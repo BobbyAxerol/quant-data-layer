@@ -1,0 +1,92 @@
+symbols:
+  # VN30 Derivatives
+  - VN30F1M
+
+  # VN30 Core Stocks
+  - VCB
+  - BID
+  - CTG
+  - HPG
+  - TCB
+  - VPB
+  - MBB
+  - FPT
+  - VNM
+  - VIC
+  - SSI
+
+  # Additional VN30 Stocks
+  - ACB
+  - BVH
+  - GAS
+  - GVR
+  - HDB
+  - MSN
+  - MWG
+  - PLX
+  - POW
+  - SAB
+  - SHB
+  - SSB
+  - STB
+  - TPB
+  - VHM
+  - VIB
+  - VJC
+  - VRE
+
+  # Top HOSE Large Caps (Top 50 Approx.)
+  - DGC
+  - DIG
+  - DPM
+  - DXG
+  - EIB
+  - GEX
+  - KBC
+  - KDH
+  - NLG
+  - NVL
+  - OCB
+  - PDR
+  - PVD
+  - PVS
+  - REE
+  - SBT
+  - VCG
+  - VHC
+
+  # Expanded HOSE Universe (Top 100 Approx.)
+  - AAA
+  - ANV
+  - ASM
+  - BAF
+  - BFC
+  - BMP
+  - CII
+  - CMG
+  - CSV
+  - CTR
+  - DBC
+  - DHG
+  - DRC
+  - EVF
+  - FCN
+  - FMC
+  - FRT
+  - HAH
+  - HCM
+  - HDG
+  - IDC
+  - IJC
+  - KOS
+  - PC1
+  - PET
+  - PHR
+  - PNJ
+  - PTB
+  - SZC
+  - TCH
+  - VGC
+  - VIX
+  - VPI
+  - YEG

@@ -1,0 +1,99 @@
+services:
+  data_layer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: data-layer:v0.1.0
+    container_name: data_layer_service
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8100:8100"
+    volumes:
+      - .:/app
+      - ./data:/app/data      # Persist Parquet preload data
+      - ./logs:/app/logs
+    environment:
+      - REDIS_HOST=redis_service
+      - REDIS_PORT=6379
+      - REDIS_DB=2
+      - VNSTOCK_API_KEY=${VNSTOCK_API_KEY:-}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - bobby_network
+      - executor_network
+
+  alpha_service:
+    image: data-layer:v0.1.0
+    container_name: data_layer_alpha
+    restart: unless-stopped
+    depends_on:
+      - data_layer
+    environment:
+      - REDIS_HOST=redis_service
+      - REDIS_PORT=6379
+      - REDIS_DB=2
+      - DATA_LAYER_URL=http://data_layer:8100
+      - ALPHA_SYMBOL=SSI
+      - ALPHA_HIGH_TF=60min
+      - ALPHA_FAST=8
+      - ALPHA_SLOW=20
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    command: ["python", "-u", "app/alpha/run_alpha.py"]
+    networks:
+      - bobby_network
+
+  test_runner:
+    image: data-layer:v0.1.0
+    container_name: data_layer_test_runner
+    restart: "no"
+    depends_on:
+      - data_layer
+    environment:
+      - REDIS_HOST=redis_service
+      - REDIS_PORT=6379
+      - REDIS_DB=2
+    volumes:
+      - .:/app
+    command: ["bash", "-lc", "python -m unittest discover tests"]
+    networks:
+      - bobby_network
+      - executor_network
+
+  data_source_checker:
+    image: data-layer:v0.1.0
+    container_name: data_layer_data_source_checker
+    restart: "no"
+    depends_on:
+      - data_layer
+    environment:
+      - REDIS_HOST=redis_service
+      - REDIS_PORT=6379
+      - REDIS_DB=2
+      - DATA_LAYER_URL=http://data_layer:8100
+      - STREAM_STALE_SECONDS=180
+      - BINANCE_SAMPLE_SIZE=5
+      - VN_SAMPLE_SIZE=5
+      - PRELOAD_TAIL_ROWS=5
+      - DIAG_REPORT_DIR=/app/logs/diagnostics
+      - DIAG_REPORT_BASENAME=data_source_check
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: ["python", "-u", "app/diagnostics/run_data_checks.py"]
+    networks:
+      - bobby_network
+      - executor_network
+
+networks:
+  bobby_network:
+    external: true
+  executor_network:
+    external: true
+

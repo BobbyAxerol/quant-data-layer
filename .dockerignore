@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+.git
+.ipynb_checkpoints
+.venv
+venv
+data
+*.parquet
+*.csv
+*.gz
