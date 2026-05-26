@@ -8,6 +8,7 @@ Other services should connect to `data_layer` using this rule:
 
 - use Redis Pub/Sub for live streaming consumption
 - use REST API for warmup, latest-state recovery, diagnostics, and manual triggers
+- use the official SDK client where possible: `app.sdk.DataLayerClient`
 - do not connect directly to Binance, DNSE, vnstock, or other providers if the service is already inside `bobby_network`
 
 The `data_layer` is the system-of-record gateway for market-data distribution inside this stack.
@@ -44,6 +45,80 @@ Downstream services should assume:
 - live price channels may come online before preload refresh finishes
 - preload data may be available slightly after service boot
 - VN live quote keys may expire after market close, while last-snapshot keys remain available
+
+### Official SDK Client
+
+Use this client from downstream Python services when the service mounts or vendors the `data_layer` package:
+
+```python
+from app.sdk import DataLayerClient
+
+client = DataLayerClient(
+    base_url="http://data_layer:8100",
+    redis_host="redis_service",
+    redis_port=6379,
+    redis_db=2,
+)
+
+health = client.health()
+btc_trade = client.latest_trade("binance", "BTCUSDT")
+btc_kline = client.latest_kline("binance", "BTCUSDT", interval="1m")
+fpt_warmup = client.warmup_ohlcv("vn_stock", "FPT", interval="5m", limit=500)
+fallback = client.fallback_status("BTCUSDT", interval="1m")
+```
+
+SDK responsibilities:
+
+- `health()`
+- `stream_health()`
+- `latest_trade(provider, symbol)`
+- `latest_kline(provider, symbol, interval)`
+- `latest_vn_quote(symbol, allow_last_snapshot=True)`
+- `warmup_ohlcv(market, symbol, interval, limit, provider=None)`
+- `fallback_status(symbol, interval)`
+- `fallback_reference(symbol, interval, force=False)`
+- `stream_trades(symbols)`
+- `stream_klines(symbols, interval)`
+- `stream_vn_quotes(symbols)`
+- `validate_freshness(payload, max_age_seconds)`
+- `validate_source(payload, allowed_sources)`
+
+If a service cannot import the SDK, it must still follow the exact REST and Redis contracts documented below.
+
+### Required Startup And Recovery Sequences
+
+Alpha startup sequence:
+
+1. Call `client.health()` and require `status=ok`.
+2. Load the symbol universe from your alpha/trading-system config; do not create ad-hoc direct provider streams.
+3. For crypto candle alpha, call `client.warmup_ohlcv("crypto", symbol, interval=..., limit=..., provider="binance")`.
+4. For VN alpha, call `client.warmup_ohlcv("vn_stock", symbol, interval=..., limit=...)`.
+5. Fetch latest live state with `latest_trade()`, `latest_kline()`, or `latest_vn_quote()`.
+6. Validate `source` and freshness before enabling trading decisions.
+7. Subscribe to Redis streams through `stream_trades()`, `stream_klines()`, or `stream_vn_quotes()`.
+
+Paper/live execution startup sequence:
+
+1. Call `health()` and `stream_health()`.
+2. Load authoritative trading symbols from trading-system config.
+3. For every active symbol, recover the latest state from REST before subscribing to Redis.
+4. Reject or pause trading if the required live source is missing, stale, or only a non-authoritative fallback.
+5. Start execution only after risk/portfolio services confirm the data source contract they need.
+
+Recovery after restart:
+
+1. Reconnect to REST first.
+2. Reload latest state for all active symbols.
+3. Rebuild local in-memory bars/marks from warmup plus latest-state endpoints.
+4. Reattach Redis subscriptions.
+5. Compare the first live message timestamp with the recovered timestamp; if there is a gap, run a small REST warmup/top-up before making the next decision.
+
+Stale-data behavior:
+
+- Binance live trading should treat stale Binance trade/kline data as blocking for execution-grade decisions.
+- OKX fallback is reference-only unless a separate risk policy explicitly allows fallback-driven action.
+- VN `/v1/vn/quote/{symbol}` is live TTL state; if it is missing after market close, use `/v1/vn/quote-last/{symbol}` only for inspection/recovery, not proof of a live tradable market.
+- VN preload may be sparse by real provider data, but it must not be fabricated by downstream services.
 
 ---
 
@@ -105,6 +180,14 @@ for message in pubsub.listen():
   - subscribe to `stream:vn:{symbol}`
   - use `GET /v1/vn/quote/{symbol}` only when live TTL state is expected
   - use `GET /v1/vn/quote-last/{symbol}` for last known snapshot, especially after market close
+
+SDK equivalents:
+
+```python
+trade_pubsub = client.stream_trades(["BTCUSDT", "ETHUSDT"])
+kline_pubsub = client.stream_klines("BTCUSDT", interval="1m")
+vn_pubsub = client.stream_vn_quotes(["FPT", "HPG"])
+```
 
 ---
 
@@ -184,6 +267,30 @@ Do not design new consumers around date-window warm-up requests for VN preload.
 ### Pattern C: Historical Proxy (Binance)
 Acts as a rate-limited proxy to Binance API for historical klines.
 - `GET http://data_layer:8100/v1/binance/klines/{symbol}?interval=1m&limit=1000`
+
+### Pattern D: Crypto Provider Warmup And Fallback
+
+Crypto history should be requested through `data_layer`, not directly from provider APIs:
+
+- Binance:
+  - `GET http://data_layer:8100/v1/crypto/ohlcv/binance/BTCUSDT?interval=15m&limit=500&market=spot`
+- OKX:
+  - `GET http://data_layer:8100/v1/crypto/ohlcv/okx/BTCUSDT?interval=15m&limit=300`
+
+Fallback semantics:
+
+- `GET http://data_layer:8100/v1/fallback/crypto/status/BTCUSDT?interval=1m`
+- `GET http://data_layer:8100/v1/fallback/crypto/reference/BTCUSDT?interval=1m&force=false`
+
+OKX fallback response is explicitly non-authoritative:
+
+- `provider=okx`
+- `venue=OKX`
+- `reference_for=BINANCE`
+- `authoritative=false`
+- `fallback_reason=<reason>`
+
+Execution/risk services must not use OKX fallback as Binance fill price unless a separate policy explicitly allows it. For live Binance trading, fallback should normally block trading, alert, or provide conservative reference context.
 
 ---
 
@@ -303,6 +410,8 @@ If another service wants strict consistency, it should mirror the `data_layer` p
 5. **Live vs Snapshot**: Treat live TTL keys and channels as execution-grade current state. Treat `quote-last` and preload data as recovery or inspection state, not as proof that the market is live.
 6. **Timezone Discipline**: VN preload and trading-session logic are VN-market-time based (`UTC+7`). If your service uses UTC internally, convert explicitly at the boundary.
 7. **Boot Sequence**: Do not assume preload, live stream, and fallback stream become ready at exactly the same time. Your service should retry warmup and then attach to the live stream.
+8. **No Direct Provider Connections**: New services inside `bobby_network` should not import provider SDKs or connect to Binance/DNSE/OKX/vnstock directly. `data_source_checker` includes a contract-enforcement audit to flag obvious direct-provider usage outside allowed internal provider modules.
+9. **Strict Diagnostics Flags**: By default, health and diagnostics report sparse/no-recent-trade provider behavior as warnings, not outages. Use `PRELOAD_STRICT_FRESHNESS=true`, `VN_STRICT_LIVE_STREAMS=true`, or `STREAM_STRICT_FEED_HEALTH=true` when you intentionally want diagnostics/health to fail on these warnings.
 
 ---
 
@@ -311,6 +420,7 @@ If another service wants strict consistency, it should mirror the `data_layer` p
 - [ ] Add `data_layer` and `redis_service` to your service's `environment` variables.
 - [ ] Ensure `networks` include `bobby_network`.
 - [ ] Use `orjson` for maximum performance.
+- [ ] Prefer `app.sdk.DataLayerClient` over hand-written REST/Redis wrappers.
 - [ ] Check `http://data_layer:8100/v1/health` during startup to verify connection.
 - [ ] Choose the correct data contract:
   - `stream:trade:{symbol}` for live execution price
@@ -318,3 +428,181 @@ If another service wants strict consistency, it should mirror the `data_layer` p
   - `/v1/preload/{symbol}` for VN warmup history
   - `/v1/vn/quote-last/{symbol}` for last known VN snapshot
 - [ ] If reconnect happens, reload latest state from REST before resuming stream-only logic.
+
+---
+
+## 7. Migration From Legacy Consumers
+
+This section is the rulebook for migrating old alpha folders, old paper execution services, and `trading_system` market-data inputs.
+
+### Migration Goal
+
+Old consumers may currently do one or more of these:
+
+- open their own Binance WebSocket or REST clients
+- open their own DNSE/vnstock clients
+- read Redis keys directly without source/freshness validation
+- call provider-specific preload/history utilities from inside alpha code
+- resample or patch missing data with local ad-hoc logic
+
+The target architecture is:
+
+- `data_layer` owns all external market-data provider connections.
+- alpha and trading services consume `data_layer` through the SDK, REST, and Redis contracts only.
+- execution/risk logic validates freshness/source before it acts.
+- alpha-specific custom logic stays inside the alpha, but data access is standardized.
+
+### Old To New Mapping
+
+| Legacy behavior | New behavior |
+|-----------------|--------------|
+| Alpha opens Binance WebSocket for trades | `client.stream_trades(symbols)` or Redis `stream:trade:{symbol}` |
+| Alpha opens Binance WebSocket for klines | `client.stream_klines(symbols, interval="1m")`; resample locally if the alpha needs higher live intervals |
+| Alpha calls Binance REST klines directly | `client.warmup_ohlcv("crypto", symbol, interval, limit, provider="binance")` |
+| Alpha calls OKX directly as backup | `client.fallback_status()` and `client.fallback_reference()`; OKX is reference-only by default |
+| Alpha opens DNSE/vnstock live quote connection | `client.stream_vn_quotes(symbols)` or Redis `stream:vn:{symbol}` |
+| Alpha calls vnstock/DNSE history directly for VN warmup | `client.warmup_ohlcv("vn_stock", symbol, interval, limit)` |
+| Paper/live executor reads exchange price directly | `client.latest_trade("binance", symbol)` plus `stream_trades()` |
+| Service trusts any Redis key if present | validate `source` and `timestamp` with `validate_source()` / `validate_freshness()` |
+| Service treats `/v1/vn/quote-last` as live | only use it for recovery/inspection unless live TTL state is confirmed |
+
+### Recommended Alpha Migration Steps
+
+1. Add `data_layer` network access.
+   - Docker network: `bobby_network`.
+   - Environment:
+     - `DATA_LAYER_URL=http://data_layer:8100`
+     - `REDIS_HOST=redis_service`
+     - `REDIS_PORT=6379`
+     - `REDIS_DB=2`
+
+2. Mount or vendor the SDK.
+   - Preferred import:
+
+```python
+from app.sdk import DataLayerClient
+```
+
+3. Replace local provider clients.
+   - Remove direct Binance/DNSE/OKX/vnstock imports from alpha runtime code.
+   - Keep strategy signal code unchanged where possible.
+   - Replace only the data access boundary first.
+
+4. Use warmup before live stream.
+   - Crypto:
+
+```python
+warmup = client.warmup_ohlcv(
+    "crypto",
+    "BTCUSDT",
+    interval="5m",
+    limit=500,
+    provider="binance",
+)
+```
+
+   - VN:
+
+```python
+warmup = client.warmup_ohlcv(
+    "vn_stock",
+    "FPT",
+    interval="15m",
+    limit=500,
+)
+```
+
+5. Attach live stream.
+   - Crypto execution price:
+
+```python
+pubsub = client.stream_trades(["BTCUSDT", "ETHUSDT"])
+```
+
+   - Crypto live candles:
+
+```python
+pubsub = client.stream_klines(["BTCUSDT", "ETHUSDT"], interval="1m")
+```
+
+   - VN live quote:
+
+```python
+pubsub = client.stream_vn_quotes(["FPT", "HPG"])
+```
+
+6. Validate before producing a trade signal.
+   - Binance live execution should require fresh Binance data.
+   - VN live trading should require fresh `vn:quote:{symbol}` when market is open.
+   - `quote-last` and preload data can recover state but should not prove the market is tradable.
+
+7. Resample locally only from trusted data.
+   - Crypto live Redis currently exposes `kline:1m:{symbol}`.
+   - If an alpha trades on `5m`, `15m`, `30m`, or `1h`, it should warm up with REST and then resample incoming `1m` live bars locally.
+   - Do not open a separate Binance kline stream from the alpha just to get another interval.
+
+### Recommended `trading_system` Migration Steps
+
+1. Keep `trading_system` execution/risk/accounting logic separate from market-data transport.
+2. Replace market-data adapters that call providers directly with a `data_layer` adapter.
+3. For Binance paper/sandbox/live:
+   - mark price / execution reference:
+     - live stream: `stream:trade:{symbol}`
+     - recovery: `GET /v1/binance/price/{symbol}`
+   - candle context:
+     - warmup: `GET /v1/crypto/ohlcv/binance/{symbol}?interval=...`
+     - live: `stream:kline:1m:{symbol}` then local resample if required
+4. For DNSE/VN paper/live:
+   - warmup: `GET /v1/preload/{symbol}?interval=...`
+   - live quote: `stream:vn:{symbol}` or `GET /v1/vn/quote/{symbol}`
+   - after-hours/restart inspection: `GET /v1/vn/quote-last/{symbol}`
+5. Risk should reject execution-grade decisions when:
+   - required Binance data is stale or missing
+   - only OKX fallback/reference is available and policy does not explicitly allow it
+   - VN market is open but the alpha requires live data and only `quote-last` exists
+6. Reconciliation/recovery should load latest state from REST before accepting new stream events.
+
+### Compatibility Period
+
+Legacy Redis keys remain supported during migration:
+
+- `trade:price:{symbol}`
+- `kline:1m:{symbol}`
+- `vn:quote:{symbol}`
+- `vn:quote:last:{symbol}`
+
+Legacy Redis channels remain supported:
+
+- `stream:trade:{symbol}`
+- `stream:kline:1m:{symbol}`
+- `stream:vn:{symbol}`
+
+Rules during compatibility:
+
+- direct Redis reads are allowed only when wrapped with source/freshness checks.
+- new services should prefer `DataLayerClient`.
+- direct external provider connections from alpha/trading services are not allowed unless documented as a temporary exception.
+- versioned/provider-aware keys can be added later in parallel; do not remove the current keys until all old consumers are migrated.
+
+### Temporary Exceptions
+
+The only acceptable exceptions are:
+
+- internal `data_layer` provider modules
+- diagnostics and tests
+- short-lived migration scripts with a deletion date or explicit owner
+- external research notebooks outside service runtime
+
+Anything running as an alpha, executor, risk service, portfolio service, or trading-system bridge inside `bobby_network` should not connect directly to external market-data providers.
+
+### Migration Acceptance Checklist
+
+- [ ] No direct provider import or WebSocket creation in alpha/trading runtime code.
+- [ ] Startup calls `health()` before warmup/subscription.
+- [ ] Warmup uses `warmup_ohlcv()`.
+- [ ] Live data uses `stream_trades()`, `stream_klines()`, or `stream_vn_quotes()`.
+- [ ] Restart recovery reloads latest state from REST before acting on new stream events.
+- [ ] Execution-grade paths validate source and freshness.
+- [ ] OKX fallback is treated as non-authoritative unless risk policy says otherwise.
+- [ ] VN `quote-last` is not treated as live tradable data.
+- [ ] `data_source_checker` passes, or remaining warnings are documented provider/sparse-market warnings.

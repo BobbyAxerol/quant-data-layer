@@ -23,6 +23,7 @@ pip-delete-this-directory.txt
 data/
 logs/
 *.parquet
+symbols_spot.json
 Documentation/
 .coverage
 .coverage.*

@@ -28,6 +28,16 @@ from app.database.dnse_fallback import DERIVATIVE_SYMBOLS, fetch_dnse_ohlcv_dire
 
 logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
+VN_MATERIALIZED_INTERVALS = ("5m", "10m", "15m", "30m", "1h", "4h")
+_PANDAS_INTERVALS = {
+    "1m": "1min",
+    "5m": "5min",
+    "10m": "10min",
+    "15m": "15min",
+    "30m": "30min",
+    "1h": "1h",
+    "4h": "4h",
+}
 
 
 def _vn_now() -> datetime:
@@ -82,6 +92,253 @@ def load_vn_symbols(yaml_path: str = None) -> list:
     with open(yaml_path, "r") as f:
         data = yaml.safe_load(f)
     return data.get("symbols", [])
+
+
+def preload_root(preload_dir: str = None) -> Path:
+    base = Path(preload_dir or PRELOAD_DIR)
+    return base.parent if base.name == "1m" else base
+
+
+def preload_interval_dir(interval: str = "1m", preload_dir: str = None) -> Path:
+    interval = normalize_preload_interval(interval)
+    root = preload_root(preload_dir)
+    return root / interval
+
+
+def preload_file_path(symbol: str, interval: str = "1m", preload_dir: str = None) -> Path:
+    return preload_interval_dir(interval, preload_dir) / f"{symbol.upper()}.parquet"
+
+
+def normalize_preload_interval(interval: str) -> str:
+    normalized = str(interval or "1m").lower().strip()
+    aliases = {
+        "1": "1m",
+        "1min": "1m",
+        "1t": "1m",
+        "5": "5m",
+        "5min": "5m",
+        "5t": "5m",
+        "10": "10m",
+        "10min": "10m",
+        "10t": "10m",
+        "15": "15m",
+        "15min": "15m",
+        "15t": "15m",
+        "30": "30m",
+        "30min": "30m",
+        "30t": "30m",
+        "60": "1h",
+        "60m": "1h",
+        "60min": "1h",
+        "1hr": "1h",
+        "1hour": "1h",
+        "240": "4h",
+        "240m": "4h",
+        "240min": "4h",
+        "4hr": "4h",
+        "4hour": "4h",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in _PANDAS_INTERVALS:
+        raise ValueError(f"Unsupported VN preload interval: {interval}")
+    return normalized
+
+
+def _resample_offset(symbol: str) -> str:
+    return "0min" if symbol.upper() in DERIVATIVE_SYMBOLS else "15min"
+
+
+def resample_vn_ohlcv(df: pd.DataFrame, interval: str, symbol: str) -> pd.DataFrame:
+    """
+    Aggregate canonical VN 1m OHLCV into a materialized interval.
+
+    The canonical parquet is local VN time, usually timezone-naive. We keep that
+    convention in materialized parquet and convert to UTC only at API boundary.
+    """
+    interval = normalize_preload_interval(interval)
+    if interval == "1m":
+        return df.copy()
+    if df.empty:
+        return df.copy()
+    required = {"time", "open", "high", "low", "close", "volume"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"Cannot resample {symbol}: missing columns {sorted(missing)}")
+
+    work = df.copy()
+    work["time"] = pd.to_datetime(work["time"], errors="coerce")
+    work = work.dropna(subset=["time"])
+    if work.empty:
+        return work
+    for column in ["open", "high", "low", "close", "volume"]:
+        work[column] = pd.to_numeric(work[column], errors="coerce")
+    work = work.dropna(subset=["open", "high", "low", "close"])
+    if work.empty:
+        return work
+
+    work = work.sort_values("time").set_index("time")
+    rule = _PANDAS_INTERVALS[interval]
+    result = work.resample(
+        rule,
+        origin="start_day",
+        offset=_resample_offset(symbol),
+        label="left",
+        closed="left",
+    ).agg(
+        {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }
+    )
+    result = result.dropna(subset=["open", "high", "low", "close"]).reset_index()
+    if "symbol" in df.columns:
+        result["symbol"] = symbol.upper()
+    return result
+
+
+def materialize_symbol_intervals(
+    symbol: str,
+    intervals: tuple[str, ...] = VN_MATERIALIZED_INTERVALS,
+    preload_dir: str = None,
+) -> dict:
+    """
+    Rebuild materialized VN interval parquet files from canonical 1m parquet.
+    """
+    symbol = symbol.upper()
+    canonical_path = preload_file_path(symbol, "1m", preload_dir)
+    report = {
+        "symbol": symbol,
+        "canonical_path": str(canonical_path),
+        "canonical_exists": canonical_path.exists(),
+        "intervals": [],
+    }
+    if not canonical_path.exists():
+        return report
+
+    df = pd.read_parquet(canonical_path)
+    for interval in intervals:
+        interval = normalize_preload_interval(interval)
+        target_dir = preload_interval_dir(interval, preload_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / f"{symbol}.parquet"
+        resampled = resample_vn_ohlcv(df, interval, symbol)
+        resampled.to_parquet(target_path, index=False, compression="snappy")
+        report["intervals"].append(
+            {
+                "interval": interval,
+                "path": str(target_path),
+                "rows": int(len(resampled)),
+                "status": "ok" if not resampled.empty else "empty",
+            }
+        )
+        logger.info(f"[{symbol}] materialized {interval}: {len(resampled)} rows -> {target_path}")
+    return report
+
+
+def materialize_all_intervals(symbols: list = None, intervals: tuple[str, ...] = VN_MATERIALIZED_INTERVALS) -> list:
+    symbols = symbols or load_vn_symbols()
+    reports = []
+    for symbol in symbols:
+        try:
+            reports.append(materialize_symbol_intervals(symbol, intervals=intervals))
+        except Exception as exc:
+            logger.error(f"[{symbol}] materialization failed: {exc}", exc_info=True)
+            reports.append({"symbol": symbol.upper(), "status": "error", "error": str(exc)})
+    return reports
+
+
+def read_preload_data(symbol: str, interval: str = "1m", limit: int = 1000) -> pd.DataFrame:
+    interval = normalize_preload_interval(interval)
+    path = preload_file_path(symbol, interval)
+    if not path.exists() and interval != "1m":
+        materialize_symbol_intervals(symbol, intervals=(interval,))
+    if not path.exists():
+        raise FileNotFoundError(str(path))
+    df = pd.read_parquet(path)
+    if df.empty:
+        return df
+    df["time"] = pd.to_datetime(df["time"])
+    return df.sort_values("time").tail(limit)
+
+
+def get_preload_last_time(symbol: str, preload_dir: str = None) -> pd.Timestamp | None:
+    path = preload_file_path(symbol, "1m", preload_dir)
+    if not path.exists():
+        return None
+    df = pd.read_parquet(path, columns=["time"])
+    if df.empty:
+        return None
+    times = pd.to_datetime(df["time"], errors="coerce").dropna()
+    if times.empty:
+        return None
+    return times.max()
+
+
+def preload_needs_topup(
+    symbol: str,
+    now_local: datetime = None,
+    preload_dir: str = None,
+    max_lag_minutes: int = 1,
+) -> dict:
+    """
+    Decide whether an existing canonical 1m parquet should be topped up.
+
+    This never asks for a full historical bootstrap. It is intended for API
+    read-through freshness when a symbol already has canonical parquet and only
+    needs today's recent delta.
+    """
+    symbol = symbol.upper()
+    now_local = now_local or _vn_now()
+    last_time = get_preload_last_time(symbol, preload_dir)
+    expected_latest = _expected_latest_vn_bar(symbol, now_local).replace(tzinfo=None)
+    if last_time is None:
+        return {
+            "symbol": symbol,
+            "needs_topup": False,
+            "reason": "canonical_missing",
+            "last_time": None,
+            "expected_latest": expected_latest,
+        }
+    lag_minutes = max(0.0, (expected_latest - last_time.to_pydatetime()).total_seconds() / 60.0)
+    return {
+        "symbol": symbol,
+        "needs_topup": lag_minutes > max_lag_minutes,
+        "reason": "stale" if lag_minutes > max_lag_minutes else "fresh",
+        "last_time": last_time,
+        "expected_latest": expected_latest,
+        "lag_minutes": lag_minutes,
+    }
+
+
+def topup_existing_symbol_if_needed(
+    symbol: str,
+    interval: str = "1m",
+    max_lag_minutes: int = 1,
+) -> dict:
+    """
+    Sync top-up an existing canonical 1m parquet before serving preload API.
+
+    If canonical does not exist, this returns immediately. Full six-month
+    bootstrap belongs to the daily preload job or explicit append/run commands,
+    not to a read endpoint.
+    """
+    symbol = symbol.upper()
+    decision = preload_needs_topup(symbol, max_lag_minutes=max_lag_minutes)
+    if decision["needs_topup"]:
+        logger.info(
+            f"[{symbol}] API read-through top-up: lag={decision.get('lag_minutes'):.1f}m, "
+            f"last={decision.get('last_time')}, expected={decision.get('expected_latest')}"
+        )
+        update_symbol(symbol)
+        materialize_symbol_intervals(symbol, intervals=(normalize_preload_interval(interval),))
+        decision = preload_needs_topup(symbol, max_lag_minutes=max_lag_minutes)
+        decision["topup_attempted"] = True
+    else:
+        decision["topup_attempted"] = False
+    return decision
 
 
 def fetch_ohlcv_chunked(
@@ -182,6 +439,7 @@ def update_symbol(symbol: str, months: int = None, preload_dir: str = None):
                     f"[{symbol}] Already up to date for expected VN checkpoint "
                     f"{expected_latest} (last_index_time={max_time})."
                 )
+                materialize_symbol_intervals(symbol, preload_dir=preload_dir)
                 return
             # Start from the day of max_time to catch any intraday gap
             start_str = max_time.strftime("%Y-%m-%d")
@@ -204,6 +462,16 @@ def update_symbol(symbol: str, months: int = None, preload_dir: str = None):
         except Exception as e:
             logger.error(f"[{symbol}] DNSE direct fetch failed: {e}", exc_info=True)
             new_df = pd.DataFrame()
+        if new_df.empty:
+            logger.warning(f"[{symbol}] DNSE derivative preload returned empty. Trying vnstock fallback.")
+            try:
+                new_df = fetch_ohlcv_chunked(symbol, start=start_str, end=end_str)
+                if not new_df.empty:
+                    logger.info(f"[{symbol}] vnstock derivative fallback returned {len(new_df)} bars")
+                else:
+                    logger.warning(f"[{symbol}] vnstock derivative fallback also returned empty.")
+            except Exception as e:
+                logger.error(f"[{symbol}] vnstock derivative fallback failed: {e}", exc_info=True)
     else:
         # ── PRIMARY: Fetch via vnstock ──────────────────────────────
         new_df = fetch_ohlcv_chunked(symbol, start=start_str, end=end_str)
@@ -247,6 +515,7 @@ def update_symbol(symbol: str, months: int = None, preload_dir: str = None):
     # Save
     combined.to_parquet(file_path, index=False, compression="snappy")
     logger.info(f"[{symbol}] Saved parquet: {len(combined)} rows, range {combined['time'].min()} -> {combined['time'].max()}")
+    materialize_symbol_intervals(symbol, preload_dir=preload_dir)
 
 
 def load_last_preload_snapshot(symbol: str, preload_dir: str = None) -> dict | None:

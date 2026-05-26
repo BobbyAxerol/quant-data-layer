@@ -19,6 +19,7 @@ from queue import Queue, Full, Empty
 from time import perf_counter
 import threading
 from typing import Optional
+from datetime import datetime, time as dt_time, timedelta, timezone
 
 # Add openapi_sdk to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "openapi_sdk", "python"))
@@ -36,6 +37,8 @@ _QUEUE_MAXSIZE = 5_000
 _BATCH_SIZE = 30
 _BATCH_TIMEOUT = 0.05
 _METRICS_INTERVAL = 60.0
+_STALE_SECONDS = float(os.getenv("STREAM_STALE_SECONDS", "180"))
+_VN_TZ = timezone(timedelta(hours=7))
 
 
 class DnseStreamManager:
@@ -63,11 +66,19 @@ class DnseStreamManager:
         self._drop_count = 0
         self._last_redis_latency_ms = 0.0
         self._last_msg_ts = time.time()
+        self._connect_attempts = 0
+        self._connect_failures = 0
+        self._reconnect_count = 0
+        self._last_connected_at: Optional[float] = None
+        self._last_error: Optional[str] = None
 
     async def _connect_and_subscribe(self):
         """Connect, authenticate, subscribe to trades for all symbols."""
+        self._connect_attempts += 1
         if not DNSE_API_KEY or not DNSE_API_SECRET_KEY:
-            logger.error("DNSE_API_KEY or DNSE_API_SECRET_KEY not set.")
+            self._connect_failures += 1
+            self._last_error = "DNSE_API_KEY or DNSE_API_SECRET_KEY not set."
+            logger.error(self._last_error)
             return False
 
         try:
@@ -81,6 +92,8 @@ class DnseStreamManager:
                 heartbeat_interval=25.0,
             )
             await self._client.connect()
+            self._last_connected_at = time.time()
+            self._last_error = None
             logger.info("DNSE WS connected and authenticated")
 
             # Subscribe to trades on HOSE (G1) and HNX (G3)
@@ -99,6 +112,8 @@ class DnseStreamManager:
             logger.info(f"Subscribed to trades for {len(self.symbols)} symbols on G1+G3")
             return True
         except Exception as e:
+            self._connect_failures += 1
+            self._last_error = str(e)
             logger.error(f"DNSE WS connect failed: {e}")
             return False
 
@@ -220,6 +235,7 @@ class DnseStreamManager:
             connected = await self._connect_and_subscribe()
             if not connected:
                 retry_count += 1
+                self._reconnect_count += 1
                 logger.warning(f"DNSE WS connect failed (attempt {retry_count}). Retrying in 10s...")
                 await asyncio.sleep(10)
                 continue
@@ -230,9 +246,11 @@ class DnseStreamManager:
                     if self._client and self._client.is_healthy:
                         await asyncio.sleep(30)
                     else:
+                        self._reconnect_count += 1
                         logger.warning("DNSE WS unhealthy, reconnecting...")
                         break
             except Exception as e:
+                self._last_error = str(e)
                 logger.error(f"DNSE stream loop error: {e}")
 
             try:
@@ -273,3 +291,61 @@ class DnseStreamManager:
         if self._task:
             self._task.cancel()
         logger.info("DNSE stream manager stopped")
+
+    @staticmethod
+    def _is_market_open() -> bool:
+        now = datetime.now(_VN_TZ)
+        if now.weekday() >= 5:
+            return False
+        local_time = now.time()
+        return (
+            dt_time(9, 0) <= local_time < dt_time(11, 30)
+            or dt_time(13, 0) <= local_time < dt_time(14, 30)
+        )
+
+    @staticmethod
+    def _iso(ts: Optional[float]) -> Optional[str]:
+        if not ts:
+            return None
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+    def get_status(self) -> dict:
+        stale_age = max(0.0, time.time() - self._last_msg_ts)
+        market_open = self._is_market_open()
+        client_healthy = bool(self._client and self._client.is_healthy)
+
+        if not self._running:
+            session_status = "BROKEN"
+        elif not market_open:
+            session_status = "MARKET_CLOSED"
+        elif client_healthy and stale_age <= _STALE_SECONDS:
+            session_status = "OPEN_HEALTHY"
+        elif client_healthy:
+            session_status = "OPEN_STALE"
+        else:
+            session_status = "BROKEN"
+
+        return {
+            "status": session_status,
+            "running": self._running,
+            "market_open": market_open,
+            "client_healthy": client_healthy,
+            "symbols_count": len(self.symbols),
+            "queue": {
+                "size": self._queue.qsize(),
+                "maxsize": _QUEUE_MAXSIZE,
+                "drop_count": self._drop_count,
+            },
+            "metrics": {
+                "ws_msg_count": self._ws_msg_count,
+                "redis_write_count": self._redis_write_count,
+                "redis_latency_ms": round(self._last_redis_latency_ms, 3),
+                "stale_age_seconds": round(stale_age, 3),
+                "connect_attempts": self._connect_attempts,
+                "connect_failures": self._connect_failures,
+                "reconnect_count": self._reconnect_count,
+                "last_connected_at": self._iso(self._last_connected_at),
+                "last_message_at": self._iso(self._last_msg_ts),
+                "last_error": self._last_error,
+            },
+        }

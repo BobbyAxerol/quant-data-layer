@@ -53,6 +53,19 @@ class RedisCache:
     def _vn_last_key(symbol: str) -> str:
         return f"vn:quote:last:{symbol}"
 
+    @staticmethod
+    def _last_known_key(key: str) -> Optional[str]:
+        if key.startswith("trade:price:"):
+            return f"trade:price:last:{key.split(':')[-1]}"
+        if key.startswith("kline:"):
+            parts = key.split(":")
+            if len(parts) == 3:
+                _, interval, symbol = parts
+                return f"kline:last:{interval}:{symbol}"
+        if key.startswith("vn:quote:") and not key.startswith("vn:quote:last:"):
+            return RedisCache._vn_last_key(key.split(":")[-1])
+        return None
+
     async def init_ping(self):
         try:
             await self.r.ping()
@@ -65,10 +78,13 @@ class RedisCache:
 
     async def push_binance_kline(self, symbol: str, interval: str, data: dict, ttl: int = 60):
         key = f"kline:{interval}:{symbol}"
+        last_key = self._last_known_key(key)
         channel = f"stream:kline:{interval}:{symbol}"
         payload = orjson.dumps(data)
         async with self.r.pipeline(transaction=False) as pipe:
             pipe.setex(key, ttl, payload)
+            if last_key:
+                pipe.set(last_key, payload)
             pipe.publish(channel, payload)
             await pipe.execute()
 
@@ -77,9 +93,17 @@ class RedisCache:
         raw = await self.r.get(key)
         return self._decode_payload(raw)
 
+    async def get_binance_kline_last(self, symbol: str, interval: str) -> Optional[dict]:
+        raw = await self.r.get(f"kline:last:{interval}:{symbol}")
+        return self._decode_payload(raw)
+
     async def get_binance_price(self, symbol: str) -> Optional[dict]:
         key = f"trade:price:{symbol}"
         raw = await self.r.get(key)
+        return self._decode_payload(raw)
+
+    async def get_binance_price_last(self, symbol: str) -> Optional[dict]:
+        raw = await self.r.get(f"trade:price:last:{symbol}")
         return self._decode_payload(raw)
 
     # ── VN Stock Tick / Quote ───────────────────────────────────
@@ -128,9 +152,9 @@ class RedisCache:
             for item in items:
                 payload = orjson.dumps(item["data"])
                 pipe.setex(item["key"], ttl, payload)
-                if item["key"].startswith("vn:quote:") and not item["key"].startswith("vn:quote:last:"):
-                    symbol = item["key"].split(":")[-1]
-                    pipe.set(self._vn_last_key(symbol), payload)
+                last_key = self._last_known_key(item["key"])
+                if last_key:
+                    pipe.set(last_key, payload)
                 pipe.publish(item["channel"], payload)
             await pipe.execute()
 
@@ -141,9 +165,9 @@ class RedisCache:
             for item in items:
                 payload = orjson.dumps(item["data"])
                 pipe.setex(item["key"], ttl, payload)
-                if item["key"].startswith("vn:quote:") and not item["key"].startswith("vn:quote:last:"):
-                    symbol = item["key"].split(":")[-1]
-                    pipe.set(self._vn_last_key(symbol), payload)
+                last_key = self._last_known_key(item["key"])
+                if last_key:
+                    pipe.set(last_key, payload)
                 pipe.publish(item["channel"], payload)
             pipe.execute()
 

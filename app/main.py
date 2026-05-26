@@ -23,16 +23,28 @@ import asyncio
 from datetime import datetime, time, timedelta, timezone
 from contextlib import asynccontextmanager
 
-import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
 
-from app.config import PRELOAD_DIR
+from app.config import (
+    PRELOAD_DAILY_RUN_TIME,
+    PRELOAD_DIR,
+    STREAM_STALE_SECONDS,
+    STREAM_STRICT_FEED_HEALTH,
+)
+from app.api.context import DataLayerContext
+from app.api import routes_control_plane, routes_fallback, routes_health, routes_history, routes_latest, routes_preload
 from app.cache.redis_cache import RedisCache
 from app.stream.async_live_feed import start_stream
+from app.ingestion.supervisor import StreamSupervisor
 from app.stream.vnstock_poller import VnstockPoller
 from app.stream.dnse_ws import DnseStreamManager
-from app.database.preload import run_preload, update_symbol, load_last_preload_snapshot, load_vn_symbols
+from app.history.preload_vn import (
+    run_preload,
+    load_last_preload_snapshot,
+    load_vn_symbols,
+)
+from app.providers.binance import rest as binance_rest
+from app.providers.okx import rest as okx_rest
 from app.logging_config import setup_logging
 
 # Configure logging to write to /app/logs/app.log
@@ -45,6 +57,11 @@ dnse_stream_manager = None  # Will be initialized in lifespan
 preload_thread = None
 preload_stop_event = threading.Event()
 unified_stream_task = None
+binance_stream_supervisor = StreamSupervisor(
+    stale_after_seconds=STREAM_STALE_SECONDS,
+    strict_feed_health=STREAM_STRICT_FEED_HEALTH,
+)
+preload_daily_state_dir = os.path.join(os.path.dirname(PRELOAD_DIR), "_state")
 
 # Vietnam market schedule (local time UTC+7)
 VN_TZ = timezone(timedelta(hours=7))
@@ -83,35 +100,132 @@ def _next_vn_market_open(now: datetime) -> datetime:
     return next_day.replace(hour=9, minute=0, second=0, microsecond=0)
 
 
-def _preload_watchdog(symbols: list):
-    logger.info("Preload watchdog starting")
-
-    # Run an immediate boot preload before entering the loop.
+def _parse_daily_preload_time(value: str) -> time:
     try:
-        logger.info("Preload watchdog: initial run")
-        run_preload(symbols)
-    except Exception as e:
-        logger.error(f"Preload watchdog initial run failed: {e}", exc_info=True)
+        hour, minute = str(value).split(":", 1)
+        return time(int(hour), int(minute))
+    except Exception:
+        logger.warning("Invalid PRELOAD_DAILY_RUN_TIME=%s, falling back to 16:00", value)
+        return time(16, 0)
+
+
+def _daily_preload_marker(day) -> str:
+    return os.path.join(preload_daily_state_dir, f"daily_preload_{day.isoformat()}.ok")
+
+
+def _mark_daily_preload_done(day):
+    os.makedirs(preload_daily_state_dir, exist_ok=True)
+    with open(_daily_preload_marker(day), "w", encoding="utf-8") as f:
+        f.write(datetime.now(tz=VN_TZ).isoformat())
+
+
+def _daily_preload_done(day) -> bool:
+    return os.path.exists(_daily_preload_marker(day))
+
+
+def _next_daily_preload_run(now: datetime) -> datetime:
+    run_time = _parse_daily_preload_time(PRELOAD_DAILY_RUN_TIME)
+    candidate = now.replace(
+        hour=run_time.hour,
+        minute=run_time.minute,
+        second=0,
+        microsecond=0,
+    )
+    if now <= candidate:
+        return candidate
+    next_day = now + timedelta(days=1)
+    while next_day.weekday() >= 5:
+        next_day += timedelta(days=1)
+    return next_day.replace(
+        hour=run_time.hour,
+        minute=run_time.minute,
+        second=0,
+        microsecond=0,
+    )
+
+
+def _normalize_binance_interval(interval: str) -> str:
+    try:
+        return binance_rest.normalize_interval(interval)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsupported_binance_interval",
+                "interval": interval,
+                "supported": sorted(binance_rest.BINANCE_KLINE_INTERVALS),
+            },
+        )
+
+
+def _normalize_okx_interval(interval: str) -> str:
+    try:
+        return okx_rest.normalize_interval(interval)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsupported_okx_interval",
+                "interval": interval,
+                "supported": sorted(okx_rest.OKX_INTERVAL_ALIASES),
+            },
+        )
+
+
+def _okx_symbol(symbol: str) -> str:
+    return okx_rest.normalize_symbol(symbol)
+
+
+def _binance_kline_urls(market: str) -> list[tuple[str, str]]:
+    try:
+        return binance_rest.kline_urls(market)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsupported_binance_market",
+                "market": str(market or "").lower().strip(),
+                "supported": sorted(binance_rest.BINANCE_KLINE_URLS),
+            },
+        )
+
+
+def _preload_watchdog(symbols: list):
+    logger.info(
+        "Preload watchdog starting: daily_run_time=%s, symbols=%s",
+        PRELOAD_DAILY_RUN_TIME,
+        len(symbols),
+    )
 
     while not preload_stop_event.is_set():
         now = _vn_now()
+        run_time = _parse_daily_preload_time(PRELOAD_DAILY_RUN_TIME)
+        should_run_now = (
+            now.weekday() < 5
+            and now.time() >= run_time
+            and not _daily_preload_done(now.date())
+        )
 
-        if _is_vn_market_open(now):
+        if should_run_now:
             try:
-                logger.info("Preload watchdog: VN market open, updating preload data")
+                logger.info(
+                    "Preload watchdog: daily %s VN update starting for %s symbols",
+                    PRELOAD_DAILY_RUN_TIME,
+                    len(symbols),
+                )
                 run_preload(symbols)
+                _mark_daily_preload_done(now.date())
+                logger.info("Preload watchdog: daily update complete")
             except Exception as e:
-                logger.error(f"Preload watchdog update failed: {e}", exc_info=True)
-
-            # During trading hours, refresh every 60 seconds to stay close to latest candle.
-            if preload_stop_event.wait(60):
-                break
+                logger.error(f"Preload watchdog daily update failed: {e}", exc_info=True)
+                if preload_stop_event.wait(300):
+                    break
             continue
 
-        next_open = _next_vn_market_open(now)
-        sleep_seconds = max(60, (next_open - now).total_seconds())
+        next_run = _next_daily_preload_run(now)
+        sleep_seconds = max(60, min(3600, (next_run - now).total_seconds()))
         logger.info(
-            f"Preload watchdog: market closed, sleeping until {next_open.isoformat()} "
+            f"Preload watchdog: sleeping toward daily run at {next_run.isoformat()} "
             f"({sleep_seconds / 60:.1f} minutes)"
         )
         if preload_stop_event.wait(sleep_seconds):
@@ -129,7 +243,7 @@ async def lifespan(app: FastAPI):
     - Start the DNSE WebSocket (PRIMARY for VN stock)
     - Start the vnstock REST poller (FALLBACK only if DNSE stale)
     """
-    global dnse_stream_manager, unified_stream_task
+    global dnse_stream_manager, unified_stream_task, binance_stream_supervisor
     logger.info("=== data_layer service starting ===")
 
     await redis_cache.init_ping()
@@ -139,6 +253,7 @@ async def lifespan(app: FastAPI):
         start_stream(
             redis_cache, 
             interval="1m", 
+            supervisor=binance_stream_supervisor,
             enabled_sources=[
                 "binance_spot_trade",
                 "binance_futures_trade",
@@ -228,218 +343,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.context = DataLayerContext(
+    redis_cache=redis_cache,
+    binance_stream_supervisor=binance_stream_supervisor,
+    get_dnse_stream_manager=lambda: dnse_stream_manager,
+)
 
-# ── Health ──────────────────────────────────────────────────────
-
-@app.get("/v1/health")
-async def health():
-    redis_ok = await redis_cache.health_check()
-    return {
-        "status": "ok" if redis_ok else "degraded",
-        "redis": redis_ok,
-        "binance_trade_stream": True,
-        "binance_kline_stream": True,
-    }
-
-
-# ── Binance Endpoints (Tier A: Redis Cache) ────────────────────
-
-@app.get("/v1/binance/price/{symbol}")
-async def get_binance_price(symbol: str):
-    """
-    Get the latest cached Binance trade price for execution/papertrade use.
-    This is the live price stream and is separate from kline/candle data.
-    """
-    data = await redis_cache.get_binance_price(symbol.upper())
-    if data is None:
-        raise HTTPException(status_code=404, detail=f"No cached trade price for {symbol}")
-    return data
-
-@app.get("/v1/binance/kline/{symbol}")
-async def get_binance_kline(symbol: str, interval: str = "1m"):
-    """
-    Get the latest cached kline for a Binance symbol.
-    Returns the single most recent event (1-event cache).
-    """
-    data = await redis_cache.get_binance_kline(symbol.upper(), interval)
-    if data is None:
-        raise HTTPException(status_code=404, detail=f"No cached kline for {symbol} @ {interval}")
-    return data
-
-
-@app.get("/v1/binance/klines/{symbol}")
-async def get_binance_klines(symbol: str, interval: str = "1m", limit: int = 500):
-    """
-    Proxy to fetch historical klines from Binance API.
-    Used for warmup by other services to avoid direct external calls.
-    """
-    # Use fapi for futures, fallback to spot
-    urls = [
-        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol.upper()}&interval={interval}&limit={limit}",
-        f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={interval}&limit={limit}"
-    ]
-    
-    import requests
-    for url in urls:
-        try:
-            resp = requests.get(url, timeout=10)
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception as e:
-            logger.warning(f"Failed to fetch klines from {url}: {e}")
-            
-    raise HTTPException(status_code=502, detail=f"Failed to fetch historical klines for {symbol} from Binance")
-
-
-# ── VN Stock Endpoints (Tier A: Redis Cache) ───────────────────
-
-@app.get("/v1/vn/quote/{symbol}")
-async def get_vn_quote(symbol: str):
-    """
-    Get the latest live cached quote for a VN stock symbol.
-    Returns only the short-TTL live event.
-    """
-    data = await redis_cache.get_vn_quote(symbol.upper())
-    if data is None:
-        raise HTTPException(status_code=404, detail=f"No cached quote for {symbol}")
-    return data
-
-
-@app.get("/v1/vn/quote-last/{symbol}")
-async def get_vn_quote_last(symbol: str):
-    """
-    Get the latest known VN quote snapshot for a symbol.
-    Unlike /v1/vn/quote/{symbol}, this may still exist after market close.
-    """
-    data = await redis_cache.get_vn_quote_last(symbol.upper())
-    if data is None:
-        raise HTTPException(status_code=404, detail=f"No last quote snapshot for {symbol}")
-    live = await redis_cache.get_vn_quote(symbol.upper())
-    return {
-        "symbol": symbol.upper(),
-        "is_live": live is not None,
-        "snapshot": data,
-    }
-
-
-@app.get("/v1/vn/board")
-async def get_vn_board():
-    """Get the latest VN price board snapshot."""
-    data = await redis_cache.get_vn_board()
-    if data is None:
-        raise HTTPException(status_code=404, detail="No cached VN board data")
-    return data
-
-
-# ── Preload Endpoints (Tier B: Parquet Disk) ───────────────────
-
-@app.get("/v1/preload/status")
-async def preload_status():
-    """
-    Check which symbols have preloaded data and their row counts.
-    """
-    preload_dir = PRELOAD_DIR
-    if not os.path.exists(preload_dir):
-        return {"symbols": []}
-
-    result = []
-    for f in os.listdir(preload_dir):
-        if f.endswith(".parquet"):
-            symbol = f.replace(".parquet", "")
-            file_path = os.path.join(preload_dir, f)
-            try:
-                df = pd.read_parquet(file_path)
-                df["time"] = pd.to_datetime(df["time"])
-                first_local = df["time"].min() if not df.empty else None
-                last_local = df["time"].max() if not df.empty else None
-                first_utc = None
-                last_utc = None
-                if first_local is not None and last_local is not None:
-                    try:
-                        first_utc = pd.Timestamp(first_local).tz_localize("Asia/Ho_Chi_Minh").tz_convert("UTC")
-                        last_utc = pd.Timestamp(last_local).tz_localize("Asia/Ho_Chi_Minh").tz_convert("UTC")
-                    except Exception:
-                        first_utc = None
-                        last_utc = None
-                result.append({
-                    "symbol": symbol,
-                    "rows": len(df),
-                    "timezone_local": "Asia/Ho_Chi_Minh",
-                    "first_local": str(first_local) if first_local is not None else None,
-                    "last_local": str(last_local) if last_local is not None else None,
-                    "first_utc": str(first_utc) if first_utc is not None else None,
-                    "last_utc": str(last_utc) if last_utc is not None else None,
-                })
-            except Exception:
-                result.append({"symbol": symbol, "rows": 0, "error": "corrupt"})
-
-    return {"symbols": result}
-
-@app.get("/v1/preload/{symbol}")
-async def get_preload_data(
-    symbol: str,
-    limit: int = Query(1000, ge=1, le=20000, description="Latest N candles for warm-up lookback"),
-):
-    """
-    Read the preloaded 1m parquet data for a VN stock symbol as a warm-up lookback.
-    This endpoint is intentionally business-oriented:
-    it returns the latest N candles backward from the newest available candle.
-    It does not support arbitrary start/end date slicing.
-    """
-    file_path = os.path.join(PRELOAD_DIR, f"{symbol.upper()}.parquet")
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"No preload data for {symbol}")
-
-    df = pd.read_parquet(file_path)
-    # Ensure time is datetime
-    df["time"] = pd.to_datetime(df["time"])
-    
-    # VN market data from vnstock is in Asia/Ho_Chi_Minh.
-    # Convert to UTC for consistency with Binance and internal stream.
-    try:
-        df["time"] = df["time"].dt.tz_localize("Asia/Ho_Chi_Minh").dt.tz_convert("UTC").dt.tz_localize(None)
-    except Exception as e:
-        # Fallback if already localized or other issues
-        logger.warning(f"Timezone conversion failed for {symbol}: {e}")
-
-    df = df.sort_values("time").tail(limit)
-
-    # Return as list of dicts for JSON serialization
-    records = df.to_dict(orient="records")
-    # Convert timestamps to ISO strings
-    for r in records:
-        if "time" in r:
-            r["time"] = str(r["time"])
-    return {"symbol": symbol.upper(), "count": len(records), "data": records}
-
-
-@app.post("/v1/preload/run")
-async def trigger_preload():
-    """
-    Trigger the preload process for all symbols in symbols_vn.yaml.
-    Runs in a background thread so the API stays responsive.
-    """
-    def _bg():
-        try:
-            run_preload()
-        except Exception as e:
-            logger.error(f"Background preload failed: {e}")
-
-    threading.Thread(target=_bg, daemon=True).start()
-    return {"status": "preload_started", "message": "Preload running in background"}
-
-
-@app.post("/v1/preload/append/{symbol}")
-async def trigger_append(symbol: str):
-    """
-    Trigger an append-only delta update for a single symbol.
-    Detects last_index_time from existing parquet and fetches only missing candles.
-    """
-    def _bg():
-        try:
-            update_symbol(symbol.upper())
-        except Exception as e:
-            logger.error(f"Append for {symbol} failed: {e}")
-
-    threading.Thread(target=_bg, daemon=True).start()
-    return {"status": "append_started", "symbol": symbol.upper()}
+app.include_router(routes_health.router)
+app.include_router(routes_latest.router)
+app.include_router(routes_history.router)
+app.include_router(routes_preload.router)
+app.include_router(routes_control_plane.router)
+app.include_router(routes_fallback.router)

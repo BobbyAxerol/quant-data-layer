@@ -1,16 +1,18 @@
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import orjson
 import pandas as pd
-import redis
-import requests
+
+from app.sdk.client import DataLayerClient as BaseDataLayerClient, DataLayerClientError
 
 logger = logging.getLogger(__name__)
 
 
-class DataLayerClient:
+class DataLayerClient(BaseDataLayerClient):
+    """Backward-compatible alpha helper built on the official SDK client."""
+
     def __init__(
         self,
         base_url: str,
@@ -18,28 +20,16 @@ class DataLayerClient:
         redis_port: int = 6379,
         redis_db: int = 2,
     ):
-        self.base_url = base_url.rstrip("/")
-        self.redis_client = redis.Redis(
-            host=redis_host,
-            port=redis_port,
-            db=redis_db,
-            decode_responses=False,
-        )
+        super().__init__(base_url, redis_host=redis_host, redis_port=redis_port, redis_db=redis_db)
         logger.info("DataLayerClient connected to %s, redis=%s:%s db=%s", self.base_url, redis_host, redis_port, redis_db)
 
     def fetch_preload(
         self,
         symbol: str,
+        interval: str = "1m",
         limit: Optional[int] = None,
     ) -> pd.DataFrame:
-        url = f"{self.base_url}/v1/preload/{symbol.upper()}"
-        params: Dict[str, Any] = {}
-        if limit is not None:
-            params["limit"] = limit
-
-        response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()
-        payload = response.json()
+        payload = self.warmup_ohlcv("vn_stock", symbol, interval=interval, limit=limit or 1000)
 
         data = payload.get("data", [])
         df = pd.DataFrame(data)
@@ -51,17 +41,10 @@ class DataLayerClient:
         return df
 
     def get_cached_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
-        raw = self.redis_client.get(f"vn:quote:{symbol.upper()}")
-        if not raw:
-            return None
-        if isinstance(raw, str):
-            raw = raw.encode()
-        return orjson.loads(raw)
+        return self.redis_get(f"vn:quote:{symbol.upper()}")
 
     def subscribe_vn_quotes(self, symbol: str):
-        pubsub = self.redis_client.pubsub(ignore_subscribe_messages=True)
-        pubsub.subscribe(f"stream:vn:{symbol.upper()}")
-        return pubsub
+        return self.stream_vn_quotes(symbol)
 
 
 class MovingAverageCrossAlpha:
@@ -132,8 +115,8 @@ class MovingAverageCrossAlpha:
 
                 return
 
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 404:
+            except DataLayerClientError as e:
+                if " 404 " in str(e):
                     logger.warning("%s attempt %d/%d: Preload data not found (404), will retry in %ds",
                                  self.symbol, attempt + 1, max_retries, retry_delay)
                     if attempt < max_retries - 1:

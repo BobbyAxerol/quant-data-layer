@@ -5,9 +5,12 @@ from app.alpha.strategy import DataLayerClient
 
 
 class TestDataLayerClient(unittest.TestCase):
-    @patch("app.alpha.strategy.requests.get")
-    def test_fetch_preload_requests_expected_endpoint(self, mock_get):
+    @patch("app.sdk.client.redis.Redis")
+    @patch("app.sdk.client.requests.Session")
+    def test_fetch_preload_requests_expected_endpoint(self, mock_session_cls, mock_redis_cls):
         response = MagicMock()
+        response.status_code = 200
+        response.text = ""
         response.json.return_value = {
             "symbol": "SSI",
             "count": 1,
@@ -23,21 +26,23 @@ class TestDataLayerClient(unittest.TestCase):
             ],
         }
         response.raise_for_status.return_value = None
-        mock_get.return_value = response
+        session = mock_session_cls.return_value
+        session.get.return_value = response
 
         client = DataLayerClient(base_url="http://data_layer:8100")
-        df = client.fetch_preload("SSI")
+        df = client.fetch_preload("SSI", interval="15m")
 
-        mock_get.assert_called_once_with(
+        session.get.assert_called_once_with(
             "http://data_layer:8100/v1/preload/SSI",
-            params={},
-            timeout=15,
+            params={"interval": "15m", "limit": 1000, "fresh": True},
+            timeout=15.0,
         )
         self.assertEqual(len(df), 1)
         self.assertEqual(df["close"].iloc[0], 100.5)
 
-    @patch("app.alpha.strategy.redis.Redis")
-    def test_get_cached_quote_parses_bytes_from_redis(self, mock_redis):
+    @patch("app.sdk.client.requests.Session")
+    @patch("app.sdk.client.redis.Redis")
+    def test_get_cached_quote_parses_bytes_from_redis(self, mock_redis, mock_session_cls):
         redis_instance = mock_redis.return_value
         redis_instance.get.return_value = b'{"last": 120.0, "symbol": "SSI"}'
 
