@@ -16,9 +16,9 @@ class DataLayerClient(BaseDataLayerClient):
     def __init__(
         self,
         base_url: str,
-        redis_host: str = "redis_service",
+        redis_host: str = "redis_marketdata",
         redis_port: int = 6379,
-        redis_db: int = 2,
+        redis_db: int = 0,
     ):
         super().__init__(base_url, redis_host=redis_host, redis_port=redis_port, redis_db=redis_db)
         logger.info("DataLayerClient connected to %s, redis=%s:%s db=%s", self.base_url, redis_host, redis_port, redis_db)

@@ -25,9 +25,9 @@ class DataLayerClient:
     def __init__(
         self,
         base_url: str = "http://data_layer:8100",
-        redis_host: str = "redis_service",
+        redis_host: str = "redis_marketdata",
         redis_port: int = 6379,
-        redis_db: int = 2,
+        redis_db: int = 0,
         timeout: float = 15.0,
         session: requests.Session | None = None,
         redis_client: redis.Redis | None = None,
@@ -53,6 +53,17 @@ class DataLayerClient:
             raise DataLayerClientError(f"GET {path} returned non-object payload")
         return payload
 
+    def _post(self, path: str, payload: dict[str, Any]) -> dict:
+        response = self.session.post(f"{self.base_url}{path}", json=payload, timeout=self.timeout)
+        try:
+            response.raise_for_status()
+        except Exception as exc:
+            raise DataLayerClientError(f"POST {path} failed: {response.status_code} {response.text[:300]}") from exc
+        body = response.json()
+        if not isinstance(body, dict):
+            raise DataLayerClientError(f"POST {path} returned non-object payload")
+        return body
+
     @staticmethod
     def _decode(raw: Any) -> dict | None:
         if not raw:
@@ -73,11 +84,24 @@ class DataLayerClient:
     def stream_health(self) -> dict:
         return self._get("/v1/health/streams")
 
-    def latest_trade(self, provider: str, symbol: str) -> dict:
+    def latest_trade(
+        self,
+        provider: str,
+        symbol: str,
+        *,
+        allow_last_snapshot: bool = False,
+        market: str = "auto",
+    ) -> dict:
         provider = provider.lower().strip()
         if provider != "binance":
             raise ValueError("latest_trade currently supports provider='binance'")
-        return self._get(f"/v1/binance/price/{symbol.upper()}")
+        params = {"market": market}
+        try:
+            return self._get(f"/v1/binance/price/{symbol.upper()}", params=params)
+        except DataLayerClientError:
+            if not allow_last_snapshot:
+                raise
+            return self._get(f"/v1/binance/price-last/{symbol.upper()}", params=params)
 
     def latest_kline(self, provider: str, symbol: str, interval: str = "1m") -> dict:
         provider = provider.lower().strip()
@@ -121,6 +145,50 @@ class DataLayerClient:
             return self._get(f"/v1/crypto/ohlcv/{resolved_provider}/{symbol}", params=params)
         raise ValueError(f"Unsupported warmup market: {market}")
 
+    def warmup_ohlcv_batch(
+        self,
+        market: str,
+        symbols: str | Iterable[str],
+        interval: str = "1m",
+        limit: int = 1000,
+        provider: str | None = None,
+        concurrency: int = 8,
+        **kwargs,
+    ) -> dict:
+        market = market.lower().strip()
+        normalized_symbols = self._symbols(symbols)
+        if not normalized_symbols:
+            return {"results": {}, "errors": {}, "success_count": 0, "error_count": 0}
+        if market in {"vn", "vn_stock", "hose", "dnse"}:
+            results = {}
+            errors = {}
+            for symbol in normalized_symbols:
+                try:
+                    results[symbol] = self.warmup_ohlcv(market, symbol, interval, limit, provider, **kwargs)
+                except Exception as exc:
+                    errors[symbol] = {"error": str(exc)}
+            return {
+                "market": market,
+                "requested_interval": interval,
+                "requested_count": len(normalized_symbols),
+                "success_count": len(results),
+                "error_count": len(errors),
+                "partial": bool(errors),
+                "results": results,
+                "errors": errors,
+            }
+        if market in {"crypto", "binance", "okx"}:
+            resolved_provider = (provider or ("okx" if market == "okx" else "binance")).lower().strip()
+            payload = {
+                "symbols": normalized_symbols,
+                "interval": interval,
+                "limit": limit,
+                "concurrency": concurrency,
+            }
+            payload.update(kwargs)
+            return self._post(f"/v1/crypto/ohlcv/{resolved_provider}/batch", payload)
+        raise ValueError(f"Unsupported warmup market: {market}")
+
     def fallback_status(self, symbol: str, interval: str = "1m") -> dict:
         return self._get(f"/v1/fallback/crypto/status/{symbol.upper()}", params={"interval": interval})
 
@@ -154,6 +222,7 @@ class DataLayerClient:
             },
             "rest_recovery": {
                 "trade": "/v1/binance/price/{symbol}",
+                "trade_last": "/v1/binance/price-last/{symbol}",
                 "kline": "/v1/binance/kline/{symbol}?interval=1m",
                 "vn_preload": "/v1/preload/{symbol}?interval=1m&limit=1000",
                 "vn_last_quote": "/v1/vn/quote-last/{symbol}",

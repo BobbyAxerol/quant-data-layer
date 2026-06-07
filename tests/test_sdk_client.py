@@ -47,6 +47,29 @@ class TestOfficialDataLayerClient(unittest.TestCase):
             timeout=15.0,
         )
 
+    def test_warmup_ohlcv_batch_routes_crypto_to_batch_endpoint(self):
+        client, session, _ = self._client()
+        response = MagicMock(status_code=200, text="")
+        response.json.return_value = {"provider": "binance", "results": {}, "errors": {}}
+        response.raise_for_status.return_value = None
+        session.post.return_value = response
+
+        payload = client.warmup_ohlcv_batch(
+            "crypto",
+            ["btcusdt", "ethusdt"],
+            provider="binance",
+            interval="15m",
+            limit=500,
+            concurrency=6,
+        )
+
+        self.assertEqual(payload["provider"], "binance")
+        session.post.assert_called_once_with(
+            "http://data_layer:8100/v1/crypto/ohlcv/binance/batch",
+            json={"symbols": ["BTCUSDT", "ETHUSDT"], "interval": "15m", "limit": 500, "concurrency": 6},
+            timeout=15.0,
+        )
+
     def test_stream_helpers_subscribe_to_standard_channels(self):
         client, _, redis_client = self._client()
         pubsub = MagicMock()
@@ -59,6 +82,22 @@ class TestOfficialDataLayerClient(unittest.TestCase):
         pubsub.subscribe.assert_any_call("stream:trade:BTCUSDT", "stream:trade:ETHUSDT")
         pubsub.subscribe.assert_any_call("stream:kline:1m:BTCUSDT")
         pubsub.subscribe.assert_any_call("stream:vn:FPT")
+
+    def test_latest_trade_accepts_market_namespace(self):
+        client, session, _ = self._client()
+        response = MagicMock(status_code=200, text="")
+        response.json.return_value = {"symbol": "BTCUSDT", "market": "binance_usdm", "price": 70000}
+        response.raise_for_status.return_value = None
+        session.get.return_value = response
+
+        payload = client.latest_trade("binance", "btcusdt", market="usdm")
+
+        self.assertEqual(payload["market"], "binance_usdm")
+        session.get.assert_called_once_with(
+            "http://data_layer:8100/v1/binance/price/BTCUSDT",
+            params={"market": "usdm"},
+            timeout=15.0,
+        )
 
     def test_freshness_helper_handles_millisecond_event_time(self):
         now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
@@ -77,4 +116,3 @@ class TestOfficialDataLayerClient(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

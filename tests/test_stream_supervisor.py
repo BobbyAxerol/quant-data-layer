@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from app.cache.redis_cache import RedisCache
-from app.stream.async_live_feed import get_spot_symbols, redis_publisher_task
+from app.stream.async_live_feed import coalesce_redis_items, get_spot_symbols, redis_publisher_task
 from app.stream.supervisor import StreamSupervisor
 
 
@@ -126,6 +126,19 @@ class TestRedisLastKnownContract(unittest.TestCase):
 
 
 class TestRedisPublisherTask(unittest.IsolatedAsyncioTestCase):
+    def test_coalesce_redis_items_keeps_latest_per_key_channel(self):
+        items = [
+            {"key": "trade:price:BTCUSDT", "channel": "stream:trade:BTCUSDT", "data": {"price": 1}},
+            {"key": "trade:price:ETHUSDT", "channel": "stream:trade:ETHUSDT", "data": {"price": 2}},
+            {"key": "trade:price:BTCUSDT", "channel": "stream:trade:BTCUSDT", "data": {"price": 3}},
+        ]
+
+        result = coalesce_redis_items(items)
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["data"]["price"], 3)
+        self.assertEqual(result[1]["data"]["price"], 2)
+
     async def test_publisher_records_supervisor_metrics(self):
         queue = asyncio.Queue(maxsize=10)
         redis_cache = FakeRedisCache()
@@ -149,11 +162,14 @@ class TestRedisPublisherTask(unittest.IsolatedAsyncioTestCase):
         task.cancel()
         await task
 
-        self.assertEqual(len(redis_cache.items), 1)
+        self.assertEqual(len(redis_cache.items), 2)
         snapshot = supervisor.snapshot()
         self.assertEqual(snapshot["publisher"]["batch_count"], 1)
-        self.assertEqual(snapshot["publisher"]["item_count"], 1)
-        self.assertEqual(redis_cache.items[0]["key"], "trade:price:BTCUSDT")
+        self.assertEqual(snapshot["publisher"]["item_count"], 2)
+        keys = {item["key"] for item in redis_cache.items}
+        channels = {item["channel"] for item in redis_cache.items}
+        self.assertEqual(keys, {"trade:price:binance_spot:BTCUSDT", "trade:price:BTCUSDT"})
+        self.assertEqual(channels, {"stream:trade:binance_spot:BTCUSDT", "stream:trade:BTCUSDT"})
 
 
 if __name__ == "__main__":

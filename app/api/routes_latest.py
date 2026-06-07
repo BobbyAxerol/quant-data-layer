@@ -9,11 +9,25 @@ router = APIRouter(prefix="/v1", tags=["latest"])
 
 
 @router.get("/binance/price/{symbol}")
-async def get_binance_price(symbol: str, ctx: DataLayerContext = Depends(get_context)):
-    data = await ctx.redis_cache.get_binance_price(symbol.upper())
+async def get_binance_price(symbol: str, market: str = "auto", ctx: DataLayerContext = Depends(get_context)):
+    data = await ctx.redis_cache.get_binance_price(symbol.upper(), market=market)
     if data is None:
-        raise HTTPException(status_code=404, detail=f"No cached trade price for {symbol}")
+        raise HTTPException(status_code=404, detail=f"No cached trade price for {symbol} market={market}")
     return data
+
+
+@router.get("/binance/price-last/{symbol}")
+async def get_binance_price_last(symbol: str, market: str = "auto", ctx: DataLayerContext = Depends(get_context)):
+    data = await ctx.redis_cache.get_binance_price_last(symbol.upper(), market=market)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"No last trade price snapshot for {symbol} market={market}")
+    live = await ctx.redis_cache.get_binance_price(symbol.upper(), market=market)
+    return {
+        "symbol": symbol.upper(),
+        "market": market.lower().strip() or "auto",
+        "is_live": live is not None,
+        "snapshot": data,
+    }
 
 
 @router.get("/binance/kline/{symbol}")
@@ -55,4 +69,3 @@ async def get_vn_board(ctx: DataLayerContext = Depends(get_context)):
     if data is None:
         raise HTTPException(status_code=404, detail="No cached VN board data")
     return data
-

@@ -66,6 +66,28 @@ def get_parser_key(source: str):
         return "dnse"
     return None
 
+
+def coalesce_redis_items(items: list[dict]) -> list[dict]:
+    """Keep only the latest event per Redis key/channel within a publisher batch."""
+    coalesced: dict[tuple[str, str], dict] = {}
+    order: list[tuple[str, str]] = []
+    for item in items:
+        dedupe_key = (item.get("key"), item.get("channel"))
+        if dedupe_key not in coalesced:
+            order.append(dedupe_key)
+        coalesced[dedupe_key] = item
+    return [coalesced[key] for key in order if key in coalesced]
+
+
+def _source_market_namespace(source: str) -> str | None:
+    value = str(source or "").lower()
+    if value.startswith("binance_futures"):
+        return "binance_usdm"
+    if value.startswith("binance_spot"):
+        return "binance_spot"
+    return None
+
+
 async def handle_ws(
     url: str,
     queue: asyncio.Queue,
@@ -224,8 +246,21 @@ async def redis_publisher_task(
                         "trade_time": data.get("T"),
                         "side": side,
                         "source": source,
+                        "provider": "binance",
+                        "market": _source_market_namespace(source),
+                        "authoritative": True,
+                        "is_live": True,
                         "raw": data,
                     }
+                    market = _source_market_namespace(source)
+                    if market:
+                        redis_items.append(
+                            {
+                                "key": f"trade:price:{market}:{sym}",
+                                "channel": f"stream:trade:{market}:{sym}",
+                                "data": payload,
+                            }
+                        )
                     key = f"trade:price:{sym}"
                     channel = f"stream:trade:{sym}"
                     redis_items.append({"key": key, "channel": channel, "data": payload})
@@ -258,6 +293,7 @@ async def redis_publisher_task(
                         redis_items.append({"key": key, "channel": channel, "data": data})
 
             if redis_items:
+                redis_items = coalesce_redis_items(redis_items)
                 try:
                     await redis_cache.push_batch(redis_items)
                     if supervisor:

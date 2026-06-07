@@ -1,4 +1,37 @@
 services:
+  redis_marketdata:
+    image: redis:7.2-alpine
+    container_name: redis_marketdata
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 1gb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --client-output-buffer-limit
+      - pubsub
+      - 128mb
+      - 32mb
+      - "60"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - bobby_network
+      - executor_network
+
   data_layer:
     build:
       context: .
@@ -12,10 +45,13 @@ services:
       - .:/app
       - ./data:/app/data      # Persist Parquet preload data
       - ./logs:/app/logs
+    depends_on:
+      redis_marketdata:
+        condition: service_healthy
     environment:
-      - REDIS_HOST=redis_service
+      - REDIS_HOST=redis_marketdata
       - REDIS_PORT=6379
-      - REDIS_DB=2
+      - REDIS_DB=0
       - VNSTOCK_API_KEY=${VNSTOCK_API_KEY:-}
     logging:
       driver: "json-file"
@@ -33,9 +69,9 @@ services:
     depends_on:
       - data_layer
     environment:
-      - REDIS_HOST=redis_service
+      - REDIS_HOST=redis_marketdata
       - REDIS_PORT=6379
-      - REDIS_DB=2
+      - REDIS_DB=0
       - DATA_LAYER_URL=http://data_layer:8100
       - ALPHA_SYMBOL=SSI
       - ALPHA_HIGH_TF=60min
@@ -55,9 +91,9 @@ services:
     depends_on:
       - data_layer
     environment:
-      - REDIS_HOST=redis_service
+      - REDIS_HOST=redis_marketdata
       - REDIS_PORT=6379
-      - REDIS_DB=2
+      - REDIS_DB=0
     volumes:
       - .:/app
     command: ["bash", "-lc", "python -m unittest discover tests"]
@@ -72,9 +108,9 @@ services:
     depends_on:
       - data_layer
     environment:
-      - REDIS_HOST=redis_service
+      - REDIS_HOST=redis_marketdata
       - REDIS_PORT=6379
-      - REDIS_DB=2
+      - REDIS_DB=0
       - DATA_LAYER_URL=http://data_layer:8100
       - STREAM_STALE_SECONDS=180
       - BINANCE_SAMPLE_SIZE=5
@@ -96,4 +132,3 @@ networks:
     external: true
   executor_network:
     external: true
-

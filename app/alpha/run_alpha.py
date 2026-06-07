@@ -25,9 +25,9 @@ def main() -> None:
     high_tf = os.getenv("ALPHA_HIGH_TF", "60min")
     fast = int(os.getenv("ALPHA_FAST", 8))
     slow = int(os.getenv("ALPHA_SLOW", 20))
-    redis_host = os.getenv("REDIS_HOST", "redis_service")
+    redis_host = os.getenv("REDIS_HOST", "redis_marketdata")
     redis_port = int(os.getenv("REDIS_PORT", 6379))
-    redis_db = int(os.getenv("REDIS_DB", 2))
+    redis_db = int(os.getenv("REDIS_DB", 0))
 
     client = DataLayerClient(
         base_url=base_url,

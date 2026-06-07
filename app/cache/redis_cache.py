@@ -56,7 +56,11 @@ class RedisCache:
     @staticmethod
     def _last_known_key(key: str) -> Optional[str]:
         if key.startswith("trade:price:"):
-            return f"trade:price:last:{key.split(':')[-1]}"
+            parts = key.split(":")
+            if len(parts) == 4:
+                _, _, market, symbol = parts
+                return f"trade:price:last:{market}:{symbol}"
+            return f"trade:price:last:{parts[-1]}"
         if key.startswith("kline:"):
             parts = key.split(":")
             if len(parts) == 3:
@@ -65,6 +69,29 @@ class RedisCache:
         if key.startswith("vn:quote:") and not key.startswith("vn:quote:last:"):
             return RedisCache._vn_last_key(key.split(":")[-1])
         return None
+
+    @staticmethod
+    def _market_trade_key(symbol: str, market: str) -> str:
+        return f"trade:price:{market}:{symbol}"
+
+    @staticmethod
+    def _market_trade_last_key(symbol: str, market: str) -> str:
+        return f"trade:price:last:{market}:{symbol}"
+
+    @staticmethod
+    def _normalize_binance_market(market: str) -> str:
+        value = str(market or "auto").lower().strip().replace("-", "_")
+        aliases = {
+            "spot": "binance_spot",
+            "binance_spot": "binance_spot",
+            "usdm": "binance_usdm",
+            "usd_m": "binance_usdm",
+            "usd_m_futures": "binance_usdm",
+            "futures": "binance_usdm",
+            "binance_futures": "binance_usdm",
+            "binance_usdm": "binance_usdm",
+        }
+        return aliases.get(value, value)
 
     async def init_ping(self):
         try:
@@ -97,12 +124,20 @@ class RedisCache:
         raw = await self.r.get(f"kline:last:{interval}:{symbol}")
         return self._decode_payload(raw)
 
-    async def get_binance_price(self, symbol: str) -> Optional[dict]:
+    async def get_binance_price(self, symbol: str, market: str = "auto") -> Optional[dict]:
+        market = self._normalize_binance_market(market)
+        if market not in {"", "auto", "legacy"}:
+            raw_market = await self.r.get(self._market_trade_key(symbol, market))
+            return self._decode_payload(raw_market)
         key = f"trade:price:{symbol}"
         raw = await self.r.get(key)
         return self._decode_payload(raw)
 
-    async def get_binance_price_last(self, symbol: str) -> Optional[dict]:
+    async def get_binance_price_last(self, symbol: str, market: str = "auto") -> Optional[dict]:
+        market = self._normalize_binance_market(market)
+        if market not in {"", "auto", "legacy"}:
+            raw_market = await self.r.get(self._market_trade_last_key(symbol, market))
+            return self._decode_payload(raw_market)
         raw = await self.r.get(f"trade:price:last:{symbol}")
         return self._decode_payload(raw)
 

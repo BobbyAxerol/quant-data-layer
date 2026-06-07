@@ -28,7 +28,7 @@ networks:
 | Service | Internal Hostname | Port | Purpose |
 |---------|-------------------|------|---------|
 | **Data Layer API** | `data_layer` | 8100 | Warmup data, health checks, manual triggers |
-| **Redis** | `redis_service` | 6379 | Real-time Pub/Sub streams, current state cache |
+| **Market-data Redis** | `redis_marketdata` | 6379 | Real-time Pub/Sub streams, current ephemeral state cache |
 
 ### Service Startup Expectations
 
@@ -55,9 +55,9 @@ from app.sdk import DataLayerClient
 
 client = DataLayerClient(
     base_url="http://data_layer:8100",
-    redis_host="redis_service",
+    redis_host="redis_marketdata",
     redis_port=6379,
-    redis_db=2,
+    redis_db=0,
 )
 
 health = client.health()
@@ -140,8 +140,10 @@ The `data_layer` multiplexes WebSocket connections and publishes updates to Redi
 
 These are the current key contracts used by `data_layer`:
 
+- `trade:price:binance_spot:{symbol}` / `trade:price:binance_usdm:{symbol}`
+  - latest Binance trade price snapshot for an explicit Binance market namespace
 - `trade:price:{symbol}`
-  - latest Binance trade price snapshot
+  - legacy/latest Binance trade price snapshot kept for backward compatibility during migration
 - `kline:{interval}:{symbol}`
   - latest Binance kline snapshot for that interval
 - `vn:quote:{symbol}`
@@ -156,7 +158,7 @@ Use the Redis channels for streaming and the Redis keys or REST endpoints for la
 import redis
 import orjson
 
-r = redis.Redis(host='redis_service', port=6379, db=2)
+r = redis.Redis(host='redis_marketdata', port=6379, db=0)
 pubsub = r.pubsub()
 pubsub.subscribe("stream:trade:BTCUSDT")
 
@@ -170,8 +172,11 @@ for message in pubsub.listen():
 ### Recommended Consumer Patterns
 
 - Execution and papertrade:
-  - subscribe to `stream:trade:{symbol}`
-  - use `GET /v1/binance/price/{symbol}` to recover latest state after reconnect
+  - subscribe to `stream:trade:binance_spot:{symbol}` or `stream:trade:binance_usdm:{symbol}` for production market-specific consumers
+  - legacy `stream:trade:{symbol}` remains available during migration
+  - use `GET /v1/binance/price/{symbol}?market=spot|usdm` to recover latest state after reconnect
+  - if the short live TTL has expired, use `GET /v1/binance/price-last/{symbol}?market=spot|usdm` and apply a
+    caller-owned freshness check before making an execution-grade decision
 - Candle-based alpha:
   - subscribe to `stream:kline:{interval}:{symbol}`
   - use `GET /v1/binance/kline/{symbol}?interval=...` for latest candle state
@@ -198,6 +203,9 @@ When a service starts, it usually needs "warmup" data (e.g., the last 100-1000 c
 ### Pattern A: Get Latest State
 Use this to get the latest live state if the service missed a few updates during boot.
 - `GET http://data_layer:8100/v1/binance/price/{symbol}`
+- `GET http://data_layer:8100/v1/binance/price-last/{symbol}`
+- `GET http://data_layer:8100/v1/binance/price/{symbol}?market=spot|usdm`
+- `GET http://data_layer:8100/v1/binance/price-last/{symbol}?market=spot|usdm`
 - `GET http://data_layer:8100/v1/binance/kline/{symbol}?interval=1m`
 - `GET http://data_layer:8100/v1/vn/quote/{symbol}`
 - `GET http://data_layer:8100/v1/vn/quote-last/{symbol}`
@@ -205,6 +213,13 @@ Use this to get the latest live state if the service missed a few updates during
 VN quote semantics:
 - `/v1/vn/quote/{symbol}` is live-only and depends on the short TTL cache.
 - `/v1/vn/quote-last/{symbol}` returns the latest known snapshot and is suitable for after-hours inspection, diagnostics, and non-live consumers.
+
+Binance trade semantics:
+- `/v1/binance/price/{symbol}?market=spot|usdm` is the short-TTL live cache for that exact Binance market.
+- `/v1/binance/price-last/{symbol}?market=spot|usdm` is an explicit last-known Binance snapshot for that exact Binance market. The response
+  includes `market` and `is_live`; callers must still reject it when its trade timestamp is too old.
+- `/v1/binance/price/{symbol}` with `market=auto` is backward-compatible. Do not use `market=auto`
+  for sandbox/live execution-grade checks.
 
 ### Pattern A.1: Health And Status
 
@@ -244,7 +259,11 @@ VN preload standard:
 - if a service needs arbitrary historical slicing, that should be implemented as a different endpoint or a separate historical service
 
 ### Recommended Usage Split
-- Execution and papertrade should use `stream:trade:{symbol}` or `GET /v1/binance/price/{symbol}` for latest live price.
+- Execution and papertrade should use market-specific `stream:trade:binance_spot:{symbol}` /
+  `stream:trade:binance_usdm:{symbol}` or `GET /v1/binance/price/{symbol}?market=spot|usdm`
+  for latest live price.
+- Consumers with a wider risk freshness window may use `/v1/binance/price-last/{symbol}?market=spot|usdm` only
+  as explicit recovery from a short-TTL gap.
 - Alpha and candle-based strategies should use `stream:kline:{interval}:{symbol}` plus preload parquet warmup.
 - Preload is interval history for warmup and signal generation, not the primary live execution feed.
 - VN services that require after-hours visibility should read `/v1/vn/quote-last/{symbol}` rather than assuming `/v1/vn/quote/{symbol}` is always present.
@@ -276,6 +295,37 @@ Crypto history should be requested through `data_layer`, not directly from provi
   - `GET http://data_layer:8100/v1/crypto/ohlcv/binance/BTCUSDT?interval=15m&limit=500&market=spot`
 - OKX:
   - `GET http://data_layer:8100/v1/crypto/ohlcv/okx/BTCUSDT?interval=15m&limit=300`
+
+For universe warmup, use the batch endpoint instead of opening hundreds of independent alpha-to-data_layer requests:
+
+```bash
+POST http://data_layer:8100/v1/crypto/ohlcv/binance/batch
+Content-Type: application/json
+
+{
+  "symbols": ["BTCUSDT", "ETHUSDT", "RIFUSDT"],
+  "interval": "15m",
+  "limit": 500,
+  "concurrency": 8,
+  "market": "auto"
+}
+```
+
+Batch response contract:
+
+- `results` is a map `{SYMBOL: single_symbol_payload}`.
+- `errors` is a map `{SYMBOL: error_detail}`.
+- `success_count`, `error_count`, and `partial` must be checked by consumers.
+- One request may include at most 100 symbols. Larger universes must be chunked by the client, e.g. 40 symbols per chunk.
+- Batch is for REST warmup/recovery only; it must not create direct exchange connections from alpha containers.
+
+Important crypto parser note:
+
+- The existing single-symbol endpoints keep their provider-native contract. Do not change endpoint shape just because one consumer fails to parse it.
+- Binance REST kline payloads under `data` are provider-native list rows, not normalized dictionaries.
+- Runtime consumers must normalize `[open_time, open, high, low, close, volume, close_time, ...]` before building dataframes.
+- This was the root cause of the rsibound warmup issue where `RIFUSDT`, `COMPUSDT`, and similar symbols returned data from data_layer but alpha logged `rows=0`.
+- The batch endpoint is additive. It does not replace or mutate the existing single-symbol endpoint contract.
 
 Fallback semantics:
 
@@ -405,7 +455,7 @@ If another service wants strict consistency, it should mirror the `data_layer` p
 
 1. **Serialization**: The `data_layer` uses `orjson` for all Redis payloads to ensure high throughput and low latency. Ensure your clients also use `orjson` or handle the bytes correctly.
 2. **Backpressure**: Real-time streams are Pub/Sub. If your service lags, it will miss messages. Use the REST API to "fill the gaps" if a disconnect is detected.
-3. **Internal Routing**: Always use the service names (`data_layer`, `redis_service`) instead of hardcoded IPs. This ensures compatibility across different environments (dev/prod).
+3. **Internal Routing**: Always use the service names (`data_layer`, `redis_marketdata`) instead of hardcoded IPs. This ensures compatibility across different environments (dev/prod).
 4. **Error Handling**: Implement exponential backoff for REST calls and automatic reconnection for Redis Pub/Sub.
 5. **Live vs Snapshot**: Treat live TTL keys and channels as execution-grade current state. Treat `quote-last` and preload data as recovery or inspection state, not as proof that the market is live.
 6. **Timezone Discipline**: VN preload and trading-session logic are VN-market-time based (`UTC+7`). If your service uses UTC internally, convert explicitly at the boundary.
@@ -417,7 +467,7 @@ If another service wants strict consistency, it should mirror the `data_layer` p
 
 ## 6. Deployment Checklist
 
-- [ ] Add `data_layer` and `redis_service` to your service's `environment` variables.
+- [ ] Add `data_layer` and `redis_marketdata` to your service's `environment` variables.
 - [ ] Ensure `networks` include `bobby_network`.
 - [ ] Use `orjson` for maximum performance.
 - [ ] Prefer `app.sdk.DataLayerClient` over hand-written REST/Redis wrappers.
@@ -472,7 +522,7 @@ The target architecture is:
    - Docker network: `bobby_network`.
    - Environment:
      - `DATA_LAYER_URL=http://data_layer:8100`
-     - `REDIS_HOST=redis_service`
+     - `REDIS_HOST=redis_marketdata`
      - `REDIS_PORT=6379`
      - `REDIS_DB=2`
 
@@ -548,7 +598,9 @@ pubsub = client.stream_vn_quotes(["FPT", "HPG"])
 3. For Binance paper/sandbox/live:
    - mark price / execution reference:
      - live stream: `stream:trade:{symbol}`
-     - recovery: `GET /v1/binance/price/{symbol}`
+     - production live stream: `stream:trade:binance_spot:{symbol}` or `stream:trade:binance_usdm:{symbol}`
+     - recovery: `GET /v1/binance/price/{symbol}?market=spot|usdm`
+     - short-TTL gap recovery: `GET /v1/binance/price-last/{symbol}?market=spot|usdm` followed by freshness validation
    - candle context:
      - warmup: `GET /v1/crypto/ohlcv/binance/{symbol}?interval=...`
      - live: `stream:kline:1m:{symbol}` then local resample if required
