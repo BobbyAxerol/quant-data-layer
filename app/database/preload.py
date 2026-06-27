@@ -336,8 +336,16 @@ def topup_existing_symbol_if_needed(
         materialize_symbol_intervals(symbol, intervals=(normalize_preload_interval(interval),))
         decision = preload_needs_topup(symbol, max_lag_minutes=max_lag_minutes)
         decision["topup_attempted"] = True
+        decision["fresh_after_topup"] = not decision.get("needs_topup", False)
+        if decision.get("needs_topup"):
+            logger.warning(
+                f"[{symbol}] API read-through top-up did not advance enough: "
+                f"lag={decision.get('lag_minutes'):.1f}m, last={decision.get('last_time')}, "
+                f"expected={decision.get('expected_latest')}"
+            )
     else:
         decision["topup_attempted"] = False
+        decision["fresh_after_topup"] = not decision.get("needs_topup", False)
     return decision
 
 
