@@ -206,7 +206,10 @@ def fetch_dnse_ohlcv_direct(
         return pd.DataFrame()
 
     start_dt = datetime.strptime(start, "%Y-%m-%d")
-    end_dt = datetime.strptime(end, "%Y-%m-%d")
+    # Treat `end` as an inclusive trading date. The DNSE API uses epoch
+    # boundaries, so querying only to YYYY-MM-DD 00:00 would miss all intraday
+    # bars for that date during read-through top-up.
+    end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
     all_rows = []
     current_start = start_dt
 
@@ -239,9 +242,15 @@ def fetch_dnse_ohlcv_direct(
     df = pd.DataFrame(all_rows)
     # Rename columns to standard format
     df = df.rename(columns={"t": "time", "o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"})
-    # Convert Unix timestamp to datetime
+    # Convert Unix timestamp to the canonical VN preload timezone. The preload
+    # parquet stores naive Asia/Ho_Chi_Minh timestamps; API responses later
+    # localize those timestamps and convert to UTC for clients.
     if "time" in df.columns:
-        df["time"] = pd.to_datetime(df["time"], unit="s")
+        df["time"] = (
+            pd.to_datetime(df["time"], unit="s", utc=True)
+            .dt.tz_convert("Asia/Ho_Chi_Minh")
+            .dt.tz_localize(None)
+        )
     df["symbol"] = symbol
     df = df.drop_duplicates(subset=["time"]).sort_values("time").reset_index(drop=True)
 
