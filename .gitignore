@@ -1,4 +1,5 @@
 .env
+.mailmap
 .env.local
 .env.*.local
 __pycache__/

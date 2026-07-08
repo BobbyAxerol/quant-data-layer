@@ -1,6 +1,53 @@
 # data_layer
 
-A centralized, high-performance market data gateway service that aggregates and distributes real-time financial market data from multiple sources — **Binance** (crypto) and **Vietnamese stock market** (via DNSE WebSocket + vnstock fallback) — to downstream trading services via **Redis Pub/Sub** and a **REST API**.
+`data_layer` is the market-data gateway for Bobby's trading stack. It centralizes provider connectivity, historical warmup, live streaming, fallback recovery, and service-to-service data contracts so alpha and execution services do not connect to exchanges directly.
+
+It currently serves:
+
+- Binance crypto spot and USD-M futures market data.
+- Binance derivatives metrics for basis-arbitrage research and execution.
+- VN stock and derivative data through DNSE/vnstock integrations.
+- Redis Pub/Sub streams for live consumers.
+- REST endpoints for warmup, recovery, diagnostics, and health checks.
+
+## Quick Links
+
+- [Integration guide](./DATA_LAYER_SERVICE_ACCESS_GUIDE.md)
+- [Contributing guide](./CONTRIBUTING.md)
+- [Security policy](./SECURITY.md)
+- [Code of conduct](./CODE_OF_CONDUCT.md)
+- [License](./LICENSE)
+
+## Repository Policy
+
+`main` is treated as the protected release branch. Do not commit directly to `main`.
+
+Use this flow:
+
+```bash
+git checkout dev
+git pull origin dev
+git checkout -b feature/my-change
+```
+
+Open pull requests into `dev`; merge `dev` into `main` only through a release pull request after tests and smoke checks pass.
+
+## What This Service Owns
+
+- Provider connections and retry/backoff policy.
+- Normalized service contracts for downstream systems.
+- Redis live-stream publication.
+- VN preload parquet storage and materialized views.
+- Latest-state recovery endpoints.
+- Diagnostics for provider health and data freshness.
+
+## What This Service Does Not Own
+
+- Trading decisions.
+- Portfolio, risk, order routing, or broker account state.
+- Alpha-specific signal logic.
+- Direct broker execution.
+- Long-term storage for ephemeral Binance derivatives metrics unless a design note explicitly approves it.
 
 ## Features
 
@@ -8,6 +55,7 @@ A centralized, high-performance market data gateway service that aggregates and 
 - **Automatic failover** — DNSE as primary VN source, vnstock REST poller as secondary fallback
 - **Redis Pub/Sub distribution** — single upstream connection shared across many downstream consumers
 - **Historical warmup (VN)** — Parquet-backed preload service for 1-minute OHLCV candle warmup
+- **Binance derivatives REST wrappers** — OHLCV, funding, open interest, long/short ratios, taker ratio, depth, and basis bundle endpoints
 - **Preload watchdog** — auto-refreshes VN candle data during market hours, sleeps until next open otherwise
 - ⚡ **High-performance serialization** — `orjson` throughout for minimal latency
 - **Alpha strategy example** — moving-average crossover strategy included as a reference implementation
@@ -49,6 +97,21 @@ Downstream services (alpha strategies, paper trading engines, execution services
 | Package Manager | [Poetry](https://python-poetry.org/) |
 | Runtime | Python 3.10+ |
 | Container | Docker + Docker Compose |
+
+## Development Checks
+
+This repo is Docker-first. Prefer container tests over installing Python packages directly on the server:
+
+```bash
+docker compose run --rm test_runner python -m unittest discover -s tests
+```
+
+Optional pre-commit hooks:
+
+```bash
+pre-commit install
+pre-commit run --all-files
+```
 
 ## Project Structure
 
