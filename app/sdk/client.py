@@ -78,6 +78,10 @@ class DataLayerClient:
             return [symbols.upper().strip()]
         return [str(symbol).upper().strip() for symbol in symbols if str(symbol).strip()]
 
+    @staticmethod
+    def _params(params: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in params.items() if value is not None}
+
     def health(self) -> dict:
         return self._get("/v1/health")
 
@@ -213,6 +217,115 @@ class DataLayerClient:
             },
         )
 
+    def binance_futures_klines(
+        self,
+        symbol: str,
+        interval: str = "1d",
+        limit: int = 30,
+        *,
+        start_time: int | None = None,
+        end_time: int | None = None,
+    ) -> dict:
+        return self._get(
+            f"/v1/binance/futures/klines/{symbol.upper().strip()}",
+            params=self._params({
+                "interval": interval,
+                "limit": limit,
+                "start_time": start_time,
+                "end_time": end_time,
+            }),
+        )
+
+    def binance_futures_metric(
+        self,
+        metric: str,
+        symbol: str,
+        *,
+        kind: str | None = None,
+        period: str = "1d",
+        limit: int = 30,
+        start_time: int | None = None,
+        end_time: int | None = None,
+    ) -> dict:
+        normalized = metric.lower().strip().replace("_", "-")
+        symbol = symbol.upper().strip()
+        params = self._params({
+            "period": period,
+            "limit": limit,
+            "start_time": start_time,
+            "end_time": end_time,
+        })
+        if normalized == "open-interest-history":
+            return self._get(f"/v1/binance/futures/open-interest-history/{symbol}", params=params)
+        if normalized == "taker-long-short":
+            return self._get(f"/v1/binance/futures/taker-long-short/{symbol}", params=params)
+        if normalized == "long-short":
+            return self._get(f"/v1/binance/futures/long-short/{kind or 'global_account'}/{symbol}", params=params)
+        if normalized == "funding-rate":
+            return self._get(
+                f"/v1/binance/futures/funding-rate/{symbol}",
+                params=self._params({"limit": limit, "start_time": start_time, "end_time": end_time}),
+            )
+        if normalized == "open-interest":
+            return self._get(f"/v1/binance/futures/open-interest/{symbol}")
+        raise ValueError(f"Unsupported Binance futures metric: {metric}")
+
+    def binance_futures_depth(self, symbol: str, limit: int = 5) -> dict:
+        return self._get(f"/v1/binance/futures/depth/{symbol.upper().strip()}", params={"limit": limit})
+
+    def binance_futures_basis(
+        self,
+        pair: str,
+        *,
+        contract_type: str = "CURRENT_QUARTER",
+        period: str = "1d",
+        limit: int = 30,
+        start_time: int | None = None,
+        end_time: int | None = None,
+    ) -> dict:
+        return self._get(
+            f"/v1/binance/futures/basis/{pair.upper().strip()}",
+            params=self._params({
+                "contract_type": contract_type,
+                "period": period,
+                "limit": limit,
+                "start_time": start_time,
+                "end_time": end_time,
+            }),
+        )
+
+    def binance_basis_bundle(
+        self,
+        perp_symbol: str,
+        delivery_symbol: str,
+        *,
+        pair: str | None = None,
+        interval: str = "1d",
+        period: str = "1d",
+        limit: int = 30,
+        include_depth: bool = True,
+        depth_limit: int = 5,
+        contract_type: str = "CURRENT_QUARTER",
+        start_time: int | None = None,
+        end_time: int | None = None,
+    ) -> dict:
+        return self._post(
+            "/v1/binance/futures/basis-bundle",
+            self._params({
+                "perp_symbol": perp_symbol.upper().strip(),
+                "delivery_symbol": delivery_symbol.upper().strip(),
+                "pair": pair.upper().strip() if pair else None,
+                "interval": interval,
+                "period": period,
+                "limit": limit,
+                "include_depth": include_depth,
+                "depth_limit": depth_limit,
+                "contract_type": contract_type,
+                "start_time": start_time,
+                "end_time": end_time,
+            }),
+        )
+
     def control_contracts(self) -> dict:
         return {
             "redis_channels": {
@@ -226,6 +339,7 @@ class DataLayerClient:
                 "kline": "/v1/binance/kline/{symbol}?interval=1m",
                 "vn_preload": "/v1/preload/{symbol}?interval=1m&limit=1000",
                 "vn_last_quote": "/v1/vn/quote-last/{symbol}",
+                "basis_bundle": "/v1/binance/futures/basis-bundle",
             },
             "provider_policy": {
                 "binance": "authoritative for Binance crypto live trade/kline data",

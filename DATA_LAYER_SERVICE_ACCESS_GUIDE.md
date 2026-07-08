@@ -327,6 +327,61 @@ Important crypto parser note:
 - This was the root cause of the rsibound warmup issue where `RIFUSDT`, `COMPUSDT`, and similar symbols returned data from data_layer but alpha logged `rows=0`.
 - The batch endpoint is additive. It does not replace or mutate the existing single-symbol endpoint contract.
 
+### Pattern E: Binance Futures Derivatives Metrics For Basis-Arb
+
+Basis-arbitrage and futures microstructure alpha must request derivatives metrics through `data_layer`.
+Do not call Binance directly from alpha containers.
+
+These endpoints are direct, non-storage wrappers around official Binance USDⓈ-M Futures market-data APIs:
+
+- `GET /v1/binance/futures/exchange-info?symbol=BTCUSDT_260925`
+- `GET /v1/binance/futures/klines/BTCUSDT_260925?interval=1d&limit=30`
+- `GET /v1/binance/futures/depth/BTCUSDT?limit=5`
+- `GET /v1/binance/futures/open-interest/BTCUSDT`
+- `GET /v1/binance/futures/open-interest-history/BTCUSDT?period=1d&limit=30`
+- `GET /v1/binance/futures/long-short/global_account/BTCUSDT?period=1d&limit=30`
+- `GET /v1/binance/futures/long-short/top_account/BTCUSDT?period=1d&limit=30`
+- `GET /v1/binance/futures/long-short/top_position/BTCUSDT?period=1d&limit=30`
+- `GET /v1/binance/futures/taker-long-short/BTCUSDT?period=1d&limit=30`
+- `GET /v1/binance/futures/funding-rate/BTCUSDT?limit=100`
+- `GET /v1/binance/futures/basis/BTCUSDT?contract_type=CURRENT_QUARTER&period=1d&limit=30`
+
+Always resolve delivery symbols from `exchange-info` first. Do not guess date suffixes:
+
+```bash
+GET http://data_layer:8100/v1/binance/futures/exchange-info
+```
+
+At the 2026-07-08 smoke test, Binance listed `BTCUSDT_260925` as `CURRENT_QUARTER` and
+`BTCUSDT_261225` as `NEXT_QUARTER`; `BTCUSDT_260926` was rejected by Binance as an invalid symbol.
+
+Preferred alpha warmup/rebalance request for basis-arb:
+
+```bash
+POST http://data_layer:8100/v1/binance/futures/basis-bundle
+Content-Type: application/json
+
+{
+  "perp_symbol": "BTCUSDT",
+  "delivery_symbol": "BTCUSDT_260925",
+  "pair": "BTCUSDT",
+  "interval": "1d",
+  "period": "1d",
+  "limit": 30,
+  "include_depth": true,
+  "depth_limit": 5,
+  "contract_type": "CURRENT_QUARTER"
+}
+```
+
+Bundle response contract:
+
+- `components` contains successful raw provider payloads keyed by component name.
+- `errors` contains per-component failures.
+- `partial=true` means at least one component failed; alpha must decide whether the missing component is fatal.
+- `cached=false` and `stored=false`; data_layer does not persist these derivatives metrics to parquet/Redis history.
+- Futures-data history endpoints are latest-30-days style datasets. Consumers must not assume older history is available from these wrappers.
+
 Fallback semantics:
 
 - `GET http://data_layer:8100/v1/fallback/crypto/status/BTCUSDT?interval=1m`

@@ -32,7 +32,15 @@ from app.config import (
     STREAM_STRICT_FEED_HEALTH,
 )
 from app.api.context import DataLayerContext
-from app.api import routes_control_plane, routes_fallback, routes_health, routes_history, routes_latest, routes_preload
+from app.api import (
+    routes_binance_derivatives,
+    routes_control_plane,
+    routes_fallback,
+    routes_health,
+    routes_history,
+    routes_latest,
+    routes_preload,
+)
 from app.cache.redis_cache import RedisCache
 from app.stream.async_live_feed import start_stream
 from app.ingestion.supervisor import StreamSupervisor
@@ -352,6 +360,7 @@ app.state.context = DataLayerContext(
 app.include_router(routes_health.router)
 app.include_router(routes_latest.router)
 app.include_router(routes_history.router)
+app.include_router(routes_binance_derivatives.router)
 app.include_router(routes_preload.router)
 app.include_router(routes_control_plane.router)
 app.include_router(routes_fallback.router)
