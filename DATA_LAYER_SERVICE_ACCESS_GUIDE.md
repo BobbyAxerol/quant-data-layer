@@ -358,23 +358,42 @@ At the 2026-07-08 smoke test, Binance listed `BTCUSDT_260925` as `CURRENT_QUARTE
 Preferred alpha warmup/rebalance request for basis-arb:
 
 ```bash
-POST http://data_layer:8100/v1/binance/futures/basis-bundle
+POST http://data_layer:8100/v1/binance/futures/continuous-basis-bundle
 Content-Type: application/json
 
 {
-  "perp_symbol": "BTCUSDT",
-  "delivery_symbol": "BTCUSDT_260925",
   "pair": "BTCUSDT",
   "interval": "1d",
-  "period": "1d",
-  "limit": 30,
-  "include_depth": true,
-  "depth_limit": 5,
-  "contract_type": "CURRENT_QUARTER"
+  "lookback_days": 365,
+  "buffer_days": 14,
+  "current_delivery_symbol": "BTCUSDT_260925",
+  "roll_policy": "research_volume_crossover"
 }
 ```
 
-Bundle response contract:
+Continuous-basis response contract:
+
+- data_layer rebuilds a rolling active-quarterly chain from Binance Vision USD-M kline ZIPs.
+- The stitching logic mirrors the research `DataPreprocessor` contract:
+  - generate candidate quarterly symbols such as `BTCUSDT_250926`, `BTCUSDT_251226`, ...;
+  - parse expiry from symbol suffix;
+  - select active windows by previous expiry/current expiry;
+  - compute `is_after_crossover` from 3-day rolling volume crossover;
+  - align perpetual and active quarterly candles;
+  - output `quarterly_close`, `quarterly_volume`, `active_contract`, `days_to_expiry`,
+    `perpetual_close`, `perpetual_volume`, `basis`, and `is_after_crossover`.
+- Monthly Binance Vision ZIPs are cached under `BINANCE_VISION_CACHE_DIR`
+  (default `/app/data/binance_vision_cache`). Daily ZIP fallback is used only for recent months
+  where monthly files may not be published yet.
+- Optional `fallback_url` can point to a research read API if Binance Vision is unavailable.
+- The endpoint is a lightweight derived wrapper, not a Redis live feed and not a long-term parquet
+  store.
+
+Short recent component request remains available for diagnostics or append flows:
+
+```bash
+POST http://data_layer:8100/v1/binance/futures/basis-bundle
+```
 
 - `components` contains successful raw provider payloads keyed by component name.
 - `errors` contains per-component failures.

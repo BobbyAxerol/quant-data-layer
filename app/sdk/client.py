@@ -326,6 +326,32 @@ class DataLayerClient:
             }),
         )
 
+    def binance_continuous_basis_bundle(
+        self,
+        pair: str,
+        *,
+        interval: str = "1d",
+        lookback_days: int = 365,
+        buffer_days: int = 14,
+        roll_policy: str = "research_volume_crossover",
+        current_delivery_symbol: str | None = None,
+        include_components: bool = False,
+        fallback_url: str | None = None,
+    ) -> dict:
+        return self._post(
+            "/v1/binance/futures/continuous-basis-bundle",
+            self._params({
+                "pair": pair.upper().strip(),
+                "interval": interval,
+                "lookback_days": lookback_days,
+                "buffer_days": buffer_days,
+                "roll_policy": roll_policy,
+                "current_delivery_symbol": current_delivery_symbol.upper().strip() if current_delivery_symbol else None,
+                "include_components": include_components,
+                "fallback_url": fallback_url,
+            }),
+        )
+
     def control_contracts(self) -> dict:
         return {
             "redis_channels": {

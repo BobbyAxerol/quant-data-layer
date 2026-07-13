@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
+from app.providers.binance import basis_continuous
 from app.providers.binance import derivatives as binance_derivatives
 from app.providers.binance.rest import BINANCE_KLINE_INTERVALS, BinanceProviderError
 
@@ -168,6 +169,30 @@ async def get_basis(
         )
     except ValueError as exc:
         _bad_request(exc)
+    except BinanceProviderError as exc:
+        _provider_error(exc)
+
+
+@router.post("/continuous-basis-bundle")
+async def post_continuous_basis_bundle(body: dict[str, Any] = Body(...)):
+    pair = str(body.get("pair") or body.get("perp_symbol") or "").upper().strip()
+    if not pair:
+        raise HTTPException(status_code=400, detail="missing_required_field:pair")
+    try:
+        return basis_continuous.fetch_continuous_basis_bundle(
+            pair=pair,
+            interval=str(body.get("interval") or body.get("resolution") or "1d"),
+            lookback_days=int(body.get("lookback_days") or body.get("limit_days") or 365),
+            buffer_days=int(body.get("buffer_days") or 14),
+            roll_policy=str(body.get("roll_policy") or "research_volume_crossover"),
+            current_delivery_symbol=body.get("current_delivery_symbol") or body.get("delivery_symbol"),
+            include_components=bool(body.get("include_components", False)),
+            fallback_url=body.get("fallback_url"),
+        )
+    except ValueError as exc:
+        _bad_request(exc)
+    except BinanceProviderError as exc:
+        _provider_error(exc)
     except BinanceProviderError as exc:
         _provider_error(exc)
 
