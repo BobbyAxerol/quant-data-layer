@@ -1,8 +1,12 @@
 import asyncio
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
+
 from app.api import routes_binance_derivatives
+from app.providers.binance import basis_continuous
 from app.providers.binance import derivatives
 from app.providers.binance.rest import BinanceProviderError
 from app.sdk.client import DataLayerClient
@@ -134,6 +138,93 @@ class TestBinanceDerivativesContract(unittest.TestCase):
             )
         self.assertEqual(payload["symbol"], "BTCUSDT_260925")
         fetch.assert_called_once_with("BTCUSDT_260925", "1d", 30, None, None)
+
+    def test_continuous_basis_builder_stitches_research_style_contracts(self):
+        idx = pd.date_range("2026-01-01", periods=140, freq="1D", tz="UTC")
+        perp = pd.DataFrame(
+            {
+                "symbol": "BTCUSDT",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": [100.0 + i for i in range(len(idx))],
+                "volume": 1000.0,
+            },
+            index=idx,
+        )
+        first = pd.DataFrame(
+            {
+                "symbol": "BTCUSDT_260327",
+                "open": 101.0,
+                "high": 102.0,
+                "low": 100.0,
+                "close": [101.0 + i for i in range(len(idx))],
+                "volume": 100.0,
+            },
+            index=idx,
+        )
+        second = pd.DataFrame(
+            {
+                "symbol": "BTCUSDT_260626",
+                "open": 102.0,
+                "high": 103.0,
+                "low": 101.0,
+                "close": [102.0 + i for i in range(len(idx))],
+                "volume": 200.0,
+            },
+            index=idx,
+        )
+        builder = basis_continuous.ContinuousBasisBuilder()
+        with patch.object(builder, "_perp_frame", return_value=perp), patch.object(
+            builder,
+            "_vision_kline_frame",
+            side_effect=lambda symbol, *_args, **_kwargs: first if symbol.endswith("260327") else second,
+        ), patch.object(
+            builder,
+            "_candidate_quarterlies",
+            return_value=["BTCUSDT_260327", "BTCUSDT_260626"],
+        ):
+            frame, meta = builder.build(
+                basis_continuous.ContinuousBasisRequest(
+                    pair="BTCUSDT",
+                    lookback_days=40,
+                    buffer_days=2,
+                    end_time=datetime(2026, 5, 20, tzinfo=timezone.utc),
+                )
+            )
+
+        self.assertEqual(len(frame), 40)
+        self.assertIn("active_contract", frame)
+        self.assertTrue(set(frame["active_contract"]).issubset({"BTCUSDT_260327", "BTCUSDT_260626"}))
+        self.assertIn("BTCUSDT_260327", meta["candidate_contracts"])
+
+    def test_route_continuous_basis_bundle_delegates_to_provider(self):
+        with patch("app.api.routes_binance_derivatives.basis_continuous.fetch_continuous_basis_bundle") as fetch:
+            fetch.return_value = {"kind": "continuous_basis_bundle", "rows": 365}
+            payload = asyncio.run(
+                routes_binance_derivatives.post_continuous_basis_bundle(
+                    {"pair": "btcusdt", "lookback_days": 365, "interval": "1d"}
+                )
+            )
+        self.assertEqual(payload["kind"], "continuous_basis_bundle")
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.kwargs["pair"], "BTCUSDT")
+
+    def test_sdk_continuous_basis_bundle_posts_contract_payload(self):
+        session = MagicMock()
+        redis_client = MagicMock()
+        response = MagicMock(status_code=200, text="")
+        response.json.return_value = {"kind": "continuous_basis_bundle", "rows": 365}
+        response.raise_for_status.return_value = None
+        session.post.return_value = response
+        client = DataLayerClient(session=session, redis_client=redis_client)
+
+        payload = client.binance_continuous_basis_bundle("btcusdt", current_delivery_symbol="btcusdt_260925")
+
+        self.assertEqual(payload["kind"], "continuous_basis_bundle")
+        _, kwargs = session.post.call_args
+        self.assertEqual(kwargs["json"]["pair"], "BTCUSDT")
+        self.assertEqual(kwargs["json"]["current_delivery_symbol"], "BTCUSDT_260925")
 
 
 if __name__ == "__main__":
