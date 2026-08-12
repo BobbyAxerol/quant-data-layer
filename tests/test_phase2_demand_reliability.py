@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import json
 import time
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app.history.topup_coordinator import PreloadTopupBackoff, PreloadTopupCoordinator
 from app.stream.async_live_feed import recover_demanded_kline_gap
+from app.stream.binance_ws import get_usdm_symbols
 from app.stream.demand_registry import FeedDemand, FeedDemandRegistry
 from app.stream.supervisor import StreamSupervisor
 
@@ -89,6 +93,43 @@ class DemandRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["items"][0]["refcount"], 2)
         self.assertEqual(await registry.release_owner("alpha-a"), 1)
         self.assertEqual((await registry.snapshot())["items"][0]["refcount"], 1)
+
+
+class UsdmStreamUniverseTests(unittest.TestCase):
+    @patch("app.stream.binance_ws.requests.get")
+    def test_all_trading_contracts_include_delivery_and_exclude_retired(self, get):
+        response = get.return_value
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "symbols": [
+                {"symbol": "BTCUSDT", "contractType": "PERPETUAL", "status": "TRADING"},
+                {"symbol": "BTCUSDT_260925", "contractType": "CURRENT_QUARTER", "status": "TRADING"},
+                {"symbol": "BTCUSDT_261225", "contractType": "NEXT_QUARTER", "status": "PENDING_TRADING"},
+            ]
+        }
+        with TemporaryDirectory() as directory:
+            cache = Path(directory) / "symbols.json"
+            symbols = get_usdm_symbols(str(cache), contract_type=None, refresh=True)
+            self.assertEqual(symbols, ["BTCUSDT", "BTCUSDT_260925"])
+            self.assertEqual(json.loads(cache.read_text()), symbols)
+
+    @patch("app.stream.binance_ws.requests.get")
+    def test_perpetual_filter_remains_available_for_legacy_callers(self, get):
+        response = get.return_value
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "symbols": [
+                {"symbol": "BTCUSDT", "contractType": "PERPETUAL", "status": "TRADING"},
+                {"symbol": "BTCUSDT_260925", "contractType": "CURRENT_QUARTER", "status": "TRADING"},
+            ]
+        }
+        with TemporaryDirectory() as directory:
+            symbols = get_usdm_symbols(
+                str(Path(directory) / "symbols.json"),
+                contract_type="PERPETUAL",
+                refresh=True,
+            )
+        self.assertEqual(symbols, ["BTCUSDT"])
 
 
 class TopupCoordinatorTests(unittest.IsolatedAsyncioTestCase):

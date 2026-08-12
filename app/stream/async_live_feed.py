@@ -446,7 +446,10 @@ async def start_stream(
     spot_symbols, usdm_symbols = await asyncio.gather(
         asyncio.to_thread(get_spot_symbols, refresh=True)
         if needs_spot else asyncio.sleep(0, result=[]),
-        asyncio.to_thread(get_usdm_symbols, refresh=True)
+        # Execution demand may include active USD-M delivery contracts.  The
+        # stream universe must therefore include every currently tradable USD-M
+        # contract, not only PERPETUAL symbols.
+        asyncio.to_thread(get_usdm_symbols, contract_type=None, refresh=True)
         if needs_usdm else asyncio.sleep(0, result=[]),
     )
     

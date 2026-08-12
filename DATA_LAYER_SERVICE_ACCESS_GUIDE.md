@@ -774,6 +774,9 @@ Operational rules:
   informational unless legacy strict diagnostics are explicitly enabled.
 - Queue-drop health uses a rolling window; old lifetime counters remain telemetry and no longer keep
   health permanently degraded after recovery.
+- The Binance USD-M WebSocket universe includes every contract whose exchange metadata reports
+  `status=TRADING`, including current/next delivery contracts as well as perpetuals. Execution
+  demand must never point at a delivery symbol omitted by a perpetual-only bootstrap filter.
 - Binance reconnect telemetry records outage duration and gap-fill results. Demanded closed klines
   are recovered from REST; an open candle is never relabeled as closed. Trade state recovery still
   requires latest-price freshness validation rather than pretending every missed trade was replayed.

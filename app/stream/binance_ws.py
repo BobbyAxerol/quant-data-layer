@@ -36,7 +36,7 @@ _METRICS_INTERVAL = 60.0  # Log metrics every N seconds
 
 def get_usdm_symbols(
     file_path: str = None,
-    contract_type: str = "PERPETUAL",
+    contract_type: str | None = "PERPETUAL",
     *,
     refresh: bool = False,
 ) -> list:
@@ -60,7 +60,7 @@ def get_usdm_symbols(
             response = http_response.json()
             symbols = [
                 s["symbol"] for s in response["symbols"]
-                if s["contractType"] == contract_type
+                if (contract_type is None or s["contractType"] == contract_type)
                 and s["status"] == "TRADING"
             ]
             with open(file_path, "w") as f:
