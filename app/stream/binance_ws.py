@@ -34,21 +34,30 @@ _METRICS_INTERVAL = 60.0  # Log metrics every N seconds
 
 # ── Symbol Discovery ────────────────────────────────────────────
 
-def get_usdm_symbols(file_path: str = None, contract_type: str = "PERPETUAL") -> list:
-    """Load symbols from local JSON cache, fallback to Binance exchangeInfo API."""
+def get_usdm_symbols(
+    file_path: str = None,
+    contract_type: str = "PERPETUAL",
+    *,
+    refresh: bool = False,
+) -> list:
+    """Load active symbols from venue metadata, with the last good cache as fallback."""
     file_path = file_path or BINANCE_SYMBOLS_FILE
+    cached_symbols = None
     if os.path.exists(file_path):
         with open(file_path, "r") as f:
             import json
-            symbols = json.load(f)
-        logger.info(f"Loaded {len(symbols)} symbols from {file_path}")
-        return symbols
+            cached_symbols = json.load(f)
+        if not refresh:
+            logger.info(f"Loaded {len(cached_symbols)} symbols from {file_path}")
+            return cached_symbols
 
     url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, timeout=10).json()
+            http_response = requests.get(url, timeout=10)
+            http_response.raise_for_status()
+            response = http_response.json()
             symbols = [
                 s["symbol"] for s in response["symbols"]
                 if s["contractType"] == contract_type
@@ -59,10 +68,13 @@ def get_usdm_symbols(file_path: str = None, contract_type: str = "PERPETUAL") ->
                 json.dump(symbols, f)
             logger.info(f"Fetched and cached {len(symbols)} symbols from Binance API")
             return symbols
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             logger.warning(f"[get_usdm_symbols] Attempt {attempt + 1}/{max_retries} failed: {e}")
             if attempt < max_retries - 1:
                 time.sleep(2)
+    if cached_symbols:
+        logger.warning("All refresh retries failed, using last good USD-M symbol cache")
+        return cached_symbols
     logger.warning("All retries failed, using static fallback symbols")
     return ["BTCUSDT", "ETHUSDT"]
 

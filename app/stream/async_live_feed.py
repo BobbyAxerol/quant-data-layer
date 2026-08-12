@@ -2,10 +2,11 @@ import asyncio
 import json
 import logging
 import traceback
-from datetime import datetime, timezone
 import time
 import random
 import os
+import math
+import re
 
 import requests
 import websockets
@@ -15,6 +16,8 @@ from app.stream.binance_ws import get_usdm_symbols
 from app.stream.feed_builder import build_urls, validate_symbols
 from app.stream.feed_parsers import PARSERS
 from app.stream.supervisor import StreamSupervisor
+from app.stream.demand_registry import feed_key_for
+from app.providers.binance import rest as binance_rest
 from app.config import (
     BINANCE_SPOT_SYMBOLS_FILE,
     BINANCE_WS_BATCH_SIZE,
@@ -24,14 +27,96 @@ from app.config import (
 
 logger = logging.getLogger(__name__)
 
+_STREAM_SYMBOL_RE = re.compile(r"[=/]([a-z0-9_]+)@(kline_[^/]+|trade)")
 
-def get_spot_symbols(file_path: str = BINANCE_SPOT_SYMBOLS_FILE) -> list[str]:
+
+def symbols_from_stream_url(url: str) -> list[str]:
+    return [match.group(1).upper() for match in _STREAM_SYMBOL_RE.finditer(url)]
+
+
+def _interval_seconds(interval: str) -> int:
+    unit = interval[-1]
+    value = int(interval[:-1])
+    return value * {"s": 1, "m": 60, "h": 3600, "d": 86400}.get(unit, 60)
+
+
+def _rest_kline_event(symbol: str, interval: str, row: list) -> dict:
+    return {
+        "e": "kline_recovery",
+        "E": int(time.time() * 1000),
+        "s": symbol,
+        "k": {
+            "t": row[0], "T": row[6], "s": symbol, "i": interval,
+            "o": row[1], "c": row[4], "h": row[2], "l": row[3], "v": row[5], "x": True,
+        },
+        "recovery_source": "BINANCE_REST_GAP_FILL",
+    }
+
+
+async def recover_demanded_kline_gap(
+    *,
+    source: str,
+    url: str,
+    interval: str,
+    queue: asyncio.Queue,
+    supervisor: StreamSupervisor,
+    shard_id: str,
+    demand_registry,
+) -> int:
+    if source.endswith("_trade") or "kline" not in url:
+        return 0
+    active = await demand_registry.snapshot()
+    demanded = set(active["feed_keys"])
+    symbols = [
+        symbol for symbol in symbols_from_stream_url(url)
+        if feed_key_for(source, "kline", symbol, interval) in demanded
+    ]
+    if not symbols:
+        return 0
+    supervisor.record_gap_detected(shard_id)
+    shard = supervisor.shards.get(shard_id)
+    outage_seconds = float(shard.last_outage_seconds or 0) if shard else 0.0
+    limit = min(1000, max(3, math.ceil(outage_seconds / max(1, _interval_seconds(interval))) + 2))
+    market = "usdm" if source.startswith("binance_futures") else "spot"
+    recovered = 0
+    now_ms = int(time.time() * 1000)
+    try:
+        for symbol in symbols:
+            payload = await asyncio.to_thread(
+                binance_rest.fetch_klines,
+                symbol,
+                interval,
+                limit,
+                None,
+                None,
+                market,
+            )
+            for row in payload.get("data") or []:
+                if len(row) <= 6 or int(row[6]) > now_ms:
+                    continue
+                await queue.put((source, _rest_kline_event(symbol, interval, row)))
+                recovered += 1
+        supervisor.record_gap_fill(shard_id, success=True)
+        return recovered
+    except Exception:
+        supervisor.record_gap_fill(shard_id, success=False)
+        logger.exception("[WS] demanded kline gap-fill failed source=%s shard=%s", source, shard_id)
+        return 0
+
+
+def get_spot_symbols(
+    file_path: str = BINANCE_SPOT_SYMBOLS_FILE,
+    *,
+    refresh: bool = False,
+) -> list[str]:
+    cached_symbols = None
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                symbols = json.load(f)
-            logger.info(f"Loaded {len(symbols)} spot symbols from {file_path}")
-            return symbols
+                cached_symbols = json.load(f)
+            if not refresh:
+                logger.info(f"Loaded {len(cached_symbols)} spot symbols from {file_path}")
+                return cached_symbols
         except Exception as exc:
             logger.warning(f"Failed to load spot symbols from {file_path}: {exc}")
 
@@ -54,6 +139,9 @@ def get_spot_symbols(file_path: str = BINANCE_SPOT_SYMBOLS_FILE) -> list[str]:
             logger.warning(f"Failed to cache spot symbols to {file_path}: {exc}")
         return symbols
     except Exception as exc:
+        if cached_symbols:
+            logger.warning(f"Failed to refresh Binance spot exchangeInfo, using last good cache: {exc}")
+            return cached_symbols
         logger.warning(f"Failed to fetch Binance spot exchangeInfo, using static fallback symbols: {exc}")
         return ["BTCUSDT", "ETHUSDT"]
 
@@ -97,6 +185,8 @@ async def handle_ws(
     reconnect_delay: int = 5,
     parser_mode: str = "raw",
     max_backoff: int = 300,
+    demand_registry=None,
+    interval: str = "1m",
 ):
     """
     Connect and stream messages from websocket. Reconnects on error.
@@ -110,8 +200,25 @@ async def handle_ws(
             logger.info(f"[WS] Connecting {source} -> {url[:60]}...")
             async with websockets.connect(url, ping_interval=30, max_size=None) as ws:
                 logger.info(f"[WS] Connected {source}")
-                supervisor.mark_connected(shard_id)
+                recovered = supervisor.mark_connected(shard_id)
                 last_connected_at = time.monotonic()
+                if recovered and demand_registry is not None:
+                    filled = await recover_demanded_kline_gap(
+                        source=source,
+                        url=url,
+                        interval=interval,
+                        queue=queue,
+                        supervisor=supervisor,
+                        shard_id=shard_id,
+                        demand_registry=demand_registry,
+                    )
+                    if filled:
+                        logger.info(
+                            "[WS] demanded kline gap-fill complete source=%s shard=%s rows=%s",
+                            source,
+                            shard_id,
+                            filled,
+                        )
 
                 async for msg in ws:
                     try:
@@ -314,6 +421,7 @@ async def start_stream(
     max_backoff: int = 300,
     max_conns_per_source: int | None = None,
     supervisor: StreamSupervisor | None = None,
+    demand_registry=None,
 ):
     """
     Main entrypoint used by services.
@@ -333,6 +441,14 @@ async def start_stream(
     
     # 2. Get Symbols
     symbols_by_source = {}
+    needs_spot = any(source.startswith("binance_spot") for source in enabled_sources)
+    needs_usdm = any(source.startswith("binance_futures") for source in enabled_sources)
+    spot_symbols, usdm_symbols = await asyncio.gather(
+        asyncio.to_thread(get_spot_symbols, refresh=True)
+        if needs_spot else asyncio.sleep(0, result=[]),
+        asyncio.to_thread(get_usdm_symbols, refresh=True)
+        if needs_usdm else asyncio.sleep(0, result=[]),
+    )
     
     for source in enabled_sources:
         if source.startswith("binance"):
@@ -340,7 +456,7 @@ async def start_stream(
             # same listed symbols, and expecting futures-only symbols on spot
             # makes health degrade even when the stream is healthy.
             try:
-                raw_symbols = get_spot_symbols() if source.startswith("binance_spot") else get_usdm_symbols()
+                raw_symbols = spot_symbols if source.startswith("binance_spot") else usdm_symbols
                 syms = validate_symbols(raw_symbols)
                 symbols_by_source[source] = syms
                 feed = "trade" if source.endswith("_trade") else "kline"
@@ -378,6 +494,8 @@ async def start_stream(
                     parser_mode=parser_mode,
                     reconnect_delay=reconnect_delay,
                     max_backoff=max_backoff,
+                    demand_registry=demand_registry,
+                    interval=interval,
                 )
             ))
 

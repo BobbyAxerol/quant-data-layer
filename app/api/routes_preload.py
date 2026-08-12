@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
 from datetime import datetime
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.api.context import DataLayerContext, get_context
 from app.config import (
     PRELOAD_API_FRESH_TOPUP,
     PRELOAD_API_TOPUP_MAX_LAG_MINUTES,
@@ -20,9 +22,9 @@ from app.history.preload_vn import (
     preload_interval_dir,
     read_preload_data,
     run_preload,
-    topup_existing_symbol_if_needed,
     update_symbol,
 )
+from app.history.topup_coordinator import PreloadTopupBackoff, PreloadTopupTimeout
 
 
 logger = logging.getLogger(__name__)
@@ -84,21 +86,39 @@ async def get_preload_data(
     interval: str = Query("1m", description="VN warmup interval: 1m, 5m, 10m, 15m, 30m, 1h, 4h"),
     limit: int = Query(1000, ge=1, le=20000, description="Latest N candles for warm-up lookback"),
     fresh: bool = Query(True, description="Top up existing canonical 1m parquet if it is stale before reading"),
+    ctx: DataLayerContext = Depends(get_context),
 ):
     try:
         interval = normalize_preload_interval(interval)
+        await ctx.demand_registry.touch_request(
+            owner_id=f"api:vn-preload:{interval}:{symbol.upper()}",
+            source="dnse_vnstock",
+            feed="kline",
+            symbol=symbol,
+            interval=interval,
+            ttl_seconds=300,
+        )
         freshness = None
         if fresh and PRELOAD_API_FRESH_TOPUP:
-            freshness = topup_existing_symbol_if_needed(
+            freshness = await ctx.preload_topup_coordinator.run(
                 symbol.upper(),
                 interval=interval,
                 max_lag_minutes=PRELOAD_API_TOPUP_MAX_LAG_MINUTES,
             )
-        df = read_preload_data(symbol.upper(), interval=interval, limit=limit)
+        df = await asyncio.to_thread(
+            read_preload_data,
+            symbol.upper(),
+            interval=interval,
+            limit=limit,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"No preload data for {symbol} @ {interval}")
+    except PreloadTopupBackoff as exc:
+        raise HTTPException(status_code=503, detail={"error": "preload_provider_backoff", "reason": str(exc)})
+    except PreloadTopupTimeout as exc:
+        raise HTTPException(status_code=503, detail={"error": "preload_topup_timeout", "reason": str(exc)})
 
     try:
         df["time"] = df["time"].dt.tz_localize("Asia/Ho_Chi_Minh").dt.tz_convert("UTC").dt.tz_localize(None)
@@ -162,4 +182,3 @@ async def trigger_materialize_symbol(symbol: str):
     except Exception as exc:
         logger.error(f"Materialize for {symbol} failed: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
-

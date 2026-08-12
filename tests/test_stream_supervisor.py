@@ -1,8 +1,10 @@
 import asyncio
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.cache.redis_cache import RedisCache
 from app.stream.async_live_feed import coalesce_redis_items, get_spot_symbols, redis_publisher_task
@@ -67,6 +69,18 @@ class TestStreamSupervisor(unittest.TestCase):
         self.assertEqual(snapshot["status"], "degraded")
         self.assertIn("queue_drop_observed", snapshot["health_warnings"])
 
+    def test_old_queue_drop_does_not_permanently_degrade_health(self):
+        supervisor = StreamSupervisor(strict_feed_health=True)
+        supervisor.queue_drop_window_seconds = 1
+        shard_id = supervisor.register_shard("binance_spot_kline", "wss://example")
+        supervisor.mark_connected(shard_id)
+        supervisor.record_queue_drop("binance_spot_kline", shard_id)
+
+        snapshot = supervisor.snapshot(now=time.time() + 2)
+
+        self.assertEqual(snapshot["status"], "ok")
+        self.assertEqual(snapshot["queue"]["recent_drop_count"], 0)
+
     def test_missing_trade_feed_is_diagnostic_not_health_failure(self):
         supervisor = StreamSupervisor(startup_grace_seconds=0)
         shard_id = supervisor.register_shard("binance_spot_trade", "wss://example")
@@ -104,6 +118,18 @@ class TestStreamSupervisor(unittest.TestCase):
             path.write_text(json.dumps(["BTCUSDT", "ETHUSDT"]), encoding="utf-8")
 
             symbols = get_spot_symbols(str(path))
+
+        self.assertEqual(symbols, ["BTCUSDT", "ETHUSDT"])
+
+    def test_spot_symbol_refresh_falls_back_to_last_good_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "symbols_spot.json"
+            path.write_text(json.dumps(["BTCUSDT", "ETHUSDT"]), encoding="utf-8")
+            with patch(
+                "app.stream.async_live_feed.requests.get",
+                side_effect=RuntimeError("exchange info offline"),
+            ):
+                symbols = get_spot_symbols(str(path), refresh=True)
 
         self.assertEqual(symbols, ["BTCUSDT", "ETHUSDT"])
 

@@ -46,10 +46,13 @@ from app.stream.async_live_feed import start_stream
 from app.ingestion.supervisor import StreamSupervisor
 from app.stream.vnstock_poller import VnstockPoller
 from app.stream.dnse_ws import DnseStreamManager
+from app.stream.demand_registry import FeedDemandRegistry
+from app.history.topup_coordinator import PreloadTopupCoordinator
 from app.history.preload_vn import (
     run_preload,
     load_last_preload_snapshot,
     load_vn_symbols,
+    topup_existing_symbol_if_needed,
 )
 from app.providers.binance import rest as binance_rest
 from app.providers.okx import rest as okx_rest
@@ -61,6 +64,11 @@ logger = logging.getLogger(__name__)
 
 # ── Shared Instances ────────────────────────────────────────────
 redis_cache = RedisCache()
+demand_registry = FeedDemandRegistry(redis_cache.r)
+preload_topup_coordinator = PreloadTopupCoordinator(
+    redis_cache.r,
+    topup_existing_symbol_if_needed,
+)
 dnse_stream_manager = None  # Will be initialized in lifespan
 preload_thread = None
 preload_stop_event = threading.Event()
@@ -262,6 +270,7 @@ async def lifespan(app: FastAPI):
             redis_cache, 
             interval="1m", 
             supervisor=binance_stream_supervisor,
+            demand_registry=demand_registry,
             enabled_sources=[
                 "binance_spot_trade",
                 "binance_futures_trade",
@@ -355,6 +364,8 @@ app.state.context = DataLayerContext(
     redis_cache=redis_cache,
     binance_stream_supervisor=binance_stream_supervisor,
     get_dnse_stream_manager=lambda: dnse_stream_manager,
+    demand_registry=demand_registry,
+    preload_topup_coordinator=preload_topup_coordinator,
 )
 
 app.include_router(routes_health.router)
