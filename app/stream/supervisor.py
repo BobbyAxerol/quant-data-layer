@@ -1,6 +1,9 @@
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from collections import deque
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+from app.stream.demand_registry import feed_key_for, parse_feed_key
 
 
 def _now() -> float:
@@ -26,6 +29,16 @@ class ShardState:
     last_connected_at: Optional[float] = None
     last_message_at: Optional[float] = None
     last_error: Optional[str] = None
+    outage_started_at: Optional[float] = None
+    last_disconnected_at: Optional[float] = None
+    last_recovered_at: Optional[float] = None
+    last_outage_seconds: Optional[float] = None
+    max_outage_seconds: float = 0.0
+    reconnect_success_count: int = 0
+    gap_detected_count: int = 0
+    gap_fill_success_count: int = 0
+    gap_fill_failure_count: int = 0
+    last_gap_fill_at: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -39,6 +52,16 @@ class ShardState:
             "last_connected_at": _iso(self.last_connected_at),
             "last_message_at": _iso(self.last_message_at),
             "last_error": self.last_error,
+            "outage_started_at": _iso(self.outage_started_at),
+            "last_disconnected_at": _iso(self.last_disconnected_at),
+            "last_recovered_at": _iso(self.last_recovered_at),
+            "last_outage_seconds": round(self.last_outage_seconds, 3) if self.last_outage_seconds is not None else None,
+            "max_outage_seconds": round(self.max_outage_seconds, 3),
+            "reconnect_success_count": self.reconnect_success_count,
+            "gap_detected_count": self.gap_detected_count,
+            "gap_fill_success_count": self.gap_fill_success_count,
+            "gap_fill_failure_count": self.gap_fill_failure_count,
+            "last_gap_fill_at": _iso(self.last_gap_fill_at),
             "url_preview": self.url_preview,
         }
 
@@ -104,6 +127,8 @@ class StreamSupervisor:
         self.queue_size = 0
         self.queue_maxsize = 0
         self.queue_drop_count = 0
+        self.queue_drop_window_seconds = 300.0
+        self._queue_drop_times: deque[float] = deque(maxlen=100_000)
         self.redis_error_count = 0
         self.last_redis_error: Optional[str] = None
         self.publisher_batch_count = 0
@@ -111,11 +136,14 @@ class StreamSupervisor:
         self.last_publisher_at: Optional[float] = None
 
     @staticmethod
-    def feed_key(feed: str, symbol: str, interval: Optional[str] = None) -> str:
-        normalized_symbol = symbol.upper()
-        if interval:
-            return f"{feed}:{interval}:{normalized_symbol}"
-        return f"{feed}:{normalized_symbol}"
+    def feed_key(
+        feed: str,
+        symbol: str,
+        interval: Optional[str] = None,
+        *,
+        source: str = "unknown",
+    ) -> str:
+        return feed_key_for(source, feed, symbol, interval)
 
     def register_shard(self, source: str, url: str, shard_id: Optional[str] = None) -> str:
         shard_id = shard_id or f"{source}:{len(self.shards)}"
@@ -133,7 +161,7 @@ class StreamSupervisor:
         symbol: str,
         interval: Optional[str] = None,
     ) -> None:
-        key = self.feed_key(feed, symbol, interval)
+        key = self.feed_key(feed, symbol, interval, source=source)
         self.feeds.setdefault(
             key,
             FeedState(
@@ -151,12 +179,23 @@ class StreamSupervisor:
         if shard:
             shard.status = "connecting"
 
-    def mark_connected(self, shard_id: str) -> None:
+    def mark_connected(self, shard_id: str) -> bool:
         shard = self.shards.get(shard_id)
         if shard:
+            recovered = shard.outage_started_at is not None
+            now = _now()
             shard.status = "connected"
-            shard.last_connected_at = _now()
+            shard.last_connected_at = now
             shard.last_error = None
+            if recovered:
+                duration = max(0.0, now - float(shard.outage_started_at))
+                shard.last_outage_seconds = duration
+                shard.max_outage_seconds = max(shard.max_outage_seconds, duration)
+                shard.last_recovered_at = now
+                shard.reconnect_success_count += 1
+                shard.outage_started_at = None
+            return recovered
+        return False
 
     def mark_message(self, shard_id: str) -> None:
         shard = self.shards.get(shard_id)
@@ -173,9 +212,27 @@ class StreamSupervisor:
     def mark_reconnect(self, shard_id: str, error: Exception | str) -> None:
         shard = self.shards.get(shard_id)
         if shard:
+            now = _now()
             shard.status = "reconnecting"
             shard.reconnect_count += 1
             shard.last_error = str(error)
+            shard.last_disconnected_at = now
+            if shard.outage_started_at is None:
+                shard.outage_started_at = now
+
+    def record_gap_detected(self, shard_id: str) -> None:
+        shard = self.shards.get(shard_id)
+        if shard:
+            shard.gap_detected_count += 1
+
+    def record_gap_fill(self, shard_id: str, *, success: bool) -> None:
+        shard = self.shards.get(shard_id)
+        if shard:
+            if success:
+                shard.gap_fill_success_count += 1
+            else:
+                shard.gap_fill_failure_count += 1
+            shard.last_gap_fill_at = _now()
 
     def record_queue_size(self, size: int, maxsize: int) -> None:
         self.queue_size = int(size)
@@ -183,6 +240,7 @@ class StreamSupervisor:
 
     def record_queue_drop(self, source: str, shard_id: Optional[str] = None) -> None:
         self.queue_drop_count += 1
+        self._queue_drop_times.append(_now())
         if shard_id and shard_id in self.shards:
             self.shards[shard_id].queue_drop_count += 1
 
@@ -216,7 +274,7 @@ class StreamSupervisor:
         if isinstance(event_ts, (int, float)) and event_ts:
             event_at = float(event_ts) / 1000.0 if event_ts > 10_000_000_000 else float(event_ts)
 
-        feed_key = self.feed_key(feed, symbol, interval)
+        feed_key = self.feed_key(feed, symbol, interval, source=source)
         state = self.feeds.setdefault(
             feed_key,
             FeedState(
@@ -242,12 +300,18 @@ class StreamSupervisor:
         self.publisher_batch_count += 1
         self.last_publisher_at = _now()
 
-    def snapshot(self, now: Optional[float] = None) -> Dict[str, Any]:
+    def snapshot(
+        self,
+        now: Optional[float] = None,
+        *,
+        demanded_feed_keys: set[str] | None = None,
+    ) -> Dict[str, Any]:
         now = now or _now()
+        demanded_feed_keys = demanded_feed_keys or set()
         uptime_seconds = max(0.0, now - self.started_at)
         expected_feeds = [feed for feed in self.feeds.values() if feed.expected]
         missing = [feed for feed in expected_feeds if not feed.last_published_at]
-        health_missing = [
+        broad_health_missing = [
             feed
             for feed in missing
             if feed.feed != "trade" and uptime_seconds > self.startup_grace_seconds
@@ -257,13 +321,43 @@ class StreamSupervisor:
             for feed in expected_feeds
             if feed.last_published_at and feed.age_seconds(now) > self.stale_after_seconds
         ]
+        by_key = {feed.feed_key: feed for feed in self.feeds.values()}
+        demanded_states = []
+        for key in sorted(demanded_feed_keys):
+            parsed = parse_feed_key(key)
+            demanded_states.append(
+                by_key.get(key)
+                or FeedState(
+                    feed_key=key,
+                    source=str(parsed["source"]),
+                    feed=str(parsed["feed"]),
+                    symbol=str(parsed["symbol"]),
+                    interval=parsed["interval"],
+                    expected=True,
+                )
+            )
+        demanded_missing = [feed for feed in demanded_states if not feed.last_published_at]
+        demanded_stale = [
+            feed
+            for feed in demanded_states
+            if feed.last_published_at and feed.age_seconds(now) > self.stale_after_seconds
+        ]
         reconnect_count = sum(shard.reconnect_count for shard in self.shards.values())
         connected_shards = [shard for shard in self.shards.values() if shard.status == "connected"]
 
         health_warnings = []
-        if self.queue_drop_count:
+        cutoff = now - self.queue_drop_window_seconds
+        while self._queue_drop_times and self._queue_drop_times[0] < cutoff:
+            self._queue_drop_times.popleft()
+        recent_queue_drops = len(self._queue_drop_times)
+        if recent_queue_drops:
             health_warnings.append("queue_drop_observed")
-        if health_missing:
+            health_warnings.append("recent_queue_drop_observed")
+        if demanded_missing and uptime_seconds > self.startup_grace_seconds:
+            health_warnings.append("missing_demanded_feeds")
+        if demanded_stale:
+            health_warnings.append("stale_demanded_feeds")
+        if broad_health_missing:
             health_warnings.append("missing_expected_feeds")
         if stale:
             health_warnings.append("stale_expected_feeds")
@@ -274,7 +368,9 @@ class StreamSupervisor:
             status = "not_started"
         elif not connected_shards:
             status = "starting"
-        elif self.strict_feed_health and health_warnings:
+        elif demanded_stale or (demanded_missing and uptime_seconds > self.startup_grace_seconds):
+            status = "degraded"
+        elif self.strict_feed_health and (recent_queue_drops or broad_health_missing or stale):
             status = "degraded"
         else:
             status = "ok"
@@ -291,6 +387,8 @@ class StreamSupervisor:
                 "size": self.queue_size,
                 "maxsize": self.queue_maxsize,
                 "drop_count": self.queue_drop_count,
+                "recent_drop_count": recent_queue_drops,
+                "window_seconds": self.queue_drop_window_seconds,
             },
             "publisher": {
                 "batch_count": self.publisher_batch_count,
@@ -309,10 +407,19 @@ class StreamSupervisor:
                 "expected_count": len(expected_feeds),
                 "observed_count": len([feed for feed in expected_feeds if feed.last_published_at]),
                 "missing_count": len(missing),
-                "health_missing_count": len(health_missing),
+                "broad_missing_count": len(missing),
+                "health_missing_count": len(broad_health_missing),
                 "stale_count": len(stale),
+                "broad_stale_count": len(stale),
+                "demanded_count": len(demanded_states),
+                "demanded_missing_count": len(demanded_missing),
+                "demanded_stale_count": len(demanded_stale),
                 "missing_samples": [feed.to_dict(now) for feed in missing[: self.sample_limit]],
-                "health_missing_samples": [feed.to_dict(now) for feed in health_missing[: self.sample_limit]],
+                "health_missing_samples": [
+                    feed.to_dict(now) for feed in broad_health_missing[: self.sample_limit]
+                ],
+                "demanded_missing_samples": [feed.to_dict(now) for feed in demanded_missing[: self.sample_limit]],
+                "demanded_stale_samples": [feed.to_dict(now) for feed in demanded_stale[: self.sample_limit]],
                 "stale_samples": [feed.to_dict(now) for feed in stale[: self.sample_limit]],
             },
         }
