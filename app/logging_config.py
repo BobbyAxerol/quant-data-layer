@@ -22,7 +22,8 @@ def setup_logging(logs_dir: str = "/app/logs") -> logging.Logger:
     
     # Get root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    root_logger.setLevel(log_level)
     
     # Remove existing handlers to avoid duplicates
     for handler in root_logger.handlers[:]:
@@ -38,8 +39,8 @@ def setup_logging(logs_dir: str = "/app/logs") -> logging.Logger:
     log_file = os.path.join(logs_dir, "app.log")
     file_handler = logging.handlers.RotatingFileHandler(
         log_file,
-        maxBytes=10_000_000,  # 10MB per file
-        backupCount=5         # Keep 5 rotated backups
+        maxBytes=max(1, int(os.getenv("LOG_FILE_MAX_BYTES", "10000000"))),
+        backupCount=max(1, int(os.getenv("LOG_FILE_BACKUP_COUNT", "5"))),
     )
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
@@ -49,6 +50,6 @@ def setup_logging(logs_dir: str = "/app/logs") -> logging.Logger:
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
     
-    root_logger.info(f"Logging initialized. Logs: {log_file}")
+    root_logger.info("Logging initialized. Logs: %s", log_file)
     
     return root_logger
