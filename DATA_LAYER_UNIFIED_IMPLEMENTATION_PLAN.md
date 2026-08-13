@@ -388,6 +388,9 @@ Run high-throughput ingestion and canonical projection with explicit shard owner
 - Running `data_layer_service` and `redis_marketdata` stayed on their existing
   images with restart count `0`; `/v1/health` remained `ok`. No production
   Redis, PostgreSQL, Parquet, route, namespace or authority flag changed.
+- Cleanup left no Phase 3 test container/network, removed the disposable Python
+  test image and `709 MB` Cargo target cache, and retained only the frozen Rust
+  evidence image. Existing logs, volumes and running services were untouched.
 
 ### Technical Debt / Decision Gate
 

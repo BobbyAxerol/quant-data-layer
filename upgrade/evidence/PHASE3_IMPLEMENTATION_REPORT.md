@@ -52,6 +52,7 @@ that a live provider works.
 | Burst/restart | 20,000/20,000 retained/replayed across 80 partitions; 0 queue rejects |
 | Sustained | 500.70 events/s for 5,000 events; p95/p99 157.09/163.60 ms; 0 rejects |
 | Runtime isolation | existing Data Layer and Redis restart count remained 0; V1 health `ok` |
+| Cleanup | no Phase 3 test container/network; disposable test image and 709 MB Cargo cache removed; frozen Rust image retained |
 
 The bounded real-provider result contains `20` raw/canonical durable records:
 one Binance trade, one BBO, one closed REST bar, one OKX trade, one OKX book
