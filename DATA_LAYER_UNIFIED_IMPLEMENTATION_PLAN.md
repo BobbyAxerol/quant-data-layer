@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-3 complete on the feature branch in dark/shadow mode; no runtime cutover has started.
+> **Status:** Phases 0-4 complete on the feature branch in dark/shadow mode; no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -61,7 +61,7 @@ These rules apply to all seven phases.
 | 1 | Canonical contracts, identity and runtime boundaries | Stable venue-neutral domain plus separately scalable Python roles | `COMPLETE (DARK)` |
 | 2 | Durability contract, bridge and Rust foundation | Replayable transport boundary and deterministic cross-language core without premature broker cutover | `COMPLETE (DARK)` |
 | 3 | Scalable ingestion and compatibility projection | Demand-driven Rust hot path with legacy V1/Redis parity | `COMPLETE (FROZEN SHADOW)` |
-| 4 | Quality, history, replay and gap-free handoff | Certified data products from warmup through live recovery | `PLANNED` |
+| 4 | Quality, history, replay and gap-free handoff | Certified data products from warmup through live recovery | `COMPLETE (FROZEN SHADOW)` |
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `PLANNED` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `PLANNED` |
 
@@ -423,7 +423,7 @@ Run high-throughput ingestion and canonical projection with explicit shard owner
 
 ## 8. Phase 4 - Quality, History, Replay And Gap-Free Handoff
 
-**Status:** `IN_PROGRESS`
+**Status:** `COMPLETE (FROZEN SHADOW)`
 
 ### Goal
 
@@ -511,11 +511,29 @@ Produce auditable, replayable and revision-aware data from raw ingestion through
   Durable replay performance over 10,000 events passed all gates: 1,547.52
   append events/s, 8,538.58 replay events/s, 60.39 ms append p99 and 2.07x
   disk amplification. See `upgrade/evidence/phase4-replay-performance.json`.
+- Final verification passed 36/36 focused Phase 4 tests and the full Python/V1
+  regression (213 run, five expected environment skips). PostgreSQL migrations
+  passed on a clean database, an existing database and a second idempotent
+  apply while preserving legacy data (16 `qdl_*` tables and three lease
+  functions). Rust fmt/Clippy `-D warnings`/11 tests, Buf format/lint/breaking/
+  generated-code diff, and Redis AOF restart/rebuild checks also passed.
+- Production compatibility remained read-only: the running V1 container kept
+  restart count zero and health, VN preload and Binance USD-M OHLCV endpoints
+  returned HTTP 200. No production Redis, PostgreSQL, Parquet or authority
+  state was modified. The implementation report and machine-readable freeze
+  are `upgrade/evidence/PHASE4_IMPLEMENTATION_REPORT.md` and
+  `upgrade/evidence/phase4-freeze.json`.
 
 ### Technical Debt / Decision Gate
 
 - Object-store/catalog deployment and retention cost require approval before production provisioning; local MinIO/catalog remains a test implementation only.
 - Provider licensing constraints must be recorded before raw retention is enabled for a new source.
+- Production HMAC key custody/rotation, externally exposed handoff endpoints and
+  per-dataset authority promotion remain Phase 5/6 gates; test keys and local
+  catalog boundaries are not production credentials or a cutover claim.
+- OKX open interest remains a truthful point-in-time snapshot. Historical OI
+  coverage requires a separately certified provider capability and must never
+  be inferred from the current endpoint.
 
 ### Rollback
 

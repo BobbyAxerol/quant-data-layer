@@ -1,0 +1,55 @@
+{
+  "schema": "qdl.phase4.freeze.v1",
+  "status": "PASS",
+  "phase": 4,
+  "frozen_at": "2026-08-13T11:48:54Z",
+  "branch": "feat/fund-grade-data-layer-v2",
+  "code_head": "46669f401900ec4f6d1b8d5fd7f8fd95cfd174c3",
+  "code_commits": [
+    "b251b3e",
+    "632386f",
+    "9f559dd",
+    "a2a7943",
+    "38612f8",
+    "46669f4"
+  ],
+  "authority": "LEGACY_V1",
+  "mode": "FROZEN_SHADOW",
+  "production_writes": 0,
+  "runtime_restarts": 0,
+  "cleanup": {
+    "phase4_test_containers": 0,
+    "phase4_test_networks": 0,
+    "temporary_test_image_removed": true,
+    "cargo_artifacts_removed_reported": "520.3 MiB"
+  },
+  "verification": {
+    "phase4_tests": 36,
+    "phase4_failures": 0,
+    "full_python_tests": 213,
+    "full_python_expected_skips": 5,
+    "postgres_qdl_tables": 16,
+    "postgres_lease_functions": 3,
+    "rust_tests": 11,
+    "redis_integration_tests": 3,
+    "v1_read_only_http_200": 3,
+    "real_okx_status": "PASS",
+    "real_dnse_status": "PASS",
+    "vn_shadow_migration_status": "PASS",
+    "replay_benchmark_status": "PASS"
+  },
+  "evidence": [
+    "PHASE4_IMPLEMENTATION_REPORT.md",
+    "phase4-vn-shadow-migration.json",
+    "phase4-okx-real-history.json",
+    "phase4-dnse-provider-coverage.json",
+    "phase4-replay-performance.json"
+  ],
+  "remaining_decision_gates": [
+    "production object-store/catalog provisioning and retention cost",
+    "provider licensing approval for raw retention",
+    "production HMAC key custody and endpoint exposure",
+    "governed per-dataset authority promotion",
+    "separately certified historical OI capability"
+  ]
+}
