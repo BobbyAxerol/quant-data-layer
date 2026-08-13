@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.api.context import DataLayerContext, get_context
@@ -44,16 +44,29 @@ def _is_vn_session_open(now: datetime) -> bool:
 
 
 @router.get("/runtime-roles")
-async def runtime_roles():
+async def runtime_roles(request: Request):
+    manifest = getattr(request.app.state, "runtime_manifest", None)
+    if manifest is not None:
+        return {
+            "current_container_role": manifest["role"],
+            "target_roles": ["api", "control", "history", "compat_combined"],
+            "separable_in_compose": True,
+            "runtime": manifest,
+            "notes": [
+                "Phase 1 separated roles are dark and do not own live ingestion.",
+                "app.main:app remains the V1 authoritative compatibility runtime.",
+            ],
+        }
     return {
-        "current_container_role": "combined_api_ingestion_history",
-        "target_roles": ["api", "ingestion", "history", "diagnostics"],
-        "separable_in_compose": False,
+        "current_container_role": "compat_combined",
+        "target_roles": ["api", "control", "history", "compat_combined"],
+        "separable_in_compose": True,
         "notes": [
-            "Phase 3 exposes route/module boundaries first.",
-            "Docker role split should happen after route contracts are stable.",
+            "Current V1 combined process remains authoritative.",
+            "Phase 1 role entrypoints are deployable only in dark validation mode.",
         ],
     }
+
 
 
 @router.get("/universe/configured")

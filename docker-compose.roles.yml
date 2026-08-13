@@ -1,0 +1,40 @@
+services:
+  qdl_api_phase1:
+    image: data-layer:phase1-test
+    profiles: ["phase1-roles"]
+    command: ["uvicorn", "app.entrypoints.api:app", "--host", "0.0.0.0", "--port", "8100"]
+    environment:
+      - QDL_RUNTIME_ROLE=api
+      - QDL_OWNS_LIVE_INGESTION=false
+      - QDL_CONFIG_REVISION=phase1-dark-0
+      - REDIS_HOST=redis_marketdata
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    networks: [bobby_network, executor_network]
+
+  qdl_control_phase1:
+    image: data-layer:phase1-test
+    profiles: ["phase1-roles"]
+    command: ["uvicorn", "app.entrypoints.control:app", "--host", "0.0.0.0", "--port", "8101"]
+    environment:
+      - QDL_RUNTIME_ROLE=control
+      - QDL_OWNS_LIVE_INGESTION=false
+      - QDL_CONFIG_REVISION=phase1-dark-0
+      - REDIS_HOST=redis_marketdata
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    networks: [bobby_network, executor_network]
+
+  qdl_history_phase1:
+    image: data-layer:phase1-test
+    profiles: ["phase1-roles"]
+    command: ["uvicorn", "app.entrypoints.history:app", "--host", "0.0.0.0", "--port", "8102"]
+    environment:
+      - QDL_RUNTIME_ROLE=history
+      - QDL_OWNS_LIVE_INGESTION=false
+      - QDL_CONFIG_REVISION=phase1-dark-0
+      - REDIS_HOST=redis_marketdata
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    networks: [bobby_network, executor_network]
+
