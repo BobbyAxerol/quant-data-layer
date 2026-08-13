@@ -463,6 +463,17 @@ Produce auditable, replayable and revision-aware data from raw ingestion through
 - Production V1, Redis, PostgreSQL and existing VN Parquet remain read-only for
   this phase. All new catalog/object-store resources use isolated shadow paths;
   no object-store or historical authority cutover is approved here.
+- History shadow slice implemented: exact-decimal revision-aware bars,
+  session/DST-aware OHLCV aggregation, immutable ZSTD Parquet snapshots,
+  conditional atomic catalog heads, S3-compatible and PyIceberg boundaries,
+  plus crash/concurrent-writer tests. The real VN migration canonicalizes the
+  mixed legacy UTC/VN-naive 1m file, deduplicates only exact OHLCV duplicates
+  with full source lineage, fails closed on conflicting revisions, and derives
+  all larger intervals from canonical 1m without fabricating bars.
+- Real read-only VN evidence: 28,196 legacy rows -> 27,955 canonical 1m rows;
+  241 exact duplicate groups, zero conflicting revisions, zero fabricated rows;
+  all seven interval snapshots round-trip from isolated shadow storage. See
+  `upgrade/evidence/phase4-vn-shadow-migration.json`.
 
 ### Technical Debt / Decision Gate
 
