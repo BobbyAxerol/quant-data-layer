@@ -271,6 +271,14 @@ class SQLiteDurableSpool:
             ).fetchall()
         return [self._stored_event(row) for row in rows]
 
+    def find_event(self, *, stream: str, event_id: bytes) -> StoredEvent | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM events WHERE stream = ? AND event_id = ?",
+                (stream, event_id),
+            ).fetchone()
+        return self._stored_event(row) if row is not None else None
+
     def register_consumer(
         self,
         *,
@@ -489,7 +497,7 @@ class SQLiteDurableSpool:
         self._connection.execute(
             """
             DELETE FROM events
-            WHERE accepted_at_ns < ?
+            WHERE committed_at_ns < ?
               AND NOT EXISTS (
                   SELECT 1 FROM consumer_checkpoints c
                   WHERE c.stream = events.stream

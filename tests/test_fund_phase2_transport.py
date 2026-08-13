@@ -162,5 +162,33 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             self.assertEqual(quarantine_id, 1)
 
 
+class DurablePublisherTests(unittest.TestCase):
+    def test_transient_failure_marks_degraded_then_recovers_after_commit(self):
+        class FlakySink:
+            attempts = 0
+
+            def append(self, durable_event):
+                self.attempts += 1
+                if self.attempts < 3:
+                    raise OSError("broker unavailable")
+                return type(
+                    "Result",
+                    (),
+                    {
+                        "cursor": Cursor(
+                            durable_event.stream, durable_event.partition_key, 1
+                        ),
+                        "duplicate": False,
+                    },
+                )()
+
+        sleeps = []
+        publisher = DurablePublisher(FlakySink(), sleep=sleeps.append)
+        result = publisher.publish(event(1))
+        self.assertEqual(result.cursor.offset, 1)
+        self.assertEqual(publisher.status.state, PublisherState.LIVE)
+        self.assertEqual(len(sleeps), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -20,12 +20,14 @@ from qdl.transport import SQLiteDurableSpool, SpoolConfig
 BINANCE_RAW = {
     "E": 1_786_352_400_124,
     "T": 1_786_352_400_123,
+    "X": "MARKET",
     "a": 9_876_543_210_123_456_789,
     "e": "aggTrade",
     "m": False,
     "p": "61234.10",
     "q": "0.125",
     "s": "BTCUSDT",
+    "st": 1_786_352_400_122,
 }
 
 
@@ -120,7 +122,11 @@ class ShadowPipelineTests(unittest.TestCase):
     def canonicalizer(self, raw_event):
         raw = json.loads(raw_event.payload)
         envelope = canonicalize_binance_usdm_trade(raw, self.context)
-        return canonical_event(envelope, accepted_at_ns=self.context.normalized_at_ns)
+        return canonical_event(
+            envelope,
+            accepted_at_ns=self.context.normalized_at_ns,
+            raw_event=raw_event,
+        )
 
     def test_crash_after_raw_commit_is_recovered_without_duplicate(self):
         raw = raw_trade_event(
@@ -164,7 +170,14 @@ class ShadowPipelineTests(unittest.TestCase):
             partition_key=canonical_result.cursor.partition_key,
         )
         target = InMemoryProjectionTarget()
-        projector = TradeProjector(target)
+        projector = TradeProjector(
+            target,
+            raw_resolver=lambda stream, event_id: (
+                found.event.payload
+                if (found := self.spool.find_event(stream=stream, event_id=event_id))
+                else None
+            ),
+        )
         self.assertTrue(projector.project(rows[0]))
         first_checksum = target.checksum()
         self.assertFalse(projector.project(rows[0]))
@@ -175,6 +188,21 @@ class ShadowPipelineTests(unittest.TestCase):
         parsed = json.loads(legacy)
         self.assertEqual(parsed["price"], 61234.1)
         self.assertEqual(parsed["raw"]["p"], "61234.10")
+        self.assertEqual(parsed["raw"]["X"], "MARKET")
+        self.assertEqual(parsed["provider"], "binance")
+        self.assertEqual(parsed["source"], "binance_usdm_trade")
+
+    def test_legacy_projection_fails_closed_without_durable_raw_reference(self):
+        envelope = canonicalize_binance_usdm_trade(BINANCE_RAW, self.context)
+        canonical = canonical_event(
+            envelope, accepted_at_ns=self.context.normalized_at_ns
+        )
+        result = self.spool.append(canonical)
+        stored = self.spool.read(
+            stream=canonical.stream, partition_key=result.cursor.partition_key
+        )[0]
+        with self.assertRaisesRegex(ValueError, "raw-event reference"):
+            TradeProjector(InMemoryProjectionTarget()).project(stored)
 
 
 if __name__ == "__main__":

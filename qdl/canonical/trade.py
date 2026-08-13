@@ -171,9 +171,20 @@ def canonicalize_okx_trade(
 
 
 def canonical_event(
-    envelope: market_data_pb2.EventEnvelope, *, accepted_at_ns: int
+    envelope: market_data_pb2.EventEnvelope,
+    *,
+    accepted_at_ns: int,
+    raw_event: DurableEvent | None = None,
 ) -> DurableEvent:
     feed_type = envelope.WhichOneof("payload") or "unknown"
+    headers = {
+        "adapter_version": envelope.adapter_version,
+        "normalizer_version": envelope.normalizer_version,
+        "schema": f"{envelope.schema_name}/{envelope.schema_major}",
+    }
+    if raw_event is not None:
+        headers["raw_event_id"] = raw_event.event_id.hex()
+        headers["raw_stream"] = raw_event.stream
     return DurableEvent(
         stream=f"md.canonical.v2.{feed_type}",
         partition_key=partition_key(
@@ -184,11 +195,7 @@ def canonical_event(
         event_id=bytes(envelope.event_id),
         payload=envelope.SerializeToString(deterministic=True),
         accepted_at_ns=accepted_at_ns,
-        headers={
-            "adapter_version": envelope.adapter_version,
-            "normalizer_version": envelope.normalizer_version,
-            "schema": f"{envelope.schema_name}/{envelope.schema_major}",
-        },
+        headers=headers,
     )
 
 

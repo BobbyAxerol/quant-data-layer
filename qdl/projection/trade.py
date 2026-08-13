@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Protocol
 
 from qdl.common.v1 import common_pb2
@@ -57,9 +58,16 @@ class InMemoryProjectionTarget:
 
 
 class TradeProjector:
-    def __init__(self, target: ProjectionTarget, *, namespace: str = "shadow:qdl:v2"):
+    def __init__(
+        self,
+        target: ProjectionTarget,
+        *,
+        namespace: str = "shadow:qdl:v2",
+        raw_resolver: Callable[[str, bytes], bytes | None] | None = None,
+    ):
         self._target = target
         self._namespace = namespace.rstrip(":")
+        self._raw_resolver = raw_resolver
 
     def project(self, stored: StoredEvent) -> bool:
         envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
@@ -70,27 +78,18 @@ class TradeProjector:
         source_event_ms = envelope.source_event_time_ns // 1_000_000
         buyer_maker = trade.aggressor_side == common_pb2.AGGRESSOR_SIDE_SELL
         native_id = int(trade.native_trade_id) if trade.native_trade_id.isdigit() else 0
-        raw = {
-            "E": source_event_ms,
-            "T": source_event_ms,
-            "e": "aggTrade",
-            "m": buyer_maker,
-            "p": _decimal_text(trade.price),
-            "q": _decimal_text(trade.quantity),
-            "s": envelope.native_symbol,
-            "t": native_id,
-        }
+        raw = self._resolve_raw(stored)
         legacy = {
             "authoritative": True,
             "event_time": source_event_ms,
             "is_live": True,
             "market": market,
             "price": float(_decimal_text(trade.price)),
-            "provider": envelope.provider.lower(),
+            "provider": _legacy_provider(envelope.venue),
             "quantity": float(_decimal_text(trade.quantity)),
             "raw": raw,
             "side": "buy" if not buyer_maker else "sell",
-            "source": envelope.source_id,
+            "source": _legacy_source(envelope.venue, envelope.market),
             "symbol": envelope.native_symbol,
             "trade_id": native_id,
             "trade_time": source_event_ms,
@@ -117,6 +116,22 @@ class TradeProjector:
             )
         )
 
+    def _resolve_raw(self, stored: StoredEvent) -> dict:
+        raw_stream = stored.event.headers.get("raw_stream")
+        raw_event_hex = stored.event.headers.get("raw_event_id")
+        if not raw_stream or not raw_event_hex or self._raw_resolver is None:
+            raise ValueError("V1 projection requires a durable raw-event reference")
+        try:
+            payload = self._raw_resolver(raw_stream, bytes.fromhex(raw_event_hex))
+        except ValueError as exc:
+            raise ValueError("invalid raw-event reference") from exc
+        if payload is None:
+            raise ValueError("referenced durable raw event is unavailable")
+        decoded = json.loads(payload)
+        if not isinstance(decoded, dict):
+            raise ValueError("referenced raw event is not an object")
+        return decoded
+
 
 def _legacy_market(venue: str, market: str) -> str:
     identity = (venue.upper(), market.upper())
@@ -130,3 +145,17 @@ def _legacy_market(venue: str, market: str) -> str:
         return aliases[identity]
     except KeyError as exc:
         raise ValueError(f"no frozen V1 trade projection for {identity}") from exc
+
+
+def _legacy_provider(venue: str) -> str:
+    providers = {"BINANCE": "binance", "OKX": "okx"}
+    try:
+        return providers[venue.upper()]
+    except KeyError as exc:
+        raise ValueError(f"no frozen V1 provider mapping for {venue}") from exc
+
+
+def _legacy_source(venue: str, market: str) -> str:
+    return _legacy_market(venue, market).replace("_swap", "_trade") + (
+        "_trade" if venue.upper() == "BINANCE" else ""
+    )
