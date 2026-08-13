@@ -4803,6 +4803,14 @@ activation remains capability/profile-specific certification.
 - Keep capability/status/subscription reconciliation under authenticated internal control-plane routes.
 - Migrate only declared consumers; preserve `/v1/crypto/ohlcv/okx/...`, SDK V1 and legacy Redis shape/source semantics until their governed sunset.
 
+Implementation status (2026-08-13): complete in frozen shadow mode. OKX is
+addressed through canonical `instrument_uid` in REST/gRPC V2, and the certified
+reference alpha consumes a manifest-driven warmup/stream handoff without an
+OKX-specific public route or direct venue connection. A bounded read-only real
+provider smoke returned five authentic `BTC-USDT-SWAP` bars with no cache or
+storage write. V1 remains authoritative; production profile/security/cutover
+certification remains Phase 6.
+
 <a id="okx-program-phase-6"></a>
 
 #### OKX workstream for program Phase 6

@@ -4861,6 +4861,14 @@ additional public values: `INVALID_REQUEST -> INVALID_ARGUMENT`,
 
 Sections `17-19`, `24-25`, `32`, roadmaps `P2/P3` and Epics `E10-E13`: stable V2 APIs, SDK, consumer requirements, observability and compatibility migration.
 
+Implementation status (2026-08-13): complete and frozen in shadow mode. REST
+and gRPC expose provider-neutral contracts; opaque signed cursors hide transport
+topology; SDK V2 enforces requirement policy and deterministic recovery; and one
+OKX reference alpha plus one Binance execution consumer are shadow-certified.
+V1 remains authoritative and no consumer is active. Results and Phase 6
+activation boundaries are recorded in
+[`PHASE5_V2_API_SDK_MIGRATION_REPORT.md`](evidence/PHASE5_V2_API_SDK_MIGRATION_REPORT.md).
+
 <a id="implementation-phase-6"></a>
 
 ### D.7 Phase 6 detailed references

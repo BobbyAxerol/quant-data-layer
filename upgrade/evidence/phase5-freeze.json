@@ -1,0 +1,37 @@
+{
+  "authority": "V1_UNCHANGED",
+  "branch": "feat/fund-grade-data-layer-v2",
+  "certified_at_utc": "2026-08-13T14:42:17Z",
+  "cleanup": {
+    "disposable_postgres_removed": true,
+    "disposable_redis_dbsize": 0,
+    "disposable_redis_removed": true,
+    "production_state_modified": false,
+    "rust_target_persisted_on_host": false
+  },
+  "consumers": {
+    "active": 0,
+    "shadow_certified": [
+      "alpha-okx-reference",
+      "trading-system-binance-execution"
+    ]
+  },
+  "implementation_head": "f234006",
+  "phase": 5,
+  "schema": "qdl.phase-freeze.v1",
+  "status": "PASS",
+  "verification": {
+    "buf_breaking": "PASS",
+    "dependency_vulnerabilities": 0,
+    "focused_tests": 27,
+    "full_python_expected_skips": 5,
+    "full_python_tests": 251,
+    "load_p99_ms": 444.088,
+    "load_requests_per_second": 317.45,
+    "postgres_qdl_tables": 20,
+    "production_writes": 0,
+    "real_provider_smoke": "PASS",
+    "redis_rebuild_tests": 3,
+    "rust_tests": 11
+  }
+}

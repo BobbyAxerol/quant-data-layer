@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-4 and Pre-Phase 5 readiness closure are complete on the feature branch in dark/shadow mode; no runtime cutover has started.
+> **Status:** Phases 0-5, including Pre-Phase 5 readiness closure, are complete on the feature branch in dark/shadow mode; no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -63,7 +63,7 @@ These rules apply to all seven phases.
 | 3 | Scalable ingestion and compatibility projection | Demand-driven Rust hot path with legacy V1/Redis parity | `COMPLETE (FROZEN SHADOW)` |
 | 4 | Quality, history, replay and gap-free handoff | Certified data products from warmup through live recovery | `COMPLETE (FROZEN SHADOW)` |
 | 4.5 | V2 readiness and debt closure | Freeze query semantics and remove correctness/security ambiguity before endpoint work | `COMPLETE (FROZEN DARK)` |
-| 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `PLANNED` |
+| 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `COMPLETE (FROZEN SHADOW)` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `PLANNED` |
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
@@ -663,7 +663,7 @@ not new domain behavior.
 
 ## 9. Phase 5 - V2 API, SDK And Controlled Consumer Migration
 
-**Status:** `IN_PROGRESS`
+**Status:** `COMPLETE (FROZEN SHADOW)`
 
 ### Goal
 
@@ -714,10 +714,51 @@ Expose provider-neutral V2 snapshot/query/stream contracts and migrate consumers
 - REST/query/consumer focused certification passed `20/20`; disposable
   PostgreSQL clean/existing/idempotent migration passed with `20` QDL tables,
   three lease functions and preserved legacy rows. No production DB was used.
+- Added signed opaque cursor scope resolution so SDK consumers never provide or
+  learn internal stream/partition topology. Removed topology fields reserve their
+  Protobuf numbers/names, preserving wire safety rather than reusing tags.
+- Added gRPC `REPLAYING`, `LIVE` and `RATE_LIMITED` controls, durable-first
+  fanout, duplicate suppression, bounded buffers and isolated slow-consumer
+  disconnect. SDK recovery covers explicit acknowledge, restored-state resume,
+  cursor expiry snapshot replacement, transient reconnect and monotonic offsets.
+- Completed async/sync SDK query wrappers and strict source-policy, entitlement,
+  freshness, coverage, final-bar, revision, gap and execution-authority checks
+  on both server and client boundaries. Direct REST and SDK clients now preserve
+  all declared `DataRequirement` policy fields.
+- Certified an OKX reference alpha and Binance execution-grade Trading System
+  shadow consumer without direct venue connections. Reference fallback is
+  visible to alpha-grade policy and rejected for execution-grade use.
+- Froze CI/Make targets for OpenAPI/Buf/codegen, Phase 5 tests, dependency audit,
+  migrations, Redis rebuild, load and bounded real-provider smoke. Full results
+  are in
+  [`PHASE5_V2_API_SDK_MIGRATION_REPORT.md`](upgrade/evidence/PHASE5_V2_API_SDK_MIGRATION_REPORT.md).
+
+### Verification
+
+- Phase 5 focused suite: `27/27` pass. Full Python/V1 regression: `251`
+  executed, `246` pass and `5` expected environment skips.
+- Buf format/lint/breaking/codegen and frozen OpenAPI gates pass. Rust format,
+  Clippy `-D warnings` and `11/11` tests pass. Dependency audit reports zero
+  known vulnerabilities.
+- PostgreSQL clean/existing/idempotent migration preserves legacy data; Redis
+  AOF restart/rebuild passes `3/3` with identical checksum and test DB cleanup.
+- Eight independent API replicas served 2,000 requests at concurrency 100:
+  `317.45 req/s`, p50 `266.942 ms`, p99 `444.088 ms`, zero venue connections and
+  zero ingestion owners. An earlier p99 failure exposed sync thread-pool cost;
+  async query handlers fixed it before freeze.
+- Read-only real-provider smoke passed Binance USD-M canonical value parity and
+  returned five authentic OKX swap bars with `production_writes=0`. Running V1
+  health remained `ok`; no service restart, authority switch or consumer
+  activation occurred.
 
 ### Technical Debt / Decision Gate
 
-- No consumer is forced to migrate without owner acceptance. Sunset dates are a separate governed decision based on telemetry.
+- No unresolved Phase 5 P0/P1 defect remains. No consumer is forced to migrate
+  without owner acceptance; sunset dates remain a governed telemetry decision.
+- Production HA broker/object store, external AuthN/AuthZ/TLS, secret-manager
+  custody, OpenTelemetry SLO operations and per-feed authority promotion are
+  Phase 6 certification/activation gates. Phase 5 does not represent local
+  shadow durability or test credentials as production infrastructure.
 
 ### Rollback
 
