@@ -1,0 +1,17 @@
+{
+  "achieved_events_per_second": 500.69971553641903,
+  "durable_latency_p95_ms": 157.088854,
+  "durable_latency_p99_ms": 163.598547,
+  "elapsed_seconds": 9.986025245976634,
+  "events": 5000,
+  "partitions": 80,
+  "peak_traced_memory_bytes": 335239,
+  "provenance": "TEST_SYNTHETIC_LOAD",
+  "queue_high_watermark": 50,
+  "queue_rejected": 0,
+  "records_after_restart": 5000,
+  "records_before_restart": 5000,
+  "schema": "qdl.phase3.sustained-load.v1",
+  "status": "PASS",
+  "target_events_per_second": 500
+}

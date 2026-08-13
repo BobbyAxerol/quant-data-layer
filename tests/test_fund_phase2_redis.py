@@ -15,6 +15,11 @@ from qdl.canonical.trade import (
     raw_trade_event,
 )
 from qdl.projection import RedisProjectionTarget, TradeProjector
+from qdl.projection.authority import (
+    Authority,
+    AuthorityProjectionRouter,
+    FeedAuthorityRegistry,
+)
 from qdl.projection.trade import ProjectionRecord
 from qdl.transport import SQLiteDurableSpool, SpoolConfig
 
@@ -103,6 +108,52 @@ class RedisReplayIntegrationTests(unittest.TestCase):
         self.assertTrue(target.apply(fresh))
         self.assertFalse(target.apply(stale))
         self.assertEqual(self.redis.get("shadow:qdl:v2:latest:test"), b"fresh")
+
+    def test_feed_authority_switch_and_rollback_use_isolated_targets_without_restart(self):
+        connection = redis.Redis.from_url(REDIS_URL).connection_pool.connection_kwargs
+        shadow = redis.Redis(
+            host=connection["host"], port=connection["port"], db=14,
+            decode_responses=False,
+        )
+        shadow.flushdb()
+        self.addCleanup(shadow.flushdb)
+        registry = FeedAuthorityRegistry()
+        router = AuthorityProjectionRouter(
+            registry,
+            shadow_target=RedisProjectionTarget(shadow),
+            authoritative_target=RedisProjectionTarget(self.redis),
+        )
+        feed = "BINANCE:USDM:trade:BTCUSDT"
+
+        def record(offset: int, epoch: int = 5) -> ProjectionRecord:
+            return ProjectionRecord(
+                feed_key=feed,
+                partition_key="partition",
+                offset=offset,
+                event_id_hex=str(offset),
+                canonical_key="shadow:qdl:v2:latest:authority-test",
+                canonical_payload=str(offset).encode(),
+                legacy_items=(),
+                shard_id="shard",
+                lease_epoch=epoch,
+            )
+
+        self.assertTrue(router.apply(record(1)))
+        self.assertEqual(shadow.get("shadow:qdl:v2:latest:authority-test"), b"1")
+        self.assertIsNone(self.redis.get("shadow:qdl:v2:latest:authority-test"))
+
+        registry.set(feed, Authority.CANONICAL)
+        self.assertTrue(router.apply(record(2)))
+        self.assertEqual(self.redis.get("shadow:qdl:v2:latest:authority-test"), b"2")
+
+        self.assertFalse(router.apply(record(3, epoch=4)))
+        self.assertEqual(self.redis.get("shadow:qdl:v2:latest:authority-test"), b"2")
+
+        registry.set(feed, Authority.LEGACY)
+        self.assertFalse(router.apply(record(4)))
+        registry.set(feed, Authority.SHADOW)
+        self.assertTrue(router.apply(record(5)))
+        self.assertEqual(shadow.get("shadow:qdl:v2:latest:authority-test"), b"5")
 
 
 if __name__ == "__main__":

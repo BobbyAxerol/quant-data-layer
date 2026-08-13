@@ -1,7 +1,7 @@
 {
   "accepted": 20000,
   "events": 20000,
-  "events_per_second": 1436.6384481672028,
+  "events_per_second": 1343.030083957862,
   "partitions": 80,
   "peak_traced_memory_bytes": 1965064,
   "provenance": "TEST_SYNTHETIC_LOAD",
