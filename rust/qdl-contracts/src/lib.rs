@@ -104,4 +104,3 @@ mod tests {
         assert_eq!(decoded.source_sequence, "9876543210123456789");
     }
 }
-

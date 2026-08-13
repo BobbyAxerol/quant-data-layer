@@ -1,0 +1,17 @@
+[
+  {"kind":"rest_envelope","expected_state":"SYNCING","expected_accepted":true},
+  {"kind":"connect","generation":1,"expected_state":"SYNCING","expected_accepted":true},
+  {"kind":"subscribe_ack","generation":1,"expected_state":"SYNCING","expected_accepted":true},
+  {"kind":"keepalive_ping","generation":1,"expected_state":"SYNCING","expected_accepted":true},
+  {"kind":"keepalive_pong","generation":1,"expected_state":"SYNCING","expected_accepted":true},
+  {"kind":"book","generation":1,"action":"update","prev_seq_id":0,"seq_id":1,"expected_state":"GAPPED","expected_accepted":false},
+  {"kind":"book","generation":1,"action":"snapshot","seq_id":100,"expected_state":"LIVE","expected_accepted":true},
+  {"kind":"book","generation":1,"action":"update","prev_seq_id":100,"seq_id":101,"expected_state":"LIVE","expected_accepted":true},
+  {"kind":"book","generation":1,"action":"update","prev_seq_id":105,"seq_id":106,"expected_state":"GAPPED","expected_accepted":false},
+  {"kind":"book","generation":1,"action":"snapshot","seq_id":200,"expected_state":"LIVE","expected_accepted":true},
+  {"kind":"book","generation":0,"action":"update","prev_seq_id":200,"seq_id":201,"expected_state":"LIVE","expected_accepted":false},
+  {"kind":"maintenance","generation":1,"expected_state":"DEGRADED","expected_accepted":true},
+  {"kind":"connect","generation":2,"expected_state":"SYNCING","expected_accepted":true},
+  {"kind":"book","generation":2,"action":"snapshot","seq_id":10,"expected_state":"LIVE","expected_accepted":true},
+  {"kind":"book","generation":2,"action":"update","prev_seq_id":10,"seq_id":5,"expected_state":"LIVE","expected_accepted":true}
+]

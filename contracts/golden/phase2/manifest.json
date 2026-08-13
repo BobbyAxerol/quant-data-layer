@@ -1,0 +1,17 @@
+{
+  "schema": "qdl.phase2.golden.v1",
+  "cases": [
+    {
+      "fixture": "binance_usdm_trade.json",
+      "golden": "binance-usdm-trade.bin",
+      "bytes": 435,
+      "sha256": "67942fef883171e1507371a6590c73145dab13aafa5399cc852453352e74b34c"
+    },
+    {
+      "fixture": "okx_trade.json",
+      "golden": "okx-swap-trade.bin",
+      "bytes": 409,
+      "sha256": "edcdde102151b0e213fa19ecf25ae0181b2843f7a0ed60a3858d045f158f0b21"
+    }
+  ]
+}
