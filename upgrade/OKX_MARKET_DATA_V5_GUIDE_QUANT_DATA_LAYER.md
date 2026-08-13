@@ -3755,6 +3755,12 @@ Minimum target design:
 - V2 consumer reconnects from durable cursor; V1 consumer recovers via warmup/latest-state contract.
 - Redis Streams, when used during migration, must declare max length, cursor expiry, memory budget and sunset criterion. It is not the long-term source of truth.
 
+Rollout order follows the platform durability stages:
+
+1. Build OKX event IDs, partition keys, cursor and replay behavior against a transport-neutral interface.
+2. Validate one demanded JSON feed on a dedicated bounded bridge; never write recovery streams into the current AOF-off `redis_marketdata` instance.
+3. Promote to Kafka-compatible topics only after measured replay/consumer/throughput/HA triggers pass. OKX adapter code and public V2 contract must remain unchanged across that promotion.
+
 Do not claim REST can reconstruct missed order-book deltas.
 
 ---

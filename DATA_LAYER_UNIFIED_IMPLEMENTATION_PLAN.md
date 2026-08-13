@@ -40,6 +40,10 @@ These rules apply to all seven phases.
 12. **Commit discipline.** Commit one coherent, tested implementation slice at a time with the configured BobbyAxerol identity. Do not bundle unrelated `symbols.json`, local data, logs or caches. Open PRs into `dev`; promote to `main` only through release gates.
 13. **New debt is governed.** Fix in-scope bugs during the phase. Stop and request direction only for a material architecture, infrastructure-cost, licensing, source-authority or public-contract decision.
 14. **Provider guides refine, not fork, the platform.** OKX `P0-P4` work follows the seven-phase mapping in its guide. Public V2 remains provider-neutral; provider routes are authenticated diagnostics/control-plane only. Provider docs and changelog are re-verified for every touched endpoint/channel and the verification date is recorded.
+15. **Running consumers are protected by default.** Development, fixtures, load tests and shadow producers use isolated process/container names, ports, Redis prefixes, consumer groups, schemas and output paths. No phase may restart, reconfigure, flush, prune, overwrite or redirect the running producer/consumer path unless an approved cutover step explicitly names the blast radius and rollback.
+16. **Source changes require a coordinated release plan.** A new producer/source remains shadow until contract, domain parity, freshness, recovery and capacity gates pass. Authority changes use immutable artifacts and one versioned deployment manifest so every owner for the selected feed slice changes consistently; partial mixed ownership is prohibited. Consumer migration remains per declared manifest and does not require a big-bang V1 sunset.
+17. **Testing covers behavior, not only availability.** Each slice runs applicable unit, contract/golden, deterministic replay, domain-oracle, integration, failure/reconnect, compatibility, resource/capacity and bounded real-provider checks. Reports state cases run, exact results, untested cases and cleanup evidence. A healthy HTTP response alone is never phase acceptance.
+18. **Correctness, stability and scalability are release gates.** No optimization is promoted if it changes identity, units, timestamps, ordering, bar closure, source authority or legacy behavior without an approved versioned contract. No benchmark is accepted without zero unexplained loss/duplicate/gap and bounded CPU, memory, disk, queue and lag under measured load plus headroom.
 
 ## 3. Phase Summary
 
@@ -47,7 +51,7 @@ These rules apply to all seven phases.
 |---:|---|---|---|
 | 0 | Containment, inventory and measurable baseline | Freeze compatibility, stop unused cost and establish reproducible truth | `PLANNED` |
 | 1 | Canonical contracts, identity and runtime boundaries | Stable venue-neutral domain plus separately scalable Python roles | `PLANNED` |
-| 2 | Durable backbone and Rust foundation | Replayable raw/canonical log and deterministic cross-language core | `PLANNED` |
+| 2 | Durability contract, bridge and Rust foundation | Replayable transport boundary and deterministic cross-language core without premature broker cutover | `PLANNED` |
 | 3 | Scalable ingestion and compatibility projection | Demand-driven Rust hot path with legacy V1/Redis parity | `PLANNED` |
 | 4 | Quality, history, replay and gap-free handoff | Certified data products from warmup through live recovery | `PLANNED` |
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `PLANNED` |
@@ -147,13 +151,13 @@ Define one precise, venue-neutral data domain and split the combined process int
 
 - New roles and schemas remain dark. Existing combined runtime stays authoritative until a later per-feed cutover.
 
-## 6. Phase 2 - Durable Backbone And Rust Foundation
+## 6. Phase 2 - Durability Contract, Bridge And Rust Foundation
 
 **Status:** `PLANNED`
 
 ### Goal
 
-Introduce a replayable raw/canonical event backbone and a deterministic Rust data-plane foundation without making Rust or the new broker authoritative.
+Introduce a transport-neutral replay contract, a bounded durable bridge and a deterministic Rust data-plane foundation without making Rust or a Kafka-compatible broker authoritative prematurely.
 
 ### Guide Index
 
@@ -162,8 +166,10 @@ Introduce a replayable raw/canonical event backbone and a deterministic Rust dat
 
 ### To Do
 
-- Select and document the Kafka-compatible implementation from measured capacity, operational burden, disk budget and recovery requirements. Keep producer/consumer contracts Kafka-compatible.
-- Provision isolated raw, canonical, quality and DLQ/quarantine topics with explicit partition keys, retention, replication, quotas and ACLs.
+- Define transport-neutral `EventSink`, `EventSource`, cursor/checkpoint, event-ID, retry and replay contracts before selecting infrastructure. Application and public contracts must not expose Redis- or Kafka-specific identifiers.
+- Implement a bounded bridge for the first isolated feed slice using a dedicated durable Redis Streams instance or local WAL/spool. It must have persistence, `noeviction`, strict memory/disk bounds, trimming, cursor-expiry behavior, monitoring and a tested cleanup/sunset path; the existing ephemeral `redis_marketdata` is forbidden for this role.
+- Measure bridge throughput, replay horizon, consumer-group count, lag, memory/disk amplification and operational recovery. Provision a Kafka-compatible broker only when the promotion gate demonstrates a real need; keep producer/consumer contracts Kafka-compatible from the start.
+- When the Kafka gate is approved, provision isolated raw, canonical, quality and DLQ/quarantine topics with explicit partition keys, retention, replication, quotas and ACLs. A single-node broker is a replay/durability step, not an HA claim.
 - Implement idempotent publication, deterministic event IDs, retry classification, bounded local spool and feed-state transition when durable commit is unavailable.
 - Create a Cargo workspace for contract types, decimal/time utilities, instrument identity, event IDs, adapter traits, broker client, telemetry and replay test tools.
 - Implement cross-language golden codecs/checksums and a deterministic venue simulator reusable by Python and Rust.
@@ -174,7 +180,7 @@ Introduce a replayable raw/canonical event backbone and a deterministic Rust dat
 
 ### Verification And Exit Gate
 
-- Broker restart/failover tests lose no acknowledged canonical events and do not expose non-idempotent duplicate state.
+- Restart/recovery tests for the selected bridge lose no acknowledged canonical events and do not expose non-idempotent duplicate state. If Kafka is promoted in this phase, broker restart/failover tests are additionally mandatory.
 - Same raw fixtures and config/normalizer revision produce identical canonical checksums across repeated replay and across Python/Rust reference implementations.
 - Slow/down broker tests prove spool bounds, backpressure and `DEGRADED/BLOCKED` semantics; no silent queue drop is allowed.
 - Redis flush/restart followed by replay rebuilds the same latest-state checksum and legacy projection fixture.
@@ -187,8 +193,8 @@ Introduce a replayable raw/canonical event backbone and a deterministic Rust dat
 
 ### Technical Debt / Decision Gate
 
-- Broker distribution and production topology require user approval if they add material memory/disk/operations cost.
-- Phase 2 must not silently substitute Redis Streams as the permanent canonical backbone.
+- Kafka promotion requires explicit approval after measured evidence shows at least one material trigger: multiple independent replay consumers, replay horizon beyond the bounded bridge, raw trade/book volume exceeding its safe budget, multi-node HA requirement, or unacceptable bridge lag/recovery time.
+- Until that gate passes, the dedicated bridge/local spool is transitional infrastructure with a declared limit and sunset path, not the canonical long-term target.
 
 ### Rollback
 

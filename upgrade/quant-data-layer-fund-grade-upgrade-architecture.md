@@ -474,6 +474,14 @@ Không chuyển chỉ vì “Rust nhanh hơn”.
 
 Target architecture dùng **Kafka protocol** làm stable infrastructure boundary. Production có thể chạy Apache Kafka hoặc một Kafka-compatible broker đã qua platform review, nhưng application code không dùng proprietary API.
 
+Việc triển khai theo ba stage để tránh thêm hạ tầng trước khi domain và load semantics được chứng minh:
+
+1. **Stage A — transport contract:** định nghĩa event ID, partition key, `EventSink`, `EventSource`, cursor/checkpoint, retry và replay độc lập implementation; sửa queue/drop/coalescing theo feed class.
+2. **Stage B — bounded durable bridge:** dùng dedicated Redis Streams có AOF/`noeviction`/bounded trim hoặc local WAL/spool cho một demanded feed slice. Không dùng `redis_marketdata` ephemeral hiện tại và không quảng bá bridge thành public contract.
+3. **Stage C — Kafka-compatible promotion:** chỉ provision/cutover khi benchmark và consumer inventory chứng minh replay horizon, consumer groups, raw trade/book throughput hoặc HA đã vượt safe envelope của bridge.
+
+Stage sequencing không thay target architecture. Nó làm cho correctness, replay contract và operational evidence tồn tại trước khi chọn broker. Single-node Kafka-compatible deployment chỉ chứng minh protocol/replay; HA production vẫn cần topology độc lập với failure domain hiện tại.
+
 Production baseline:
 
 ```text
@@ -493,6 +501,8 @@ Redis Streams có thể được dùng như **migration bridge** nếu chưa th�
 - Topic/transport abstraction phải giữ khả năng đổi sang Kafka.
 - Không lưu full long-retention market history trong Redis.
 - Chỉ dùng trong P0/P1 transition hoặc deployment nhỏ.
+- Chạy trên persistence/memory policy riêng; không chia sẻ `allkeys-lru`, AOF-off market-data cache.
+- Có promotion metrics: retained events/time, trim loss, consumer lag, replay recovery time, memory/disk amplification và operator recovery steps.
 
 ### 7.3 Redis target role
 
