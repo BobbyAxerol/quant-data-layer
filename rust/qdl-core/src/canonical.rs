@@ -1,6 +1,6 @@
 use prost::Message;
-use qdl_contracts::qdl::common::v1::{AggressorSide, SourceRole};
-use qdl_contracts::qdl::marketdata::v2::{event_envelope, EventEnvelope, Trade};
+use qdl_contracts::qdl::common::v1::{AggressorSide, BarOrigin, SourceRole};
+use qdl_contracts::qdl::marketdata::v2::{event_envelope, Bar, EventEnvelope, Quote, Trade};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -59,9 +59,124 @@ fn canonical_json(raw: &Value) -> Result<Vec<u8>, String> {
 pub fn canonicalize_trade(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
     match fixture.provider_kind.as_str() {
         "binance_usdm_agg_trade" => canonicalize_binance(fixture),
+        "binance_usdm_bbo" => canonicalize_binance_bbo(fixture),
+        "binance_usdm_bar" => canonicalize_binance_bar(fixture),
         "okx_trade" => canonicalize_okx(fixture),
         other => Err(format!("unsupported provider fixture: {other}")),
     }
+}
+
+fn base_envelope(
+    fixture: &TradeFixture,
+    feed: &str,
+    source_sequence: String,
+    source_event_time_ms: i64,
+) -> Result<EventEnvelope, String> {
+    let context = &fixture.context;
+    let raw_bytes = canonical_json(&fixture.raw)?;
+    let event_id = deterministic_event_id(
+        &[
+            b"2",
+            context.venue.as_bytes(),
+            context.market.as_bytes(),
+            context.instrument_uid.as_bytes(),
+            feed.as_bytes(),
+            context.source_id.as_bytes(),
+            source_sequence.as_bytes(),
+        ],
+        16,
+    )?;
+    Ok(EventEnvelope {
+        schema_name: format!("qdl.marketdata.{feed}"),
+        schema_major: 2,
+        schema_minor: 0,
+        event_id,
+        instrument_uid: context.instrument_uid.clone(),
+        instrument_id: context.instrument_id.clone(),
+        instrument_revision: context.instrument_revision,
+        venue: context.venue.clone(),
+        market: context.market.clone(),
+        product_type: context.product_type.clone(),
+        native_symbol: context.native_symbol.clone(),
+        provider: context.provider.clone(),
+        source_id: context.source_id.clone(),
+        source_role: SourceRole::Primary as i32,
+        lease_epoch: context.lease_epoch,
+        source_event_time_ns: source_event_time_ms * 1_000_000,
+        received_at_ns: context.received_at_ns,
+        normalized_at_ns: context.normalized_at_ns,
+        published_at_ns: context.published_at_ns,
+        source_sequence,
+        partition_sequence: context.partition_sequence,
+        normalizer_version: context.normalizer_version.clone(),
+        adapter_version: context.adapter_version.clone(),
+        quality_flags: vec![],
+        raw_payload_hash: Sha256::digest(raw_bytes).to_vec(),
+        correlation_id: context.correlation_id.clone(),
+        config_revision: context.config_revision,
+        payload: None,
+    })
+}
+
+fn verify_binance_symbol(fixture: &TradeFixture) -> Result<(), String> {
+    if text(&fixture.raw, "s")?.to_uppercase() != fixture.context.native_symbol.to_uppercase() {
+        return Err("provider symbol does not match resolved instrument".into());
+    }
+    Ok(())
+}
+
+fn canonicalize_binance_bbo(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
+    verify_binance_symbol(fixture)?;
+    let sequence = text(&fixture.raw, "u")?;
+    let source_time = fixture
+        .raw
+        .get("T")
+        .and_then(Value::as_i64)
+        .or_else(|| fixture.raw.get("E").and_then(Value::as_i64))
+        .ok_or_else(|| "required provider timestamp is missing".to_owned())?;
+    let mut envelope = base_envelope(fixture, "quote", sequence, source_time)?;
+    envelope.payload = Some(event_envelope::Payload::Quote(Quote {
+        bid_price: Some(parse_decimal(&text(&fixture.raw, "b")?)?),
+        bid_quantity: Some(parse_decimal(&text(&fixture.raw, "B")?)?),
+        ask_price: Some(parse_decimal(&text(&fixture.raw, "a")?)?),
+        ask_quantity: Some(parse_decimal(&text(&fixture.raw, "A")?)?),
+        level: 1,
+    }));
+    Ok(envelope)
+}
+
+fn canonicalize_binance_bar(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
+    verify_binance_symbol(fixture)?;
+    let kline = fixture
+        .raw
+        .get("k")
+        .ok_or_else(|| "Binance kline frame requires k object".to_owned())?;
+    if text(kline, "s")?.to_uppercase() != fixture.context.native_symbol.to_uppercase() {
+        return Err("provider kline symbol does not match resolved instrument".into());
+    }
+    let source_time = integer(&fixture.raw, "E")?;
+    let sequence = format!(
+        "{}:{}:{}",
+        text(kline, "t")?,
+        kline.get("L").and_then(Value::as_i64).unwrap_or(0),
+        source_time
+    );
+    let mut envelope = base_envelope(fixture, "bar", sequence, source_time)?;
+    envelope.payload = Some(event_envelope::Payload::Bar(Bar {
+        interval: text(kline, "i")?,
+        open_time_ns: integer(kline, "t")? * 1_000_000,
+        close_time_ns: integer(kline, "T")? * 1_000_000,
+        open: Some(parse_decimal(&text(kline, "o")?)?),
+        high: Some(parse_decimal(&text(kline, "h")?)?),
+        low: Some(parse_decimal(&text(kline, "l")?)?),
+        close: Some(parse_decimal(&text(kline, "c")?)?),
+        volume: Some(parse_decimal(&text(kline, "v")?)?),
+        trade_count: kline.get("n").and_then(Value::as_u64).unwrap_or(0),
+        is_final: kline.get("x").and_then(Value::as_bool).unwrap_or(false),
+        revision: 0,
+        origin: BarOrigin::VenueNative as i32,
+    }));
+    Ok(envelope)
 }
 
 fn canonicalize_binance(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
@@ -190,6 +305,8 @@ mod tests {
         for (fixture_name, golden_name) in [
             ("binance_usdm_trade.json", "binance-usdm-trade.bin"),
             ("okx_trade.json", "okx-swap-trade.bin"),
+            ("binance_usdm_bbo.json", "binance-usdm-bbo.bin"),
+            ("binance_usdm_bar.json", "binance-usdm-bar.bin"),
         ] {
             let fixture_path = format!(
                 "{}/../../tests/fixtures/phase2/{fixture_name}",
