@@ -44,6 +44,14 @@ These rules apply to all seven phases.
 16. **Source changes require a coordinated release plan.** A new producer/source remains shadow until contract, domain parity, freshness, recovery and capacity gates pass. Authority changes use immutable artifacts and one versioned deployment manifest so every owner for the selected feed slice changes consistently; partial mixed ownership is prohibited. Consumer migration remains per declared manifest and does not require a big-bang V1 sunset.
 17. **Testing covers behavior, not only availability.** Each slice runs applicable unit, contract/golden, deterministic replay, domain-oracle, integration, failure/reconnect, compatibility, resource/capacity and bounded real-provider checks. Reports state cases run, exact results, untested cases and cleanup evidence. A healthy HTTP response alone is never phase acceptance.
 18. **Correctness, stability and scalability are release gates.** No optimization is promoted if it changes identity, units, timestamps, ordering, bar closure, source authority or legacy behavior without an approved versioned contract. No benchmark is accepted without zero unexplained loss/duplicate/gap and bounded CPU, memory, disk, queue and lag under measured load plus headroom.
+19. **Production data is provider-authentic.** Production and shadow ingestion
+    paths may only publish bytes received from an approved real venue/provider or
+    replay those previously durably captured bytes. They must never fabricate,
+    seed, interpolate or silently substitute market events. Synthetic, generated
+    and simulator payloads are restricted to isolated tests and are marked as
+    test provenance. Bounded read-only provider smoke is mandatory before a feed
+    implementation is frozen; fixtures remain the deterministic failure oracle,
+    never evidence that a live source works.
 
 ## 3. Phase Summary
 
@@ -282,7 +290,7 @@ Introduce a transport-neutral replay contract, a bounded durable bridge and a de
 
 ## 7. Phase 3 - Scalable Ingestion And Compatibility Projection
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 ### Goal
 
