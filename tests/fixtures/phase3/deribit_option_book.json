@@ -1,0 +1,12 @@
+{
+  "provenance": "TEST_SYNTHETIC_EXTENSION_FIXTURE",
+  "provider": "DERIBIT_TEST_ONLY",
+  "venue": "DERIBIT",
+  "market": "OPTION",
+  "native_symbol": "BTC-30JUN26-60000-C",
+  "feed": "book",
+  "change_id": "1001",
+  "prev_change_id": "1000",
+  "bids": [["0.0100", "5.0"]],
+  "asks": [["0.0110", "3.0"]]
+}

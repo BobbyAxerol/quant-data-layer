@@ -199,9 +199,12 @@ def canonical_event(
     )
 
 
-def raw_trade_event(
-    raw: Mapping[str, Any], *, context: TradeContext, accepted_at_ns: int
+def raw_market_event(
+    raw: Mapping[str, Any], *, context: TradeContext, feed_type: str, accepted_at_ns: int
 ) -> DurableEvent:
+    feed = feed_type.strip().lower()
+    if not feed:
+        raise ValueError("feed_type is required")
     raw_bytes = canonical_json_bytes(raw)
     raw_id = deterministic_event_id(
         [
@@ -209,14 +212,15 @@ def raw_trade_event(
             context.venue,
             context.market,
             context.source_id,
+            feed,
             hashlib.sha256(raw_bytes).digest(),
         ]
     )
     return DurableEvent(
-        stream=f"md.raw.v1.{context.venue.lower()}.{context.market.lower()}.trade",
+        stream=f"md.raw.v1.{context.venue.lower()}.{context.market.lower()}.{feed}",
         partition_key=partition_key(
             instrument_uid=context.instrument_uid,
-            feed_type="trade",
+            feed_type=feed,
             source_id=context.source_id,
         ),
         event_id=raw_id,
@@ -224,4 +228,12 @@ def raw_trade_event(
         accepted_at_ns=accepted_at_ns,
         content_type="application/json",
         headers={"adapter_version": context.adapter_version},
+    )
+
+
+def raw_trade_event(
+    raw: Mapping[str, Any], *, context: TradeContext, accepted_at_ns: int
+) -> DurableEvent:
+    return raw_market_event(
+        raw, context=context, feed_type="trade", accepted_at_ns=accepted_at_ns
     )

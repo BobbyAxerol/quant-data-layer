@@ -29,7 +29,7 @@ phase2-benchmark:
 	docker run --rm -v "$(CURDIR):/app" -w /app data-layer:v0.1.0 python scripts/phase2_benchmark.py --events 10000 --partitions 10 --payload-bytes 512 --batch-size 100 --consumer-groups 8 --min-throughput 500 --max-p99-ms 250 --max-disk-amplification 4
 
 phase3-test:
-	docker run --rm -v "$(CURDIR):/app" -w /app data-layer:phase3-test python -m unittest -v tests.test_fund_phase3_control
+	docker run --rm -v "$(CURDIR):/app" -w /app data-layer:phase3-test python -m unittest -v tests.test_fund_phase3_control tests.test_fund_phase3_binance tests.test_fund_phase3_okx tests.test_fund_phase3_projection tests.test_fund_phase3_provenance tests.test_fund_phase3_extension
 
 phase3-lease-smoke:
 	scripts/phase3_lease_smoke.sh

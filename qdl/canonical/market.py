@@ -90,3 +90,28 @@ def canonicalize_binance_usdm_bar(
         origin=common_pb2.BAR_ORIGIN_VENUE_NATIVE,
     ))
     return envelope
+
+
+def canonicalize_binance_usdm_rest_bar(
+    raw: Mapping[str, Any], context: TradeContext
+) -> market_data_pb2.EventEnvelope:
+    if str(_required(raw, "symbol")).upper() != context.native_symbol.upper():
+        raise ValueError("provider symbol does not match resolved instrument")
+    row = raw.get("row")
+    if not isinstance(row, list) or len(row) < 11:
+        raise ValueError("Binance REST kline requires the unmodified native row")
+    sequence = f"{row[0]}:{row[6]}"
+    envelope = _envelope(
+        raw=raw, context=context, feed="bar", source_sequence=sequence,
+        source_event_time_ms=int(row[6]),
+    )
+    envelope.quality_flags.append(common_pb2.QUALITY_FLAG_BACKFILLED)
+    envelope.bar.CopyFrom(market_data_pb2.Bar(
+        interval=str(_required(raw, "interval")),
+        open_time_ns=int(row[0]) * 1_000_000,
+        close_time_ns=int(row[6]) * 1_000_000,
+        open=_decimal(row[1]), high=_decimal(row[2]), low=_decimal(row[3]),
+        close=_decimal(row[4]), volume=_decimal(row[5]), trade_count=int(row[8]),
+        is_final=True, revision=0, origin=common_pb2.BAR_ORIGIN_BACKFILLED,
+    ))
+    return envelope

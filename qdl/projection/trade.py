@@ -23,6 +23,8 @@ class ProjectionRecord:
     canonical_key: str
     canonical_payload: bytes
     legacy_items: tuple[tuple[str, bytes], ...]
+    shard_id: str
+    lease_epoch: int
 
 
 class ProjectionTarget(Protocol):
@@ -33,8 +35,13 @@ class InMemoryProjectionTarget:
     def __init__(self):
         self.latest: dict[str, bytes] = {}
         self.checkpoints: dict[str, tuple[int, str]] = {}
+        self.lease_epochs: dict[str, int] = {}
 
     def apply(self, record: ProjectionRecord) -> bool:
+        observed = self.lease_epochs.get(record.shard_id, 0)
+        if record.lease_epoch < observed:
+            return False
+        self.lease_epochs[record.shard_id] = record.lease_epoch
         current = self.checkpoints.get(record.partition_key)
         if current is not None and record.offset <= current[0]:
             return False
@@ -113,6 +120,8 @@ class TradeProjector:
                 canonical_key=canonical_key,
                 canonical_payload=stored.event.payload,
                 legacy_items=legacy_items,
+                shard_id=envelope.source_id,
+                lease_epoch=envelope.lease_epoch,
             )
         )
 

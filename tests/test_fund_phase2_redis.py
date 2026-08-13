@@ -15,6 +15,7 @@ from qdl.canonical.trade import (
     raw_trade_event,
 )
 from qdl.projection import RedisProjectionTarget, TradeProjector
+from qdl.projection.trade import ProjectionRecord
 from qdl.transport import SQLiteDurableSpool, SpoolConfig
 
 
@@ -84,6 +85,22 @@ class RedisReplayIntegrationTests(unittest.TestCase):
             "shadow:qdl:v2:legacy:trade:price:binance_usdm:BTCUSDT"
         )
         self.assertEqual(json.loads(legacy)["raw"], fixture["raw"])
+
+    def test_atomic_projection_rejects_stale_lease_epoch(self):
+        target = RedisProjectionTarget(self.redis)
+        fresh = ProjectionRecord(
+            partition_key="partition", offset=1, event_id_hex="fresh",
+            canonical_key="shadow:qdl:v2:latest:test", canonical_payload=b"fresh",
+            legacy_items=(), shard_id="shard", lease_epoch=5,
+        )
+        stale = ProjectionRecord(
+            partition_key="partition", offset=2, event_id_hex="stale",
+            canonical_key="shadow:qdl:v2:latest:test", canonical_payload=b"stale",
+            legacy_items=(), shard_id="shard", lease_epoch=4,
+        )
+        self.assertTrue(target.apply(fresh))
+        self.assertFalse(target.apply(stale))
+        self.assertEqual(self.redis.get("shadow:qdl:v2:latest:test"), b"fresh")
 
 
 if __name__ == "__main__":

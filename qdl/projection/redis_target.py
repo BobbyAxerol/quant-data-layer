@@ -8,6 +8,10 @@ from qdl.projection.trade import ProjectionRecord
 
 
 _APPLY_LUA = """
+local current_epoch = redis.call('GET', KEYS[2])
+if current_epoch and tonumber(current_epoch) > tonumber(ARGV[3]) then
+  return -1
+end
 local current = redis.call('GET', KEYS[1])
 if current then
   local current_offset = string.sub(current, 1, 20)
@@ -15,9 +19,10 @@ if current then
     return 0
   end
 end
-for index = 2, #KEYS do
+for index = 3, #KEYS do
   redis.call('SET', KEYS[index], ARGV[index + 1])
 end
+redis.call('SET', KEYS[2], ARGV[3])
 redis.call('SET', KEYS[1], ARGV[1] .. ':' .. ARGV[2])
 return 1
 """
@@ -39,21 +44,27 @@ class RedisProjectionTarget:
                 raise ValueError("projection key escapes configured namespace")
         partition_digest = hashlib.sha256(record.partition_key.encode()).hexdigest()
         checkpoint_key = f"{self._namespace}:checkpoint:{partition_digest}"
+        shard_digest = hashlib.sha256(record.shard_id.encode()).hexdigest()
+        epoch_key = f"{self._namespace}:lease-epoch:{shard_digest}"
         offset = f"{record.offset:020d}"
-        keys = [checkpoint_key, *(key for key, _ in data_items)]
+        keys = [checkpoint_key, epoch_key, *(key for key, _ in data_items)]
         args: list[str | bytes] = [
             offset,
             record.event_id_hex,
+            str(record.lease_epoch),
             *(payload for _, payload in data_items),
         ]
-        return bool(self._client.eval(_APPLY_LUA, len(keys), *keys, *args))
+        result = int(self._client.eval(_APPLY_LUA, len(keys), *keys, *args))
+        if result < 0:
+            return False
+        return bool(result)
 
     def checksum(self) -> str:
         digest = hashlib.sha256()
         keys = sorted(
             key
             for key in self._client.scan_iter(match=f"{self._namespace}:*")
-            if b":checkpoint:" not in key
+            if b":checkpoint:" not in key and b":lease-epoch:" not in key
         )
         for raw_key in keys:
             value = self._client.get(raw_key)

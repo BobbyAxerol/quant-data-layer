@@ -8,6 +8,7 @@ from qdl.ingestion.demand import DesiredSubscriptionRegistry
 from qdl.ingestion.fencing import FencingGate, InMemoryLeaseStore
 from qdl.ingestion.queue import FeedQueue
 from qdl.projection.authority import Authority, FeedAuthorityRegistry
+from qdl.projection.trade import InMemoryProjectionTarget, ProjectionRecord
 
 
 class DemandAndShardTests(unittest.TestCase):
@@ -90,6 +91,17 @@ class AuthorityTests(unittest.TestCase):
         decision = registry.decide(feed_key=feed, shard_id="s", lease_epoch=2)
         self.assertFalse(decision.write_canonical)
         self.assertFalse(decision.write_legacy)
+
+    def test_projection_target_rejects_stale_epoch_even_with_newer_offset(self):
+        target = InMemoryProjectionTarget()
+        def record(offset, epoch):
+            return ProjectionRecord(
+                partition_key="p", offset=offset, event_id_hex=str(offset),
+                canonical_key="shadow:qdl:v2:latest:x", canonical_payload=b"x",
+                legacy_items=(), shard_id="s", lease_epoch=epoch,
+            )
+        self.assertTrue(target.apply(record(1, 2)))
+        self.assertFalse(target.apply(record(2, 1)))
 
 
 if __name__ == "__main__":

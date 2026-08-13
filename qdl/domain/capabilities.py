@@ -86,7 +86,7 @@ def okx_global_capabilities(market: str, *, account_tier: str = "PUBLIC") -> Ven
                 snapshot=True,
                 delta=True,
                 sequence=True,
-                checksum=True,
+                checksum=False,
                 resubscribe=True,
                 resnapshot_on_gap=True,
             ),
@@ -96,7 +96,7 @@ def okx_global_capabilities(market: str, *, account_tier: str = "PUBLIC") -> Ven
                 snapshot=True,
                 delta=True,
                 sequence=True,
-                checksum=True,
+                checksum=False,
                 resubscribe=True,
                 resnapshot_on_gap=True,
                 constraint="requires approved OKX VIP/channel entitlement",
@@ -153,4 +153,3 @@ def dnse_capabilities() -> VenueCapabilityProfile:
             "l2": FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint="not certified in current provider contract"),
         },
     )
-

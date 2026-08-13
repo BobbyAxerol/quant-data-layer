@@ -12,12 +12,7 @@ from qdl.canonical.trade import TradeContext
 def snapshot(book: OkxOrderBook, *, sequence: int = 10) -> dict:
     row = {"seqId": sequence, "prevSeqId": -1,
            "bids": [["100", "2", "0", "1"]],
-           "asks": [["101", "3", "0", "1"]]}
-    probe = OkxOrderBook(book.inst_id)
-    probe.reconnect(book.generation)
-    unsigned = {"arg": {"instId": book.inst_id}, "action": "snapshot", "data": [dict(row)]}
-    probe.apply_ws(unsigned, generation=book.generation)
-    row["checksum"] = probe.checksum()
+           "asks": [["101", "3", "0", "1"]], "checksum": 0}
     return {"arg": {"instId": book.inst_id}, "action": "snapshot", "data": [row]}
 
 
@@ -48,13 +43,12 @@ class OkxBookTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "cannot establish"):
             book.apply_rest_snapshot({"bids": [], "asks": []})
 
-    def test_checksum_mismatch_fails_closed(self):
+    def test_deprecated_fixed_checksum_is_not_used_as_crc(self):
         book = OkxOrderBook("BTC-USDT-SWAP")
         book.reconnect(1)
         frame = snapshot(book)
-        frame["data"][0]["checksum"] += 1
-        self.assertFalse(book.apply_ws(frame, generation=1))
-        self.assertEqual(book.state, BookState.INVALID)
+        self.assertTrue(book.apply_ws(frame, generation=1))
+        self.assertEqual(book.state, BookState.LIVE)
 
     def test_validated_ws_snapshot_maps_to_exact_canonical_book(self):
         book = OkxOrderBook("BTC-USDT-SWAP")

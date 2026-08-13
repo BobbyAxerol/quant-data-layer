@@ -5,6 +5,7 @@ from qdl.projection.trade import (
     ProjectionRecord,
     TradeProjector,
 )
+from qdl.projection.market import MarketProjector
 
 try:
     from qdl.projection.redis_target import RedisProjectionTarget
@@ -13,6 +14,7 @@ except ImportError:  # Redis remains an optional adapter for the domain package.
 
 __all__ = [
     "InMemoryProjectionTarget",
+    "MarketProjector",
     "ProjectionRecord",
     "RedisProjectionTarget",
     "TradeProjector",

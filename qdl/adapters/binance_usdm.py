@@ -23,6 +23,7 @@ from qdl.ingestion.contracts import ConnectionShard, FeedType
 
 
 BINANCE_USDM_EXCHANGE_INFO = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+BINANCE_USDM_KLINES = "https://fapi.binance.com/fapi/v1/klines"
 BINANCE_USDM_WS_BASE = "wss://fstream.binance.com/stream?streams="
 
 
@@ -116,10 +117,28 @@ async def discover_instruments(
     raise RuntimeError("Binance USD-M instrument discovery exhausted retries") from last_error
 
 
+async def fetch_klines(
+    symbol: str, interval: str, *, limit: int = 3, timeout_seconds: float = 10.0
+) -> list[list[Any]]:
+    if limit < 1 or limit > 1500:
+        raise ValueError("Binance kline limit must be between 1 and 1500")
+    response = await asyncio.to_thread(
+        requests.get,
+        BINANCE_USDM_KLINES,
+        params={"symbol": symbol.upper(), "interval": interval, "limit": limit},
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+    rows = response.json()
+    if not isinstance(rows, list) or any(not isinstance(row, list) or len(row) < 11 for row in rows):
+        raise ValueError("Binance kline response has invalid native row shape")
+    return rows
+
+
 def stream_name(feed: FeedType, symbol: str, interval: str | None = None) -> str:
     native = symbol.lower()
     if feed is FeedType.TRADE:
-        return f"{native}@aggTrade"
+        return f"{native}@trade"
     if feed is FeedType.BBO:
         return f"{native}@bookTicker"
     if feed is FeedType.BAR and interval:
@@ -195,7 +214,7 @@ class BinanceUsdmSupervisor:
                         received += 1
             except asyncio.CancelledError:
                 raise
-            except (TimeoutError, OSError, ValueError):
+            except (TimeoutError, OSError):
                 failures += 1
                 if stop.is_set():
                     break

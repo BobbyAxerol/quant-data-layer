@@ -50,7 +50,7 @@ class BinanceDiscoveryTests(unittest.TestCase):
         )
         shard = ConnectionShard("s", "BINANCE", "USDM", FeedType.TRADE, subscriptions, 1)
         url = websocket_url(shard, {"BTCUSDT"})
-        self.assertIn("btcusdt@aggTrade", url)
+        self.assertIn("btcusdt@trade", url)
         self.assertIn("btcusdt@bookTicker", url)
         self.assertIn("btcusdt@kline_1m", url)
         with self.assertRaisesRegex(ValueError, "not active"):

@@ -4,7 +4,6 @@ import asyncio
 import json
 import random
 import time
-import zlib
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -118,11 +117,6 @@ class OkxRestClient:
         )
 
 
-def _signed_crc32(value: str) -> int:
-    checksum = zlib.crc32(value.encode("utf-8"))
-    return checksum if checksum < 2**31 else checksum - 2**32
-
-
 class OkxOrderBook:
     """Executable WS book. Any sequence/checksum gap invalidates all local levels."""
 
@@ -162,26 +156,14 @@ class OkxOrderBook:
         self._apply_levels(self.bids, row.get("bids", []))
         self._apply_levels(self.asks, row.get("asks", []))
         self.sequence = sequence
-        expected = row.get("checksum")
-        if expected not in (None, "") and int(expected) != self.checksum():
-            self._invalidate(BookState.INVALID)
-            return False
+        # OKX V5 deprecated this field and currently fixes it to 0. Integrity
+        # is sequence continuity; treating checksum=0 as CRC would invalidate
+        # every real public book snapshot.
         self.state = BookState.LIVE
         return True
 
     def apply_rest_snapshot(self, _: Mapping[str, Any]) -> None:
         raise RuntimeError("REST /books cannot establish executable WS delta continuity")
-
-    def checksum(self) -> int:
-        bids = sorted(self.bids.items(), key=lambda item: float(item[0]), reverse=True)[:25]
-        asks = sorted(self.asks.items(), key=lambda item: float(item[0]))[:25]
-        parts: list[str] = []
-        for index in range(max(len(bids), len(asks))):
-            if index < len(bids):
-                parts.extend(bids[index])
-            if index < len(asks):
-                parts.extend(asks[index])
-        return _signed_crc32(":".join(parts))
 
     def _apply_levels(self, side: dict[str, str], levels: list[list[str]]) -> None:
         for level in levels:
