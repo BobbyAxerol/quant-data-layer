@@ -101,6 +101,35 @@ class RequirementContractTests(unittest.TestCase):
                 self.assertEqual(problem.code, expected)
         self.assertIsNone(evaluate_requirement(requirement, **defaults))
 
+    def test_alpha_and_research_can_only_relax_explicit_policies(self):
+        defaults = {
+            "coverage": CoverageStatus.PARTIAL,
+            "entitled": True,
+            "available": True,
+            "fresh": False,
+            "authoritative": False,
+            "gap_open": True,
+        }
+        for grade in (ConsumerGrade.ALPHA, ConsumerGrade.RESEARCH):
+            with self.subTest(grade=grade):
+                requirement = self.requirement(
+                    consumer_grade=grade,
+                    require_full_coverage=False,
+                    stale_policy=StalePolicy.OBSERVE,
+                    gap_policy=GapPolicy.OBSERVE,
+                )
+                self.assertIsNone(evaluate_requirement(requirement, **defaults))
+        blocked = self.requirement(
+            consumer_grade=ConsumerGrade.ALPHA,
+            require_full_coverage=False,
+            stale_policy=StalePolicy.BLOCK,
+            gap_policy=GapPolicy.OBSERVE,
+        )
+        self.assertEqual(
+            evaluate_requirement(blocked, **defaults).code,
+            CanonicalErrorCode.DATA_STALE,
+        )
+
     def test_error_aliases_collapse_to_one_canonical_vocabulary(self):
         self.assertEqual(
             LEGACY_ERROR_ALIASES,
@@ -183,6 +212,16 @@ class MemoryCatalog:
         return self.snapshot
 
 
+class AdvancingCatalog(MemoryCatalog):
+    def __init__(self, snapshot: MemorySnapshot, store: MemoryHandoffStore):
+        super().__init__(snapshot)
+        self.store = store
+
+    def current(self, dataset_id: str):
+        self.store.high += 1
+        return self.snapshot
+
+
 class MutableKeyProvider:
     def __init__(self, keys: SigningKeySet):
         self.keys = keys
@@ -227,6 +266,28 @@ class HandoffReadinessTests(unittest.TestCase):
                     dataset_id="bars", consumer_id="alpha-a", stream=STREAM,
                     partition_key=PARTITION, ttl_seconds=60,
                 )
+
+    def test_live_can_advance_after_watermark_without_changing_snapshot_boundary(self):
+        store = MemoryHandoffStore(7)
+        handoff, _ = self.make_handoff(store)
+        catalog = AdvancingCatalog(
+            MemorySnapshot("snapshot-7", "bars/7.parquet", "1", "7"), store
+        )
+        bundle = SnapshotHandoffCoordinator(catalog, handoff).prepare(
+            dataset_id="bars", consumer_id="alpha-a", stream=STREAM,
+            partition_key=PARTITION, ttl_seconds=60,
+        )
+        self.assertEqual(store.high, 8)
+        self.assertEqual(bundle.snapshot_watermark.offset, 7)
+
+    def test_unsigned_internal_cursor_is_rejected_by_public_codec(self):
+        store = MemoryHandoffStore(0)
+        handoff, _ = self.make_handoff(store)
+        with self.assertRaisesRegex(ValueError, "invalid signed"):
+            handoff.replay(
+                token=Cursor(STREAM, PARTITION, 0).to_token(),
+                consumer_id="alpha-a", stream=STREAM, partition_key=PARTITION,
+            )
 
     def test_key_rotation_verifies_overlap_and_rejects_retired_key(self):
         store = MemoryHandoffStore(0)

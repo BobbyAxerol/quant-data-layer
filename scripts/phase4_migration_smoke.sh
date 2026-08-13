@@ -16,13 +16,19 @@ docker run -d --name "${container}" \
   -v "${root_dir}/migrations/postgres:/migrations:ro" \
   postgres:16-alpine >/dev/null
 
-for _ in $(seq 1 60); do
+ready=false
+for _ in $(seq 1 240); do
   if docker exec "${container}" pg_isready -U postgres >/dev/null 2>&1; then
+    ready=true
     break
   fi
   sleep 0.25
 done
-docker exec "${container}" pg_isready -U postgres >/dev/null
+if [[ "${ready}" != "true" ]]; then
+  echo "phase4 disposable PostgreSQL did not become ready within 60 seconds" >&2
+  docker logs "${container}" >&2 || true
+  exit 1
+fi
 
 for database in qdl_phase4_clean qdl_phase4_existing; do
   docker exec "${container}" createdb -U postgres "${database}"
