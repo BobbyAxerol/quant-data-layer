@@ -57,6 +57,7 @@ from app.history.preload_vn import (
 from app.providers.binance import rest as binance_rest
 from app.providers.okx import rest as okx_rest
 from app.logging_config import setup_logging
+from app.runtime_source_config import RuntimeSourceConfig
 
 # Configure logging to write to /app/logs/app.log
 setup_logging()
@@ -263,23 +264,24 @@ async def lifespan(app: FastAPI):
     logger.info("=== data_layer service starting ===")
 
     await redis_cache.init_ping()
+    runtime_sources = RuntimeSourceConfig.from_env()
+    logger.info("Runtime source configuration: %s", runtime_sources.public_summary())
 
     # 1. Unified stream (Binance)
-    unified_stream_task = asyncio.create_task(
-        start_stream(
-            redis_cache, 
-            interval="1m", 
-            supervisor=binance_stream_supervisor,
-            demand_registry=demand_registry,
-            enabled_sources=[
-                "binance_spot_trade",
-                "binance_futures_trade",
-                "binance_spot_kline",
-                "binance_futures_kline",
-            ]
+    if runtime_sources.binance_sources:
+        unified_stream_task = asyncio.create_task(
+            start_stream(
+                redis_cache,
+                interval="1m",
+                supervisor=binance_stream_supervisor,
+                demand_registry=demand_registry,
+                enabled_sources=list(runtime_sources.binance_sources),
+            )
         )
-    )
-    logger.info("Unified async Binance trade + kline streams started")
+        logger.info("Unified async Binance streams started: %s", runtime_sources.binance_sources)
+    else:
+        unified_stream_task = None
+        logger.info("Binance live streams disabled by DATA_LAYER_BINANCE_SOURCES")
 
     # Load VN symbols early (needed for DNSE and vnstock)
     vn_symbols = load_vn_symbols()
@@ -295,7 +297,7 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Failed to seed preload snapshot for {symbol}: {e}")
 
     # 2. DNSE WebSocket (PRIMARY for VN stock)
-    if vn_symbols:
+    if vn_symbols and runtime_sources.dnse_stream_enabled:
         try:
             dnse_stream_manager = DnseStreamManager(redis_cache, vn_symbols)
             dnse_stream_manager.start()
@@ -305,26 +307,26 @@ async def lifespan(app: FastAPI):
             logger.warning("Will use vnstock as primary fallback source")
             dnse_stream_manager = None
     else:
-        logger.info("No VN symbols configured, skipping DNSE stream")
+        logger.info("DNSE stream disabled or no VN symbols configured")
 
     # 3. vnstock poller (FALLBACK only if DNSE stale or unavailable)
     vn_poller = None
-    if vn_symbols:
+    if vn_symbols and runtime_sources.vnstock_poller_enabled:
         vn_poller = VnstockPoller(redis_cache, vn_symbols)
         vn_poller.start()
         logger.info(f"vnstock fallback poller started for {len(vn_symbols)} symbols (SECONDARY source)")
     else:
-        logger.info("No VN symbols configured, skipping vnstock poller")
+        logger.info("vnstock poller disabled or no VN symbols configured")
 
     # 4. Preload watchdog thread
     global preload_thread
     preload_stop_event.clear()
-    if vn_symbols:
+    if vn_symbols and runtime_sources.preload_watchdog_enabled:
         preload_thread = threading.Thread(target=_preload_watchdog, args=(vn_symbols,), daemon=True)
         preload_thread.start()
         logger.info("Preload watchdog started")
     else:
-        logger.info("No VN symbols configured, skipping preload watchdog")
+        logger.info("Preload watchdog disabled or no VN symbols configured")
 
     yield
 
