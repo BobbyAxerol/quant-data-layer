@@ -1,0 +1,5 @@
+# Trivy 0.72 can prefer stale BuildKit Python SBOM metadata over the final
+# virtualenv. CI independently asserts the final runtime has msgpack >=1.2.1
+# and setuptools >=78.1.1 before this narrowly scoped false-positive waiver.
+GHSA-6v7p-g79w-8964
+CVE-2025-47273

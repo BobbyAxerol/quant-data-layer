@@ -7,6 +7,9 @@ version = 2
 confidence-threshold = 0.8
 allow = [
   "Apache-2.0",
+  "BSD-3-Clause",
+  "CDLA-Permissive-2.0",
+  "ISC",
   "MIT",
   "Unicode-3.0",
 ]

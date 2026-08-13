@@ -11,17 +11,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Checkout pull-request base contracts
         if: github.event_name == 'pull_request'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.base_ref }}
           path: base-contracts
 
       - name: Set up Buf
-        uses: bufbuild/buf-setup-action@v1
+        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
           version: "1.50.0"
 
@@ -44,7 +44,7 @@ jobs:
           git diff --exit-code -- ../generated
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
@@ -76,10 +76,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build data_layer image
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml build data_layer
@@ -88,6 +88,7 @@ jobs:
         run: |
           docker run --rm data-layer:v0.1.0 sh -c '
             test ! -e /opt/venv/bin/poetry
+            python -c "from importlib.metadata import version; from packaging.version import Version; assert Version(version(\"msgpack\")) >= Version(\"1.2.1\"); assert Version(version(\"setuptools\")) >= Version(\"78.1.1\")"
             python -m pip freeze --local > /tmp/qdl-runtime-requirements.txt
             python -m pip install --disable-pip-version-check --no-cache-dir "pip-audit>=2.9,<3"
             pip-audit -r /tmp/qdl-runtime-requirements.txt --progress-spinner=off
@@ -106,6 +107,13 @@ jobs:
           tests.test_fund_phase5_consumer tests.test_fund_phase5_stream_sdk
           tests.test_fund_phase5_e2e tests.test_fund_phase5_load
           tests.test_fund_phase5_real_provider
+
+      - name: Run Phase 6 operations, recovery and release gates
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml
+          run --rm test_runner python -m unittest -v
+          tests.test_fund_phase6_operations tests.test_fund_phase6_resilience
+          tests.test_fund_phase6_release
 
       - name: Run bounded V2 API replica load gate
         run: >-
@@ -134,6 +142,41 @@ jobs:
           python scripts/phase2_benchmark.py --events 2000 --partitions 10
           --payload-bytes 512 --batch-size 100 --consumer-groups 8
           --min-throughput 300 --max-p99-ms 300 --max-disk-amplification 12
+
+      - name: Scan final runtime image for critical and high vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: data-layer:v0.1.0
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Scan repository for leaked secrets and critical misconfiguration
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+
+      - name: Rehearse immutable SBOM and signed release manifest
+        run: |
+          evidence_dir="$(mktemp -d)"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+            -out "${evidence_dir}/private.pem" >/dev/null 2>&1
+          openssl pkey -in "${evidence_dir}/private.pem" -pubout \
+            -out "${evidence_dir}/public.pem"
+          image_id="$(docker image inspect data-layer:v0.1.0 --format '{{.Id}}')"
+          python scripts/phase6_release_bundle.py \
+            --repo . --output-dir "${evidence_dir}/bundle" \
+            --release "qdl-ci-${GITHUB_SHA}" --git-sha "${GITHUB_SHA}" \
+            --image-ref "local/data-layer@${image_id}" \
+            --signing-key "${evidence_dir}/private.pem" \
+            --verification-key "${evidence_dir}/public.pem"
+          rm -rf "${evidence_dir}"
 
       - name: Clean CI Compose resources
         if: always()
