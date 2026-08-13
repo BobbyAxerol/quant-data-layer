@@ -474,6 +474,15 @@ Produce auditable, replayable and revision-aware data from raw ingestion through
   241 exact duplicate groups, zero conflicting revisions, zero fabricated rows;
   all seven interval snapshots round-trip from isolated shadow storage. See
   `upgrade/evidence/phase4-vn-shadow-migration.json`.
+- Gap-free handoff/replay slice implemented with HMAC-signed, rotation-aware,
+  consumer/stream/partition/snapshot-scoped cursors; snapshot watermarks,
+  durable consumer checkpoints and offset-contiguity checks. Cursor tampering,
+  wrong scope, expiry, compaction loss and unexplained gaps fail closed; late
+  arrivals appended after the watermark remain replayable by durable offset.
+- Deterministic raw replay now reports raw/canonical/lineage checksums keyed by
+  source revision, normalizer version and config revision. History/live overlap
+  reconciliation supports explicit higher revisions and checks only the open
+  times supplied by a session calendar, preserving legitimate sparse feeds.
 
 ### Technical Debt / Decision Gate
 

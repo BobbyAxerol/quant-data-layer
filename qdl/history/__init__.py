@@ -7,14 +7,17 @@ from qdl.history.catalog import (
     S3CompatibleObjectStore,
     SnapshotConflict,
 )
+from qdl.history.reconcile import BarReconciliationReport, reconcile_history_live
 
 __all__ = [
     "AtomicParquetCatalog",
     "BarRecord",
+    "BarReconciliationReport",
     "LocalObjectStore",
     "S3CompatibleObjectStore",
     "SessionWindow",
     "SnapshotConflict",
     "aggregate_bars",
+    "reconcile_history_live",
     "select_revisions",
 ]
