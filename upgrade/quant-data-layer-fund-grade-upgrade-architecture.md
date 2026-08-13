@@ -4792,6 +4792,11 @@ Sections `6-7`, `11`, `28-29` and Epics `E4-E5`: Python/Rust boundary, durable b
 
 Sections `12-14`, `20`, `23`, `37`, roadmap `P2` and Epics `E6-E8`: scalable adapters, source quality, ownership/fencing, Redis projection and Rust hot-path policy.
 
+Implementation status (2026-08-13): complete and frozen in shadow mode. No V1
+authority or running deployment changed. Certification evidence and remaining
+provider boundaries are in
+[`PHASE3_IMPLEMENTATION_REPORT.md`](evidence/PHASE3_IMPLEMENTATION_REPORT.md).
+
 <a id="implementation-phase-4"></a>
 
 ### D.5 Phase 4 detailed references

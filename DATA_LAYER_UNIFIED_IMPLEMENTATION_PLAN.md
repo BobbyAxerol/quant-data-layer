@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-2 complete on the feature branch in dark/shadow mode; no runtime cutover has started.
+> **Status:** Phases 0-3 complete on the feature branch in dark/shadow mode; no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -60,7 +60,7 @@ These rules apply to all seven phases.
 | 0 | Containment, inventory and measurable baseline | Freeze compatibility, stop unused cost and establish reproducible truth | `COMPLETE` |
 | 1 | Canonical contracts, identity and runtime boundaries | Stable venue-neutral domain plus separately scalable Python roles | `COMPLETE (DARK)` |
 | 2 | Durability contract, bridge and Rust foundation | Replayable transport boundary and deterministic cross-language core without premature broker cutover | `COMPLETE (DARK)` |
-| 3 | Scalable ingestion and compatibility projection | Demand-driven Rust hot path with legacy V1/Redis parity | `PLANNED` |
+| 3 | Scalable ingestion and compatibility projection | Demand-driven Rust hot path with legacy V1/Redis parity | `COMPLETE (FROZEN SHADOW)` |
 | 4 | Quality, history, replay and gap-free handoff | Certified data products from warmup through live recovery | `PLANNED` |
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `PLANNED` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `PLANNED` |
@@ -290,7 +290,7 @@ Introduce a transport-neutral replay contract, a bounded durable bridge and a de
 
 ## 7. Phase 3 - Scalable Ingestion And Compatibility Projection
 
-**Status:** `IN_PROGRESS`
+**Status:** `COMPLETE (FROZEN SHADOW)`
 
 ### Goal
 
@@ -324,15 +324,99 @@ Run high-throughput ingestion and canonical projection with explicit shard owner
 
 ### Completed
 
-- Not started.
+- Added deterministic demand registry, TTL leases, no-truncation shard planning,
+  PostgreSQL lease ownership and monotonically increasing fencing epochs.
+- Added feed-class queue policy: trade/book are lossless and block under
+  pressure; BBO/bar may coalesce only the same pending latest-state key. Spot
+  with zero declared demand creates zero shards but uses the same contract when
+  enabled later.
+- Added a provider-authentic Binance USD-M adapter with exchange-info
+  validation, exact tick/step metadata, demanded-only WebSocket streams,
+  reconnect/backoff and interruptible graceful shutdown. Added a bounded Rust
+  Binance trade hot path that writes raw provider frames before canonical bytes
+  to an fsynced shadow WAL.
+- Added an OKX V5 async REST client with endpoint buckets and retry, separate
+  public/business WebSocket supervisors with acknowledgement correlation,
+  heartbeat/reconnect/resubscribe and an executable book state machine. A true
+  `prevSeqId/seqId` gap clears the book and requires a fresh WebSocket snapshot;
+  REST `/books` is explicitly forbidden as a delta-continuity bridge.
+- Added exact canonical BBO, bar and book mappings; raw-first market events;
+  canonical latest-state and frozen V1 bar compatibility projection; atomic
+  Redis checkpoint/lease-epoch fencing; and a per-feed authority router that
+  switches `SHADOW/CANONICAL/LEGACY` without process restart.
+- Added adapter capability-boundary tests for an option/order-book source.
+  Deribit-shaped data is explicitly test-synthetic and cannot be certified as a
+  production source.
+- Added reconnect-storm and stop-interruption tests for Binance and OKX so a
+  requested shutdown does not wait for the heartbeat timeout.
+- Added bounded real-provider, burst/restart, sustained-load and Rust live-frame
+  parity evidence. Production/shadow implementations do not import fixtures or
+  simulator modules.
+- Froze the Phase 3 implementation in shadow mode. Evidence and immutable
+  artifact identity are recorded in
+  [`PHASE3_IMPLEMENTATION_REPORT.md`](upgrade/evidence/PHASE3_IMPLEMENTATION_REPORT.md)
+  and [`phase3-freeze.json`](upgrade/evidence/phase3-freeze.json). Reopening this
+  phase requires a reviewed contract/ADR change and new certification evidence.
+
+### Verification
+
+- Full Python/V1 regression: `177` tests run, `172` passed and `5` expected
+  environment-gated skips.
+- Phase 3 focused adapter/control/projection/provenance suite: `29/29` passed,
+  including malformed input, reconnect storm, delist/inactive symbol,
+  sequence gap and graceful shutdown.
+- Rust `1.82.0`: format, Clippy with warnings denied and `11/11` tests passed;
+  Python/Rust trade/BBO/bar golden bytes are exact.
+- Buf format/lint/breaking/codegen-diff gates passed against the frozen Phase 1
+  descriptor.
+- PostgreSQL disposable integration passed exclusive owner, renew, release,
+  expiry takeover and stale-epoch fencing.
+- Redis disposable integration passed AOF restart, deterministic flush/rebuild,
+  stale-epoch rejection and live authority switch/rollback across isolated
+  targets with no process restart.
+- Provider-authentic read-only smoke passed Binance USD-M trade/BBO/closed bar
+  and OKX trade/book snapshot/deltas, with `20` durable records and zero
+  production writes.
+- Rust read-only smoke consumed `3` real Binance events; every canonical byte
+  matched Python and was written to isolated fsynced WAL only.
+- Burst/restart gate accepted and replayed `20,000/20,000` events across `80`
+  partitions at `1,343.03 events/s`, with queue rejection `0` and peak traced
+  Python memory `1,965,064` bytes.
+- Sustained gate held `500.70 events/s` for `5,000` events across `80`
+  partitions; durable p95/p99 were `157.09/163.60 ms`, queue rejection `0`,
+  records survived restart and peak traced memory was `335,239` bytes.
+- Running `data_layer_service` and `redis_marketdata` stayed on their existing
+  images with restart count `0`; `/v1/health` remained `ok`. No production
+  Redis, PostgreSQL, Parquet, route, namespace or authority flag changed.
 
 ### Technical Debt / Decision Gate
 
-- Venue-specific sequence/checksum limitations must be documented in capability metadata and certification, not hidden with generic assumptions.
+- Phase 3 is certified only as a dark/shadow implementation. SQLite remains a
+  single-host transitional spool, not an HA broad-universe authority. The
+  Kafka-compatible promotion trigger and production authority cutover remain
+  governed Phase 6 decisions.
+- Binance individual trade and BBO WebSockets plus closed-bar REST were
+  provider-certified from this host. The Binance USD-M kline WebSocket emitted
+  no frame during bounded probes, so its parser has deterministic golden parity
+  but is not falsely marked live-certified.
+- OKX public `books` is certified with `seqId/prevSeqId` continuity. The current
+  V5 `checksum` value is deprecated/fixed and is not represented as a valid CRC
+  capability. VIP/deep-book channels remain separately uncertified.
+- Historical completeness, raw retention governance, quarantine, source
+  failover and gap-free warmup/live cursor handoff are Phase 4 scope. No
+  generated bar, REST order-book bridge or synthetic source is used to conceal
+  those pending capabilities.
+- Production promotion remains deliberately unperformed under Rules 15-16.
+  The authority mechanism is integration-certified, but V1 stays authoritative
+  until the Phase 6 release/cutover gate is explicitly approved.
 
 ### Rollback
 
-- Per-feed authority flag returns publication to Python. Rust remains shadow; compatibility projector checkpoints permit deterministic recovery.
+- No live rollback was needed because no authority changed. For an isolated
+  shadow deployment, stop only its shard owner, return its per-feed authority
+  to `LEGACY`, verify the fencing epoch, and delete only its namespaced shadow
+  checkpoints/spool after checksum capture. Existing Python/V1 publication
+  continues uninterrupted.
 
 ## 8. Phase 4 - Quality, History, Replay And Gap-Free Handoff
 

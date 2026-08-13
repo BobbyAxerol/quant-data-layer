@@ -4780,6 +4780,13 @@ Mapping này là thứ tự bắt buộc để OKX không tạo một kiến tr�
 - Implement the deterministic book state machine from Phần 11. A true sequence gap invalidates executable state and requires a fresh WS snapshot; REST book data never bridges missing deltas.
 - Implement P0/P1 and required P2 feeds in shadow, project canonical events to V1, then promote only certified feed slices.
 
+Implementation status (2026-08-13): the Phase 3 transport, supervisor, public
+trade/book state machine and compatibility projection mechanisms are complete
+and frozen in shadow mode. Real-provider evidence covers public trade plus book
+snapshot/delta. No OKX feed was promoted to authority; exact historical
+pagination and additional P0/P1/P2 coverage remain Phase 4, while VIP/deep-book
+activation remains capability/profile-specific certification.
+
 <a id="okx-program-phase-4"></a>
 
 #### OKX workstream for program Phase 4
