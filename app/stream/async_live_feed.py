@@ -389,7 +389,9 @@ async def redis_publisher_task(
                     sym = sym.upper()
                     key = f"kline:{interval}:{sym}"
                     channel = f"stream:kline:{interval}:{sym}"
-                    redis_items.append({"key": key, "channel": channel, "data": raw_data})
+                    redis_items.append(
+                        {"key": key, "channel": channel, "data": raw_data, "source": source}
+                    )
                     
                 elif source == "dnse":
                     sym = data.get("symbol", "")
