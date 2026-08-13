@@ -39,6 +39,10 @@ class EventIdCollision(DurableTransportError):
     """An event ID was reused for different immutable bytes."""
 
 
+class PayloadCorruption(DurableTransportError):
+    """A committed record no longer matches its durable payload checksum."""
+
+
 class CursorExpired(DurableTransportError):
     """A requested cursor predates the bridge retention horizon."""
 
@@ -175,6 +179,16 @@ def partition_key(*, instrument_uid: str, feed_type: str, source_id: str) -> str
 def classify_transport_error(error: BaseException) -> RetryDecision:
     if isinstance(error, BackpressureRequired):
         return RetryDecision(RetryClass.CAPACITY, "bridge_capacity_exhausted")
-    if isinstance(error, (EventIdCollision, ValueError, TypeError)):
+    if isinstance(
+        error,
+        (
+            CheckpointRegression,
+            CursorExpired,
+            EventIdCollision,
+            PayloadCorruption,
+            ValueError,
+            TypeError,
+        ),
+    ):
         return RetryDecision(RetryClass.NON_RETRYABLE, "invalid_or_conflicting_event")
     return RetryDecision(RetryClass.RETRYABLE, "transient_transport_failure", 0.05)

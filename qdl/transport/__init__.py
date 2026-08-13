@@ -12,6 +12,7 @@ from qdl.transport.contracts import (
     EventSource,
     RetryClass,
     RetryDecision,
+    PayloadCorruption,
     StreamName,
 )
 from qdl.transport.publisher import DurablePublisher, PublisherState
@@ -29,6 +30,7 @@ __all__ = [
     "EventSink",
     "EventSource",
     "PublisherState",
+    "PayloadCorruption",
     "RetryClass",
     "RetryDecision",
     "SQLiteDurableSpool",

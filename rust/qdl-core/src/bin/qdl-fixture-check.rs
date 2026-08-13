@@ -8,7 +8,9 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = env::args().nth(1).ok_or("usage: qdl-fixture-check FIXTURE.json")?;
+    let path = env::args()
+        .nth(1)
+        .ok_or("usage: qdl-fixture-check FIXTURE.json")?;
     let fixture: TradeFixture = serde_json::from_slice(&fs::read(&path)?)?;
     let canonical = canonical_bytes(&fixture).map_err(|error| format!("canonical: {error}"))?;
     println!(

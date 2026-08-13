@@ -12,6 +12,7 @@ from qdl.transport import (
     DurableEvent,
     DurablePublisher,
     EventIdCollision,
+    PayloadCorruption,
     PublisherState,
     SQLiteDurableSpool,
     SpoolConfig,
@@ -102,6 +103,22 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             self.assertEqual(spool.stats().records, 1)
             self.assertEqual(spool.high_watermark(event(1).stream, event(1).partition_key), 1)
 
+    def test_replay_detects_payload_corruption(self):
+        with self.spool() as spool:
+            first = spool.append(event(1))
+            spool._connection.execute(
+                """
+                UPDATE events SET payload = ?
+                WHERE stream = ? AND partition_key = ? AND logical_offset = ?
+                """,
+                (b"tampered", first.cursor.stream, first.cursor.partition_key, first.cursor.offset),
+            )
+            with self.assertRaises(PayloadCorruption):
+                spool.read(
+                    stream=first.cursor.stream,
+                    partition_key=first.cursor.partition_key,
+                )
+
     def test_batch_is_one_transaction_and_rolls_back_on_collision(self):
         with self.spool() as spool:
             spool.append(event(1))
@@ -119,6 +136,60 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
                 publisher.publish(event(2))
             self.assertEqual(publisher.status.state, PublisherState.BLOCKED)
             self.assertEqual(spool.stats().records, 1)
+
+    def test_metadata_and_physical_storage_bounds_fail_closed(self):
+        with SQLiteDurableSpool(
+            SpoolConfig(
+                path=self.path,
+                max_records=10,
+                max_payload_bytes=1024,
+                max_event_bytes=512,
+                max_storage_bytes=1024,
+                max_partitions=1,
+                max_consumer_checkpoints=1,
+                min_free_disk_bytes=0,
+            ),
+            clock_ns=self.clock,
+        ) as spool:
+            with self.assertRaises(BackpressureRequired):
+                spool.append(event(1))
+
+        second_path = Path(self.temp.name) / "metadata.sqlite3"
+        with SQLiteDurableSpool(
+            SpoolConfig(
+                path=second_path,
+                max_records=10,
+                max_payload_bytes=1024,
+                max_event_bytes=512,
+                max_storage_bytes=10 * 1024 * 1024,
+                max_partitions=1,
+                max_consumer_checkpoints=1,
+                min_free_disk_bytes=0,
+            ),
+            clock_ns=self.clock,
+        ) as spool:
+            first = spool.append(event(1))
+            with self.assertRaises(BackpressureRequired):
+                spool.append(
+                    DurableEvent(
+                        stream=event(2).stream,
+                        partition_key="another/partition/source",
+                        event_id=event(2).event_id,
+                        payload=event(2).payload,
+                        accepted_at_ns=event(2).accepted_at_ns,
+                    )
+                )
+            spool.register_consumer(
+                consumer_id="first",
+                stream=first.cursor.stream,
+                partition_key=first.cursor.partition_key,
+            )
+            with self.assertRaises(BackpressureRequired):
+                spool.register_consumer(
+                    consumer_id="second",
+                    stream=first.cursor.stream,
+                    partition_key=first.cursor.partition_key,
+                )
 
     def test_checkpoint_is_monotonic_and_trim_waits_for_all_active_consumers(self):
         with self.spool() as spool:

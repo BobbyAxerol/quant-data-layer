@@ -21,7 +21,13 @@ def percentile(sorted_values: list[int], percentile_value: float) -> float:
     return sorted_values[index] / 1_000_000
 
 
-def run(event_count: int, partition_count: int, payload_size: int, batch_size: int) -> dict:
+def run(
+    event_count: int,
+    partition_count: int,
+    payload_size: int,
+    batch_size: int,
+    consumer_groups: int,
+) -> dict:
     with tempfile.TemporaryDirectory(prefix="qdl-phase2-benchmark.") as directory:
         path = Path(directory) / "bridge.sqlite3"
         payload_body = b"x" * payload_size
@@ -72,6 +78,24 @@ def run(event_count: int, partition_count: int, payload_size: int, batch_size: i
                 )
             duplicate_seconds = time.perf_counter() - duplicate_started
 
+            checkpoint_start = time.perf_counter()
+            checkpoint_rows = 0
+            for consumer_index in range(consumer_groups):
+                consumer_id = f"benchmark-consumer-{consumer_index}"
+                for partition_index in range(partition_count):
+                    partition = (
+                        f"instrument-{partition_index}/trade/binance-shadow"
+                    )
+                    high = spool.high_watermark("md.canonical.v2.trade", partition)
+                    spool.register_consumer(
+                        consumer_id=consumer_id,
+                        stream="md.canonical.v2.trade",
+                        partition_key=partition,
+                        after_offset=high,
+                    )
+                    checkpoint_rows += 1
+            checkpoint_seconds = time.perf_counter() - checkpoint_start
+
             replay_start = time.perf_counter()
             replayed = 0
             replay_digest = hashlib.sha256()
@@ -100,6 +124,7 @@ def run(event_count: int, partition_count: int, payload_size: int, batch_size: i
                 "partition_count": partition_count,
                 "payload_size_bytes": payload_size,
                 "batch_size": batch_size,
+                "consumer_groups": consumer_groups,
                 "sqlite_journal": "WAL",
                 "sqlite_synchronous": "FULL",
             },
@@ -133,7 +158,9 @@ def run(event_count: int, partition_count: int, payload_size: int, batch_size: i
             "capacity": {
                 "logical_utilization": stats.utilization,
                 "replay_horizon_seconds_at_100_events_per_second": config.max_records / 100,
-                "benchmark_consumer_groups": 1,
+                "benchmark_consumer_groups": consumer_groups,
+                "checkpoint_rows": checkpoint_rows,
+                "checkpoint_writes_per_second": checkpoint_rows / checkpoint_seconds,
             },
         }
 
@@ -144,18 +171,55 @@ def main() -> None:
     parser.add_argument("--partitions", type=int, default=10)
     parser.add_argument("--payload-bytes", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument("--consumer-groups", type=int, default=8)
+    parser.add_argument("--min-throughput", type=float, default=0.0)
+    parser.add_argument("--max-p99-ms", type=float, default=0.0)
+    parser.add_argument("--max-disk-amplification", type=float, default=0.0)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.events <= 0 or args.partitions <= 0 or args.events < args.partitions:
         raise SystemExit("invalid benchmark event/partition count")
     if args.batch_size <= 0 or args.batch_size > 1000:
         raise SystemExit("invalid benchmark batch size")
-    result = run(args.events, args.partitions, args.payload_bytes, args.batch_size)
+    if args.consumer_groups <= 0:
+        raise SystemExit("invalid benchmark consumer group count")
+    result = run(
+        args.events,
+        args.partitions,
+        args.payload_bytes,
+        args.batch_size,
+        args.consumer_groups,
+    )
+    failures = []
+    if (
+        args.min_throughput > 0
+        and result["append"]["throughput_events_per_second"] < args.min_throughput
+    ):
+        failures.append("append_throughput_below_gate")
+    if args.max_p99_ms > 0 and result["append"]["latency_ms"]["p99"] > args.max_p99_ms:
+        failures.append("append_p99_above_gate")
+    if (
+        args.max_disk_amplification > 0
+        and result["resources"]["disk_amplification"]
+        > args.max_disk_amplification
+    ):
+        failures.append("disk_amplification_above_gate")
+    if result["replay"]["events"] != args.events:
+        failures.append("replay_event_count_mismatch")
+    result["gates"] = {
+        "min_throughput": args.min_throughput,
+        "max_p99_ms": args.max_p99_ms,
+        "max_disk_amplification": args.max_disk_amplification,
+        "failures": failures,
+    }
+    result["status"] = "FAIL" if failures else "PASS"
     rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered)
     print(rendered, end="")
+    if failures:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

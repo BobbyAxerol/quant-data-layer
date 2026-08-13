@@ -25,7 +25,10 @@ impl BackoffPolicy {
         let bounded_basis = u64::from(jitter_basis.min(10_000));
         let jitter_window = exponential.saturating_mul(u64::from(self.jitter_bps)) / 10_000;
         (exponential.saturating_sub(jitter_window)
-            + jitter_window.saturating_mul(2).saturating_mul(bounded_basis) / 10_000)
+            + jitter_window
+                .saturating_mul(2)
+                .saturating_mul(bounded_basis)
+                / 10_000)
             .min(self.maximum_ms)
     }
 }

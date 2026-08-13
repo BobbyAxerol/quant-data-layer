@@ -33,7 +33,10 @@ pub struct ConnectionSupervisor {
 
 impl Default for ConnectionSupervisor {
     fn default() -> Self {
-        Self { state: ConnectionState::Disabled, generation: 0 }
+        Self {
+            state: ConnectionState::Disabled,
+            generation: 0,
+        }
     }
 }
 
@@ -118,7 +121,10 @@ mod tests {
         let session = SourceSession {
             source_id: "source-1".into(),
             connection_generation: 4,
-            lease: FencingLease { epoch: 8, expires_at_ns: 1_000 },
+            lease: FencingLease {
+                epoch: 8,
+                expires_at_ns: 1_000,
+            },
         };
         assert!(session.permits_publish(4, 8, 999));
         assert!(!session.permits_publish(3, 8, 999));

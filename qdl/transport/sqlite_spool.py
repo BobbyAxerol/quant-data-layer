@@ -17,6 +17,7 @@ from qdl.transport.contracts import (
     CursorExpired,
     DurableEvent,
     EventIdCollision,
+    PayloadCorruption,
     StoredEvent,
 )
 
@@ -98,6 +99,7 @@ class SQLiteDurableSpool:
         self._connection.row_factory = sqlite3.Row
         self._configure()
         self._migrate()
+        self._validate_integrity()
 
     def _configure(self) -> None:
         self._connection.execute("PRAGMA journal_mode=WAL")
@@ -131,8 +133,9 @@ class SQLiteDurableSpool:
                 PRIMARY KEY (stream, partition_key, logical_offset),
                 UNIQUE (stream, event_id)
             );
+            DROP INDEX IF EXISTS idx_qdl_spool_events_retention;
             CREATE INDEX IF NOT EXISTS idx_qdl_spool_events_retention
-                ON events (accepted_at_ns);
+                ON events (committed_at_ns);
 
             CREATE TABLE IF NOT EXISTS consumer_checkpoints (
                 consumer_id TEXT NOT NULL,
@@ -426,14 +429,15 @@ class SQLiteDurableSpool:
     def get_checkpoint(
         self, *, consumer_id: str, stream: str, partition_key: str
     ) -> Cursor | None:
-        row = self._connection.execute(
-            """
-            SELECT logical_offset FROM consumer_checkpoints
-            WHERE consumer_id = ? AND stream = ? AND partition_key = ?
-              AND expires_at_ns > ?
-            """,
-            (consumer_id, stream, partition_key, self._clock_ns()),
-        ).fetchone()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT logical_offset FROM consumer_checkpoints
+                WHERE consumer_id = ? AND stream = ? AND partition_key = ?
+                  AND expires_at_ns > ?
+                """,
+                (consumer_id, stream, partition_key, self._clock_ns()),
+            ).fetchone()
         if row is None:
             return None
         return Cursor(stream, partition_key, int(row["logical_offset"]))
@@ -494,37 +498,41 @@ class SQLiteDurableSpool:
     ) -> int:
         if not reason_code.strip() or retry_count < 0:
             raise ValueError("valid quarantine reason and retry_count are required")
-        count = self._connection.execute("SELECT COUNT(*) FROM quarantine").fetchone()[0]
-        if int(count) >= self.config.max_quarantine_records:
-            raise BackpressureRequired("bridge quarantine bound exhausted")
-        result = self._connection.execute(
-            """
-            INSERT INTO quarantine(
-                stream, partition_key, event_id, payload_sha256, reason_code,
-                reason_message, retry_count, quarantined_at_ns
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event.stream,
-                event.partition_key,
-                event.event_id,
-                hashlib.sha256(event.payload).hexdigest(),
-                reason_code,
-                reason_message,
-                retry_count,
-                self._clock_ns(),
-            ),
-        )
+        with self._lock:
+            count = self._connection.execute(
+                "SELECT COUNT(*) FROM quarantine"
+            ).fetchone()[0]
+            if int(count) >= self.config.max_quarantine_records:
+                raise BackpressureRequired("bridge quarantine bound exhausted")
+            result = self._connection.execute(
+                """
+                INSERT INTO quarantine(
+                    stream, partition_key, event_id, payload_sha256, reason_code,
+                    reason_message, retry_count, quarantined_at_ns
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.stream,
+                    event.partition_key,
+                    event.event_id,
+                    hashlib.sha256(event.payload).hexdigest(),
+                    reason_code,
+                    reason_message,
+                    retry_count,
+                    self._clock_ns(),
+                ),
+            )
         return int(result.lastrowid)
 
     def high_watermark(self, stream: str, partition_key: str) -> int:
-        row = self._connection.execute(
-            """
-            SELECT next_offset FROM partitions
-            WHERE stream = ? AND partition_key = ?
-            """,
-            (stream, partition_key),
-        ).fetchone()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT next_offset FROM partitions
+                WHERE stream = ? AND partition_key = ?
+                """,
+                (stream, partition_key),
+            ).fetchone()
         return int(row["next_offset"]) - 1 if row else 0
 
     def stats(self) -> SpoolStats:
@@ -566,6 +574,14 @@ class SQLiteDurableSpool:
             self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             self._connection.close()
             self._connection = None
+
+    def integrity_check(self) -> bool:
+        with self._lock:
+            return self._connection.execute("PRAGMA quick_check(1)").fetchone()[0] == "ok"
+
+    def _validate_integrity(self) -> None:
+        if not self.integrity_check():
+            raise PayloadCorruption("SQLite durable spool integrity check failed")
 
     def _preflight_disk(self, event_bytes: int) -> None:
         free = shutil.disk_usage(self.config.path.parent).free
@@ -646,11 +662,15 @@ class SQLiteDurableSpool:
 
     @staticmethod
     def _stored_event(row: sqlite3.Row) -> StoredEvent:
+        payload = bytes(row["payload"])
+        actual_digest = hashlib.sha256(payload).hexdigest()
+        if actual_digest != row["payload_sha256"]:
+            raise PayloadCorruption("committed payload checksum mismatch")
         event = DurableEvent(
             stream=row["stream"],
             partition_key=row["partition_key"],
             event_id=bytes(row["event_id"]),
-            payload=bytes(row["payload"]),
+            payload=payload,
             accepted_at_ns=int(row["accepted_at_ns"]),
             content_type=row["content_type"],
             headers=json.loads(row["headers_json"]),

@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
-pub mod canonical;
 pub mod backoff;
+pub mod canonical;
 pub mod decimal;
 pub mod event_id;
 pub mod okx_simulator;
