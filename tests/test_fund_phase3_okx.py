@@ -4,7 +4,15 @@ import asyncio
 import unittest
 from unittest.mock import Mock, patch
 
-from qdl.adapters.okx.client import AsyncTokenBucket, BookState, OkxOrderBook, OkxRestClient
+from qdl.adapters.okx.client import (
+    AsyncTokenBucket,
+    BookState,
+    OkxOrderBook,
+    OkxRestClient,
+    OkxSubscription,
+    OkxWebSocketSupervisor,
+    _receive_until_stop,
+)
 from qdl.canonical.book import canonicalize_okx_book
 from qdl.canonical.trade import TradeContext
 
@@ -91,6 +99,47 @@ class OkxRateAndRestTests(unittest.IsolatedAsyncioTestCase):
         rows = await OkxRestClient().trades("BTC-USDT-SWAP", limit=1)
         self.assertEqual(rows, [{"tradeId": "7"}])
         self.assertEqual(get.call_args.kwargs["params"]["instId"], "BTC-USDT-SWAP")
+
+
+class OkxSupervisorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reconnect_storm_is_bounded_and_stop_is_honored(self):
+        stop = asyncio.Event()
+        attempts = 0
+
+        class FailingConnection:
+            async def __aenter__(self):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 3:
+                    stop.set()
+                raise OSError("isolated reconnect test")
+
+            async def __aexit__(self, *_):
+                return False
+
+        supervisor = OkxWebSocketSupervisor(
+            on_frame=lambda *_: asyncio.sleep(0), max_backoff_seconds=0
+        )
+        with patch("websockets.asyncio.client.connect", return_value=FailingConnection()):
+            self.assertEqual(
+                await supervisor.run(
+                    (OkxSubscription("trades", "BTC-USDT-SWAP"),), stop=stop
+                ),
+                0,
+            )
+        self.assertEqual(attempts, 3)
+
+    async def test_stop_interrupts_blocked_receive(self):
+        stop = asyncio.Event()
+
+        class BlockingSocket:
+            async def recv(self):
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(_receive_until_stop(BlockingSocket(), stop, 60))
+        await asyncio.sleep(0)
+        stop.set()
+        self.assertIsNone(await asyncio.wait_for(task, timeout=0.2))
 
 
 if __name__ == "__main__":

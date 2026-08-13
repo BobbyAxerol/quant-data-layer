@@ -27,6 +27,24 @@ BINANCE_USDM_KLINES = "https://fapi.binance.com/fapi/v1/klines"
 BINANCE_USDM_WS_BASE = "wss://fstream.binance.com/stream?streams="
 
 
+async def _receive_until_stop(socket: Any, stop: asyncio.Event, timeout: float) -> Any | None:
+    """Receive one frame while allowing an operator stop to interrupt the wait."""
+    receive = asyncio.create_task(socket.recv())
+    stopping = asyncio.create_task(stop.wait())
+    done, pending = await asyncio.wait(
+        {receive, stopping}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+    )
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    if not done:
+        raise TimeoutError("Binance WebSocket receive timed out")
+    if stopping in done and stopping.result():
+        return None
+    return receive.result()
+
+
 @dataclass(frozen=True)
 class BinanceDiscovery:
     records: tuple[InstrumentRecord, ...]
@@ -208,7 +226,11 @@ class BinanceUsdmSupervisor:
                 ) as socket:
                     failures = 0
                     while not stop.is_set() and (max_events is None or received < max_events):
-                        message = await asyncio.wait_for(socket.recv(), timeout=self._heartbeat * 2)
+                        message = await _receive_until_stop(
+                            socket, stop, timeout=self._heartbeat * 2
+                        )
+                        if message is None:
+                            break
                         stream, frame = decode_combined_frame(message)
                         await self._on_frame(stream, frame, time.time_ns())
                         received += 1

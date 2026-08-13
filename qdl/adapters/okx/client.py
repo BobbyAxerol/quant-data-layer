@@ -17,6 +17,24 @@ OKX_PUBLIC_WS = "wss://ws.okx.com:8443/ws/v5/public"
 OKX_BUSINESS_WS = "wss://ws.okx.com:8443/ws/v5/business"
 
 
+async def _receive_until_stop(socket: Any, stop: asyncio.Event, timeout: float) -> Any | None:
+    """Receive one frame while allowing an operator stop to interrupt the wait."""
+    receive = asyncio.create_task(socket.recv())
+    stopping = asyncio.create_task(stop.wait())
+    done, pending = await asyncio.wait(
+        {receive, stopping}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+    )
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    if not done:
+        raise TimeoutError("OKX WebSocket receive timed out")
+    if stopping in done and stopping.result():
+        return None
+    return receive.result()
+
+
 class BookState(str, Enum):
     SYNCING = "SYNCING"
     LIVE = "LIVE"
@@ -234,7 +252,12 @@ class OkxWebSocketSupervisor:
                     pending = {(item.channel, item.inst_id) for item in subscriptions}
                     deadline = time.monotonic() + 10
                     while pending:
-                        payload = json.loads(await asyncio.wait_for(socket.recv(), timeout=max(0.1, deadline - time.monotonic())))
+                        message = await _receive_until_stop(
+                            socket, stop, timeout=max(0.1, deadline - time.monotonic())
+                        )
+                        if message is None:
+                            return received
+                        payload = json.loads(message)
                         if payload.get("event") == "error":
                             raise RuntimeError(f"OKX subscription rejected: {payload.get('code')} {payload.get('msg')}")
                         if payload.get("event") == "subscribe":
@@ -243,7 +266,11 @@ class OkxWebSocketSupervisor:
                     failures = 0
                     while not stop.is_set() and (max_events is None or received < max_events):
                         try:
-                            message = await asyncio.wait_for(socket.recv(), timeout=self._heartbeat)
+                            message = await _receive_until_stop(
+                                socket, stop, timeout=self._heartbeat
+                            )
+                            if message is None:
+                                break
                         except TimeoutError:
                             await socket.send("ping")
                             pong = await asyncio.wait_for(socket.recv(), timeout=self._heartbeat)

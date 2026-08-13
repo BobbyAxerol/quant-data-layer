@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest.mock import patch
 
 from qdl.adapters.binance_usdm import (
     decode_combined_frame,
+    BinanceUsdmSupervisor,
     parse_exchange_info,
     websocket_url,
 )
@@ -81,6 +83,55 @@ class BinanceCanonicalTests(unittest.TestCase):
     def test_malformed_combined_frame_is_rejected_not_coerced(self):
         with self.assertRaises(ValueError):
             decode_combined_frame('{"stream":"x","data":{}}')
+
+
+class BinanceSupervisorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reconnect_storm_is_bounded_and_stop_is_honored(self):
+        stop = asyncio.Event()
+        attempts = 0
+
+        class FailingConnection:
+            async def __aenter__(self):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 3:
+                    stop.set()
+                raise OSError("isolated reconnect test")
+
+            async def __aexit__(self, *_):
+                return False
+
+        subscription = Subscription(
+            "BINANCE", "USDM", FeedType.TRADE, "BTCUSDT"
+        )
+        shard = ConnectionShard(
+            "s", "BINANCE", "USDM", FeedType.TRADE, (subscription,), 1
+        )
+        supervisor = BinanceUsdmSupervisor(
+            on_frame=lambda *_: asyncio.sleep(0), max_backoff_seconds=0
+        )
+        with patch("websockets.asyncio.client.connect", return_value=FailingConnection()):
+            self.assertEqual(
+                await supervisor.run(
+                    shard, active_symbols={"BTCUSDT"}, stop=stop
+                ),
+                0,
+            )
+        self.assertEqual(attempts, 3)
+
+    async def test_stop_interrupts_blocked_receive(self):
+        stop = asyncio.Event()
+
+        class BlockingSocket:
+            async def recv(self):
+                await asyncio.Event().wait()
+
+        from qdl.adapters.binance_usdm import _receive_until_stop
+
+        task = asyncio.create_task(_receive_until_stop(BlockingSocket(), stop, 60))
+        await asyncio.sleep(0)
+        stop.set()
+        self.assertIsNone(await asyncio.wait_for(task, timeout=0.2))
 
 
 if __name__ == "__main__":
