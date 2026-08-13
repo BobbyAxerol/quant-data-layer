@@ -34,7 +34,8 @@ in-process telemetry buffer as replicated production infrastructure.
 - Added dependency, license, secret, misconfiguration and container image gates.
   GitHub Actions are pinned by commit SHA.
 - Moved the Python runtime image to fixed non-root UID/GID `10001` and upgraded
-  final runtime `setuptools` to a non-vulnerable version.
+  final runtime `setuptools` to a non-vulnerable version. Added an idempotent,
+  path-bounded host preflight for the `data/` and `logs/` bind mounts.
 - Kept `/v1`, production Redis namespaces, running containers and source
   authority unchanged.
 

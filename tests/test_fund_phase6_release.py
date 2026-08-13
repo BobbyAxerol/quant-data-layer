@@ -15,6 +15,12 @@ class ReleaseBundleTests(unittest.TestCase):
     def test_runtime_image_is_non_root_and_trivy_waiver_is_narrow(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("USER qdl:qdl", dockerfile)
+        preparation = (ROOT / "scripts/prepare_nonroot_runtime.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('QDL_RUNTIME_UID:-10001', preparation)
+        self.assertIn('QDL_RUNTIME_GID:-10001', preparation)
+        self.assertIn('for relative in data logs', preparation)
         ignored = {
             line.strip()
             for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()

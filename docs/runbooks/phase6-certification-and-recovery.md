@@ -21,6 +21,10 @@ production Redis, durable log or historical store to make a gate pass.
    in `SHADOW`.
 5. Confirm durable storage, Redis shadow namespace and history bucket have safe
    capacity. Never reuse a production consumer group for testing.
+6. Before deploying the non-root Python image, run
+   `sudo scripts/prepare_nonroot_runtime.sh` once on the host and verify the
+   mounted `data/` and `logs/` paths are writable by UID/GID `10001`. Do not
+   change ownership of unrelated repository or production-volume paths.
 
 ## Venue Loss Or Reconnect Storm
 

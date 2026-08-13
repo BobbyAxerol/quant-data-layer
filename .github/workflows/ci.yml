@@ -81,6 +81,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
+      - name: Prepare non-root runtime bind mounts
+        run: sudo scripts/prepare_nonroot_runtime.sh
+
       - name: Build data_layer image
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml build data_layer
 
