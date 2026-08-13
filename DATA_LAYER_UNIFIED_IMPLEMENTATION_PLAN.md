@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5, including Pre-Phase 5 readiness closure, are complete on the feature branch in dark/shadow mode; no runtime cutover has started.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. No runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -64,7 +64,7 @@ These rules apply to all seven phases.
 | 4 | Quality, history, replay and gap-free handoff | Certified data products from warmup through live recovery | `COMPLETE (FROZEN SHADOW)` |
 | 4.5 | V2 readiness and debt closure | Freeze query semantics and remove correctness/security ambiguity before endpoint work | `COMPLETE (FROZEN DARK)` |
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `COMPLETE (FROZEN SHADOW)` |
-| 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `PLANNED` |
+| 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `BLOCKED (SHADOW PASS; PRIMARY NO-GO)` |
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
 
@@ -766,7 +766,9 @@ Expose provider-neutral V2 snapshot/query/stream contracts and migrate consumers
 
 ## 10. Phase 6 - Production Certification And Multi-Venue Readiness
 
-**Status:** `PLANNED`
+**Status:** `BLOCKED` - implementation and shadow certification are complete;
+production authority is intentionally `NO-GO` until the infrastructure gates in
+the Phase 6 report pass.
 
 ### Goal
 
@@ -801,10 +803,59 @@ Certify production reliability, security, resource efficiency and operational re
 
 ### Completed
 
-- Not started.
+- Added bounded OpenTelemetry-compatible correlation/metrics primitives, SLO
+  evaluation and low-cardinality rules. Canonical drops and completeness breach
+  fail as SEV-1 conditions.
+- Added fail-closed JWT/RBAC control identity, environment/venue scope, exact
+  egress allowlists, SSRF/private-address blocking, payload/decompression
+  bounds, secret redaction and hash-chained mutation audit records.
+- Added deterministic chaos/recovery tests for restart, transient durable sink,
+  slow consumer, Redis rebuild, projector replay, object-store commit failure,
+  lease/fencing failover, malformed/duplicate/gap inputs and OKX
+  make-before-break reconnect.
+- Added capability-scoped adapter certification. Binance USD-M selected TRADE,
+  OKX V5 JSON reference/history and DNSE BAR scopes passed their bounded gates;
+  OKX SBE and actual Deribit activation remain fail-closed capabilities.
+- Added capacity certification with normal/burst windows, p50/p95/p99/p99.9,
+  restart replay, queue rejection and memory-growth evidence.
+- Added deterministic SPDX release manifests, immutable image enforcement,
+  checksums, signature verification rehearsal, pinned CI actions, Python/Rust
+  dependency gates and Trivy image/repository scans.
+- Hardened the runtime image to fixed non-root UID/GID `10001`; upgraded final
+  runtime `setuptools`; verified no unresolved HIGH/CRITICAL image finding,
+  leaked secret or HIGH/CRITICAL repository misconfiguration.
+- Ran the full final-image suite: 274 Python tests passed with five conditional
+  integration skips whose Docker/Buf/Redis equivalents passed separately; 11
+  Rust tests passed; Buf lint/breaking/generation, isolated Redis rebuild and
+  PostgreSQL migration gates passed.
+- Captured authentic read-only evidence from Binance USD-M, OKX V5 and DNSE.
+  No synthetic/provider-fabricated production evidence and no production write
+  were used.
+- Preserved the running V1 authority and production state. At certification
+  close it remained healthy, with restart count zero and no OOM.
+- Frozen evidence:
+  [Phase 6 production certification report](upgrade/evidence/PHASE6_PRODUCTION_CERTIFICATION_REPORT.md),
+  [machine-readable decision](upgrade/evidence/phase6-certification-freeze.json),
+  [capacity](upgrade/evidence/phase6-capacity.json),
+  [service/provider smoke](upgrade/evidence/phase6-real-provider-service-smoke.json),
+  [OKX](upgrade/evidence/phase6-okx-real-provider.json) and
+  [DNSE](upgrade/evidence/phase6-dnse-real-provider.json).
 
 ### Technical Debt / Decision Gate
 
+- `BLOCKED`: deploy a replicated Kafka-compatible durable broker and prove
+  producer acknowledgements, replication, broker failover and restore. The
+  certified SQLite implementation remains a bounded bridge only.
+- `BLOCKED`: deploy OTel collector/dashboards/alert routing and approve the
+  production SLO/error budget.
+- `BLOCKED`: apply production workload identity, RBAC/network policy, external
+  secret rotation, registry signature admission and entitlement/retention
+  governance.
+- `BLOCKED`: rehearse object-store/PITR and regional DR on independent
+  infrastructure. A same-host test cannot certify regional recovery.
+- `BLOCKED`: register and migrate every critical consumer, then run an
+  operator-approved `SHADOW -> CANARY -> PRIMARY` cutover for one exact feed
+  slice. Combined V1 and broad Spot producers are not removed automatically.
 - Actual Deribit, additional options vendors or regional HA are separate production activations requiring credentials, licensing, capacity and source-semantics approval. The core architecture must already support them.
 - V1/legacy Redis removal is not part of automatic Phase 6 closure; it requires zero-consumer telemetry and an approved sunset release.
 

@@ -4875,6 +4875,15 @@ activation boundaries are recorded in
 
 Sections `25-29`, roadmap `P3`, Sections `34-35`, `37-41` and Appendix `B`: production certification, security, chaos/performance, cutover, runbooks and adapter definition of done.
 
+Implementation status (2026-08-13): implementation and bounded shadow
+certification pass; production authority remains `NO-GO`. Security, recovery,
+capacity, real-provider and release evidence is frozen in
+[`PHASE6_PRODUCTION_CERTIFICATION_REPORT.md`](evidence/PHASE6_PRODUCTION_CERTIFICATION_REPORT.md).
+The report maps every Section 41 and Appendix B gate and explicitly blocks
+replicated transport, production telemetry/security, full consumer cutover and
+regional DR claims until their real infrastructure exists. V1 remains
+authoritative and was not restarted or mutated.
+
 ### Option and Deribit extension boundary
 
 Adding an option venue must not require changing canonical core identities or rewriting distribution. The common boundary must represent:

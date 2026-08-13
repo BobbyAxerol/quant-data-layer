@@ -1,0 +1,24 @@
+{
+  "authority": "V1_UNCHANGED",
+  "binance": {
+    "canonical_parity": {
+      "event_time": true,
+      "price": true,
+      "quantity": true,
+      "trade_id": true
+    },
+    "market": "binance_usdm",
+    "provider": "binance"
+  },
+  "health_status": "ok",
+  "okx": {
+    "cached": false,
+    "instId": "BTC-USDT-SWAP",
+    "provider_interval": "1m",
+    "rows": 5,
+    "stored": false
+  },
+  "production_writes": 0,
+  "schema": "qdl.phase5.real-provider-shadow-smoke.v1",
+  "status": "PASS"
+}

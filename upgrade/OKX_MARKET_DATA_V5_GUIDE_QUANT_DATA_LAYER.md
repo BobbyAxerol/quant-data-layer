@@ -4820,6 +4820,14 @@ certification remains Phase 6.
 - Promote Rust book core or SBE only after JSON shadow parity, schema/version pinning, unknown-schema fail-closed behavior and tested JSON rollback.
 - Store compact evidence and clean every fixture topic/group/key/container after certification.
 
+Implementation status (2026-08-13): OKX V5 JSON SWAP reference/history is
+shadow-certified with authentic read-only provider evidence and independent
+capability failure boundaries. Maintenance reconnect uses make-before-break and
+rejects old-generation frames. OKX SBE remains blocked until entitlement,
+pinned schema/version, JSON shadow parity and rollback are available. No OKX
+production authority was promoted; see the unified
+[Phase 6 report](evidence/PHASE6_PRODUCTION_CERTIFICATION_REPORT.md).
+
 ---
 
 ## 27. Agent implementation workflow
