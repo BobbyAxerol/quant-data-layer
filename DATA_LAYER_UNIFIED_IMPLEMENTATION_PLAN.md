@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phase 0 implementation complete on the feature branch; no runtime cutover has started.
+> **Status:** Phases 0-2 complete on the feature branch in dark/shadow mode; no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -47,11 +47,11 @@ These rules apply to all seven phases.
 
 ## 3. Phase Summary
 
-| Phase | Name | Primary outcome | Initial status |
+| Phase | Name | Primary outcome | Status |
 |---:|---|---|---|
-| 0 | Containment, inventory and measurable baseline | Freeze compatibility, stop unused cost and establish reproducible truth | `PLANNED` |
-| 1 | Canonical contracts, identity and runtime boundaries | Stable venue-neutral domain plus separately scalable Python roles | `PLANNED` |
-| 2 | Durability contract, bridge and Rust foundation | Replayable transport boundary and deterministic cross-language core without premature broker cutover | `PLANNED` |
+| 0 | Containment, inventory and measurable baseline | Freeze compatibility, stop unused cost and establish reproducible truth | `COMPLETE` |
+| 1 | Canonical contracts, identity and runtime boundaries | Stable venue-neutral domain plus separately scalable Python roles | `COMPLETE (DARK)` |
+| 2 | Durability contract, bridge and Rust foundation | Replayable transport boundary and deterministic cross-language core without premature broker cutover | `COMPLETE (DARK)` |
 | 3 | Scalable ingestion and compatibility projection | Demand-driven Rust hot path with legacy V1/Redis parity | `PLANNED` |
 | 4 | Quality, history, replay and gap-free handoff | Certified data products from warmup through live recovery | `PLANNED` |
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `PLANNED` |
@@ -193,7 +193,7 @@ Define one precise, venue-neutral data domain and split the combined process int
 
 ## 6. Phase 2 - Durability Contract, Bridge And Rust Foundation
 
-**Status:** `PLANNED`
+**Status:** `COMPLETE (DARK / NO V1 CUTOVER)`
 
 ### Goal
 
@@ -229,12 +229,52 @@ Introduce a transport-neutral replay contract, a bounded durable bridge and a de
 
 ### Completed
 
-- Not started.
+- Defined portable event sink/source, batch append, logical cursor/checkpoint,
+  deterministic event-ID, retry and partition contracts without exposing a
+  Redis/Kafka offset in application contracts.
+- Implemented a bounded local SQLite WAL bridge for the selected BTCUSDT and
+  ETHUSDT Binance USD-M trade shadow slice. It uses `synchronous=FULL`, atomic
+  batches, raw-first durable acceptance, payload checksums, corruption checks,
+  monotonic offsets, consumer TTL and strict logical/physical metadata bounds.
+- Implemented restartable raw-to-canonical processing, idempotent compatibility
+  projection and Redis flush/restart/replay rebuild. All Redis writes use an
+  isolated `shadow:qdl:v2` namespace; legacy production publication is disabled.
+- Added Python/Rust exact-decimal golden parity for Binance and OKX plus a
+  deterministic OKX protocol simulator covering sequence gaps, stale connection
+  generations, keepalive and maintenance reset.
+- Added a Rust workspace and immutable replay tool with pinned compiler/base
+  image digests, `unsafe` forbidden, deterministic backoff/rate-limit/fencing
+  primitives and CI format/clippy/test/dependency policy gates.
+- Measured 10,000 durable events over 10 partitions and 8 consumer groups:
+  1,470.85 events/s append, 8,211.74 events/s replay, p99 62.28 ms per fsynced
+  batch, 33,004 KiB max RSS and 2.072x disk amplification. All configured gates
+  passed for the small shadow slice.
+- Verification: full Python regression 146 run (143 pass, 3 environment-gated skips);
+  Phase 2 focused tests 20 PASS; Rust 9 PASS; Buf compatibility PASS; isolated
+  Redis recovery PASS; Rust dependency/license/advisory policy PASS; two
+  immutable builds produced the same image ID.
+- Read-only live smoke loaded BTCUSDT/ETHUSDT through unchanged V1, produced two
+  raw and two canonical local records, and made zero production writes. Running
+  Data Layer/Redis restart counts remained zero and all Phase 2 resources were
+  cleaned.
+- Evidence: [Phase 2 implementation report](upgrade/evidence/PHASE2_IMPLEMENTATION_REPORT.md),
+  [verification summary](upgrade/evidence/phase2-verification.json),
+  [performance report](upgrade/evidence/phase2-performance.json), and
+  [live shadow smoke](upgrade/evidence/phase2-live-shadow-smoke.json).
 
 ### Technical Debt / Decision Gate
 
 - Kafka promotion requires explicit approval after measured evidence shows at least one material trigger: multiple independent replay consumers, replay horizon beyond the bounded bridge, raw trade/book volume exceeding its safe budget, multi-node HA requirement, or unacceptable bridge lag/recovery time.
 - Until that gate passes, the dedicated bridge/local spool is transitional infrastructure with a declared limit and sunset path, not the canonical long-term target.
+- The bridge is a single-host, non-HA shadow mechanism and is not approved for
+  broad-universe trades or order-book deltas. Phase 3 must produce sustained
+  demand-backed parity/capacity evidence before any feed authority changes.
+- Existing Python V1/build dependencies have advisory findings in the current
+  image. Phase 2 added no Python dependency; a compatibility-tested dependency
+  refresh remains mandatory before production promotion. Rust Phase 2
+  dependencies pass advisory, license, ban and source policy checks.
+- OpenTelemetry export and multi-node durable-broker failover are later
+  certification work; Phase 2 supplies the stable interfaces, not an HA claim.
 
 ### Rollback
 

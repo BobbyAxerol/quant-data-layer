@@ -3,7 +3,7 @@
   "canonical_events": 2,
   "production_writes": 0,
   "projected_keys": 6,
-  "projection_checksum": "d25a8518f80fe053f7c481bfafb34fad35c2d13d3603b34261ffd319ec8ed677",
+  "projection_checksum": "9dedee9f3f5c6b5ac2df5654f70e5d0351c9e894a7a57a349e85e81c9378c030",
   "raw_events": 2,
   "schema": "qdl.phase2.live-shadow-smoke.v1",
   "spool_storage_bytes": 259376,
