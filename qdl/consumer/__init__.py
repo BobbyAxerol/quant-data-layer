@@ -5,15 +5,20 @@ from qdl.consumer.manifest import (
     ConsumerManifestLoader,
     ConsumerMigration,
     ConsumerMigrationRegistry,
+    ConsumerRoute,
     MigrationState,
     UsageTelemetry,
 )
+from qdl.consumer.shadow import ManifestShadowConsumer, ShadowObservation
 
 __all__ = [
     "ConsumerManifest",
     "ConsumerManifestLoader",
     "ConsumerMigration",
     "ConsumerMigrationRegistry",
+    "ConsumerRoute",
     "MigrationState",
+    "ManifestShadowConsumer",
+    "ShadowObservation",
     "UsageTelemetry",
 ]

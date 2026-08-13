@@ -11,6 +11,10 @@ from qdl.api_v2.models import (
     BatchItemResponse,
     BatchRequirementModel,
     BatchResponse,
+    FeedStatusResponse,
+    GapListResponse,
+    InstrumentPageResponse,
+    InstrumentResponse,
     MarketDataView,
     ProblemDetails,
     QualityView,
@@ -18,6 +22,7 @@ from qdl.api_v2.models import (
     ReadinessResponse,
     SnapshotResponse,
     SourceView,
+    SystemReadinessSummary,
     WarmupResponse,
 )
 from qdl.query import (
@@ -68,6 +73,7 @@ def _market_item(item) -> MarketDataView:
         quality=QualityView(**{**asdict(item.quality), "flags": list(item.quality.flags)}),
         cursor=item.cursor,
         snapshot_id=item.snapshot_id,
+        watermark_offset=item.watermark_offset,
     )
 
 
@@ -122,8 +128,8 @@ def _problem(error: QueryServiceError) -> ProblemDetails:
     )
 
 
-@router.get("/instruments")
-def list_instruments(
+@router.get("/instruments", response_model=InstrumentPageResponse)
+async def list_instruments(
     cursor: str | None = None,
     limit: int = Query(100, ge=1, le=500),
     service: V2QueryService = Depends(_service),
@@ -141,8 +147,8 @@ def list_instruments(
     }
 
 
-@router.get("/instruments/{identity}")
-def get_instrument(identity: str, service: V2QueryService = Depends(_service)):
+@router.get("/instruments/{identity}", response_model=InstrumentResponse)
+async def get_instrument(identity: str, service: V2QueryService = Depends(_service)):
     try:
         item = service.get_instrument(identity)
     except KeyError as error:
@@ -181,7 +187,7 @@ def _query_requirement(
 
 
 @router.get("/market-data/{instrument_uid}/snapshot", response_model=SnapshotResponse)
-def snapshot(
+async def snapshot(
     instrument_uid: str,
     feed: FeedType,
     source_policy_id: str,
@@ -202,7 +208,7 @@ def snapshot(
 
 
 @router.get("/market-data/{instrument_uid}/warmup", response_model=WarmupResponse)
-def warmup(
+async def warmup(
     instrument_uid: str,
     feed: FeedType,
     source_policy_id: str,
@@ -224,7 +230,7 @@ def warmup(
 
 
 @router.get("/market-data/{instrument_uid}/history", response_model=WarmupResponse)
-def history(
+async def history(
     instrument_uid: str,
     feed: FeedType,
     source_policy_id: str,
@@ -235,7 +241,7 @@ def history(
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
 ):
-    return warmup(
+    return await warmup(
         instrument_uid,
         feed,
         source_policy_id,
@@ -249,7 +255,7 @@ def history(
 
 
 @router.post("/market-data/warmup:batch", response_model=BatchResponse)
-def warmup_batch(
+async def warmup_batch(
     body: BatchRequirementModel,
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
@@ -284,8 +290,8 @@ def warmup_batch(
     )
 
 
-@router.get("/feeds/{instrument_uid}/status")
-def feed_status(
+@router.get("/feeds/{instrument_uid}/status", response_model=FeedStatusResponse)
+async def feed_status(
     instrument_uid: str,
     feed: FeedType,
     source_policy_id: str,
@@ -305,7 +311,7 @@ def feed_status(
 
 
 @router.post("/system/readiness:check", response_model=ReadinessResponse)
-def readiness(
+async def readiness(
     body: BatchRequirementModel,
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
@@ -341,8 +347,8 @@ def readiness(
     )
 
 
-@router.get("/system/readiness")
-def system_readiness():
+@router.get("/system/readiness", response_model=SystemReadinessSummary)
+async def system_readiness():
     return {
         "schema": "qdl.system-readiness.v2",
         "status": "SHADOW_READY",
@@ -351,8 +357,8 @@ def system_readiness():
     }
 
 
-@router.get("/data-quality/gaps")
-def data_quality_gaps(service: V2QueryService = Depends(_service)):
+@router.get("/data-quality/gaps", response_model=GapListResponse)
+async def data_quality_gaps(service: V2QueryService = Depends(_service)):
     return {
         "schema": "qdl.data-quality.gaps.v2",
         "items": [
@@ -365,6 +371,12 @@ def data_quality_gaps(service: V2QueryService = Depends(_service)):
 def create_v2_app(service: V2QueryService) -> FastAPI:
     app = FastAPI(title="Quant Data Layer V2", version="2.0.0-shadow")
     app.state.v2_query_service = service
+    app.state.runtime_manifest = {
+        "role": "api_v2",
+        "owns_live_ingestion": False,
+        "owns_venue_connections": False,
+        "authority": "SHADOW",
+    }
     app.include_router(router)
 
     @app.exception_handler(QueryServiceError)

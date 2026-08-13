@@ -1,0 +1,1694 @@
+{
+  "components": {
+    "schemas": {
+      "BarRevisionPolicy": {
+        "enum": [
+          "LATEST",
+          "INITIAL_ONLY",
+          "EMIT_REVISIONS"
+        ],
+        "title": "BarRevisionPolicy",
+        "type": "string"
+      },
+      "BatchItemResponse": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WarmupResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProblemDetails"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "status"
+        ],
+        "title": "BatchItemResponse",
+        "type": "object"
+      },
+      "BatchRequirementModel": {
+        "additionalProperties": false,
+        "properties": {
+          "consumer_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Consumer Id",
+            "type": "string"
+          },
+          "require_all": {
+            "default": true,
+            "title": "Require All",
+            "type": "boolean"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementModel"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Requirements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "requirements"
+        ],
+        "title": "BatchRequirementModel",
+        "type": "object"
+      },
+      "BatchResponse": {
+        "properties": {
+          "error_count": {
+            "title": "Error Count",
+            "type": "integer"
+          },
+          "partial": {
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BatchItemResponse"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "schema": {
+            "default": "qdl.marketdata.batch.v2",
+            "title": "Schema",
+            "type": "string"
+          },
+          "success_count": {
+            "title": "Success Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "partial",
+          "success_count",
+          "error_count",
+          "results"
+        ],
+        "title": "BatchResponse",
+        "type": "object"
+      },
+      "ConsumerGrade": {
+        "enum": [
+          "EXECUTION",
+          "ALPHA",
+          "RESEARCH"
+        ],
+        "title": "ConsumerGrade",
+        "type": "string"
+      },
+      "FeedStatusResponse": {
+        "properties": {
+          "feed": {
+            "title": "Feed",
+            "type": "string"
+          },
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "quality": {
+            "$ref": "#/components/schemas/QualityView"
+          },
+          "schema": {
+            "default": "qdl.feed-status.v2",
+            "title": "Schema",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "feed",
+          "quality"
+        ],
+        "title": "FeedStatusResponse",
+        "type": "object"
+      },
+      "FeedType": {
+        "enum": [
+          "TRADE",
+          "QUOTE",
+          "BAR",
+          "BOOK_SNAPSHOT",
+          "BOOK_DELTA",
+          "FUNDING_RATE",
+          "OPEN_INTEREST",
+          "MARK_INDEX_PRICE",
+          "TICKER"
+        ],
+        "title": "FeedType",
+        "type": "string"
+      },
+      "GapListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GapView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "schema": {
+            "default": "qdl.data-quality.gaps.v2",
+            "title": "Schema",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "GapListResponse",
+        "type": "object"
+      },
+      "GapPolicy": {
+        "enum": [
+          "BLOCK",
+          "PAUSE",
+          "OBSERVE"
+        ],
+        "title": "GapPolicy",
+        "type": "string"
+      },
+      "GapView": {
+        "properties": {
+          "detected_at_ns": {
+            "title": "Detected At Ns",
+            "type": "integer"
+          },
+          "expected_sequence": {
+            "title": "Expected Sequence",
+            "type": "string"
+          },
+          "feed": {
+            "title": "Feed",
+            "type": "string"
+          },
+          "gap_id": {
+            "title": "Gap Id",
+            "type": "string"
+          },
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "observed_sequence": {
+            "title": "Observed Sequence",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "gap_id",
+          "instrument_uid",
+          "feed",
+          "source_id",
+          "expected_sequence",
+          "observed_sequence",
+          "detected_at_ns"
+        ],
+        "title": "GapView",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "InstrumentPageResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InstrumentView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "schema": {
+            "default": "qdl.instruments.page.v2",
+            "title": "Schema",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "InstrumentPageResponse",
+        "type": "object"
+      },
+      "InstrumentResponse": {
+        "properties": {
+          "asset_class": {
+            "title": "Asset Class",
+            "type": "string"
+          },
+          "canonical_symbol": {
+            "title": "Canonical Symbol",
+            "type": "string"
+          },
+          "instrument_id": {
+            "title": "Instrument Id",
+            "type": "string"
+          },
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "market": {
+            "title": "Market",
+            "type": "string"
+          },
+          "metadata_revision": {
+            "minimum": 1.0,
+            "title": "Metadata Revision",
+            "type": "integer"
+          },
+          "native_symbol": {
+            "title": "Native Symbol",
+            "type": "string"
+          },
+          "product_type": {
+            "title": "Product Type",
+            "type": "string"
+          },
+          "schema": {
+            "default": "qdl.instrument.v2",
+            "title": "Schema",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "venue": {
+            "title": "Venue",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "instrument_id",
+          "venue",
+          "market",
+          "product_type",
+          "canonical_symbol",
+          "metadata_revision",
+          "asset_class",
+          "native_symbol",
+          "status"
+        ],
+        "title": "InstrumentResponse",
+        "type": "object"
+      },
+      "InstrumentView": {
+        "properties": {
+          "asset_class": {
+            "title": "Asset Class",
+            "type": "string"
+          },
+          "canonical_symbol": {
+            "title": "Canonical Symbol",
+            "type": "string"
+          },
+          "instrument_id": {
+            "title": "Instrument Id",
+            "type": "string"
+          },
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "market": {
+            "title": "Market",
+            "type": "string"
+          },
+          "metadata_revision": {
+            "minimum": 1.0,
+            "title": "Metadata Revision",
+            "type": "integer"
+          },
+          "native_symbol": {
+            "title": "Native Symbol",
+            "type": "string"
+          },
+          "product_type": {
+            "title": "Product Type",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "venue": {
+            "title": "Venue",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "instrument_id",
+          "venue",
+          "market",
+          "product_type",
+          "canonical_symbol",
+          "metadata_revision",
+          "asset_class",
+          "native_symbol",
+          "status"
+        ],
+        "title": "InstrumentView",
+        "type": "object"
+      },
+      "MarketDataView": {
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "feed": {
+            "title": "Feed",
+            "type": "string"
+          },
+          "instrument_id": {
+            "title": "Instrument Id",
+            "type": "string"
+          },
+          "instrument_revision": {
+            "title": "Instrument Revision",
+            "type": "integer"
+          },
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval"
+          },
+          "observed_at_ns": {
+            "title": "Observed At Ns",
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "quality": {
+            "$ref": "#/components/schemas/QualityView"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Id"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceView"
+          },
+          "watermark_offset": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Watermark Offset",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "instrument_id",
+          "instrument_revision",
+          "feed",
+          "interval",
+          "observed_at_ns",
+          "revision",
+          "payload",
+          "source",
+          "quality"
+        ],
+        "title": "MarketDataView",
+        "type": "object"
+      },
+      "ProblemDetails": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "instrument_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instrument Uid"
+          },
+          "quality_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality State"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "retry_after_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Ms"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code",
+          "detail",
+          "request_id",
+          "retryable"
+        ],
+        "title": "ProblemDetails",
+        "type": "object"
+      },
+      "QualityView": {
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "execution_eligible": {
+            "title": "Execution Eligible",
+            "type": "boolean"
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "freshness_ms": {
+            "title": "Freshness Ms",
+            "type": "integer"
+          },
+          "gap_open": {
+            "title": "Gap Open",
+            "type": "boolean"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "freshness_ms",
+          "gap_open",
+          "complete",
+          "execution_eligible",
+          "policy_id",
+          "flags"
+        ],
+        "title": "QualityView",
+        "type": "object"
+      },
+      "ReadinessItemResponse": {
+        "properties": {
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProblemDetails"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualityView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "status"
+        ],
+        "title": "ReadinessItemResponse",
+        "type": "object"
+      },
+      "ReadinessResponse": {
+        "properties": {
+          "authority": {
+            "default": "V1",
+            "title": "Authority",
+            "type": "string"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ReadinessItemResponse"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "schema": {
+            "default": "qdl.system-readiness.v2",
+            "title": "Schema",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "ready",
+          "results"
+        ],
+        "title": "ReadinessResponse",
+        "type": "object"
+      },
+      "RecoveryPolicy": {
+        "enum": [
+          "SNAPSHOT_AND_REPLAY",
+          "FRESH_SNAPSHOT",
+          "NONE"
+        ],
+        "title": "RecoveryPolicy",
+        "type": "string"
+      },
+      "RequirementModel": {
+        "additionalProperties": false,
+        "properties": {
+          "bar_revision_policy": {
+            "$ref": "#/components/schemas/BarRevisionPolicy",
+            "default": "LATEST"
+          },
+          "consumer_grade": {
+            "$ref": "#/components/schemas/ConsumerGrade"
+          },
+          "feed": {
+            "$ref": "#/components/schemas/FeedType"
+          },
+          "gap_policy": {
+            "$ref": "#/components/schemas/GapPolicy",
+            "default": "BLOCK"
+          },
+          "instrument_uid": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval"
+          },
+          "max_freshness_ms": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 86400000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Freshness Ms"
+          },
+          "recovery": {
+            "$ref": "#/components/schemas/RecoveryPolicy",
+            "default": "SNAPSHOT_AND_REPLAY"
+          },
+          "require_final_bars": {
+            "default": true,
+            "title": "Require Final Bars",
+            "type": "boolean"
+          },
+          "require_full_coverage": {
+            "default": true,
+            "title": "Require Full Coverage",
+            "type": "boolean"
+          },
+          "source_policy_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Source Policy Id",
+            "type": "string"
+          },
+          "stale_policy": {
+            "$ref": "#/components/schemas/StalePolicy",
+            "default": "BLOCK"
+          },
+          "warmup_limit": {
+            "default": 0,
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Warmup Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "feed",
+          "consumer_grade",
+          "source_policy_id"
+        ],
+        "title": "RequirementModel",
+        "type": "object"
+      },
+      "SnapshotResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MarketDataView"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "schema": {
+            "default": "qdl.marketdata.snapshot.v2",
+            "title": "Schema",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "data"
+        ],
+        "title": "SnapshotResponse",
+        "type": "object"
+      },
+      "SourceView": {
+        "properties": {
+          "authoritative": {
+            "title": "Authoritative",
+            "type": "boolean"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_role": {
+            "title": "Source Role",
+            "type": "string"
+          },
+          "venue": {
+            "title": "Venue",
+            "type": "string"
+          }
+        },
+        "required": [
+          "venue",
+          "provider",
+          "source_id",
+          "source_role",
+          "authoritative"
+        ],
+        "title": "SourceView",
+        "type": "object"
+      },
+      "StalePolicy": {
+        "enum": [
+          "BLOCK",
+          "PAUSE",
+          "OBSERVE"
+        ],
+        "title": "StalePolicy",
+        "type": "string"
+      },
+      "SystemReadinessSummary": {
+        "properties": {
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "schema": {
+            "default": "qdl.system-readiness.v2",
+            "title": "Schema",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "v2_consumer_activation": {
+            "title": "V2 Consumer Activation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "authority",
+          "v2_consumer_activation"
+        ],
+        "title": "SystemReadinessSummary",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WarmupResponse": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "coverage": {
+            "title": "Coverage",
+            "type": "string"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/MarketDataView"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "data_as_of_ns": {
+            "title": "Data As Of Ns",
+            "type": "integer"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "schema": {
+            "default": "qdl.marketdata.warmup.v2",
+            "title": "Schema",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "stream_cursor": {
+            "title": "Stream Cursor",
+            "type": "string"
+          },
+          "watermark_offset": {
+            "minimum": 0.0,
+            "title": "Watermark Offset",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "snapshot_id",
+          "data_as_of_ns",
+          "stream_cursor",
+          "watermark_offset",
+          "coverage",
+          "count",
+          "data"
+        ],
+        "title": "WarmupResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Quant Data Layer V2",
+    "version": "2.0.0-shadow"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v2/data-quality/gaps": {
+      "get": {
+        "operationId": "data_quality_gaps_v2_data_quality_gaps_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GapListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Data Quality Gaps",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/feeds/{instrument_uid}/status": {
+      "get": {
+        "operationId": "feed_status_v2_feeds__instrument_uid__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instrument_uid",
+            "required": true,
+            "schema": {
+              "title": "Instrument Uid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "feed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeedType"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_policy_id",
+            "required": true,
+            "schema": {
+              "title": "Source Policy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "consumer_grade",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ConsumerGrade",
+              "default": "ALPHA"
+            }
+          },
+          {
+            "in": "query",
+            "name": "interval",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Interval"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Feed Status",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/instruments": {
+      "get": {
+        "operationId": "list_instruments_v2_instruments_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstrumentPageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Instruments",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/instruments/{identity}": {
+      "get": {
+        "operationId": "get_instrument_v2_instruments__identity__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identity",
+            "required": true,
+            "schema": {
+              "title": "Identity",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstrumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Instrument",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/market-data/warmup:batch": {
+      "post": {
+        "operationId": "warmup_batch_v2_market_data_warmup_batch_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-QDL-Purpose",
+            "required": false,
+            "schema": {
+              "default": "INTERNAL_ALPHA",
+              "title": "X-Qdl-Purpose",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchRequirementModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Warmup Batch",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/market-data/{instrument_uid}/history": {
+      "get": {
+        "operationId": "history_v2_market_data__instrument_uid__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instrument_uid",
+            "required": true,
+            "schema": {
+              "title": "Instrument Uid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "feed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeedType"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_policy_id",
+            "required": true,
+            "schema": {
+              "title": "Source Policy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "consumer_grade",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ConsumerGrade",
+              "default": "RESEARCH"
+            }
+          },
+          {
+            "in": "query",
+            "name": "interval",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Interval"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_freshness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-QDL-Purpose",
+            "required": false,
+            "schema": {
+              "default": "INTERNAL_ALPHA",
+              "title": "X-Qdl-Purpose",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarmupResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "History",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/market-data/{instrument_uid}/snapshot": {
+      "get": {
+        "operationId": "snapshot_v2_market_data__instrument_uid__snapshot_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instrument_uid",
+            "required": true,
+            "schema": {
+              "title": "Instrument Uid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "feed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeedType"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_policy_id",
+            "required": true,
+            "schema": {
+              "title": "Source Policy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "consumer_grade",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ConsumerGrade",
+              "default": "ALPHA"
+            }
+          },
+          {
+            "in": "query",
+            "name": "interval",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Interval"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_freshness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-QDL-Purpose",
+            "required": false,
+            "schema": {
+              "default": "INTERNAL_ALPHA",
+              "title": "X-Qdl-Purpose",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Snapshot",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/market-data/{instrument_uid}/warmup": {
+      "get": {
+        "operationId": "warmup_v2_market_data__instrument_uid__warmup_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instrument_uid",
+            "required": true,
+            "schema": {
+              "title": "Instrument Uid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "feed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeedType"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_policy_id",
+            "required": true,
+            "schema": {
+              "title": "Source Policy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "consumer_grade",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ConsumerGrade",
+              "default": "ALPHA"
+            }
+          },
+          {
+            "in": "query",
+            "name": "interval",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Interval"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_freshness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-QDL-Purpose",
+            "required": false,
+            "schema": {
+              "default": "INTERNAL_ALPHA",
+              "title": "X-Qdl-Purpose",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarmupResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Warmup",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/system/readiness": {
+      "get": {
+        "operationId": "system_readiness_v2_system_readiness_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemReadinessSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "System Readiness",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/system/readiness:check": {
+      "post": {
+        "operationId": "readiness_v2_system_readiness_check_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-QDL-Purpose",
+            "required": false,
+            "schema": {
+              "default": "INTERNAL_ALPHA",
+              "title": "X-Qdl-Purpose",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchRequirementModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Readiness",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    }
+  }
+}

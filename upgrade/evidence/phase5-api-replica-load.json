@@ -1,0 +1,15 @@
+{
+  "concurrency": 100,
+  "latency_ms": {
+    "max": 408.464,
+    "p50": 245.571,
+    "p99": 378.074
+  },
+  "live_ingestion_owners": 0,
+  "replicas": 8,
+  "requests": 2000,
+  "requests_per_second": 352.15,
+  "schema": "qdl.phase5.api-replica-load.v1",
+  "status": "PASS",
+  "venue_connection_attempts": 0
+}

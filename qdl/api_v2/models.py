@@ -84,6 +84,7 @@ class MarketDataView(BaseModel):
     quality: QualityView
     cursor: str | None = None
     snapshot_id: str | None = None
+    watermark_offset: int = Field(default=0, ge=0)
 
 
 class SnapshotResponse(BaseModel):
@@ -92,6 +93,33 @@ class SnapshotResponse(BaseModel):
     contract_schema: str = Field("qdl.marketdata.snapshot.v2", alias="schema")
     request_id: str
     data: MarketDataView
+
+
+class InstrumentView(BaseModel):
+    instrument_uid: str
+    instrument_id: str
+    venue: str
+    market: str
+    product_type: str
+    canonical_symbol: str
+    metadata_revision: int = Field(ge=1)
+    asset_class: str
+    native_symbol: str
+    status: str
+
+
+class InstrumentPageResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    contract_schema: str = Field("qdl.instruments.page.v2", alias="schema")
+    items: list[InstrumentView]
+    next_cursor: str | None = None
+
+
+class InstrumentResponse(InstrumentView):
+    model_config = ConfigDict(populate_by_name=True)
+
+    contract_schema: str = Field("qdl.instrument.v2", alias="schema")
 
 
 class WarmupResponse(BaseModel):
@@ -149,3 +177,38 @@ class ReadinessResponse(BaseModel):
     ready: bool
     authority: str = "V1"
     results: list[ReadinessItemResponse]
+
+
+class FeedStatusResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    contract_schema: str = Field("qdl.feed-status.v2", alias="schema")
+    instrument_uid: str
+    feed: str
+    quality: QualityView
+
+
+class GapView(BaseModel):
+    gap_id: str
+    instrument_uid: str
+    feed: str
+    source_id: str
+    expected_sequence: str
+    observed_sequence: str
+    detected_at_ns: int
+
+
+class GapListResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    contract_schema: str = Field("qdl.data-quality.gaps.v2", alias="schema")
+    items: list[GapView]
+
+
+class SystemReadinessSummary(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    contract_schema: str = Field("qdl.system-readiness.v2", alias="schema")
+    status: str
+    authority: str
+    v2_consumer_activation: str

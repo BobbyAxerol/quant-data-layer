@@ -128,8 +128,18 @@ class FakeQueryTransport:
             "snapshot_id": "snapshot",
             "stream_cursor": self.token,
             "watermark_offset": self.watermark,
+            "coverage": "FULL",
             "count": 1,
-            "data": [{"instrument_uid": requirement.instrument_uid}],
+            "data": [{
+                "instrument_uid": requirement.instrument_uid,
+                "feed": requirement.feed,
+                "interval": requirement.interval,
+                "payload": {"is_final": True},
+                "quality": {
+                    "state": "LIVE", "gap_open": False,
+                    "execution_eligible": True,
+                },
+            }],
         }
 
     async def snapshot(self, requirement, *, consumer_id):
@@ -138,6 +148,13 @@ class FakeQueryTransport:
             "request_id": "request",
             "data": {
                 "instrument_uid": requirement.instrument_uid,
+                "feed": requirement.feed,
+                "interval": requirement.interval,
+                "payload": {"is_final": True},
+                "quality": {
+                    "state": "LIVE", "gap_open": False,
+                    "execution_eligible": True,
+                },
                 "snapshot_id": "snapshot",
                 "cursor": self.token,
                 "watermark_offset": self.watermark,
@@ -425,6 +442,32 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             stream.tokens,
             ["snapshot-token", "snapshot-token", "token-1"],
         )
+
+    async def test_sdk_rejects_semantically_invalid_success_response(self):
+        requirement = DataRequirement(
+            self.record.instrument_uid, "BAR", "EXECUTION", "execution_binance_v1",
+            interval="1m", warmup_limit=1,
+        )
+        query = FakeQueryTransport("snapshot-token")
+        original = query.warmup
+
+        async def stale(*args, **kwargs):
+            payload = await original(*args, **kwargs)
+            payload["data"][0]["quality"]["state"] = "STALE"
+            payload["data"][0]["quality"]["execution_eligible"] = False
+            return payload
+
+        query.warmup = stale
+        client = AsyncDataLayerClient(
+            query_transport=query,
+            stream_transport=ScriptedStreamTransport(()),
+            consumer_id="trading-system-shadow",
+        )
+        with self.assertRaisesRegex(DataLayerError, "STALE"):
+            async with client.warmup_then_stream(
+                requirement, stream=STREAM, partition_key=self.partition
+            ):
+                pass
 
 
 if __name__ == "__main__":

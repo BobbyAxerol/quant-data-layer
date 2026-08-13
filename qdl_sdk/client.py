@@ -35,6 +35,47 @@ class TelemetryRecorder(Protocol):
     ) -> None: ...
 
 
+def _validate_query_payload(
+    requirement: DataRequirement, payload: dict, *, warmup: bool
+) -> None:
+    rows = payload.get("data") if warmup else [payload.get("data")]
+    if not isinstance(rows, list) or not rows or any(not isinstance(row, dict) for row in rows):
+        raise ContinuityError("DATA_NOT_READY", "query response has no typed market-data rows")
+    if warmup:
+        if int(payload.get("count", -1)) != len(rows):
+            raise ContinuityError("PARTIAL_RESULT", "warmup count does not match returned rows")
+        if requirement.require_full_coverage and payload.get("coverage") != "FULL":
+            raise ContinuityError("PARTIAL_RESULT", "warmup response is not full coverage")
+    for row in rows:
+        if row.get("instrument_uid") != requirement.instrument_uid:
+            raise ContinuityError("CONFLICT", "query response instrument does not match requirement")
+        if str(row.get("feed", "")).upper() != requirement.feed:
+            raise ContinuityError("CONFLICT", "query response feed does not match requirement")
+        if requirement.interval is not None and row.get("interval") != requirement.interval:
+            raise ContinuityError("CONFLICT", "query response interval does not match requirement")
+        quality = row.get("quality")
+        if not isinstance(quality, dict):
+            raise ContinuityError("DATA_NOT_READY", "query response has no quality metadata")
+        state = str(quality.get("state", "")).upper()
+        if quality.get("gap_open") and requirement.gap_policy in {"BLOCK", "PAUSE"}:
+            raise ContinuityError("OPEN_SEQUENCE_GAP", "query response has an open gap")
+        if state in {"STALE", "OFFLINE", "UNAVAILABLE"} and requirement.stale_policy in {
+            "BLOCK", "PAUSE",
+        }:
+            raise ContinuityError("DATA_STALE", f"query response quality state is {state}")
+        if requirement.consumer_grade == "EXECUTION" and not quality.get(
+            "execution_eligible", False
+        ):
+            raise ContinuityError(
+                "SOURCE_NON_AUTHORITATIVE",
+                "execution-grade response is not execution eligible",
+            )
+        if requirement.feed == "BAR" and requirement.require_final_bars:
+            market_payload = row.get("payload")
+            if not isinstance(market_payload, dict) or not market_payload.get("is_final", False):
+                raise ContinuityError("DATA_NOT_READY", "bar response is not final")
+
+
 class WarmupStreamSession:
     def __init__(
         self,
@@ -161,6 +202,7 @@ class WarmupStreamSession:
             "snapshot_id": data.get("snapshot_id") or "latest-snapshot",
             "stream_cursor": data.get("cursor"),
             "watermark_offset": data.get("watermark_offset", 0),
+            "coverage": "FULL",
             "count": 1,
             "data": [data],
         }
@@ -217,10 +259,12 @@ class AsyncDataLayerClient:
                 "request_id": snapshot["request_id"],
                 "snapshot_id": data.get("snapshot_id") or "latest-snapshot",
                 "stream_cursor": data.get("cursor"),
-                "watermark_offset": 0,
+                "watermark_offset": data.get("watermark_offset", 0),
+                "coverage": "FULL",
                 "count": 1,
                 "data": [data],
             }
+        _validate_query_payload(requirement, warmup, warmup=True)
         snapshot_token = warmup.get("stream_cursor")
         snapshot_offset = int(warmup.get("watermark_offset", 0))
         if not snapshot_token:

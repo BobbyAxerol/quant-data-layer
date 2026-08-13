@@ -21,6 +21,12 @@ class MigrationState(StrEnum):
     ROLLED_BACK = "ROLLED_BACK"
 
 
+class ConsumerRoute(StrEnum):
+    V1 = "V1"
+    V1_WITH_V2_SHADOW = "V1_WITH_V2_SHADOW"
+    V2 = "V2"
+
+
 _TRANSITIONS = {
     MigrationState.REGISTERED: frozenset({MigrationState.SHADOW}),
     MigrationState.SHADOW: frozenset({MigrationState.ACCEPTED, MigrationState.ROLLED_BACK}),
@@ -157,6 +163,14 @@ class ConsumerMigrationRegistry:
         except KeyError as error:
             raise KeyError(f"consumer migration is not registered: {consumer_id}") from error
 
+    def route(self, consumer_id: str) -> ConsumerRoute:
+        state = self.get(consumer_id).state
+        if state in {MigrationState.REGISTERED, MigrationState.ROLLED_BACK}:
+            return ConsumerRoute.V1
+        if state in {MigrationState.SHADOW, MigrationState.ACCEPTED}:
+            return ConsumerRoute.V1_WITH_V2_SHADOW
+        return ConsumerRoute.V2
+
 
 class UsageTelemetry:
     """Bounded aggregate telemetry; never records strategy parameters or payloads."""
@@ -189,3 +203,22 @@ class UsageTelemetry:
             }
             for (consumer_id, sdk_major, contract), values in sorted(self._usage.items())
         )
+
+    def deprecation_notices(self, owners: dict[str, str]) -> tuple[dict[str, str | int], ...]:
+        notices = []
+        for item in self.snapshot():
+            if not item["deprecated"]:
+                continue
+            owner = owners.get(str(item["consumer_id"]))
+            if not owner:
+                raise ValueError(
+                    f"deprecated consumer has no notification owner: {item['consumer_id']}"
+                )
+            notices.append({
+                "consumer_id": str(item["consumer_id"]),
+                "owner": owner,
+                "contract": str(item["contract"]),
+                "requests": int(item["requests"]),
+                "action": "REGISTER_V2_MANIFEST_OR_APPROVE_V1_SUNSET_EXCEPTION",
+            })
+        return tuple(notices)

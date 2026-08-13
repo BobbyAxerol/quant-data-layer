@@ -51,12 +51,15 @@ class MarketDataItem:
     cursor: str | None = None
     snapshot_id: str | None = None
     revision: int = 0
+    watermark_offset: int = 0
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.instrument_id.strip():
             raise ValueError("market-data instrument identity is required")
         if self.instrument_revision < 1 or self.observed_at_ns <= 0 or self.revision < 0:
             raise ValueError("market-data revision/time fields are invalid")
+        if self.watermark_offset < 0:
+            raise ValueError("market-data watermark_offset cannot be negative")
         if self.feed is FeedType.BAR and not self.interval:
             raise ValueError("bar item requires interval")
         if self.feed is not FeedType.BAR and self.interval is not None:

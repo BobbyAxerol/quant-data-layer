@@ -6,6 +6,7 @@ from pathlib import Path
 from qdl.consumer import (
     ConsumerManifestLoader,
     ConsumerMigrationRegistry,
+    ConsumerRoute,
     MigrationState,
     UsageTelemetry,
 )
@@ -69,6 +70,10 @@ class ConsumerMigrationTests(unittest.TestCase):
             reason="Parity observation",
         )
         self.assertEqual(shadow.state, MigrationState.SHADOW)
+        self.assertEqual(
+            self.registry.route(self.manifest.consumer_id),
+            ConsumerRoute.V1_WITH_V2_SHADOW,
+        )
         with self.assertRaisesRegex(ValueError, "invalid migration transition"):
             self.registry.transition(
                 self.manifest.consumer_id,
@@ -83,6 +88,7 @@ class ConsumerMigrationTests(unittest.TestCase):
             reason="Exercise V1 rollback",
         )
         self.assertEqual(rolled_back.state, MigrationState.ROLLED_BACK)
+        self.assertEqual(self.registry.route(self.manifest.consumer_id), ConsumerRoute.V1)
 
     def test_owner_and_manifest_mutation_are_rejected(self):
         self.registry.register(self.manifest, reason="register")
@@ -110,6 +116,11 @@ class ConsumerMigrationTests(unittest.TestCase):
         self.assertTrue(snapshot[0]["deprecated"])
         self.assertFalse(snapshot[1]["deprecated"])
         self.assertNotIn("payload", snapshot[0])
+        notices = telemetry.deprecation_notices({"alpha-a": "alpha-owner"})
+        self.assertEqual(notices[0]["owner"], "alpha-owner")
+        self.assertIn("V2_MANIFEST", notices[0]["action"])
+        with self.assertRaisesRegex(ValueError, "notification owner"):
+            telemetry.deprecation_notices({})
         with self.assertRaisesRegex(RuntimeError, "capacity"):
             telemetry.record(
                 consumer_id="alpha-c", sdk_major=2, contract="/v2/warmup", cursor_offset=0
