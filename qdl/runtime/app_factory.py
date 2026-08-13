@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
+import uuid
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 
 from qdl.runtime.passive_dependencies import build_passive_context
 from qdl.runtime.roles import RuntimeRole, RuntimeRoleConfig
@@ -58,8 +60,35 @@ def create_role_app(role: RuntimeRole) -> FastAPI:
         app.include_router(routes_fallback.router)
     elif role is RuntimeRole.CONTROL:
         from app.api import routes_control_plane
+        from qdl.security import AuditChain
+        from qdl.security.fastapi import ControlPlaneGuard, ControlSecurityConfig
 
-        app.include_router(routes_control_plane.router)
+        guard = ControlPlaneGuard(ControlSecurityConfig.from_environment())
+        try:
+            audit_path = os.environ["QDL_CONTROL_AUDIT_PATH"]
+        except KeyError as error:
+            raise RuntimeError("QDL_CONTROL_AUDIT_PATH is required for the control role") from error
+        audit = AuditChain(audit_path)
+        app.state.control_audit = audit
+
+        @app.middleware("http")
+        async def audit_control_mutation(request: Request, call_next):
+            response = await call_next(request)
+            if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path.startswith("/v1/control/"):
+                principal = getattr(request.state, "qdl_principal", None)
+                audit.append(
+                    actor=principal.subject if principal is not None else "unauthenticated",
+                    action=f"{request.method} {request.url.path}",
+                    environment=os.environ.get("QDL_ENVIRONMENT", "paper"),
+                    request_id=request.headers.get("x-request-id", str(uuid.uuid4())),
+                    result=str(response.status_code),
+                    details={"path": request.url.path, "method": request.method},
+                )
+            return response
+
+        app.include_router(routes_control_plane.router, dependencies=[Depends(guard)])
+        app.state.runtime_manifest["control_auth"] = "required"
+        app.state.runtime_manifest["control_audit"] = "hash_chain_fsync"
     elif role is RuntimeRole.HISTORY:
         from app.api import routes_binance_derivatives, routes_history, routes_preload
 
@@ -69,4 +98,3 @@ def create_role_app(role: RuntimeRole) -> FastAPI:
     else:
         raise ValueError("compatibility combined runtime remains app.main:app")
     return app
-

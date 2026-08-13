@@ -93,7 +93,19 @@ class RuntimeRoleTopologyTests(unittest.TestCase):
     def test_role_routes_are_non_overlapping_by_ownership(self):
         route_sets = {}
         for role in (RuntimeRole.API, RuntimeRole.CONTROL, RuntimeRole.HISTORY):
-            with mock.patch.dict(os.environ, {"QDL_RUNTIME_ROLE": role.value, "QDL_OWNS_LIVE_INGESTION": "false"}, clear=False):
+            environment = {
+                "QDL_RUNTIME_ROLE": role.value,
+                "QDL_OWNS_LIVE_INGESTION": "false",
+            }
+            if role is RuntimeRole.CONTROL:
+                environment.update({
+                    "QDL_CONTROL_JWT_ISSUER": "https://identity.test",
+                    "QDL_CONTROL_JWT_AUDIENCE": "qdl-control",
+                    "QDL_CONTROL_JWT_KEYS_JSON": '{"test":"test-secret"}',
+                    "QDL_CONTROL_JWT_ALGORITHMS": "HS256",
+                    "QDL_CONTROL_AUDIT_PATH": "/tmp/qdl-phase1-control-audit.jsonl",
+                })
+            with mock.patch.dict(os.environ, environment, clear=False):
                 role_app = create_role_app(role)
             route_sets[role] = {route.path for route in role_app.routes if route.path.startswith("/v1")}
 
