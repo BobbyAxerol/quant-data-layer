@@ -4,6 +4,7 @@ from qdl.history.bars import BarRecord, SessionWindow, aggregate_bars, select_re
 from qdl.history.catalog import (
     AtomicParquetCatalog,
     LocalObjectStore,
+    PyIcebergTableAppender,
     S3CompatibleObjectStore,
     SnapshotConflict,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "BarRecord",
     "BarReconciliationReport",
     "LocalObjectStore",
+    "PyIcebergTableAppender",
     "S3CompatibleObjectStore",
     "SessionWindow",
     "SnapshotConflict",

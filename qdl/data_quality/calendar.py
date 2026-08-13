@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from qdl.domain.calendar import TradingCalendar
-from qdl.quality.engine import FeedQualityState
+from qdl.data_quality.engine import FeedQualityState
 
 
 @dataclass(frozen=True)

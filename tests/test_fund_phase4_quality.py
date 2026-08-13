@@ -5,7 +5,7 @@ import tempfile
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 
-from qdl.quality import (
+from qdl.data_quality import (
     FeedKey,
     FeedQualityLedger,
     FeedQualityState,

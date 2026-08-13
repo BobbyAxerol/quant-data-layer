@@ -505,6 +505,12 @@ Produce auditable, replayable and revision-aware data from raw ingestion through
   requires exact dataset confirmation before deletion. S3 CAS uses the ETag
   from the same read (preventing a concurrent-head race) and paginates listings;
   dedicated race/immutability tests pass.
+- Full-suite certification found and fixed a handwritten-package collision with
+  generated protobuf namespace `qdl.quality.v1`; the implementation now lives
+  under `qdl.data_quality`, leaving the stable generated contract untouched.
+  Durable replay performance over 10,000 events passed all gates: 1,547.52
+  append events/s, 8,538.58 replay events/s, 60.39 ms append p99 and 2.07x
+  disk amplification. See `upgrade/evidence/phase4-replay-performance.json`.
 
 ### Technical Debt / Decision Gate
 

@@ -13,6 +13,7 @@ from qdl.history import (
     AtomicParquetCatalog,
     BarRecord,
     LocalObjectStore,
+    PyIcebergTableAppender,
     S3CompatibleObjectStore,
     SessionWindow,
     SnapshotConflict,
@@ -229,6 +230,22 @@ class S3CompatibleCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(SnapshotConflict, "conditional S3 metadata commit failed"):
             store.compare_and_swap("head", original_sha, b"ours")
         self.assertEqual(store.get("head"), b"concurrent-writer")
+
+
+class IcebergBoundaryTests(unittest.TestCase):
+    def test_injected_table_receives_revision_selected_arrow_batch(self):
+        class Table:
+            appended = None
+
+            def append(self, value):
+                self.appended = value
+
+        table = Table()
+        PyIcebergTableAppender(table).append([bar(0), bar(0, revision=1, close="102")])
+        self.assertEqual(table.appended.num_rows, 1)
+        self.assertEqual(table.appended.to_pylist()[0]["revision"], 1)
+        with self.assertRaisesRegex(ValueError, "empty Iceberg"):
+            PyIcebergTableAppender(table).append([])
 
 
 class VnMigrationTests(unittest.TestCase):

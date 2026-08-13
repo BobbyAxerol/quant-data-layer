@@ -1,6 +1,6 @@
 """Canonical quality, sequence continuity and source-authority policy."""
 
-from qdl.quality.engine import (
+from qdl.data_quality.engine import (
     FeedKey,
     FeedQualityLedger,
     FeedQualityState,
@@ -8,8 +8,8 @@ from qdl.quality.engine import (
     ObservationResult,
     ValidationLevel,
 )
-from qdl.quality.calendar import CalendarAssessment, assess_bar_availability
-from qdl.quality.source_authority import (
+from qdl.data_quality.calendar import CalendarAssessment, assess_bar_availability
+from qdl.data_quality.source_authority import (
     AuthorityAction,
     SourceAuthorityController,
     SourceAuthorityState,
