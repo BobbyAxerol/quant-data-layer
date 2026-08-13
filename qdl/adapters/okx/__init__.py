@@ -18,3 +18,24 @@ __all__ = [
     "OkxSubscription",
     "OkxWebSocketSupervisor",
 ]
+from qdl.adapters.okx.history import (
+    HistoryCoverage,
+    OkxCandle,
+    OkxCandleHistory,
+    OkxFundingHistory,
+    OkxFundingRate,
+    OkxHistoricalClient,
+    OkxOpenInterestSnapshot,
+    PaginationStalled,
+)
+
+__all__ = [
+    "HistoryCoverage",
+    "OkxCandle",
+    "OkxCandleHistory",
+    "OkxFundingHistory",
+    "OkxFundingRate",
+    "OkxHistoricalClient",
+    "OkxOpenInterestSnapshot",
+    "PaginationStalled",
+]

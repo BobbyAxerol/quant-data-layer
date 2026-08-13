@@ -483,6 +483,16 @@ Produce auditable, replayable and revision-aware data from raw ingestion through
   source revision, normalizer version and config revision. History/live overlap
   reconciliation supports explicit higher revisions and checks only the open
   times supplied by a session calendar, preserving legitimate sparse feeds.
+- OKX V5 shadow history/reference client implemented without changing the V1
+  route: documented `after=oldest_ts` backward traversal, inclusive exact-window
+  filtering, overlap dedup, confirmed-candle revision preference, no-progress
+  failure, page/record budgets and explicit coverage. Trade, mark and index
+  candles remain distinct contracts; funding retains formula/method/raw lineage;
+  OI is explicitly `SNAPSHOT_ONLY` and never claims historical coverage.
+- Bounded real OKX public-API evidence passed with 30 trade, 30 mark and 30 index
+  1m bars, six funding records and one OI snapshot; all requested historical
+  windows reported full coverage, with zero production writes. See
+  `upgrade/evidence/phase4-okx-real-history.json`.
 
 ### Technical Debt / Decision Gate
 

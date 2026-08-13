@@ -1,4 +1,4 @@
-.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-history-test phase4-migration-smoke phase4-replay-test phase4-vn-shadow-smoke python-test rust-test
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-vn-shadow-smoke python-test rust-test
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
 RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
@@ -52,6 +52,12 @@ phase4-history-test:
 
 phase4-replay-test:
 	docker run --rm -v "$(CURDIR):/app" -w /app data-layer:v0.1.0 python -m unittest -v tests.test_fund_phase4_replay
+
+phase4-okx-test:
+	docker run --rm -v "$(CURDIR):/app" -w /app data-layer:v0.1.0 python -m unittest -v tests.test_fund_phase4_okx_history
+
+phase4-okx-real-smoke:
+	docker run --rm -v "$(CURDIR):/app" -w /app data-layer:v0.1.0 python scripts/phase4_okx_real_smoke.py --output /app/upgrade/evidence/phase4-okx-real-history.json
 
 phase4-vn-shadow-smoke:
 	docker run --rm -v "$(CURDIR):/app" -w /app data-layer:v0.1.0 python scripts/phase4_vn_shadow_smoke.py --preload-root /app/data/preload --output /app/upgrade/evidence/phase4-vn-shadow-migration.json

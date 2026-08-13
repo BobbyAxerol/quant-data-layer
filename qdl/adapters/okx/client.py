@@ -80,6 +80,7 @@ class OkxRestClient:
         self._buckets = {
             "instruments": AsyncTokenBucket(capacity=10, refill_per_second=5),
             "market": AsyncTokenBucket(capacity=10, refill_per_second=5),
+            "public": AsyncTokenBucket(capacity=5, refill_per_second=2.5),
         }
 
     async def get(
