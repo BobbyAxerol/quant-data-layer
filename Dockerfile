@@ -1,11 +1,9 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS builder
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONPATH=/app
-
-ENV POETRY_VERSION=2.1.3
-ENV POETRY_VIRTUALENVS_CREATE=false
+ENV POETRY_VERSION=2.3.4
+ENV POETRY_VIRTUALENVS_IN_PROJECT=true
 ENV POETRY_NO_INTERACTION=1
 
 WORKDIR /app
@@ -16,6 +14,17 @@ COPY pyproject.toml poetry.lock ./
 
 RUN poetry config installer.max-workers 10 && \
     poetry install --no-root --only main --no-ansi
+
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app
+ENV PATH=/opt/venv/bin:$PATH
+
+WORKDIR /app
+
+COPY --from=builder /app/.venv /opt/venv
 
 COPY . /app
 

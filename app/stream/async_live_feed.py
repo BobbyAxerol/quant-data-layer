@@ -9,8 +9,8 @@ import math
 import re
 
 import requests
-import websockets
-from websockets.exceptions import InvalidStatusCode, ConnectionClosedError, ConnectionClosedOK
+from websockets.asyncio.client import connect as websocket_connect
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK, InvalidStatus
 
 from app.stream.binance_ws import get_usdm_symbols
 from app.stream.feed_builder import build_urls, validate_symbols
@@ -198,7 +198,7 @@ async def handle_ws(
         try:
             supervisor.mark_connecting(shard_id)
             logger.info(f"[WS] Connecting {source} -> {url[:60]}...")
-            async with websockets.connect(url, ping_interval=30, max_size=None) as ws:
+            async with websocket_connect(url, ping_interval=30, max_size=None) as ws:
                 logger.info(f"[WS] Connected {source}")
                 recovered = supervisor.mark_connected(shard_id)
                 last_connected_at = time.monotonic()
@@ -259,8 +259,8 @@ async def handle_ws(
                         supervisor.mark_parse_error(shard_id, e)
                         logger.error(f"[WS] parse error: {e}")
                         
-        except InvalidStatusCode as e:
-            status = getattr(e, "status_code", None)
+        except InvalidStatus as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
             elapsed = (time.monotonic() - last_connected_at) if last_connected_at else 0
             if status == 429:
                 backoff = min(max(backoff * 2, reconnect_delay * 2), max_backoff)

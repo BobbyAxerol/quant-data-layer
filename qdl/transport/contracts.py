@@ -68,6 +68,8 @@ class Cursor:
             raise ValueError("cursor offset must be non-negative")
 
     def to_token(self) -> str:
+        """Encode an internal diagnostic token; it is not a public/authenticated cursor."""
+
         payload = json.dumps(
             {
                 "offset": self.offset,

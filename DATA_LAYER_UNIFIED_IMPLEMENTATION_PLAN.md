@@ -62,6 +62,7 @@ These rules apply to all seven phases.
 | 2 | Durability contract, bridge and Rust foundation | Replayable transport boundary and deterministic cross-language core without premature broker cutover | `COMPLETE (DARK)` |
 | 3 | Scalable ingestion and compatibility projection | Demand-driven Rust hot path with legacy V1/Redis parity | `COMPLETE (FROZEN SHADOW)` |
 | 4 | Quality, history, replay and gap-free handoff | Certified data products from warmup through live recovery | `COMPLETE (FROZEN SHADOW)` |
+| 4.5 | V2 readiness and debt closure | Freeze query semantics and remove correctness/security ambiguity before endpoint work | `IN_PROGRESS` |
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `PLANNED` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `PLANNED` |
 
@@ -538,6 +539,90 @@ Produce auditable, replayable and revision-aware data from raw ingestion through
 ### Rollback
 
 - Existing VN Parquet/read path remains available until shadow snapshot reconciliation passes. Historical authority switches per dataset, never globally.
+
+## 8A. Phase 4.5 - V2 Readiness And Debt Closure
+
+**Status:** `IN_PROGRESS`
+
+### Goal
+
+Close cross-phase correctness, security and compatibility ambiguity before any
+public V2 route or gRPC service is implemented. Freeze provider-neutral query
+semantics over transport/storage interfaces so Phase 5 adds delivery surfaces,
+not new domain behavior.
+
+### Guide Index
+
+- [Pre-Phase 5 readiness guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-4-5)
+- [Stable API, SDK and consumer semantics: Sections 17-19](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#17-stable-api-design)
+- [Failure semantics: Section 38](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#38-failure-semantics-exposed-to-consumers)
+
+### To Do
+
+- Reconcile the conflicting Section 17/38 error names into one stable internal
+  taxonomy and freeze `DataRequirement`, consumer grade, completeness/partial,
+  freshness, bar revision, source-policy and recovery semantics.
+- Define bounded provider-neutral query/result contracts before HTTP/gRPC
+  serialization. An execution-grade all-instruments requirement must fail
+  closed on partial, stale, gapped, non-authoritative or unentitled data.
+- Replace handoff's concrete SQLite dependency with durable transport/catalog
+  protocols. Bind immutable historical snapshot cursor end to the captured live
+  watermark before issuing a signed token; mismatch must fail closed and retry.
+- Introduce a rotation-aware signing-key provider boundary. Unsigned logical
+  cursor tokens remain internal only and must never be accepted on a public V2
+  boundary.
+- Add source entitlement/licensing policy with default-deny external
+  redistribution and raw-history access. Capability and provenance cannot imply
+  entitlement.
+- Close safe legacy compatibility debt needed by certification (notably the
+  deprecated WebSocket client/exception API) without changing V1 routes, SDK or
+  Redis payloads.
+- Resolve stale debt notes from Phases 0-4 as `CLOSED`, `SUPERSEDED` or an
+  explicit Phase 6 infrastructure/authority decision. Do not hide an in-scope
+  defect as a decision gate.
+
+### Verification And Exit Gate
+
+- Pure-domain tests cover invalid/bounded requirements, strict versus partial
+  batches, all consumer grades, freshness/gap/authority decisions and licensing
+  denial without provider calls.
+- Handoff tests cover snapshot/watermark match, mismatch, concurrent head move,
+  key rotation, unknown/retired key, tamper, wrong scope, expiration, compaction,
+  restart and transport substitution without SQLite-specific API assumptions.
+- Existing Phase 1-4 focused suites, full Python/V1 regression, Buf breaking and
+  generated-code gates, Rust fmt/Clippy/tests, Redis rebuild and PostgreSQL
+  migration smoke pass.
+- A Python dependency/advisory report is recorded. Unfixed exploitable runtime
+  findings block Phase 5; accepted non-runtime/tooling findings require an owner
+  and expiry.
+- Read-only V1 health, VN preload and Binance USD-M history smoke return the
+  frozen behavior while the running service restart count remains unchanged.
+- Test containers, images, databases, Redis state, object-store paths and build
+  caches are isolated and removed. User-owned `symbols.json` remains untouched.
+
+### Completed
+
+- Cross-phase audit identified four endpoint blockers: inconsistent failure
+  names, absent query/requirement domain contracts, SQLite-coupled handoff and
+  in-memory-only signing/entitlement boundaries. Provider certification and HA
+  authority gates were separated from endpoint semantics instead of being
+  pulled prematurely into Phase 5.
+
+### Technical Debt / Decision Gate
+
+- Kafka-compatible HA promotion, production object-store/Iceberg provisioning,
+  production secret backend, raw-data licensing approval and per-feed authority
+  cutover remain Phase 6 decisions. Phase 4.5 must provide stable interfaces and
+  fail-closed readiness for them; it must not fake infrastructure approval.
+- OKX historical OI and VIP/deep-book capability remain unavailable until a
+  separately licensed/certified provider source exists. Public contracts expose
+  this honestly as capability/coverage state.
+
+### Rollback
+
+- Phase 4.5 adds dark pure-domain contracts and compatibility-safe internals.
+  Revert its commits if required; V1 remains authoritative and no runtime,
+  storage, source or consumer manifest is changed.
 
 ## 9. Phase 5 - V2 API, SDK And Controlled Consumer Migration
 

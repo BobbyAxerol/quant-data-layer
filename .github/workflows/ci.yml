@@ -13,6 +13,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout pull-request base contracts
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: base-contracts
+
       - name: Set up Buf
         uses: bufbuild/buf-setup-action@v1
         with:
@@ -24,6 +31,11 @@ jobs:
           buf format --diff --exit-code
           buf lint
           buf breaking --against baseline/qdl-v2-phase1.binpb
+
+      - name: Check schema against pull-request base
+        if: github.event_name == 'pull_request'
+        working-directory: contracts
+        run: buf breaking --against ../base-contracts/contracts
 
       - name: Verify generated contracts are current
         working-directory: contracts
@@ -71,6 +83,15 @@ jobs:
 
       - name: Build data_layer image
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml build data_layer
+
+      - name: Audit final runtime dependencies
+        run: |
+          docker run --rm data-layer:v0.1.0 sh -c '
+            test ! -e /opt/venv/bin/poetry
+            python -m pip freeze --local > /tmp/qdl-runtime-requirements.txt
+            python -m pip install --disable-pip-version-check --no-cache-dir "pip-audit>=2.9,<3"
+            pip-audit -r /tmp/qdl-runtime-requirements.txt --progress-spinner=off
+          '
 
       - name: Run unit tests
         run: >-

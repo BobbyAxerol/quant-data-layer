@@ -1788,18 +1788,20 @@ Error taxonomy:
 ```text
 INVALID_ARGUMENT
 INSTRUMENT_NOT_FOUND
+UNSUPPORTED_FEED
 SCHEMA_NOT_SUPPORTED
 DATA_NOT_READY
 DATA_STALE
+SOURCE_UNAVAILABLE
 SOURCE_NOT_ALLOWED
+SOURCE_NON_AUTHORITATIVE
+OPEN_SEQUENCE_GAP
 CURSOR_EXPIRED
 CURSOR_INVALID
 RATE_LIMITED
-UPSTREAM_UNAVAILABLE
 DEPENDENCY_UNAVAILABLE
 PARTIAL_RESULT
 CONFLICT
-JOB_ALREADY_EXISTS
 INTERNAL_ERROR
 ```
 
@@ -4394,18 +4396,22 @@ Consumer should never infer failure from missing JSON field or HTTP timeout alon
 ### 38.1 Error classes
 
 ```text
-INVALID_REQUEST
-UNKNOWN_INSTRUMENT
+INVALID_ARGUMENT
+INSTRUMENT_NOT_FOUND
 UNSUPPORTED_FEED
+SCHEMA_NOT_SUPPORTED
 DATA_NOT_READY
 DATA_STALE
 SOURCE_UNAVAILABLE
+SOURCE_NOT_ALLOWED
 SOURCE_NON_AUTHORITATIVE
 OPEN_SEQUENCE_GAP
 CURSOR_EXPIRED
-SCHEMA_UNSUPPORTED
+CURSOR_INVALID
 RATE_LIMITED
 DEPENDENCY_UNAVAILABLE
+PARTIAL_RESULT
+CONFLICT
 INTERNAL_ERROR
 ```
 
@@ -4802,6 +4808,52 @@ provider boundaries are in
 ### D.5 Phase 4 detailed references
 
 Sections `13-16`, `38` and Epics `E7/E9`: gap/quality/fallback semantics, historical materialization, replay and gap-free warmup-to-live handoff.
+
+### D.5A Pre-Phase 5 readiness and debt closure
+
+<a id="implementation-phase-4-5"></a>
+
+Before exposing REST/gRPC V2, freeze one provider-neutral domain vocabulary for
+requirements, coverage, partial results, errors, entitlement and recovery.
+Public cursors are signed and scoped; unsigned logical transport cursors are
+internal. Historical snapshot `source_cursor_end` must equal the captured
+durable live watermark before a handoff grant is issued. Handoff depends on
+portable transport/catalog/key-provider protocols, never a concrete SQLite,
+Redis, Kafka, local-file or KMS implementation.
+
+This readiness phase does not provision production Kafka/object storage, grant
+provider redistribution rights or change authority. Those remain governed
+Phase 6 decisions. It does require fail-closed readiness so Phase 5 cannot
+accidentally advertise shadow/local durability as production HA.
+
+Canonical error codes used by domain, REST problem details, gRPC status details
+and SDK exceptions are:
+
+```text
+INVALID_ARGUMENT
+INSTRUMENT_NOT_FOUND
+UNSUPPORTED_FEED
+SCHEMA_NOT_SUPPORTED
+DATA_NOT_READY
+DATA_STALE
+SOURCE_UNAVAILABLE
+SOURCE_NOT_ALLOWED
+SOURCE_NON_AUTHORITATIVE
+OPEN_SEQUENCE_GAP
+CURSOR_EXPIRED
+CURSOR_INVALID
+RATE_LIMITED
+DEPENDENCY_UNAVAILABLE
+PARTIAL_RESULT
+CONFLICT
+INTERNAL_ERROR
+```
+
+Legacy names shown elsewhere in this guide map to these codes and are not
+additional public values: `INVALID_REQUEST -> INVALID_ARGUMENT`,
+`UNKNOWN_INSTRUMENT -> INSTRUMENT_NOT_FOUND`,
+`UPSTREAM_UNAVAILABLE -> SOURCE_UNAVAILABLE`, and
+`SCHEMA_UNSUPPORTED -> SCHEMA_NOT_SUPPORTED`.
 
 <a id="implementation-phase-5"></a>
 
