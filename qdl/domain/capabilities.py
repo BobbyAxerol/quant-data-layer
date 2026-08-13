@@ -101,6 +101,35 @@ def okx_global_capabilities(market: str, *, account_tier: str = "PUBLIC") -> Ven
                 resnapshot_on_gap=True,
                 constraint="requires approved OKX VIP/channel entitlement",
             ),
+            "sbe_trade": FeedCapability(
+                CapabilityAvailability.TIER_GATED,
+                live=True,
+                sequence=True,
+                resubscribe=True,
+                constraint="requires pinned OKX SBE schema, login/tier entitlement and JSON parity",
+            ),
+            "sbe_bbo": FeedCapability(
+                CapabilityAvailability.TIER_GATED,
+                live=True,
+                resubscribe=True,
+                constraint="requires authenticated SBE service and tested JSON rollback",
+            ),
+            "sbe_l2": FeedCapability(
+                CapabilityAvailability.TIER_GATED,
+                live=True,
+                snapshot=True,
+                delta=True,
+                sequence=True,
+                resubscribe=True,
+                resnapshot_on_gap=True,
+                constraint="requires VIP deep-book entitlement and unknown-schema fail-closed decoder",
+            ),
+            "option_summary": FeedCapability(
+                CapabilityAvailability.REGION_GATED,
+                rest_history=True,
+                live=True,
+                constraint="requires approved OKX legal-entity/profile option endpoint",
+            ),
         },
     )
 
