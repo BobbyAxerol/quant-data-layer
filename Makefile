@@ -1,7 +1,7 @@
-.PHONY: contract-check contract-generate python-test rust-test
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test python-test rust-test
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
-RUST_IMAGE ?= rust:1.82-slim
+RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
 
 contract-generate:
 	docker run --rm -v "$(CURDIR):/workspace" -w /workspace/contracts $(BUF_IMAGE) generate
@@ -17,5 +17,13 @@ python-test:
 	python -m unittest discover -s tests
 
 rust-test:
-	docker run --rm -v "$(CURDIR):/workspace" -w /workspace $(RUST_IMAGE) cargo test --workspace --locked
+	docker run --rm -v "$(CURDIR):/workspace" -w /workspace $(RUST_IMAGE) sh -c 'cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked'
 
+phase2-test:
+	docker run --rm -v "$(CURDIR):/app" -w /app data-layer:v0.1.0 python -m unittest -v tests.test_fund_phase2_transport tests.test_fund_phase2_pipeline tests.test_fund_phase2_simulator tests.test_fund_phase2_shadow_smoke
+
+phase2-redis-smoke:
+	QDL_TEST_IMAGE=data-layer:v0.1.0 scripts/phase2_redis_rebuild_smoke.sh
+
+phase2-benchmark:
+	docker run --rm -v "$(CURDIR):/app" -w /app data-layer:v0.1.0 python scripts/phase2_benchmark.py --events 10000 --partitions 10 --payload-bytes 512 --batch-size 100 --consumer-groups 8 --min-throughput 500 --max-p99-ms 250 --max-disk-amplification 4

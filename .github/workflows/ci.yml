@@ -42,9 +42,23 @@ jobs:
           python -m unittest tests.test_phase1_contracts
 
       - name: Test Rust generated contracts
-        run: >-
-          docker run --rm -v "$PWD:/workspace" -w /workspace
-          rust:1.82-slim cargo test --workspace --locked
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace rust:1.82-slim \
+            sh -c 'cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked'
+
+      - name: Check Rust dependency, license and advisory policy
+        env:
+          CARGO_DENY_VERSION: "0.20.2"
+          CARGO_DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+        run: |
+          archive="cargo-deny-${CARGO_DENY_VERSION}.tar.gz"
+          directory="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl --fail --location --silent --show-error \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${directory}.tar.gz" \
+            --output "${archive}"
+          echo "${CARGO_DENY_SHA256}  ${archive}" | sha256sum --check --strict
+          tar --no-same-owner -xzf "${archive}"
+          "./${directory}/cargo-deny" check
 
   unit-tests:
     runs-on: ubuntu-latest
@@ -62,6 +76,28 @@ jobs:
         run: >-
           docker compose -f docker-compose.yml -f docker-compose.ci.yml
           run --rm test_runner python -m unittest discover -s tests
+
+      - name: Test isolated Redis restart and replay rebuild
+        run: QDL_TEST_IMAGE=data-layer:v0.1.0 scripts/phase2_redis_rebuild_smoke.sh
+
+      - name: Build immutable Rust replay tool
+        run: >-
+          docker build --provenance=false -f Dockerfile.qdl-core
+          -t qdl-core:${{ github.sha }} .
+
+      - name: Verify Rust artifact against provider fixtures
+        run: |
+          docker run --rm -v "$PWD/tests/fixtures/phase2:/fixtures:ro" \
+            qdl-core:${{ github.sha }} /fixtures/binance_usdm_trade.json | grep -q '"status":"PASS"'
+          docker run --rm -v "$PWD/tests/fixtures/phase2:/fixtures:ro" \
+            qdl-core:${{ github.sha }} /fixtures/okx_trade.json | grep -q '"status":"PASS"'
+
+      - name: Run bounded durability performance regression
+        run: >-
+          docker run --rm -v "$PWD:/app" -w /app data-layer:v0.1.0
+          python scripts/phase2_benchmark.py --events 2000 --partitions 10
+          --payload-bytes 512 --batch-size 100 --consumer-groups 8
+          --min-throughput 300 --max-p99-ms 300 --max-disk-amplification 12
 
       - name: Clean CI Compose resources
         if: always()
