@@ -168,7 +168,7 @@ Define one precise, venue-neutral data domain and split the combined process int
   `app.main:app` remains the sole V1 combined ingestion/projection authority.
 - Added ADRs `0001`-`0005`, contract CI, Compose role profile and Phase 1 evidence.
 - Verification: Buf format/lint/build/generate/breaking PASS; Python/Rust golden
-  parity PASS; migration smoke PASS; full application regression `124 passed, 2
+  parity PASS; migration smoke PASS; full application regression `125 passed, 2
   skipped`; frozen V1 OpenAPI/Redis/SDK artifacts PASS.
 - Evidence: [Phase 1 report](upgrade/evidence/PHASE1_IMPLEMENTATION_REPORT.md),
   [contract gate](upgrade/evidence/phase1-contract-gate.json), and

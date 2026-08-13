@@ -32,9 +32,9 @@ Authority: dark/additive; existing `app.main:app`, `/v1` and Redis V1 remain aut
   binary image: PASS.
 - Python canonical contract/domain tests: PASS.
 - Rust `qdl-contracts` golden-byte parity: 1 PASS.
-- Instrument/capability/OKX registry/migration unit tests: 11 PASS.
+- Instrument/capability/OKX registry/migration unit tests: 12 PASS.
 - Runtime ownership/topology plus V1 golden tests: 8 PASS.
-- Full application-image regression: 124 PASS, 2 skipped optional Redis
+- Full application-image regression: 125 PASS, 2 skipped optional Redis
   integration tests.
 - Disposable PostgreSQL migration smoke: clean and legacy-seeded databases
   both produced 11 QDL tables and identical schema SHA; second apply and legacy
