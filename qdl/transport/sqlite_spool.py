@@ -336,6 +336,21 @@ class SQLiteDurableSpool:
                 ),
             )
 
+    def get_checkpoint(
+        self, *, consumer_id: str, stream: str, partition_key: str
+    ) -> Cursor | None:
+        row = self._connection.execute(
+            """
+            SELECT logical_offset FROM consumer_checkpoints
+            WHERE consumer_id = ? AND stream = ? AND partition_key = ?
+              AND expires_at_ns > ?
+            """,
+            (consumer_id, stream, partition_key, self._clock_ns()),
+        ).fetchone()
+        if row is None:
+            return None
+        return Cursor(stream, partition_key, int(row["logical_offset"]))
+
     def trim_consumed(self, *, now_ns: int | None = None) -> int:
         """Delete only records acknowledged by every active consumer."""
 
