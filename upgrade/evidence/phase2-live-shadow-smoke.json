@@ -1,0 +1,16 @@
+{
+  "authority": "LOCAL_SHADOW_ONLY",
+  "canonical_events": 2,
+  "production_writes": 0,
+  "projected_keys": 6,
+  "projection_checksum": "d25a8518f80fe053f7c481bfafb34fad35c2d13d3603b34261ffd319ec8ed677",
+  "raw_events": 2,
+  "schema": "qdl.phase2.live-shadow-smoke.v1",
+  "spool_storage_bytes": 259376,
+  "status": "PASS",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT"
+  ],
+  "v1_reads": 2
+}

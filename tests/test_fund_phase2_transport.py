@@ -74,6 +74,7 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             min_free_disk_bytes=0,
             consumer_ttl_seconds=10,
             replay_retention_seconds=10,
+            maintenance_interval_seconds=1,
         )
         return SQLiteDurableSpool(config, clock_ns=self.clock)
 
@@ -100,6 +101,15 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
                 spool.append(event(1, payload=b"different"))
             self.assertEqual(spool.stats().records, 1)
             self.assertEqual(spool.high_watermark(event(1).stream, event(1).partition_key), 1)
+
+    def test_batch_is_one_transaction_and_rolls_back_on_collision(self):
+        with self.spool() as spool:
+            spool.append(event(1))
+            with self.assertRaises(EventIdCollision):
+                spool.append_many([event(2), event(1, payload=b"different")])
+            self.assertEqual(spool.stats().records, 1)
+            results = spool.append_many([event(2), event(3)])
+            self.assertEqual([item.cursor.offset for item in results], [2, 3])
 
     def test_capacity_blocks_and_publisher_reports_blocked(self):
         with self.spool(max_records=1) as spool:
@@ -152,7 +162,18 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             self.assertEqual(spool.stats().records, 1)
 
     def test_poison_record_is_quarantined_with_bounded_metadata(self):
-        with self.spool() as spool:
+        with SQLiteDurableSpool(
+            SpoolConfig(
+                path=self.path,
+                max_records=10,
+                max_payload_bytes=1024,
+                max_event_bytes=512,
+                max_storage_bytes=10 * 1024 * 1024,
+                max_quarantine_records=1,
+                min_free_disk_bytes=0,
+            ),
+            clock_ns=self.clock,
+        ) as spool:
             quarantine_id = spool.quarantine(
                 event=event(1),
                 reason_code="PARSER_INVALID",
@@ -160,6 +181,13 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
                 retry_count=3,
             )
             self.assertEqual(quarantine_id, 1)
+            with self.assertRaises(BackpressureRequired):
+                spool.quarantine(
+                    event=event(2),
+                    reason_code="PARSER_INVALID",
+                    reason_message="second poison record",
+                    retry_count=3,
+                )
 
 
 class DurablePublisherTests(unittest.TestCase):

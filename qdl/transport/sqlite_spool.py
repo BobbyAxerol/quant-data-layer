@@ -27,19 +27,39 @@ class SpoolConfig:
     max_records: int = 100_000
     max_payload_bytes: int = 256 * 1024 * 1024
     max_event_bytes: int = 2 * 1024 * 1024
+    max_batch_events: int = 1000
+    max_storage_bytes: int = 384 * 1024 * 1024
+    max_partitions: int = 1024
+    max_consumer_checkpoints: int = 4096
+    max_quarantine_records: int = 10_000
     min_free_disk_bytes: int = 512 * 1024 * 1024
     consumer_ttl_seconds: int = 3600
     replay_retention_seconds: int = 24 * 3600
+    maintenance_interval_seconds: int = 30
 
     def __post_init__(self) -> None:
         if self.max_records <= 0 or self.max_payload_bytes <= 0:
             raise ValueError("spool bounds must be positive")
         if self.max_event_bytes <= 0 or self.max_event_bytes > self.max_payload_bytes:
             raise ValueError("max_event_bytes must fit inside max_payload_bytes")
+        if self.max_batch_events <= 0:
+            raise ValueError("max_batch_events must be positive")
+        if self.max_storage_bytes <= self.max_event_bytes:
+            raise ValueError("max_storage_bytes must exceed max_event_bytes")
+        if min(
+            self.max_partitions,
+            self.max_consumer_checkpoints,
+            self.max_quarantine_records,
+        ) <= 0:
+            raise ValueError("metadata bounds must be positive")
         if self.min_free_disk_bytes < 0:
             raise ValueError("min_free_disk_bytes must be non-negative")
-        if self.consumer_ttl_seconds <= 0 or self.replay_retention_seconds <= 0:
-            raise ValueError("retention and consumer TTL must be positive")
+        if min(
+            self.consumer_ttl_seconds,
+            self.replay_retention_seconds,
+            self.maintenance_interval_seconds,
+        ) <= 0:
+            raise ValueError("retention, maintenance and consumer TTL must be positive")
 
 
 @dataclass(frozen=True)
@@ -137,107 +157,160 @@ class SQLiteDurableSpool:
                 retry_count INTEGER NOT NULL,
                 quarantined_at_ns INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS spool_state (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                event_records INTEGER NOT NULL,
+                payload_bytes INTEGER NOT NULL,
+                last_maintenance_ns INTEGER NOT NULL
+            );
+            INSERT OR IGNORE INTO spool_state(
+                singleton, event_records, payload_bytes, last_maintenance_ns
+            )
+            SELECT 1, COUNT(*), COALESCE(SUM(LENGTH(payload)), 0), 0 FROM events;
             """
         )
 
     def append(self, event: DurableEvent) -> AppendResult:
-        if len(event.payload) > self.config.max_event_bytes:
+        return self.append_many([event])[0]
+
+    def append_many(self, events: list[DurableEvent]) -> list[AppendResult]:
+        if not events:
+            return []
+        if len(events) > self.config.max_batch_events:
+            raise BackpressureRequired("event batch exceeds configured bridge bound")
+        if any(len(event.payload) > self.config.max_event_bytes for event in events):
             raise BackpressureRequired("event exceeds configured per-event bridge bound")
-        digest = hashlib.sha256(event.payload).hexdigest()
-        headers_json = json.dumps(dict(event.headers), sort_keys=True, separators=(",", ":"))
+        total_input_bytes = sum(len(event.payload) for event in events)
 
         with self._lock:
-            self._preflight_disk(len(event.payload))
+            self._preflight_disk(total_input_bytes)
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                existing = self._connection.execute(
-                    """
-                    SELECT partition_key, logical_offset, payload_sha256, committed_at_ns
-                    FROM events WHERE stream = ? AND event_id = ?
-                    """,
-                    (event.stream, event.event_id),
-                ).fetchone()
-                if existing is not None:
-                    if (
-                        existing["partition_key"] != event.partition_key
-                        or existing["payload_sha256"] != digest
-                    ):
-                        raise EventIdCollision("event ID maps to different immutable content")
-                    self._connection.execute("COMMIT")
-                    return AppendResult(
-                        cursor=Cursor(
-                            event.stream,
-                            existing["partition_key"],
-                            int(existing["logical_offset"]),
-                        ),
-                        committed_at_ns=int(existing["committed_at_ns"]),
-                        duplicate=True,
-                        payload_sha256=digest,
-                    )
-
-                self._expire_consumers_locked(self._clock_ns())
-                self._trim_aged_unowned_locked(self._clock_ns())
+                self._maybe_maintain_locked(self._clock_ns())
                 records, payload_bytes = self._logical_usage_locked()
-                if records + 1 > self.config.max_records:
-                    raise BackpressureRequired("bridge max_records exhausted")
-                if payload_bytes + len(event.payload) > self.config.max_payload_bytes:
-                    raise BackpressureRequired("bridge max_payload_bytes exhausted")
-
-                row = self._connection.execute(
-                    """
-                    SELECT next_offset FROM partitions
-                    WHERE stream = ? AND partition_key = ?
-                    """,
-                    (event.stream, event.partition_key),
-                ).fetchone()
-                offset = int(row["next_offset"]) if row else 1
-                if row is None:
-                    self._connection.execute(
-                        "INSERT INTO partitions(stream, partition_key, next_offset) VALUES (?, ?, ?)",
-                        (event.stream, event.partition_key, 2),
+                partition_count = int(
+                    self._connection.execute("SELECT COUNT(*) FROM partitions").fetchone()[0]
+                )
+                added_records = 0
+                added_payload_bytes = 0
+                results = []
+                for event in events:
+                    digest = hashlib.sha256(event.payload).hexdigest()
+                    headers_json = json.dumps(
+                        dict(event.headers), sort_keys=True, separators=(",", ":")
                     )
-                else:
-                    self._connection.execute(
+                    existing = self._connection.execute(
                         """
-                        UPDATE partitions SET next_offset = ?
+                        SELECT partition_key, logical_offset, payload_sha256, committed_at_ns
+                        FROM events WHERE stream = ? AND event_id = ?
+                        """,
+                        (event.stream, event.event_id),
+                    ).fetchone()
+                    if existing is not None:
+                        if (
+                            existing["partition_key"] != event.partition_key
+                            or existing["payload_sha256"] != digest
+                        ):
+                            raise EventIdCollision(
+                                "event ID maps to different immutable content"
+                            )
+                        results.append(
+                            AppendResult(
+                                cursor=Cursor(
+                                    event.stream,
+                                    existing["partition_key"],
+                                    int(existing["logical_offset"]),
+                                ),
+                                committed_at_ns=int(existing["committed_at_ns"]),
+                                duplicate=True,
+                                payload_sha256=digest,
+                            )
+                        )
+                        continue
+
+                    if records + added_records + 1 > self.config.max_records:
+                        raise BackpressureRequired("bridge max_records exhausted")
+                    if (
+                        payload_bytes + added_payload_bytes + len(event.payload)
+                        > self.config.max_payload_bytes
+                    ):
+                        raise BackpressureRequired("bridge max_payload_bytes exhausted")
+
+                    row = self._connection.execute(
+                        """
+                        SELECT next_offset FROM partitions
                         WHERE stream = ? AND partition_key = ?
                         """,
-                        (offset + 1, event.stream, event.partition_key),
+                        (event.stream, event.partition_key),
+                    ).fetchone()
+                    offset = int(row["next_offset"]) if row else 1
+                    if row is None:
+                        if partition_count >= self.config.max_partitions:
+                            raise BackpressureRequired("bridge max_partitions exhausted")
+                        self._connection.execute(
+                            """
+                            INSERT INTO partitions(stream, partition_key, next_offset)
+                            VALUES (?, ?, ?)
+                            """,
+                            (event.stream, event.partition_key, 2),
+                        )
+                        partition_count += 1
+                    else:
+                        self._connection.execute(
+                            """
+                            UPDATE partitions SET next_offset = ?
+                            WHERE stream = ? AND partition_key = ?
+                            """,
+                            (offset + 1, event.stream, event.partition_key),
+                        )
+                    committed_at_ns = self._clock_ns()
+                    self._connection.execute(
+                        """
+                        INSERT INTO events(
+                            stream, partition_key, logical_offset, event_id, payload,
+                            payload_sha256, accepted_at_ns, committed_at_ns,
+                            content_type, headers_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            event.stream,
+                            event.partition_key,
+                            offset,
+                            event.event_id,
+                            event.payload,
+                            digest,
+                            event.accepted_at_ns,
+                            committed_at_ns,
+                            event.content_type,
+                            headers_json,
+                        ),
                     )
-                committed_at_ns = self._clock_ns()
+                    added_records += 1
+                    added_payload_bytes += len(event.payload)
+                    results.append(
+                        AppendResult(
+                            cursor=Cursor(event.stream, event.partition_key, offset),
+                            committed_at_ns=committed_at_ns,
+                            duplicate=False,
+                            payload_sha256=digest,
+                        )
+                    )
                 self._connection.execute(
                     """
-                    INSERT INTO events(
-                        stream, partition_key, logical_offset, event_id, payload,
-                        payload_sha256, accepted_at_ns, committed_at_ns,
-                        content_type, headers_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    UPDATE spool_state
+                    SET event_records = event_records + ?,
+                        payload_bytes = payload_bytes + ?
+                    WHERE singleton = 1
                     """,
-                    (
-                        event.stream,
-                        event.partition_key,
-                        offset,
-                        event.event_id,
-                        event.payload,
-                        digest,
-                        event.accepted_at_ns,
-                        committed_at_ns,
-                        event.content_type,
-                        headers_json,
-                    ),
+                    (added_records, added_payload_bytes),
                 )
                 self._connection.execute("COMMIT")
+                return results
             except BaseException:
                 if self._connection.in_transaction:
                     self._connection.execute("ROLLBACK")
                 raise
-
-        return AppendResult(
-            cursor=Cursor(event.stream, event.partition_key, offset),
-            committed_at_ns=committed_at_ns,
-            duplicate=False,
-            payload_sha256=digest,
-        )
 
     def read(
         self,
@@ -323,6 +396,12 @@ class SQLiteDurableSpool:
             ).fetchone()
             if current is not None and cursor.offset < int(current["logical_offset"]):
                 raise CheckpointRegression("consumer checkpoint cannot move backwards")
+            if current is None:
+                checkpoint_count = self._connection.execute(
+                    "SELECT COUNT(*) FROM consumer_checkpoints"
+                ).fetchone()[0]
+                if int(checkpoint_count) >= self.config.max_consumer_checkpoints:
+                    raise BackpressureRequired("bridge consumer checkpoint bound exhausted")
             self._connection.execute(
                 """
                 INSERT INTO consumer_checkpoints(
@@ -381,6 +460,14 @@ class SQLiteDurableSpool:
                     ).fetchone()[0]
                     if checkpoint is None:
                         continue
+                    removed = self._connection.execute(
+                        """
+                        SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0)
+                        FROM events
+                        WHERE stream = ? AND partition_key = ? AND logical_offset <= ?
+                        """,
+                        (row["stream"], row["partition_key"], int(checkpoint)),
+                    ).fetchone()
                     result = self._connection.execute(
                         """
                         DELETE FROM events
@@ -389,6 +476,7 @@ class SQLiteDurableSpool:
                         (row["stream"], row["partition_key"], int(checkpoint)),
                     )
                     deleted += result.rowcount
+                    self._decrement_usage_locked(int(removed[0]), int(removed[1]))
                 self._connection.execute("COMMIT")
             except BaseException:
                 if self._connection.in_transaction:
@@ -406,6 +494,9 @@ class SQLiteDurableSpool:
     ) -> int:
         if not reason_code.strip() or retry_count < 0:
             raise ValueError("valid quarantine reason and retry_count are required")
+        count = self._connection.execute("SELECT COUNT(*) FROM quarantine").fetchone()[0]
+        if int(count) >= self.config.max_quarantine_records:
+            raise BackpressureRequired("bridge quarantine bound exhausted")
         result = self._connection.execute(
             """
             INSERT INTO quarantine(
@@ -480,12 +571,42 @@ class SQLiteDurableSpool:
         free = shutil.disk_usage(self.config.path.parent).free
         if free - event_bytes < self.config.min_free_disk_bytes:
             raise BackpressureRequired("bridge minimum free-disk reserve would be violated")
+        conservative_growth = max(1 * 1024 * 1024, event_bytes * 4)
+        if self.storage_bytes() + conservative_growth > self.config.max_storage_bytes:
+            raise BackpressureRequired("bridge physical storage bound would be violated")
 
     def _logical_usage_locked(self) -> tuple[int, int]:
         row = self._connection.execute(
-            "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0) FROM events"
+            "SELECT event_records, payload_bytes FROM spool_state WHERE singleton = 1"
         ).fetchone()
         return int(row[0]), int(row[1])
+
+    def _maybe_maintain_locked(self, now_ns: int) -> None:
+        last = self._connection.execute(
+            "SELECT last_maintenance_ns FROM spool_state WHERE singleton = 1"
+        ).fetchone()[0]
+        interval_ns = self.config.maintenance_interval_seconds * 1_000_000_000
+        if now_ns - int(last) < interval_ns:
+            return
+        self._expire_consumers_locked(now_ns)
+        self._trim_aged_unowned_locked(now_ns)
+        self._connection.execute(
+            "UPDATE spool_state SET last_maintenance_ns = ? WHERE singleton = 1",
+            (now_ns,),
+        )
+
+    def _decrement_usage_locked(self, records: int, payload_bytes: int) -> None:
+        if records <= 0:
+            return
+        self._connection.execute(
+            """
+            UPDATE spool_state
+            SET event_records = MAX(0, event_records - ?),
+                payload_bytes = MAX(0, payload_bytes - ?)
+            WHERE singleton = 1
+            """,
+            (records, payload_bytes),
+        )
 
     def _expire_consumers_locked(self, now_ns: int) -> None:
         self._connection.execute(
@@ -494,6 +615,20 @@ class SQLiteDurableSpool:
 
     def _trim_aged_unowned_locked(self, now_ns: int) -> None:
         cutoff = now_ns - self.config.replay_retention_seconds * 1_000_000_000
+        removed = self._connection.execute(
+            """
+            SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0)
+            FROM events
+            WHERE committed_at_ns < ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM consumer_checkpoints c
+                  WHERE c.stream = events.stream
+                    AND c.partition_key = events.partition_key
+                    AND c.expires_at_ns > ?
+              )
+            """,
+            (cutoff, now_ns),
+        ).fetchone()
         self._connection.execute(
             """
             DELETE FROM events
@@ -507,6 +642,7 @@ class SQLiteDurableSpool:
             """,
             (cutoff, now_ns),
         )
+        self._decrement_usage_locked(int(removed[0]), int(removed[1]))
 
     @staticmethod
     def _stored_event(row: sqlite3.Row) -> StoredEvent:

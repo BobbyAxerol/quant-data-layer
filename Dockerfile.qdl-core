@@ -1,0 +1,12 @@
+FROM rust@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010 AS builder
+
+WORKDIR /src
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY rust ./rust
+COPY generated/rust ./generated/rust
+RUN cargo build --release --locked -p qdl-core --bin qdl-fixture-check
+
+FROM debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+COPY --from=builder /src/target/release/qdl-fixture-check /usr/local/bin/qdl-fixture-check
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/qdl-fixture-check"]

@@ -139,6 +139,11 @@ class EventSink(Protocol):
 
 
 @runtime_checkable
+class BatchEventSink(EventSink, Protocol):
+    def append_many(self, events: list[DurableEvent]) -> list[AppendResult]: ...
+
+
+@runtime_checkable
 class EventSource(Protocol):
     def read(
         self,

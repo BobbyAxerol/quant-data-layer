@@ -1,0 +1,43 @@
+{
+  "append": {
+    "duplicate_retry_events_per_second": 1230.1231050488602,
+    "latency_ms": {
+      "max": 62.519181,
+      "mean": 38.47514745,
+      "p50": 36.358656,
+      "p95": 54.337272,
+      "p99": 58.272774,
+      "p99_9": 62.519181
+    },
+    "throughput_events_per_second": 1537.093566333381
+  },
+  "capacity": {
+    "benchmark_consumer_groups": 1,
+    "logical_utilization": 0.9900990099009901,
+    "replay_horizon_seconds_at_100_events_per_second": 101.0
+  },
+  "config": {
+    "batch_size": 100,
+    "event_count": 10000,
+    "partition_count": 10,
+    "payload_size_bytes": 512,
+    "sqlite_journal": "WAL",
+    "sqlite_synchronous": "FULL"
+  },
+  "replay": {
+    "checksum": "4360b2c47feb524b66eb539b9a9fd9d874bbb984bcc81b2e9be3468f646d395c",
+    "events": 10000,
+    "events_per_second": 7796.637581878654
+  },
+  "resources": {
+    "disk_amplification": 2.0689625,
+    "max_rss_kib": 33072,
+    "network_amplification": 0.0,
+    "payload_bytes": 5120000,
+    "process_cpu_seconds": 5.9744358349999995,
+    "python_peak_allocation_bytes": 3123624,
+    "storage_bytes": 10593088
+  },
+  "schema": "qdl.phase2.benchmark.v1",
+  "status": "PASS"
+}
