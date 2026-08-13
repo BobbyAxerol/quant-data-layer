@@ -125,23 +125,48 @@ class S3CompatibleObjectStore:
     def get_optional(self, key: str) -> bytes | None:
         try:
             return self.get(key)
-        except Exception:
+        except KeyError:
             return None
+        except Exception as error:
+            code = str(
+                getattr(error, "response", {}).get("Error", {}).get("Code", "")
+            )
+            if code in {"NoSuchKey", "404", "NotFound"}:
+                return None
+            raise
 
     def compare_and_swap(self, key: str, expected_sha256: str | None, payload: bytes) -> str:
-        current = self.get_optional(key)
+        object_key = self._key(key)
+        current_etag = None
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=object_key)
+            current = response["Body"].read()
+            current_etag = response.get("ETag")
+            if current_etag is None:
+                current_etag = self.client.head_object(
+                    Bucket=self.bucket, Key=object_key
+                )["ETag"]
+        except KeyError:
+            current = None
+        except Exception as error:
+            code = str(
+                getattr(error, "response", {}).get("Error", {}).get("Code", "")
+            )
+            if code in {"NoSuchKey", "404", "NotFound"}:
+                current = None
+            else:
+                raise
         current_digest = hashlib.sha256(current).hexdigest() if current is not None else None
         if current_digest != expected_sha256:
             raise SnapshotConflict("S3 dataset head changed before metadata commit")
         arguments = {
-            "Bucket": self.bucket, "Key": self._key(key), "Body": payload,
+            "Bucket": self.bucket, "Key": object_key, "Body": payload,
             "Metadata": {"sha256": hashlib.sha256(payload).hexdigest()},
         }
         if current is None:
             arguments["IfNoneMatch"] = "*"
         else:
-            head = self.client.head_object(Bucket=self.bucket, Key=self._key(key))
-            arguments["IfMatch"] = head["ETag"]
+            arguments["IfMatch"] = current_etag
         try:
             self.client.put_object(**arguments)
         except Exception as error:
@@ -149,9 +174,19 @@ class S3CompatibleObjectStore:
         return hashlib.sha256(payload).hexdigest()
 
     def list(self, prefix: str) -> list[str]:
-        response = self.client.list_objects_v2(Bucket=self.bucket, Prefix=self._key(prefix))
         root = f"{self.prefix}/" if self.prefix else ""
-        return sorted(item["Key"].removeprefix(root) for item in response.get("Contents", []))
+        arguments = {"Bucket": self.bucket, "Prefix": self._key(prefix)}
+        keys = []
+        while True:
+            response = self.client.list_objects_v2(**arguments)
+            keys.extend(item["Key"].removeprefix(root) for item in response.get("Contents", []))
+            if not response.get("IsTruncated"):
+                break
+            token = response.get("NextContinuationToken")
+            if not token:
+                raise RuntimeError("S3 object listing truncated without continuation token")
+            arguments["ContinuationToken"] = token
+        return sorted(keys)
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=self._key(key))
@@ -170,6 +205,7 @@ class Snapshot:
     normalizer_version: str
     config_revision: int
     schema: tuple[tuple[str, str], ...]
+    operation: str = "APPEND_REWRITE"
 
 
 class AtomicParquetCatalog:
@@ -199,7 +235,10 @@ class AtomicParquetCatalog:
         config_revision: int,
         expected_parent_snapshot_id: str | None,
         crash_at: str | None = None,
+        operation: str = "APPEND_REWRITE",
     ) -> Snapshot:
+        if operation not in {"APPEND_REWRITE", "COMPACT"}:
+            raise ValueError("unsupported historical snapshot operation")
         selected = select_revisions(records)
         if not selected:
             raise ValueError("cannot commit an empty historical snapshot")
@@ -209,6 +248,9 @@ class AtomicParquetCatalog:
         if current_id != expected_parent_snapshot_id:
             raise SnapshotConflict("expected parent is not the current dataset head")
         table = pa.Table.from_pylist([record.as_dict() for record in selected])
+        new_schema = tuple((field.name, str(field.type)) for field in table.schema)
+        if current is not None:
+            self._validate_additive_schema(current.schema, new_schema)
         sink = io.BytesIO()
         pq.write_table(table, sink, compression="zstd", use_dictionary=True)
         parquet_bytes = sink.getvalue()
@@ -230,7 +272,8 @@ class AtomicParquetCatalog:
             source_cursor_end=source_cursor_end,
             normalizer_version=normalizer_version,
             config_revision=config_revision,
-            schema=tuple((field.name, str(field.type)) for field in table.schema),
+            schema=new_schema,
+            operation=operation,
         )
         manifest_bytes = json.dumps(
             {**snapshot.__dict__, "schema": [list(item) for item in snapshot.schema]},
@@ -255,6 +298,60 @@ class AtomicParquetCatalog:
         )
         return snapshot
 
+    def compact(
+        self,
+        dataset_id: str,
+        records: list[BarRecord],
+        *,
+        source_cursor_start: str,
+        source_cursor_end: str,
+        normalizer_version: str,
+        config_revision: int,
+        expected_parent_snapshot_id: str,
+    ) -> Snapshot:
+        return self.commit(
+            dataset_id, records,
+            source_cursor_start=source_cursor_start,
+            source_cursor_end=source_cursor_end,
+            normalizer_version=normalizer_version,
+            config_revision=config_revision,
+            expected_parent_snapshot_id=expected_parent_snapshot_id,
+            operation="COMPACT",
+        )
+
+    def orphan_objects(self, dataset_id: str) -> list[str]:
+        current = self.current(dataset_id)
+        all_keys = set(self.store.list(dataset_id))
+        if current is None:
+            return sorted(all_keys)
+        manifests: dict[str, tuple[str, dict]] = {}
+        for key in all_keys:
+            if not key.startswith(f"{dataset_id}/metadata/") or key.endswith("/current.json"):
+                continue
+            try:
+                payload = json.loads(self.store.get(key))
+                manifests[str(payload["snapshot_id"])] = (key, payload)
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+        reachable = {self._pointer_key(dataset_id)}
+        snapshot_id: str | None = current.snapshot_id
+        while snapshot_id is not None:
+            manifest = manifests.get(snapshot_id)
+            if manifest is None:
+                raise ValueError("committed snapshot lineage manifest is missing")
+            key, payload = manifest
+            reachable.update((key, str(payload["data_key"])))
+            snapshot_id = payload.get("parent_snapshot_id")
+        return sorted(all_keys.difference(reachable))
+
+    def purge_orphans(self, dataset_id: str, *, confirm_dataset_id: str) -> int:
+        if confirm_dataset_id != dataset_id:
+            raise ValueError("orphan cleanup requires exact dataset confirmation")
+        keys = self.orphan_objects(dataset_id)
+        for key in keys:
+            self.store.delete(key)
+        return len(keys)
+
     def read(self, snapshot: Snapshot | None = None, *, dataset_id: str | None = None) -> list[BarRecord]:
         selected = snapshot or (self.current(dataset_id or "") if dataset_id else None)
         if selected is None:
@@ -273,7 +370,22 @@ class AtomicParquetCatalog:
 
     @staticmethod
     def _snapshot_values(payload: dict) -> dict:
-        return {**payload, "schema": tuple(tuple(item) for item in payload["schema"])}
+        return {
+            "operation": "APPEND_REWRITE",
+            **payload,
+            "schema": tuple(tuple(item) for item in payload["schema"]),
+        }
+
+    @staticmethod
+    def _validate_additive_schema(
+        previous: tuple[tuple[str, str], ...], current: tuple[tuple[str, str], ...]
+    ) -> None:
+        current_fields = dict(current)
+        for name, data_type in previous:
+            if name not in current_fields:
+                raise ValueError(f"historical schema removed field: {name}")
+            if current_fields[name] != data_type:
+                raise ValueError(f"historical schema changed field type: {name}")
 
 
 class PyIcebergTableAppender:

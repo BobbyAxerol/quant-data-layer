@@ -493,6 +493,18 @@ Produce auditable, replayable and revision-aware data from raw ingestion through
   1m bars, six funding records and one OI snapshot; all requested historical
   windows reported full coverage, with zero production writes. See
   `upgrade/evidence/phase4-okx-real-history.json`.
+- Calendar quality policy now distinguishes closed sessions/holidays, legitimate
+  sparse feeds, late bars and missing continuous bars. A real read-only DNSE
+  probe for completed date 2026-08-12 returned exactly 241 VN30F1M bars over
+  provider bar sessions 09:00-11:29, 13:00-14:29 and close 14:45, with zero
+  missing/out-of-session/fabricated rows. The 08:45 market pre-open is retained
+  as market-calendar context and is not fabricated as provider OHLCV. See
+  `upgrade/evidence/phase4-dnse-provider-coverage.json`.
+- Historical catalog governance now enforces additive-compatible schemas,
+  records compaction operations, identifies uncommitted orphan files and
+  requires exact dataset confirmation before deletion. S3 CAS uses the ETag
+  from the same read (preventing a concurrent-head race) and paginates listings;
+  dedicated race/immutability tests pass.
 
 ### Technical Debt / Decision Gate
 

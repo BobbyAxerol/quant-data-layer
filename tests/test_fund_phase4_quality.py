@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 
 from qdl.quality import (
@@ -14,7 +15,9 @@ from qdl.quality import (
     SourceCandidate,
     SourceRole,
     ValidationLevel,
+    assess_bar_availability,
 )
+from qdl.domain.calendar import MarketSession, TradingCalendar
 from qdl.pipeline import ValidatedCanonicalPipeline
 from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
 
@@ -154,6 +157,56 @@ class RawLineageAndQuarantineTests(unittest.TestCase):
                 self.assertEqual(stored.event.payload, raw.payload)
                 quarantine = spool.quarantine_records()[0]
                 self.assertEqual(quarantine["payload_sha256"], stored.payload_sha256)
+
+
+class TradingCalendarQualityTests(unittest.TestCase):
+    def setUp(self):
+        self.calendar = TradingCalendar(
+            calendar_id="VN_DERIVATIVE_V1",
+            timezone_name="Asia/Ho_Chi_Minh",
+            weekly_sessions=(
+                MarketSession(time(8, 45), time(11, 30), "MORNING"),
+                MarketSession(time(13, 0), time(14, 46), "AFTERNOON_AND_CLOSE"),
+            ),
+            holidays=frozenset({date(2026, 9, 2)}),
+        )
+
+    @staticmethod
+    def ns(value: str) -> int:
+        return int(datetime.fromisoformat(value).astimezone(timezone.utc).timestamp() * 1_000_000_000)
+
+    def test_closed_lunch_weekend_and_holiday_are_not_provider_outages(self):
+        for value in (
+            "2026-08-13T12:00:00+07:00",
+            "2026-08-15T09:00:00+07:00",
+            "2026-09-02T09:00:00+07:00",
+        ):
+            assessment = assess_bar_availability(
+                self.calendar, expected_open_time_ns=self.ns(value),
+                observed_open_time_ns=None, sparse_allowed=False,
+            )
+            self.assertEqual(assessment.state, FeedQualityState.MARKET_CLOSED)
+            self.assertFalse(assessment.outage)
+
+    def test_sparse_late_and_missing_continuous_bar_have_distinct_states(self):
+        expected = self.ns("2026-08-13T09:01:00+07:00")
+        sparse = assess_bar_availability(
+            self.calendar, expected_open_time_ns=expected,
+            observed_open_time_ns=None, sparse_allowed=True,
+        )
+        late = assess_bar_availability(
+            self.calendar, expected_open_time_ns=expected,
+            observed_open_time_ns=expected - 60_000_000_000, sparse_allowed=False,
+        )
+        missing = assess_bar_availability(
+            self.calendar, expected_open_time_ns=expected,
+            observed_open_time_ns=None, sparse_allowed=False,
+        )
+        self.assertEqual(sparse.reason, "SPARSE_NO_EVENT")
+        self.assertFalse(sparse.outage)
+        self.assertEqual(late.state, FeedQualityState.STALE)
+        self.assertTrue(late.outage)
+        self.assertEqual(missing.state, FeedQualityState.GAPPED)
 
 
 if __name__ == "__main__":

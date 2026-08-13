@@ -8,6 +8,7 @@ from qdl.quality.engine import (
     ObservationResult,
     ValidationLevel,
 )
+from qdl.quality.calendar import CalendarAssessment, assess_bar_availability
 from qdl.quality.source_authority import (
     AuthorityAction,
     SourceAuthorityController,
@@ -17,6 +18,7 @@ from qdl.quality.source_authority import (
 )
 
 __all__ = [
+    "CalendarAssessment",
     "AuthorityAction",
     "FeedKey",
     "FeedQualityLedger",
@@ -28,4 +30,5 @@ __all__ = [
     "SourceCandidate",
     "SourceRole",
     "ValidationLevel",
+    "assess_bar_availability",
 ]

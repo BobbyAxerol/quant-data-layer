@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import hashlib
+import io
 from datetime import time
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from qdl.history import (
     AtomicParquetCatalog,
     BarRecord,
     LocalObjectStore,
+    S3CompatibleObjectStore,
     SessionWindow,
     SnapshotConflict,
     aggregate_bars,
@@ -126,6 +129,106 @@ class AtomicCatalogTests(unittest.TestCase):
                     expected_parent_snapshot_id=None,
                 )
             self.assertEqual(catalog.current("bars").snapshot_id, head.snapshot_id)
+
+    def test_compaction_and_orphan_cleanup_are_explicitly_governed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            catalog = AtomicParquetCatalog(LocalObjectStore(Path(directory)))
+            head = catalog.commit(
+                "bars", [bar(0)], source_cursor_start="0", source_cursor_end="1",
+                normalizer_version="qdl/phase4", config_revision=1,
+                expected_parent_snapshot_id=None,
+            )
+            with self.assertRaises(RuntimeError):
+                catalog.commit(
+                    "bars", [bar(0), bar(1)], source_cursor_start="1", source_cursor_end="2",
+                    normalizer_version="qdl/phase4", config_revision=1,
+                    expected_parent_snapshot_id=head.snapshot_id, crash_at="after_manifest",
+                )
+            self.assertEqual(len(catalog.orphan_objects("bars")), 2)
+            with self.assertRaisesRegex(ValueError, "exact dataset confirmation"):
+                catalog.purge_orphans("bars", confirm_dataset_id="wrong")
+            self.assertEqual(catalog.purge_orphans("bars", confirm_dataset_id="bars"), 2)
+            compacted = catalog.compact(
+                "bars", [bar(0), bar(1)], source_cursor_start="0", source_cursor_end="2",
+                normalizer_version="qdl/phase4", config_revision=1,
+                expected_parent_snapshot_id=head.snapshot_id,
+            )
+            self.assertEqual(compacted.operation, "COMPACT")
+            self.assertEqual(catalog.orphan_objects("bars"), [])
+
+    def test_schema_evolution_rejects_removal_or_type_change(self):
+        previous = (("a", "string"), ("b", "int64"))
+        AtomicParquetCatalog._validate_additive_schema(
+            previous, (("a", "string"), ("b", "int64"), ("c", "bool"))
+        )
+        with self.assertRaisesRegex(ValueError, "removed field"):
+            AtomicParquetCatalog._validate_additive_schema(previous, (("a", "string"),))
+        with self.assertRaisesRegex(ValueError, "changed field type"):
+            AtomicParquetCatalog._validate_additive_schema(
+                previous, (("a", "string"), ("b", "string"))
+            )
+
+
+class FakeS3Client:
+    def __init__(self):
+        self.objects = {}
+        self.race_on_get = None
+
+    def put_object(self, *, Bucket, Key, Body, Metadata, IfNoneMatch=None, IfMatch=None):
+        current = self.objects.get((Bucket, Key))
+        if IfNoneMatch == "*" and current is not None:
+            raise RuntimeError("precondition failed")
+        if IfMatch is not None and (current is None or current[1] != IfMatch):
+            raise RuntimeError("etag mismatch")
+        payload = bytes(Body)
+        etag = hashlib.sha256(payload).hexdigest()
+        self.objects[(Bucket, Key)] = (payload, etag, dict(Metadata))
+        return {"ETag": etag}
+
+    def get_object(self, *, Bucket, Key):
+        payload, etag, _ = self.objects[(Bucket, Key)]
+        if self.race_on_get == (Bucket, Key):
+            replacement = b"concurrent-writer"
+            self.objects[(Bucket, Key)] = (
+                replacement, hashlib.sha256(replacement).hexdigest(), {}
+            )
+            self.race_on_get = None
+        return {"Body": io.BytesIO(payload), "ETag": etag}
+
+    def head_object(self, *, Bucket, Key):
+        return {"ETag": self.objects[(Bucket, Key)][1]}
+
+    def list_objects_v2(self, *, Bucket, Prefix, ContinuationToken=None):
+        return {"Contents": [
+            {"Key": key} for bucket, key in self.objects if bucket == Bucket and key.startswith(Prefix)
+        ], "IsTruncated": False}
+
+    def delete_object(self, *, Bucket, Key):
+        self.objects.pop((Bucket, Key), None)
+
+
+class S3CompatibleCatalogTests(unittest.TestCase):
+    def test_conditional_s3_writes_preserve_immutability_and_atomic_head(self):
+        store = S3CompatibleObjectStore(FakeS3Client(), bucket="phase4", prefix="qdl")
+        catalog = AtomicParquetCatalog(store)
+        snapshot = catalog.commit(
+            "bars", [bar(0)], source_cursor_start="0", source_cursor_end="1",
+            normalizer_version="qdl/phase4", config_revision=1,
+            expected_parent_snapshot_id=None,
+        )
+        self.assertEqual(catalog.current("bars").snapshot_id, snapshot.snapshot_id)
+        self.assertEqual(catalog.read(dataset_id="bars"), [bar(0)])
+        with self.assertRaises(SnapshotConflict):
+            store.put_immutable(snapshot.data_key, b"different")
+
+    def test_s3_compare_and_swap_uses_etag_from_the_same_read(self):
+        client = FakeS3Client()
+        store = S3CompatibleObjectStore(client, bucket="phase4", prefix="qdl")
+        original_sha = store.compare_and_swap("head", None, b"original")
+        client.race_on_get = ("phase4", "qdl/head")
+        with self.assertRaisesRegex(SnapshotConflict, "conditional S3 metadata commit failed"):
+            store.compare_and_swap("head", original_sha, b"ours")
+        self.assertEqual(store.get("head"), b"concurrent-writer")
 
 
 class VnMigrationTests(unittest.TestCase):
