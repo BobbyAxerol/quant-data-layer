@@ -12,6 +12,7 @@
 ## Document map
 
 - **Implementation tracker:** [`DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md) translates this architecture into seven gated phases with status, test evidence, rollback and technical-debt decisions.
+- **OKX provider specification:** [`OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md`](OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md) owns verified OKX V5 REST/WS/cursor/order-book/capability semantics and maps its P0-P4 workstream into these seven phases. It refines this architecture; it does not create provider-specific public contracts or a second durable backbone.
 
 - **Sections 0–7:** scope, current state, principles, guarantees, target architecture, Python–Rust split and recommended stack.
 - **Sections 8–19:** canonical domain/events, schema versioning, durable topics, venue adapters, quality/fallback, historical, warmup-to-live, API, SDK and alpha integration.
@@ -4744,6 +4745,8 @@ Một adapter chỉ được xem là complete khi:
 ## Appendix D — Seven-phase execution index and option-ready boundary
 
 Implementation được track trong [`DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md):
+
+OKX implementation details and provider-specific exit evidence are indexed separately in [OKX Guide Section 26.1](OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-program-phase-map); phase status remains owned only by the unified tracker.
 
 | Phase | Architecture sections | Main gate |
 |---:|---|---|
