@@ -197,6 +197,15 @@ class InstrumentRegistry:
         except KeyError as exc:
             raise KeyError(f"unknown instrument_uid: {instrument_uid}") from exc
 
+    def get_by_id(self, instrument_id: str) -> InstrumentRecord:
+        try:
+            return self.get(self._ids[instrument_id.strip().upper()])
+        except KeyError as exc:
+            raise KeyError(f"unknown instrument_id: {instrument_id}") from exc
+
+    def list_records(self) -> tuple[InstrumentRecord, ...]:
+        return tuple(sorted(self._records.values(), key=lambda item: item.instrument_id))
+
     def resolve(
         self,
         *,

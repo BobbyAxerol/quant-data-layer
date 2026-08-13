@@ -1,0 +1,21 @@
+apiVersion: qdl/v2
+kind: DataRequirement
+metadata:
+  id: trading-system.binance.execution.shadow
+  owner: trading-platform
+spec:
+  sdk_major: 2
+  rollback_contract: V1
+  requirements:
+    - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+      feed: TRADE
+      consumer_grade: EXECUTION
+      source_policy_id: execution_binance_usdm_v1
+      warmup_limit: 0
+      max_freshness_ms: 1000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: LATEST

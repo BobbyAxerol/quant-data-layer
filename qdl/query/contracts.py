@@ -111,6 +111,26 @@ class DataRequirement:
     recovery: RecoveryPolicy = RecoveryPolicy.SNAPSHOT_AND_REPLAY
     bar_revision_policy: BarRevisionPolicy = BarRevisionPolicy.LATEST
 
+    @classmethod
+    def from_mapping(cls, value: dict[str, object]) -> "DataRequirement":
+        allowed = set(cls.__dataclass_fields__)
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(f"unknown data requirement fields: {sorted(unknown)}")
+        converted = dict(value)
+        enums = {
+            "feed": FeedType,
+            "consumer_grade": ConsumerGrade,
+            "stale_policy": StalePolicy,
+            "gap_policy": GapPolicy,
+            "recovery": RecoveryPolicy,
+            "bar_revision_policy": BarRevisionPolicy,
+        }
+        for field, enum_type in enums.items():
+            if field in converted and not isinstance(converted[field], enum_type):
+                converted[field] = enum_type(str(converted[field]).upper())
+        return cls(**converted)
+
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip():
             raise ValueError("instrument_uid is required")

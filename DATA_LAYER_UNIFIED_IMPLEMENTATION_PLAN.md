@@ -663,7 +663,7 @@ not new domain behavior.
 
 ## 9. Phase 5 - V2 API, SDK And Controlled Consumer Migration
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 ### Goal
 
@@ -696,7 +696,24 @@ Expose provider-neutral V2 snapshot/query/stream contracts and migrate consumers
 
 ### Completed
 
-- Not started.
+- Phase 5 implementation started on `feat/fund-grade-data-layer-v2` after the
+  Phase 4.5 dark freeze. Delivery is split into three independently tested
+  slices: provider-neutral REST/OpenAPI, cursor-backed stream plus SDK V2, and
+  controlled shadow-consumer migration/certification.
+- V1 remains authoritative throughout this phase. No existing route, Redis
+  payload, venue subscription, source authority or running consumer is changed
+  implicitly; `symbols.json` remains user-owned and excluded from phase commits.
+- REST/governance slice implemented provider-neutral instrument, snapshot,
+  warmup, history, batch, feed-status, gap and readiness contracts with stable
+  RFC 9457-style problem details. Binance and OKX are addressed only through
+  canonical instrument identity; provider remains response provenance.
+- Added strict consumer manifest parsing, aggregate deprecation telemetry and a
+  governed `REGISTERED -> SHADOW -> ACCEPTED -> ACTIVE` migration state machine
+  with explicit V1 rollback. PostgreSQL migration `0004` stores manifests,
+  requirements, migration audit and hourly usage aggregates, never tick data.
+- REST/query/consumer focused certification passed `20/20`; disposable
+  PostgreSQL clean/existing/idempotent migration passed with `20` QDL tables,
+  three lease functions and preserved legacy rows. No production DB was used.
 
 ### Technical Debt / Decision Gate
 

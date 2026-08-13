@@ -21,6 +21,27 @@ from qdl.query.entitlement import (
     EntitlementGrant,
     EntitlementPolicy,
 )
+from qdl.query.results import (
+    GapRecord,
+    HistoryResult,
+    InstrumentPage,
+    InstrumentQuery,
+    MarketDataItem,
+    MarketDataQueryBackend,
+    MemoryMarketDataBackend,
+    QualityMetadata,
+    SourceMetadata,
+)
+from qdl.query.service import (
+    BatchItemResult,
+    BatchQueryResult,
+    QueryResult,
+    QueryServiceError,
+    ReadinessItemResult,
+    ReadinessResult,
+    V2QueryService,
+    WarmupResult,
+)
 
 __all__ = [
     "AccessDecision",
@@ -40,4 +61,21 @@ __all__ = [
     "RecoveryPolicy",
     "StalePolicy",
     "evaluate_requirement",
+    "HistoryResult",
+    "GapRecord",
+    "InstrumentPage",
+    "InstrumentQuery",
+    "MarketDataItem",
+    "MarketDataQueryBackend",
+    "MemoryMarketDataBackend",
+    "QualityMetadata",
+    "SourceMetadata",
+    "BatchItemResult",
+    "BatchQueryResult",
+    "QueryResult",
+    "QueryServiceError",
+    "ReadinessItemResult",
+    "ReadinessResult",
+    "V2QueryService",
+    "WarmupResult",
 ]
