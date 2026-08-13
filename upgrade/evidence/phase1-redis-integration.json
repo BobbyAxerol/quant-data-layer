@@ -1,0 +1,22 @@
+{
+  "disposable_redis": {
+    "image": "redis:7.2-alpine",
+    "persistence": false,
+    "removed_after_test": true,
+    "separate_from_live_redis": true
+  },
+  "load_case": {
+    "demanded_feed_count": 10,
+    "lease_count": 1000,
+    "memory_delta_bytes": 623408,
+    "snapshot_seconds": 0.0985,
+    "write_seconds": 0.2782
+  },
+  "refcount_and_cross_coordinator_singleflight": "PASS",
+  "summary": {
+    "failed": 0,
+    "passed": 2
+  },
+  "recorded_at": "2026-08-13T08:09:00Z"
+}
+

@@ -34,8 +34,11 @@ Authority: dark/additive; existing `app.main:app`, `/v1` and Redis V1 remain aut
 - Rust `qdl-contracts` golden-byte parity: 1 PASS.
 - Instrument/capability/OKX registry/migration unit tests: 12 PASS.
 - Runtime ownership/topology plus V1 golden tests: 8 PASS.
-- Full application-image regression: 125 PASS, 2 skipped optional Redis
-  integration tests.
+- Full application-image regression: 125 PASS; its two environment-gated Redis
+  tests were then run separately against disposable Redis and both PASS.
+- Redis integration load case: 1,000 leases/10 demanded feeds in 0.2782s,
+  snapshot in 0.0985s, memory delta 623,408 bytes; temporary container/network
+  removed after test.
 - Disposable PostgreSQL migration smoke: clean and legacy-seeded databases
   both produced 11 QDL tables and identical schema SHA; second apply and legacy
   row preservation PASS.
