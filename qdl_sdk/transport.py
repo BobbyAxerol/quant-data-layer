@@ -9,7 +9,7 @@ import httpx
 
 from qdl.query.v2 import query_pb2
 from qdl_sdk.errors import CursorExpiredError, DataLayerError, SlowConsumerError
-from qdl_sdk.models import DataRequirement, StreamEvent
+from qdl_sdk.models import ControlEvent, DataRequirement, StreamEvent
 
 
 class RestQueryTransport:
@@ -41,9 +41,11 @@ class RestQueryTransport:
 
     async def snapshot(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
         del consumer_id
+        params = requirement.query_params()
+        params.pop("limit", None)
         response = await self._client.get(
             f"/v2/market-data/{requirement.instrument_uid}/snapshot",
-            params=requirement.query_params(),
+            params=params,
             headers={"X-QDL-Purpose": self._purpose(requirement)},
         )
         return self._decode(response)
@@ -101,31 +103,41 @@ class GrpcStreamTransport:
         requirement: DataRequirement,
         *,
         consumer_id: str,
-        stream: str,
-        partition_key: str,
         cursor_token: str,
         max_buffer_events: int = 1000,
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> AsyncIterator[StreamEvent | ControlEvent]:
         request = query_pb2.SubscribeRequest(
             consumer_id=consumer_id,
             requirement=requirement.to_proto(),
-            stream=stream,
-            partition_key=partition_key,
             cursor_token=cursor_token,
             max_buffer_events=max_buffer_events,
         )
         try:
             async for response in self._subscribe(request):
                 record = response.record
-                if record.WhichOneof("payload") != "event":
+                payload = record.WhichOneof("payload")
+                if payload == "control":
+                    yield ControlEvent(
+                        record.control.code,
+                        record.control.detail,
+                        {"high_watermark": record.control.high_watermark},
+                    )
                     continue
-                yield StreamEvent(record.logical_offset, record.resume_token, record.event)
+                if payload == "event":
+                    yield StreamEvent(record.logical_offset, record.resume_token, record.event)
         except grpc.aio.AioRpcError as error:
             detail = error.details() or "gRPC stream failed"
             if error.code() is grpc.StatusCode.OUT_OF_RANGE:
                 raise CursorExpiredError("CURSOR_EXPIRED", detail, retryable=False) from error
             if error.code() is grpc.StatusCode.RESOURCE_EXHAUSTED:
                 raise SlowConsumerError("RATE_LIMITED", detail, retryable=True) from error
+            if error.code() is grpc.StatusCode.INVALID_ARGUMENT:
+                raise DataLayerError("CURSOR_INVALID", detail, retryable=False) from error
+            if error.code() is grpc.StatusCode.PERMISSION_DENIED:
+                raise DataLayerError("SOURCE_NOT_ALLOWED", detail, retryable=False) from error
+            if error.code() is grpc.StatusCode.FAILED_PRECONDITION:
+                code = detail.partition(":")[0]
+                raise DataLayerError(code or "DATA_NOT_READY", detail, retryable=False) from error
             raise DataLayerError("DEPENDENCY_UNAVAILABLE", detail, retryable=True) from error
 
     async def close(self) -> None:

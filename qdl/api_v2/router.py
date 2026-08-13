@@ -28,12 +28,16 @@ from qdl.api_v2.models import (
 from qdl.query import (
     AccessPurpose,
     BatchRequirement,
+    BarRevisionPolicy,
     CanonicalErrorCode,
     ConsumerGrade,
     DataRequirement,
     FeedType,
+    GapPolicy,
     QueryProblem,
     QueryServiceError,
+    RecoveryPolicy,
+    StalePolicy,
     V2QueryService,
 )
 
@@ -174,6 +178,12 @@ def _query_requirement(
     interval: str | None,
     warmup_limit: int,
     max_freshness_ms: int | None,
+    require_full_coverage: bool,
+    require_final_bars: bool,
+    stale_policy: StalePolicy,
+    gap_policy: GapPolicy,
+    recovery: RecoveryPolicy,
+    bar_revision_policy: BarRevisionPolicy,
 ) -> DataRequirement:
     return DataRequirement(
         instrument_uid=instrument_uid,
@@ -183,6 +193,12 @@ def _query_requirement(
         interval=interval,
         warmup_limit=warmup_limit,
         max_freshness_ms=max_freshness_ms,
+        require_full_coverage=require_full_coverage,
+        require_final_bars=require_final_bars,
+        stale_policy=stale_policy,
+        gap_policy=gap_policy,
+        recovery=recovery,
+        bar_revision_policy=bar_revision_policy,
     )
 
 
@@ -194,13 +210,21 @@ async def snapshot(
     consumer_grade: ConsumerGrade = ConsumerGrade.ALPHA,
     interval: str | None = None,
     max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    require_full_coverage: bool = True,
+    require_final_bars: bool = True,
+    stale_policy: StalePolicy = StalePolicy.BLOCK,
+    gap_policy: GapPolicy = GapPolicy.BLOCK,
+    recovery: RecoveryPolicy = RecoveryPolicy.SNAPSHOT_AND_REPLAY,
+    bar_revision_policy: BarRevisionPolicy = BarRevisionPolicy.LATEST,
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
 ):
     result = service.snapshot(
         _query_requirement(
             instrument_uid, feed, consumer_grade, source_policy_id,
-            interval, 0, max_freshness_ms,
+            interval, 0, max_freshness_ms, require_full_coverage,
+            require_final_bars, stale_policy, gap_policy, recovery,
+            bar_revision_policy,
         ),
         purpose=purpose,
     )
@@ -216,13 +240,21 @@ async def warmup(
     interval: str | None = None,
     limit: int = Query(1000, ge=1, le=10_000),
     max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    require_full_coverage: bool = True,
+    require_final_bars: bool = True,
+    stale_policy: StalePolicy = StalePolicy.BLOCK,
+    gap_policy: GapPolicy = GapPolicy.BLOCK,
+    recovery: RecoveryPolicy = RecoveryPolicy.SNAPSHOT_AND_REPLAY,
+    bar_revision_policy: BarRevisionPolicy = BarRevisionPolicy.LATEST,
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
 ):
     result = service.warmup(
         _query_requirement(
             instrument_uid, feed, consumer_grade, source_policy_id,
-            interval, limit, max_freshness_ms,
+            interval, limit, max_freshness_ms, require_full_coverage,
+            require_final_bars, stale_policy, gap_policy, recovery,
+            bar_revision_policy,
         ),
         purpose=purpose,
     )
@@ -238,6 +270,12 @@ async def history(
     interval: str | None = None,
     limit: int = Query(1000, ge=1, le=10_000),
     max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    require_full_coverage: bool = True,
+    require_final_bars: bool = True,
+    stale_policy: StalePolicy = StalePolicy.BLOCK,
+    gap_policy: GapPolicy = GapPolicy.BLOCK,
+    recovery: RecoveryPolicy = RecoveryPolicy.SNAPSHOT_AND_REPLAY,
+    bar_revision_policy: BarRevisionPolicy = BarRevisionPolicy.LATEST,
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
 ):
@@ -249,6 +287,12 @@ async def history(
         interval,
         limit,
         max_freshness_ms,
+        require_full_coverage,
+        require_final_bars,
+        stale_policy,
+        gap_policy,
+        recovery,
+        bar_revision_policy,
         purpose,
         service,
     )
@@ -297,10 +341,18 @@ async def feed_status(
     source_policy_id: str,
     consumer_grade: ConsumerGrade = ConsumerGrade.ALPHA,
     interval: str | None = None,
+    require_full_coverage: bool = True,
+    require_final_bars: bool = True,
+    stale_policy: StalePolicy = StalePolicy.BLOCK,
+    gap_policy: GapPolicy = GapPolicy.BLOCK,
+    recovery: RecoveryPolicy = RecoveryPolicy.SNAPSHOT_AND_REPLAY,
+    bar_revision_policy: BarRevisionPolicy = BarRevisionPolicy.LATEST,
     service: V2QueryService = Depends(_service),
 ):
     requirement = _query_requirement(
-        instrument_uid, feed, consumer_grade, source_policy_id, interval, 0, None
+        instrument_uid, feed, consumer_grade, source_policy_id, interval, 0, None,
+        require_full_coverage, require_final_bars, stale_policy, gap_policy,
+        recovery, bar_revision_policy,
     )
     return {
         "schema": "qdl.feed-status.v2",

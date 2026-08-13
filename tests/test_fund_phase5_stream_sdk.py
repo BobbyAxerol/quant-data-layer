@@ -43,14 +43,20 @@ from qdl.stream import (
     create_grpc_server,
 )
 from qdl.transport import Cursor, DurableEvent, SQLiteDurableSpool, SpoolConfig
-from qdl_sdk import AsyncDataLayerClient, DataRequirement, GrpcStreamTransport, MemoryCursorStore
+from qdl_sdk import (
+    AsyncDataLayerClient,
+    DataLayerClientV2,
+    DataRequirement,
+    GrpcStreamTransport,
+    MemoryCursorStore,
+)
 from qdl_sdk.cursor import FileCursorStore
-from qdl_sdk.errors import CursorExpiredError, DataLayerError
+from qdl_sdk.errors import CursorExpiredError, DataLayerError, SlowConsumerError
 from qdl_sdk.models import ControlEvent, StreamEvent
 from qdl_sdk.v1_facade import V1CompatibilityFacade
 
 
-STREAM = "md.canonical.v2"
+STREAM = "md.canonical.v2.bar"
 
 
 def instrument() -> InstrumentRecord:
@@ -137,7 +143,8 @@ class FakeQueryTransport:
                 "payload": {"is_final": True},
                 "quality": {
                     "state": "LIVE", "gap_open": False,
-                    "execution_eligible": True,
+                    "execution_eligible": True, "complete": True,
+                    "freshness_ms": 1, "policy_id": requirement.source_policy_id,
                 },
             }],
         }
@@ -153,7 +160,8 @@ class FakeQueryTransport:
                 "payload": {"is_final": True},
                 "quality": {
                     "state": "LIVE", "gap_open": False,
-                    "execution_eligible": True,
+                    "execution_eligible": True, "complete": True,
+                    "freshness_ms": 1, "policy_id": requirement.source_policy_id,
                 },
                 "snapshot_id": "snapshot",
                 "cursor": self.token,
@@ -282,6 +290,38 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         await slow.close()
         await peer.close()
 
+    async def test_grpc_emits_backpressure_control_before_slow_consumer_disconnect(self):
+        grpc_service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, self.token),
+        )
+        server = create_grpc_server(grpc_service)
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}", allow_insecure_loopback=True
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid, "BAR", "ALPHA", "alpha_binance_v1",
+            interval="1m", warmup_limit=1,
+        )
+        events = transport.subscribe(
+            requirement, consumer_id="alpha-shadow", cursor_token=self.token,
+            max_buffer_events=1,
+        ).__aiter__()
+        try:
+            self.assertEqual((await events.__anext__()).code, "REPLAYING")
+            self.assertEqual((await events.__anext__()).code, "LIVE")
+            await self.gateway.publish(durable(self.record, 1))
+            await self.gateway.publish(durable(self.record, 2))
+            self.assertEqual((await events.__anext__()).code, "RATE_LIMITED")
+            with self.assertRaises(SlowConsumerError):
+                await events.__anext__()
+        finally:
+            await transport.close()
+            await server.stop(grace=0)
+
     async def test_real_grpc_sdk_handoff_ack_restart_and_bar_revisions(self):
         registry = InstrumentRegistry()
         registry.register(self.record, [])
@@ -331,27 +371,34 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             max_buffer_events=2,
         )
         try:
-            async with client.warmup_then_stream(
-                sdk_requirement, stream=STREAM, partition_key=self.partition
-            ) as session:
+            async with client.warmup_then_stream(sdk_requirement) as session:
                 await self.gateway.publish(durable(self.record, 1, revision=0))
+                controls = []
                 first = await session.__anext__()
+                while isinstance(first, ControlEvent):
+                    controls.append(first.code)
+                    first = await session.__anext__()
                 self.assertIsInstance(first, StreamEvent)
+                self.assertIn("REPLAYING", controls)
                 session.acknowledge(first)
                 await self.gateway.publish(durable(self.record, 2, revision=1))
                 revised = await session.__anext__()
+                while isinstance(revised, ControlEvent):
+                    controls.append(revised.code)
+                    revised = await session.__anext__()
                 self.assertEqual(revised.event.bar.revision, 1)
+                self.assertIn("LIVE", controls)
                 session.acknowledge(revised)
             self.assertEqual(next(iter(cursor_store._items.values())).offset, 2)
 
             async with client.warmup_then_stream(
                 sdk_requirement,
-                stream=STREAM,
-                partition_key=self.partition,
                 resume_restored_state=True,
             ) as restarted:
                 await self.gateway.publish(durable(self.record, 3))
                 resumed = await restarted.__anext__()
+                while isinstance(resumed, ControlEvent):
+                    resumed = await restarted.__anext__()
                 self.assertEqual(resumed.logical_offset, 3)
         finally:
             await client.close()
@@ -393,13 +440,11 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             query_transport=query, stream_transport=stream,
             consumer_id="alpha-shadow", cursor_store=store, telemetry=telemetry,
         )
-        key = client._cursor_key(requirement, STREAM, self.partition)
+        key = client._cursor_key(requirement)
         from qdl_sdk.cursor import CursorCheckpoint
         store.save(key, CursorCheckpoint("old-token", 2))
 
-        async with client.warmup_then_stream(
-            requirement, stream=STREAM, partition_key=self.partition
-        ) as session:
+        async with client.warmup_then_stream(requirement) as session:
             event = await session.__anext__()
             session.acknowledge(event)
         self.assertEqual(stream.tokens, ["fresh-token"])
@@ -426,9 +471,7 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             query_transport=query, stream_transport=stream,
             consumer_id="alpha-shadow", max_reconnect_attempts=2,
         )
-        async with client.warmup_then_stream(
-            requirement, stream=STREAM, partition_key=self.partition
-        ) as session:
+        async with client.warmup_then_stream(requirement) as session:
             replaced = await session.__anext__()
             self.assertEqual(replaced.code, "SNAPSHOT_REPLACED")
             first = await session.__anext__()
@@ -465,9 +508,75 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaisesRegex(DataLayerError, "STALE"):
             async with client.warmup_then_stream(
-                requirement, stream=STREAM, partition_key=self.partition
+                requirement
             ):
                 pass
+
+    async def test_public_query_wrappers_preserve_all_requirement_policies(self):
+        requirement = DataRequirement(
+            self.record.instrument_uid,
+            "bar",
+            "alpha",
+            "alpha_binance_v1",
+            interval="1m",
+            warmup_limit=1,
+            max_freshness_ms=500,
+            require_full_coverage=False,
+            require_final_bars=False,
+            stale_policy="observe",
+            gap_policy="observe",
+            recovery="fresh_snapshot",
+            bar_revision_policy="emit_revisions",
+        )
+        self.assertEqual(requirement.stale_policy, "OBSERVE")
+        self.assertEqual(requirement.query_params()["recovery"], "FRESH_SNAPSHOT")
+        query = FakeQueryTransport(self.token)
+        client = AsyncDataLayerClient(
+            query_transport=query,
+            stream_transport=ScriptedStreamTransport(()),
+            consumer_id="alpha-shadow",
+        )
+        self.assertEqual((await client.warmup(requirement))["count"], 1)
+        self.assertEqual((await client.snapshot(requirement))["data"]["feed"], "BAR")
+        facade = DataLayerClientV2(client)
+        sync_snapshot = await asyncio.to_thread(facade.snapshot, requirement)
+        self.assertEqual(sync_snapshot["data"]["instrument_uid"], self.record.instrument_uid)
+
+        with self.assertRaisesRegex(ValueError, "stale policy"):
+            DataRequirement(
+                self.record.instrument_uid, "TRADE", "ALPHA", "alpha_binance_v1",
+                stale_policy="UNKNOWN",
+            )
+
+    async def test_signed_cursor_scope_mismatch_fails_closed_without_retry(self):
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, self.token),
+        )
+        server = create_grpc_server(service)
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}", allow_insecure_loopback=True
+        )
+        wrong_requirement = DataRequirement(
+            self.record.instrument_uid, "TRADE", "ALPHA", "alpha_binance_v1"
+        )
+        events = transport.subscribe(
+            wrong_requirement,
+            consumer_id="alpha-shadow",
+            cursor_token=self.token,
+            max_buffer_events=1,
+        ).__aiter__()
+        try:
+            with self.assertRaises(DataLayerError) as raised:
+                await events.__anext__()
+            self.assertEqual(raised.exception.code, "CURSOR_INVALID")
+            self.assertFalse(raised.exception.retryable)
+        finally:
+            await transport.close()
+            await server.stop(grace=0)
 
 
 if __name__ == "__main__":

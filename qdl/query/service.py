@@ -6,9 +6,11 @@ from dataclasses import dataclass
 
 from qdl.query.contracts import (
     BatchRequirement,
+    BarRevisionPolicy,
     CanonicalErrorCode,
     CoverageStatus,
     DataRequirement,
+    FeedType,
     QueryProblem,
     evaluate_requirement,
 )
@@ -129,6 +131,7 @@ class V2QueryService:
         item = self.backend.latest(requirement)
         if item is None:
             self._raise_not_ready(requirement, request_id)
+        self._enforce_content(requirement, (item,), request_id)
         self._enforce(
             requirement,
             item.quality,
@@ -137,6 +140,7 @@ class V2QueryService:
             DataProduct.CANONICAL_SNAPSHOT,
             CoverageStatus.FULL,
             request_id,
+            authoritative=item.source.authoritative,
         )
         return QueryResult(request_id, item)
 
@@ -153,6 +157,7 @@ class V2QueryService:
             self._raise_not_ready(requirement, request_id)
         quality = history.items[-1].quality
         source_id = history.items[-1].source.source_id
+        self._enforce_content(requirement, history.items, request_id)
         self._enforce(
             requirement,
             quality,
@@ -161,6 +166,7 @@ class V2QueryService:
             DataProduct.CANONICAL_HISTORY,
             history.coverage,
             request_id,
+            authoritative=history.items[-1].source.authoritative,
         )
         return WarmupResult(request_id, history)
 
@@ -242,7 +248,20 @@ class V2QueryService:
         product: DataProduct,
         coverage: CoverageStatus,
         request_id: str,
+        *,
+        authoritative: bool,
     ) -> None:
+        if quality.policy_id != requirement.source_policy_id:
+            raise QueryServiceError(
+                QueryProblem(
+                    CanonicalErrorCode.CONFLICT,
+                    "resolved source policy does not match the data requirement",
+                    False,
+                ),
+                request_id=request_id,
+                instrument_uid=requirement.instrument_uid,
+                quality_state=quality.state,
+            )
         entitlement = self.entitlements.authorize(
             source_id=source_id,
             purpose=purpose,
@@ -251,12 +270,22 @@ class V2QueryService:
         )
         problem = evaluate_requirement(
             requirement,
-            coverage=coverage,
             entitled=entitlement.allowed,
             available=quality.state not in {"OFFLINE", "UNAVAILABLE"},
-            fresh=quality.state not in {"STALE", "OFFLINE"},
-            authoritative=quality.execution_eligible and not quality.gap_open,
+            fresh=(
+                quality.state not in {"STALE", "OFFLINE"}
+                and (
+                    requirement.max_freshness_ms is None
+                    or quality.freshness_ms <= requirement.max_freshness_ms
+                )
+            ),
+            authoritative=(
+                authoritative and quality.execution_eligible and not quality.gap_open
+            ),
             gap_open=quality.gap_open,
+            coverage=(
+                coverage if quality.complete else CoverageStatus.PARTIAL
+            ),
         )
         if problem is not None:
             raise QueryServiceError(
@@ -264,6 +293,39 @@ class V2QueryService:
                 request_id=request_id,
                 instrument_uid=requirement.instrument_uid,
                 quality_state=quality.state,
+            )
+
+    @staticmethod
+    def _enforce_content(
+        requirement: DataRequirement,
+        items: tuple[MarketDataItem, ...],
+        request_id: str,
+    ) -> None:
+        if requirement.feed is not FeedType.BAR:
+            return
+        if requirement.require_final_bars and any(
+            item.payload.get("is_final") is not True for item in items
+        ):
+            raise QueryServiceError(
+                QueryProblem(
+                    CanonicalErrorCode.DATA_NOT_READY,
+                    "required final bar is not available",
+                    True,
+                ),
+                request_id=request_id,
+                instrument_uid=requirement.instrument_uid,
+            )
+        if requirement.bar_revision_policy is BarRevisionPolicy.INITIAL_ONLY and any(
+            item.revision != 0 for item in items
+        ):
+            raise QueryServiceError(
+                QueryProblem(
+                    CanonicalErrorCode.DATA_NOT_READY,
+                    "initial bar revision is not available from this result",
+                    True,
+                ),
+                request_id=request_id,
+                instrument_uid=requirement.instrument_uid,
             )
 
     @staticmethod

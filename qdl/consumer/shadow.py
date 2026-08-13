@@ -1,15 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
-
 from qdl.consumer.manifest import ConsumerManifest, ConsumerMigration, MigrationState
 from qdl_sdk import AsyncDataLayerClient
 from qdl_sdk.models import DataRequirement, StreamEvent
-
-
-class StreamBindingResolver(Protocol):
-    def resolve(self, requirement: DataRequirement) -> tuple[str, str]: ...
 
 
 @dataclass(frozen=True)
@@ -32,7 +26,6 @@ class ManifestShadowConsumer:
         manifest: ConsumerManifest,
         migration: ConsumerMigration,
         client: AsyncDataLayerClient,
-        binding_resolver: StreamBindingResolver,
     ) -> None:
         if migration.consumer_id != manifest.consumer_id:
             raise ValueError("migration and manifest consumer identities differ")
@@ -44,7 +37,6 @@ class ManifestShadowConsumer:
             raise ValueError("SDK and manifest consumer identities differ")
         self.manifest = manifest
         self.client = client
-        self.binding_resolver = binding_resolver
 
     async def observe_once(self, requirement_index: int = 0) -> ShadowObservation:
         try:
@@ -66,10 +58,7 @@ class ManifestShadowConsumer:
             recovery=domain.recovery.value,
             bar_revision_policy=domain.bar_revision_policy.value,
         )
-        stream, partition_key = self.binding_resolver.resolve(requirement)
-        async with self.client.warmup_then_stream(
-            requirement, stream=stream, partition_key=partition_key
-        ) as session:
+        async with self.client.warmup_then_stream(requirement) as session:
             while True:
                 item = await session.__anext__()
                 if not isinstance(item, StreamEvent):

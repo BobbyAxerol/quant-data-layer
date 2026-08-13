@@ -71,17 +71,30 @@ class GrpcMarketDataService:
 
     async def subscribe(self, request: query_pb2.SubscribeRequest, context):
         subscription = None
+        stream = ""
+        partition_key = ""
         try:
-            requirement_from_proto(request.requirement)
+            requirement = requirement_from_proto(request.requirement)
+            scope = self.gateway.handoff.resolve_scope(
+                token=request.cursor_token, consumer_id=request.consumer_id
+            )
+            stream, partition_key = scope.stream, scope.partition_key
+            parts = partition_key.split("/", 2)
+            if len(parts) != 3 or parts[:2] != [
+                requirement.instrument_uid, requirement.feed.value.lower()
+            ]:
+                raise ValueError("cursor scope does not match the data requirement")
+            if stream != f"md.canonical.v2.{requirement.feed.value.lower()}":
+                raise ValueError("cursor stream does not match the data requirement")
             subscription = await self.gateway.open(
                 consumer_id=request.consumer_id,
-                stream=request.stream,
-                partition_key=request.partition_key,
+                stream=stream,
+                partition_key=partition_key,
                 token=request.cursor_token,
                 max_buffer_events=request.max_buffer_events or None,
             )
             high = self.gateway.handoff.capture_watermark(
-                stream=request.stream, partition_key=request.partition_key
+                stream=stream, partition_key=partition_key
             ).offset
             yield query_pb2.SubscribeResponse(record=query_pb2.StreamRecord(
                 resume_token=request.cursor_token,
@@ -112,6 +125,17 @@ class GrpcMarketDataService:
                     record=self._event(record.stored, record.resume_token)
                 )
         except SlowConsumer as error:
+            yield query_pb2.SubscribeResponse(record=query_pb2.StreamRecord(
+                resume_token=subscription.token if subscription else request.cursor_token,
+                control=query_pb2.StreamControl(
+                    state=query_pb2.STREAM_CONTROL_STATE_BACKPRESSURE,
+                    code="RATE_LIMITED",
+                    detail=str(error),
+                    high_watermark=self.gateway.handoff.capture_watermark(
+                        stream=stream, partition_key=partition_key
+                    ).offset,
+                ),
+            ))
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, f"RATE_LIMITED:{error}")
         except StreamCapacityExceeded as error:
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, f"RATE_LIMITED:{error}")
@@ -126,11 +150,14 @@ class GrpcMarketDataService:
     async def replay(self, request: query_pb2.ReplayRequest, context):
         token = request.cursor_token
         try:
+            scope = self.gateway.handoff.resolve_scope(
+                token=token, consumer_id=request.consumer_id
+            )
             records = self.gateway.handoff.replay(
                 token=token,
                 consumer_id=request.consumer_id,
-                stream=request.stream,
-                partition_key=request.partition_key,
+                stream=scope.stream,
+                partition_key=scope.partition_key,
                 limit=request.limit or 1000,
             )
             for stored in records:

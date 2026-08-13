@@ -108,16 +108,6 @@ class _SnapshotLoader:
         return GrpcSnapshot("request", "snapshot", self.token, time.time_ns(), 0, ())
 
 
-class _Binding:
-    def __init__(self, stream: str, partition_key: str):
-        self.stream = stream
-        self.partition_key = partition_key
-
-    def resolve(self, requirement):
-        del requirement
-        return self.stream, self.partition_key
-
-
 class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
     async def _observe_manifest(self, manifest_name: str, record: InstrumentRecord, feed: FeedType):
         manifest = ConsumerManifestLoader.load(ROOT / "consumers/shadow" / manifest_name)
@@ -193,7 +183,6 @@ class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
             )
             consumer = ManifestShadowConsumer(
                 manifest=manifest, migration=migration, client=client,
-                binding_resolver=_Binding(stream, partition),
             )
             task = asyncio.create_task(consumer.observe_once())
             for _ in range(100):
@@ -325,11 +314,10 @@ class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
                 context.instrument_uid, "BAR", "ALPHA", "alpha_binance_v1",
                 interval="1m", warmup_limit=1,
             )
-            async with client.warmup_then_stream(
-                sdk_requirement, stream="md.canonical.v2.bar",
-                partition_key=result.cursor.partition_key,
-            ) as session:
+            async with client.warmup_then_stream(sdk_requirement) as session:
                 delivered = await asyncio.wait_for(session.__anext__(), timeout=2)
+                while not hasattr(delivered, "event"):
+                    delivered = await asyncio.wait_for(session.__anext__(), timeout=2)
                 self.assertEqual(delivered.event.bar.close.source_text, legacy["k"]["c"])
                 self.assertEqual(delivered.event.bar.is_final, legacy["k"]["x"])
             await client.close()

@@ -262,6 +262,81 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(denied.json()["code"], "SOURCE_NOT_ALLOWED")
 
+    def test_single_query_preserves_manifest_freshness_and_final_bar_policy(self):
+        current = self.backend.latest(self.requirement)
+        self.backend.put_latest(
+            self.requirement,
+            MarketDataItem(
+                **{
+                    **current.__dict__,
+                    "payload": {**current.payload, "is_final": False},
+                    "quality": QualityMetadata(
+                        "STALE", 20_000, False, True, False,
+                        "alpha_crypto_primary_v1",
+                    ),
+                }
+            ),
+        )
+        allowed = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/snapshot",
+            params=self.params(
+                stale_policy="OBSERVE",
+                require_final_bars=False,
+            ),
+        )
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+        blocked = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/snapshot",
+            params=self.params(
+                stale_policy="OBSERVE",
+                require_final_bars=True,
+            ),
+        )
+        self.assertEqual(blocked.status_code, 503)
+        self.assertEqual(blocked.json()["code"], "DATA_NOT_READY")
+
+    def test_approved_reference_fallback_is_alpha_visible_but_execution_blocked(self):
+        fallback_requirement = DataRequirement(
+            instrument_uid=self.binance.instrument_uid,
+            feed=FeedType.BAR,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="alpha_crypto_reference_v1",
+            interval="1m",
+            max_freshness_ms=10_000,
+        )
+        current = self.backend.latest(self.requirement)
+        fallback = MarketDataItem(
+            **{
+                **current.__dict__,
+                "source": SourceMetadata(
+                    "OKX", "OKX_DIRECT", "OKX_DIRECT", "REFERENCE", False
+                ),
+                "quality": QualityMetadata(
+                    "LIVE", 20, False, True, False,
+                    "alpha_crypto_reference_v1", ("FALLBACK_ACTIVE",),
+                ),
+            }
+        )
+        self.backend.put_latest(fallback_requirement, fallback)
+        alpha = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/snapshot",
+            params=self.params(source_policy_id="alpha_crypto_reference_v1"),
+        )
+        self.assertEqual(alpha.status_code, 200, alpha.text)
+        self.assertEqual(alpha.json()["data"]["source"]["source_role"], "REFERENCE")
+        self.assertIn("FALLBACK_ACTIVE", alpha.json()["data"]["quality"]["flags"])
+
+        execution = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/snapshot",
+            headers={"X-QDL-Purpose": "INTERNAL_EXECUTION"},
+            params=self.params(
+                source_policy_id="alpha_crypto_reference_v1",
+                consumer_grade="EXECUTION",
+            ),
+        )
+        self.assertEqual(execution.status_code, 503)
+        self.assertEqual(execution.json()["code"], "SOURCE_NON_AUTHORITATIVE")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1070,6 +1070,62 @@
               ],
               "title": "Interval"
             }
+          },
+          {
+            "in": "query",
+            "name": "require_full_coverage",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Require Full Coverage",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "require_final_bars",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Require Final Bars",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stale_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/StalePolicy",
+              "default": "BLOCK"
+            }
+          },
+          {
+            "in": "query",
+            "name": "gap_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/GapPolicy",
+              "default": "BLOCK"
+            }
+          },
+          {
+            "in": "query",
+            "name": "recovery",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RecoveryPolicy",
+              "default": "SNAPSHOT_AND_REPLAY"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bar_revision_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BarRevisionPolicy",
+              "default": "LATEST"
+            }
           }
         ],
         "responses": {
@@ -1342,6 +1398,62 @@
             }
           },
           {
+            "in": "query",
+            "name": "require_full_coverage",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Require Full Coverage",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "require_final_bars",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Require Final Bars",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stale_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/StalePolicy",
+              "default": "BLOCK"
+            }
+          },
+          {
+            "in": "query",
+            "name": "gap_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/GapPolicy",
+              "default": "BLOCK"
+            }
+          },
+          {
+            "in": "query",
+            "name": "recovery",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RecoveryPolicy",
+              "default": "SNAPSHOT_AND_REPLAY"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bar_revision_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BarRevisionPolicy",
+              "default": "LATEST"
+            }
+          },
+          {
             "in": "header",
             "name": "X-QDL-Purpose",
             "required": false,
@@ -1451,6 +1563,62 @@
                 }
               ],
               "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "require_full_coverage",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Require Full Coverage",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "require_final_bars",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Require Final Bars",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stale_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/StalePolicy",
+              "default": "BLOCK"
+            }
+          },
+          {
+            "in": "query",
+            "name": "gap_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/GapPolicy",
+              "default": "BLOCK"
+            }
+          },
+          {
+            "in": "query",
+            "name": "recovery",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RecoveryPolicy",
+              "default": "SNAPSHOT_AND_REPLAY"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bar_revision_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BarRevisionPolicy",
+              "default": "LATEST"
             }
           },
           {
@@ -1575,6 +1743,62 @@
                 }
               ],
               "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "require_full_coverage",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Require Full Coverage",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "require_final_bars",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Require Final Bars",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stale_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/StalePolicy",
+              "default": "BLOCK"
+            }
+          },
+          {
+            "in": "query",
+            "name": "gap_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/GapPolicy",
+              "default": "BLOCK"
+            }
+          },
+          {
+            "in": "query",
+            "name": "recovery",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RecoveryPolicy",
+              "default": "SNAPSHOT_AND_REPLAY"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bar_revision_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BarRevisionPolicy",
+              "default": "LATEST"
             }
           },
           {

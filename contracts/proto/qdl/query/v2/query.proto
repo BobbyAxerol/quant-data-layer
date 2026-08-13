@@ -21,18 +21,20 @@ message DataRequirement {
 }
 
 message SubscribeRequest {
+  reserved 3, 4;
+  reserved "stream", "partition_key";
+
   string consumer_id = 1;
   DataRequirement requirement = 2;
-  string stream = 3;
-  string partition_key = 4;
   string cursor_token = 5;
   uint32 max_buffer_events = 6;
 }
 
 message ReplayRequest {
+  reserved 2, 3;
+  reserved "stream", "partition_key";
+
   string consumer_id = 1;
-  string stream = 2;
-  string partition_key = 3;
   string cursor_token = 4;
   uint32 limit = 5;
 }

@@ -21,8 +21,6 @@ class StreamTransport(Protocol):
         requirement: DataRequirement,
         *,
         consumer_id: str,
-        stream: str,
-        partition_key: str,
         cursor_token: str,
         max_buffer_events: int,
     ): ...
@@ -56,7 +54,18 @@ def _validate_query_payload(
         quality = row.get("quality")
         if not isinstance(quality, dict):
             raise ContinuityError("DATA_NOT_READY", "query response has no quality metadata")
+        if quality.get("policy_id") != requirement.source_policy_id:
+            raise ContinuityError(
+                "CONFLICT", "query response source policy does not match requirement"
+            )
         state = str(quality.get("state", "")).upper()
+        freshness_ms = quality.get("freshness_ms")
+        if (
+            requirement.max_freshness_ms is not None
+            and (not isinstance(freshness_ms, int) or freshness_ms > requirement.max_freshness_ms)
+            and requirement.stale_policy in {"BLOCK", "PAUSE"}
+        ):
+            raise ContinuityError("DATA_STALE", "query response exceeds freshness policy")
         if quality.get("gap_open") and requirement.gap_policy in {"BLOCK", "PAUSE"}:
             raise ContinuityError("OPEN_SEQUENCE_GAP", "query response has an open gap")
         if state in {"STALE", "OFFLINE", "UNAVAILABLE"} and requirement.stale_policy in {
@@ -70,6 +79,8 @@ def _validate_query_payload(
                 "SOURCE_NON_AUTHORITATIVE",
                 "execution-grade response is not execution eligible",
             )
+        if requirement.require_full_coverage and not quality.get("complete", False):
+            raise ContinuityError("PARTIAL_RESULT", "query response quality is incomplete")
         if requirement.feed == "BAR" and requirement.require_final_bars:
             market_payload = row.get("payload")
             if not isinstance(market_payload, dict) or not market_payload.get("is_final", False):
@@ -89,8 +100,6 @@ class WarmupStreamSession:
         starting_offset: int,
         query_transport: QueryTransport,
         stream_transport: StreamTransport,
-        stream: str,
-        partition_key: str,
         max_buffer_events: int,
         max_reconnect_attempts: int,
         telemetry: TelemetryRecorder | None,
@@ -105,8 +114,6 @@ class WarmupStreamSession:
         self._last_seen_offset = starting_offset
         self._query_transport = query_transport
         self._stream_transport = stream_transport
-        self._stream = stream
-        self._partition_key = partition_key
         self._max_buffer_events = max_buffer_events
         self._max_reconnect_attempts = max_reconnect_attempts
         self._reconnect_attempts = 0
@@ -121,6 +128,7 @@ class WarmupStreamSession:
             event = await self._events.__anext__()
         except CursorExpiredError:
             self.warmup = await self._fresh_snapshot()
+            _validate_query_payload(self.requirement, self.warmup, warmup=True)
             self._last_seen_offset = int(self.warmup.get("watermark_offset", 0))
             self._events = self._subscribe(
                 str(self.warmup["stream_cursor"])
@@ -148,6 +156,8 @@ class WarmupStreamSession:
                 "RECONNECTED",
                 "stream transport reconnected from the last confirmed cursor",
             )
+        if isinstance(event, ControlEvent):
+            return event
         if event.logical_offset <= self._last_seen_offset:
             raise ContinuityError(
                 "OPEN_SEQUENCE_GAP",
@@ -181,8 +191,6 @@ class WarmupStreamSession:
         return self._stream_transport.subscribe(
             self.requirement,
             consumer_id=self.consumer_id,
-            stream=self._stream,
-            partition_key=self._partition_key,
             cursor_token=token,
             max_buffer_events=self._max_buffer_events,
         ).__aiter__()
@@ -234,16 +242,30 @@ class AsyncDataLayerClient:
         self.max_reconnect_attempts = max_reconnect_attempts
         self.telemetry = telemetry
 
+    async def snapshot(self, requirement: DataRequirement) -> dict:
+        payload = await self.query_transport.snapshot(
+            requirement, consumer_id=self.consumer_id
+        )
+        _validate_query_payload(requirement, payload, warmup=False)
+        self._record_query("/v2/market-data/snapshot", payload)
+        return payload
+
+    async def warmup(self, requirement: DataRequirement) -> dict:
+        payload = await self.query_transport.warmup(
+            requirement, consumer_id=self.consumer_id
+        )
+        _validate_query_payload(requirement, payload, warmup=True)
+        self._record_query("/v2/market-data/warmup", payload)
+        return payload
+
     @asynccontextmanager
     async def warmup_then_stream(
         self,
         requirement: DataRequirement,
         *,
-        stream: str,
-        partition_key: str,
         resume_restored_state: bool = False,
     ):
-        cursor_key = self._cursor_key(requirement, stream, partition_key)
+        cursor_key = self._cursor_key(requirement)
         checkpoint = self.cursor_store.load(cursor_key)
         if requirement.warmup_limit > 0:
             warmup = await self.query_transport.warmup(
@@ -286,8 +308,6 @@ class AsyncDataLayerClient:
         events = self.stream_transport.subscribe(
             requirement,
             consumer_id=self.consumer_id,
-            stream=stream,
-            partition_key=partition_key,
             cursor_token=token,
             max_buffer_events=self.max_buffer_events,
         ).__aiter__()
@@ -301,8 +321,6 @@ class AsyncDataLayerClient:
             starting_offset=starting_offset,
             query_transport=self.query_transport,
             stream_transport=self.stream_transport,
-            stream=stream,
-            partition_key=partition_key,
             max_buffer_events=self.max_buffer_events,
             max_reconnect_attempts=self.max_reconnect_attempts,
             telemetry=self.telemetry,
@@ -319,8 +337,29 @@ class AsyncDataLayerClient:
         await self.stream_transport.close()
         await self.query_transport.close()
 
-    def _cursor_key(self, requirement: DataRequirement, stream: str, partition_key: str) -> str:
-        return "|".join((self.consumer_id, requirement.instrument_uid, requirement.feed, stream, partition_key))
+    def _cursor_key(self, requirement: DataRequirement) -> str:
+        return "|".join((
+            self.consumer_id,
+            requirement.instrument_uid,
+            requirement.feed,
+            requirement.interval or "",
+            requirement.source_policy_id,
+        ))
+
+    def _record_query(self, contract: str, payload: dict) -> None:
+        if self.telemetry is not None:
+            data = payload.get("data")
+            watermark = (
+                data.get("watermark_offset", 0)
+                if isinstance(data, dict)
+                else payload.get("watermark_offset", 0)
+            )
+            self.telemetry.record(
+                consumer_id=self.consumer_id,
+                sdk_major=2,
+                contract=contract,
+                cursor_offset=int(watermark),
+            )
 
 
 class DataLayerClientV2:
@@ -333,9 +372,12 @@ class DataLayerClientV2:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(
-                self.async_client.query_transport.warmup(
-                    requirement, consumer_id=self.async_client.consumer_id
-                )
-            )
+            return asyncio.run(self.async_client.warmup(requirement))
+        raise RuntimeError("sync SDK cannot run inside an active event loop")
+
+    def snapshot(self, requirement: DataRequirement) -> dict:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.async_client.snapshot(requirement))
         raise RuntimeError("sync SDK cannot run inside an active event loop")

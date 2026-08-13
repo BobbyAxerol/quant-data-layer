@@ -79,6 +79,13 @@ class HandoffGrant:
 
 
 @dataclass(frozen=True)
+class HandoffScope:
+    stream: str
+    partition_key: str
+    watermark_offset: int
+
+
+@dataclass(frozen=True)
 class _TokenPayload:
     consumer_id: str
     snapshot_id: str
@@ -135,6 +142,14 @@ class SignedHandoffCursorCodec:
         stream: str,
         partition_key: str,
     ) -> _TokenPayload:
+        payload = self.resolve(token, consumer_id=consumer_id)
+        if (payload.stream, payload.partition_key) != (stream, partition_key):
+            raise ValueError("handoff cursor scope mismatch")
+        return payload
+
+    def resolve(self, token: str, *, consumer_id: str) -> _TokenPayload:
+        """Verify an opaque public token before resolving its server-side scope."""
+
         try:
             encoded_body, encoded_signature = token.split(".", 1)
             body = self._unb64(encoded_body)
@@ -153,10 +168,8 @@ class SignedHandoffCursorCodec:
             key: raw[key]
             for key in _TokenPayload.__dataclass_fields__
         })
-        if (payload.consumer_id, payload.stream, payload.partition_key) != (
-            consumer_id, stream, partition_key
-        ):
-            raise ValueError("handoff cursor scope mismatch")
+        if payload.consumer_id != consumer_id:
+            raise ValueError("handoff cursor consumer scope mismatch")
         if self._clock_ns() >= payload.expires_at_ns:
             raise CursorExpired("signed handoff cursor expired")
         return payload
@@ -194,6 +207,12 @@ class GapFreeHandoff:
 
     def capture_watermark(self, *, stream: str, partition_key: str) -> Cursor:
         return Cursor(stream, partition_key, self._spool.high_watermark(stream, partition_key))
+
+    def resolve_scope(self, *, token: str, consumer_id: str) -> HandoffScope:
+        payload = self._codec.resolve(token, consumer_id=consumer_id)
+        return HandoffScope(
+            payload.stream, payload.partition_key, payload.watermark_offset
+        )
 
     def issue(
         self,

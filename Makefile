@@ -1,8 +1,9 @@
-.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-migration-smoke python-test rust-test
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test python-test rust-test
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
 RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
 PHASE45_TEST_IMAGE ?= data-layer:phase45-test
+PHASE5_TEST_IMAGE ?= data-layer:phase5-test
 
 contract-generate:
 	docker run --rm -v "$(CURDIR):/workspace" -w /workspace/contracts $(BUF_IMAGE) generate
@@ -89,3 +90,26 @@ phase5-api-test:
 
 phase5-migration-smoke:
 	bash scripts/phase5_migration_smoke.sh
+
+phase5-build:
+	docker build --provenance=false -t $(PHASE5_TEST_IMAGE) .
+
+phase5-contract-check:
+	$(MAKE) contract-check
+	docker run --rm -v "$(CURDIR):/app" -w /app $(PHASE5_TEST_IMAGE) python scripts/generate_phase5_openapi.py
+	git diff --exit-code -- contracts/v2/openapi.snapshot.json
+
+phase5-test: phase5-build
+	docker run --rm -v "$(CURDIR):/app" -w /app $(PHASE5_TEST_IMAGE) python -m unittest -v tests.test_fund_phase5_api tests.test_fund_phase5_contracts tests.test_fund_phase5_consumer tests.test_fund_phase5_stream_sdk tests.test_fund_phase5_e2e tests.test_fund_phase5_load tests.test_fund_phase5_real_provider
+
+phase5-load: phase5-build
+	docker run --rm -v "$(CURDIR):/app" -w /app $(PHASE5_TEST_IMAGE) python scripts/phase5_api_replica_load.py --replicas 8 --requests 2000 --concurrency 100 --min-rps 250 --max-p99-ms 500
+
+phase5-dependency-audit: phase5-build
+	docker run --rm $(PHASE5_TEST_IMAGE) sh -c 'python -m pip freeze --local > /tmp/qdl-runtime-requirements.txt && python -m pip install --disable-pip-version-check --no-cache-dir "pip-audit>=2.9,<3" && pip-audit -r /tmp/qdl-runtime-requirements.txt --progress-spinner=off'
+
+phase5-real-provider-smoke:
+	docker run --rm -v "$(CURDIR):/app" -w /app --network host $(PHASE5_TEST_IMAGE) python scripts/phase5_real_provider_smoke.py --output upgrade/evidence/phase5-real-provider-smoke.json
+
+phase5-clean:
+	docker image rm $(PHASE5_TEST_IMAGE) 2>/dev/null || true

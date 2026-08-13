@@ -98,6 +98,21 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.ci.yml
           run --rm test_runner python -m unittest discover -s tests
 
+      - name: Run V2 contract, SDK and shadow-consumer gates
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml
+          run --rm test_runner python -m unittest -v
+          tests.test_fund_phase5_api tests.test_fund_phase5_contracts
+          tests.test_fund_phase5_consumer tests.test_fund_phase5_stream_sdk
+          tests.test_fund_phase5_e2e tests.test_fund_phase5_load
+          tests.test_fund_phase5_real_provider
+
+      - name: Run bounded V2 API replica load gate
+        run: >-
+          docker run --rm -v "$PWD:/app" -w /app data-layer:v0.1.0
+          python scripts/phase5_api_replica_load.py --replicas 8 --requests 2000
+          --concurrency 100 --min-rps 250 --max-p99-ms 500
+
       - name: Test isolated Redis restart and replay rebuild
         run: QDL_TEST_IMAGE=data-layer:v0.1.0 scripts/phase2_redis_rebuild_smoke.sh
 

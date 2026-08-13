@@ -35,10 +35,6 @@ pub struct SubscribeRequest {
     pub consumer_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag="2")]
     pub requirement: ::core::option::Option<DataRequirement>,
-    #[prost(string, tag="3")]
-    pub stream: ::prost::alloc::string::String,
-    #[prost(string, tag="4")]
-    pub partition_key: ::prost::alloc::string::String,
     #[prost(string, tag="5")]
     pub cursor_token: ::prost::alloc::string::String,
     #[prost(uint32, tag="6")]
@@ -48,10 +44,6 @@ pub struct SubscribeRequest {
 pub struct ReplayRequest {
     #[prost(string, tag="1")]
     pub consumer_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub stream: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub partition_key: ::prost::alloc::string::String,
     #[prost(string, tag="4")]
     pub cursor_token: ::prost::alloc::string::String,
     #[prost(uint32, tag="5")]
