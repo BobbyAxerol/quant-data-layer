@@ -89,11 +89,13 @@ class RedisReplayIntegrationTests(unittest.TestCase):
     def test_atomic_projection_rejects_stale_lease_epoch(self):
         target = RedisProjectionTarget(self.redis)
         fresh = ProjectionRecord(
+            feed_key="BINANCE:USDM:trade:BTCUSDT",
             partition_key="partition", offset=1, event_id_hex="fresh",
             canonical_key="shadow:qdl:v2:latest:test", canonical_payload=b"fresh",
             legacy_items=(), shard_id="shard", lease_epoch=5,
         )
         stale = ProjectionRecord(
+            feed_key="BINANCE:USDM:trade:BTCUSDT",
             partition_key="partition", offset=2, event_id_hex="stale",
             canonical_key="shadow:qdl:v2:latest:test", canonical_payload=b"stale",
             legacy_items=(), shard_id="shard", lease_epoch=4,

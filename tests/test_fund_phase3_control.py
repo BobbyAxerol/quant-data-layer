@@ -7,7 +7,7 @@ from qdl.ingestion.contracts import DeliveryPolicy, FeedType, Subscription, plan
 from qdl.ingestion.demand import DesiredSubscriptionRegistry
 from qdl.ingestion.fencing import FencingGate, InMemoryLeaseStore
 from qdl.ingestion.queue import FeedQueue
-from qdl.projection.authority import Authority, FeedAuthorityRegistry
+from qdl.projection.authority import Authority, AuthorityProjectionRouter, FeedAuthorityRegistry
 from qdl.projection.trade import InMemoryProjectionTarget, ProjectionRecord
 
 
@@ -96,12 +96,42 @@ class AuthorityTests(unittest.TestCase):
         target = InMemoryProjectionTarget()
         def record(offset, epoch):
             return ProjectionRecord(
+                feed_key="BINANCE:USDM:trade:BTCUSDT",
                 partition_key="p", offset=offset, event_id_hex=str(offset),
                 canonical_key="shadow:qdl:v2:latest:x", canonical_payload=b"x",
                 legacy_items=(), shard_id="s", lease_epoch=epoch,
             )
         self.assertTrue(target.apply(record(1, 2)))
         self.assertFalse(target.apply(record(2, 1)))
+
+    def test_live_authority_switch_and_rollback_need_no_process_restart(self):
+        registry = FeedAuthorityRegistry()
+        shadow = InMemoryProjectionTarget()
+        authoritative = InMemoryProjectionTarget()
+        router = AuthorityProjectionRouter(
+            registry, shadow_target=shadow, authoritative_target=authoritative
+        )
+        feed = "BINANCE:USDM:trade:BTCUSDT"
+
+        def record(offset):
+            return ProjectionRecord(
+                feed_key=feed, partition_key="p", offset=offset,
+                event_id_hex=str(offset), canonical_key="shadow:qdl:v2:latest:x",
+                canonical_payload=str(offset).encode(), legacy_items=(),
+                shard_id="shard", lease_epoch=1,
+            )
+
+        self.assertTrue(router.apply(record(1)))
+        self.assertEqual(shadow.latest["shadow:qdl:v2:latest:x"], b"1")
+        self.assertEqual(authoritative.latest, {})
+
+        registry.set(feed, Authority.CANONICAL)
+        self.assertTrue(router.apply(record(2)))
+        self.assertEqual(authoritative.latest["shadow:qdl:v2:latest:x"], b"2")
+
+        registry.set(feed, Authority.LEGACY)
+        self.assertFalse(router.apply(record(3)))
+        self.assertEqual(authoritative.latest["shadow:qdl:v2:latest:x"], b"2")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod backoff;
+pub mod binance;
 pub mod canonical;
 pub mod decimal;
 pub mod event_id;

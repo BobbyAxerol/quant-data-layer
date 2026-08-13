@@ -17,6 +17,7 @@ def _decimal_text(value: common_pb2.DecimalValue) -> str:
 
 @dataclass(frozen=True)
 class ProjectionRecord:
+    feed_key: str
     partition_key: str
     offset: int
     event_id_hex: str
@@ -114,6 +115,10 @@ class TradeProjector:
         )
         return self._target.apply(
             ProjectionRecord(
+                feed_key=(
+                    f"{envelope.venue.upper()}:{envelope.market.upper()}:"
+                    f"trade:{envelope.native_symbol.upper()}"
+                ),
                 partition_key=stored.cursor.partition_key,
                 offset=stored.cursor.offset,
                 event_id_hex=stored.event.event_id.hex(),
