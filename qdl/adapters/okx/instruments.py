@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation
 
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
@@ -77,7 +78,12 @@ def parse_public_instrument(
     strike_text = str(payload.get("stk") or "").strip()
     option_value = str(payload.get("optType") or "").strip().upper()
     option_type = {"C": OptionType.CALL, "CALL": OptionType.CALL, "P": OptionType.PUT, "PUT": OptionType.PUT}.get(option_value)
-    multiplier_text = str(payload.get("ctVal") or payload.get("ctMult") or "1")
+    ct_val_text = str(payload.get("ctVal") or "1")
+    ct_mult_text = str(payload.get("ctMult") or "1")
+    try:
+        multiplier_text = format(Decimal(ct_val_text) * Decimal(ct_mult_text), "f")
+    except InvalidOperation as exc:
+        raise ValueError("OKX contract multiplier fields must be exact decimals") from exc
     record = InstrumentRecord(
         identity=identity,
         metadata_revision=metadata_revision,
@@ -98,7 +104,17 @@ def parse_public_instrument(
         attributes={
             key: str(value)
             for key, value in payload.items()
-            if key in {"instFamily", "uly", "groupId", "seriesId", "ctType", "ctValCcy", "instIdCode"}
+            if key in {
+                "instFamily",
+                "uly",
+                "groupId",
+                "seriesId",
+                "ctType",
+                "ctVal",
+                "ctMult",
+                "ctValCcy",
+                "instIdCode",
+            }
             and value not in (None, "")
         },
     )
@@ -111,4 +127,3 @@ def parse_public_instrument(
         valid_from_ns=valid_from_ns,
     )
     return record, alias
-

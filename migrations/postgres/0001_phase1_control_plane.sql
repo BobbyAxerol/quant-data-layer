@@ -81,6 +81,10 @@ CREATE TABLE IF NOT EXISTS qdl_instrument_aliases (
 CREATE INDEX IF NOT EXISTS qdl_alias_resolve_idx
     ON qdl_instrument_aliases (provider, market, native_symbol, valid_from_ns, valid_to_ns);
 
+CREATE UNIQUE INDEX IF NOT EXISTS qdl_alias_current_owner_idx
+    ON qdl_instrument_aliases (provider, market, native_symbol)
+    WHERE valid_to_ns IS NULL;
+
 CREATE TABLE IF NOT EXISTS qdl_source_profiles (
     source_profile_id TEXT PRIMARY KEY,
     provider TEXT NOT NULL,
@@ -127,6 +131,14 @@ CREATE TABLE IF NOT EXISTS qdl_subscription_specs (
     FOREIGN KEY (config_revision) REFERENCES qdl_config_revisions (config_revision),
     CHECK (valid_to IS NULL OR valid_to > valid_from)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS qdl_subscription_current_scope_idx
+    ON qdl_subscription_specs (
+        instrument_uid,
+        feed_type,
+        COALESCE(interval, ''),
+        source_policy_id
+    ) WHERE valid_to IS NULL;
 
 CREATE TABLE IF NOT EXISTS qdl_ingestion_leases (
     shard_id TEXT PRIMARY KEY,

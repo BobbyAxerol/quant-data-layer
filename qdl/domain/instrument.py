@@ -163,20 +163,31 @@ class InstrumentRegistry:
         existing = self._records.get(record.instrument_uid)
         if existing is not None and existing.instrument_id != record.instrument_id:
             raise ValueError(f"instrument_uid collision: {record.instrument_uid}")
-        self._records[record.instrument_uid] = record
-        self._ids[record.instrument_id] = record.instrument_uid
-
+        pending: list[tuple[tuple[str, str, str], InstrumentAlias]] = []
         for alias in aliases:
             if alias.instrument_uid != record.instrument_uid:
                 raise ValueError("alias instrument_uid does not match record")
+            if alias.instrument_revision != record.metadata_revision:
+                raise ValueError("alias instrument_revision does not match record")
             key = alias.normalized_key()
-            periods = self._aliases.setdefault(key, [])
+            periods = [*self._aliases.get(key, []), *(item for item_key, item in pending if item_key == key)]
+            duplicate = False
             for current in periods:
+                if current == alias:
+                    duplicate = True
+                    continue
                 left_end = current.valid_to_ns if current.valid_to_ns is not None else 2**63 - 1
                 right_end = alias.valid_to_ns if alias.valid_to_ns is not None else 2**63 - 1
                 if max(current.valid_from_ns, alias.valid_from_ns) < min(left_end, right_end):
-                    if current.instrument_uid != alias.instrument_uid:
-                        raise ValueError(f"overlapping alias ownership: {key}")
+                    raise ValueError(f"overlapping alias ownership: {key}")
+            if not duplicate:
+                pending.append((key, alias))
+
+        # Commit only after every identity and temporal constraint is valid.
+        self._records[record.instrument_uid] = record
+        self._ids[record.instrument_id] = record.instrument_uid
+        for key, alias in pending:
+            periods = self._aliases.setdefault(key, [])
             periods.append(alias)
             periods.sort(key=lambda item: item.valid_from_ns)
 

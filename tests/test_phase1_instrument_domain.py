@@ -86,6 +86,8 @@ class InstrumentIdentityTests(unittest.TestCase):
         registry.register(first, [InstrumentAlias("REFERENCE", "PERP", "BTC", first.instrument_uid, 1, 0)])
         with self.assertRaisesRegex(ValueError, "overlapping alias"):
             registry.register(second, [InstrumentAlias("REFERENCE", "PERP", "BTC", second.instrument_uid, 1, 5)])
+        with self.assertRaisesRegex(KeyError, "unknown instrument_uid"):
+            registry.get(second.instrument_uid)
 
 
 class OkxInstrumentTests(unittest.TestCase):
@@ -101,6 +103,7 @@ class OkxInstrumentTests(unittest.TestCase):
                 "tickSz": "0.1",
                 "lotSz": "0.01",
                 "ctVal": "0.01",
+                "ctMult": "10",
                 "state": "live",
             },
             metadata_revision=3,
@@ -109,6 +112,9 @@ class OkxInstrumentTests(unittest.TestCase):
         self.assertEqual(record.instrument_id, "OKX.SWAP.PERPETUAL.BTC-USDT")
         self.assertEqual(record.native_symbol, "BTC-USDT-SWAP")
         self.assertEqual(alias.native_symbol, "BTC-USDT-SWAP")
+        self.assertEqual(record.contract_multiplier.as_decimal(), CanonicalDecimal.from_text("0.1").as_decimal())
+        self.assertEqual(record.attributes["ctVal"], "0.01")
+        self.assertEqual(record.attributes["ctMult"], "10")
 
     def test_option_preserves_registry_identity_and_required_fields(self):
         record, _ = parse_public_instrument(
@@ -140,6 +146,54 @@ class OkxInstrumentTests(unittest.TestCase):
                 metadata_revision=1,
                 valid_from_ns=0,
             )
+
+    def test_spot_dated_future_and_event_use_exact_registry_ids(self):
+        fixtures = [
+            (
+                {
+                    "instType": "SPOT",
+                    "instId": "BTC-USDT",
+                    "baseCcy": "BTC",
+                    "quoteCcy": "USDT",
+                    "tickSz": "0.1",
+                    "lotSz": "0.00001",
+                    "state": "live",
+                },
+                "OKX.SPOT.SPOT.BTC-USDT",
+            ),
+            (
+                {
+                    "instType": "FUTURES",
+                    "instId": "BTC-USDT-260925",
+                    "instFamily": "BTC-USDT",
+                    "ctValCcy": "BTC",
+                    "settleCcy": "USDT",
+                    "tickSz": "0.1",
+                    "lotSz": "1",
+                    "ctVal": "0.01",
+                    "expTime": "1789948800000",
+                    "state": "live",
+                },
+                "OKX.FUTURES.FUTURE.BTC-USDT-260925",
+            ),
+            (
+                {
+                    "instType": "EVENTS",
+                    "instId": "BTC-ABOVE-DAILY-001",
+                    "seriesId": "BTC-ABOVE-DAILY",
+                    "tickSz": "0.01",
+                    "lotSz": "1",
+                    "state": "preopen",
+                },
+                "OKX.EVENTS.EVENT_CONTRACT.BTC-ABOVE-DAILY-001",
+            ),
+        ]
+        for payload, expected_id in fixtures:
+            with self.subTest(inst_type=payload["instType"]):
+                record, alias = parse_public_instrument(payload, metadata_revision=1, valid_from_ns=0)
+                self.assertEqual(record.instrument_id, expected_id)
+                self.assertEqual(record.native_symbol, payload["instId"])
+                self.assertEqual(alias.native_symbol, payload["instId"])
 
 
 class CapabilityTests(unittest.TestCase):
