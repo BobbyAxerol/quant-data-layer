@@ -1,0 +1,61 @@
+{
+  "schema": "qdl.phase45.freeze.v1",
+  "status": "PASS",
+  "phase": "4.5",
+  "frozen_at": "2026-08-13T12:31:12Z",
+  "branch": "feat/fund-grade-data-layer-v2",
+  "implementation_head": "0472abcbf60da9f98cfcc947bae7718d668b8bfe",
+  "implementation_commits": [
+    "1d65a9b",
+    "7a4f431",
+    "0472abc"
+  ],
+  "authority": "LEGACY_V1",
+  "mode": "FROZEN_DARK",
+  "v2_endpoints_started": 0,
+  "production_writes": 0,
+  "runtime_restarts": 0,
+  "verification": {
+    "phase45_tests": 11,
+    "combined_phase4_phase45_tests": 47,
+    "full_python_tests": 224,
+    "full_python_expected_skips": 5,
+    "runtime_dependencies": 61,
+    "dependency_findings": 0,
+    "redis_integration_tests": 3,
+    "postgres_qdl_tables": 16,
+    "postgres_lease_functions": 3,
+    "rust_tests": 11,
+    "v1_read_only_http_200": 3,
+    "real_binance_websocket_frames": 1
+  },
+  "performance": {
+    "events": 10000,
+    "append_events_per_second": 1432.699187615556,
+    "replay_events_per_second": 8266.957224176082,
+    "append_p99_ms": 59.696663,
+    "disk_amplification": 2.0721625,
+    "status": "PASS"
+  },
+  "image": {
+    "tested_image_id": "sha256:023887c8fac5cd1fd018a519e1f96ff5af1611e8ff7cbad572c9ef4619c8abe6",
+    "tested_content_bytes": 163007213,
+    "running_content_bytes": 394348787,
+    "size_reduction_percent": 58.66,
+    "build_tools_in_runtime": false
+  },
+  "cleanup": {
+    "phase45_test_containers": 0,
+    "phase45_test_networks": 0,
+    "temporary_test_image_removed": true,
+    "cargo_artifacts_removed_reported": "520.3 MiB"
+  },
+  "remaining_phase6_decisions": [
+    "production HA durable transport",
+    "production object-store and Iceberg catalog",
+    "production signing-secret backend and rotation ownership",
+    "provider licensing grants for raw retention or redistribution",
+    "governed per-feed authority promotion",
+    "separate historical OKX OI and VIP/deep-book certification"
+  ]
+}

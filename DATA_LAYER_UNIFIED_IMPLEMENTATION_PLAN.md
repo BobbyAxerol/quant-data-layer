@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-4 complete on the feature branch in dark/shadow mode; no runtime cutover has started.
+> **Status:** Phases 0-4 and Pre-Phase 5 readiness closure are complete on the feature branch in dark/shadow mode; no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -62,7 +62,7 @@ These rules apply to all seven phases.
 | 2 | Durability contract, bridge and Rust foundation | Replayable transport boundary and deterministic cross-language core without premature broker cutover | `COMPLETE (DARK)` |
 | 3 | Scalable ingestion and compatibility projection | Demand-driven Rust hot path with legacy V1/Redis parity | `COMPLETE (FROZEN SHADOW)` |
 | 4 | Quality, history, replay and gap-free handoff | Certified data products from warmup through live recovery | `COMPLETE (FROZEN SHADOW)` |
-| 4.5 | V2 readiness and debt closure | Freeze query semantics and remove correctness/security ambiguity before endpoint work | `IN_PROGRESS` |
+| 4.5 | V2 readiness and debt closure | Freeze query semantics and remove correctness/security ambiguity before endpoint work | `COMPLETE (FROZEN DARK)` |
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `PLANNED` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `PLANNED` |
 
@@ -542,7 +542,7 @@ Produce auditable, replayable and revision-aware data from raw ingestion through
 
 ## 8A. Phase 4.5 - V2 Readiness And Debt Closure
 
-**Status:** `IN_PROGRESS`
+**Status:** `COMPLETE (FROZEN DARK)`
 
 ### Goal
 
@@ -607,6 +607,43 @@ not new domain behavior.
   in-memory-only signing/entitlement boundaries. Provider certification and HA
   authority gates were separated from endpoint semantics instead of being
   pulled prematurely into Phase 5.
+- Added provider-neutral query contracts for one canonical error vocabulary,
+  bounded `DataRequirement`/batch semantics, consumer grades, coverage,
+  freshness/gap/recovery and bar-revision policies. Execution-grade requests
+  cannot relax full coverage, authoritative source, gap or freshness gates.
+- Added source licensing/entitlement contracts with explicit purpose and data
+  product. Missing, expired, raw-history and external-redistribution grants
+  fail closed independently of provider capability.
+- Refactored handoff to portable durable-store, catalog and signing-key-provider
+  protocols. `SnapshotHandoffCoordinator` issues a signed grant only when the
+  immutable snapshot cursor end exactly equals the captured durable watermark;
+  live events after that capture remain replayable. Static keys are test/local
+  only, rotation overlap works and retired/unknown/tampered/unsigned cursors
+  fail closed.
+- Reconciled Section 17/38 error names and added legacy alias mapping without
+  creating extra public values. CI now checks Buf against both the immutable
+  Phase 1 baseline and the pull-request base branch.
+- Replaced deprecated legacy WebSocket APIs with `websockets.asyncio` and
+  verified one real Binance USD-M trade frame read-only. V1 route, payload,
+  Redis and reconnect semantics remain unchanged.
+- Closed Python runtime dependency debt: multi-stage image excludes Poetry and
+  build dependencies; patched runtime dependencies audit at 0 findings across
+  61 packages. Full regression exposed and fixed undeclared DNSE `msgpack`
+  ownership. The tested image content size was 163,007,213 bytes versus
+  394,348,787 bytes for the running image (58.66% smaller).
+- Certification passed 11/11 Phase 4.5 tests, 47/47 combined Phase 4/4.5 tests
+  and 224 full Python tests with five expected environment skips. Redis rebuild
+  3/3, PostgreSQL clean/existing/idempotent migration, Buf gates and Rust
+  fmt/Clippy/11 tests passed. The 10,000-event durability benchmark passed at
+  1,432.70 append/s, 8,266.96 replay/s, 59.70 ms p99 and 2.072x disk
+  amplification.
+- Read-only production smoke returned HTTP 200 for health, VN preload and
+  Binance USD-M history; the running V1 restart count stayed zero. No endpoint,
+  producer, storage or source authority was activated. Test image, containers,
+  networks, temporary reports and 520.3 MiB Cargo artifacts were removed.
+- Cross-phase closure matrix, implementation details and machine-readable
+  evidence are in `upgrade/evidence/PHASE45_V2_READINESS_REPORT.md` and
+  `upgrade/evidence/phase45-freeze.json`.
 
 ### Technical Debt / Decision Gate
 
