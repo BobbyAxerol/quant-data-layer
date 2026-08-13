@@ -34,6 +34,18 @@ pub mod qdl {
             ));
         }
     }
+
+    pub mod query {
+        // Prost keeps `oneof` wire semantics as a Rust enum. The canonical event
+        // variant is intentionally larger than the lightweight control variant.
+        #[allow(clippy::large_enum_variant)]
+        pub mod v2 {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../generated/rust/qdl/query/v2/qdl.query.v2.rs"
+            ));
+        }
+    }
 }
 
 #[cfg(test)]

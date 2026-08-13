@@ -78,6 +78,7 @@ def _warmup(result) -> WarmupResponse:
         snapshot_id=history.snapshot_id,
         data_as_of_ns=history.data_as_of_ns,
         stream_cursor=history.stream_cursor,
+        watermark_offset=history.watermark_offset,
         coverage=history.coverage.value,
         count=len(history.items),
         data=[_market_item(item) for item in history.items],

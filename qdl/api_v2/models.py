@@ -102,6 +102,7 @@ class WarmupResponse(BaseModel):
     snapshot_id: str
     data_as_of_ns: int
     stream_cursor: str
+    watermark_offset: int = Field(ge=0)
     coverage: str
     count: int
     data: list[MarketDataView]

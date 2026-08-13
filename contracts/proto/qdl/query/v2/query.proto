@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package qdl.query.v2;
+
+import "qdl/marketdata/v2/market_data.proto";
+
+message DataRequirement {
+  string instrument_uid = 1;
+  string feed = 2;
+  string interval = 3;
+  string consumer_grade = 4;
+  string source_policy_id = 5;
+  uint32 warmup_limit = 6;
+  uint64 max_freshness_ms = 7;
+  bool require_full_coverage = 8;
+  bool require_final_bars = 9;
+  string stale_policy = 10;
+  string gap_policy = 11;
+  string recovery = 12;
+  string bar_revision_policy = 13;
+}
+
+message SubscribeRequest {
+  string consumer_id = 1;
+  DataRequirement requirement = 2;
+  string stream = 3;
+  string partition_key = 4;
+  string cursor_token = 5;
+  uint32 max_buffer_events = 6;
+}
+
+message ReplayRequest {
+  string consumer_id = 1;
+  string stream = 2;
+  string partition_key = 3;
+  string cursor_token = 4;
+  uint32 limit = 5;
+}
+
+enum StreamControlState {
+  STREAM_CONTROL_STATE_UNSPECIFIED = 0;
+  STREAM_CONTROL_STATE_REPLAYING = 1;
+  STREAM_CONTROL_STATE_LIVE = 2;
+  STREAM_CONTROL_STATE_BACKPRESSURE = 3;
+  STREAM_CONTROL_STATE_RECOVERY_REQUIRED = 4;
+}
+
+message StreamControl {
+  StreamControlState state = 1;
+  string code = 2;
+  string detail = 3;
+  uint64 high_watermark = 4;
+}
+
+message StreamRecord {
+  uint64 logical_offset = 1;
+  string resume_token = 2;
+  oneof payload {
+    qdl.marketdata.v2.EventEnvelope event = 10;
+    StreamControl control = 11;
+  }
+}
+
+message SubscribeResponse {
+  StreamRecord record = 1;
+}
+
+message ReplayResponse {
+  StreamRecord record = 1;
+}
+
+message GetSnapshotRequest {
+  string consumer_id = 1;
+  DataRequirement requirement = 2;
+}
+
+message GetSnapshotResponse {
+  string request_id = 1;
+  string snapshot_id = 2;
+  string stream_cursor = 3;
+  int64 data_as_of_ns = 4;
+  uint64 watermark_offset = 5;
+  repeated qdl.marketdata.v2.EventEnvelope events = 6;
+}
+
+message GetFeedStatusRequest {
+  DataRequirement requirement = 1;
+}
+
+message GetFeedStatusResponse {
+  string state = 1;
+  uint64 freshness_ms = 2;
+  bool gap_open = 3;
+  bool complete = 4;
+  bool execution_eligible = 5;
+  string policy_id = 6;
+  repeated string flags = 7;
+}
+
+service MarketDataStreamService {
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+  rpc Replay(ReplayRequest) returns (stream ReplayResponse);
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
+  rpc GetFeedStatus(GetFeedStatusRequest) returns (GetFeedStatusResponse);
+}

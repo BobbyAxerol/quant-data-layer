@@ -272,6 +272,31 @@ class GapFreeHandoff:
             ttl_seconds=self._checkpoint_ttl_seconds,
         )
 
+    def advance_token(
+        self,
+        *,
+        token: str,
+        consumer_id: str,
+        cursor: Cursor,
+        ttl_seconds: int,
+    ) -> HandoffGrant:
+        """Issue a resumable signed cursor after one event is safely processed."""
+
+        payload = self._codec.decode(
+            token,
+            consumer_id=consumer_id,
+            stream=cursor.stream,
+            partition_key=cursor.partition_key,
+        )
+        if cursor.offset < payload.watermark_offset:
+            raise ValueError("resume cursor cannot precede the snapshot watermark")
+        return self.issue(
+            consumer_id=consumer_id,
+            snapshot_id=payload.snapshot_id,
+            snapshot_watermark=cursor,
+            ttl_seconds=ttl_seconds,
+        )
+
 
 @runtime_checkable
 class HistoricalSnapshotView(Protocol):

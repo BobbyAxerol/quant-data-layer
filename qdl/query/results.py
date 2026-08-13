@@ -69,6 +69,7 @@ class HistoryResult:
     coverage: CoverageStatus
     snapshot_id: str
     stream_cursor: str
+    watermark_offset: int
     data_as_of_ns: int
 
     def __post_init__(self) -> None:
@@ -76,6 +77,8 @@ class HistoryResult:
             raise ValueError("history snapshot and stream cursor are required")
         if self.data_as_of_ns <= 0:
             raise ValueError("history data_as_of_ns must be positive")
+        if self.watermark_offset < 0:
+            raise ValueError("history watermark_offset cannot be negative")
 
 
 @runtime_checkable

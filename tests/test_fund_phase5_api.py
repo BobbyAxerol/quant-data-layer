@@ -100,7 +100,9 @@ class Phase5ApiTests(unittest.TestCase):
         self.backend.put_latest(self.requirement, bars[-1])
         self.backend.put_history(
             self.requirement,
-            HistoryResult(bars, CoverageStatus.FULL, "snapshot-2", "signed-cursor-2", now),
+            HistoryResult(
+                bars, CoverageStatus.FULL, "snapshot-2", "signed-cursor-2", 2, now
+            ),
         )
         self.backend.put_gap(GapRecord(
             "gap-1", self.okx.instrument_uid, FeedType.TRADE, "OKX_DIRECT",
