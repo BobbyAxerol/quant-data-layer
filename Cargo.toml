@@ -1,0 +1,12 @@
+[workspace]
+members = ["rust/qdl-contracts"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+rust-version = "1.82"
+
+[workspace.dependencies]
+prost = "0.13.5"
+

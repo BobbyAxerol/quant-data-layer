@@ -1,0 +1,130 @@
+syntax = "proto3";
+
+package qdl.marketdata.v2;
+
+import "qdl/common/v1/common.proto";
+import "qdl/quality/v1/quality.proto";
+
+message Trade {
+  string native_trade_id = 1;
+  qdl.common.v1.DecimalValue price = 2;
+  qdl.common.v1.DecimalValue quantity = 3;
+  qdl.common.v1.AggressorSide aggressor_side = 4;
+  bool is_block_trade = 5;
+  bool is_buyer_maker = 6;
+}
+
+message Quote {
+  qdl.common.v1.DecimalValue bid_price = 1;
+  qdl.common.v1.DecimalValue bid_quantity = 2;
+  qdl.common.v1.DecimalValue ask_price = 3;
+  qdl.common.v1.DecimalValue ask_quantity = 4;
+  uint32 level = 5;
+}
+
+message Bar {
+  string interval = 1;
+  int64 open_time_ns = 2;
+  int64 close_time_ns = 3;
+  qdl.common.v1.DecimalValue open = 4;
+  qdl.common.v1.DecimalValue high = 5;
+  qdl.common.v1.DecimalValue low = 6;
+  qdl.common.v1.DecimalValue close = 7;
+  qdl.common.v1.DecimalValue volume = 8;
+  uint64 trade_count = 9;
+  bool is_final = 10;
+  uint32 revision = 11;
+  qdl.common.v1.BarOrigin origin = 12;
+}
+
+message BookLevel {
+  qdl.common.v1.BookSide side = 1;
+  qdl.common.v1.DecimalValue price = 2;
+  qdl.common.v1.DecimalValue quantity = 3;
+  uint32 order_count = 4;
+}
+
+message OrderBookSnapshot {
+  string native_sequence = 1;
+  string checksum = 2;
+  repeated BookLevel levels = 3;
+  uint32 depth = 4;
+}
+
+message OrderBookDelta {
+  string native_sequence_start = 1;
+  string native_sequence_end = 2;
+  string snapshot_sequence = 3;
+  string checksum = 4;
+  repeated BookLevel updates = 5;
+  bool reset = 6;
+}
+
+message FundingRate {
+  qdl.common.v1.DecimalValue rate = 1;
+  int64 funding_time_ns = 2;
+  optional int64 next_funding_time_ns = 3;
+}
+
+message OpenInterest {
+  qdl.common.v1.DecimalValue quantity = 1;
+  optional qdl.common.v1.DecimalValue notional = 2;
+}
+
+message MarkIndexPrice {
+  qdl.common.v1.DecimalValue mark_price = 1;
+  qdl.common.v1.DecimalValue index_price = 2;
+}
+
+message Ticker {
+  qdl.common.v1.DecimalValue last_price = 1;
+  optional qdl.common.v1.DecimalValue last_quantity = 2;
+  optional qdl.common.v1.DecimalValue open_24h = 3;
+  optional qdl.common.v1.DecimalValue high_24h = 4;
+  optional qdl.common.v1.DecimalValue low_24h = 5;
+  optional qdl.common.v1.DecimalValue volume_24h = 6;
+}
+
+message EventEnvelope {
+  string schema_name = 1;
+  uint32 schema_major = 2;
+  uint32 schema_minor = 3;
+  bytes event_id = 4;
+  string instrument_uid = 5;
+  string instrument_id = 6;
+  uint64 instrument_revision = 7;
+  string venue = 8;
+  string market = 9;
+  string product_type = 10;
+  string native_symbol = 11;
+  string provider = 12;
+  string source_id = 13;
+  qdl.common.v1.SourceRole source_role = 14;
+  uint64 lease_epoch = 15;
+  int64 source_event_time_ns = 16;
+  int64 received_at_ns = 17;
+  int64 normalized_at_ns = 18;
+  int64 published_at_ns = 19;
+  string source_sequence = 20;
+  uint64 partition_sequence = 21;
+  string normalizer_version = 22;
+  string adapter_version = 23;
+  repeated qdl.common.v1.QualityFlag quality_flags = 24;
+  bytes raw_payload_hash = 25;
+  string correlation_id = 26;
+  uint64 config_revision = 27;
+
+  oneof payload {
+    Trade trade = 40;
+    Quote quote = 41;
+    Bar bar = 42;
+    OrderBookSnapshot book_snapshot = 43;
+    OrderBookDelta book_delta = 44;
+    FundingRate funding_rate = 45;
+    OpenInterest open_interest = 46;
+    MarkIndexPrice mark_index_price = 47;
+    Ticker ticker = 48;
+    qdl.quality.v1.FeedStateEvent feed_state = 49;
+    qdl.quality.v1.DataQualityEvent quality_event = 50;
+  }
+}

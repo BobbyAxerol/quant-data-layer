@@ -21,7 +21,8 @@ dependencies = [
     "vnstock (>=3.0.0)",
     "numpy (>=1.26.0,<2.0.0)",
     "python-dotenv (>=1.0.1,<2.0.0)",
-    "orjson (>=3.10.0,<4.0.0)"
+    "orjson (>=3.10.0,<4.0.0)",
+    "protobuf (>=6.31.1,<7.0.0)"
 ]
 
 [build-system]

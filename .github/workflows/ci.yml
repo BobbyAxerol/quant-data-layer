@@ -7,6 +7,45 @@ on:
     branches: ["dev"]
 
 jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.50.0"
+
+      - name: Check schema format and compatibility
+        working-directory: contracts
+        run: |
+          buf format --diff --exit-code
+          buf lint
+          buf breaking --against baseline/qdl-v2-phase1.binpb
+
+      - name: Verify generated contracts are current
+        working-directory: contracts
+        run: |
+          buf generate
+          git diff --exit-code -- ../generated
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test Python generated contracts
+        run: |
+          python -m pip install --disable-pip-version-check protobuf==6.33.6
+          python -m unittest tests.test_phase1_contracts
+
+      - name: Test Rust generated contracts
+        run: >-
+          docker run --rm -v "$PWD:/workspace" -w /workspace
+          rust:1.82-slim cargo test --workspace --locked
+
   unit-tests:
     runs-on: ubuntu-latest
     steps:
