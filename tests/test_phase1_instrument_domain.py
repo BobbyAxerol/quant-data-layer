@@ -60,9 +60,10 @@ class InstrumentIdentityTests(unittest.TestCase):
             InstrumentIdentity.create(venue="BINANCE", market="USDM", product_type="PERPETUAL", canonical_symbol="BTC-USDT"),
             InstrumentIdentity.create(venue="BINANCE", market="DELIVERY", product_type="FUTURE", canonical_symbol="BTC-USDT-260925"),
             InstrumentIdentity.create(venue="HNX", market="DERIVATIVES", product_type="FUTURE", canonical_symbol="VN30F1M"),
+            InstrumentIdentity.create(venue="OKX", market="OPTION", product_type="OPTION", canonical_symbol="BTC-USD-260925-50000-C"),
         }
-        self.assertEqual(len({item.instrument_uid for item in identities}), 4)
-        self.assertEqual(len({item.instrument_id for item in identities}), 4)
+        self.assertEqual(len({item.instrument_uid for item in identities}), 5)
+        self.assertEqual(len({item.instrument_id for item in identities}), 5)
 
     def test_temporal_alias_resolution_and_snapshot_export(self):
         registry = InstrumentRegistry()

@@ -63,6 +63,11 @@ class GeneratedContractGoldenTests(unittest.TestCase):
 
         self.assertEqual(hashlib.sha256(payload).hexdigest(), metadata["sha256"])
         self.assertEqual(message.instrument_id, "BINANCE.USDM.PERPETUAL.BTC-USDT")
+        self.assertEqual(message.event_id, bytes(range(16)))
+        self.assertEqual(message.source_event_time_ns, 1_786_352_400_123_000_000)
+        self.assertEqual(message.received_at_ns, 1_786_352_400_123_456_000)
+        self.assertEqual(message.normalized_at_ns, 1_786_352_400_123_500_000)
+        self.assertEqual(message.published_at_ns, 1_786_352_400_123_700_000)
         self.assertEqual(message.trade.native_trade_id, "184467440737095516160")
         self.assertEqual(message.trade.price.mantissa, 6_123_410)
         self.assertEqual(message.trade.price.scale, 2)

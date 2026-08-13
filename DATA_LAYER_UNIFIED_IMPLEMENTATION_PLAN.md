@@ -117,7 +117,7 @@ Create a trustworthy, reproducible baseline before changing transport or schemas
 
 ## 5. Phase 1 - Canonical Contracts, Identity And Runtime Boundaries
 
-**Status:** `PLANNED`
+**Status:** `COMPLETE (DARK / NO V1 CUTOVER)`
 
 ### Goal
 
@@ -151,11 +151,40 @@ Define one precise, venue-neutral data domain and split the combined process int
 
 ### Completed
 
-- Not started.
+- Added canonical Protobuf packages, pinned Buf code generation and a frozen
+  Phase 1 breaking baseline. Generated Python/Rust models share one contract;
+  exact decimal, nanosecond timestamp, large native ID and deterministic golden
+  binary tests pass.
+- Added UUIDv5 canonical instrument identity, temporal aliases, metadata
+  revisions, source/venue separation, session calendars and capability profiles.
+  OKX Spot/Swap/Futures/Option/Event records are parsed from authoritative
+  `/public/instruments` fields without symbol heuristics.
+- Added forward-only PostgreSQL migrations for instrument/control metadata,
+  source policies, subscriptions, revisions/audit, leases/fencing and jobs. Clean
+  and legacy-seeded disposable databases pass second-apply idempotence with
+  identical QDL schema hashes; no tick-event table was introduced.
+- Added dark `api`, `control` and `history` entrypoints with fail-closed role
+  ownership. Three API replicas instantiate no venue-loop owner. Existing
+  `app.main:app` remains the sole V1 combined ingestion/projection authority.
+- Added ADRs `0001`-`0005`, contract CI, Compose role profile and Phase 1 evidence.
+- Verification: Buf format/lint/build/generate/breaking PASS; Python/Rust golden
+  parity PASS; migration smoke PASS; full application regression `124 passed, 2
+  skipped`; frozen V1 OpenAPI/Redis/SDK artifacts PASS.
+- Evidence: [Phase 1 report](upgrade/evidence/PHASE1_IMPLEMENTATION_REPORT.md),
+  [contract gate](upgrade/evidence/phase1-contract-gate.json), and
+  [migration smoke](upgrade/evidence/phase1-migration-smoke.json). The unchanged
+  live V1 path also passed [7/7 bounded read-only checks](upgrade/evidence/phase1-live-v1-smoke.json)
+  with both running containers still at restart count zero.
 
 ### Technical Debt / Decision Gate
 
 - Contract naming or semantics that affect public V2 behavior require explicit approval before schema freeze. Pure implementation details do not.
+- Phase 1 schema bootstrap uses a checked-in binary breaking baseline. Once this
+  branch lands on the protected base branch, add Git-ref breaking comparison as
+  a second gate; do not replace the immutable initial baseline.
+- Control tables and separated roles remain dark. Connecting them to authority,
+  adding durable transport, or starting role services belongs to later approved
+  phases and requires a coordinated immutable-image deployment.
 
 ### Rollback
 
