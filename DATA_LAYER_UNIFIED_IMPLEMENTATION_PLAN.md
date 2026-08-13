@@ -423,7 +423,7 @@ Run high-throughput ingestion and canonical projection with explicit shard owner
 
 ## 8. Phase 4 - Quality, History, Replay And Gap-Free Handoff
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 ### Goal
 
@@ -456,7 +456,13 @@ Produce auditable, replayable and revision-aware data from raw ingestion through
 
 ### Completed
 
-- Not started.
+- Phase 4 verification matrix frozen before implementation: canonical quality
+  and source authority; immutable/revision-aware history; deterministic replay
+  and signed cursor handoff; OKX pagination/reference coverage; VN sparse
+  session migration; bounded real-provider checks; crash/restart/cleanup gates.
+- Production V1, Redis, PostgreSQL and existing VN Parquet remain read-only for
+  this phase. All new catalog/object-store resources use isolated shadow paths;
+  no object-store or historical authority cutover is approved here.
 
 ### Technical Debt / Decision Gate
 

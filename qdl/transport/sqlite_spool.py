@@ -524,6 +524,21 @@ class SQLiteDurableSpool:
             )
         return int(result.lastrowid)
 
+    def quarantine_records(self, *, limit: int = 100) -> list[dict[str, int | str]]:
+        if limit <= 0 or limit > 1000:
+            raise ValueError("quarantine limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT quarantine_id, stream, partition_key, hex(event_id) AS event_id_hex,
+                       payload_sha256, reason_code, reason_message, retry_count,
+                       quarantined_at_ns
+                FROM quarantine ORDER BY quarantine_id ASC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def high_watermark(self, stream: str, partition_key: str) -> int:
         with self._lock:
             row = self._connection.execute(
