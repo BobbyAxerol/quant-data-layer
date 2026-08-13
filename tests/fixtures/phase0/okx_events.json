@@ -1,0 +1,18 @@
+{
+  "candle_page": {
+    "code": "0",
+    "msg": "",
+    "data": [
+      ["1786579200000", "118000.0", "118100.0", "117900.0", "118050.0", "12.5", "1475625", "1475625", "1"],
+      ["1786492800000", "117000.0", "118050.0", "116800.0", "118000.0", "10.0", "1175000", "1175000", "1"]
+    ]
+  },
+  "cursor_overlap": {"previous_oldest_ts": "1786492800000", "next_page_newest_ts": "1786492800000"},
+  "cache_regression": {"latest_cached_ts": "1786579200000", "incoming_rest_ts": "1786492800000"},
+  "book_frames": [
+    {"action": "snapshot", "arg": {"channel": "books", "instId": "BTC-USDT-SWAP"}, "data": [{"asks": [["118001.0", "3", "0", "2"]], "bids": [["118000.0", "4", "0", "3"]], "ts": "1786579200000", "seqId": 100, "prevSeqId": -1}]},
+    {"action": "update", "arg": {"channel": "books", "instId": "BTC-USDT-SWAP"}, "data": [{"asks": [], "bids": [], "ts": "1786579200100", "seqId": 100, "prevSeqId": 100}]},
+    {"action": "update", "arg": {"channel": "books", "instId": "BTC-USDT-SWAP"}, "data": [{"asks": [["118001.0", "2", "0", "1"]], "bids": [], "ts": "1786579200200", "seqId": 50, "prevSeqId": 100}]},
+    {"action": "update", "arg": {"channel": "books", "instId": "BTC-USDT-SWAP"}, "data": [{"asks": [], "bids": [["117999.0", "1", "0", "1"]], "ts": "1786579200300", "seqId": 53, "prevSeqId": 51}]}
+  ]
+}

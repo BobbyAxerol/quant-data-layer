@@ -1,0 +1,6 @@
+{
+  "invalid_json_shape": ["not", "an", "event", "object"],
+  "missing_identity": {"price": "100.0", "source_ts_ms": 1786579200000},
+  "invalid_decimal": {"provider": "okx", "instrument_id": "BTC-USDT-SWAP", "price": "NaN-not-valid"},
+  "unknown_event": {"provider": "binance", "market": "usdm", "event_type": "future_event_not_yet_supported", "raw": {}}
+}

@@ -1,0 +1,16 @@
+{
+  "spot_trade": {
+    "stream": "btcusdt@trade",
+    "data": {"e": "trade", "E": 1786579200123, "s": "BTCUSDT", "t": 101, "p": "118000.10", "q": "0.002", "T": 1786579200120, "m": false}
+  },
+  "usdm_trade": {
+    "stream": "btcusdt@trade",
+    "data": {"e": "trade", "E": 1786579200223, "s": "BTCUSDT", "t": 201, "p": "118001.20", "q": "0.003", "T": 1786579200220, "m": true}
+  },
+  "closed_candle": {
+    "stream": "ethusdt@kline_1m",
+    "data": {"e": "kline", "E": 1786579260050, "s": "ETHUSDT", "k": {"t": 1786579200000, "T": 1786579259999, "s": "ETHUSDT", "i": "1m", "o": "4200.00", "c": "4201.25", "h": "4202.00", "l": "4199.50", "v": "123.45", "x": true}}
+  },
+  "duplicate_trade": {"identity": ["binance", "usdm", "BTCUSDT", 201]},
+  "out_of_order_trade": {"previous_trade_id": 201, "incoming_trade_id": 199}
+}

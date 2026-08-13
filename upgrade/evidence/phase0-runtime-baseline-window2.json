@@ -1,0 +1,996 @@
+{
+  "audit_mode": "read_only",
+  "consumer_inventory": {},
+  "contract_manifest_sha256": null,
+  "generated_at": "2026-08-13T07:17:10.542915+00:00",
+  "repository_commit": null,
+  "samples": [
+    {
+      "http": {
+        "/v1/control/feed-demands": {
+          "latency_ms": 39.277,
+          "ok": true,
+          "payload": {
+            "by_feed": {
+              "kline": 4,
+              "trade": 5,
+              "vn_quote": 1
+            },
+            "by_source": {
+              "binance": 1,
+              "binance_futures_trade": 5,
+              "dnse": 1,
+              "dnse_vnstock": 3
+            },
+            "demanded_feed_count": 10,
+            "feed_keys_sha256": "3fd6b475e1c1a23ac5f1407ba221a8669d7e107c32c05cd81a36268a08c6028f",
+            "lease_count": 12
+          },
+          "payload_sha256": "4794be1724e11bf92e6a8eaa6f494a3de4e170dcee300dbc7c4b6a4ae6ee0723",
+          "status": 200
+        },
+        "/v1/control/runtime-roles": {
+          "latency_ms": 2.597,
+          "ok": true,
+          "payload": {
+            "current_container_role": "combined_api_ingestion_history",
+            "notes": {
+              "count": 2,
+              "sample": [
+                "Phase 3 exposes route/module boundaries first.",
+                "Docker role split should happen after route contracts are stable."
+              ],
+              "sha256": "fa2a061080312f7e5980e3ff0b1e0b8e6a2a388a95465121637526eabb85490b"
+            },
+            "separable_in_compose": false,
+            "target_roles": {
+              "count": 4,
+              "sample": [
+                "api",
+                "ingestion",
+                "history"
+              ],
+              "sha256": "aacbf86baa3eb7840c9f00abbb487f6c451f9bedada75c17a9a091967443ba95"
+            }
+          },
+          "payload_sha256": "4165aa919e537b8f4462f6820dc0749eab6db4a9f387b961bb93766f284a3988",
+          "status": 200
+        },
+        "/v1/control/universe/active": {
+          "latency_ms": 17.234,
+          "ok": true,
+          "payload": {
+            "mode": "configured_equals_active",
+            "priority": {
+              "binance": [
+                "BTCUSDT",
+                "ETHUSDT",
+                "BNBUSDT",
+                "SOLUSDT"
+              ],
+              "dnse": [
+                "VN30F1M",
+                "FPT",
+                "HPG",
+                "VCB",
+                "BID"
+              ]
+            },
+            "provider_names": [
+              "binance",
+              "dnse"
+            ],
+            "providers_sha256": "f82fd22e83910beaf11a4d08237e85ab3d642da4d86356d6fba95890eddde251"
+          },
+          "payload_sha256": "e60a5c9f70751b85f6f75be7699445d1b546d3024999cd220869c555e9871d55",
+          "status": 200
+        },
+        "/v1/health": {
+          "latency_ms": 102.499,
+          "ok": true,
+          "payload": {
+            "binance_stream": {
+              "feeds": {
+                "broad_missing_count": 2105,
+                "broad_stale_count": 653,
+                "demanded_count": 6,
+                "demanded_missing_count": 1,
+                "demanded_stale_count": 0,
+                "expected_count": 4202,
+                "health_missing_count": 2101,
+                "missing_count": 2105,
+                "observed_count": 2097,
+                "stale_count": 653
+              },
+              "health_warnings": [
+                "missing_demanded_feeds",
+                "missing_expected_feeds",
+                "stale_expected_feeds"
+              ],
+              "publisher": {
+                "batch_count": 31246387,
+                "item_count": 97732699,
+                "last_publisher_at": "2026-08-13T07:16:59Z",
+                "last_redis_error": null,
+                "redis_error_count": 0
+              },
+              "queue": {
+                "drop_count": 3790249,
+                "maxsize": 10000,
+                "recent_drop_count": 0,
+                "size": 0,
+                "window_seconds": 300.0
+              },
+              "shards": {
+                "connected_count": 44,
+                "count": 44,
+                "reconnect_count": 1
+              },
+              "status": "degraded",
+              "strict_feed_health": false,
+              "uptime_seconds": 87302.541
+            },
+            "dnse_stream": {
+              "client_healthy": true,
+              "market_open": true,
+              "metrics": {
+                "connect_attempts": 1,
+                "connect_failures": 0,
+                "last_connected_at": "2026-08-12T07:01:59Z",
+                "last_error": null,
+                "last_message_at": "2026-08-13T07:16:59Z",
+                "reconnect_count": 0,
+                "redis_latency_ms": 0.914,
+                "redis_write_count": 155341,
+                "stale_age_seconds": 0.036,
+                "ws_msg_count": 274495
+              },
+              "queue": {
+                "drop_count": 0,
+                "maxsize": 5000,
+                "size": 0
+              },
+              "running": true,
+              "status": "OPEN_HEALTHY",
+              "symbols_count": 82
+            },
+            "feed_demands": {
+              "by_feed": {
+                "kline": 4,
+                "trade": 5,
+                "vn_quote": 1
+              },
+              "by_source": {
+                "binance": 1,
+                "binance_futures_trade": 5,
+                "dnse": 1,
+                "dnse_vnstock": 3
+              },
+              "demanded_feed_count": 10,
+              "feed_keys_sha256": "3fd6b475e1c1a23ac5f1407ba221a8669d7e107c32c05cd81a36268a08c6028f",
+              "lease_count": 12
+            },
+            "preload_topup": {
+              "active_local_scopes": 0,
+              "failure_count": 3,
+              "provider_fetch_count": 862,
+              "waiter_count": 0
+            },
+            "redis": true,
+            "status": "degraded"
+          },
+          "payload_sha256": "ee7f72ecd3f6c5d6d90226d2fd3a372a4d4b9ed495ebac76fdf61bdfeb8ad23d",
+          "status": 200
+        },
+        "/v1/health/streams": {
+          "latency_ms": 40.629,
+          "ok": true,
+          "payload": {
+            "binance_stream": {
+              "feeds": {
+                "broad_missing_count": 2105,
+                "broad_stale_count": 654,
+                "demanded_count": 6,
+                "demanded_missing_count": 1,
+                "demanded_stale_count": 0,
+                "expected_count": 4202,
+                "health_missing_count": 2101,
+                "missing_count": 2105,
+                "observed_count": 2097,
+                "stale_count": 654
+              },
+              "health_warnings": [
+                "missing_demanded_feeds",
+                "missing_expected_feeds",
+                "stale_expected_feeds"
+              ],
+              "publisher": {
+                "batch_count": 31246393,
+                "item_count": 97732736,
+                "last_publisher_at": "2026-08-13T07:16:59Z",
+                "last_redis_error": null,
+                "redis_error_count": 0
+              },
+              "queue": {
+                "drop_count": 3790249,
+                "maxsize": 10000,
+                "recent_drop_count": 0,
+                "size": 0,
+                "window_seconds": 300.0
+              },
+              "shards": {
+                "connected_count": 44,
+                "count": 44,
+                "reconnect_count": 1
+              },
+              "status": "degraded",
+              "strict_feed_health": false,
+              "uptime_seconds": 87302.589
+            },
+            "dnse_stream": {
+              "client_healthy": true,
+              "market_open": true,
+              "metrics": {
+                "connect_attempts": 1,
+                "connect_failures": 0,
+                "last_connected_at": "2026-08-12T07:01:59Z",
+                "last_error": null,
+                "last_message_at": "2026-08-13T07:16:59Z",
+                "reconnect_count": 0,
+                "redis_latency_ms": 0.914,
+                "redis_write_count": 155341,
+                "stale_age_seconds": 0.079,
+                "ws_msg_count": 274495
+              },
+              "queue": {
+                "drop_count": 0,
+                "maxsize": 5000,
+                "size": 0
+              },
+              "running": true,
+              "status": "OPEN_HEALTHY",
+              "symbols_count": 82
+            },
+            "feed_demands": {
+              "by_feed": {
+                "kline": 4,
+                "trade": 5,
+                "vn_quote": 1
+              },
+              "by_source": {
+                "binance": 1,
+                "binance_futures_trade": 5,
+                "dnse": 1,
+                "dnse_vnstock": 3
+              },
+              "demanded_feed_count": 10,
+              "feed_keys_sha256": "3fd6b475e1c1a23ac5f1407ba221a8669d7e107c32c05cd81a36268a08c6028f",
+              "lease_count": 12
+            },
+            "preload_topup": null,
+            "redis": null,
+            "status": null
+          },
+          "payload_sha256": "93eab67a31dba19ef4376d37a662d2c7d48e78e8689b67c4c1b968873e3b9ea2",
+          "status": 200
+        }
+      },
+      "observed_at": "2026-08-13T07:16:59.536499+00:00",
+      "redis": {
+        "clients": {
+          "blocked_clients": 0,
+          "client_recent_max_output_buffer": 0,
+          "connected_clients": 35
+        },
+        "demand_key_count": 12,
+        "demand_key_samples": [
+          "feed:demand:lease:17f5518368b143666b5b:5f483a1cc0c172848b0c",
+          "feed:demand:lease:1c5f8495fed1df447a08:a1bced8ed9d45ea5ce46",
+          "feed:demand:lease:382502a4227e1e7658e8:7d31bc32b14715babe8d",
+          "feed:demand:lease:767fca3e9bdcace75638:6743666cc42d9376e106",
+          "feed:demand:lease:b7e4b84cb734a0c1210d:9ee8e51b8aa54463bb63",
+          "feed:demand:lease:ec1b3f44914783e34fda:cb3368faf80a01e7c89a",
+          "feed:demand:lease:ee58cf2566e445c5def1:5ac11106a04e8fb0c8b8",
+          "feed:demand:lease:ee58cf2566e445c5def1:91ad4670526d67bc616b",
+          "feed:demand:lease:ee58cf2566e445c5def1:9f31cfbfcbb1ea721c4d",
+          "feed:demand:lease:ee58cf2566e445c5def1:a1bced8ed9d45ea5ce46",
+          "feed:demand:lease:ee58cf2566e445c5def1:cb3368faf80a01e7c89a",
+          "feed:demand:lease:ee58cf2566e445c5def1:e4906b2997ff8499803b"
+        ],
+        "memory": {
+          "maxmemory": 1073741824,
+          "mem_fragmentation_ratio": 1.53,
+          "used_memory": 7623856,
+          "used_memory_peak": 7995048
+        },
+        "payload_shapes": {
+          "kline:1m:*": {
+            "E": "integer",
+            "e": "string",
+            "k": {
+              "B": "string",
+              "L": "integer",
+              "Q": "string",
+              "T": "integer",
+              "V": "string",
+              "c": "string",
+              "f": "integer",
+              "h": "string",
+              "i": "string",
+              "l": "string",
+              "n": "integer",
+              "o": "string",
+              "q": "string",
+              "s": "string",
+              "t": "integer",
+              "v": "string",
+              "x": "boolean"
+            },
+            "s": "string"
+          },
+          "trade:price:*": {
+            "authoritative": "boolean",
+            "event_time": "integer",
+            "is_live": "boolean",
+            "market": "string",
+            "price": "number",
+            "provider": "string",
+            "quantity": "number",
+            "raw": {
+              "E": "integer",
+              "M": "boolean",
+              "T": "integer",
+              "e": "string",
+              "m": "boolean",
+              "p": "string",
+              "q": "string",
+              "s": "string",
+              "t": "integer"
+            },
+            "side": "string",
+            "source": "string",
+            "symbol": "string",
+            "trade_id": "integer",
+            "trade_time": "integer"
+          },
+          "trade:price:binance_spot:*": {
+            "authoritative": "boolean",
+            "event_time": "integer",
+            "is_live": "boolean",
+            "market": "string",
+            "price": "number",
+            "provider": "string",
+            "quantity": "number",
+            "raw": {
+              "E": "integer",
+              "M": "boolean",
+              "T": "integer",
+              "e": "string",
+              "m": "boolean",
+              "p": "string",
+              "q": "string",
+              "s": "string",
+              "t": "integer"
+            },
+            "side": "string",
+            "source": "string",
+            "symbol": "string",
+            "trade_id": "integer",
+            "trade_time": "integer"
+          },
+          "trade:price:binance_usdm:*": {
+            "authoritative": "boolean",
+            "event_time": "integer",
+            "is_live": "boolean",
+            "market": "string",
+            "price": "number",
+            "provider": "string",
+            "quantity": "number",
+            "raw": {
+              "E": "integer",
+              "T": "integer",
+              "X": "string",
+              "e": "string",
+              "m": "boolean",
+              "p": "string",
+              "q": "string",
+              "s": "string",
+              "st": "integer",
+              "t": "integer"
+            },
+            "side": "string",
+            "source": "string",
+            "symbol": "string",
+            "trade_id": "integer",
+            "trade_time": "integer"
+          },
+          "vn:quote:*": {
+            "high": "number",
+            "low": "number",
+            "open": "number",
+            "price": "number",
+            "quantity": "integer",
+            "source": "string",
+            "symbol": "string",
+            "timestamp": "number",
+            "total_volume": "integer"
+          }
+        },
+        "persistence": {
+          "aof_enabled": 0,
+          "rdb_last_save_time": 1785984113
+        },
+        "pubsub_channel_count": 311,
+        "pubsub_channel_samples": [
+          "stream:kline:15m:ETHUSDT",
+          "stream:kline:15m:SOLUSDT",
+          "stream:kline:15m:VN30F1M",
+          "stream:kline:1d:BTCUSDT",
+          "stream:kline:1h:BNBUSDT",
+          "stream:kline:1h:BTCUSDT",
+          "stream:kline:1h:DOGEUSDT",
+          "stream:kline:1h:ETHUSDT",
+          "stream:kline:1h:SOLUSDT",
+          "stream:kline:1m:0GTRY",
+          "stream:kline:1m:0GUSDC",
+          "stream:kline:1m:0GUSDT",
+          "stream:kline:1m:1000000BOBUSDT",
+          "stream:kline:1m:1000000MOGUSDT",
+          "stream:kline:1m:1000BONKUSDC",
+          "stream:kline:1m:1000BONKUSDT",
+          "stream:kline:1m:1000CATTRY",
+          "stream:kline:1m:1000CATUSDC",
+          "stream:kline:1m:1000CATUSDT",
+          "stream:kline:1m:1000CHEEMSUSDC"
+        ],
+        "stats": {
+          "evicted_keys": 0,
+          "expired_keys": 4363426,
+          "instantaneous_ops_per_sec": 3305,
+          "rejected_connections": 0,
+          "total_commands_processed": 1915642075,
+          "total_connections_received": 70135,
+          "total_net_input_bytes": 868576431949,
+          "total_net_output_bytes": 54313374815
+        },
+        "status": "ok"
+      },
+      "source_plan": {
+        "batch_size": 100,
+        "estimated_full_shards": 44,
+        "estimated_shard_reduction_percent": 63.636,
+        "estimated_spot_off_shards": 16,
+        "method": "ceil(symbol_count/batch_size) per trade and kline source",
+        "spot_symbols": 1377,
+        "usdm_symbols": 731
+      },
+      "storage": {
+        "data/binance_vision_cache": {
+          "bytes": 111025,
+          "file_count": 49,
+          "parquet_files": 0
+        },
+        "data/preload": {
+          "bytes": 43181892,
+          "file_count": 627,
+          "parquet_files": 574
+        },
+        "logs": {
+          "bytes": 58559991,
+          "file_count": 22,
+          "parquet_files": 0
+        }
+      },
+      "system": {
+        "filesystem_bytes": {
+          "free": 18470395904,
+          "total": 63310585856,
+          "used": 41602363392
+        },
+        "load_average": [
+          3.04,
+          3.88,
+          3.18
+        ],
+        "memory_bytes": {
+          "available": 3319468032,
+          "total": 11269316608
+        }
+      }
+    },
+    {
+      "http": {
+        "/v1/control/feed-demands": {
+          "latency_ms": 20.208,
+          "ok": true,
+          "payload": {
+            "by_feed": {
+              "kline": 4,
+              "trade": 5,
+              "vn_quote": 1
+            },
+            "by_source": {
+              "binance": 1,
+              "binance_futures_trade": 5,
+              "dnse": 1,
+              "dnse_vnstock": 3
+            },
+            "demanded_feed_count": 10,
+            "feed_keys_sha256": "3fd6b475e1c1a23ac5f1407ba221a8669d7e107c32c05cd81a36268a08c6028f",
+            "lease_count": 12
+          },
+          "payload_sha256": "4f454ddbf1bd08c9dbc16f4d0358325837a04ca2d9d93243664a7c50b34867fd",
+          "status": 200
+        },
+        "/v1/control/runtime-roles": {
+          "latency_ms": 4.578,
+          "ok": true,
+          "payload": {
+            "current_container_role": "combined_api_ingestion_history",
+            "notes": {
+              "count": 2,
+              "sample": [
+                "Phase 3 exposes route/module boundaries first.",
+                "Docker role split should happen after route contracts are stable."
+              ],
+              "sha256": "fa2a061080312f7e5980e3ff0b1e0b8e6a2a388a95465121637526eabb85490b"
+            },
+            "separable_in_compose": false,
+            "target_roles": {
+              "count": 4,
+              "sample": [
+                "api",
+                "ingestion",
+                "history"
+              ],
+              "sha256": "aacbf86baa3eb7840c9f00abbb487f6c451f9bedada75c17a9a091967443ba95"
+            }
+          },
+          "payload_sha256": "4165aa919e537b8f4462f6820dc0749eab6db4a9f387b961bb93766f284a3988",
+          "status": 200
+        },
+        "/v1/control/universe/active": {
+          "latency_ms": 15.442,
+          "ok": true,
+          "payload": {
+            "mode": "configured_equals_active",
+            "priority": {
+              "binance": [
+                "BTCUSDT",
+                "ETHUSDT",
+                "BNBUSDT",
+                "SOLUSDT"
+              ],
+              "dnse": [
+                "VN30F1M",
+                "FPT",
+                "HPG",
+                "VCB",
+                "BID"
+              ]
+            },
+            "provider_names": [
+              "binance",
+              "dnse"
+            ],
+            "providers_sha256": "f82fd22e83910beaf11a4d08237e85ab3d642da4d86356d6fba95890eddde251"
+          },
+          "payload_sha256": "e60a5c9f70751b85f6f75be7699445d1b546d3024999cd220869c555e9871d55",
+          "status": 200
+        },
+        "/v1/health": {
+          "latency_ms": 40.128,
+          "ok": true,
+          "payload": {
+            "binance_stream": {
+              "feeds": {
+                "broad_missing_count": 2105,
+                "broad_stale_count": 651,
+                "demanded_count": 6,
+                "demanded_missing_count": 1,
+                "demanded_stale_count": 0,
+                "expected_count": 4202,
+                "health_missing_count": 2101,
+                "missing_count": 2105,
+                "observed_count": 2097,
+                "stale_count": 651
+              },
+              "health_warnings": [
+                "missing_demanded_feeds",
+                "missing_expected_feeds",
+                "stale_expected_feeds"
+              ],
+              "publisher": {
+                "batch_count": 31250367,
+                "item_count": 97747485,
+                "last_publisher_at": "2026-08-13T07:17:10Z",
+                "last_redis_error": null,
+                "redis_error_count": 0
+              },
+              "queue": {
+                "drop_count": 3790249,
+                "maxsize": 10000,
+                "recent_drop_count": 0,
+                "size": 0,
+                "window_seconds": 300.0
+              },
+              "shards": {
+                "connected_count": 44,
+                "count": 44,
+                "reconnect_count": 1
+              },
+              "status": "degraded",
+              "strict_feed_health": false,
+              "uptime_seconds": 87313.333
+            },
+            "dnse_stream": {
+              "client_healthy": true,
+              "market_open": true,
+              "metrics": {
+                "connect_attempts": 1,
+                "connect_failures": 0,
+                "last_connected_at": "2026-08-12T07:01:59Z",
+                "last_error": null,
+                "last_message_at": "2026-08-13T07:17:10Z",
+                "reconnect_count": 0,
+                "redis_latency_ms": 1.016,
+                "redis_write_count": 155576,
+                "stale_age_seconds": 0.023,
+                "ws_msg_count": 274825
+              },
+              "queue": {
+                "drop_count": 0,
+                "maxsize": 5000,
+                "size": 0
+              },
+              "running": true,
+              "status": "OPEN_HEALTHY",
+              "symbols_count": 82
+            },
+            "feed_demands": {
+              "by_feed": {
+                "kline": 4,
+                "trade": 5,
+                "vn_quote": 1
+              },
+              "by_source": {
+                "binance": 1,
+                "binance_futures_trade": 5,
+                "dnse": 1,
+                "dnse_vnstock": 3
+              },
+              "demanded_feed_count": 10,
+              "feed_keys_sha256": "3fd6b475e1c1a23ac5f1407ba221a8669d7e107c32c05cd81a36268a08c6028f",
+              "lease_count": 12
+            },
+            "preload_topup": {
+              "active_local_scopes": 0,
+              "failure_count": 3,
+              "provider_fetch_count": 864,
+              "waiter_count": 0
+            },
+            "redis": true,
+            "status": "degraded"
+          },
+          "payload_sha256": "803b1ed77d4e50bfb3650cecd4fd08c7784748dd0654b3ddf76c078fb32669cd",
+          "status": 200
+        },
+        "/v1/health/streams": {
+          "latency_ms": 30.439,
+          "ok": true,
+          "payload": {
+            "binance_stream": {
+              "feeds": {
+                "broad_missing_count": 2105,
+                "broad_stale_count": 651,
+                "demanded_count": 6,
+                "demanded_missing_count": 1,
+                "demanded_stale_count": 0,
+                "expected_count": 4202,
+                "health_missing_count": 2101,
+                "missing_count": 2105,
+                "observed_count": 2097,
+                "stale_count": 651
+              },
+              "health_warnings": [
+                "missing_demanded_feeds",
+                "missing_expected_feeds",
+                "stale_expected_feeds"
+              ],
+              "publisher": {
+                "batch_count": 31250377,
+                "item_count": 97747523,
+                "last_publisher_at": "2026-08-13T07:17:10Z",
+                "last_redis_error": null,
+                "redis_error_count": 0
+              },
+              "queue": {
+                "drop_count": 3790249,
+                "maxsize": 10000,
+                "recent_drop_count": 0,
+                "size": 0,
+                "window_seconds": 300.0
+              },
+              "shards": {
+                "connected_count": 44,
+                "count": 44,
+                "reconnect_count": 1
+              },
+              "status": "degraded",
+              "strict_feed_health": false,
+              "uptime_seconds": 87313.366
+            },
+            "dnse_stream": {
+              "client_healthy": true,
+              "market_open": true,
+              "metrics": {
+                "connect_attempts": 1,
+                "connect_failures": 0,
+                "last_connected_at": "2026-08-12T07:01:59Z",
+                "last_error": null,
+                "last_message_at": "2026-08-13T07:17:10Z",
+                "reconnect_count": 0,
+                "redis_latency_ms": 0.53,
+                "redis_write_count": 155577,
+                "stale_age_seconds": 0.018,
+                "ws_msg_count": 274826
+              },
+              "queue": {
+                "drop_count": 0,
+                "maxsize": 5000,
+                "size": 0
+              },
+              "running": true,
+              "status": "OPEN_HEALTHY",
+              "symbols_count": 82
+            },
+            "feed_demands": {
+              "by_feed": {
+                "kline": 4,
+                "trade": 5,
+                "vn_quote": 1
+              },
+              "by_source": {
+                "binance": 1,
+                "binance_futures_trade": 5,
+                "dnse": 1,
+                "dnse_vnstock": 3
+              },
+              "demanded_feed_count": 10,
+              "feed_keys_sha256": "3fd6b475e1c1a23ac5f1407ba221a8669d7e107c32c05cd81a36268a08c6028f",
+              "lease_count": 12
+            },
+            "preload_topup": null,
+            "redis": null,
+            "status": null
+          },
+          "payload_sha256": "b0d64dbc317dfd1ba33c1808d8d6692c73fa5add4cb5e1eaf9cb00b00698a49c",
+          "status": 200
+        }
+      },
+      "observed_at": "2026-08-13T07:17:10.387001+00:00",
+      "redis": {
+        "clients": {
+          "blocked_clients": 0,
+          "client_recent_max_output_buffer": 0,
+          "connected_clients": 35
+        },
+        "demand_key_count": 12,
+        "demand_key_samples": [
+          "feed:demand:lease:17f5518368b143666b5b:5f483a1cc0c172848b0c",
+          "feed:demand:lease:1c5f8495fed1df447a08:a1bced8ed9d45ea5ce46",
+          "feed:demand:lease:382502a4227e1e7658e8:7d31bc32b14715babe8d",
+          "feed:demand:lease:767fca3e9bdcace75638:6743666cc42d9376e106",
+          "feed:demand:lease:b7e4b84cb734a0c1210d:9ee8e51b8aa54463bb63",
+          "feed:demand:lease:ec1b3f44914783e34fda:cb3368faf80a01e7c89a",
+          "feed:demand:lease:ee58cf2566e445c5def1:5ac11106a04e8fb0c8b8",
+          "feed:demand:lease:ee58cf2566e445c5def1:91ad4670526d67bc616b",
+          "feed:demand:lease:ee58cf2566e445c5def1:9f31cfbfcbb1ea721c4d",
+          "feed:demand:lease:ee58cf2566e445c5def1:a1bced8ed9d45ea5ce46",
+          "feed:demand:lease:ee58cf2566e445c5def1:cb3368faf80a01e7c89a",
+          "feed:demand:lease:ee58cf2566e445c5def1:e4906b2997ff8499803b"
+        ],
+        "memory": {
+          "maxmemory": 1073741824,
+          "mem_fragmentation_ratio": 1.56,
+          "used_memory": 7634232,
+          "used_memory_peak": 7995048
+        },
+        "payload_shapes": {
+          "kline:1m:*": {
+            "E": "integer",
+            "e": "string",
+            "k": {
+              "B": "string",
+              "L": "integer",
+              "Q": "string",
+              "T": "integer",
+              "V": "string",
+              "c": "string",
+              "f": "integer",
+              "h": "string",
+              "i": "string",
+              "l": "string",
+              "n": "integer",
+              "o": "string",
+              "q": "string",
+              "s": "string",
+              "t": "integer",
+              "v": "string",
+              "x": "boolean"
+            },
+            "s": "string"
+          },
+          "trade:price:*": {
+            "authoritative": "boolean",
+            "event_time": "integer",
+            "is_live": "boolean",
+            "market": "string",
+            "price": "number",
+            "provider": "string",
+            "quantity": "number",
+            "raw": {
+              "E": "integer",
+              "M": "boolean",
+              "T": "integer",
+              "e": "string",
+              "m": "boolean",
+              "p": "string",
+              "q": "string",
+              "s": "string",
+              "t": "integer"
+            },
+            "side": "string",
+            "source": "string",
+            "symbol": "string",
+            "trade_id": "integer",
+            "trade_time": "integer"
+          },
+          "trade:price:binance_spot:*": {
+            "authoritative": "boolean",
+            "event_time": "integer",
+            "is_live": "boolean",
+            "market": "string",
+            "price": "number",
+            "provider": "string",
+            "quantity": "number",
+            "raw": {
+              "E": "integer",
+              "M": "boolean",
+              "T": "integer",
+              "e": "string",
+              "m": "boolean",
+              "p": "string",
+              "q": "string",
+              "s": "string",
+              "t": "integer"
+            },
+            "side": "string",
+            "source": "string",
+            "symbol": "string",
+            "trade_id": "integer",
+            "trade_time": "integer"
+          },
+          "trade:price:binance_usdm:*": {
+            "authoritative": "boolean",
+            "event_time": "integer",
+            "is_live": "boolean",
+            "market": "string",
+            "price": "number",
+            "provider": "string",
+            "quantity": "number",
+            "raw": {
+              "E": "integer",
+              "T": "integer",
+              "X": "string",
+              "e": "string",
+              "m": "boolean",
+              "p": "string",
+              "q": "string",
+              "s": "string",
+              "st": "integer",
+              "t": "integer"
+            },
+            "side": "string",
+            "source": "string",
+            "symbol": "string",
+            "trade_id": "integer",
+            "trade_time": "integer"
+          },
+          "vn:quote:*": {
+            "high": "number",
+            "low": "number",
+            "open": "number",
+            "price": "number",
+            "quantity": "integer",
+            "source": "string",
+            "symbol": "string",
+            "timestamp": "number",
+            "total_volume": "integer"
+          }
+        },
+        "persistence": {
+          "aof_enabled": 0,
+          "rdb_last_save_time": 1785984113
+        },
+        "pubsub_channel_count": 311,
+        "pubsub_channel_samples": [
+          "stream:kline:15m:ETHUSDT",
+          "stream:kline:15m:SOLUSDT",
+          "stream:kline:15m:VN30F1M",
+          "stream:kline:1d:BTCUSDT",
+          "stream:kline:1h:BNBUSDT",
+          "stream:kline:1h:BTCUSDT",
+          "stream:kline:1h:DOGEUSDT",
+          "stream:kline:1h:ETHUSDT",
+          "stream:kline:1h:SOLUSDT",
+          "stream:kline:1m:0GTRY",
+          "stream:kline:1m:0GUSDC",
+          "stream:kline:1m:0GUSDT",
+          "stream:kline:1m:1000000BOBUSDT",
+          "stream:kline:1m:1000000MOGUSDT",
+          "stream:kline:1m:1000BONKUSDC",
+          "stream:kline:1m:1000BONKUSDT",
+          "stream:kline:1m:1000CATTRY",
+          "stream:kline:1m:1000CATUSDC",
+          "stream:kline:1m:1000CATUSDT",
+          "stream:kline:1m:1000CHEEMSUSDC"
+        ],
+        "stats": {
+          "evicted_keys": 0,
+          "expired_keys": 4363534,
+          "instantaneous_ops_per_sec": 3573,
+          "rejected_connections": 0,
+          "total_commands_processed": 1915687345,
+          "total_connections_received": 70137,
+          "total_net_input_bytes": 868596848016,
+          "total_net_output_bytes": 54314450018
+        },
+        "status": "ok"
+      },
+      "source_plan": {
+        "batch_size": 100,
+        "estimated_full_shards": 44,
+        "estimated_shard_reduction_percent": 63.636,
+        "estimated_spot_off_shards": 16,
+        "method": "ceil(symbol_count/batch_size) per trade and kline source",
+        "spot_symbols": 1377,
+        "usdm_symbols": 731
+      },
+      "storage": {
+        "data/binance_vision_cache": {
+          "bytes": 111025,
+          "file_count": 49,
+          "parquet_files": 0
+        },
+        "data/preload": {
+          "bytes": 43181892,
+          "file_count": 627,
+          "parquet_files": 574
+        },
+        "logs": {
+          "bytes": 58560255,
+          "file_count": 22,
+          "parquet_files": 0
+        }
+      },
+      "system": {
+        "filesystem_bytes": {
+          "free": 18470359040,
+          "total": 63310585856,
+          "used": 41602400256
+        },
+        "load_average": [
+          2.65,
+          3.77,
+          3.15
+        ],
+        "memory_bytes": {
+          "available": 3294892032,
+          "total": 11269316608
+        }
+      }
+    }
+  ],
+  "schema_version": 1
+}

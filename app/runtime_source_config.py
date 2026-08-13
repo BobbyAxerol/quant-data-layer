@@ -14,9 +14,7 @@ SUPPORTED_BINANCE_SOURCES = frozenset(
     }
 )
 DEFAULT_BINANCE_SOURCES = (
-    "binance_spot_trade",
     "binance_futures_trade",
-    "binance_spot_kline",
     "binance_futures_kline",
 )
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})

@@ -4,11 +4,11 @@ from app.runtime_source_config import DEFAULT_BINANCE_SOURCES, RuntimeSourceConf
 
 
 class RuntimeSourceConfigTests(unittest.TestCase):
-    def test_defaults_preserve_current_runtime_ownership(self):
+    def test_defaults_disable_undeclared_spot_and_keep_usdm(self):
         config = RuntimeSourceConfig.from_env({})
 
         self.assertEqual(config.binance_sources, DEFAULT_BINANCE_SOURCES)
-        self.assertTrue(config.spot_enabled)
+        self.assertFalse(config.spot_enabled)
         self.assertTrue(config.usdm_enabled)
         self.assertTrue(config.dnse_stream_enabled)
         self.assertTrue(config.vnstock_poller_enabled)

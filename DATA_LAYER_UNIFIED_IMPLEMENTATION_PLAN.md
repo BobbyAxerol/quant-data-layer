@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Proposed for user approval. No implementation or runtime cutover has started.
+> **Status:** Phase 0 implementation complete on the feature branch; no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -59,7 +59,7 @@ These rules apply to all seven phases.
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
 
-**Status:** `PLANNED`
+**Status:** `COMPLETE`
 
 ### Goal
 
@@ -94,12 +94,22 @@ Create a trustworthy, reproducible baseline before changing transport or schemas
 
 ### Completed
 
-- Not started.
+- Added validated source ownership configuration. The new artifact defaults to Binance USD-M trade+kline; Spot, DNSE, vnstock and preload ownership remain independently configurable. The running service was not restarted.
+- Frozen V1 OpenAPI, route/method/name inventory, SDK signatures and Redis payload shapes under [`contracts/v1`](contracts/v1).
+- Added a read-only audit tool, bounded provider smoke and deterministic Binance/OKX/VN/malformed fixture corpus.
+- Inventoried the full workspace, Trading System and active migrated alpha tree without reading generated logs/state/data.
+- Captured two bounded runtime windows and a resource/topology baseline. Details and exact artifacts are in the [Phase 0 baseline report](upgrade/evidence/PHASE0_BASELINE_REPORT.md).
+- Detected and fixed provider-scoped kline demand health correlation without changing V1 Redis payloads (`965275e`). Runtime verification remains part of the coordinated immutable-image deployment because Phase 0 did not restart the live process.
+- Measured current source topology: 44 full Binance shards versus 16 USD-M-only shards, a projected 63.636% connection reduction. No active demand lease required Spot during observation.
 
 ### Technical Debt / Decision Gate
 
-- Confirm measured production headroom target after baseline results. No infrastructure purchase is assumed in this phase.
-- Any consumer that depends on undeclared Spot Pub/Sub must be registered before Spot can remain disabled.
+- Phase 1 must turn measured load into explicit SLO/headroom budgets. Baseline observed approximately 4.3k-4.5k Redis commands/s and 1.98-2.04 MB/s input during the two ten-second windows.
+- The running image still has four Binance sources because no cutover was allowed. Deploying the USD-M-only default requires immutable-image V1/Redis shadow parity and coordinated recreation with the documented source-list rollback.
+- Legacy `stream:trade:{symbol}` source authority must be frozen to USD-M (or explicitly versioned) before Spot producer removal. Active alphas had no direct-provider usage, but workspace-wide legacy/reference files remain and are tracked in inventory evidence.
+- Existing queue code has 3,790,249 cumulative drops. Recent drops were zero in final windows, but Phases 2-3 must replace feed-agnostic drop/coalesce behavior before trade/book delta certification.
+- OKX `after`/`before` pagination remains a characterized defect in the compatibility facade; it is corrected under the async adapter/history implementation with V1 golden protection, not silently in Phase 0.
+- Existing `websockets.legacy` and `InvalidStatusCode` deprecation warnings must be removed during the scalable adapter implementation.
 
 ### Rollback
 
