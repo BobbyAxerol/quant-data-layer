@@ -1,0 +1,51 @@
+{
+  "schema": "qdl.phase7.contract-freeze.v1",
+  "recorded_at": "2026-08-14T10:37:26Z",
+  "branch": "feat/fund-grade-data-layer-v2",
+  "base_commit": "b9a2b57fc0eb9a1db2d688a6320ecd8d7f731438",
+  "subphase": "7.0",
+  "subphase_status": "PASS",
+  "phase7_status": "IN_PROGRESS",
+  "production_runtime_changed": false,
+  "v1_authority": "UNCHANGED",
+  "artifacts": {
+    "openapi": {
+      "path": "contracts/v2/openapi.snapshot.json",
+      "sha256": "bea44d3920db52f5893eb773aa195ae7f4abd2684d5ca65d904e995934fabcea",
+      "semantic_diff": "PASS_PRE_BETA_FREEZE"
+    },
+    "protobuf_descriptor": {
+      "path": "contracts/baseline/qdl-v2-phase7-beta.binpb",
+      "sha256": "16686bb63dd2633f5572dca98baef1d7e1c3d9aec249a259a9725a58ad1445ef"
+    },
+    "canonical_bar_golden": {
+      "path": "contracts/golden/phase2/binance-usdm-bar.bin",
+      "sha256": "247b9ffe1ba730b7861dca4bf241872be0a2604e0169752e30dac3b467814b8c"
+    }
+  },
+  "compatibility": {
+    "v1_openapi_sha256": "d1eb1ab5eca5161cf4d0f743737f70d32a2cec66918d5cd68ab198c12aa3de30",
+    "v1_public_surface_sha256": "2161c540ae26b4c0027b55694f29b2fb8a19029dc5d35439d14612ec90acc2fe",
+    "v1_redis_payload_sha256": "48fcf64c00065142e6d92f8314ea7f457b8db7990b319fa8bc662b78c0c1bf73",
+    "v1_contract_files_changed": false,
+    "buf_phase1_breaking": "PASS",
+    "buf_phase7_breaking": "PASS"
+  },
+  "verification": {
+    "python_tests": 285,
+    "python_failures": 0,
+    "python_conditional_skips": 5,
+    "phase7_security_tests": 11,
+    "rust_tests": 11,
+    "rust_fmt": "PASS",
+    "rust_clippy_warnings_denied": "PASS",
+    "postgres_migration": "PASS_CLEAN_EXISTING_IDEMPOTENT_21_TABLES",
+    "real_provider_mutation": false
+  },
+  "not_authorized": [
+    "V2_BETA_DEPLOYMENT",
+    "V2_EXECUTION_DEPENDENCY",
+    "V2_SOURCE_AUTHORITY",
+    "V1_SUNSET"
+  ]
+}
