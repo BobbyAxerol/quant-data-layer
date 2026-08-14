@@ -72,6 +72,12 @@ These rules apply to all phases.
     Rust targets venue ingestion, native decoding, canonicalization,
     ordering/dedup/gap state, realtime books/bars, durable publishing and other
     measured hot paths.
+24. **Every venue converges on one Rust core.** Binance is the first real
+    vertical slice, not a separate core or a Binance-only target. Binance, OKX,
+    DNSE/VN, future Deribit and other adapters must implement the same capability
+    and canonical-core traits. A venue whose network/SDK edge remains Python
+    publishes an authenticated raw provider envelope into the Rust core rather
+    than maintaining a second Python canonical/quality implementation.
 
 ## 3. Phase Summary
 
@@ -86,7 +92,7 @@ These rules apply to all phases.
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `COMPLETE (FROZEN SHADOW)` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `BLOCKED (SHADOW PASS; PRIMARY NO-GO)` |
 | 7 | V2 public beta and consumer canary | Publish a protected read-only V2 surface and validate real consumer behavior without changing authority | `PLANNED` |
-| 8 | Rust realtime-core vertical slice | Run demanded Binance USD-M trade ingestion/canonicalization as a deterministic Rust shadow | `PLANNED` |
+| 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `PLANNED` |
 | 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
@@ -976,36 +982,51 @@ V1 production authority -> existing API/Redis consumers
   Revoke beta credentials and delete isolated beta consumer state. V1 requires
   no data replay, schema rollback or restart.
 
-## 12. Phase 8 - Rust Realtime-Core Vertical Slice
+## 12. Phase 8 - Multi-Venue Rust Realtime Core And Reference Slice
 
 **Status:** `PLANNED`
 
 ### Goal
 
-Implement a production-shaped Rust realtime data-plane slice for demanded
-Binance USD-M TRADE feeds, run it beside the Python producer in strict shadow,
-and prove exact canonical/domain parity before any Rust event receives public or
-legacy write authority.
+Implement one production-shaped, provider-neutral Rust realtime core for every
+current and future venue; prove its cross-venue contract with Binance, OKX,
+DNSE/VN and Deribit-style conformance inputs; then use demanded Binance USD-M
+TRADE as the first authentic real-provider reference shadow. No Rust event
+receives public or legacy write authority in this phase.
 
 ### Target Ownership
 
 ```text
-Binance USD-M native WebSocket bytes
-    -> Rust connection/shard supervisor
-    -> native decoder and instrument resolver
-    -> fixed-point canonical event
-    -> ordering/dedup/gap and feed-quality state
-    -> DurableSink abstraction
-    -> shadow canonical log/projection
+Binance Rust edge -------\
+OKX Rust edge ------------+--> venue capability adapter
+DNSE Python/SDK edge -----+          |
+Deribit future Rust edge -/          v
+                              Rust canonical realtime core
+                              - identity/decimal/time
+                              - ordering/dedup/gap
+                              - quality/book/bar state
+                              - backpressure/replay
+                              - DurableSink
+                                      |
+                                      v
+                              shadow canonical log/projection
 
 Python remains: API, SDK, control plane, history, reconciliation,
 consumer registry and V1 compatibility authority.
 ```
 
+The Rust core and capability traits are shared; only provider protocol adapters
+vary. A Python-only provider SDK may retain a thin acquisition edge, but it must
+forward provider-authentic bytes/records plus source metadata through a bounded,
+versioned raw-envelope contract into the same Rust canonical/quality pipeline.
+It must not keep a parallel venue-specific Python core.
+
 Rust runs as a separate process/container with independent lifecycle and bounded
 resources. Do not embed the first production slice through PyO3 or make FastAPI
 own the Rust event loop; process isolation is required for restart, scale and
-rollback.
+rollback. Binance USD-M is the first reference adapter because it has high
+demand, throughput and mature Python/provider oracles, not because the core is
+Binance-specific.
 
 ### Guide Index
 
@@ -1018,6 +1039,12 @@ rollback.
 - Implement Rust adapter traits for connection lifecycle, subscription shards,
   native frame decoding, capability declaration and durable output without
   provider branches in canonical core.
+- Implement a versioned raw-provider-envelope boundary so a native Rust edge or
+  a constrained Python SDK edge can supply the same Rust core without changing
+  canonical output, quality policy or durable semantics.
+- Build one cross-venue conformance suite covering Binance USD-M/Spot, OKX
+  SPOT/SWAP, DNSE/VN bars and Deribit-style option/book identity. Unsupported
+  capabilities must be declared and fail independently rather than fork core.
 - Use generated canonical Protobuf types and the existing stable instrument UID,
   alias revision, fixed-point decimal, timestamp, source session, sequence,
   event ID, source role and quality semantics. Do not introduce a Rust-specific
@@ -1031,9 +1058,13 @@ rollback.
 - Publish only through the common `DurableSink` interface. Rust must not make
   Redis Pub/Sub or a local file the hidden source of truth, and transport choice
   must remain replaceable by the replicated broker implementation.
-- Tee the same authentic provider frames into Python PRIMARY and Rust SHADOW.
-  Compare canonical output without changing the Python subscription owner or
-  V1 compatibility writer.
+- Tee the same authentic Binance provider frames into Python PRIMARY and Rust
+  SHADOW as the first real reference slice. Compare canonical output without
+  changing the Python subscription owner or V1 compatibility writer.
+- Feed authentic bounded OKX and DNSE provider captures through their adapter/
+  raw-envelope paths and compare them with the existing Python canonical oracle.
+  Deribit remains deterministic conformance evidence until a separately approved
+  real adapter/source activation exists.
 - Prepare the next capability modules for BBO/L2 snapshot-delta-checksum and
   realtime bar aggregation, but do not expand authority beyond TRADE during this
   phase.
@@ -1043,12 +1074,17 @@ rollback.
 - Shared Protobuf generation, Rust fmt/clippy/advisory/license gates and Python/
   Rust golden fixtures pass on malformed, duplicate, out-of-order, gap,
   reconnect, stale-generation, precision and unknown-field cases.
+- The same core conformance suite passes Binance, OKX, DNSE/VN and
+  Deribit-style option/book cases with no venue branch in canonical identity,
+  decimal, ordering, quality, replay or durable-publish modules.
 - A long deterministic native-frame replay produces identical event IDs,
   instrument identity, decimal values, side, timestamps, sequence/session,
   quality transitions and output count in Python and Rust.
-- Bounded real-provider shadow runs across normal traffic plus at least one
-  controlled reconnect/resubscribe cycle with zero unexplained mismatch, zero
-  canonical drop and no duplicate authority owner.
+- Bounded Binance real-provider shadow runs across normal traffic plus at least
+  one controlled reconnect/resubscribe cycle with zero unexplained mismatch,
+  zero canonical drop and no duplicate authority owner. Authentic OKX and DNSE
+  bounded captures pass the same core semantics; their network edges are not
+  falsely certified by Binance evidence.
 - Process kill, durable-sink outage, disk/spool bound, Redis outage, slow
   projector and restart/replay tests pass; Rust never acknowledges an event that
   cannot be recovered inside the certified boundary.
@@ -1070,6 +1106,9 @@ rollback.
   bridge, but Phase 9 primary promotion cannot waive durable replication.
 - BBO/L2 and realtime bars require separate capability evidence; TRADE success
   does not certify them automatically.
+- Binance reference success certifies the shared core against its declared
+  matrix, not every venue edge. OKX, DNSE and future Deribit network adapters
+  still require independent provider, reconnect, rate-limit and capacity gates.
 
 ### Rollback
 
@@ -1090,16 +1129,19 @@ outer API/SDK/control/history/reconciliation platform.
 ### Promotion Sequence
 
 ```text
-BINANCE / USD-M / TRADE / demanded hash range
-    -> BBO
-    -> L2 snapshot + delta + checksum
-    -> realtime BAR aggregation
-    -> OKX JSON core feeds
-    -> future Deribit option books after independent certification
+Shared Rust canonical/quality/durable core
+    |
+    +-> BINANCE / USD-M / TRADE -> BBO -> L2 -> BAR
+    +-> OKX / SPOT+SWAP / JSON TRADE -> BBO -> L2 -> BAR
+    +-> DNSE/VN Python acquisition edge -> Rust BAR/quality core
+    +-> Deribit option TRADE/BOOK after independent activation
+    +-> future venue capability adapters
 ```
 
-DNSE/VN bar and low-rate historical adapters remain Python unless measured
-capacity or correctness evidence justifies a separate migration.
+DNSE/VN and other low-rate or proprietary-SDK acquisition edges may remain
+Python, while their realtime canonical validation, ordering, quality, durable
+publish and replay converge on the Rust core. Historical REST/provider wrappers
+and materialization remain Python unless measured evidence justifies otherwise.
 
 ### Guide Index
 
@@ -1125,6 +1167,10 @@ capacity or correctness evidence justifies a separate migration.
   certification for BBO, L2/book and realtime bar capabilities. Book state uses
   snapshot/delta/checksum semantics; bar aggregation preserves closure,
   origin/finality and revision semantics exactly.
+- Promote OKX and DNSE/VN through their own authority slices after the shared
+  core passes. No venue inherits production certification from Binance; each
+  edge proves native identity, sequence/session, reconnect, rate-limit, source
+  authority and provider-specific market-session semantics.
 - Promote OKX JSON capabilities independently. SBE remains optional and cannot
   become primary without entitlement, pinned schema/version, JSON shadow parity,
   unknown-schema fail-closed behavior and tested JSON rollback.
@@ -1178,9 +1224,11 @@ approval before any runtime deployment or authority change.
 Phase 7 approval authorizes protected read-only beta deployment only. It does
 not authorize V1 restart, source-authority change or live execution dependency.
 
-Phase 8 approval authorizes an isolated Rust shadow ingestor for the selected
-Binance USD-M TRADE slice. Phase 9 requires a separate approval naming the exact
-venue/market/feed/hash range, production blast radius and rollback manifest.
+Phase 8 approval authorizes the isolated shared Rust core, the Binance USD-M
+TRADE reference shadow and bounded OKX/DNSE cross-venue conformance inputs. It
+does not authorize any Rust write authority. Phase 9 requires a separate
+approval naming the exact venue/market/feed/hash range, production blast radius
+and rollback manifest.
 
 ### Historical Foundation Approval
 
