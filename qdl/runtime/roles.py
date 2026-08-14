@@ -10,6 +10,8 @@ class RuntimeRole(str, Enum):
     API = "api"
     CONTROL = "control"
     HISTORY = "history"
+    QUERY_V2 = "query_v2"
+    STREAM_V2 = "stream_v2"
     COMPAT_COMBINED = "compat_combined"
 
 
@@ -17,6 +19,8 @@ _ROLE_OWNERSHIP = {
     RuntimeRole.API: frozenset({"query_api"}),
     RuntimeRole.CONTROL: frozenset({"control_api"}),
     RuntimeRole.HISTORY: frozenset({"history_api"}),
+    RuntimeRole.QUERY_V2: frozenset({"query_v2", "beta_read_only"}),
+    RuntimeRole.STREAM_V2: frozenset({"stream_v2", "beta_read_only", "leased_gateway"}),
     RuntimeRole.COMPAT_COMBINED: frozenset(
         {"query_api", "control_api", "history_api", "live_ingestion", "legacy_projection"}
     ),
@@ -73,11 +77,16 @@ class RuntimeRoleConfig:
         return "live_ingestion" in self.owned_capabilities
 
     def manifest(self) -> dict[str, object]:
+        if self.role is RuntimeRole.COMPAT_COMBINED:
+            authority = "v1_authoritative"
+        elif self.role in {RuntimeRole.QUERY_V2, RuntimeRole.STREAM_V2}:
+            authority = "v1_shadow_read_only"
+        else:
+            authority = "phase1_dark"
         return {
             "role": self.role.value,
             "owned_capabilities": sorted(self.owned_capabilities),
             "owns_live_ingestion": self.owns_live_ingestion,
             "config_revision": self.config_revision,
-            "authority": "v1_authoritative" if self.role is RuntimeRole.COMPAT_COMBINED else "phase1_dark",
+            "authority": authority,
         }
-

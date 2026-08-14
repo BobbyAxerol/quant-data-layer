@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import threading
 import time
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Mapping, Protocol
+
+from redis import Redis
+from redis.exceptions import RedisError
 
 from qdl.consumer import ConsumerManifest, ConsumerManifestRegistry
 from qdl.query import AccessPurpose, DataRequirement, FeedType
@@ -97,6 +101,78 @@ class InMemoryMinuteQuota:
                     status_code=429,
                 )
             self._windows[manifest.consumer_id] = (current_minute, count + 1)
+
+
+_REDIS_MINUTE_QUOTA = """
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+if count > tonumber(ARGV[1]) then
+  return {0, count}
+end
+return {1, count}
+"""
+
+
+class RedisMinuteQuota:
+    """Shared, atomic beta quota; Redis failure denies access rather than bypassing."""
+
+    def __init__(self, redis: Redis, *, prefix: str) -> None:
+        normalized = prefix.strip(": ")
+        if not normalized.startswith("qdl:beta:v2:"):
+            raise ValueError("shared quota requires a dedicated beta Redis prefix")
+        self.redis = redis
+        self.prefix = normalized
+
+    @classmethod
+    def from_url(cls, url: str, *, prefix: str) -> "RedisMinuteQuota":
+        return cls(
+            Redis.from_url(
+                url,
+                decode_responses=True,
+                socket_connect_timeout=0.5,
+                socket_timeout=0.5,
+                health_check_interval=30,
+            ),
+            prefix=prefix,
+        )
+
+    def _key(self, manifest: ConsumerManifest, minute: int) -> str:
+        identity = hashlib.sha256(manifest.consumer_id.encode()).hexdigest()[:24]
+        return f"{self.prefix}:quota:minute:{identity}:{minute}"
+
+    def consume(self, manifest: ConsumerManifest) -> None:
+        minute = int(time.time() // 60)
+        try:
+            allowed, _ = self.redis.eval(
+                _REDIS_MINUTE_QUOTA,
+                1,
+                self._key(manifest, minute),
+                manifest.quotas.requests_per_minute,
+                120_000,
+            )
+        except RedisError as error:
+            raise DataPlaneAccessError(
+                "DEPENDENCY_UNAVAILABLE",
+                "shared request quota is unavailable",
+                status_code=503,
+            ) from error
+        if int(allowed) != 1:
+            raise DataPlaneAccessError(
+                "RATE_LIMITED",
+                "consumer request quota is exhausted",
+                status_code=429,
+            )
+
+    def ping(self) -> bool:
+        try:
+            return bool(self.redis.ping())
+        except RedisError:
+            return False
+
+    def close(self) -> None:
+        self.redis.close()
 
 
 @dataclass(frozen=True, slots=True)

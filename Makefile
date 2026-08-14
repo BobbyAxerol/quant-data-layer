@@ -1,4 +1,4 @@
-.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test python-test rust-test
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test python-test rust-test
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
 RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
@@ -128,6 +128,17 @@ phase7-migration-smoke:
 
 phase7-test: phase7-build
 	docker run --rm --tmpfs /app/logs:rw,uid=10001,gid=10001,size=16m -v "$(CURDIR):/app:ro" -w /app $(PHASE7_TEST_IMAGE) python -m unittest -v tests.test_fund_phase7_contract_security tests.test_fund_phase5_api tests.test_fund_phase5_contracts tests.test_fund_phase5_consumer tests.test_fund_phase5_stream_sdk tests.test_fund_phase5_e2e tests.test_fund_phase5_load
+
+phase71-test: phase7-build
+	docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,size=256m --tmpfs /app/logs:rw,uid=10001,gid=10001,size=16m $(PHASE7_TEST_IMAGE) python -m unittest -v tests.test_fund_phase71_beta_runtime tests.test_fund_phase7_contract_security
+
+phase71-topology-test: phase7-build
+	QDL_BETA_IMAGE="$$(docker image inspect $(PHASE7_TEST_IMAGE) --format '{{.Id}}')" \
+	QDL_BETA_REDIS_IMAGE="$$(docker image inspect redis:7.2-alpine --format '{{.Id}}')" \
+	QDL_BETA_INIT_IMAGE="$$(docker image inspect redis:7.2-alpine --format '{{.Id}}')" \
+	QDL_BETA_CURSOR_KEYS_JSON='{"beta-k1":"phase71-ci-cursor-key-material-32-bytes"}' \
+	QDL_BETA_JWT_KEYS_JSON='{"phase7-test":"phase7-test-secret-material-32bytes"}' \
+	scripts/phase71_beta_topology_smoke.sh
 
 phase7-clean:
 	docker image rm $(PHASE7_TEST_IMAGE) 2>/dev/null || true

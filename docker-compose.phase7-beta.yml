@@ -1,0 +1,176 @@
+x-beta-common: &beta-common
+  image: ${QDL_BETA_IMAGE:?set QDL_BETA_IMAGE to an immutable sha256 image ID or digest}
+  user: "10001:10001"
+  read_only: true
+  restart: unless-stopped
+  cap_drop: ["ALL"]
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  mem_limit: 512m
+  cpus: 0.75
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=32m,uid=10001,gid=10001
+    - /app/logs:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001
+  networks: [qdl_beta_internal, qdl_beta_ingress]
+  profiles: ["phase7-beta"]
+  environment: &beta-environment
+    QDL_ENVIRONMENT: paper
+    QDL_CONFIG_REVISION: ${QDL_BETA_CONFIG_REVISION:-phase7-beta-1}
+    QDL_BETA_AUTHORITY_REVISION: ${QDL_BETA_AUTHORITY_REVISION:-1}
+    QDL_BETA_SCHEMA_DIGEST: ${QDL_BETA_SCHEMA_DIGEST:-bea44d3920db52f5893eb773aa195ae7f4abd2684d5ca65d904e995934fabcea}
+    QDL_BETA_STATE_DIR: /var/lib/qdl-beta
+    QDL_BETA_CONSUMER_MANIFESTS: /app/consumers/shadow/alpha-okx-reference.yaml:/app/consumers/shadow/trading-system-binance-execution.yaml
+    QDL_BETA_REDIS_URL: redis://qdl_beta_redis:6379/0
+    QDL_BETA_REDIS_PREFIX: ${QDL_BETA_REDIS_PREFIX:-qdl:beta:v2:paper:phase7}
+    QDL_BETA_CONSUMER_GROUP: ${QDL_BETA_CONSUMER_GROUP:-qdl-v2-beta-phase7}
+    QDL_BETA_CURSOR_KEYS_JSON: ${QDL_BETA_CURSOR_KEYS_JSON:?set an isolated beta cursor keyring JSON}
+    QDL_BETA_CURSOR_ACTIVE_KEY_ID: ${QDL_BETA_CURSOR_ACTIVE_KEY_ID:-beta-k1}
+    QDL_BETA_CURSOR_TTL_SECONDS: ${QDL_BETA_CURSOR_TTL_SECONDS:-3600}
+    QDL_BETA_MAX_REQUEST_BYTES: ${QDL_BETA_MAX_REQUEST_BYTES:-1048576}
+    QDL_BETA_MAX_CONCURRENT_REQUESTS: ${QDL_BETA_MAX_CONCURRENT_REQUESTS:-200}
+    QDL_BETA_MAX_CONCURRENT_RPCS: ${QDL_BETA_MAX_CONCURRENT_RPCS:-200}
+    QDL_BETA_MAX_STREAMS: ${QDL_BETA_MAX_STREAMS:-100}
+    QDL_BETA_MAX_BUFFER_EVENTS: ${QDL_BETA_MAX_BUFFER_EVENTS:-2000}
+    QDL_BETA_MAX_REPLAY_EVENTS: ${QDL_BETA_MAX_REPLAY_EVENTS:-5000}
+    QDL_BETA_LEASE_SHARD_ID: stream-v2-public-beta
+    QDL_BETA_LEASE_TTL_SECONDS: ${QDL_BETA_LEASE_TTL_SECONDS:-15}
+    QDL_BETA_LEASE_RENEW_SECONDS: ${QDL_BETA_LEASE_RENEW_SECONDS:-5}
+    QDL_DATA_JWT_ISSUER: ${QDL_BETA_JWT_ISSUER:-https://identity.qdl.beta.invalid}
+    QDL_DATA_JWT_AUDIENCE: ${QDL_BETA_JWT_AUDIENCE:-qdl-v2-beta}
+    QDL_DATA_JWT_KEYS_JSON: ${QDL_BETA_JWT_KEYS_JSON:?set an isolated beta workload verification keyring JSON}
+    QDL_DATA_JWT_ALGORITHMS: ${QDL_BETA_JWT_ALGORITHMS:-HS256}
+    QDL_DATA_JWT_MAX_LIFETIME_SECONDS: ${QDL_BETA_JWT_MAX_LIFETIME_SECONDS:-900}
+
+services:
+  qdl_beta_state_init:
+    image: ${QDL_BETA_INIT_IMAGE:?set QDL_BETA_INIT_IMAGE to an immutable sha256 image ID or digest}
+    user: "0:0"
+    command: ["sh", "-c", "chown 10001:10001 /query /stream && chmod 0700 /query /stream"]
+    restart: "no"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER"]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - qdl_beta_query_state:/query
+      - qdl_beta_stream_state:/stream
+    networks: [qdl_beta_internal]
+    profiles: ["phase7-beta"]
+
+  qdl_beta_redis:
+    image: ${QDL_BETA_REDIS_IMAGE:?set QDL_BETA_REDIS_IMAGE to an immutable sha256 image ID or digest}
+    user: "999:999"
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 64mb
+      - --maxmemory-policy
+      - noeviction
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 96m
+    cpus: 0.25
+    tmpfs:
+      - /data:rw,noexec,nosuid,nodev,size=16m,uid=999,gid=999
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+    networks: [qdl_beta_internal]
+    profiles: ["phase7-beta"]
+
+  qdl_query_v2_beta:
+    <<: *beta-common
+    command: ["python", "-m", "uvicorn", "app.entrypoints.query_v2:app", "--host", "0.0.0.0", "--port", "18100", "--no-access-log"]
+    environment:
+      <<: *beta-environment
+      QDL_BETA_INSTANCE_ID: query-v2-beta-1
+      QDL_BETA_HTTP_PORT: "18100"
+      QDL_BETA_GRPC_PORT: "18110"
+      QDL_BETA_AUDIT_PATH: /var/lib/qdl-beta/query-v2-audit.jsonl
+    volumes:
+      - qdl_beta_query_state:/var/lib/qdl-beta
+    ports:
+      - "127.0.0.1:${QDL_BETA_QUERY_HOST_PORT:-18100}:18100"
+    depends_on:
+      qdl_beta_state_init:
+        condition: service_completed_successfully
+      qdl_beta_redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18100/health/ready', timeout=1)"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  qdl_stream_v2_beta_a:
+    <<: *beta-common
+    command: ["python", "-m", "app.entrypoints.stream_v2"]
+    environment:
+      <<: *beta-environment
+      QDL_BETA_INSTANCE_ID: stream-v2-beta-a
+      QDL_BETA_HTTP_PORT: "18101"
+      QDL_BETA_GRPC_PORT: "18110"
+      QDL_BETA_AUDIT_PATH: /var/lib/qdl-beta/stream-v2-a-audit.jsonl
+    volumes:
+      - qdl_beta_stream_state:/var/lib/qdl-beta
+    ports:
+      - "127.0.0.1:${QDL_BETA_STREAM_A_HEALTH_PORT:-18101}:18101"
+      - "127.0.0.1:${QDL_BETA_STREAM_A_GRPC_PORT:-18110}:18110"
+    depends_on:
+      qdl_beta_state_init:
+        condition: service_completed_successfully
+      qdl_beta_redis:
+        condition: service_healthy
+
+  qdl_stream_v2_beta_b:
+    <<: *beta-common
+    command: ["python", "-m", "app.entrypoints.stream_v2"]
+    environment:
+      <<: *beta-environment
+      QDL_BETA_INSTANCE_ID: stream-v2-beta-b
+      QDL_BETA_HTTP_PORT: "18102"
+      QDL_BETA_GRPC_PORT: "18110"
+      QDL_BETA_AUDIT_PATH: /var/lib/qdl-beta/stream-v2-b-audit.jsonl
+    volumes:
+      - qdl_beta_stream_state:/var/lib/qdl-beta
+    ports:
+      - "127.0.0.1:${QDL_BETA_STREAM_B_HEALTH_PORT:-18102}:18102"
+      - "127.0.0.1:${QDL_BETA_STREAM_B_GRPC_PORT:-18111}:18110"
+    depends_on:
+      qdl_beta_state_init:
+        condition: service_completed_successfully
+      qdl_beta_redis:
+        condition: service_healthy
+
+networks:
+  qdl_beta_internal:
+    internal: true
+    labels:
+      qdl.phase: "7.1"
+      qdl.authority: "none"
+  qdl_beta_ingress:
+    labels:
+      qdl.phase: "7.1"
+      qdl.exposure: "loopback-only"
+
+volumes:
+  qdl_beta_query_state:
+    labels:
+      qdl.phase: "7.1"
+      qdl.legacy-shared: "false"
+  qdl_beta_stream_state:
+    labels:
+      qdl.phase: "7.1"
+      qdl.legacy-shared: "false"

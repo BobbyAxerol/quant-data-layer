@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass
 
@@ -54,7 +55,8 @@ class GrpcDataPlaneInterceptor(grpc.aio.ServerInterceptor):
                         "workload bearer token is required",
                         status_code=401,
                     )
-                access = self._identity.authenticate(
+                access = await asyncio.to_thread(
+                    self._identity.authenticate,
                     authorization.removeprefix("Bearer ").strip(),
                     consumer_id=consumer_id,
                 )
@@ -69,6 +71,8 @@ class GrpcDataPlaneInterceptor(grpc.aio.ServerInterceptor):
                     status = grpc.StatusCode.UNAUTHENTICATED
                 elif getattr(error, "status_code", None) == 429:
                     status = grpc.StatusCode.RESOURCE_EXHAUSTED
+                elif getattr(error, "status_code", None) == 503:
+                    status = grpc.StatusCode.UNAVAILABLE
                 else:
                     status = grpc.StatusCode.PERMISSION_DENIED
                 await context.abort(status, detail)

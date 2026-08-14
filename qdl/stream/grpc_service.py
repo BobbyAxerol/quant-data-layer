@@ -16,6 +16,7 @@ from qdl.security import (
     GrpcDataPlaneInterceptor,
     current_grpc_data_access,
 )
+from qdl.runtime import GatewayFenced
 from qdl.stream.gateway import DurableStreamGateway, SlowConsumer, StreamCapacityExceeded
 from qdl.transport import CursorExpired, StoredEvent
 
@@ -127,9 +128,9 @@ class GrpcMarketDataService:
                 token=request.cursor_token,
                 max_buffer_events=buffer_events,
             )
-            high = self.gateway.handoff.capture_watermark(
+            high = (await self.gateway.capture_watermark(
                 stream=stream, partition_key=partition_key
-            ).offset
+            )).offset
             yield query_pb2.SubscribeResponse(record=query_pb2.StreamRecord(
                 resume_token=request.cursor_token,
                 control=query_pb2.StreamControl(
@@ -140,7 +141,7 @@ class GrpcMarketDataService:
                 ),
             ))
             for stored in subscription.initial:
-                record = subscription.record(stored)
+                record = await subscription.record(stored)
                 yield query_pb2.SubscribeResponse(
                     record=self._event(record.stored, record.resume_token)
                 )
@@ -158,6 +159,7 @@ class GrpcMarketDataService:
                 yield query_pb2.SubscribeResponse(
                     record=self._event(record.stored, record.resume_token)
                 )
+                subscription.mark_delivered()
         except SlowConsumer as error:
             yield query_pb2.SubscribeResponse(record=query_pb2.StreamRecord(
                 resume_token=subscription.token if subscription else request.cursor_token,
@@ -165,14 +167,16 @@ class GrpcMarketDataService:
                     state=query_pb2.STREAM_CONTROL_STATE_BACKPRESSURE,
                     code="RATE_LIMITED",
                     detail=str(error),
-                    high_watermark=self.gateway.handoff.capture_watermark(
+                    high_watermark=(await self.gateway.capture_watermark(
                         stream=stream, partition_key=partition_key
-                    ).offset,
+                    )).offset,
                 ),
             ))
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, f"RATE_LIMITED:{error}")
         except StreamCapacityExceeded as error:
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, f"RATE_LIMITED:{error}")
+        except GatewayFenced as error:
+            await context.abort(grpc.StatusCode.UNAVAILABLE, f"GATEWAY_FENCED:{error}")
         except CursorExpired as error:
             await context.abort(grpc.StatusCode.OUT_OF_RANGE, f"CURSOR_EXPIRED:{error}")
         except (ValueError, ReplayGapError) as error:
@@ -201,7 +205,7 @@ class GrpcMarketDataService:
             )
             replay_limit = request.limit or 1000
             request_access.access.require_stream_buffer(replay_limit)
-            records = self.gateway.handoff.replay(
+            records = await self.gateway.replay(
                 token=token,
                 consumer_id=request.consumer_id,
                 stream=scope.stream,
@@ -209,11 +213,10 @@ class GrpcMarketDataService:
                 limit=replay_limit,
             )
             for stored in records:
-                grant = self.gateway.handoff.advance_token(
+                grant = await self.gateway.advance_token(
                     token=token,
                     consumer_id=request.consumer_id,
                     cursor=stored.cursor,
-                    ttl_seconds=self.gateway.cursor_ttl_seconds,
                 )
                 token = grant.token
                 yield query_pb2.ReplayResponse(record=self._event(stored, token))
@@ -223,6 +226,8 @@ class GrpcMarketDataService:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"CURSOR_INVALID:{error}")
         except DataPlaneAccessError as error:
             await context.abort(grpc.StatusCode.PERMISSION_DENIED, error.detail)
+        except GatewayFenced as error:
+            await context.abort(grpc.StatusCode.UNAVAILABLE, f"GATEWAY_FENCED:{error}")
 
     async def get_snapshot(self, request: query_pb2.GetSnapshotRequest, context):
         try:
@@ -313,12 +318,25 @@ def create_grpc_server(
     *,
     identity_service: DataPlaneIdentityService,
     maximum_concurrent_rpcs: int = 10_000,
+    max_receive_message_bytes: int = 1_048_576,
+    max_send_message_bytes: int = 4_194_304,
 ) -> grpc.aio.Server:
-    if maximum_concurrent_rpcs <= 0:
-        raise ValueError("maximum_concurrent_rpcs must be positive")
+    if min(
+        maximum_concurrent_rpcs,
+        max_receive_message_bytes,
+        max_send_message_bytes,
+    ) <= 0:
+        raise ValueError("gRPC concurrency and message bounds must be positive")
     server = grpc.aio.server(
         interceptors=(GrpcDataPlaneInterceptor(identity_service),),
         maximum_concurrent_rpcs=maximum_concurrent_rpcs,
+        options=(
+            ("grpc.max_receive_message_length", max_receive_message_bytes),
+            ("grpc.max_send_message_length", max_send_message_bytes),
+            ("grpc.keepalive_time_ms", 30_000),
+            ("grpc.keepalive_timeout_ms", 5_000),
+            ("grpc.http2.max_pings_without_data", 2),
+        ),
     )
     add_market_data_service(server, service)
     return server

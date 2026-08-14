@@ -124,7 +124,19 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.ci.yml
           run --rm test_runner python -m unittest -v
           tests.test_fund_phase7_contract_security
+          tests.test_fund_phase71_beta_runtime
           tests.test_phase0_contract_golden tests.test_fund_phase5_contracts
+
+      - name: Run isolated Phase 7.1 beta topology and rollback gate
+        env:
+          QDL_BETA_CURSOR_KEYS_JSON: '{"beta-k1":"phase71-ci-cursor-key-material-32-bytes"}'
+          QDL_BETA_JWT_KEYS_JSON: '{"phase7-test":"phase7-test-secret-material-32bytes"}'
+        run: |
+          docker image inspect redis:7.2-alpine >/dev/null 2>&1 || docker pull redis:7.2-alpine
+          export QDL_BETA_IMAGE="$(docker image inspect data-layer:v0.1.0 --format '{{.Id}}')"
+          export QDL_BETA_REDIS_IMAGE="$(docker image inspect redis:7.2-alpine --format '{{.Id}}')"
+          export QDL_BETA_INIT_IMAGE="${QDL_BETA_REDIS_IMAGE}"
+          scripts/phase71_beta_topology_smoke.sh
 
       - name: Run additive PostgreSQL migration gate
         run: bash scripts/phase5_migration_smoke.sh

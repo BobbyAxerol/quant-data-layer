@@ -49,6 +49,8 @@ from qdl.security import (
     DataPlaneIdentityService,
     DataPlanePermission,
 )
+from qdl.runtime.bounds import BoundedRequestMiddleware, RequestBounds
+from qdl.runtime.readiness import FailClosedReadiness
 
 
 router = APIRouter(prefix="/v2", tags=["market-data-v2"])
@@ -598,14 +600,12 @@ async def readiness(
 
 
 @router.get("/system/readiness", response_model=SystemReadinessSummary)
-async def system_readiness(access: DataPlaneAccess = Depends(_data_access)):
+async def system_readiness(
+    request: Request,
+    access: DataPlaneAccess = Depends(_data_access),
+):
     access.require_permission(DataPlanePermission.STATUS_READ)
-    return {
-        "schema": "qdl.system-readiness.v2",
-        "status": "SHADOW_READY",
-        "authority": "V1",
-        "v2_consumer_activation": "MANIFEST_CONTROLLED",
-    }
+    return await request.app.state.v2_runtime_readiness.public_summary()
 
 
 @router.get("/data-quality/gaps", response_model=GapListResponse)
@@ -627,10 +627,13 @@ def create_v2_app(
     service: V2QueryService,
     *,
     identity_service: DataPlaneIdentityService | None = None,
+    readiness_service=None,
+    request_bounds: RequestBounds | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Quant Data Layer V2", version="2.0.0-shadow")
     app.state.v2_query_service = service
     app.state.v2_identity_service = identity_service
+    app.state.v2_runtime_readiness = readiness_service or FailClosedReadiness()
     app.state.runtime_manifest = {
         "role": "api_v2",
         "owns_live_ingestion": False,
@@ -638,6 +641,8 @@ def create_v2_app(
         "authority": "SHADOW",
     }
     app.include_router(router)
+    if request_bounds is not None:
+        app.add_middleware(BoundedRequestMiddleware, bounds=request_bounds)
     default_openapi = app.openapi
 
     def data_plane_openapi():

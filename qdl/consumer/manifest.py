@@ -243,6 +243,17 @@ class ConsumerManifestRegistry:
         except KeyError as error:
             raise KeyError("workload subject has no registered consumer manifest") from error
 
+    @property
+    def count(self) -> int:
+        return len(self._by_id)
+
+    @property
+    def revisions(self) -> tuple[tuple[str, int, str], ...]:
+        return tuple(sorted(
+            (item.consumer_id, item.manifest_revision, item.manifest_sha256)
+            for item in self._by_id.values()
+        ))
+
 
 @dataclass(frozen=True)
 class ConsumerMigration:
