@@ -1,0 +1,40 @@
+{
+  "authority": "V1_SHADOW_READ_ONLY",
+  "config_revision": "phase7-beta-1",
+  "decision": "PASS",
+  "image_id": "sha256:e640b0e7afe54790ebe0d6ee240e8d45ec86a09b247411dd7d3087cb261a6bfb",
+  "results": [
+    {
+      "case": "query_dependencies_available",
+      "expected": "READY/200",
+      "observed": "READY/200"
+    },
+    {
+      "case": "active_gateway_lease",
+      "expected": "READY/200",
+      "observed": "READY/200 epoch=1"
+    },
+    {
+      "case": "passive_gateway_lease",
+      "expected": "STANDBY/503",
+      "observed": "STANDBY/503"
+    },
+    {
+      "case": "required_dependency_failure_and_recovery",
+      "expected": "NOT_READY then READY",
+      "observed": "NOT_READY then READY"
+    },
+    {
+      "case": "shared_quota_backend_unavailable",
+      "expected": "fail closed 503",
+      "observed": "fail closed 503"
+    },
+    {
+      "case": "request_bounds",
+      "expected": "413/414/415/429/504",
+      "observed": "413/414/415/429/504"
+    }
+  ],
+  "schema": "qdl.phase7.1.readiness-matrix.v1",
+  "tested_commit": "5e013be6431944f199beb5bc26de7d9e537006d5"
+}

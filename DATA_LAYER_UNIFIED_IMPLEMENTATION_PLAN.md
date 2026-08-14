@@ -976,7 +976,7 @@ Certify production reliability, security, resource efficiency and operational re
 
 ## 11. Phase 7 - V2 Public Beta And Consumer Canary
 
-**Status:** `IN_PROGRESS` (`7.0 COMPLETE`; `7.1-7.3 NOT STARTED`)
+**Status:** `IN_PROGRESS` (`7.0-7.1 COMPLETE`; `7.2-7.3 NOT STARTED`)
 
 ### Goal
 
@@ -1511,11 +1511,33 @@ Phase 7 is `COMPLETE` only when all conditions below pass:
   [auth matrix](upgrade/evidence/phase7-auth-matrix.json).
 - No V1 runtime, source authority, provider connection or production state was
   restarted or mutated. This completion does not authorize beta deployment.
+- `7.1 COMPLETE` on 2026-08-14. Added isolated non-root `query_v2` and
+  active/passive `stream_v2` roles, dependency-derived readiness, a monotonic
+  Redis fencing lease, atomic shared Redis quotas, per-partition gap-free
+  replay/live barriers and bounded HTTP/gRPC/resource controls.
+- The real topology gate authenticated a beta query, fenced one stream owner,
+  promoted the passive owner from epoch `1` to `2`, then removed every beta
+  container/network/volume. Canonical V1 container IDs, images, restart counts,
+  networks and mounts were unchanged; production Redis contained zero beta keys
+  before and after.
+- Full Python regression passed 296 tests with five existing conditional skips.
+  Rust fmt/clippy with warnings denied and 11 Rust tests passed. Both Buf
+  breaking baselines and the frozen OpenAPI digest passed unchanged. The tested
+  non-root image, SBOM and SHADOW release manifest are immutable and verified.
+- Evidence: [Phase 7.1 report](upgrade/evidence/PHASE71_ISOLATED_BETA_RUNTIME_REPORT.md),
+  [readiness matrix](upgrade/evidence/phase7-readiness-matrix.json),
+  [cursor handoff](upgrade/evidence/phase7-cursor-handoff.json),
+  [topology rollback](upgrade/evidence/phase7-topology-rollback.json) and
+  [release bundle](upgrade/evidence/phase71-release-bundle/release-manifest.json).
+- Phase 7.1 activates no consumer data source and does not authorize execution
+  dependency or beta authority. Real monitoring and paper-alpha activation are
+  exclusively Phase 7.2 work.
 
 ### Technical Debt / Decision Gate
 
-- The first monitoring consumer, paper alpha, beta hostname, JWT issuer/audience,
-  token authority and cursor TTL must be named in the deployment manifest.
+- Phase 7.2 must bind the approved canonical catalog/query source and activate
+  the first monitoring consumer before the disposable paper alpha. Until then,
+  instrument data correctly returns `DATA_NOT_READY`.
 - A certified bounded bridge may support Phase 7 while V1 remains authoritative,
   but it cannot satisfy Phase 8 authority-capable or Phase 9 primary gates.
 - The beta stream topology must choose active/passive or partition-affine
