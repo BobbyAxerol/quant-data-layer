@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phases 7-9 are planned for V2 public beta and evidence-driven Rust realtime-core promotion. No runtime cutover has started.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 public beta is in progress with subphases 7.0-7.2 complete and 7.3 pending; Phases 8-9 remain planned for evidence-driven Rust realtime-core promotion. V1 remains authoritative and no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -976,7 +976,7 @@ Certify production reliability, security, resource efficiency and operational re
 
 ## 11. Phase 7 - V2 Public Beta And Consumer Canary
 
-**Status:** `IN_PROGRESS` (`7.0-7.1 COMPLETE`; `7.2-7.3 NOT STARTED`)
+**Status:** `IN_PROGRESS` (`7.0-7.2 COMPLETE`; `7.3 NOT STARTED`)
 
 ### Goal
 
@@ -1532,12 +1532,36 @@ Phase 7 is `COMPLETE` only when all conditions below pass:
 - Phase 7.1 activates no consumer data source and does not authorize execution
   dependency or beta authority. Real monitoring and paper-alpha activation are
   exclusively Phase 7.2 work.
+- `7.2 COMPLETE` on 2026-08-14. Added a strict canonical source catalog, bounded
+  V1 read-only bridge, shared durable query/stream watermark, per-consumer
+  signed handoff cursors, monitoring consumer and disposable paper-alpha
+  consumer. Both consumers use only the V2 SDK and explicitly forbid execution
+  dependency.
+- The real-provider topology canary seeded 117 closed BTCUSDT 1m bars, started
+  monitoring before paper, observed/checkpointed offsets `118/119`, promoted the
+  passive gateway from epoch `1` to `2`, then resumed the paper consumer at
+  offset `120` on the next real closed bar. V1/V2 mismatch count and restarted
+  signal-state mismatch were both zero.
+- Stale data, missing closed-bar intervals, cursor scope/expiry, credential
+  rotation, bounded slow-consumer recovery, final-only authenticated ingest,
+  duplicate ingest, V1 fallback and exact topology rollback passed. No generated
+  market event entered real evidence.
+- Full Python regression passed 305 tests with five existing conditional skips;
+  Rust fmt/clippy with warnings denied and 11 tests passed. Both Buf breaking
+  baselines and the frozen OpenAPI digest remained unchanged.
+- Evidence: [Phase 7.2 report](upgrade/evidence/PHASE72_CONSUMER_CANARY_REPORT.md),
+  [consumer parity](upgrade/evidence/phase7-consumer-parity.json),
+  [SDK checkpoint](upgrade/evidence/phase7-sdk-checkpoint.json) and
+  [topology canary](upgrade/evidence/phase72-topology-canary.json).
+- V1 remains authoritative and was not restarted or reconfigured. Phase 7.2
+  does not authorize V2 execution dependency, production durable groups or
+  public authority.
 
 ### Technical Debt / Decision Gate
 
-- Phase 7.2 must bind the approved canonical catalog/query source and activate
-  the first monitoring consumer before the disposable paper alpha. Until then,
-  instrument data correctly returns `DATA_NOT_READY`.
+- Phase 7.3 must complete normal/burst capacity, adversarial security, resource
+  growth and final credential/state cleanup evidence before an explicit
+  `BETA-GO` or `BETA-NO-GO` decision.
 - A certified bounded bridge may support Phase 7 while V1 remains authoritative,
   but it cannot satisfy Phase 8 authority-capable or Phase 9 primary gates.
 - The beta stream topology must choose active/passive or partition-affine

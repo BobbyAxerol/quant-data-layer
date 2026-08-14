@@ -1,0 +1,12 @@
+{
+  "checkpoint_after_failover": 120,
+  "checkpoint_before_failover": 119,
+  "consumer_id": "phase7-paper-alpha-binance",
+  "decision": "PASS",
+  "execution_dependency": "FORBIDDEN",
+  "restart_state_sha256": "ccfe11f93d13cc76624ffb43bee16c090e5133192416b6b9dce6b360a4a292f7",
+  "schema": "qdl.phase7.2.sdk-checkpoint.v1",
+  "snapshot_rebuild_state_sha256": "ccfe11f93d13cc76624ffb43bee16c090e5133192416b6b9dce6b360a4a292f7",
+  "state_mismatch": 0,
+  "warmup_then_replay_live": true
+}
