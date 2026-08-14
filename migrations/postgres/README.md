@@ -13,3 +13,7 @@ Validation runs twice against a clean disposable PostgreSQL instance and once
 against an instance containing an unrelated legacy table. No production-like
 database or volume is used by the validation script.
 
+Phase 7 adds `0005_phase7_data_plane_identity.sql`. It binds an authenticated
+workload subject and environment to one immutable consumer-manifest revision,
+including allowed purposes, data-plane permissions, execution-dependency policy
+and bounded quotas. It does not store market events or alter V1 tables.

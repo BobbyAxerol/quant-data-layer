@@ -6,6 +6,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from qdl.api_v2 import create_v2_app
+from qdl.consumer import ConsumerManifestLoader
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
     AssetClass,
@@ -14,9 +15,12 @@ from qdl.domain.instrument import (
     InstrumentRegistry,
     ProductType,
 )
+from tests.phase7_support import make_identity, make_token, manifest_mapping
 from qdl.query import (
     AccessPurpose,
+    BarLifecycle,
     ConsumerGrade,
+    ContractMetadata,
     CoverageStatus,
     DataProduct,
     DataRequirement,
@@ -32,6 +36,20 @@ from qdl.query import (
     SourceMetadata,
     V2QueryService,
 )
+
+
+def contract() -> ContractMetadata:
+    return ContractMetadata(
+        schema_digest="a" * 64,
+        contract_version="2.0.0-beta.1",
+        normalizer_version="phase7-test",
+        adapter_version="fixture-v1",
+        instrument_catalog_revision=1,
+        source_policy_revision=1,
+        authority_revision=1,
+        config_revision=1,
+        correlation_id="phase7-api-test",
+    )
 
 
 def record(venue: str, market: str, symbol: str) -> InstrumentRecord:
@@ -87,13 +105,23 @@ class Phase5ApiTests(unittest.TestCase):
                 revision=0,
                 payload={
                     "open_time_ns": now - (2 - index) * 60_000_000_000,
+                    "close_time_ns": now - (1 - index) * 60_000_000_000,
+                    "open": str(60_000 + index),
+                    "high": str(60_001 + index),
+                    "low": str(59_999 + index),
                     "close": str(60_000 + index),
+                    "volume": "12.5",
+                    "trade_count": 10,
+                    "origin": "VENUE_NATIVE",
                     "is_final": True,
                 },
                 source=source,
                 quality=quality,
+                contract=contract(),
                 cursor=f"cursor-{index + 1}",
                 snapshot_id="snapshot-2",
+                watermark_offset=index + 1,
+                bar_lifecycle=BarLifecycle.FINAL,
             )
             for index in range(2)
         )
@@ -130,7 +158,43 @@ class Phase5ApiTests(unittest.TestCase):
             backend=self.backend,
             entitlements=EntitlementPolicy(grants),
         )
-        self.client = TestClient(create_v2_app(self.service), raise_server_exceptions=False)
+        self.consumer_id = "phase5-api-shadow"
+        self.subject = "spiffe://qdl/paper/phase5-api-shadow"
+        manifest_payload = manifest_mapping(
+            consumer_id=self.consumer_id,
+            subject=self.subject,
+            instrument_uid=self.binance.instrument_uid,
+            source_policy_id="alpha_crypto_primary_v1",
+        )
+        base_requirement = manifest_payload["spec"]["requirements"][0]
+        manifest_payload["spec"]["purposes"] = [
+            "INTERNAL_ALPHA", "INTERNAL_EXECUTION"
+        ]
+        manifest_payload["spec"]["requirements"] = [
+            base_requirement,
+            {**base_requirement, "instrument_uid": self.okx.instrument_uid},
+            {**base_requirement, "consumer_grade": "EXECUTION"},
+            {**base_requirement, "source_policy_id": "alpha_crypto_reference_v1"},
+            {
+                **base_requirement,
+                "consumer_grade": "EXECUTION",
+                "source_policy_id": "alpha_crypto_reference_v1",
+            },
+        ]
+        self.manifest = ConsumerManifestLoader.from_mapping(manifest_payload)
+        self.identity = make_identity(self.manifest)
+        self.client = TestClient(
+            create_v2_app(self.service, identity_service=self.identity),
+            raise_server_exceptions=False,
+        )
+        self.client.headers.update(self.headers())
+
+    def headers(self, purpose: str = "INTERNAL_ALPHA"):
+        return {
+            "Authorization": f"Bearer {make_token(self.subject)}",
+            "X-QDL-Consumer-ID": self.consumer_id,
+            "X-QDL-Purpose": purpose,
+        }
 
     def params(self, **overrides):
         values = {
@@ -203,7 +267,7 @@ class Phase5ApiTests(unittest.TestCase):
         response = self.client.post(
             "/v2/market-data/warmup:batch",
             json={
-                "consumer_id": "alpha-shadow",
+                "consumer_id": self.consumer_id,
                 "require_all": False,
                 "requirements": [existing, missing],
             },
@@ -219,7 +283,7 @@ class Phase5ApiTests(unittest.TestCase):
             "/v2/system/readiness:check",
             headers={"X-QDL-Purpose": "INTERNAL_EXECUTION"},
             json={
-                "consumer_id": "trading-system-shadow",
+                "consumer_id": self.consumer_id,
                 "requirements": [invalid_execution],
             },
         )
@@ -246,7 +310,7 @@ class Phase5ApiTests(unittest.TestCase):
             params=self.params(consumer_grade="EXECUTION"),
         )
         self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json()["code"], "SOURCE_NON_AUTHORITATIVE")
+        self.assertEqual(response.json()["code"], "DATA_STALE")
         self.assertEqual(response.json()["quality_state"], "STALE")
 
         denied_service = V2QueryService(
@@ -254,7 +318,11 @@ class Phase5ApiTests(unittest.TestCase):
             backend=self.backend,
             entitlements=EntitlementPolicy(()),
         )
-        denied_client = TestClient(create_v2_app(denied_service), raise_server_exceptions=False)
+        denied_client = TestClient(
+            create_v2_app(denied_service, identity_service=self.identity),
+            raise_server_exceptions=False,
+        )
+        denied_client.headers.update(self.headers())
         denied = denied_client.get(
             f"/v2/market-data/{self.binance.instrument_uid}/warmup",
             params=self.params(limit=2),
@@ -270,6 +338,7 @@ class Phase5ApiTests(unittest.TestCase):
                 **{
                     **current.__dict__,
                     "payload": {**current.payload, "is_final": False},
+                    "bar_lifecycle": BarLifecycle.IN_PROGRESS,
                     "quality": QualityMetadata(
                         "STALE", 20_000, False, True, False,
                         "alpha_crypto_primary_v1",

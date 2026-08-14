@@ -5,6 +5,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from qdl.domain.instrument import InstrumentRecord, InstrumentRegistry
 from qdl.query.contracts import CoverageStatus, DataRequirement, FeedType
+from qdl.query.lifecycle import BarLifecycle
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,43 @@ class QualityMetadata:
 
 
 @dataclass(frozen=True)
+class ContractMetadata:
+    schema_digest: str
+    contract_version: str
+    normalizer_version: str
+    adapter_version: str
+    instrument_catalog_revision: int
+    source_policy_revision: int
+    authority_revision: int
+    config_revision: int
+    correlation_id: str
+
+    def __post_init__(self) -> None:
+        if len(self.schema_digest) != 64 or any(
+            character not in "0123456789abcdef" for character in self.schema_digest
+        ):
+            raise ValueError("contract schema digest must be lowercase SHA-256")
+        if not all(
+            value.strip()
+            for value in (
+                self.contract_version,
+                self.normalizer_version,
+                self.adapter_version,
+                self.correlation_id,
+            )
+        ):
+            raise ValueError("contract version and lineage identifiers are required")
+        revisions = (
+            self.instrument_catalog_revision,
+            self.source_policy_revision,
+            self.authority_revision,
+            self.config_revision,
+        )
+        if any(value < 1 for value in revisions):
+            raise ValueError("contract lineage revisions must be positive")
+
+
+@dataclass(frozen=True)
 class MarketDataItem:
     instrument_uid: str
     instrument_id: str
@@ -47,11 +85,14 @@ class MarketDataItem:
     payload: dict[str, Any]
     source: SourceMetadata
     quality: QualityMetadata
+    contract: ContractMetadata
     interval: str | None = None
     cursor: str | None = None
     snapshot_id: str | None = None
     revision: int = 0
     watermark_offset: int = 0
+    bar_lifecycle: BarLifecycle | None = None
+    supersedes_event_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.instrument_id.strip():
@@ -64,6 +105,19 @@ class MarketDataItem:
             raise ValueError("bar item requires interval")
         if self.feed is not FeedType.BAR and self.interval is not None:
             raise ValueError("interval is valid only for bar items")
+        if self.feed is FeedType.BAR:
+            if self.bar_lifecycle in {None, BarLifecycle.UNSPECIFIED}:
+                raise ValueError("bar item requires an explicit lifecycle")
+            is_final = self.payload.get("is_final")
+            if self.bar_lifecycle is BarLifecycle.IN_PROGRESS and is_final is not False:
+                raise ValueError("in-progress bar must declare is_final=false")
+            if self.bar_lifecycle in {BarLifecycle.FINAL, BarLifecycle.REVISED}:
+                if is_final is not True:
+                    raise ValueError("final or revised bar must declare is_final=true")
+            if self.bar_lifecycle is BarLifecycle.REVISED and not self.supersedes_event_id:
+                raise ValueError("revised bar must identify the superseded event")
+        elif self.bar_lifecycle is not None or self.supersedes_event_id is not None:
+            raise ValueError("bar lifecycle metadata is valid only for bar items")
 
 
 @dataclass(frozen=True)

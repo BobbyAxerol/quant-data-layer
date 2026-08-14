@@ -3,9 +3,28 @@ kind: DataRequirement
 metadata:
   id: alpha.okx.reference.shadow
   owner: alpha-platform
+  subject: spiffe://qdl/paper/alpha-okx-reference-shadow
+  environment: paper
+  revision: 1
 spec:
   sdk_major: 2
   rollback_contract: V1
+  execution_dependency: FORBIDDEN
+  permissions:
+    - instruments:read
+    - snapshot:read
+    - history:read
+    - status:read
+    - quality:read
+    - stream:read
+  purposes:
+    - INTERNAL_ALPHA
+  quotas:
+    requests_per_minute: 120
+    max_batch_items: 20
+    max_warmup_rows: 2000
+    max_streams: 4
+    max_buffer_events: 1000
   requirements:
     - instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
       feed: BAR

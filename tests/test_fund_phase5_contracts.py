@@ -25,6 +25,10 @@ class Phase5OpenApiContractTests(unittest.TestCase):
                     continue
                 success = operation["responses"]["200"]["content"]["application/json"]
                 self.assertIn("schema", success, f"untyped success response: {method} {path}")
+                self.assertEqual(operation["security"], [{
+                    "QDLWorkloadBearer": [],
+                    "QDLConsumerIdentity": [],
+                }])
 
 
 if __name__ == "__main__":

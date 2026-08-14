@@ -30,7 +30,9 @@ class FeedQueue(Generic[T]):
         if capacity <= 0:
             raise ValueError("capacity must be positive")
         self._policy = policy
-        self._queue: asyncio.Queue[tuple[str, T]] = asyncio.Queue(maxsize=capacity)
+        self._queue: asyncio.Queue[tuple[str, T, DeliveryPolicy]] = asyncio.Queue(
+            maxsize=capacity
+        )
         self._latest: dict[str, T] = {}
         self._pending_keys: set[str] = set()
         self._high_watermark = 0
@@ -40,30 +42,41 @@ class FeedQueue(Generic[T]):
         self._rejected = 0
         self._enqueue_wait_ns = 0
 
-    async def put(self, key: str, value: T) -> None:
+    async def put(
+        self,
+        key: str,
+        value: T,
+        *,
+        policy: DeliveryPolicy | None = None,
+    ) -> None:
         if not key.strip():
             raise ValueError("queue key is required")
         started = time.perf_counter_ns()
-        if self._policy is DeliveryPolicy.LATEST_STATE and key in self._pending_keys:
+        effective_policy = policy or self._policy
+        coalescing = effective_policy in {
+            DeliveryPolicy.LATEST_STATE,
+            DeliveryPolicy.LIFECYCLE_COALESCE,
+        }
+        if coalescing and key in self._pending_keys:
             self._latest[key] = value
             self._coalesced += 1
             return
         try:
-            await self._queue.put((key, value))
+            await self._queue.put((key, value, effective_policy))
         except asyncio.CancelledError:
             self._rejected += 1
             raise
         finally:
             self._enqueue_wait_ns += time.perf_counter_ns() - started
-        if self._policy is DeliveryPolicy.LATEST_STATE:
+        if coalescing:
             self._pending_keys.add(key)
             self._latest[key] = value
         self._enqueued += 1
         self._high_watermark = max(self._high_watermark, self._queue.qsize())
 
     async def get(self) -> T:
-        key, value = await self._queue.get()
-        if self._policy is DeliveryPolicy.LATEST_STATE:
+        key, value, policy = await self._queue.get()
+        if policy in {DeliveryPolicy.LATEST_STATE, DeliveryPolicy.LIFECYCLE_COALESCE}:
             value = self._latest.pop(key)
             self._pending_keys.remove(key)
         self._dequeued += 1

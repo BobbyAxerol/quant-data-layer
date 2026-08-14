@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from qdl.query.contracts import (
     BatchRequirement,
@@ -14,6 +14,7 @@ from qdl.query.contracts import (
     QueryProblem,
     evaluate_requirement,
 )
+from qdl.query.lifecycle import BarLifecycle
 from qdl.query.entitlement import AccessPurpose, DataProduct, EntitlementPolicy
 from qdl.query.results import (
     HistoryResult,
@@ -142,7 +143,12 @@ class V2QueryService:
             request_id,
             authoritative=item.source.authoritative,
         )
-        return QueryResult(request_id, item)
+        return QueryResult(
+            request_id,
+            self._with_execution_eligibility(
+                requirement, item, DataProduct.CANONICAL_SNAPSHOT
+            ),
+        )
 
     def warmup(
         self,
@@ -168,7 +174,18 @@ class V2QueryService:
             request_id,
             authoritative=history.items[-1].source.authoritative,
         )
-        return WarmupResult(request_id, history)
+        return WarmupResult(
+            request_id,
+            replace(
+                history,
+                items=tuple(
+                    self._with_execution_eligibility(
+                        requirement, item, DataProduct.CANONICAL_HISTORY
+                    )
+                    for item in history.items
+                ),
+            ),
+        )
 
     def warmup_batch(
         self,
@@ -194,14 +211,21 @@ class V2QueryService:
         return BatchQueryResult(request_id, tuple(results))
 
     def status(self, requirement: DataRequirement) -> QualityMetadata:
-        status = self.backend.feed_status(requirement)
-        if status is None:
+        item = self.backend.latest(requirement)
+        if item is None:
+            history = self.backend.history(requirement)
+            item = history.items[-1] if history and history.items else None
+        if item is None:
             raise QueryServiceError(
                 QueryProblem(CanonicalErrorCode.DATA_NOT_READY, "feed status is unavailable", True),
                 request_id=self.request_id(),
                 instrument_uid=requirement.instrument_uid,
             )
-        return status
+        return self._with_execution_eligibility(
+            requirement,
+            item,
+            DataProduct.CANONICAL_SNAPSHOT,
+        ).quality
 
     def open_gaps(self):
         return self.backend.open_gaps()
@@ -280,7 +304,7 @@ class V2QueryService:
                 )
             ),
             authoritative=(
-                authoritative and quality.execution_eligible and not quality.gap_open
+                authoritative and not quality.gap_open
             ),
             gap_open=quality.gap_open,
             coverage=(
@@ -295,6 +319,36 @@ class V2QueryService:
                 quality_state=quality.state,
             )
 
+    def _with_execution_eligibility(
+        self,
+        requirement: DataRequirement,
+        item: MarketDataItem,
+        product: DataProduct,
+    ) -> MarketDataItem:
+        execution_entitlement = self.entitlements.authorize(
+            source_id=item.source.source_id,
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+            product=product,
+            at_ns=self._clock_ns(),
+        )
+        quality = item.quality
+        eligible = (
+            execution_entitlement.allowed
+            and item.source.authoritative
+            and quality.policy_id == requirement.source_policy_id
+            and quality.state == "LIVE"
+            and quality.complete
+            and not quality.gap_open
+            and (
+                requirement.max_freshness_ms is None
+                or quality.freshness_ms <= requirement.max_freshness_ms
+            )
+        )
+        return replace(
+            item,
+            quality=replace(quality, execution_eligible=eligible),
+        )
+
     @staticmethod
     def _enforce_content(
         requirement: DataRequirement,
@@ -304,7 +358,8 @@ class V2QueryService:
         if requirement.feed is not FeedType.BAR:
             return
         if requirement.require_final_bars and any(
-            item.payload.get("is_final") is not True for item in items
+            item.bar_lifecycle not in {BarLifecycle.FINAL, BarLifecycle.REVISED}
+            for item in items
         ):
             raise QueryServiceError(
                 QueryProblem(

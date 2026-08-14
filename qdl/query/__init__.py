@@ -32,7 +32,9 @@ from qdl.query.entitlement import (
     EntitlementGrant,
     EntitlementPolicy,
 )
+from qdl.query.lifecycle import BarLifecycle, DeliveryMode, delivery_mode
 from qdl.query.results import (
+    ContractMetadata,
     GapRecord,
     HistoryResult,
     InstrumentPage,
@@ -57,13 +59,16 @@ from qdl.query.service import (
 __all__ = [
     "AccessDecision",
     "AccessPurpose",
+    "BarLifecycle",
     "BarRevisionPolicy",
     "BatchRequirement",
     "CanonicalErrorCode",
     "ConsumerGrade",
+    "ContractMetadata",
     "CoverageStatus",
     "DataProduct",
     "DataRequirement",
+    "DeliveryMode",
     "EntitlementGrant",
     "EntitlementPolicy",
     "FeedType",
@@ -71,6 +76,7 @@ __all__ = [
     "QueryProblem",
     "RecoveryPolicy",
     "StalePolicy",
+    "delivery_mode",
     "evaluate_requirement",
     "HistoryResult",
     "GapRecord",

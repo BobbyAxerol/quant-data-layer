@@ -25,37 +25,61 @@ _sym_db = _symbol_database.Default()
 from qdl.marketdata.v2 import market_data_pb2 as qdl_dot_marketdata_dot_v2_dot_market__data__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18qdl/query/v2/query.proto\x12\x0cqdl.query.v2\x1a#qdl/marketdata/v2/market_data.proto\"\xf6\x03\n\x0f\x44\x61taRequirement\x12%\n\x0einstrument_uid\x18\x01 \x01(\tR\rinstrumentUid\x12\x12\n\x04\x66\x65\x65\x64\x18\x02 \x01(\tR\x04\x66\x65\x65\x64\x12\x1a\n\x08interval\x18\x03 \x01(\tR\x08interval\x12%\n\x0e\x63onsumer_grade\x18\x04 \x01(\tR\rconsumerGrade\x12(\n\x10source_policy_id\x18\x05 \x01(\tR\x0esourcePolicyId\x12!\n\x0cwarmup_limit\x18\x06 \x01(\rR\x0bwarmupLimit\x12(\n\x10max_freshness_ms\x18\x07 \x01(\x04R\x0emaxFreshnessMs\x12\x32\n\x15require_full_coverage\x18\x08 \x01(\x08R\x13requireFullCoverage\x12,\n\x12require_final_bars\x18\t \x01(\x08R\x10requireFinalBars\x12!\n\x0cstale_policy\x18\n \x01(\tR\x0bstalePolicy\x12\x1d\n\ngap_policy\x18\x0b \x01(\tR\tgapPolicy\x12\x1a\n\x08recovery\x18\x0c \x01(\tR\x08recovery\x12.\n\x13\x62\x61r_revision_policy\x18\r \x01(\tR\x11\x62\x61rRevisionPolicy\"\xe6\x01\n\x10SubscribeRequest\x12\x1f\n\x0b\x63onsumer_id\x18\x01 \x01(\tR\nconsumerId\x12?\n\x0brequirement\x18\x02 \x01(\x0b\x32\x1d.qdl.query.v2.DataRequirementR\x0brequirement\x12!\n\x0c\x63ursor_token\x18\x05 \x01(\tR\x0b\x63ursorToken\x12*\n\x11max_buffer_events\x18\x06 \x01(\rR\x0fmaxBufferEventsJ\x04\x08\x03\x10\x04J\x04\x08\x04\x10\x05R\x06streamR\rpartition_key\"\x8c\x01\n\rReplayRequest\x12\x1f\n\x0b\x63onsumer_id\x18\x01 \x01(\tR\nconsumerId\x12!\n\x0c\x63ursor_token\x18\x04 \x01(\tR\x0b\x63ursorToken\x12\x14\n\x05limit\x18\x05 \x01(\rR\x05limitJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04R\x06streamR\rpartition_key\"\x9a\x01\n\rStreamControl\x12\x36\n\x05state\x18\x01 \x01(\x0e\x32 .qdl.query.v2.StreamControlStateR\x05state\x12\x12\n\x04\x63ode\x18\x02 \x01(\tR\x04\x63ode\x12\x16\n\x06\x64\x65tail\x18\x03 \x01(\tR\x06\x64\x65tail\x12%\n\x0ehigh_watermark\x18\x04 \x01(\x04R\rhighWatermark\"\xd6\x01\n\x0cStreamRecord\x12%\n\x0elogical_offset\x18\x01 \x01(\x04R\rlogicalOffset\x12!\n\x0cresume_token\x18\x02 \x01(\tR\x0bresumeToken\x12\x38\n\x05\x65vent\x18\n \x01(\x0b\x32 .qdl.marketdata.v2.EventEnvelopeH\x00R\x05\x65vent\x12\x37\n\x07\x63ontrol\x18\x0b \x01(\x0b\x32\x1b.qdl.query.v2.StreamControlH\x00R\x07\x63ontrolB\t\n\x07payload\"G\n\x11SubscribeResponse\x12\x32\n\x06record\x18\x01 \x01(\x0b\x32\x1a.qdl.query.v2.StreamRecordR\x06record\"D\n\x0eReplayResponse\x12\x32\n\x06record\x18\x01 \x01(\x0b\x32\x1a.qdl.query.v2.StreamRecordR\x06record\"v\n\x12GetSnapshotRequest\x12\x1f\n\x0b\x63onsumer_id\x18\x01 \x01(\tR\nconsumerId\x12?\n\x0brequirement\x18\x02 \x01(\x0b\x32\x1d.qdl.query.v2.DataRequirementR\x0brequirement\"\x82\x02\n\x13GetSnapshotResponse\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x1f\n\x0bsnapshot_id\x18\x02 \x01(\tR\nsnapshotId\x12#\n\rstream_cursor\x18\x03 \x01(\tR\x0cstreamCursor\x12!\n\rdata_as_of_ns\x18\x04 \x01(\x03R\ndataAsOfNs\x12)\n\x10watermark_offset\x18\x05 \x01(\x04R\x0fwatermarkOffset\x12\x38\n\x06\x65vents\x18\x06 \x03(\x0b\x32 .qdl.marketdata.v2.EventEnvelopeR\x06\x65vents\"W\n\x14GetFeedStatusRequest\x12?\n\x0brequirement\x18\x01 \x01(\x0b\x32\x1d.qdl.query.v2.DataRequirementR\x0brequirement\"\xe9\x01\n\x15GetFeedStatusResponse\x12\x14\n\x05state\x18\x01 \x01(\tR\x05state\x12!\n\x0c\x66reshness_ms\x18\x02 \x01(\x04R\x0b\x66reshnessMs\x12\x19\n\x08gap_open\x18\x03 \x01(\x08R\x07gapOpen\x12\x1a\n\x08\x63omplete\x18\x04 \x01(\x08R\x08\x63omplete\x12-\n\x12\x65xecution_eligible\x18\x05 \x01(\x08R\x11\x65xecutionEligible\x12\x1b\n\tpolicy_id\x18\x06 \x01(\tR\x08policyId\x12\x14\n\x05\x66lags\x18\x07 \x03(\tR\x05\x66lags*\xd0\x01\n\x12StreamControlState\x12$\n STREAM_CONTROL_STATE_UNSPECIFIED\x10\x00\x12\"\n\x1eSTREAM_CONTROL_STATE_REPLAYING\x10\x01\x12\x1d\n\x19STREAM_CONTROL_STATE_LIVE\x10\x02\x12%\n!STREAM_CONTROL_STATE_BACKPRESSURE\x10\x03\x12*\n&STREAM_CONTROL_STATE_RECOVERY_REQUIRED\x10\x04\x32\xde\x02\n\x17MarketDataStreamService\x12N\n\tSubscribe\x12\x1e.qdl.query.v2.SubscribeRequest\x1a\x1f.qdl.query.v2.SubscribeResponse0\x01\x12\x45\n\x06Replay\x12\x1b.qdl.query.v2.ReplayRequest\x1a\x1c.qdl.query.v2.ReplayResponse0\x01\x12R\n\x0bGetSnapshot\x12 .qdl.query.v2.GetSnapshotRequest\x1a!.qdl.query.v2.GetSnapshotResponse\x12X\n\rGetFeedStatus\x12\".qdl.query.v2.GetFeedStatusRequest\x1a#.qdl.query.v2.GetFeedStatusResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18qdl/query/v2/query.proto\x12\x0cqdl.query.v2\x1a#qdl/marketdata/v2/market_data.proto\"\x8f\x07\n\x0f\x44\x61taRequirement\x12%\n\x0einstrument_uid\x18\x01 \x01(\tR\rinstrumentUid\x12\x16\n\x04\x66\x65\x65\x64\x18\x02 \x01(\tB\x02\x18\x01R\x04\x66\x65\x65\x64\x12\x1a\n\x08interval\x18\x03 \x01(\tR\x08interval\x12)\n\x0e\x63onsumer_grade\x18\x04 \x01(\tB\x02\x18\x01R\rconsumerGrade\x12(\n\x10source_policy_id\x18\x05 \x01(\tR\x0esourcePolicyId\x12!\n\x0cwarmup_limit\x18\x06 \x01(\rR\x0bwarmupLimit\x12(\n\x10max_freshness_ms\x18\x07 \x01(\x04R\x0emaxFreshnessMs\x12\x32\n\x15require_full_coverage\x18\x08 \x01(\x08R\x13requireFullCoverage\x12,\n\x12require_final_bars\x18\t \x01(\x08R\x10requireFinalBars\x12%\n\x0cstale_policy\x18\n \x01(\tB\x02\x18\x01R\x0bstalePolicy\x12!\n\ngap_policy\x18\x0b \x01(\tB\x02\x18\x01R\tgapPolicy\x12\x1e\n\x08recovery\x18\x0c \x01(\tB\x02\x18\x01R\x08recovery\x12\x32\n\x13\x62\x61r_revision_policy\x18\r \x01(\tB\x02\x18\x01R\x11\x62\x61rRevisionPolicy\x12\x33\n\tfeed_type\x18\x14 \x01(\x0e\x32\x16.qdl.query.v2.FeedTypeR\x08\x66\x65\x65\x64Type\x12\x31\n\x05grade\x18\x15 \x01(\x0e\x32\x1b.qdl.query.v2.ConsumerGradeR\x05grade\x12\x45\n\x11stale_policy_type\x18\x16 \x01(\x0e\x32\x19.qdl.query.v2.StalePolicyR\x0fstalePolicyType\x12?\n\x0fgap_policy_type\x18\x17 \x01(\x0e\x32\x17.qdl.query.v2.GapPolicyR\rgapPolicyType\x12\x45\n\x0frecovery_policy\x18\x18 \x01(\x0e\x32\x1c.qdl.query.v2.RecoveryPolicyR\x0erecoveryPolicy\x12H\n\x0frevision_policy\x18\x19 \x01(\x0e\x32\x1f.qdl.query.v2.BarRevisionPolicyR\x0erevisionPolicy\"\xe6\x01\n\x10SubscribeRequest\x12\x1f\n\x0b\x63onsumer_id\x18\x01 \x01(\tR\nconsumerId\x12?\n\x0brequirement\x18\x02 \x01(\x0b\x32\x1d.qdl.query.v2.DataRequirementR\x0brequirement\x12!\n\x0c\x63ursor_token\x18\x05 \x01(\tR\x0b\x63ursorToken\x12*\n\x11max_buffer_events\x18\x06 \x01(\rR\x0fmaxBufferEventsJ\x04\x08\x03\x10\x04J\x04\x08\x04\x10\x05R\x06streamR\rpartition_key\"\x8c\x01\n\rReplayRequest\x12\x1f\n\x0b\x63onsumer_id\x18\x01 \x01(\tR\nconsumerId\x12!\n\x0c\x63ursor_token\x18\x04 \x01(\tR\x0b\x63ursorToken\x12\x14\n\x05limit\x18\x05 \x01(\rR\x05limitJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04R\x06streamR\rpartition_key\"\x9a\x01\n\rStreamControl\x12\x36\n\x05state\x18\x01 \x01(\x0e\x32 .qdl.query.v2.StreamControlStateR\x05state\x12\x12\n\x04\x63ode\x18\x02 \x01(\tR\x04\x63ode\x12\x16\n\x06\x64\x65tail\x18\x03 \x01(\tR\x06\x64\x65tail\x12%\n\x0ehigh_watermark\x18\x04 \x01(\x04R\rhighWatermark\"\xd6\x01\n\x0cStreamRecord\x12%\n\x0elogical_offset\x18\x01 \x01(\x04R\rlogicalOffset\x12!\n\x0cresume_token\x18\x02 \x01(\tR\x0bresumeToken\x12\x38\n\x05\x65vent\x18\n \x01(\x0b\x32 .qdl.marketdata.v2.EventEnvelopeH\x00R\x05\x65vent\x12\x37\n\x07\x63ontrol\x18\x0b \x01(\x0b\x32\x1b.qdl.query.v2.StreamControlH\x00R\x07\x63ontrolB\t\n\x07payload\"G\n\x11SubscribeResponse\x12\x32\n\x06record\x18\x01 \x01(\x0b\x32\x1a.qdl.query.v2.StreamRecordR\x06record\"D\n\x0eReplayResponse\x12\x32\n\x06record\x18\x01 \x01(\x0b\x32\x1a.qdl.query.v2.StreamRecordR\x06record\"v\n\x12GetSnapshotRequest\x12\x1f\n\x0b\x63onsumer_id\x18\x01 \x01(\tR\nconsumerId\x12?\n\x0brequirement\x18\x02 \x01(\x0b\x32\x1d.qdl.query.v2.DataRequirementR\x0brequirement\"\x82\x02\n\x13GetSnapshotResponse\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x1f\n\x0bsnapshot_id\x18\x02 \x01(\tR\nsnapshotId\x12#\n\rstream_cursor\x18\x03 \x01(\tR\x0cstreamCursor\x12!\n\rdata_as_of_ns\x18\x04 \x01(\x03R\ndataAsOfNs\x12)\n\x10watermark_offset\x18\x05 \x01(\x04R\x0fwatermarkOffset\x12\x38\n\x06\x65vents\x18\x06 \x03(\x0b\x32 .qdl.marketdata.v2.EventEnvelopeR\x06\x65vents\"x\n\x14GetFeedStatusRequest\x12?\n\x0brequirement\x18\x01 \x01(\x0b\x32\x1d.qdl.query.v2.DataRequirementR\x0brequirement\x12\x1f\n\x0b\x63onsumer_id\x18\x02 \x01(\tR\nconsumerId\"\xe9\x01\n\x15GetFeedStatusResponse\x12\x14\n\x05state\x18\x01 \x01(\tR\x05state\x12!\n\x0c\x66reshness_ms\x18\x02 \x01(\x04R\x0b\x66reshnessMs\x12\x19\n\x08gap_open\x18\x03 \x01(\x08R\x07gapOpen\x12\x1a\n\x08\x63omplete\x18\x04 \x01(\x08R\x08\x63omplete\x12-\n\x12\x65xecution_eligible\x18\x05 \x01(\x08R\x11\x65xecutionEligible\x12\x1b\n\tpolicy_id\x18\x06 \x01(\tR\x08policyId\x12\x14\n\x05\x66lags\x18\x07 \x03(\tR\x05\x66lags*\x88\x02\n\x08\x46\x65\x65\x64Type\x12\x19\n\x15\x46\x45\x45\x44_TYPE_UNSPECIFIED\x10\x00\x12\x13\n\x0f\x46\x45\x45\x44_TYPE_TRADE\x10\x01\x12\x13\n\x0f\x46\x45\x45\x44_TYPE_QUOTE\x10\x02\x12\x11\n\rFEED_TYPE_BAR\x10\x03\x12\x1b\n\x17\x46\x45\x45\x44_TYPE_BOOK_SNAPSHOT\x10\x04\x12\x18\n\x14\x46\x45\x45\x44_TYPE_BOOK_DELTA\x10\x05\x12\x1a\n\x16\x46\x45\x45\x44_TYPE_FUNDING_RATE\x10\x06\x12\x1b\n\x17\x46\x45\x45\x44_TYPE_OPEN_INTEREST\x10\x07\x12\x1e\n\x1a\x46\x45\x45\x44_TYPE_MARK_INDEX_PRICE\x10\x08\x12\x14\n\x10\x46\x45\x45\x44_TYPE_TICKER\x10\t*\x84\x01\n\rConsumerGrade\x12\x1e\n\x1a\x43ONSUMER_GRADE_UNSPECIFIED\x10\x00\x12\x1c\n\x18\x43ONSUMER_GRADE_EXECUTION\x10\x01\x12\x18\n\x14\x43ONSUMER_GRADE_ALPHA\x10\x02\x12\x1b\n\x17\x43ONSUMER_GRADE_RESEARCH\x10\x03*u\n\x0bStalePolicy\x12\x1c\n\x18STALE_POLICY_UNSPECIFIED\x10\x00\x12\x16\n\x12STALE_POLICY_BLOCK\x10\x01\x12\x16\n\x12STALE_POLICY_PAUSE\x10\x02\x12\x18\n\x14STALE_POLICY_OBSERVE\x10\x03*k\n\tGapPolicy\x12\x1a\n\x16GAP_POLICY_UNSPECIFIED\x10\x00\x12\x14\n\x10GAP_POLICY_BLOCK\x10\x01\x12\x14\n\x10GAP_POLICY_PAUSE\x10\x02\x12\x16\n\x12GAP_POLICY_OBSERVE\x10\x03*\x98\x01\n\x0eRecoveryPolicy\x12\x1f\n\x1bRECOVERY_POLICY_UNSPECIFIED\x10\x00\x12\'\n#RECOVERY_POLICY_SNAPSHOT_AND_REPLAY\x10\x01\x12\"\n\x1eRECOVERY_POLICY_FRESH_SNAPSHOT\x10\x02\x12\x18\n\x14RECOVERY_POLICY_NONE\x10\x03*\xa6\x01\n\x11\x42\x61rRevisionPolicy\x12#\n\x1f\x42\x41R_REVISION_POLICY_UNSPECIFIED\x10\x00\x12\x1e\n\x1a\x42\x41R_REVISION_POLICY_LATEST\x10\x01\x12$\n BAR_REVISION_POLICY_INITIAL_ONLY\x10\x02\x12&\n\"BAR_REVISION_POLICY_EMIT_REVISIONS\x10\x03*\xd0\x01\n\x12StreamControlState\x12$\n STREAM_CONTROL_STATE_UNSPECIFIED\x10\x00\x12\"\n\x1eSTREAM_CONTROL_STATE_REPLAYING\x10\x01\x12\x1d\n\x19STREAM_CONTROL_STATE_LIVE\x10\x02\x12%\n!STREAM_CONTROL_STATE_BACKPRESSURE\x10\x03\x12*\n&STREAM_CONTROL_STATE_RECOVERY_REQUIRED\x10\x04\x32\xde\x02\n\x17MarketDataStreamService\x12N\n\tSubscribe\x12\x1e.qdl.query.v2.SubscribeRequest\x1a\x1f.qdl.query.v2.SubscribeResponse0\x01\x12\x45\n\x06Replay\x12\x1b.qdl.query.v2.ReplayRequest\x1a\x1c.qdl.query.v2.ReplayResponse0\x01\x12R\n\x0bGetSnapshot\x12 .qdl.query.v2.GetSnapshotRequest\x1a!.qdl.query.v2.GetSnapshotResponse\x12X\n\rGetFeedStatus\x12\".qdl.query.v2.GetFeedStatusRequest\x1a#.qdl.query.v2.GetFeedStatusResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'qdl.query.v2.query_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_STREAMCONTROLSTATE']._serialized_start=2184
-  _globals['_STREAMCONTROLSTATE']._serialized_end=2392
+  _globals['_DATAREQUIREMENT'].fields_by_name['feed']._loaded_options = None
+  _globals['_DATAREQUIREMENT'].fields_by_name['feed']._serialized_options = b'\030\001'
+  _globals['_DATAREQUIREMENT'].fields_by_name['consumer_grade']._loaded_options = None
+  _globals['_DATAREQUIREMENT'].fields_by_name['consumer_grade']._serialized_options = b'\030\001'
+  _globals['_DATAREQUIREMENT'].fields_by_name['stale_policy']._loaded_options = None
+  _globals['_DATAREQUIREMENT'].fields_by_name['stale_policy']._serialized_options = b'\030\001'
+  _globals['_DATAREQUIREMENT'].fields_by_name['gap_policy']._loaded_options = None
+  _globals['_DATAREQUIREMENT'].fields_by_name['gap_policy']._serialized_options = b'\030\001'
+  _globals['_DATAREQUIREMENT'].fields_by_name['recovery']._loaded_options = None
+  _globals['_DATAREQUIREMENT'].fields_by_name['recovery']._serialized_options = b'\030\001'
+  _globals['_DATAREQUIREMENT'].fields_by_name['bar_revision_policy']._loaded_options = None
+  _globals['_DATAREQUIREMENT'].fields_by_name['bar_revision_policy']._serialized_options = b'\030\001'
+  _globals['_FEEDTYPE']._serialized_start=2626
+  _globals['_FEEDTYPE']._serialized_end=2890
+  _globals['_CONSUMERGRADE']._serialized_start=2893
+  _globals['_CONSUMERGRADE']._serialized_end=3025
+  _globals['_STALEPOLICY']._serialized_start=3027
+  _globals['_STALEPOLICY']._serialized_end=3144
+  _globals['_GAPPOLICY']._serialized_start=3146
+  _globals['_GAPPOLICY']._serialized_end=3253
+  _globals['_RECOVERYPOLICY']._serialized_start=3256
+  _globals['_RECOVERYPOLICY']._serialized_end=3408
+  _globals['_BARREVISIONPOLICY']._serialized_start=3411
+  _globals['_BARREVISIONPOLICY']._serialized_end=3577
+  _globals['_STREAMCONTROLSTATE']._serialized_start=3580
+  _globals['_STREAMCONTROLSTATE']._serialized_end=3788
   _globals['_DATAREQUIREMENT']._serialized_start=80
-  _globals['_DATAREQUIREMENT']._serialized_end=582
-  _globals['_SUBSCRIBEREQUEST']._serialized_start=585
-  _globals['_SUBSCRIBEREQUEST']._serialized_end=815
-  _globals['_REPLAYREQUEST']._serialized_start=818
-  _globals['_REPLAYREQUEST']._serialized_end=958
-  _globals['_STREAMCONTROL']._serialized_start=961
-  _globals['_STREAMCONTROL']._serialized_end=1115
-  _globals['_STREAMRECORD']._serialized_start=1118
-  _globals['_STREAMRECORD']._serialized_end=1332
-  _globals['_SUBSCRIBERESPONSE']._serialized_start=1334
-  _globals['_SUBSCRIBERESPONSE']._serialized_end=1405
-  _globals['_REPLAYRESPONSE']._serialized_start=1407
-  _globals['_REPLAYRESPONSE']._serialized_end=1475
-  _globals['_GETSNAPSHOTREQUEST']._serialized_start=1477
-  _globals['_GETSNAPSHOTREQUEST']._serialized_end=1595
-  _globals['_GETSNAPSHOTRESPONSE']._serialized_start=1598
-  _globals['_GETSNAPSHOTRESPONSE']._serialized_end=1856
-  _globals['_GETFEEDSTATUSREQUEST']._serialized_start=1858
-  _globals['_GETFEEDSTATUSREQUEST']._serialized_end=1945
-  _globals['_GETFEEDSTATUSRESPONSE']._serialized_start=1948
-  _globals['_GETFEEDSTATUSRESPONSE']._serialized_end=2181
-  _globals['_MARKETDATASTREAMSERVICE']._serialized_start=2395
-  _globals['_MARKETDATASTREAMSERVICE']._serialized_end=2745
+  _globals['_DATAREQUIREMENT']._serialized_end=991
+  _globals['_SUBSCRIBEREQUEST']._serialized_start=994
+  _globals['_SUBSCRIBEREQUEST']._serialized_end=1224
+  _globals['_REPLAYREQUEST']._serialized_start=1227
+  _globals['_REPLAYREQUEST']._serialized_end=1367
+  _globals['_STREAMCONTROL']._serialized_start=1370
+  _globals['_STREAMCONTROL']._serialized_end=1524
+  _globals['_STREAMRECORD']._serialized_start=1527
+  _globals['_STREAMRECORD']._serialized_end=1741
+  _globals['_SUBSCRIBERESPONSE']._serialized_start=1743
+  _globals['_SUBSCRIBERESPONSE']._serialized_end=1814
+  _globals['_REPLAYRESPONSE']._serialized_start=1816
+  _globals['_REPLAYRESPONSE']._serialized_end=1884
+  _globals['_GETSNAPSHOTREQUEST']._serialized_start=1886
+  _globals['_GETSNAPSHOTREQUEST']._serialized_end=2004
+  _globals['_GETSNAPSHOTRESPONSE']._serialized_start=2007
+  _globals['_GETSNAPSHOTRESPONSE']._serialized_end=2265
+  _globals['_GETFEEDSTATUSREQUEST']._serialized_start=2267
+  _globals['_GETFEEDSTATUSREQUEST']._serialized_end=2387
+  _globals['_GETFEEDSTATUSRESPONSE']._serialized_start=2390
+  _globals['_GETFEEDSTATUSRESPONSE']._serialized_end=2623
+  _globals['_MARKETDATASTREAMSERVICE']._serialized_start=3791
+  _globals['_MARKETDATASTREAMSERVICE']._serialized_end=4141
 # @@protoc_insertion_point(module_scope)

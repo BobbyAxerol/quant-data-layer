@@ -8,8 +8,9 @@ import grpc
 import httpx
 
 from qdl.query.v2 import query_pb2
+from qdl_sdk.credentials import CredentialProvider
 from qdl_sdk.errors import CursorExpiredError, DataLayerError, SlowConsumerError
-from qdl_sdk.models import ControlEvent, DataRequirement, StreamEvent
+from qdl_sdk.models import ControlEvent, DataRequirement, Grade, StreamEvent
 
 
 class RestQueryTransport:
@@ -19,11 +20,13 @@ class RestQueryTransport:
         *,
         timeout_seconds: float = 10.0,
         client: httpx.AsyncClient | None = None,
+        credential_provider: CredentialProvider | None = None,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("query timeout must be positive")
         self.base_url = base_url.rstrip("/")
         self._owns_client = client is None
+        self._credential_provider = credential_provider
         self._client = client or httpx.AsyncClient(
             base_url=self.base_url,
             timeout=httpx.Timeout(timeout_seconds),
@@ -31,22 +34,22 @@ class RestQueryTransport:
         )
 
     async def warmup(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
-        del consumer_id
+        headers = await self._headers(requirement, consumer_id)
         response = await self._client.get(
             f"/v2/market-data/{requirement.instrument_uid}/warmup",
             params=requirement.query_params(),
-            headers={"X-QDL-Purpose": self._purpose(requirement)},
+            headers=headers,
         )
         return self._decode(response)
 
     async def snapshot(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
-        del consumer_id
+        headers = await self._headers(requirement, consumer_id)
         params = requirement.query_params()
         params.pop("limit", None)
         response = await self._client.get(
             f"/v2/market-data/{requirement.instrument_uid}/snapshot",
             params=params,
-            headers={"X-QDL-Purpose": self._purpose(requirement)},
+            headers=headers,
         )
         return self._decode(response)
 
@@ -54,12 +57,26 @@ class RestQueryTransport:
         if self._owns_client:
             await self._client.aclose()
 
+    async def _headers(self, requirement: DataRequirement, consumer_id: str) -> dict[str, str]:
+        if self._credential_provider is None:
+            raise DataLayerError(
+                "UNAUTHENTICATED",
+                "V2 REST transport requires a workload credential provider",
+                retryable=False,
+            )
+        token = await self._credential_provider.get_token()
+        return {
+            "Authorization": f"Bearer {token}",
+            "X-QDL-Consumer-ID": consumer_id,
+            "X-QDL-Purpose": self._purpose(requirement),
+        }
+
     @staticmethod
     def _purpose(requirement: DataRequirement) -> str:
         return {
-            "EXECUTION": "INTERNAL_EXECUTION",
-            "ALPHA": "INTERNAL_ALPHA",
-            "RESEARCH": "INTERNAL_RESEARCH",
+            Grade.EXECUTION: "INTERNAL_EXECUTION",
+            Grade.ALPHA: "INTERNAL_ALPHA",
+            Grade.RESEARCH: "INTERNAL_RESEARCH",
         }[requirement.consumer_grade]
 
     @staticmethod
@@ -82,10 +99,12 @@ class GrpcStreamTransport:
         *,
         credentials: grpc.ChannelCredentials | None = None,
         allow_insecure_loopback: bool = False,
+        credential_provider: CredentialProvider | None = None,
     ) -> None:
         if not target.strip():
             raise ValueError("gRPC stream target is required")
         self.target = target
+        self._credential_provider = credential_provider
         if credentials is None:
             if not allow_insecure_loopback or not self._is_loopback(target):
                 raise ValueError("insecure gRPC is allowed only for explicit loopback tests")
@@ -112,8 +131,20 @@ class GrpcStreamTransport:
             cursor_token=cursor_token,
             max_buffer_events=max_buffer_events,
         )
+        if self._credential_provider is None:
+            raise DataLayerError(
+                "UNAUTHENTICATED",
+                "V2 gRPC transport requires a workload credential provider",
+                retryable=False,
+            )
+        token = await self._credential_provider.get_token()
+        metadata = (
+            ("authorization", f"Bearer {token}"),
+            ("x-qdl-consumer-id", consumer_id),
+            ("x-qdl-purpose", RestQueryTransport._purpose(requirement)),
+        )
         try:
-            async for response in self._subscribe(request):
+            async for response in self._subscribe(request, metadata=metadata):
                 record = response.record
                 payload = record.WhichOneof("payload")
                 if payload == "control":

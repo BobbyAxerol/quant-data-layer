@@ -1,8 +1,112 @@
 {
   "components": {
     "schemas": {
+      "BarLifecycle": {
+        "enum": [
+          "UNSPECIFIED",
+          "IN_PROGRESS",
+          "FINAL",
+          "REVISED",
+          "CANCELLED"
+        ],
+        "title": "BarLifecycle",
+        "type": "string"
+      },
+      "BarPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "close": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "close_time_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "Close Time Ns",
+            "type": "integer"
+          },
+          "feed": {
+            "const": "BAR",
+            "default": "BAR",
+            "title": "Feed",
+            "type": "string"
+          },
+          "high": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "interval": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Interval",
+            "type": "string"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/BarLifecycle"
+          },
+          "low": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "open": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "open_time_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "Open Time Ns",
+            "type": "integer"
+          },
+          "origin": {
+            "enum": [
+              "VENUE_NATIVE",
+              "AGGREGATED",
+              "BACKFILLED",
+              "RECONCILED"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "supersedes_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Event Id"
+          },
+          "trade_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Trade Count",
+            "type": "integer"
+          },
+          "volume": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "interval",
+          "open_time_ns",
+          "close_time_ns",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume",
+          "lifecycle",
+          "revision",
+          "origin"
+        ],
+        "title": "BarPayload",
+        "type": "object"
+      },
       "BarRevisionPolicy": {
         "enum": [
+          "UNSPECIFIED",
           "LATEST",
           "INITIAL_ONLY",
           "EMIT_REVISIONS"
@@ -11,6 +115,7 @@
         "type": "string"
       },
       "BatchItemResponse": {
+        "additionalProperties": false,
         "properties": {
           "data": {
             "anyOf": [
@@ -80,6 +185,7 @@
         "type": "object"
       },
       "BatchResponse": {
+        "additionalProperties": false,
         "properties": {
           "error_count": {
             "title": "Error Count",
@@ -120,8 +226,150 @@
         "title": "BatchResponse",
         "type": "object"
       },
+      "BookDeltaPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "checksum": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checksum"
+          },
+          "feed": {
+            "const": "BOOK_DELTA",
+            "default": "BOOK_DELTA",
+            "title": "Feed",
+            "type": "string"
+          },
+          "native_sequence_end": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Native Sequence End",
+            "type": "string"
+          },
+          "native_sequence_start": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Native Sequence Start",
+            "type": "string"
+          },
+          "reset": {
+            "default": false,
+            "title": "Reset",
+            "type": "boolean"
+          },
+          "snapshot_sequence": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Snapshot Sequence",
+            "type": "string"
+          },
+          "updates": {
+            "items": {
+              "$ref": "#/components/schemas/BookLevel"
+            },
+            "title": "Updates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "native_sequence_start",
+          "native_sequence_end",
+          "snapshot_sequence",
+          "updates"
+        ],
+        "title": "BookDeltaPayload",
+        "type": "object"
+      },
+      "BookLevel": {
+        "additionalProperties": false,
+        "properties": {
+          "order_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Order Count",
+            "type": "integer"
+          },
+          "price": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "quantity": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "side": {
+            "enum": [
+              "BID",
+              "ASK"
+            ],
+            "title": "Side",
+            "type": "string"
+          }
+        },
+        "required": [
+          "side",
+          "price",
+          "quantity"
+        ],
+        "title": "BookLevel",
+        "type": "object"
+      },
+      "BookSnapshotPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "checksum": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checksum"
+          },
+          "depth": {
+            "minimum": 1.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "feed": {
+            "const": "BOOK_SNAPSHOT",
+            "default": "BOOK_SNAPSHOT",
+            "title": "Feed",
+            "type": "string"
+          },
+          "levels": {
+            "items": {
+              "$ref": "#/components/schemas/BookLevel"
+            },
+            "title": "Levels",
+            "type": "array"
+          },
+          "native_sequence": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Native Sequence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "native_sequence",
+          "levels",
+          "depth"
+        ],
+        "title": "BookSnapshotPayload",
+        "type": "object"
+      },
       "ConsumerGrade": {
         "enum": [
+          "UNSPECIFIED",
           "EXECUTION",
           "ALPHA",
           "RESEARCH"
@@ -129,11 +377,107 @@
         "title": "ConsumerGrade",
         "type": "string"
       },
+      "ContractView": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_version": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Adapter Version",
+            "type": "string"
+          },
+          "authority_revision": {
+            "minimum": 1.0,
+            "title": "Authority Revision",
+            "type": "integer"
+          },
+          "config_revision": {
+            "minimum": 1.0,
+            "title": "Config Revision",
+            "type": "integer"
+          },
+          "contract_version": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "correlation_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "instrument_catalog_revision": {
+            "minimum": 1.0,
+            "title": "Instrument Catalog Revision",
+            "type": "integer"
+          },
+          "normalizer_version": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Normalizer Version",
+            "type": "string"
+          },
+          "schema_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Schema Digest",
+            "type": "string"
+          },
+          "source_policy_revision": {
+            "minimum": 1.0,
+            "title": "Source Policy Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_digest",
+          "contract_version",
+          "normalizer_version",
+          "adapter_version",
+          "instrument_catalog_revision",
+          "source_policy_revision",
+          "authority_revision",
+          "config_revision",
+          "correlation_id"
+        ],
+        "title": "ContractView",
+        "type": "object"
+      },
+      "DecimalValue": {
+        "additionalProperties": false,
+        "properties": {
+          "coefficient": {
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "title": "Coefficient",
+            "type": "string"
+          },
+          "scale": {
+            "maximum": 38.0,
+            "minimum": -38.0,
+            "title": "Scale",
+            "type": "integer"
+          },
+          "source_text": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Source Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coefficient",
+          "scale",
+          "source_text"
+        ],
+        "title": "DecimalValue",
+        "type": "object"
+      },
       "FeedStatusResponse": {
+        "additionalProperties": false,
         "properties": {
           "feed": {
-            "title": "Feed",
-            "type": "string"
+            "$ref": "#/components/schemas/FeedType"
           },
           "instrument_uid": {
             "title": "Instrument Uid",
@@ -158,6 +502,7 @@
       },
       "FeedType": {
         "enum": [
+          "UNSPECIFIED",
           "TRADE",
           "QUOTE",
           "BAR",
@@ -171,7 +516,45 @@
         "title": "FeedType",
         "type": "string"
       },
+      "FundingRatePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "feed": {
+            "const": "FUNDING_RATE",
+            "default": "FUNDING_RATE",
+            "title": "Feed",
+            "type": "string"
+          },
+          "funding_time_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "Funding Time Ns",
+            "type": "integer"
+          },
+          "next_funding_time_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Funding Time Ns"
+          },
+          "rate": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "rate",
+          "funding_time_ns"
+        ],
+        "title": "FundingRatePayload",
+        "type": "object"
+      },
       "GapListResponse": {
+        "additionalProperties": false,
         "properties": {
           "items": {
             "items": {
@@ -194,6 +577,7 @@
       },
       "GapPolicy": {
         "enum": [
+          "UNSPECIFIED",
           "BLOCK",
           "PAUSE",
           "OBSERVE"
@@ -202,6 +586,7 @@
         "type": "string"
       },
       "GapView": {
+        "additionalProperties": false,
         "properties": {
           "detected_at_ns": {
             "title": "Detected At Ns",
@@ -212,8 +597,7 @@
             "type": "string"
           },
           "feed": {
-            "title": "Feed",
-            "type": "string"
+            "$ref": "#/components/schemas/FeedType"
           },
           "gap_id": {
             "title": "Gap Id",
@@ -258,6 +642,7 @@
         "type": "object"
       },
       "InstrumentPageResponse": {
+        "additionalProperties": false,
         "properties": {
           "items": {
             "items": {
@@ -290,6 +675,7 @@
         "type": "object"
       },
       "InstrumentResponse": {
+        "additionalProperties": false,
         "properties": {
           "asset_class": {
             "title": "Asset Class",
@@ -354,6 +740,7 @@
         "type": "object"
       },
       "InstrumentView": {
+        "additionalProperties": false,
         "properties": {
           "asset_class": {
             "title": "Asset Class",
@@ -412,8 +799,35 @@
         "title": "InstrumentView",
         "type": "object"
       },
-      "MarketDataView": {
+      "MarkIndexPricePayload": {
+        "additionalProperties": false,
         "properties": {
+          "feed": {
+            "const": "MARK_INDEX_PRICE",
+            "default": "MARK_INDEX_PRICE",
+            "title": "Feed",
+            "type": "string"
+          },
+          "index_price": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "mark_price": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "mark_price",
+          "index_price"
+        ],
+        "title": "MarkIndexPricePayload",
+        "type": "object"
+      },
+      "MarketDataView": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/components/schemas/ContractView"
+          },
           "cursor": {
             "anyOf": [
               {
@@ -426,14 +840,14 @@
             "title": "Cursor"
           },
           "feed": {
-            "title": "Feed",
-            "type": "string"
+            "$ref": "#/components/schemas/FeedType"
           },
           "instrument_id": {
             "title": "Instrument Id",
             "type": "string"
           },
           "instrument_revision": {
+            "minimum": 1.0,
             "title": "Instrument Revision",
             "type": "integer"
           },
@@ -453,18 +867,61 @@
             "title": "Interval"
           },
           "observed_at_ns": {
+            "exclusiveMinimum": 0.0,
             "title": "Observed At Ns",
             "type": "integer"
           },
           "payload": {
-            "additionalProperties": true,
-            "title": "Payload",
-            "type": "object"
+            "discriminator": {
+              "mapping": {
+                "BAR": "#/components/schemas/BarPayload",
+                "BOOK_DELTA": "#/components/schemas/BookDeltaPayload",
+                "BOOK_SNAPSHOT": "#/components/schemas/BookSnapshotPayload",
+                "FUNDING_RATE": "#/components/schemas/FundingRatePayload",
+                "MARK_INDEX_PRICE": "#/components/schemas/MarkIndexPricePayload",
+                "OPEN_INTEREST": "#/components/schemas/OpenInterestPayload",
+                "QUOTE": "#/components/schemas/QuotePayload",
+                "TICKER": "#/components/schemas/TickerPayload",
+                "TRADE": "#/components/schemas/TradePayload"
+              },
+              "propertyName": "feed"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TradePayload"
+              },
+              {
+                "$ref": "#/components/schemas/QuotePayload"
+              },
+              {
+                "$ref": "#/components/schemas/BarPayload"
+              },
+              {
+                "$ref": "#/components/schemas/BookSnapshotPayload"
+              },
+              {
+                "$ref": "#/components/schemas/BookDeltaPayload"
+              },
+              {
+                "$ref": "#/components/schemas/FundingRatePayload"
+              },
+              {
+                "$ref": "#/components/schemas/OpenInterestPayload"
+              },
+              {
+                "$ref": "#/components/schemas/MarkIndexPricePayload"
+              },
+              {
+                "$ref": "#/components/schemas/TickerPayload"
+              }
+            ],
+            "title": "Payload"
           },
           "quality": {
             "$ref": "#/components/schemas/QualityView"
           },
           "revision": {
+            "minimum": 0.0,
             "title": "Revision",
             "type": "integer"
           },
@@ -499,12 +956,43 @@
           "revision",
           "payload",
           "source",
-          "quality"
+          "quality",
+          "contract"
         ],
         "title": "MarketDataView",
         "type": "object"
       },
+      "OpenInterestPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "feed": {
+            "const": "OPEN_INTEREST",
+            "default": "OPEN_INTEREST",
+            "title": "Feed",
+            "type": "string"
+          },
+          "notional": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quantity": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "quantity"
+        ],
+        "title": "OpenInterestPayload",
+        "type": "object"
+      },
       "ProblemDetails": {
+        "additionalProperties": false,
         "properties": {
           "code": {
             "title": "Code",
@@ -581,6 +1069,7 @@
         "type": "object"
       },
       "QualityView": {
+        "additionalProperties": false,
         "properties": {
           "complete": {
             "title": "Complete",
@@ -598,6 +1087,7 @@
             "type": "array"
           },
           "freshness_ms": {
+            "minimum": 0.0,
             "title": "Freshness Ms",
             "type": "integer"
           },
@@ -606,10 +1096,27 @@
             "type": "boolean"
           },
           "policy_id": {
+            "maxLength": 200,
+            "minLength": 1,
             "title": "Policy Id",
             "type": "string"
           },
           "state": {
+            "enum": [
+              "DISABLED",
+              "STARTING",
+              "CONNECTING",
+              "SUBSCRIBING",
+              "SYNCING",
+              "LIVE",
+              "DEGRADED",
+              "GAPPED",
+              "RESYNCING",
+              "STALE",
+              "OFFLINE",
+              "HALTED",
+              "MARKET_CLOSED"
+            ],
             "title": "State",
             "type": "string"
           }
@@ -626,7 +1133,45 @@
         "title": "QualityView",
         "type": "object"
       },
+      "QuotePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "ask_price": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "ask_quantity": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "bid_price": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "bid_quantity": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "feed": {
+            "const": "QUOTE",
+            "default": "QUOTE",
+            "title": "Feed",
+            "type": "string"
+          },
+          "level": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Level",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bid_price",
+          "bid_quantity",
+          "ask_price",
+          "ask_quantity"
+        ],
+        "title": "QuotePayload",
+        "type": "object"
+      },
       "ReadinessItemResponse": {
+        "additionalProperties": false,
         "properties": {
           "instrument_uid": {
             "title": "Instrument Uid",
@@ -665,6 +1210,7 @@
         "type": "object"
       },
       "ReadinessResponse": {
+        "additionalProperties": false,
         "properties": {
           "authority": {
             "default": "V1",
@@ -702,6 +1248,7 @@
       },
       "RecoveryPolicy": {
         "enum": [
+          "UNSPECIFIED",
           "SNAPSHOT_AND_REPLAY",
           "FRESH_SNAPSHOT",
           "NONE"
@@ -799,6 +1346,7 @@
         "type": "object"
       },
       "SnapshotResponse": {
+        "additionalProperties": false,
         "properties": {
           "data": {
             "$ref": "#/components/schemas/MarketDataView"
@@ -821,24 +1369,37 @@
         "type": "object"
       },
       "SourceView": {
+        "additionalProperties": false,
         "properties": {
           "authoritative": {
             "title": "Authoritative",
             "type": "boolean"
           },
           "provider": {
+            "maxLength": 80,
+            "minLength": 1,
             "title": "Provider",
             "type": "string"
           },
           "source_id": {
+            "maxLength": 120,
+            "minLength": 1,
             "title": "Source Id",
             "type": "string"
           },
           "source_role": {
+            "enum": [
+              "PRIMARY",
+              "SECONDARY",
+              "REFERENCE",
+              "BACKFILL"
+            ],
             "title": "Source Role",
             "type": "string"
           },
           "venue": {
+            "maxLength": 40,
+            "minLength": 1,
             "title": "Venue",
             "type": "string"
           }
@@ -855,6 +1416,7 @@
       },
       "StalePolicy": {
         "enum": [
+          "UNSPECIFIED",
           "BLOCK",
           "PAUSE",
           "OBSERVE"
@@ -863,6 +1425,7 @@
         "type": "string"
       },
       "SystemReadinessSummary": {
+        "additionalProperties": false,
         "properties": {
           "authority": {
             "title": "Authority",
@@ -888,6 +1451,124 @@
           "v2_consumer_activation"
         ],
         "title": "SystemReadinessSummary",
+        "type": "object"
+      },
+      "TickerPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "feed": {
+            "const": "TICKER",
+            "default": "TICKER",
+            "title": "Feed",
+            "type": "string"
+          },
+          "high_24h": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_price": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "last_quantity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "low_24h": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "open_24h": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "volume_24h": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "last_price"
+        ],
+        "title": "TickerPayload",
+        "type": "object"
+      },
+      "TradePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "aggressor_side": {
+            "enum": [
+              "BUY",
+              "SELL"
+            ],
+            "title": "Aggressor Side",
+            "type": "string"
+          },
+          "feed": {
+            "const": "TRADE",
+            "default": "TRADE",
+            "title": "Feed",
+            "type": "string"
+          },
+          "is_block_trade": {
+            "default": false,
+            "title": "Is Block Trade",
+            "type": "boolean"
+          },
+          "is_buyer_maker": {
+            "default": false,
+            "title": "Is Buyer Maker",
+            "type": "boolean"
+          },
+          "native_trade_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Native Trade Id",
+            "type": "string"
+          },
+          "price": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "quantity": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "native_trade_id",
+          "price",
+          "quantity",
+          "aggressor_side"
+        ],
+        "title": "TradePayload",
         "type": "object"
       },
       "ValidationError": {
@@ -931,6 +1612,7 @@
         "type": "object"
       },
       "WarmupResponse": {
+        "additionalProperties": false,
         "properties": {
           "count": {
             "title": "Count",
@@ -948,6 +1630,7 @@
             "type": "array"
           },
           "data_as_of_ns": {
+            "exclusiveMinimum": 0.0,
             "title": "Data As Of Ns",
             "type": "integer"
           },
@@ -961,10 +1644,12 @@
             "type": "string"
           },
           "snapshot_id": {
+            "minLength": 1,
             "title": "Snapshot Id",
             "type": "string"
           },
           "stream_cursor": {
+            "minLength": 1,
             "title": "Stream Cursor",
             "type": "string"
           },
@@ -986,6 +1671,17 @@
         ],
         "title": "WarmupResponse",
         "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "QDLConsumerIdentity": {
+        "in": "header",
+        "name": "X-QDL-Consumer-ID",
+        "type": "apiKey"
+      },
+      "QDLWorkloadBearer": {
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
@@ -1010,6 +1706,12 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
         "summary": "Data Quality Gaps",
         "tags": [
           "market-data-v2"
@@ -1126,6 +1828,15 @@
               "$ref": "#/components/schemas/BarRevisionPolicy",
               "default": "LATEST"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-QDL-Purpose",
+            "required": true,
+            "schema": {
+              "title": "X-Qdl-Purpose",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1150,6 +1861,12 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
         "summary": "Feed Status",
         "tags": [
           "market-data-v2"
@@ -1211,6 +1928,12 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
         "summary": "List Instruments",
         "tags": [
           "market-data-v2"
@@ -1253,6 +1976,12 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
         "summary": "Get Instrument",
         "tags": [
           "market-data-v2"
@@ -1266,9 +1995,8 @@
           {
             "in": "header",
             "name": "X-QDL-Purpose",
-            "required": false,
+            "required": true,
             "schema": {
-              "default": "INTERNAL_ALPHA",
               "title": "X-Qdl-Purpose",
               "type": "string"
             }
@@ -1306,6 +2034,12 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
         "summary": "Warmup Batch",
         "tags": [
           "market-data-v2"
@@ -1456,9 +2190,8 @@
           {
             "in": "header",
             "name": "X-QDL-Purpose",
-            "required": false,
+            "required": true,
             "schema": {
-              "default": "INTERNAL_ALPHA",
               "title": "X-Qdl-Purpose",
               "type": "string"
             }
@@ -1486,6 +2219,12 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
         "summary": "History",
         "tags": [
           "market-data-v2"
@@ -1624,9 +2363,8 @@
           {
             "in": "header",
             "name": "X-QDL-Purpose",
-            "required": false,
+            "required": true,
             "schema": {
-              "default": "INTERNAL_ALPHA",
               "title": "X-Qdl-Purpose",
               "type": "string"
             }
@@ -1654,6 +2392,12 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
         "summary": "Snapshot",
         "tags": [
           "market-data-v2"
@@ -1804,9 +2548,8 @@
           {
             "in": "header",
             "name": "X-QDL-Purpose",
-            "required": false,
+            "required": true,
             "schema": {
-              "default": "INTERNAL_ALPHA",
               "title": "X-Qdl-Purpose",
               "type": "string"
             }
@@ -1834,6 +2577,12 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
         "summary": "Warmup",
         "tags": [
           "market-data-v2"
@@ -1855,6 +2604,12 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
         "summary": "System Readiness",
         "tags": [
           "market-data-v2"
@@ -1868,9 +2623,8 @@
           {
             "in": "header",
             "name": "X-QDL-Purpose",
-            "required": false,
+            "required": true,
             "schema": {
-              "default": "INTERNAL_ALPHA",
               "title": "X-Qdl-Purpose",
               "type": "string"
             }
@@ -1908,6 +2662,12 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
         "summary": "Readiness",
         "tags": [
           "market-data-v2"

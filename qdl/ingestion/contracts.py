@@ -4,6 +4,8 @@ import hashlib
 from dataclasses import dataclass
 from enum import Enum
 
+from qdl.domain.lifecycle import BarLifecycle
+
 
 class FeedType(str, Enum):
     TRADE = "trade"
@@ -15,17 +17,26 @@ class FeedType(str, Enum):
 class DeliveryPolicy(str, Enum):
     LOSSLESS = "LOSSLESS"
     LATEST_STATE = "LATEST_STATE"
+    LIFECYCLE_COALESCE = "LIFECYCLE_COALESCE"
 
 
 LOSSLESS_FEEDS = frozenset({FeedType.TRADE, FeedType.BOOK})
 
 
-def delivery_policy(feed: FeedType) -> DeliveryPolicy:
-    return (
-        DeliveryPolicy.LOSSLESS
-        if feed in LOSSLESS_FEEDS
-        else DeliveryPolicy.LATEST_STATE
-    )
+def delivery_policy(
+    feed: FeedType,
+    *,
+    bar_lifecycle: BarLifecycle | None = None,
+) -> DeliveryPolicy:
+    if feed in LOSSLESS_FEEDS:
+        return DeliveryPolicy.LOSSLESS
+    if feed is FeedType.BAR:
+        if bar_lifecycle in {None, BarLifecycle.UNSPECIFIED}:
+            raise ValueError("bar delivery requires an explicit lifecycle")
+        if bar_lifecycle is BarLifecycle.IN_PROGRESS:
+            return DeliveryPolicy.LIFECYCLE_COALESCE
+        return DeliveryPolicy.LOSSLESS
+    return DeliveryPolicy.LATEST_STATE
 
 
 @dataclass(frozen=True, order=True)

@@ -5,6 +5,14 @@ package qdl.marketdata.v2;
 import "qdl/common/v1/common.proto";
 import "qdl/quality/v1/quality.proto";
 
+enum BarLifecycle {
+  BAR_LIFECYCLE_UNSPECIFIED = 0;
+  BAR_LIFECYCLE_IN_PROGRESS = 1;
+  BAR_LIFECYCLE_FINAL = 2;
+  BAR_LIFECYCLE_REVISED = 3;
+  BAR_LIFECYCLE_CANCELLED = 4;
+}
+
 message Trade {
   string native_trade_id = 1;
   qdl.common.v1.DecimalValue price = 2;
@@ -35,6 +43,8 @@ message Bar {
   bool is_final = 10;
   uint32 revision = 11;
   qdl.common.v1.BarOrigin origin = 12;
+  BarLifecycle lifecycle = 13;
+  optional bytes supersedes_event_id = 14;
 }
 
 message BookLevel {

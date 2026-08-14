@@ -19,7 +19,9 @@ from qdl.domain.instrument import (
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import (
     AccessPurpose,
+    BarLifecycle,
     ConsumerGrade,
+    ContractMetadata,
     DataProduct,
     DataRequirement as DomainRequirement,
     EntitlementGrant,
@@ -45,15 +47,24 @@ from qdl.stream import (
 from qdl.transport import Cursor, DurableEvent, SQLiteDurableSpool, SpoolConfig
 from qdl_sdk import (
     AsyncDataLayerClient,
+    BarRevisionPolicy as SdkBarRevisionPolicy,
     DataLayerClientV2,
     DataRequirement,
+    Feed,
+    GapPolicy as SdkGapPolicy,
+    Grade,
     GrpcStreamTransport,
     MemoryCursorStore,
+    RecoveryPolicy as SdkRecoveryPolicy,
+    StalePolicy as SdkStalePolicy,
+    StaticBearerCredential,
 )
 from qdl_sdk.cursor import FileCursorStore
 from qdl_sdk.errors import CursorExpiredError, DataLayerError, SlowConsumerError
 from qdl_sdk.models import ControlEvent, StreamEvent
 from qdl_sdk.v1_facade import V1CompatibilityFacade
+from qdl.consumer import ConsumerManifestLoader
+from tests.phase7_support import make_identity, make_token, manifest_mapping
 
 
 STREAM = "md.canonical.v2.bar"
@@ -75,6 +86,20 @@ def instrument() -> InstrumentRecord:
 
 
 def envelope(record: InstrumentRecord, index: int, *, revision: int = 0) -> market_data_pb2.EventEnvelope:
+    bar = market_data_pb2.Bar(
+        interval="1m",
+        open_time_ns=1_000_000_000,
+        close_time_ns=61_000_000_000,
+        is_final=True,
+        revision=revision,
+        lifecycle=(
+            market_data_pb2.BAR_LIFECYCLE_REVISED
+            if revision
+            else market_data_pb2.BAR_LIFECYCLE_FINAL
+        ),
+    )
+    if revision:
+        bar.supersedes_event_id = b"previous"
     return market_data_pb2.EventEnvelope(
         schema_name="qdl.marketdata.bar",
         schema_major=2,
@@ -99,13 +124,7 @@ def envelope(record: InstrumentRecord, index: int, *, revision: int = 0) -> mark
         normalizer_version="phase5-test",
         adapter_version="fixture-v1",
         config_revision=1,
-        bar=market_data_pb2.Bar(
-            interval="1m",
-            open_time_ns=1_000_000_000,
-            close_time_ns=61_000_000_000,
-            is_final=True,
-            revision=revision,
-        ),
+        bar=bar,
     )
 
 
@@ -126,47 +145,82 @@ class FakeQueryTransport:
         self.watermark = watermark
         self.calls = 0
 
+    def row(self, requirement):
+        decimal = {"coefficient": "1", "scale": 0, "source_text": "1"}
+        return {
+            "instrument_uid": requirement.instrument_uid,
+            "instrument_id": "binance:usdm:perpetual:BTC-USDT",
+            "instrument_revision": 1,
+            "feed": requirement.feed.value,
+            "interval": requirement.interval,
+            "observed_at_ns": 61_000_000_000,
+            "revision": 0,
+            "payload": {
+                "feed": "BAR",
+                "interval": requirement.interval,
+                "open_time_ns": 1_000_000_000,
+                "close_time_ns": 61_000_000_000,
+                "open": decimal,
+                "high": decimal,
+                "low": decimal,
+                "close": decimal,
+                "volume": decimal,
+                "trade_count": 1,
+                "lifecycle": "FINAL",
+                "revision": 0,
+                "origin": "VENUE_NATIVE",
+            },
+            "source": {
+                "venue": "BINANCE",
+                "provider": "BINANCE_DIRECT",
+                "source_id": "BINANCE_DIRECT",
+                "source_role": "PRIMARY",
+                "authoritative": True,
+            },
+            "quality": {
+                "state": "LIVE",
+                "gap_open": False,
+                "execution_eligible": True,
+                "complete": True,
+                "freshness_ms": 1,
+                "policy_id": requirement.source_policy_id,
+                "flags": [],
+            },
+            "contract": {
+                "schema_digest": "5" * 64,
+                "contract_version": "2.0.0-beta.1",
+                "normalizer_version": "phase7-test",
+                "adapter_version": "fixture-v1",
+                "instrument_catalog_revision": 1,
+                "source_policy_revision": 1,
+                "authority_revision": 1,
+                "config_revision": 1,
+                "correlation_id": "phase5-sdk-fixture",
+            },
+            "snapshot_id": "snapshot",
+            "cursor": self.token,
+            "watermark_offset": self.watermark,
+        }
+
     async def warmup(self, requirement, *, consumer_id):
         self.calls += 1
         return {
             "schema": "qdl.marketdata.warmup.v2",
             "request_id": "request",
             "snapshot_id": "snapshot",
+            "data_as_of_ns": 61_000_000_000,
             "stream_cursor": self.token,
             "watermark_offset": self.watermark,
             "coverage": "FULL",
             "count": 1,
-            "data": [{
-                "instrument_uid": requirement.instrument_uid,
-                "feed": requirement.feed,
-                "interval": requirement.interval,
-                "payload": {"is_final": True},
-                "quality": {
-                    "state": "LIVE", "gap_open": False,
-                    "execution_eligible": True, "complete": True,
-                    "freshness_ms": 1, "policy_id": requirement.source_policy_id,
-                },
-            }],
+            "data": [self.row(requirement)],
         }
 
     async def snapshot(self, requirement, *, consumer_id):
         self.calls += 1
         return {
             "request_id": "request",
-            "data": {
-                "instrument_uid": requirement.instrument_uid,
-                "feed": requirement.feed,
-                "interval": requirement.interval,
-                "payload": {"is_final": True},
-                "quality": {
-                    "state": "LIVE", "gap_open": False,
-                    "execution_eligible": True, "complete": True,
-                    "freshness_ms": 1, "policy_id": requirement.source_policy_id,
-                },
-                "snapshot_id": "snapshot",
-                "cursor": self.token,
-                "watermark_offset": self.watermark,
-            },
+            "data": self.row(requirement),
         }
 
     async def close(self):
@@ -241,6 +295,22 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             snapshot_watermark=Cursor(STREAM, self.partition, 0),
             ttl_seconds=3600,
         ).token
+        self.consumer_id = "alpha-shadow"
+        self.subject = "spiffe://qdl/paper/alpha-shadow"
+        manifest_payload = manifest_mapping(
+            consumer_id=self.consumer_id,
+            subject=self.subject,
+            instrument_uid=self.record.instrument_uid,
+            source_policy_id="alpha_binance_v1",
+        )
+        manifest_payload["spec"]["requirements"].append({
+            **manifest_payload["spec"]["requirements"][0],
+            "feed": "TRADE",
+            "interval": None,
+        })
+        self.manifest = ConsumerManifestLoader.from_mapping(manifest_payload)
+        self.identity = make_identity(self.manifest)
+        self.credential = StaticBearerCredential(make_token(self.subject))
 
     async def asyncTearDown(self):
         self.spool.close()
@@ -296,14 +366,15 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             query_service=None,
             snapshot_loader=SnapshotLoader(self.record, self.token),
         )
-        server = create_grpc_server(grpc_service)
+        server = create_grpc_server(grpc_service, identity_service=self.identity)
         port = server.add_insecure_port("127.0.0.1:0")
         await server.start()
         transport = GrpcStreamTransport(
-            f"127.0.0.1:{port}", allow_insecure_loopback=True
+            f"127.0.0.1:{port}", allow_insecure_loopback=True,
+            credential_provider=self.credential,
         )
         requirement = DataRequirement(
-            self.record.instrument_uid, "BAR", "ALPHA", "alpha_binance_v1",
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
             interval="1m", warmup_limit=1,
         )
         events = transport.subscribe(
@@ -331,11 +402,24 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             "alpha_binance_v1", interval="1m", warmup_limit=1,
         )
         quality = QualityMetadata("LIVE", 1, False, True, True, "alpha_binance_v1")
+        now = time.time_ns()
         backend.put_latest(domain_requirement, MarketDataItem(
             self.record.instrument_uid, self.record.instrument_id, 1, FeedType.BAR,
-            time.time_ns(), {"is_final": True},
+            now, {
+                "open_time_ns": now - 60_000_000_000,
+                "close_time_ns": now,
+                "open": "60000", "high": "60100", "low": "59900",
+                "close": "60050", "volume": "10", "trade_count": 5,
+                "origin": "VENUE_NATIVE", "is_final": True,
+            },
             SourceMetadata("BINANCE", "BINANCE_DIRECT", "BINANCE_DIRECT", "PRIMARY", True),
-            quality, interval="1m", cursor=self.token, snapshot_id="snapshot-0",
+            quality,
+            ContractMetadata(
+                "5" * 64, "2.0.0-beta.1", "phase7-test", "fixture-v1",
+                1, 1, 1, 1, "phase5-stream-sdk",
+            ),
+            interval="1m", cursor=self.token, snapshot_id="snapshot-0",
+            bar_lifecycle=BarLifecycle.FINAL,
         ))
         service = V2QueryService(
             instruments=InstrumentQuery(registry), backend=backend,
@@ -351,16 +435,17 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             query_service=service,
             snapshot_loader=SnapshotLoader(self.record, self.token),
         )
-        server = create_grpc_server(grpc_service)
+        server = create_grpc_server(grpc_service, identity_service=self.identity)
         port = server.add_insecure_port("127.0.0.1:0")
         await server.start()
         transport = GrpcStreamTransport(
-            f"127.0.0.1:{port}", allow_insecure_loopback=True
+            f"127.0.0.1:{port}", allow_insecure_loopback=True,
+            credential_provider=self.credential,
         )
         query = FakeQueryTransport(self.token)
         cursor_store = MemoryCursorStore()
         sdk_requirement = DataRequirement(
-            self.record.instrument_uid, "BAR", "ALPHA", "alpha_binance_v1",
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
             interval="1m", warmup_limit=1,
         )
         client = AsyncDataLayerClient(
@@ -428,7 +513,7 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
     async def test_fresh_snapshot_does_not_replay_from_unrestored_old_checkpoint(self):
         store = MemoryCursorStore()
         requirement = DataRequirement(
-            self.record.instrument_uid, "BAR", "ALPHA", "alpha_binance_v1",
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
             interval="1m", warmup_limit=1,
         )
         query = FakeQueryTransport("fresh-token", watermark=5)
@@ -455,7 +540,7 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cursor_expiration_rebuilds_snapshot_and_transient_error_reconnects(self):
         requirement = DataRequirement(
-            self.record.instrument_uid, "BAR", "ALPHA", "alpha_binance_v1",
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
             interval="1m", warmup_limit=1,
         )
         query = FakeQueryTransport("snapshot-token", watermark=0)
@@ -488,7 +573,8 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sdk_rejects_semantically_invalid_success_response(self):
         requirement = DataRequirement(
-            self.record.instrument_uid, "BAR", "EXECUTION", "execution_binance_v1",
+            self.record.instrument_uid, Feed.BAR, Grade.EXECUTION,
+            "execution_binance_v1",
             interval="1m", warmup_limit=1,
         )
         query = FakeQueryTransport("snapshot-token")
@@ -515,20 +601,20 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
     async def test_public_query_wrappers_preserve_all_requirement_policies(self):
         requirement = DataRequirement(
             self.record.instrument_uid,
-            "bar",
-            "alpha",
+            Feed.BAR,
+            Grade.ALPHA,
             "alpha_binance_v1",
             interval="1m",
             warmup_limit=1,
             max_freshness_ms=500,
             require_full_coverage=False,
             require_final_bars=False,
-            stale_policy="observe",
-            gap_policy="observe",
-            recovery="fresh_snapshot",
-            bar_revision_policy="emit_revisions",
+            stale_policy=SdkStalePolicy.OBSERVE,
+            gap_policy=SdkGapPolicy.OBSERVE,
+            recovery=SdkRecoveryPolicy.FRESH_SNAPSHOT,
+            bar_revision_policy=SdkBarRevisionPolicy.EMIT_REVISIONS,
         )
-        self.assertEqual(requirement.stale_policy, "OBSERVE")
+        self.assertEqual(requirement.stale_policy, SdkStalePolicy.OBSERVE)
         self.assertEqual(requirement.query_params()["recovery"], "FRESH_SNAPSHOT")
         query = FakeQueryTransport(self.token)
         client = AsyncDataLayerClient(
@@ -536,15 +622,16 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             stream_transport=ScriptedStreamTransport(()),
             consumer_id="alpha-shadow",
         )
-        self.assertEqual((await client.warmup(requirement))["count"], 1)
-        self.assertEqual((await client.snapshot(requirement))["data"]["feed"], "BAR")
+        self.assertEqual((await client.warmup(requirement)).count, 1)
+        self.assertEqual((await client.snapshot(requirement)).data.feed.value, "BAR")
         facade = DataLayerClientV2(client)
         sync_snapshot = await asyncio.to_thread(facade.snapshot, requirement)
-        self.assertEqual(sync_snapshot["data"]["instrument_uid"], self.record.instrument_uid)
+        self.assertEqual(sync_snapshot.data.instrument_uid, self.record.instrument_uid)
 
-        with self.assertRaisesRegex(ValueError, "stale policy"):
+        with self.assertRaisesRegex(TypeError, "stale_policy"):
             DataRequirement(
-                self.record.instrument_uid, "TRADE", "ALPHA", "alpha_binance_v1",
+                self.record.instrument_uid, Feed.TRADE, Grade.ALPHA,
+                "alpha_binance_v1",
                 stale_policy="UNKNOWN",
             )
 
@@ -554,14 +641,16 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             query_service=None,
             snapshot_loader=SnapshotLoader(self.record, self.token),
         )
-        server = create_grpc_server(service)
+        server = create_grpc_server(service, identity_service=self.identity)
         port = server.add_insecure_port("127.0.0.1:0")
         await server.start()
         transport = GrpcStreamTransport(
-            f"127.0.0.1:{port}", allow_insecure_loopback=True
+            f"127.0.0.1:{port}", allow_insecure_loopback=True,
+            credential_provider=self.credential,
         )
         wrong_requirement = DataRequirement(
-            self.record.instrument_uid, "TRADE", "ALPHA", "alpha_binance_v1"
+            self.record.instrument_uid, Feed.TRADE, Grade.ALPHA,
+            "alpha_binance_v1"
         )
         events = transport.subscribe(
             wrong_requirement,

@@ -3,9 +3,26 @@ kind: DataRequirement
 metadata:
   id: trading-system.binance.execution.shadow
   owner: trading-platform
+  subject: spiffe://qdl/paper/trading-system-binance-execution-shadow
+  environment: paper
+  revision: 1
 spec:
   sdk_major: 2
   rollback_contract: V1
+  execution_dependency: FORBIDDEN
+  permissions:
+    - instruments:read
+    - snapshot:read
+    - status:read
+    - stream:read
+  purposes:
+    - INTERNAL_EXECUTION
+  quotas:
+    requests_per_minute: 600
+    max_batch_items: 50
+    max_warmup_rows: 1000
+    max_streams: 20
+    max_buffer_events: 2000
   requirements:
     - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
       feed: TRADE

@@ -11,6 +11,7 @@ from qdl.consumer import (
     UsageTelemetry,
 )
 from qdl.query import ConsumerGrade, FeedType
+from tests.phase7_support import manifest_mapping
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,21 +32,17 @@ class ConsumerManifestTests(unittest.TestCase):
         self.assertEqual(alpha.rollback_contract, "V1")
 
     def test_unknown_fields_and_weak_execution_policy_fail_closed(self):
-        base = {
-            "apiVersion": "qdl/v2",
-            "kind": "DataRequirement",
-            "metadata": {"id": "consumer", "owner": "owner"},
-            "spec": {
-                "sdk_major": 2,
-                "requirements": [{
-                    "instrument_uid": "uid",
-                    "feed": "TRADE",
-                    "consumer_grade": "EXECUTION",
-                    "source_policy_id": "execution",
-                    "gap_policy": "OBSERVE",
-                }],
-            },
-        }
+        base = manifest_mapping(
+            consumer_id="consumer",
+            subject="spiffe://qdl/paper/consumer",
+            instrument_uid="uid",
+            feed="TRADE",
+            interval=None,
+            grade="EXECUTION",
+            source_policy_id="execution",
+            purposes=("INTERNAL_EXECUTION",),
+        )
+        base["spec"]["requirements"][0]["gap_policy"] = "OBSERVE"
         with self.assertRaisesRegex(ValueError, "gap policy must BLOCK"):
             ConsumerManifestLoader.from_mapping(base)
         base["unexpected"] = True

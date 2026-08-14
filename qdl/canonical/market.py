@@ -88,6 +88,11 @@ def canonicalize_binance_usdm_bar(
         volume=_decimal(_required(kline, "v")), trade_count=int(kline.get("n") or 0),
         is_final=bool(kline.get("x", False)), revision=0,
         origin=common_pb2.BAR_ORIGIN_VENUE_NATIVE,
+        lifecycle=(
+            market_data_pb2.BAR_LIFECYCLE_FINAL
+            if bool(kline.get("x", False))
+            else market_data_pb2.BAR_LIFECYCLE_IN_PROGRESS
+        ),
     ))
     return envelope
 
@@ -113,5 +118,6 @@ def canonicalize_binance_usdm_rest_bar(
         open=_decimal(row[1]), high=_decimal(row[2]), low=_decimal(row[3]),
         close=_decimal(row[4]), volume=_decimal(row[5]), trade_count=int(row[8]),
         is_final=True, revision=0, origin=common_pb2.BAR_ORIGIN_BACKFILLED,
+        lifecycle=market_data_pb2.BAR_LIFECYCLE_FINAL,
     ))
     return envelope

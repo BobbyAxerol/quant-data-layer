@@ -40,6 +40,12 @@ class Principal:
     roles: frozenset[str]
     venues: frozenset[str]
     token_id: str
+    consumer_manifest_revision: int | None = None
+
+    def has_permission(self, permission: Permission) -> bool:
+        return any(
+            permission in _ROLE_PERMISSIONS.get(role, ()) for role in self.roles
+        )
 
 
 class ServiceTokenVerifier:
@@ -65,19 +71,26 @@ class ServiceTokenVerifier:
         self._max_lifetime = max_lifetime_seconds
 
     def verify(self, token: str, *, expected_environment: str) -> Principal:
-        header = jwt.get_unverified_header(token)
-        key_id = str(header.get("kid") or "")
-        algorithm = str(header.get("alg") or "")
-        if algorithm not in self._algorithms or key_id not in self._keys:
-            raise PermissionError("untrusted workload token key or algorithm")
-        claims = jwt.decode(
-            token,
-            self._keys[key_id],
-            algorithms=[algorithm],
-            issuer=self._issuer,
-            audience=self._audience,
-            options={"require": ["sub", "iss", "aud", "exp", "iat", "jti", "environment"]},
-        )
+        try:
+            header = jwt.get_unverified_header(token)
+            key_id = str(header.get("kid") or "")
+            algorithm = str(header.get("alg") or "")
+            if algorithm not in self._algorithms or key_id not in self._keys:
+                raise PermissionError("untrusted workload token key or algorithm")
+            claims = jwt.decode(
+                token,
+                self._keys[key_id],
+                algorithms=[algorithm],
+                issuer=self._issuer,
+                audience=self._audience,
+                options={
+                    "require": [
+                        "sub", "iss", "aud", "exp", "iat", "jti", "environment"
+                    ]
+                },
+            )
+        except jwt.PyJWTError as error:
+            raise PermissionError("workload token verification failed") from error
         issued_at = int(claims["iat"])
         expires_at = int(claims["exp"])
         if expires_at <= issued_at or expires_at - issued_at > self._max_lifetime:
@@ -89,12 +102,23 @@ class ServiceTokenVerifier:
         unknown = roles - _ROLE_PERMISSIONS.keys()
         if not roles or unknown:
             raise PermissionError("workload token contains unknown or empty roles")
+        manifest_revision = claims.get("consumer_manifest_revision")
+        if manifest_revision is not None:
+            try:
+                manifest_revision = int(manifest_revision)
+            except (TypeError, ValueError) as error:
+                raise PermissionError(
+                    "workload token manifest revision is invalid"
+                ) from error
+            if manifest_revision < 1:
+                raise PermissionError("workload token manifest revision is invalid")
         return Principal(
             subject=str(claims["sub"]),
             environment=environment,
             roles=roles,
             venues=frozenset(str(item).upper() for item in claims.get("venues", [])),
             token_id=str(claims["jti"]),
+            consumer_manifest_revision=manifest_revision,
         )
 
 

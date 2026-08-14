@@ -4,10 +4,12 @@
 pub struct DataRequirement {
     #[prost(string, tag="1")]
     pub instrument_uid: ::prost::alloc::string::String,
+    #[deprecated]
     #[prost(string, tag="2")]
     pub feed: ::prost::alloc::string::String,
     #[prost(string, tag="3")]
     pub interval: ::prost::alloc::string::String,
+    #[deprecated]
     #[prost(string, tag="4")]
     pub consumer_grade: ::prost::alloc::string::String,
     #[prost(string, tag="5")]
@@ -20,14 +22,30 @@ pub struct DataRequirement {
     pub require_full_coverage: bool,
     #[prost(bool, tag="9")]
     pub require_final_bars: bool,
+    #[deprecated]
     #[prost(string, tag="10")]
     pub stale_policy: ::prost::alloc::string::String,
+    #[deprecated]
     #[prost(string, tag="11")]
     pub gap_policy: ::prost::alloc::string::String,
+    #[deprecated]
     #[prost(string, tag="12")]
     pub recovery: ::prost::alloc::string::String,
+    #[deprecated]
     #[prost(string, tag="13")]
     pub bar_revision_policy: ::prost::alloc::string::String,
+    #[prost(enumeration="FeedType", tag="20")]
+    pub feed_type: i32,
+    #[prost(enumeration="ConsumerGrade", tag="21")]
+    pub grade: i32,
+    #[prost(enumeration="StalePolicy", tag="22")]
+    pub stale_policy_type: i32,
+    #[prost(enumeration="GapPolicy", tag="23")]
+    pub gap_policy_type: i32,
+    #[prost(enumeration="RecoveryPolicy", tag="24")]
+    pub recovery_policy: i32,
+    #[prost(enumeration="BarRevisionPolicy", tag="25")]
+    pub revision_policy: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeRequest {
@@ -115,6 +133,8 @@ pub struct GetSnapshotResponse {
 pub struct GetFeedStatusRequest {
     #[prost(message, optional, tag="1")]
     pub requirement: ::core::option::Option<DataRequirement>,
+    #[prost(string, tag="2")]
+    pub consumer_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetFeedStatusResponse {
@@ -132,6 +152,216 @@ pub struct GetFeedStatusResponse {
     pub policy_id: ::prost::alloc::string::String,
     #[prost(string, repeated, tag="7")]
     pub flags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum FeedType {
+    Unspecified = 0,
+    Trade = 1,
+    Quote = 2,
+    Bar = 3,
+    BookSnapshot = 4,
+    BookDelta = 5,
+    FundingRate = 6,
+    OpenInterest = 7,
+    MarkIndexPrice = 8,
+    Ticker = 9,
+}
+impl FeedType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "FEED_TYPE_UNSPECIFIED",
+            Self::Trade => "FEED_TYPE_TRADE",
+            Self::Quote => "FEED_TYPE_QUOTE",
+            Self::Bar => "FEED_TYPE_BAR",
+            Self::BookSnapshot => "FEED_TYPE_BOOK_SNAPSHOT",
+            Self::BookDelta => "FEED_TYPE_BOOK_DELTA",
+            Self::FundingRate => "FEED_TYPE_FUNDING_RATE",
+            Self::OpenInterest => "FEED_TYPE_OPEN_INTEREST",
+            Self::MarkIndexPrice => "FEED_TYPE_MARK_INDEX_PRICE",
+            Self::Ticker => "FEED_TYPE_TICKER",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "FEED_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "FEED_TYPE_TRADE" => Some(Self::Trade),
+            "FEED_TYPE_QUOTE" => Some(Self::Quote),
+            "FEED_TYPE_BAR" => Some(Self::Bar),
+            "FEED_TYPE_BOOK_SNAPSHOT" => Some(Self::BookSnapshot),
+            "FEED_TYPE_BOOK_DELTA" => Some(Self::BookDelta),
+            "FEED_TYPE_FUNDING_RATE" => Some(Self::FundingRate),
+            "FEED_TYPE_OPEN_INTEREST" => Some(Self::OpenInterest),
+            "FEED_TYPE_MARK_INDEX_PRICE" => Some(Self::MarkIndexPrice),
+            "FEED_TYPE_TICKER" => Some(Self::Ticker),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ConsumerGrade {
+    Unspecified = 0,
+    Execution = 1,
+    Alpha = 2,
+    Research = 3,
+}
+impl ConsumerGrade {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "CONSUMER_GRADE_UNSPECIFIED",
+            Self::Execution => "CONSUMER_GRADE_EXECUTION",
+            Self::Alpha => "CONSUMER_GRADE_ALPHA",
+            Self::Research => "CONSUMER_GRADE_RESEARCH",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CONSUMER_GRADE_UNSPECIFIED" => Some(Self::Unspecified),
+            "CONSUMER_GRADE_EXECUTION" => Some(Self::Execution),
+            "CONSUMER_GRADE_ALPHA" => Some(Self::Alpha),
+            "CONSUMER_GRADE_RESEARCH" => Some(Self::Research),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum StalePolicy {
+    Unspecified = 0,
+    Block = 1,
+    Pause = 2,
+    Observe = 3,
+}
+impl StalePolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "STALE_POLICY_UNSPECIFIED",
+            Self::Block => "STALE_POLICY_BLOCK",
+            Self::Pause => "STALE_POLICY_PAUSE",
+            Self::Observe => "STALE_POLICY_OBSERVE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "STALE_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "STALE_POLICY_BLOCK" => Some(Self::Block),
+            "STALE_POLICY_PAUSE" => Some(Self::Pause),
+            "STALE_POLICY_OBSERVE" => Some(Self::Observe),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum GapPolicy {
+    Unspecified = 0,
+    Block = 1,
+    Pause = 2,
+    Observe = 3,
+}
+impl GapPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "GAP_POLICY_UNSPECIFIED",
+            Self::Block => "GAP_POLICY_BLOCK",
+            Self::Pause => "GAP_POLICY_PAUSE",
+            Self::Observe => "GAP_POLICY_OBSERVE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "GAP_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "GAP_POLICY_BLOCK" => Some(Self::Block),
+            "GAP_POLICY_PAUSE" => Some(Self::Pause),
+            "GAP_POLICY_OBSERVE" => Some(Self::Observe),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum RecoveryPolicy {
+    Unspecified = 0,
+    SnapshotAndReplay = 1,
+    FreshSnapshot = 2,
+    None = 3,
+}
+impl RecoveryPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "RECOVERY_POLICY_UNSPECIFIED",
+            Self::SnapshotAndReplay => "RECOVERY_POLICY_SNAPSHOT_AND_REPLAY",
+            Self::FreshSnapshot => "RECOVERY_POLICY_FRESH_SNAPSHOT",
+            Self::None => "RECOVERY_POLICY_NONE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "RECOVERY_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "RECOVERY_POLICY_SNAPSHOT_AND_REPLAY" => Some(Self::SnapshotAndReplay),
+            "RECOVERY_POLICY_FRESH_SNAPSHOT" => Some(Self::FreshSnapshot),
+            "RECOVERY_POLICY_NONE" => Some(Self::None),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BarRevisionPolicy {
+    Unspecified = 0,
+    Latest = 1,
+    InitialOnly = 2,
+    EmitRevisions = 3,
+}
+impl BarRevisionPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BAR_REVISION_POLICY_UNSPECIFIED",
+            Self::Latest => "BAR_REVISION_POLICY_LATEST",
+            Self::InitialOnly => "BAR_REVISION_POLICY_INITIAL_ONLY",
+            Self::EmitRevisions => "BAR_REVISION_POLICY_EMIT_REVISIONS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BAR_REVISION_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "BAR_REVISION_POLICY_LATEST" => Some(Self::Latest),
+            "BAR_REVISION_POLICY_INITIAL_ONLY" => Some(Self::InitialOnly),
+            "BAR_REVISION_POLICY_EMIT_REVISIONS" => Some(Self::EmitRevisions),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

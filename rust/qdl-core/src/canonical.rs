@@ -1,6 +1,8 @@
 use prost::Message;
 use qdl_contracts::qdl::common::v1::{AggressorSide, BarOrigin, SourceRole};
-use qdl_contracts::qdl::marketdata::v2::{event_envelope, Bar, EventEnvelope, Quote, Trade};
+use qdl_contracts::qdl::marketdata::v2::{
+    event_envelope, Bar, BarLifecycle, EventEnvelope, Quote, Trade,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -162,6 +164,7 @@ fn canonicalize_binance_bar(fixture: &TradeFixture) -> Result<EventEnvelope, Str
         source_time
     );
     let mut envelope = base_envelope(fixture, "bar", sequence, source_time)?;
+    let is_final = kline.get("x").and_then(Value::as_bool).unwrap_or(false);
     envelope.payload = Some(event_envelope::Payload::Bar(Bar {
         interval: text(kline, "i")?,
         open_time_ns: integer(kline, "t")? * 1_000_000,
@@ -172,9 +175,15 @@ fn canonicalize_binance_bar(fixture: &TradeFixture) -> Result<EventEnvelope, Str
         close: Some(parse_decimal(&text(kline, "c")?)?),
         volume: Some(parse_decimal(&text(kline, "v")?)?),
         trade_count: kline.get("n").and_then(Value::as_u64).unwrap_or(0),
-        is_final: kline.get("x").and_then(Value::as_bool).unwrap_or(false),
+        is_final,
         revision: 0,
         origin: BarOrigin::VenueNative as i32,
+        lifecycle: if is_final {
+            BarLifecycle::Final as i32
+        } else {
+            BarLifecycle::InProgress as i32
+        },
+        supersedes_event_id: None,
     }));
     Ok(envelope)
 }

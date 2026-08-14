@@ -1,9 +1,10 @@
-.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test python-test rust-test
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test python-test rust-test
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
 RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
 PHASE45_TEST_IMAGE ?= data-layer:phase45-test
 PHASE5_TEST_IMAGE ?= data-layer:phase5-test
+PHASE7_TEST_IMAGE ?= data-layer:phase7-test
 
 contract-generate:
 	docker run --rm -v "$(CURDIR):/workspace" -w /workspace/contracts $(BUF_IMAGE) generate
@@ -12,6 +13,7 @@ contract-check:
 	docker run --rm -v "$(CURDIR):/workspace" -w /workspace/contracts $(BUF_IMAGE) format --diff --exit-code
 	docker run --rm -v "$(CURDIR):/workspace" -w /workspace/contracts $(BUF_IMAGE) lint
 	docker run --rm -v "$(CURDIR):/workspace" -w /workspace/contracts $(BUF_IMAGE) breaking --against baseline/qdl-v2-phase1.binpb
+	docker run --rm -v "$(CURDIR):/workspace" -w /workspace/contracts $(BUF_IMAGE) breaking --against baseline/qdl-v2-phase7-beta.binpb
 	$(MAKE) contract-generate
 	git diff --exit-code -- generated
 
@@ -113,3 +115,19 @@ phase5-real-provider-smoke:
 
 phase5-clean:
 	docker image rm $(PHASE5_TEST_IMAGE) 2>/dev/null || true
+
+phase7-build:
+	docker build --provenance=false -t $(PHASE7_TEST_IMAGE) .
+
+phase7-contract-check:
+	$(MAKE) contract-check
+	docker run --rm --tmpfs /app/logs:rw,uid=10001,gid=10001,size=16m -v "$(CURDIR):/app:ro" -w /app $(PHASE7_TEST_IMAGE) python -m unittest -v tests.test_phase0_contract_golden tests.test_fund_phase5_contracts tests.test_fund_phase7_contract_security
+
+phase7-migration-smoke:
+	bash scripts/phase5_migration_smoke.sh
+
+phase7-test: phase7-build
+	docker run --rm --tmpfs /app/logs:rw,uid=10001,gid=10001,size=16m -v "$(CURDIR):/app:ro" -w /app $(PHASE7_TEST_IMAGE) python -m unittest -v tests.test_fund_phase7_contract_security tests.test_fund_phase5_api tests.test_fund_phase5_contracts tests.test_fund_phase5_consumer tests.test_fund_phase5_stream_sdk tests.test_fund_phase5_e2e tests.test_fund_phase5_load
+
+phase7-clean:
+	docker image rm $(PHASE7_TEST_IMAGE) 2>/dev/null || true

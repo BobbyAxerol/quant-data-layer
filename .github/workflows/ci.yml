@@ -31,6 +31,7 @@ jobs:
           buf format --diff --exit-code
           buf lint
           buf breaking --against baseline/qdl-v2-phase1.binpb
+          buf breaking --against baseline/qdl-v2-phase7-beta.binpb
 
       - name: Check schema against pull-request base
         if: github.event_name == 'pull_request'
@@ -117,6 +118,16 @@ jobs:
           run --rm test_runner python -m unittest -v
           tests.test_fund_phase6_operations tests.test_fund_phase6_resilience
           tests.test_fund_phase6_release
+
+      - name: Run Phase 7 typed-contract and data-plane identity gates
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml
+          run --rm test_runner python -m unittest -v
+          tests.test_fund_phase7_contract_security
+          tests.test_phase0_contract_golden tests.test_fund_phase5_contracts
+
+      - name: Run additive PostgreSQL migration gate
+        run: bash scripts/phase5_migration_smoke.sh
 
       - name: Run bounded V2 API replica load gate
         run: >-

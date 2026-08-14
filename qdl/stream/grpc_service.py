@@ -9,6 +9,13 @@ from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import AccessPurpose, DataRequirement, QueryServiceError, V2QueryService
 from qdl.query.v2 import query_pb2
 from qdl.replay import ReplayGapError
+from qdl.security import (
+    DataPlaneAccessError,
+    DataPlaneIdentityService,
+    DataPlanePermission,
+    GrpcDataPlaneInterceptor,
+    current_grpc_data_access,
+)
 from qdl.stream.gateway import DurableStreamGateway, SlowConsumer, StreamCapacityExceeded
 from qdl.transport import CursorExpired, StoredEvent
 
@@ -31,20 +38,38 @@ class SnapshotLoader(Protocol):
 
 
 def requirement_from_proto(value: query_pb2.DataRequirement) -> DataRequirement:
+    def enum_value(number: int, enum_wrapper, prefix: str) -> str:
+        name = enum_wrapper.Name(number)
+        if name.endswith("_UNSPECIFIED"):
+            raise ValueError(f"{prefix.lower()} cannot be UNSPECIFIED")
+        return name.removeprefix(prefix)
+
     return DataRequirement.from_mapping({
         "instrument_uid": value.instrument_uid,
-        "feed": value.feed,
+        "feed": enum_value(value.feed_type, query_pb2.FeedType, "FEED_TYPE_"),
         "interval": value.interval or None,
-        "consumer_grade": value.consumer_grade,
+        "consumer_grade": enum_value(
+            value.grade, query_pb2.ConsumerGrade, "CONSUMER_GRADE_"
+        ),
         "source_policy_id": value.source_policy_id,
         "warmup_limit": value.warmup_limit,
         "max_freshness_ms": value.max_freshness_ms or None,
         "require_full_coverage": value.require_full_coverage,
         "require_final_bars": value.require_final_bars,
-        "stale_policy": value.stale_policy,
-        "gap_policy": value.gap_policy,
-        "recovery": value.recovery,
-        "bar_revision_policy": value.bar_revision_policy,
+        "stale_policy": enum_value(
+            value.stale_policy_type, query_pb2.StalePolicy, "STALE_POLICY_"
+        ),
+        "gap_policy": enum_value(
+            value.gap_policy_type, query_pb2.GapPolicy, "GAP_POLICY_"
+        ),
+        "recovery": enum_value(
+            value.recovery_policy, query_pb2.RecoveryPolicy, "RECOVERY_POLICY_"
+        ),
+        "bar_revision_policy": enum_value(
+            value.revision_policy,
+            query_pb2.BarRevisionPolicy,
+            "BAR_REVISION_POLICY_",
+        ),
     })
 
 
@@ -75,6 +100,15 @@ class GrpcMarketDataService:
         partition_key = ""
         try:
             requirement = requirement_from_proto(request.requirement)
+            request_access = current_grpc_data_access()
+            request_access.access.require_consumer(request.consumer_id)
+            request_access.access.require_permission(DataPlanePermission.STREAM_READ)
+            request_access.access.require_requirement(requirement)
+            buffer_events = (
+                request.max_buffer_events
+                or request_access.access.manifest.quotas.max_buffer_events
+            )
+            request_access.access.require_stream_buffer(buffer_events)
             scope = self.gateway.handoff.resolve_scope(
                 token=request.cursor_token, consumer_id=request.consumer_id
             )
@@ -91,7 +125,7 @@ class GrpcMarketDataService:
                 stream=stream,
                 partition_key=partition_key,
                 token=request.cursor_token,
-                max_buffer_events=request.max_buffer_events or None,
+                max_buffer_events=buffer_events,
             )
             high = self.gateway.handoff.capture_watermark(
                 stream=stream, partition_key=partition_key
@@ -143,6 +177,8 @@ class GrpcMarketDataService:
             await context.abort(grpc.StatusCode.OUT_OF_RANGE, f"CURSOR_EXPIRED:{error}")
         except (ValueError, ReplayGapError) as error:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"CURSOR_INVALID:{error}")
+        except DataPlaneAccessError as error:
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, error.detail)
         finally:
             if subscription is not None:
                 await subscription.close()
@@ -150,15 +186,27 @@ class GrpcMarketDataService:
     async def replay(self, request: query_pb2.ReplayRequest, context):
         token = request.cursor_token
         try:
+            request_access = current_grpc_data_access()
+            request_access.access.require_consumer(request.consumer_id)
+            request_access.access.require_permission(DataPlanePermission.STREAM_READ)
             scope = self.gateway.handoff.resolve_scope(
                 token=token, consumer_id=request.consumer_id
             )
+            partition_parts = scope.partition_key.split("/", 2)
+            if len(partition_parts) != 3:
+                raise ValueError("cursor partition scope is invalid")
+            request_access.access.require_feed_scope(
+                instrument_uid=partition_parts[0],
+                feed=partition_parts[1].upper(),
+            )
+            replay_limit = request.limit or 1000
+            request_access.access.require_stream_buffer(replay_limit)
             records = self.gateway.handoff.replay(
                 token=token,
                 consumer_id=request.consumer_id,
                 stream=scope.stream,
                 partition_key=scope.partition_key,
-                limit=request.limit or 1000,
+                limit=replay_limit,
             )
             for stored in records:
                 grant = self.gateway.handoff.advance_token(
@@ -173,10 +221,20 @@ class GrpcMarketDataService:
             await context.abort(grpc.StatusCode.OUT_OF_RANGE, f"CURSOR_EXPIRED:{error}")
         except (ValueError, ReplayGapError) as error:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"CURSOR_INVALID:{error}")
+        except DataPlaneAccessError as error:
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, error.detail)
 
     async def get_snapshot(self, request: query_pb2.GetSnapshotRequest, context):
         try:
             requirement = requirement_from_proto(request.requirement)
+            request_access = current_grpc_data_access()
+            request_access.access.require_consumer(request.consumer_id)
+            request_access.access.require_permission(
+                DataPlanePermission.HISTORY_READ
+                if requirement.warmup_limit > 0
+                else DataPlanePermission.SNAPSHOT_READ
+            )
+            request_access.access.require_requirement(requirement)
             snapshot = self.snapshot_loader.load(requirement, consumer_id=request.consumer_id)
             return query_pb2.GetSnapshotResponse(
                 request_id=snapshot.request_id,
@@ -193,10 +251,17 @@ class GrpcMarketDataService:
             )
         except ValueError as error:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"INVALID_ARGUMENT:{error}")
+        except DataPlaneAccessError as error:
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, error.detail)
 
     async def get_feed_status(self, request: query_pb2.GetFeedStatusRequest, context):
         try:
-            status = self.query_service.status(requirement_from_proto(request.requirement))
+            requirement = requirement_from_proto(request.requirement)
+            request_access = current_grpc_data_access()
+            request_access.access.require_consumer(request.consumer_id)
+            request_access.access.require_permission(DataPlanePermission.STATUS_READ)
+            request_access.access.require_requirement(requirement)
+            status = self.query_service.status(requirement)
             return query_pb2.GetFeedStatusResponse(
                 state=status.state,
                 freshness_ms=status.freshness_ms,
@@ -213,6 +278,8 @@ class GrpcMarketDataService:
             )
         except ValueError as error:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"INVALID_ARGUMENT:{error}")
+        except DataPlaneAccessError as error:
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, error.detail)
 
 
 def add_market_data_service(server: grpc.aio.Server, service: GrpcMarketDataService) -> None:
@@ -244,10 +311,14 @@ def add_market_data_service(server: grpc.aio.Server, service: GrpcMarketDataServ
 def create_grpc_server(
     service: GrpcMarketDataService,
     *,
+    identity_service: DataPlaneIdentityService,
     maximum_concurrent_rpcs: int = 10_000,
 ) -> grpc.aio.Server:
     if maximum_concurrent_rpcs <= 0:
         raise ValueError("maximum_concurrent_rpcs must be positive")
-    server = grpc.aio.server(maximum_concurrent_rpcs=maximum_concurrent_rpcs)
+    server = grpc.aio.server(
+        interceptors=(GrpcDataPlaneInterceptor(identity_service),),
+        maximum_concurrent_rpcs=maximum_concurrent_rpcs,
+    )
     add_market_data_service(server, service)
     return server

@@ -33,12 +33,14 @@ LEGACY_ERROR_ALIASES = {
 
 
 class ConsumerGrade(StrEnum):
+    UNSPECIFIED = "UNSPECIFIED"
     EXECUTION = "EXECUTION"
     ALPHA = "ALPHA"
     RESEARCH = "RESEARCH"
 
 
 class FeedType(StrEnum):
+    UNSPECIFIED = "UNSPECIFIED"
     TRADE = "TRADE"
     QUOTE = "QUOTE"
     BAR = "BAR"
@@ -51,6 +53,7 @@ class FeedType(StrEnum):
 
 
 class CoverageStatus(StrEnum):
+    UNSPECIFIED = "UNSPECIFIED"
     FULL = "FULL"
     PARTIAL = "PARTIAL"
     SNAPSHOT_ONLY = "SNAPSHOT_ONLY"
@@ -58,24 +61,28 @@ class CoverageStatus(StrEnum):
 
 
 class StalePolicy(StrEnum):
+    UNSPECIFIED = "UNSPECIFIED"
     BLOCK = "BLOCK"
     PAUSE = "PAUSE"
     OBSERVE = "OBSERVE"
 
 
 class GapPolicy(StrEnum):
+    UNSPECIFIED = "UNSPECIFIED"
     BLOCK = "BLOCK"
     PAUSE = "PAUSE"
     OBSERVE = "OBSERVE"
 
 
 class RecoveryPolicy(StrEnum):
+    UNSPECIFIED = "UNSPECIFIED"
     SNAPSHOT_AND_REPLAY = "SNAPSHOT_AND_REPLAY"
     FRESH_SNAPSHOT = "FRESH_SNAPSHOT"
     NONE = "NONE"
 
 
 class BarRevisionPolicy(StrEnum):
+    UNSPECIFIED = "UNSPECIFIED"
     LATEST = "LATEST"
     INITIAL_ONLY = "INITIAL_ONLY"
     EMIT_REVISIONS = "EMIT_REVISIONS"
@@ -140,6 +147,16 @@ class DataRequirement:
             raise ValueError("warmup_limit must be between 0 and 10000")
         if self.max_freshness_ms is not None and self.max_freshness_ms <= 0:
             raise ValueError("max_freshness_ms must be positive")
+        enum_values = (
+            self.feed,
+            self.consumer_grade,
+            self.stale_policy,
+            self.gap_policy,
+            self.recovery,
+            self.bar_revision_policy,
+        )
+        if any(value.value == "UNSPECIFIED" for value in enum_values):
+            raise ValueError("UNSPECIFIED enum values are invalid at the V2 boundary")
         if self.feed is FeedType.BAR:
             if self.interval is None or not self.interval.strip():
                 raise ValueError("bar requirements need an interval")

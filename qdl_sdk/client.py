@@ -4,9 +4,19 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from qdl_sdk.cursor import CursorCheckpoint, CursorStore, MemoryCursorStore
 from qdl_sdk.errors import ContinuityError, CursorExpiredError, DataLayerError
-from qdl_sdk.models import ControlEvent, DataRequirement, StreamEvent
+from qdl_sdk.models import (
+    ControlEvent,
+    DataRequirement,
+    Feed,
+    Grade,
+    SnapshotResponse,
+    StreamEvent,
+    WarmupResponse,
+)
 
 
 class QueryTransport(Protocol):
@@ -35,56 +45,64 @@ class TelemetryRecorder(Protocol):
 
 def _validate_query_payload(
     requirement: DataRequirement, payload: dict, *, warmup: bool
-) -> None:
-    rows = payload.get("data") if warmup else [payload.get("data")]
-    if not isinstance(rows, list) or not rows or any(not isinstance(row, dict) for row in rows):
-        raise ContinuityError("DATA_NOT_READY", "query response has no typed market-data rows")
+) -> SnapshotResponse | WarmupResponse:
+    try:
+        response = (
+            WarmupResponse.model_validate(payload)
+            if warmup
+            else SnapshotResponse.model_validate(payload)
+        )
+    except ValidationError as error:
+        raise ContinuityError(
+            "SCHEMA_NOT_SUPPORTED", "query response violates the typed V2 contract"
+        ) from error
+    rows = response.data if isinstance(response, WarmupResponse) else [response.data]
+    if not rows:
+        raise ContinuityError("DATA_NOT_READY", "query response has no market-data rows")
     if warmup:
-        if int(payload.get("count", -1)) != len(rows):
+        assert isinstance(response, WarmupResponse)
+        if response.count != len(rows):
             raise ContinuityError("PARTIAL_RESULT", "warmup count does not match returned rows")
-        if requirement.require_full_coverage and payload.get("coverage") != "FULL":
+        if requirement.require_full_coverage and response.coverage != "FULL":
             raise ContinuityError("PARTIAL_RESULT", "warmup response is not full coverage")
     for row in rows:
-        if row.get("instrument_uid") != requirement.instrument_uid:
+        if row.instrument_uid != requirement.instrument_uid:
             raise ContinuityError("CONFLICT", "query response instrument does not match requirement")
-        if str(row.get("feed", "")).upper() != requirement.feed:
+        if row.feed.value != requirement.feed.value:
             raise ContinuityError("CONFLICT", "query response feed does not match requirement")
-        if requirement.interval is not None and row.get("interval") != requirement.interval:
+        if requirement.interval is not None and row.interval != requirement.interval:
             raise ContinuityError("CONFLICT", "query response interval does not match requirement")
-        quality = row.get("quality")
-        if not isinstance(quality, dict):
-            raise ContinuityError("DATA_NOT_READY", "query response has no quality metadata")
-        if quality.get("policy_id") != requirement.source_policy_id:
+        quality = row.quality
+        if quality.policy_id != requirement.source_policy_id:
             raise ContinuityError(
                 "CONFLICT", "query response source policy does not match requirement"
             )
-        state = str(quality.get("state", "")).upper()
-        freshness_ms = quality.get("freshness_ms")
+        state = quality.state.upper()
+        freshness_ms = quality.freshness_ms
         if (
             requirement.max_freshness_ms is not None
-            and (not isinstance(freshness_ms, int) or freshness_ms > requirement.max_freshness_ms)
-            and requirement.stale_policy in {"BLOCK", "PAUSE"}
+            and freshness_ms > requirement.max_freshness_ms
+            and requirement.stale_policy.value in {"BLOCK", "PAUSE"}
         ):
             raise ContinuityError("DATA_STALE", "query response exceeds freshness policy")
-        if quality.get("gap_open") and requirement.gap_policy in {"BLOCK", "PAUSE"}:
+        if quality.gap_open and requirement.gap_policy.value in {"BLOCK", "PAUSE"}:
             raise ContinuityError("OPEN_SEQUENCE_GAP", "query response has an open gap")
-        if state in {"STALE", "OFFLINE", "UNAVAILABLE"} and requirement.stale_policy in {
+        if state in {"STALE", "OFFLINE", "UNAVAILABLE"} and requirement.stale_policy.value in {
             "BLOCK", "PAUSE",
         }:
             raise ContinuityError("DATA_STALE", f"query response quality state is {state}")
-        if requirement.consumer_grade == "EXECUTION" and not quality.get(
-            "execution_eligible", False
-        ):
+        if requirement.consumer_grade is Grade.EXECUTION and not quality.execution_eligible:
             raise ContinuityError(
                 "SOURCE_NON_AUTHORITATIVE",
                 "execution-grade response is not execution eligible",
             )
-        if requirement.require_full_coverage and not quality.get("complete", False):
+        if requirement.require_full_coverage and not quality.complete:
             raise ContinuityError("PARTIAL_RESULT", "query response quality is incomplete")
-        if requirement.feed == "BAR" and requirement.require_final_bars:
-            market_payload = row.get("payload")
-            if not isinstance(market_payload, dict) or not market_payload.get("is_final", False):
+        if requirement.feed is Feed.BAR and requirement.require_final_bars:
+            lifecycle = str(getattr(row.payload, "lifecycle", "")).upper()
+            if lifecycle not in {"FINAL", "REVISED"}:
                 raise ContinuityError("DATA_NOT_READY", "bar response is not final")
+    return response
 
 
 class WarmupStreamSession:
@@ -93,7 +111,7 @@ class WarmupStreamSession:
         *,
         consumer_id: str,
         requirement: DataRequirement,
-        warmup: dict,
+        warmup: WarmupResponse,
         events,
         cursor_store: CursorStore,
         cursor_key: str,
@@ -128,10 +146,9 @@ class WarmupStreamSession:
             event = await self._events.__anext__()
         except CursorExpiredError:
             self.warmup = await self._fresh_snapshot()
-            _validate_query_payload(self.requirement, self.warmup, warmup=True)
-            self._last_seen_offset = int(self.warmup.get("watermark_offset", 0))
+            self._last_seen_offset = self.warmup.watermark_offset
             self._events = self._subscribe(
-                str(self.warmup["stream_cursor"])
+                self.warmup.stream_cursor
             )
             self._reconnect_attempts = 0
             return ControlEvent(
@@ -146,8 +163,8 @@ class WarmupStreamSession:
             await asyncio.sleep(min(0.1 * 2 ** (self._reconnect_attempts - 1), 2.0))
             checkpoint = self._cursor_store.load(self._cursor_key)
             if checkpoint is None:
-                token = str(self.warmup["stream_cursor"])
-                self._last_seen_offset = int(self.warmup.get("watermark_offset", 0))
+                token = self.warmup.stream_cursor
+                self._last_seen_offset = self.warmup.watermark_offset
             else:
                 token = checkpoint.token
                 self._last_seen_offset = checkpoint.offset
@@ -195,25 +212,36 @@ class WarmupStreamSession:
             max_buffer_events=self._max_buffer_events,
         ).__aiter__()
 
-    async def _fresh_snapshot(self) -> dict:
+    async def _fresh_snapshot(self) -> WarmupResponse:
         if self.requirement.warmup_limit > 0:
-            return await self._query_transport.warmup(
+            payload = await self._query_transport.warmup(
                 self.requirement, consumer_id=self.consumer_id
             )
-        snapshot = await self._query_transport.snapshot(
+            result = _validate_query_payload(self.requirement, payload, warmup=True)
+            assert isinstance(result, WarmupResponse)
+            return result
+        snapshot_payload = await self._query_transport.snapshot(
             self.requirement, consumer_id=self.consumer_id
         )
-        data = snapshot["data"]
-        return {
+        snapshot = _validate_query_payload(
+            self.requirement, snapshot_payload, warmup=False
+        )
+        assert isinstance(snapshot, SnapshotResponse)
+        if not snapshot.data.snapshot_id or not snapshot.data.cursor:
+            raise ContinuityError(
+                "CURSOR_INVALID", "snapshot response has no server-issued handoff state"
+            )
+        return WarmupResponse.model_validate({
             "schema": "qdl.marketdata.warmup.v2",
-            "request_id": snapshot["request_id"],
-            "snapshot_id": data.get("snapshot_id") or "latest-snapshot",
-            "stream_cursor": data.get("cursor"),
-            "watermark_offset": data.get("watermark_offset", 0),
+            "request_id": snapshot.request_id,
+            "snapshot_id": snapshot.data.snapshot_id,
+            "stream_cursor": snapshot.data.cursor,
+            "watermark_offset": snapshot.data.watermark_offset,
+            "data_as_of_ns": snapshot.data.observed_at_ns,
             "coverage": "FULL",
             "count": 1,
-            "data": [data],
-        }
+            "data": [snapshot.data.model_dump(mode="json")],
+        })
 
 
 class AsyncDataLayerClient:
@@ -242,21 +270,23 @@ class AsyncDataLayerClient:
         self.max_reconnect_attempts = max_reconnect_attempts
         self.telemetry = telemetry
 
-    async def snapshot(self, requirement: DataRequirement) -> dict:
+    async def snapshot(self, requirement: DataRequirement) -> SnapshotResponse:
         payload = await self.query_transport.snapshot(
             requirement, consumer_id=self.consumer_id
         )
-        _validate_query_payload(requirement, payload, warmup=False)
-        self._record_query("/v2/market-data/snapshot", payload)
-        return payload
+        response = _validate_query_payload(requirement, payload, warmup=False)
+        assert isinstance(response, SnapshotResponse)
+        self._record_query("/v2/market-data/snapshot", response)
+        return response
 
-    async def warmup(self, requirement: DataRequirement) -> dict:
+    async def warmup(self, requirement: DataRequirement) -> WarmupResponse:
         payload = await self.query_transport.warmup(
             requirement, consumer_id=self.consumer_id
         )
-        _validate_query_payload(requirement, payload, warmup=True)
-        self._record_query("/v2/market-data/warmup", payload)
-        return payload
+        response = _validate_query_payload(requirement, payload, warmup=True)
+        assert isinstance(response, WarmupResponse)
+        self._record_query("/v2/market-data/warmup", response)
+        return response
 
     @asynccontextmanager
     async def warmup_then_stream(
@@ -268,27 +298,35 @@ class AsyncDataLayerClient:
         cursor_key = self._cursor_key(requirement)
         checkpoint = self.cursor_store.load(cursor_key)
         if requirement.warmup_limit > 0:
-            warmup = await self.query_transport.warmup(
+            raw_warmup = await self.query_transport.warmup(
                 requirement, consumer_id=self.consumer_id
             )
+            warmup = _validate_query_payload(requirement, raw_warmup, warmup=True)
+            assert isinstance(warmup, WarmupResponse)
         else:
-            snapshot = await self.query_transport.snapshot(
+            raw_snapshot = await self.query_transport.snapshot(
                 requirement, consumer_id=self.consumer_id
             )
-            data = snapshot["data"]
-            warmup = {
+            snapshot = _validate_query_payload(requirement, raw_snapshot, warmup=False)
+            assert isinstance(snapshot, SnapshotResponse)
+            data = snapshot.data
+            if not data.snapshot_id or not data.cursor:
+                raise ContinuityError(
+                    "CURSOR_INVALID", "snapshot response has no server-issued handoff state"
+                )
+            warmup = WarmupResponse.model_validate({
                 "schema": "qdl.marketdata.warmup.v2",
-                "request_id": snapshot["request_id"],
-                "snapshot_id": data.get("snapshot_id") or "latest-snapshot",
-                "stream_cursor": data.get("cursor"),
-                "watermark_offset": data.get("watermark_offset", 0),
+                "request_id": snapshot.request_id,
+                "snapshot_id": data.snapshot_id,
+                "stream_cursor": data.cursor,
+                "watermark_offset": data.watermark_offset,
+                "data_as_of_ns": data.observed_at_ns,
                 "coverage": "FULL",
                 "count": 1,
-                "data": [data],
-            }
-        _validate_query_payload(requirement, warmup, warmup=True)
-        snapshot_token = warmup.get("stream_cursor")
-        snapshot_offset = int(warmup.get("watermark_offset", 0))
+                "data": [data.model_dump(mode="json")],
+            })
+        snapshot_token = warmup.stream_cursor
+        snapshot_offset = warmup.watermark_offset
         if not snapshot_token:
             raise ContinuityError("CURSOR_INVALID", "warmup response has no signed stream cursor")
         if resume_restored_state and checkpoint is None:
@@ -341,18 +379,19 @@ class AsyncDataLayerClient:
         return "|".join((
             self.consumer_id,
             requirement.instrument_uid,
-            requirement.feed,
+            requirement.feed.value,
             requirement.interval or "",
             requirement.source_policy_id,
         ))
 
-    def _record_query(self, contract: str, payload: dict) -> None:
+    def _record_query(
+        self, contract: str, payload: SnapshotResponse | WarmupResponse
+    ) -> None:
         if self.telemetry is not None:
-            data = payload.get("data")
             watermark = (
-                data.get("watermark_offset", 0)
-                if isinstance(data, dict)
-                else payload.get("watermark_offset", 0)
+                payload.data.watermark_offset
+                if isinstance(payload, SnapshotResponse)
+                else payload.watermark_offset
             )
             self.telemetry.record(
                 consumer_id=self.consumer_id,
@@ -368,14 +407,14 @@ class DataLayerClientV2:
     def __init__(self, async_client: AsyncDataLayerClient):
         self.async_client = async_client
 
-    def warmup(self, requirement: DataRequirement) -> dict:
+    def warmup(self, requirement: DataRequirement) -> WarmupResponse:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(self.async_client.warmup(requirement))
         raise RuntimeError("sync SDK cannot run inside an active event loop")
 
-    def snapshot(self, requirement: DataRequirement) -> dict:
+    def snapshot(self, requirement: DataRequirement) -> SnapshotResponse:
         try:
             asyncio.get_running_loop()
         except RuntimeError:

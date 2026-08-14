@@ -32,7 +32,9 @@ from qdl.pipeline import ShadowCanonicalPipeline
 from qdl.projection import InMemoryProjectionTarget, MarketProjector
 from qdl.query import (
     AccessPurpose,
+    BarLifecycle,
     ConsumerGrade,
+    ContractMetadata,
     CoverageStatus,
     DataProduct,
     DataRequirement as DomainRequirement,
@@ -52,10 +54,14 @@ from qdl.stream import DurableStreamGateway, GrpcMarketDataService, GrpcSnapshot
 from qdl.transport import Cursor, DurableEvent, SQLiteDurableSpool, SpoolConfig
 from qdl_sdk import (
     AsyncDataLayerClient,
+    Feed,
+    Grade,
     DataRequirement as SdkRequirement,
     GrpcStreamTransport,
     RestQueryTransport,
+    StaticBearerCredential,
 )
+from tests.phase7_support import make_identity, make_manifest, make_token
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +99,8 @@ def _envelope(record: InstrumentRecord, feed: FeedType, source_id: str):
     if feed is FeedType.BAR:
         return market_data_pb2.EventEnvelope(**common, bar=market_data_pb2.Bar(
             interval="1m", open_time_ns=1, close_time_ns=2, is_final=True, revision=1,
+            lifecycle=market_data_pb2.BAR_LIFECYCLE_REVISED,
+            supersedes_event_id=b"previous",
         ))
     return market_data_pb2.EventEnvelope(**common, trade=market_data_pb2.Trade(
         native_trade_id="1", is_buyer_maker=False,
@@ -106,6 +114,32 @@ class _SnapshotLoader:
     def load(self, requirement, *, consumer_id):
         del requirement, consumer_id
         return GrpcSnapshot("request", "snapshot", self.token, time.time_ns(), 0, ())
+
+
+def _contract(correlation_id: str) -> ContractMetadata:
+    return ContractMetadata(
+        "5" * 64, "2.0.0-beta.1", "phase7-test", "fixture-v1",
+        1, 1, 1, 1, correlation_id,
+    )
+
+
+def _payload(feed: FeedType, now: int) -> dict:
+    if feed is FeedType.BAR:
+        return {
+            "open_time_ns": now - 60_000_000_000,
+            "close_time_ns": now,
+            "open": "60000", "high": "60100", "low": "59900",
+            "close": "60050", "volume": "10", "trade_count": 5,
+            "origin": "VENUE_NATIVE", "is_final": True,
+        }
+    return {
+        "native_trade_id": "trade-1",
+        "price": "60050",
+        "quantity": "0.01",
+        "aggressor_side": "BUY",
+        "is_block_trade": False,
+        "is_buyer_maker": False,
+    }
 
 
 class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
@@ -144,12 +178,15 @@ class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
             quality = QualityMetadata(
                 "LIVE", 1, False, True, True, domain.source_policy_id
             )
+            now = time.time_ns()
             item = MarketDataItem(
-                record.instrument_uid, record.instrument_id, 1, feed, time.time_ns(),
-                {"is_final": True},
+                record.instrument_uid, record.instrument_id, 1, feed, now,
+                _payload(feed, now),
                 SourceMetadata(record.identity.venue, source_id, source_id, "PRIMARY", True),
-                quality, interval=domain.interval, cursor=token, snapshot_id="snapshot",
+                quality, _contract("phase5-manifest-e2e"),
+                interval=domain.interval, cursor=token, snapshot_id="snapshot",
                 watermark_offset=0,
+                bar_lifecycle=(BarLifecycle.FINAL if feed is FeedType.BAR else None),
             )
             backend.put_latest(domain, item)
             if domain.warmup_limit:
@@ -165,19 +202,27 @@ class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
                     0,
                 ),)),
             )
+            identity = make_identity(manifest)
+            credential = StaticBearerCredential(make_token(manifest.subject))
             http_client = httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=create_v2_app(service)),
+                transport=httpx.ASGITransport(app=create_v2_app(
+                    service, identity_service=identity
+                )),
                 base_url="http://phase5-shadow",
             )
             grpc_server = create_grpc_server(GrpcMarketDataService(
                 gateway=gateway, query_service=service, snapshot_loader=_SnapshotLoader(token),
-            ))
+            ), identity_service=identity)
             port = grpc_server.add_insecure_port("127.0.0.1:0")
             await grpc_server.start()
             client = AsyncDataLayerClient(
-                query_transport=RestQueryTransport("http://phase5-shadow", client=http_client),
+                query_transport=RestQueryTransport(
+                    "http://phase5-shadow", client=http_client,
+                    credential_provider=credential,
+                ),
                 stream_transport=GrpcStreamTransport(
-                    f"127.0.0.1:{port}", allow_insecure_loopback=True
+                    f"127.0.0.1:{port}", allow_insecure_loopback=True,
+                    credential_provider=credential,
                 ),
                 consumer_id=manifest.consumer_id,
             )
@@ -275,10 +320,23 @@ class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
             item = MarketDataItem(
                 context.instrument_uid, context.instrument_id, context.instrument_revision,
                 FeedType.BAR, canonical.source_event_time_ns,
-                {"close": canonical.bar.close.source_text, "is_final": canonical.bar.is_final},
+                {
+                    "open_time_ns": canonical.bar.open_time_ns,
+                    "close_time_ns": canonical.bar.close_time_ns,
+                    "open": canonical.bar.open.source_text,
+                    "high": canonical.bar.high.source_text,
+                    "low": canonical.bar.low.source_text,
+                    "close": canonical.bar.close.source_text,
+                    "volume": canonical.bar.volume.source_text,
+                    "trade_count": canonical.bar.trade_count,
+                    "origin": "VENUE_NATIVE",
+                    "is_final": canonical.bar.is_final,
+                },
                 SourceMetadata("BINANCE", "BINANCE_DIRECT", context.source_id, "PRIMARY", True),
-                quality, interval="1m", cursor=token, snapshot_id="snapshot",
+                quality, _contract("phase5-provider-e2e"),
+                interval="1m", cursor=token, snapshot_id="snapshot",
                 watermark_offset=0,
+                bar_lifecycle=BarLifecycle.FINAL,
             )
             backend = MemoryMarketDataBackend()
             backend.put_latest(requirement, item)
@@ -292,26 +350,39 @@ class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
                     frozenset({DataProduct.CANONICAL_HISTORY, DataProduct.CANONICAL_SNAPSHOT}), 0,
                 ),)),
             )
+            manifest = make_manifest(
+                consumer_id="alpha-binance-e2e",
+                subject="spiffe://qdl/paper/alpha-binance-e2e",
+                instrument_uid=context.instrument_uid,
+                source_policy_id="alpha_binance_v1",
+            )
+            identity = make_identity(manifest)
+            credential = StaticBearerCredential(make_token(manifest.subject))
             http_client = httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=create_v2_app(service)),
+                transport=httpx.ASGITransport(app=create_v2_app(
+                    service, identity_service=identity
+                )),
                 base_url="http://phase5-full-e2e",
             )
             server = create_grpc_server(GrpcMarketDataService(
                 gateway=gateway, query_service=service, snapshot_loader=_SnapshotLoader(token),
-            ))
+            ), identity_service=identity)
             port = server.add_insecure_port("127.0.0.1:0")
             await server.start()
             client = AsyncDataLayerClient(
                 query_transport=RestQueryTransport(
-                    "http://phase5-full-e2e", client=http_client
+                    "http://phase5-full-e2e", client=http_client,
+                    credential_provider=credential,
                 ),
                 stream_transport=GrpcStreamTransport(
-                    f"127.0.0.1:{port}", allow_insecure_loopback=True
+                    f"127.0.0.1:{port}", allow_insecure_loopback=True,
+                    credential_provider=credential,
                 ),
                 consumer_id="alpha-binance-e2e",
             )
             sdk_requirement = SdkRequirement(
-                context.instrument_uid, "BAR", "ALPHA", "alpha_binance_v1",
+                context.instrument_uid, Feed.BAR, Grade.ALPHA,
+                "alpha_binance_v1",
                 interval="1m", warmup_limit=1,
             )
             async with client.warmup_then_stream(sdk_requirement) as session:

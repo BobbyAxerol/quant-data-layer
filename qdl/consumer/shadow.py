@@ -3,7 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from qdl.consumer.manifest import ConsumerManifest, ConsumerMigration, MigrationState
 from qdl_sdk import AsyncDataLayerClient
-from qdl_sdk.models import DataRequirement, StreamEvent
+from qdl_sdk.models import (
+    BarRevisionPolicy as SdkBarRevisionPolicy,
+    DataRequirement,
+    Feed as SdkFeed,
+    GapPolicy as SdkGapPolicy,
+    Grade as SdkGrade,
+    RecoveryPolicy as SdkRecoveryPolicy,
+    StalePolicy as SdkStalePolicy,
+    StreamEvent,
+)
 
 
 @dataclass(frozen=True)
@@ -45,18 +54,20 @@ class ManifestShadowConsumer:
             raise ValueError("manifest requirement index is invalid") from error
         requirement = DataRequirement(
             instrument_uid=domain.instrument_uid,
-            feed=domain.feed.value,
-            consumer_grade=domain.consumer_grade.value,
+            feed=SdkFeed(domain.feed.value),
+            consumer_grade=SdkGrade(domain.consumer_grade.value),
             source_policy_id=domain.source_policy_id,
             interval=domain.interval,
             warmup_limit=domain.warmup_limit,
             max_freshness_ms=domain.max_freshness_ms,
             require_full_coverage=domain.require_full_coverage,
             require_final_bars=domain.require_final_bars,
-            stale_policy=domain.stale_policy.value,
-            gap_policy=domain.gap_policy.value,
-            recovery=domain.recovery.value,
-            bar_revision_policy=domain.bar_revision_policy.value,
+            stale_policy=SdkStalePolicy(domain.stale_policy.value),
+            gap_policy=SdkGapPolicy(domain.gap_policy.value),
+            recovery=SdkRecoveryPolicy(domain.recovery.value),
+            bar_revision_policy=SdkBarRevisionPolicy(
+                domain.bar_revision_policy.value
+            ),
         )
         async with self.client.warmup_then_stream(requirement) as session:
             while True:

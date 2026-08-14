@@ -54,6 +54,10 @@ pub struct Bar {
     pub revision: u32,
     #[prost(enumeration="super::super::common::v1::BarOrigin", tag="12")]
     pub origin: i32,
+    #[prost(enumeration="BarLifecycle", tag="13")]
+    pub lifecycle: i32,
+    #[prost(bytes="vec", optional, tag="14")]
+    pub supersedes_event_id: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BookLevel {
@@ -215,6 +219,41 @@ pub mod event_envelope {
         FeedState(super::super::super::quality::v1::FeedStateEvent),
         #[prost(message, tag="50")]
         QualityEvent(super::super::super::quality::v1::DataQualityEvent),
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BarLifecycle {
+    Unspecified = 0,
+    InProgress = 1,
+    Final = 2,
+    Revised = 3,
+    Cancelled = 4,
+}
+impl BarLifecycle {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BAR_LIFECYCLE_UNSPECIFIED",
+            Self::InProgress => "BAR_LIFECYCLE_IN_PROGRESS",
+            Self::Final => "BAR_LIFECYCLE_FINAL",
+            Self::Revised => "BAR_LIFECYCLE_REVISED",
+            Self::Cancelled => "BAR_LIFECYCLE_CANCELLED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BAR_LIFECYCLE_UNSPECIFIED" => Some(Self::Unspecified),
+            "BAR_LIFECYCLE_IN_PROGRESS" => Some(Self::InProgress),
+            "BAR_LIFECYCLE_FINAL" => Some(Self::Final),
+            "BAR_LIFECYCLE_REVISED" => Some(Self::Revised),
+            "BAR_LIFECYCLE_CANCELLED" => Some(Self::Cancelled),
+            _ => None,
+        }
     }
 }
 // @@protoc_insertion_point(module)
