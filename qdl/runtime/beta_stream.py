@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 
 import grpc
@@ -20,8 +21,18 @@ from qdl.runtime.beta import (
     load_beta_manifests,
 )
 from qdl.runtime.bounds import BoundedRequestMiddleware, RequestBounds
+from qdl.runtime.canary_bridge import install_internal_canonical_ingest
+from qdl.runtime.canary_source import (
+    CanaryGrpcSnapshotLoader,
+    CanarySourceCatalog,
+    build_canary_query_stack,
+)
 from qdl.runtime.lease import ActivePassiveGatewayLease, RedisGatewayLeaseStore
-from qdl.runtime.readiness import CallableReadinessProbe
+from qdl.runtime.readiness import (
+    CallableReadinessProbe,
+    ComponentReadiness,
+    ComponentState,
+)
 from qdl.security import AuditChain
 from qdl.stream import DurableStreamGateway, GrpcMarketDataService, create_grpc_server
 
@@ -105,11 +116,28 @@ def create_beta_stream_runtime(
         authority=lease,
     )
     lease.on_fenced = gateway.fence_all
-    query_service = build_empty_query_service()
+    catalog = None
+    if config.source_bindings_path is None:
+        query_service = build_empty_query_service()
+        snapshot_loader = UnavailableSnapshotLoader()
+    else:
+        catalog = CanarySourceCatalog.load(config.source_bindings_path)
+        query_service, backend, issuer = build_canary_query_stack(
+            spool=spool,
+            catalog=catalog,
+            schema_digest=config.schema_digest,
+            handoff=handoff,
+            cursor_ttl_seconds=config.cursor_ttl_seconds,
+        )
+        snapshot_loader = CanaryGrpcSnapshotLoader(
+            service=query_service,
+            backend=backend,
+            issuer=issuer,
+        )
     grpc_service = GrpcMarketDataService(
         gateway=gateway,
         query_service=query_service,
-        snapshot_loader=UnavailableSnapshotLoader(),
+        snapshot_loader=snapshot_loader,
     )
     grpc_server = create_grpc_server(
         grpc_service,
@@ -117,11 +145,23 @@ def create_beta_stream_runtime(
         maximum_concurrent_rpcs=config.max_concurrent_rpcs,
         max_receive_message_bytes=config.max_request_bytes,
     )
+    extra_probes = [CallableReadinessProbe("gateway_lease", lease.readiness)]
+    if catalog is not None:
+        extra_probes.append(CallableReadinessProbe(
+            "instrument_catalog",
+            lambda: ComponentReadiness(
+                "instrument_catalog",
+                ComponentState.READY,
+                detail=f"bindings={len(catalog.bindings)}",
+                revision=str(catalog.catalog_revision),
+                checked_at_ns=time.time_ns(),
+            ),
+        ))
     readiness = beta_readiness(
         config,
         manifests,
         spool,
-        extra_probes=(CallableReadinessProbe("gateway_lease", lease.readiness),),
+        extra_probes=tuple(extra_probes),
         quota=identity.quota,
     )
     health_app = FastAPI(
@@ -138,6 +178,14 @@ def create_beta_stream_runtime(
         ),
     )
     install_beta_health(health_app, readiness, config.public_manifest())
+    if catalog is not None:
+        assert config.internal_ingest_secret is not None
+        install_internal_canonical_ingest(
+            health_app,
+            gateway=gateway,
+            catalog=catalog,
+            secret=config.internal_ingest_secret,
+        )
     audit = AuditChain(config.audit_path)
     return BetaStreamRuntime(
         config, redis, spool, gateway, lease, grpc_server, health_app, audit,

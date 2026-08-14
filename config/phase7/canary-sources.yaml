@@ -1,0 +1,46 @@
+schema: qdl.phase7.2.source-bindings.v1
+catalog_revision: 1
+source_policy_revision: 1
+authority_revision: 1
+bindings:
+  - binding_id: binance-usdm-btcusdt-bar-1m
+    instrument:
+      instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+      instrument_id: BINANCE.USDM.PERPETUAL.BTC-USDT
+      venue: BINANCE
+      market: USDM
+      product_type: PERPETUAL
+      canonical_symbol: BTC-USDT
+      native_symbol: BTCUSDT
+      asset_class: DERIVATIVE
+      base_asset: BTC
+      quote_asset: USDT
+      settlement_asset: USDT
+      price_tick: "0.10"
+      quantity_step: "0.001"
+      contract_multiplier: "1"
+      session_calendar_id: CRYPTO_24X7
+    feed: BAR
+    interval: 1m
+    source:
+      provider: QDL_V1_HTTP
+      source_id: QDL_V1_BINANCE_USDM
+      source_role: PRIMARY
+      source_policy_id: alpha_crypto_primary_v1
+      authoritative: true
+      adapter_version: qdl-v1-http-binance-bars-v1
+      normalizer_version: qdl-canonical-v2
+    read:
+      kind: BINANCE_CRYPTO_OHLCV
+      path: /v1/crypto/ohlcv/binance/BTCUSDT/1m
+      params:
+        market: usdm
+      warmup_rows: 120
+      poll_rows: 3
+      poll_seconds: 10
+      timeout_seconds: 10
+      max_attempts: 4
+      max_backoff_seconds: 8
+    quality:
+      stale_after_ms: 180000
+      require_closed_bar: true

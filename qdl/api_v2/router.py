@@ -263,6 +263,24 @@ def _warmup(result) -> WarmupResponse:
     )
 
 
+def _bind_item_cursor(request: Request, access, requirement, item):
+    issuer = getattr(request.app.state, "v2_cursor_issuer", None)
+    if issuer is None:
+        return item
+    return issuer.bind_item(
+        requirement, item, consumer_id=access.consumer_id
+    )
+
+
+def _bind_history_cursor(request: Request, access, requirement, history):
+    issuer = getattr(request.app.state, "v2_cursor_issuer", None)
+    if issuer is None:
+        return history
+    return issuer.bind_history(
+        requirement, history, consumer_id=access.consumer_id
+    )
+
+
 _STATUS = {
     CanonicalErrorCode.INVALID_ARGUMENT: 400,
     CanonicalErrorCode.INSTRUMENT_NOT_FOUND: 404,
@@ -379,6 +397,7 @@ def _query_requirement(
 
 @router.get("/market-data/{instrument_uid}/snapshot", response_model=SnapshotResponse)
 async def snapshot(
+    request: Request,
     instrument_uid: str,
     feed: FeedType,
     source_policy_id: str,
@@ -408,11 +427,13 @@ async def snapshot(
         requirement,
         purpose=purpose,
     )
-    return SnapshotResponse(request_id=result.request_id, data=_market_item(result.item))
+    item = _bind_item_cursor(request, access, requirement, result.item)
+    return SnapshotResponse(request_id=result.request_id, data=_market_item(item))
 
 
 @router.get("/market-data/{instrument_uid}/warmup", response_model=WarmupResponse)
 async def warmup(
+    request: Request,
     instrument_uid: str,
     feed: FeedType,
     source_policy_id: str,
@@ -443,11 +464,16 @@ async def warmup(
         requirement,
         purpose=purpose,
     )
+    result = type(result)(
+        result.request_id,
+        _bind_history_cursor(request, access, requirement, result.history),
+    )
     return _warmup(result)
 
 
 @router.get("/market-data/{instrument_uid}/history", response_model=WarmupResponse)
 async def history(
+    request: Request,
     instrument_uid: str,
     feed: FeedType,
     source_policy_id: str,
@@ -474,11 +500,17 @@ async def history(
     access.require_permission(DataPlanePermission.HISTORY_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    return _warmup(service.warmup(requirement, purpose=purpose))
+    result = service.warmup(requirement, purpose=purpose)
+    result = type(result)(
+        result.request_id,
+        _bind_history_cursor(request, access, requirement, result.history),
+    )
+    return _warmup(result)
 
 
 @router.post("/market-data/warmup:batch", response_model=BatchResponse)
 async def warmup_batch(
+    request: Request,
     body: BatchRequirementModel,
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
@@ -498,7 +530,7 @@ async def warmup_batch(
     )
     result = service.warmup_batch(batch, purpose=purpose)
     items = []
-    for item in result.results:
+    for item, requirement in zip(result.results, requirements, strict=True):
         problem = None
         if item.problem is not None:
             problem = _problem(QueryServiceError(
@@ -506,10 +538,22 @@ async def warmup_batch(
                 request_id=result.request_id,
                 instrument_uid=item.instrument_uid,
             ))
+        warmup_data = None
+        if item.result is not None:
+            bound = type(item.result)(
+                item.result.request_id,
+                _bind_history_cursor(
+                    request,
+                    access,
+                    requirement,
+                    item.result.history,
+                ),
+            )
+            warmup_data = _warmup(bound)
         items.append(BatchItemResponse(
             instrument_uid=item.instrument_uid,
             status=item.status,
-            data=_warmup(item.result) if item.result else None,
+            data=warmup_data,
             problem=problem,
         ))
     return BatchResponse(
@@ -629,11 +673,13 @@ def create_v2_app(
     identity_service: DataPlaneIdentityService | None = None,
     readiness_service=None,
     request_bounds: RequestBounds | None = None,
+    cursor_issuer=None,
 ) -> FastAPI:
     app = FastAPI(title="Quant Data Layer V2", version="2.0.0-shadow")
     app.state.v2_query_service = service
     app.state.v2_identity_service = identity_service
     app.state.v2_runtime_readiness = readiness_service or FailClosedReadiness()
+    app.state.v2_cursor_issuer = cursor_issuer
     app.state.runtime_manifest = {
         "role": "api_v2",
         "owns_live_ingestion": False,

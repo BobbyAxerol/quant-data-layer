@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from qdl.replay import GapFreeHandoff
-from qdl.transport import DurableEvent, EventSink, StoredEvent
+from qdl.transport import CursorExpired, DurableEvent, EventSink, StoredEvent
 
 
 class SlowConsumer(RuntimeError):
@@ -156,6 +156,17 @@ class DurableStreamGateway:
                 partition_key=partition_key,
                 limit=replay_limit,
             ))
+            if len(initial) == replay_limit:
+                high_watermark = await asyncio.to_thread(
+                    self.handoff.capture_watermark,
+                    stream=stream,
+                    partition_key=partition_key,
+                )
+                if initial[-1].cursor.offset < high_watermark.offset:
+                    raise CursorExpired(
+                        "replay backlog exceeds the bounded gateway window; "
+                        "a fresh snapshot is required"
+                    )
             self.assert_active(lease_epoch)
             # Register behind the same partition barrier as replay. A publish
             # cannot land between the replay watermark and live fan-out.

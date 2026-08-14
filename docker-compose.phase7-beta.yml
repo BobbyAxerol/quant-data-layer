@@ -20,7 +20,10 @@ x-beta-common: &beta-common
     QDL_BETA_AUTHORITY_REVISION: ${QDL_BETA_AUTHORITY_REVISION:-1}
     QDL_BETA_SCHEMA_DIGEST: ${QDL_BETA_SCHEMA_DIGEST:-bea44d3920db52f5893eb773aa195ae7f4abd2684d5ca65d904e995934fabcea}
     QDL_BETA_STATE_DIR: /var/lib/qdl-beta
-    QDL_BETA_CONSUMER_MANIFESTS: /app/consumers/shadow/alpha-okx-reference.yaml:/app/consumers/shadow/trading-system-binance-execution.yaml
+    QDL_BETA_DURABLE_STATE_DIR: /var/lib/qdl-beta-durable
+    QDL_BETA_CONSUMER_MANIFESTS: ${QDL_BETA_CONSUMER_MANIFESTS:-/app/consumers/beta/phase7-monitoring-binance.yaml:/app/consumers/beta/phase7-paper-alpha-binance.yaml}
+    QDL_BETA_SOURCE_BINDINGS: ${QDL_BETA_SOURCE_BINDINGS-/app/config/phase7/canary-sources.yaml}
+    QDL_BETA_INTERNAL_INGEST_SECRET: ${QDL_BETA_INTERNAL_INGEST_SECRET:-}
     QDL_BETA_REDIS_URL: redis://qdl_beta_redis:6379/0
     QDL_BETA_REDIS_PREFIX: ${QDL_BETA_REDIS_PREFIX:-qdl:beta:v2:paper:phase7}
     QDL_BETA_CONSUMER_GROUP: ${QDL_BETA_CONSUMER_GROUP:-qdl-v2-beta-phase7}
@@ -46,7 +49,7 @@ services:
   qdl_beta_state_init:
     image: ${QDL_BETA_INIT_IMAGE:?set QDL_BETA_INIT_IMAGE to an immutable sha256 image ID or digest}
     user: "0:0"
-    command: ["sh", "-c", "chown 10001:10001 /query /stream && chmod 0700 /query /stream"]
+    command: ["sh", "-c", "chown 10001:10001 /query /stream /durable && chmod 0700 /query /stream /durable"]
     restart: "no"
     read_only: true
     cap_drop: ["ALL"]
@@ -56,6 +59,7 @@ services:
     volumes:
       - qdl_beta_query_state:/query
       - qdl_beta_stream_state:/stream
+      - qdl_beta_durable_state:/durable
     networks: [qdl_beta_internal]
     profiles: ["phase7-beta"]
 
@@ -101,6 +105,7 @@ services:
       QDL_BETA_AUDIT_PATH: /var/lib/qdl-beta/query-v2-audit.jsonl
     volumes:
       - qdl_beta_query_state:/var/lib/qdl-beta
+      - qdl_beta_durable_state:/var/lib/qdl-beta-durable
     ports:
       - "127.0.0.1:${QDL_BETA_QUERY_HOST_PORT:-18100}:18100"
     depends_on:
@@ -125,6 +130,7 @@ services:
       QDL_BETA_AUDIT_PATH: /var/lib/qdl-beta/stream-v2-a-audit.jsonl
     volumes:
       - qdl_beta_stream_state:/var/lib/qdl-beta
+      - qdl_beta_durable_state:/var/lib/qdl-beta-durable
     ports:
       - "127.0.0.1:${QDL_BETA_STREAM_A_HEALTH_PORT:-18101}:18101"
       - "127.0.0.1:${QDL_BETA_STREAM_A_GRPC_PORT:-18110}:18110"
@@ -145,6 +151,7 @@ services:
       QDL_BETA_AUDIT_PATH: /var/lib/qdl-beta/stream-v2-b-audit.jsonl
     volumes:
       - qdl_beta_stream_state:/var/lib/qdl-beta
+      - qdl_beta_durable_state:/var/lib/qdl-beta-durable
     ports:
       - "127.0.0.1:${QDL_BETA_STREAM_B_HEALTH_PORT:-18102}:18102"
       - "127.0.0.1:${QDL_BETA_STREAM_B_GRPC_PORT:-18111}:18110"
@@ -153,6 +160,24 @@ services:
         condition: service_completed_successfully
       qdl_beta_redis:
         condition: service_healthy
+
+  qdl_beta_v1_bridge:
+    <<: *beta-common
+    command: ["python", "-m", "app.entrypoints.phase7_v1_bridge"]
+    restart: unless-stopped
+    profiles: ["phase7-canary"]
+    networks: [qdl_beta_internal, bobby_network]
+    environment:
+      <<: *beta-environment
+      QDL_BETA_INSTANCE_ID: v1-readonly-bridge-beta-1
+      QDL_BETA_V1_BASE_URL: http://data_layer:8100
+      QDL_BETA_STREAM_INGEST_URLS_JSON: '["http://qdl_stream_v2_beta_a:18101","http://qdl_stream_v2_beta_b:18102"]'
+      QDL_BETA_BRIDGE_RUN_ONCE: ${QDL_BETA_BRIDGE_RUN_ONCE:-false}
+    depends_on:
+      qdl_stream_v2_beta_a:
+        condition: service_started
+      qdl_stream_v2_beta_b:
+        condition: service_started
 
 networks:
   qdl_beta_internal:
@@ -164,6 +189,8 @@ networks:
     labels:
       qdl.phase: "7.1"
       qdl.exposure: "loopback-only"
+  bobby_network:
+    external: true
 
 volumes:
   qdl_beta_query_state:
@@ -173,4 +200,8 @@ volumes:
   qdl_beta_stream_state:
     labels:
       qdl.phase: "7.1"
+      qdl.legacy-shared: "false"
+  qdl_beta_durable_state:
+    labels:
+      qdl.phase: "7.2"
       qdl.legacy-shared: "false"

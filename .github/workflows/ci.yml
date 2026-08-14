@@ -125,6 +125,7 @@ jobs:
           run --rm test_runner python -m unittest -v
           tests.test_fund_phase7_contract_security
           tests.test_fund_phase71_beta_runtime
+          tests.test_fund_phase72_consumer_canary
           tests.test_phase0_contract_golden tests.test_fund_phase5_contracts
 
       - name: Run isolated Phase 7.1 beta topology and rollback gate

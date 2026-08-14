@@ -17,6 +17,8 @@ PROD_REDIS_CONTAINER="${QDL_V1_REDIS_CONTAINER:-redis_marketdata}"
 
 export QDL_BETA_IMAGE QDL_BETA_REDIS_IMAGE QDL_BETA_INIT_IMAGE
 export QDL_BETA_CURSOR_KEYS_JSON QDL_BETA_JWT_KEYS_JSON
+export QDL_BETA_SOURCE_BINDINGS=""
+export QDL_BETA_CONSUMER_MANIFESTS="/app/consumers/shadow/alpha-okx-reference.yaml:/app/consumers/shadow/trading-system-binance-execution.yaml"
 export QDL_BETA_JWT_ISSUER="${QDL_BETA_JWT_ISSUER:-https://identity.qdl.beta.invalid}"
 export QDL_BETA_JWT_AUDIENCE="${QDL_BETA_JWT_AUDIENCE:-qdl-v2-beta}"
 export QDL_BETA_QUERY_HOST_PORT="${QUERY_PORT}"

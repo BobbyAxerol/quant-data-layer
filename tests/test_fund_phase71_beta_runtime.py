@@ -29,7 +29,7 @@ from qdl.runtime.readiness import (
 )
 from qdl.security import DataPlaneAccessError, RedisMinuteQuota
 from qdl.stream import DurableStreamGateway
-from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
+from qdl.transport import CursorExpired, DurableEvent, SQLiteDurableSpool, SpoolConfig
 from tests.phase7_support import manifest_mapping
 
 
@@ -272,6 +272,24 @@ class Phase71LeaseAndGatewayTests(unittest.IsolatedAsyncioTestCase):
                 replay_limit=6,
             )
 
+    async def test_truncated_replay_requires_fresh_snapshot_instead_of_live_gap(self):
+        token = self.token()
+        for sequence in range(1, 4):
+            self.spool.append(event(sequence))
+        gateway = DurableStreamGateway(
+            handoff=self.handoff,
+            sink=self.spool,
+            max_replay_events=2,
+        )
+        with self.assertRaisesRegex(CursorExpired, "fresh snapshot"):
+            await gateway.open(
+                consumer_id="paper-alpha",
+                stream=STREAM,
+                partition_key=PARTITION_A,
+                token=token,
+                replay_limit=2,
+            )
+
 
 class Phase71ConfigAndTopologyTests(unittest.TestCase):
     def config(self, root: Path, **overrides) -> BetaRuntimeConfig:
@@ -283,8 +301,11 @@ class Phase71ConfigAndTopologyTests(unittest.TestCase):
             "authority_revision": 1,
             "schema_digest": "a" * 64,
             "state_dir": root,
+            "durable_state_dir": root,
             "audit_path": root / "audit.jsonl",
             "manifest_paths": (root / "consumer.yaml",),
+            "source_bindings_path": None,
+            "internal_ingest_secret": None,
             "redis_url": "redis://qdl_beta_redis:6379/0",
             "redis_prefix": "qdl:beta:v2:paper:phase71",
             "consumer_group": "qdl-beta-phase71",

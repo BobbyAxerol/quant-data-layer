@@ -127,6 +127,7 @@ class GrpcMarketDataService:
                 partition_key=partition_key,
                 token=request.cursor_token,
                 max_buffer_events=buffer_events,
+                replay_limit=self.gateway.max_replay_events,
             )
             high = (await self.gateway.capture_watermark(
                 stream=stream, partition_key=partition_key

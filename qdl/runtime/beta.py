@@ -17,6 +17,10 @@ from qdl.domain.instrument import InstrumentRegistry
 from qdl.query import EntitlementPolicy, InstrumentQuery, MemoryMarketDataBackend, V2QueryService
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
 from qdl.runtime.bounds import RequestBounds
+from qdl.runtime.canary_source import (
+    CanarySourceCatalog,
+    build_canary_query_stack,
+)
 from qdl.runtime.readiness import (
     CallableReadinessProbe,
     ComponentReadiness,
@@ -41,8 +45,11 @@ class BetaRuntimeConfig:
     authority_revision: int
     schema_digest: str
     state_dir: Path
+    durable_state_dir: Path
     audit_path: Path
     manifest_paths: tuple[Path, ...]
+    source_bindings_path: Path | None
+    internal_ingest_secret: bytes | None
     redis_url: str
     redis_prefix: str
     consumer_group: str
@@ -109,6 +116,13 @@ class BetaRuntimeConfig:
             self.audit_path.resolve().relative_to(state_root)
         except ValueError as error:
             raise ValueError("beta audit path must stay inside beta state directory") from error
+        if self.source_bindings_path is not None:
+            if self.internal_ingest_secret is None or len(self.internal_ingest_secret) < 32:
+                raise ValueError(
+                    "activated beta source bindings require a 256-bit internal ingest secret"
+                )
+        if self.durable_state_dir.resolve() == Path("/app").resolve():
+            raise ValueError("beta durable state cannot use the application source directory")
 
     @classmethod
     def from_environment(
@@ -126,6 +140,8 @@ class BetaRuntimeConfig:
             if value.strip()
         )
         state_dir = Path(env.get("QDL_BETA_STATE_DIR", "/var/lib/qdl-beta"))
+        source_path = env.get("QDL_BETA_SOURCE_BINDINGS", "").strip()
+        ingest_secret = env.get("QDL_BETA_INTERNAL_INGEST_SECRET", "")
         instance = env.get("QDL_BETA_INSTANCE_ID", f"{role}-local")
         return cls(
             role=role,
@@ -135,10 +151,15 @@ class BetaRuntimeConfig:
             authority_revision=int(env["QDL_BETA_AUTHORITY_REVISION"]),
             schema_digest=env["QDL_BETA_SCHEMA_DIGEST"],
             state_dir=state_dir,
+            durable_state_dir=Path(
+                env.get("QDL_BETA_DURABLE_STATE_DIR", str(state_dir))
+            ),
             audit_path=Path(
                 env.get("QDL_BETA_AUDIT_PATH", str(state_dir / f"{instance}-audit.jsonl"))
             ),
             manifest_paths=manifests,
+            source_bindings_path=Path(source_path) if source_path else None,
+            internal_ingest_secret=ingest_secret.encode() if ingest_secret else None,
             redis_url=env["QDL_BETA_REDIS_URL"],
             redis_prefix=env["QDL_BETA_REDIS_PREFIX"],
             consumer_group=env["QDL_BETA_CONSUMER_GROUP"],
@@ -175,6 +196,8 @@ class BetaRuntimeConfig:
             "active_cursor_key_id": self.active_cursor_key_id,
             "cursor_ttl_seconds": self.cursor_ttl_seconds,
             "state_dir": str(self.state_dir),
+            "durable_state_dir": str(self.durable_state_dir),
+            "source_bindings": bool(self.source_bindings_path),
             "owns_venue_connections": False,
             "writes_legacy_namespaces": False,
         }
@@ -209,7 +232,7 @@ def build_empty_query_service() -> V2QueryService:
 
 def build_beta_spool(config: BetaRuntimeConfig) -> SQLiteDurableSpool:
     return SQLiteDurableSpool(SpoolConfig(
-        path=config.state_dir / "canonical-shadow.sqlite3",
+        path=config.durable_state_dir / "canonical-shadow.sqlite3",
         max_records=100_000,
         max_payload_bytes=256 * 1024 * 1024,
         max_storage_bytes=384 * 1024 * 1024,
@@ -350,7 +373,37 @@ def create_beta_query_app(config: BetaRuntimeConfig | None = None) -> FastAPI:
     manifests = load_beta_manifests(config)
     identity = build_beta_identity(config, manifests)
     spool = build_beta_spool(config)
-    readiness = beta_readiness(config, manifests, spool, quota=identity.quota)
+    cursor_issuer = None
+    extra_probes = ()
+    if config.source_bindings_path is None:
+        query_service = build_empty_query_service()
+    else:
+        catalog = CanarySourceCatalog.load(config.source_bindings_path)
+        handoff = build_beta_handoff(config, spool)
+        query_service, _backend, cursor_issuer = build_canary_query_stack(
+            spool=spool,
+            catalog=catalog,
+            schema_digest=config.schema_digest,
+            handoff=handoff,
+            cursor_ttl_seconds=config.cursor_ttl_seconds,
+        )
+        extra_probes = (
+            CallableReadinessProbe(
+                "instrument_catalog",
+                lambda: _ready(
+                    "instrument_catalog",
+                    revision=str(catalog.catalog_revision),
+                    detail=f"bindings={len(catalog.bindings)}",
+                ),
+            ),
+        )
+    readiness = beta_readiness(
+        config,
+        manifests,
+        spool,
+        extra_probes=extra_probes,
+        quota=identity.quota,
+    )
     audit = AuditChain(config.audit_path)
     audit.append(
         actor=config.instance_id,
@@ -361,9 +414,10 @@ def create_beta_query_app(config: BetaRuntimeConfig | None = None) -> FastAPI:
         details=config.public_manifest(),
     )
     app = create_v2_app(
-        build_empty_query_service(),
+        query_service,
         identity_service=identity,
         readiness_service=readiness,
+        cursor_issuer=cursor_issuer,
         request_bounds=RequestBounds(
             max_request_bytes=config.max_request_bytes,
             max_concurrent_requests=config.max_concurrent_requests,
