@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. No runtime cutover has started.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phases 7-9 are planned for V2 public beta and evidence-driven Rust realtime-core promotion. No runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -24,7 +24,7 @@ Phase status is one of `PLANNED`, `IN_PROGRESS`, `BLOCKED`, `COMPLETE`. A phase 
 
 ## 2. Program-Wide Rules And Invariants
 
-These rules apply to all seven phases.
+These rules apply to all phases.
 
 1. **No big-bang cutover.** Use strangler migration, shadow reads/writes, parity reports and per-feed authority flags as defined in [Sections 30-33](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#30-migration-strategy-no-big-bang-rewrite).
 2. **V1 remains stable.** Existing alpha and Trading System consumers must not change merely because internal transport, schemas or implementation language changes. Protect `/v1`, SDK v1 and legacy Redis payloads with golden tests.
@@ -52,6 +52,26 @@ These rules apply to all seven phases.
     test provenance. Bounded read-only provider smoke is mandatory before a feed
     implementation is frozen; fixtures remain the deterministic failure oracle,
     never evidence that a live source works.
+20. **Public beta is not source-authority promotion.** V2 beta data-plane routes
+    are versioned, authenticated, rate-limited and read-only. Control mutations
+    remain on an internal network. V1 remains authoritative and available as the
+    rollback path until an independently approved feed-slice cutover.
+21. **Implementation language stays behind the contract.** Rust may replace a
+    Python hot path only behind the existing canonical Protobuf, V2 API/SDK and
+    compatibility boundaries. Rust implementation names must not leak into
+    public schemas or force alpha/Trading System consumers to change.
+22. **Rust replaces core paths by evidence, not aspiration.** Each feed moves
+    `PYTHON_PRIMARY -> RUST_SHADOW -> RUST_CANARY -> RUST_PRIMARY` independently.
+    Exact domain parity, real-provider shadow evidence, replay determinism,
+    reconnect/gap recovery, bounded resources and tested rollback are mandatory.
+    An unexplained mismatch blocks promotion regardless of throughput gain.
+23. **Python remains the outer platform layer.** Python continues to own REST and
+    gRPC query/control surfaces, SDK/facades, consumer requirements, historical
+    orchestration, reconciliation, operational tooling and low-rate adapters
+    unless profiling plus a separate approval demonstrates a material benefit.
+    Rust targets venue ingestion, native decoding, canonicalization,
+    ordering/dedup/gap state, realtime books/bars, durable publishing and other
+    measured hot paths.
 
 ## 3. Phase Summary
 
@@ -65,6 +85,9 @@ These rules apply to all seven phases.
 | 4.5 | V2 readiness and debt closure | Freeze query semantics and remove correctness/security ambiguity before endpoint work | `COMPLETE (FROZEN DARK)` |
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `COMPLETE (FROZEN SHADOW)` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `BLOCKED (SHADOW PASS; PRIMARY NO-GO)` |
+| 7 | V2 public beta and consumer canary | Publish a protected read-only V2 surface and validate real consumer behavior without changing authority | `PLANNED` |
+| 8 | Rust realtime-core vertical slice | Run demanded Binance USD-M trade ingestion/canonicalization as a deterministic Rust shadow | `PLANNED` |
+| 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
 
@@ -863,11 +886,310 @@ Certify production reliability, security, resource efficiency and operational re
 
 - Authority flags roll back per feed/partition to the last certified producer. Durable cursors and canonical data remain available for reconciliation.
 
-## 11. Approval Gate Before Implementation
+## 11. Phase 7 - V2 Public Beta And Consumer Canary
 
-Implementation begins only after the user approves this seven-phase decomposition and the two architecture-guide clarifications:
+**Status:** `PLANNED`
+
+### Goal
+
+Publish the existing provider-neutral V2 data plane as a protected beta, prove
+that real consumers can use snapshot, warmup, history, signed cursor and replay
+without a handoff gap, and preserve V1 as the unchanged production authority.
+
+### Architecture Boundary
+
+```text
+V1 production authority -> existing API/Redis consumers
+                         \
+                          -> V2 shadow projection -> authenticated beta API/SDK
+```
+
+- “Public beta” means a documented and reachable V2 data-plane contract, not an
+  anonymous endpoint and not a production-authority claim.
+- Query/snapshot/warmup/stream routes may be exposed through the approved
+  gateway. Runtime-role, authority, requirement mutation and diagnostics routes
+  remain internal and RBAC protected.
+- The beta reads canonical shadow state. It does not open duplicate venue
+  subscriptions, write legacy production keys or disable a V1 producer.
+
+### Guide Index
+
+- [V2 API, SDK and migration design: Sections 17-19, 24-25 and 32](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-5)
+- [Security, operations and cutover boundaries: Sections 25-29 and 34-41](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-6)
+- [Phase 6 certification decision](upgrade/evidence/PHASE6_PRODUCTION_CERTIFICATION_REPORT.md)
+
+### To Do
+
+- Build an immutable beta image and a versioned deployment manifest using only
+  dedicated V2 role containers, ports, state paths, Redis prefixes and consumer
+  groups. Run the non-root bind-mount preflight before deployment.
+- Publish V2 OpenAPI/Protobuf artifacts and SDK version with explicit `beta`,
+  supported endpoint, rate-limit, cursor TTL and compatibility statements.
+- Route authenticated read-only `/v2` traffic through the gateway. Apply request
+  size, timeout, concurrency, rate-limit, JWT audience/environment and egress
+  policy; keep all mutation/control routes private.
+- Register one monitoring/reference consumer first, then one disposable paper
+  alpha consumer. Neither consumer may connect directly to a venue or reuse a
+  production durable consumer group.
+- Exercise `snapshot -> signed cursor -> replay -> live`, client restart from a
+  persisted cursor, stale/gap fail-closed behavior, cursor expiry, bounded slow
+  consumer handling and V1 fallback.
+- Compare V1 and V2 for exact instrument identity, decimal values, source/event
+  timestamps, final-bar state, counts, freshness and source authority on the
+  selected Binance USD-M, OKX JSON and DNSE bar scopes.
+- Measure request rate, p50/p95/p99 latency, cursor lag, replay lag, CPU, RSS,
+  network, Redis/durable-store growth and error-budget consumption under normal
+  and burst beta load.
+- Emit compact beta evidence and remove disposable account/consumer state,
+  temporary keys, cursor files, containers and networks after certification.
+
+### Verification And Exit Gate
+
+- V1 golden API/Redis/SDK compatibility remains byte/behavior compatible and
+  the running V1 authority is not restarted by the beta deployment.
+- V2 contract, auth, rate-limit, malformed request, typed error, snapshot/cursor,
+  replay, reconnect, slow consumer, replica/load and rollback tests pass.
+- Real-provider read-only smoke passes; no generated market event is admitted to
+  beta evidence.
+- The monitoring consumer and paper alpha complete multiple closed-candle/live
+  handoffs with zero unexplained value/count/finality mismatch and zero
+  undetected gap.
+- Stopping the beta route/containers restores the exact pre-beta topology;
+  existing consumers continue through V1 without data or config migration.
+
+### Completed
+
+- Not started. This section is plan-only and does not authorize deployment.
+
+### Technical Debt / Decision Gate
+
+- Beta may use the certified bounded durable bridge because V1 remains
+  authoritative. It cannot be promoted to sole production authority until the
+  replicated durable-broker and production observability/security gates in
+  Phase 6 pass.
+- Selection of the first paper alpha and public hostname/audience must be
+  recorded in the deployment manifest before execution.
+
+### Rollback
+
+- Remove the V2 beta gateway route and stop only dedicated V2 role containers.
+  Revoke beta credentials and delete isolated beta consumer state. V1 requires
+  no data replay, schema rollback or restart.
+
+## 12. Phase 8 - Rust Realtime-Core Vertical Slice
+
+**Status:** `PLANNED`
+
+### Goal
+
+Implement a production-shaped Rust realtime data-plane slice for demanded
+Binance USD-M TRADE feeds, run it beside the Python producer in strict shadow,
+and prove exact canonical/domain parity before any Rust event receives public or
+legacy write authority.
+
+### Target Ownership
+
+```text
+Binance USD-M native WebSocket bytes
+    -> Rust connection/shard supervisor
+    -> native decoder and instrument resolver
+    -> fixed-point canonical event
+    -> ordering/dedup/gap and feed-quality state
+    -> DurableSink abstraction
+    -> shadow canonical log/projection
+
+Python remains: API, SDK, control plane, history, reconciliation,
+consumer registry and V1 compatibility authority.
+```
+
+Rust runs as a separate process/container with independent lifecycle and bounded
+resources. Do not embed the first production slice through PyO3 or make FastAPI
+own the Rust event loop; process isolation is required for restart, scale and
+rollback.
+
+### Guide Index
+
+- [Python/Rust role model and canonical hot path: Sections 8-14 and 20-23](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-1)
+- [Durable transport and Rust foundation: Sections 6-7, 11 and 28-29](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-2)
+- [Ingestion, fencing and compatibility projection: Sections 12-14, 23 and 37](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-3)
+
+### To Do
+
+- Implement Rust adapter traits for connection lifecycle, subscription shards,
+  native frame decoding, capability declaration and durable output without
+  provider branches in canonical core.
+- Use generated canonical Protobuf types and the existing stable instrument UID,
+  alias revision, fixed-point decimal, timestamp, source session, sequence,
+  event ID, source role and quality semantics. Do not introduce a Rust-specific
+  public schema.
+- Implement bounded reconnect/backoff/jitter, source-session epochs,
+  lease/fencing, rate budgets, subscription reconciliation, heartbeat/freshness
+  and old-generation frame rejection.
+- Implement deterministic ordering, deduplication, gap detection, quarantine and
+  fail-closed feed-quality transitions. Queue saturation must backpressure,
+  spool within approved bounds or disconnect/degrade; it may not silently drop.
+- Publish only through the common `DurableSink` interface. Rust must not make
+  Redis Pub/Sub or a local file the hidden source of truth, and transport choice
+  must remain replaceable by the replicated broker implementation.
+- Tee the same authentic provider frames into Python PRIMARY and Rust SHADOW.
+  Compare canonical output without changing the Python subscription owner or
+  V1 compatibility writer.
+- Prepare the next capability modules for BBO/L2 snapshot-delta-checksum and
+  realtime bar aggregation, but do not expand authority beyond TRADE during this
+  phase.
+
+### Verification And Exit Gate
+
+- Shared Protobuf generation, Rust fmt/clippy/advisory/license gates and Python/
+  Rust golden fixtures pass on malformed, duplicate, out-of-order, gap,
+  reconnect, stale-generation, precision and unknown-field cases.
+- A long deterministic native-frame replay produces identical event IDs,
+  instrument identity, decimal values, side, timestamps, sequence/session,
+  quality transitions and output count in Python and Rust.
+- Bounded real-provider shadow runs across normal traffic plus at least one
+  controlled reconnect/resubscribe cycle with zero unexplained mismatch, zero
+  canonical drop and no duplicate authority owner.
+- Process kill, durable-sink outage, disk/spool bound, Redis outage, slow
+  projector and restart/replay tests pass; Rust never acknowledges an event that
+  cannot be recovered inside the certified boundary.
+- CPU/RSS/throughput/p99/p99.9 evidence demonstrates a measurable operational
+  benefit or equal performance with materially stronger bounds. Faster output
+  cannot compensate for semantic divergence.
+- All Rust output remains in isolated shadow topics/namespaces and is removed or
+  retained only as compact checksummed evidence after test cleanup.
+
+### Completed
+
+- Not started. Existing `qdl-core` contract/replay foundation is input to this
+  phase, not evidence that a real Rust venue ingestor is already complete.
+
+### Technical Debt / Decision Gate
+
+- The first authority-capable Rust slice requires selection/deployment of the
+  replicated durable broker. Phase 8 shadow can continue against the bounded
+  bridge, but Phase 9 primary promotion cannot waive durable replication.
+- BBO/L2 and realtime bars require separate capability evidence; TRADE success
+  does not certify them automatically.
+
+### Rollback
+
+- Fence and stop the Rust shadow owner, remove its isolated state and continue
+  Python PRIMARY unchanged. No public endpoint, SDK or legacy key changes.
+
+## 13. Phase 9 - Rust Core Canary And Progressive Replacement
+
+**Status:** `PLANNED`
+
+### Goal
+
+Promote Rust from shadow to the authoritative realtime core one certified
+venue/market/feed/hash-range slice at a time, retire the corresponding Python
+hot-path owner only after rollback rehearsal, and preserve Python as the stable
+outer API/SDK/control/history/reconciliation platform.
+
+### Promotion Sequence
+
+```text
+BINANCE / USD-M / TRADE / demanded hash range
+    -> BBO
+    -> L2 snapshot + delta + checksum
+    -> realtime BAR aggregation
+    -> OKX JSON core feeds
+    -> future Deribit option books after independent certification
+```
+
+DNSE/VN bar and low-rate historical adapters remain Python unless measured
+capacity or correctness evidence justifies a separate migration.
+
+### Guide Index
+
+- [Authority ownership and no-big-bang migration: Sections 30-33](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#30-migration-strategy-no-big-bang-rewrite)
+- [Production acceptance and adapter definition of done: Sections 37-41 and Appendix B](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#41-production-acceptance-checklist)
+- [OKX JSON/SBE promotion boundary](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-program-phase-6)
+
+### To Do
+
+- Provision production durable transport, telemetry, service identity, secrets,
+  audit and rollback controls required by the Phase 6 `NO-GO` report.
+- Promote one bounded TRADE slice through
+  `PYTHON_PRIMARY -> RUST_SHADOW -> RUST_CANARY -> RUST_PRIMARY`; every state
+  transition records owner, fencing epoch, artifact digest, config revision,
+  cursor range, evidence and operator approval.
+- During canary, dual-read/compare without dual public write authority. The V1
+  compatibility projector continues to emit the established legacy shape from
+  canonical events so alpha and Trading System consumers do not change.
+- After clean promotion, disable only the Python venue subscription for that
+  exact slice. Retain a tested Python rollback manifest; do not retain two
+  unfenced owners “for safety”.
+- Repeat independent domain, provider, chaos, capacity and rollback
+  certification for BBO, L2/book and realtime bar capabilities. Book state uses
+  snapshot/delta/checksum semantics; bar aggregation preserves closure,
+  origin/finality and revision semantics exactly.
+- Promote OKX JSON capabilities independently. SBE remains optional and cannot
+  become primary without entitlement, pinned schema/version, JSON shadow parity,
+  unknown-schema fail-closed behavior and tested JSON rollback.
+- Track CPU/RSS, venue connections, queue/lag, durable growth and operational
+  burden before and after each slice. Remove the replaced Python hot path only
+  when the measured result and rollback posture are better.
+
+### Verification And Exit Gate
+
+- Every promoted slice satisfies the Phase 6 production checklist and Appendix
+  B using real infrastructure and authentic provider events.
+- Canonical/domain parity remains exact across replay and live shadow windows;
+  gaps, reconnects, process crashes and broker/Redis/projector outages recover
+  without ambiguous ownership or acknowledged loss.
+- V1 compatibility tests and selected V1 consumers remain unchanged while V2
+  beta consumers continue snapshot/cursor/replay successfully.
+- Rust resource and latency results meet approved headroom with bounded memory,
+  queues and backpressure; no monotonic lag/disk growth remains.
+- Rollback to Python restores the previous owner within the approved recovery
+  objective and reconciles the affected cursor range without duplicate external
+  publication.
+- All test/canary resources are scope-cleaned. Only production canonical state,
+  governed evidence and active consumer registrations remain.
+
+### Completed
+
+- Not started. User approval is required independently for each authority slice.
+
+### Technical Debt / Decision Gate
+
+- Python outer-layer replacement is not a Phase 9 objective. A future language
+  change there requires profiling and a separate contract-preserving decision.
+- V1 sunset remains owner- and telemetry-based after all registered consumers
+  migrate; Rust promotion does not itself authorize V1 removal.
+- Deribit/option production remains a separately licensed and credentialed
+  adapter activation even though canonical option identity/book contracts are
+  already architecture-ready.
+
+### Rollback
+
+- Fence Rust for the affected slice, reactivate the immutable Python rollback
+  manifest, replay/reconcile from the last common durable cursor and restore the
+  previous authority flag. Other venue/feed slices remain untouched.
+
+## 14. Approval Gates Before Further Implementation
+
+The original seven-phase foundation was approved and executed through Phase 6
+shadow certification. Phases 7-9 are the next program and require phase-level
+approval before any runtime deployment or authority change.
+
+Phase 7 approval authorizes protected read-only beta deployment only. It does
+not authorize V1 restart, source-authority change or live execution dependency.
+
+Phase 8 approval authorizes an isolated Rust shadow ingestor for the selected
+Binance USD-M TRADE slice. Phase 9 requires a separate approval naming the exact
+venue/market/feed/hash range, production blast radius and rollback manifest.
+
+### Historical Foundation Approval
+
+The original implementation began only after the user approved the seven-phase
+foundation and these two architecture clarifications:
 
 1. Use a demand-backed Binance USD-M slice instead of blindly starting with broad Binance Spot.
 2. Treat options/Deribit as a first-class capability test now, while deferring actual venue activation until its own certification.
 
-Upon approval, Phase 0 is implemented first. Later phases may refine measurable thresholds from Phase 0 evidence, but may not weaken compatibility, correctness, no-silent-loss or cleanup gates without explicit approval.
+Phase 0 was implemented first. Later phases may refine measurable thresholds
+from its evidence, but may not weaken compatibility, correctness,
+no-silent-loss or cleanup gates without explicit approval.
