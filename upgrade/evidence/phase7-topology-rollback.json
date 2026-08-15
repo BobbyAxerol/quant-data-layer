@@ -1,0 +1,22 @@
+{
+  "authenticated_query_status": 200,
+  "beta_keys_in_v1_after": 0,
+  "beta_keys_in_v1_before": 0,
+  "beta_resources_after_cleanup": {
+    "containers": 0,
+    "networks": 0,
+    "volumes": 0
+  },
+  "decision": "PASS",
+  "fencing_epoch_after": 2,
+  "fencing_epoch_before": 1,
+  "image_id": "sha256:e640b0e7afe54790ebe0d6ee240e8d45ec86a09b247411dd7d3087cb261a6bfb",
+  "production_mutations": 0,
+  "schema": "qdl.phase7.1.topology-rollback.v1",
+  "tested_commit": "5e013be6431944f199beb5bc26de7d9e537006d5",
+  "v1_container_ids_unchanged": true,
+  "v1_image_ids_unchanged": true,
+  "v1_mounts_unchanged": true,
+  "v1_network_endpoints_unchanged": true,
+  "v1_restart_counts_unchanged": true
+}

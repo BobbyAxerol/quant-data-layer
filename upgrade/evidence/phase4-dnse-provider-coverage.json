@@ -1,0 +1,19 @@
+{
+  "expected_rows": 241,
+  "fabricated_rows": 0,
+  "market_preopen_note": "08:45 market session is not represented as DNSE OHLCV bars",
+  "missing_expected_rows": 0,
+  "missing_sample": [],
+  "observed_first": "2026-08-12T09:00:00",
+  "observed_last": "2026-08-12T14:45:00",
+  "observed_rows": 241,
+  "outside_sample": [],
+  "outside_session_rows": 0,
+  "production_writes": 0,
+  "provenance": "REAL_DNSE_PUBLIC_MARKETDATA_READ_ONLY",
+  "provider_bar_session": "09:00-11:29,13:00-14:29,14:45 Asia/Ho_Chi_Minh",
+  "schema": "qdl.phase4.dnse-provider-coverage.v1",
+  "status": "PASS",
+  "symbol": "VN30F1M",
+  "trading_date": "2026-08-12"
+}

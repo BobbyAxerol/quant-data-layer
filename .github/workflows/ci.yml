@@ -7,22 +7,214 @@ on:
     branches: ["dev"]
 
 jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Checkout pull-request base contracts
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: base-contracts
+
+      - name: Set up Buf
+        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: "1.50.0"
+
+      - name: Check schema format and compatibility
+        working-directory: contracts
+        run: |
+          buf format --diff --exit-code
+          buf lint
+          buf breaking --against baseline/qdl-v2-phase1.binpb
+          buf breaking --against baseline/qdl-v2-phase7-beta.binpb
+
+      - name: Check schema against pull-request base
+        if: github.event_name == 'pull_request'
+        working-directory: contracts
+        run: |
+          if [[ -d ../base-contracts/contracts ]]; then
+            buf breaking --against ../base-contracts/contracts
+          else
+            echo "Base branch has no contract module; frozen Phase 1/7 baselines remain authoritative."
+          fi
+
+      - name: Verify generated contracts are current
+        working-directory: contracts
+        run: |
+          buf generate
+          git diff --exit-code -- ../generated
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Test Python generated contracts
+        run: |
+          python -m pip install --disable-pip-version-check protobuf==6.33.6
+          python -m unittest tests.test_phase1_contracts
+
+      - name: Test Rust generated contracts
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace rust:1.82-slim \
+            sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends clang cmake libclang-dev libcurl4-openssl-dev libssl-dev libzstd-dev make pkg-config zlib1g-dev >/dev/null && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked'
+
+      - name: Check Rust dependency, license and advisory policy
+        env:
+          CARGO_DENY_VERSION: "0.20.2"
+          CARGO_DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+        run: |
+          archive="cargo-deny-${CARGO_DENY_VERSION}.tar.gz"
+          directory="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl --fail --location --silent --show-error \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${directory}.tar.gz" \
+            --output "${archive}"
+          echo "${CARGO_DENY_SHA256}  ${archive}" | sha256sum --check --strict
+          tar --no-same-owner -xzf "${archive}"
+          "./${directory}/cargo-deny" check
+
   unit-tests:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Prepare non-root runtime bind mounts
+        run: sudo scripts/prepare_nonroot_runtime.sh
 
       - name: Build data_layer image
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml build data_layer
+
+      - name: Audit final runtime dependencies
+        run: |
+          docker run --rm data-layer:v0.1.0 sh -c '
+            test ! -e /opt/venv/bin/poetry
+            python -c "from importlib.metadata import version; from packaging.version import Version; assert Version(version(\"msgpack\")) >= Version(\"1.2.1\"); assert Version(version(\"setuptools\")) >= Version(\"78.1.1\")"
+            python -m pip freeze --local > /tmp/qdl-runtime-requirements.txt
+            python -m pip install --disable-pip-version-check --no-cache-dir "pip-audit>=2.9,<3"
+            pip-audit --cache-dir /tmp/qdl-pip-audit-cache -r /tmp/qdl-runtime-requirements.txt --progress-spinner=off
+          '
 
       - name: Run unit tests
         run: >-
           docker compose -f docker-compose.yml -f docker-compose.ci.yml
           run --rm test_runner python -m unittest discover -s tests
+
+      - name: Run V2 contract, SDK and shadow-consumer gates
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml
+          run --rm test_runner python -m unittest -v
+          tests.test_fund_phase5_api tests.test_fund_phase5_contracts
+          tests.test_fund_phase5_consumer tests.test_fund_phase5_stream_sdk
+          tests.test_fund_phase5_e2e tests.test_fund_phase5_load
+          tests.test_fund_phase5_real_provider
+
+      - name: Run Phase 6 operations, recovery and release gates
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml
+          run --rm test_runner python -m unittest -v
+          tests.test_fund_phase6_operations tests.test_fund_phase6_resilience
+          tests.test_fund_phase6_release
+
+      - name: Run Phase 7 typed-contract and data-plane identity gates
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml
+          run --rm test_runner python -m unittest -v
+          tests.test_fund_phase7_contract_security
+          tests.test_fund_phase71_beta_runtime
+          tests.test_fund_phase72_consumer_canary
+          tests.test_fund_phase73_beta_decision
+          tests.test_phase0_contract_golden tests.test_fund_phase5_contracts
+
+      - name: Run isolated Phase 7.1 beta topology and rollback gate
+        env:
+          QDL_BETA_CURSOR_KEYS_JSON: '{"beta-k1":"phase71-ci-cursor-key-material-32-bytes"}'
+          QDL_BETA_JWT_KEYS_JSON: '{"phase7-test":"phase7-test-secret-material-32bytes"}'
+        run: |
+          docker image inspect redis:7.2-alpine >/dev/null 2>&1 || docker pull redis:7.2-alpine
+          export QDL_BETA_IMAGE="$(docker image inspect data-layer:v0.1.0 --format '{{.Id}}')"
+          export QDL_BETA_REDIS_IMAGE="$(docker image inspect redis:7.2-alpine --format '{{.Id}}')"
+          export QDL_BETA_INIT_IMAGE="${QDL_BETA_REDIS_IMAGE}"
+          scripts/phase71_beta_topology_smoke.sh
+
+      - name: Run additive PostgreSQL migration gate
+        run: bash scripts/phase5_migration_smoke.sh
+
+      - name: Run bounded V2 API replica load gate
+        run: >-
+          docker run --rm -v "$PWD:/app" -w /app data-layer:v0.1.0
+          python scripts/phase5_api_replica_load.py --replicas 8 --requests 2000
+          --concurrency 100 --min-rps 250 --max-p99-ms 500
+
+      - name: Test isolated Redis restart and replay rebuild
+        run: QDL_TEST_IMAGE=data-layer:v0.1.0 scripts/phase2_redis_rebuild_smoke.sh
+
+      - name: Build immutable Rust replay tool
+        run: >-
+          docker build --provenance=false -f Dockerfile.qdl-core
+          -t qdl-core:${{ github.sha }} .
+
+      - name: Verify Rust artifact against provider fixtures
+        run: |
+          docker run --rm -v "$PWD/tests/fixtures/phase2:/fixtures:ro" \
+            qdl-core:${{ github.sha }} /fixtures/binance_usdm_trade.json | grep -q '"status":"PASS"'
+          docker run --rm -v "$PWD/tests/fixtures/phase2:/fixtures:ro" \
+            qdl-core:${{ github.sha }} /fixtures/okx_trade.json | grep -q '"status":"PASS"'
+
+      - name: Run bounded durability performance regression
+        run: >-
+          docker run --rm -v "$PWD:/app" -w /app data-layer:v0.1.0
+          python scripts/phase2_benchmark.py --events 2000 --partitions 10
+          --payload-bytes 512 --batch-size 100 --consumer-groups 8
+          --min-throughput 300 --max-p99-ms 300 --max-disk-amplification 12
+
+      - name: Scan final runtime image for critical and high vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: data-layer:v0.1.0
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Scan repository for leaked secrets and critical misconfiguration
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+
+      - name: Rehearse immutable SBOM and signed release manifest
+        run: |
+          evidence_dir="$(mktemp -d)"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+            -out "${evidence_dir}/private.pem" >/dev/null 2>&1
+          openssl pkey -in "${evidence_dir}/private.pem" -pubout \
+            -out "${evidence_dir}/public.pem"
+          image_id="$(docker image inspect data-layer:v0.1.0 --format '{{.Id}}')"
+          python -m scripts.phase6_release_bundle \
+            --repo . --output-dir "${evidence_dir}/bundle" \
+            --release "qdl-ci-${GITHUB_SHA}" --git-sha "${GITHUB_SHA}" \
+            --image-ref "local/data-layer@${image_id}" \
+            --signing-key "${evidence_dir}/private.pem" \
+            --verification-key "${evidence_dir}/public.pem"
+          rm -rf "${evidence_dir}"
 
       - name: Clean CI Compose resources
         if: always()

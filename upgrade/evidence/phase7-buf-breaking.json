@@ -1,0 +1,26 @@
+{
+  "schema": "qdl.phase7.buf-breaking.v1",
+  "recorded_at": "2026-08-14T10:37:26Z",
+  "buf_version": "1.50.0",
+  "format": "PASS",
+  "lint": "PASS",
+  "breaking_checks": {
+    "immutable_phase1_baseline": {
+      "status": "PASS",
+      "path": "contracts/baseline/qdl-v2-phase1.binpb",
+      "sha256": "c42a9d592ab776257ae4ab210c59309202b12816720c6b7d9d0441be82070f2f"
+    },
+    "phase7_beta_freeze_candidate": {
+      "status": "PASS",
+      "path": "contracts/baseline/qdl-v2-phase7-beta.binpb",
+      "sha256": "16686bb63dd2633f5572dca98baef1d7e1c3d9aec249a259a9725a58ad1445ef"
+    },
+    "git_reference_before_phase7": {
+      "status": "PASS",
+      "reference": "origin/feat/fund-grade-data-layer-v2",
+      "commit": "b9a2b57fc0eb9a1db2d688a6320ecd8d7f731438"
+    }
+  },
+  "generated_python_rust_contracts": "PASS",
+  "v1_contract_files_changed": false
+}

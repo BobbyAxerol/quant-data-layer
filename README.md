@@ -13,6 +13,9 @@ It currently serves:
 ## Quick Links
 
 - [Integration guide](./DATA_LAYER_SERVICE_ACCESS_GUIDE.md)
+- [Fund-grade implementation tracker](./DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md)
+- [Fund-grade architecture and migration guide](./upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
+- [OKX V5 market-data implementation guide](./upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
 - [Contributing guide](./CONTRIBUTING.md)
 - [Security policy](./SECURITY.md)
 - [Code of conduct](./CODE_OF_CONDUCT.md)

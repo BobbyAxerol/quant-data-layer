@@ -1,0 +1,28 @@
+{
+  "authority": "V1_SHADOW_READ_ONLY",
+  "bar_lifecycle": "FINAL_ONLY",
+  "canonical_instrument_id": "BINANCE:USDM:PERPETUAL:BTCUSDT",
+  "canonical_instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+  "closed_bar_open_times_utc": [
+    "2026-08-14T18:35:00Z",
+    "2026-08-14T18:36:00Z"
+  ],
+  "credential_rotation": "beta-jwt-k1->beta-jwt-k2",
+  "decimal_comparison": "SOURCE_TEXT_AND_COEFFICIENT_SCALE_EXACT",
+  "decision": "PASS",
+  "execution_dependency": "FORBIDDEN",
+  "feed": "BAR",
+  "initial_seeded_closed_events": 117,
+  "interval": "1m",
+  "monitoring_logical_offset": 118,
+  "paper_checkpoint_after_failover": 120,
+  "paper_checkpoint_before_failover": 119,
+  "paper_restart_state_mismatch": 0,
+  "provider": "binance",
+  "real_provider_data": true,
+  "schema": "qdl.phase7.2.consumer-parity.v1",
+  "source_id": "QDL_V1_BINANCE_USDM",
+  "source_role": "PRIMARY",
+  "v1_v2_mismatch_count": 0,
+  "venue": "BINANCE"
+}

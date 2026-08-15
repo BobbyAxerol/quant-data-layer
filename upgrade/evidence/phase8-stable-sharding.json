@@ -1,0 +1,12 @@
+{
+  "algorithm": "sha256-rendezvous-v1",
+  "authority": "RUST_SHADOW",
+  "bounded_churn": true,
+  "changed": 3360,
+  "churn_ratio": 0.336,
+  "instruments": 10000,
+  "owners_after": 3,
+  "owners_before": 2,
+  "schema": "qdl.phase8.stable-sharding.v1",
+  "status": "PASS"
+}

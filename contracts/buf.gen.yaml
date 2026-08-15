@@ -1,0 +1,12 @@
+version: v2
+clean: true
+plugins:
+  - remote: buf.build/protocolbuffers/python:v31.1
+    revision: 1
+    out: ../generated/python
+  - remote: buf.build/community/neoeinstein-prost:v0.5.0
+    revision: 1
+    out: ../generated/rust
+inputs:
+  - directory: proto
+

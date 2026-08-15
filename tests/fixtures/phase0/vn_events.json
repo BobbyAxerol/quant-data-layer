@@ -1,0 +1,6 @@
+{
+  "quote": {"symbol": "VN30F1M", "price": "1820.7", "volume": "12", "source_ts_ms": 1786579200000, "source": "dnse"},
+  "market_closed": {"market": "vn_derivative", "timezone": "Asia/Ho_Chi_Minh", "state": "MARKET_CLOSED", "reason": "after_session_14:30"},
+  "stale": {"symbol": "VN30F1M", "last_source_ts_ms": 1786578900000, "observed_ts_ms": 1786579200000, "state": "STALE"},
+  "duplicate": {"identity": ["dnse", "VN30F1M", 1786579200000, "1820.7", "12"]}
+}

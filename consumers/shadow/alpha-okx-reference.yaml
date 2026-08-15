@@ -1,0 +1,41 @@
+apiVersion: qdl/v2
+kind: DataRequirement
+metadata:
+  id: alpha.okx.reference.shadow
+  owner: alpha-platform
+  subject: spiffe://qdl/paper/alpha-okx-reference-shadow
+  environment: paper
+  revision: 1
+spec:
+  sdk_major: 2
+  rollback_contract: V1
+  execution_dependency: FORBIDDEN
+  permissions:
+    - instruments:read
+    - snapshot:read
+    - history:read
+    - status:read
+    - quality:read
+    - stream:read
+  purposes:
+    - INTERNAL_ALPHA
+  quotas:
+    requests_per_minute: 120
+    max_batch_items: 20
+    max_warmup_rows: 2000
+    max_streams: 4
+    max_buffer_events: 1000
+  requirements:
+    - instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+      feed: BAR
+      interval: 1m
+      consumer_grade: ALPHA
+      source_policy_id: alpha_okx_reference_v1
+      warmup_limit: 500
+      max_freshness_ms: 3000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS

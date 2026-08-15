@@ -1,0 +1,41 @@
+apiVersion: qdl/v2
+kind: DataRequirement
+metadata:
+  id: phase7-monitoring-binance
+  owner: data-platform
+  subject: spiffe://qdl/beta/phase7-monitoring-binance
+  environment: paper
+  revision: 1
+spec:
+  sdk_major: 2
+  rollback_contract: V1
+  execution_dependency: FORBIDDEN
+  permissions:
+    - instruments:read
+    - snapshot:read
+    - history:read
+    - status:read
+    - quality:read
+    - stream:read
+  purposes:
+    - INTERNAL_RESEARCH
+  quotas:
+    requests_per_minute: 120
+    max_batch_items: 10
+    max_warmup_rows: 500
+    max_streams: 2
+    max_buffer_events: 500
+  requirements:
+    - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+      feed: BAR
+      interval: 1m
+      consumer_grade: RESEARCH
+      source_policy_id: alpha_crypto_primary_v1
+      warmup_limit: 30
+      max_freshness_ms: 180000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS

@@ -1,0 +1,15 @@
+{
+  "accepted": 20000,
+  "events": 20000,
+  "events_per_second": 1343.030083957862,
+  "partitions": 80,
+  "peak_traced_memory_bytes": 1965064,
+  "provenance": "TEST_SYNTHETIC_LOAD",
+  "queue_high_watermark": 512,
+  "queue_rejected": 0,
+  "records_after_restart": 20000,
+  "records_before_restart": 20000,
+  "replayed_after_restart": 20000,
+  "schema": "qdl.phase3.load-recovery.v1",
+  "status": "PASS"
+}

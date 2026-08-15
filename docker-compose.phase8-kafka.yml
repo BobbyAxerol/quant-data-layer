@@ -1,0 +1,151 @@
+x-kafka-environment: &kafka-environment
+  CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+  KAFKA_PROCESS_ROLES: broker,controller
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_INTER_BROKER_LISTENER_NAME: SSL
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:SSL,SSL:SSL
+  KAFKA_LISTENERS: CONTROLLER://:9093,SSL://:9092
+  KAFKA_SSL_CLIENT_AUTH: required
+  KAFKA_SSL_TRUSTSTORE_FILENAME: truststore.jks
+  KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore.password
+  KAFKA_SSL_KEY_CREDENTIALS: key.password
+  KAFKA_SSL_KEYSTORE_CREDENTIALS: store.password
+  KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+  KAFKA_SSL_TRUSTSTORE_TYPE: JKS
+  KAFKA_SSL_ENABLED_PROTOCOLS: TLSv1.3,TLSv1.2
+  KAFKA_SSL_PROTOCOL: TLSv1.3
+  KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: HTTPS
+  KAFKA_SSL_PRINCIPAL_MAPPING_RULES: RULE:^CN=([^,]+).*$$/$$1/,DEFAULT
+  KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+  KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+  KAFKA_SUPER_USERS: User:phase8-admin;User:kafka1;User:kafka2;User:kafka3
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
+  KAFKA_NUM_PARTITIONS: 3
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+  KAFKA_COMPRESSION_TYPE: producer
+  KAFKA_MESSAGE_MAX_BYTES: 1048576
+  KAFKA_REPLICA_FETCH_MAX_BYTES: 2097152
+  KAFKA_LOG_RETENTION_MS: 86400000
+  KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 1000
+  KAFKA_LOG_SEGMENT_BYTES: 16777216
+  KAFKA_LOG_DIRS: /var/lib/kafka/data
+  KAFKA_HEAP_OPTS: -Xms256m -Xmx256m
+
+x-kafka-common: &kafka-common
+  image: apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9
+  restart: "no"
+  security_opt:
+    - no-new-privileges:true
+  networks:
+    - phase8_shadow
+  volumes:
+    - type: bind
+      source: ${QDL_PHASE8_CERT_DIR:?set QDL_PHASE8_CERT_DIR}
+      target: /etc/kafka/secrets
+      read_only: true
+  healthcheck:
+    test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server $${HOSTNAME}:9092 --command-config /etc/kafka/secrets/admin.properties >/dev/null 2>&1"]
+    interval: 5s
+    timeout: 5s
+    retries: 36
+    start_period: 20s
+  mem_limit: 512m
+  cpus: 0.75
+
+services:
+  kafka1:
+    <<: *kafka-common
+    hostname: kafka1
+    environment:
+      <<: *kafka-environment
+      KAFKA_NODE_ID: 1
+      KAFKA_ADVERTISED_LISTENERS: SSL://kafka1:9092
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka1.keystore.p12
+    volumes:
+      - type: bind
+        source: ${QDL_PHASE8_CERT_DIR:?set QDL_PHASE8_CERT_DIR}
+        target: /etc/kafka/secrets
+        read_only: true
+      - kafka1_data:/var/lib/kafka/data
+
+  kafka2:
+    <<: *kafka-common
+    hostname: kafka2
+    environment:
+      <<: *kafka-environment
+      KAFKA_NODE_ID: 2
+      KAFKA_ADVERTISED_LISTENERS: SSL://kafka2:9092
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka2.keystore.p12
+    volumes:
+      - type: bind
+        source: ${QDL_PHASE8_CERT_DIR:?set QDL_PHASE8_CERT_DIR}
+        target: /etc/kafka/secrets
+        read_only: true
+      - kafka2_data:/var/lib/kafka/data
+
+  kafka3:
+    <<: *kafka-common
+    hostname: kafka3
+    environment:
+      <<: *kafka-environment
+      KAFKA_NODE_ID: 3
+      KAFKA_ADVERTISED_LISTENERS: SSL://kafka3:9092
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka3.keystore.p12
+    volumes:
+      - type: bind
+        source: ${QDL_PHASE8_CERT_DIR:?set QDL_PHASE8_CERT_DIR}
+        target: /etc/kafka/secrets
+        read_only: true
+      - kafka3_data:/var/lib/kafka/data
+
+  phase8_redis:
+    image: redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 48mb
+      - --maxmemory-policy
+      - noeviction
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /data:rw,nosuid,nodev,noexec,size=64m
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - phase8_shadow
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    mem_limit: 64m
+    cpus: 0.25
+
+networks:
+  phase8_shadow:
+    internal: true
+    labels:
+      qdl.scope: phase8-certification
+
+volumes:
+  kafka1_data:
+    labels:
+      qdl.scope: phase8-certification
+  kafka2_data:
+    labels:
+      qdl.scope: phase8-certification
+  kafka3_data:
+    labels:
+      qdl.scope: phase8-certification

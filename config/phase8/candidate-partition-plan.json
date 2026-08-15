@@ -1,0 +1,17 @@
+{
+  "schema": "qdl.partition-plan.v1",
+  "partition_plan_epoch": 1,
+  "hash_algorithm": "rendezvous-sha256-v1",
+  "assignment_revision": 1,
+  "authority": "RUST_SHADOW",
+  "slice_id": "BINANCE:USDM:TRADE:BTCUSDT",
+  "assignments": [
+    {
+      "instrument_uid": "85ad7cb6-7ebf-5c81-9d82-12c4c10ca85c",
+      "native_symbol": "BTCUSDT",
+      "owner": "rust-ingestor-binance-usdm-shard-0"
+    }
+  ],
+  "public_write_allowed": false,
+  "legacy_write_allowed": false
+}

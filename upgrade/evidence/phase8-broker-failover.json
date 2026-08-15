@@ -1,0 +1,22 @@
+{
+  "acknowledged_records_survived_full_restart": true,
+  "acknowledged_records_survived_replica_volume_loss": true,
+  "below_min_isr_failed_closed": true,
+  "below_min_isr_offset_after": 65,
+  "below_min_isr_offset_before": 65,
+  "below_min_isr_write_status": 124,
+  "cleanup": {
+    "containers_after": 0,
+    "networks_after": 0,
+    "v1_health_after": 200,
+    "v1_health_before": 200,
+    "v1_topology_unchanged": true,
+    "volumes_after": 0
+  },
+  "one_replica_loss_offset_after": 65,
+  "one_replica_loss_offset_before": 64,
+  "one_replica_loss_write_status": 0,
+  "schema": "qdl.phase8.broker-failover-evidence.v1",
+  "status": "PASS",
+  "under_replicated_partitions_after_restore": 0
+}

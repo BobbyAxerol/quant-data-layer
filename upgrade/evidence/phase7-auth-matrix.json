@@ -1,0 +1,42 @@
+{
+  "schema": "qdl.phase7.auth-matrix.v1",
+  "recorded_at": "2026-08-14T10:37:26Z",
+  "status": "PASS",
+  "rest": {
+    "application_guard_on_all_v2_operations": true,
+    "operation_count": 10,
+    "cases": {
+      "valid_bound_identity": "PASS",
+      "missing_token": "PASS_401",
+      "unknown_key_id": "PASS_401_REDACTED",
+      "expired_token": "PASS_401",
+      "not_before_in_future": "PASS_401",
+      "wrong_audience": "PASS_401",
+      "wrong_environment": "PASS_401",
+      "consumer_id_mismatch": "PASS_403",
+      "manifest_revision_mismatch": "PASS_401",
+      "malformed_manifest_revision": "PASS_401",
+      "purpose_escalation": "PASS_403",
+      "role_escalation": "PASS_403",
+      "unknown_manifest_permission": "PASS_REGISTRATION_REJECTED",
+      "request_and_buffer_quota": "PASS_429",
+      "credential_redaction": "PASS"
+    }
+  },
+  "grpc": {
+    "server_interceptor_enabled": true,
+    "client_call_credentials_supported": true,
+    "same_principal_manifest_policy_as_rest": true,
+    "cases": {
+      "valid_bound_identity": "PASS",
+      "missing_token": "PASS_UNAUTHENTICATED",
+      "wrong_audience": "PASS_UNAUTHENTICATED",
+      "wrong_environment": "PASS_UNAUTHENTICATED",
+      "manifest_revision_mismatch": "PASS_UNAUTHENTICATED",
+      "purpose_or_scope_escalation": "PASS_PERMISSION_DENIED",
+      "buffer_quota": "PASS_RESOURCE_EXHAUSTED"
+    }
+  },
+  "credential_storage": "NO_SECRET_VALUE_PERSISTED_IN_MANIFEST_OR_EVIDENCE",
+  "phase7_1_shared_quota_backend": "NOT_STARTED"
+}

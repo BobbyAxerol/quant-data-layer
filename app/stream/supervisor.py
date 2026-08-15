@@ -251,7 +251,7 @@ class StreamSupervisor:
     def record_publish(self, item: Dict[str, Any]) -> None:
         key = str(item.get("key") or "")
         data = item.get("data") or {}
-        source = str(data.get("source") or "")
+        source = str(item.get("source") or data.get("source") or "")
         feed = None
         symbol = None
         interval = None

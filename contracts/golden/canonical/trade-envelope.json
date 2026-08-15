@@ -1,0 +1,8 @@
+{
+  "producer": "generated/python protobuf 6.31.1",
+  "rust_consumer": "qdl-contracts prost 0.13.5",
+  "schema": "qdl.marketdata.trade",
+  "schema_major": 2,
+  "sha256": "671935121f18ac43f6a2bbfa23d5f940c0028cc176c8dcfde657a70ae91ea48c",
+  "size_bytes": 424
+}

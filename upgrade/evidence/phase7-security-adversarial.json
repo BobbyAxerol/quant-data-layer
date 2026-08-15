@@ -1,0 +1,28 @@
+{
+  "authority": "V1_SHADOW_READ_ONLY",
+  "schema": "qdl.phase7.security-adversarial.v1",
+  "status": "PASS",
+  "tests": {
+    "auth_status_codes": {
+      "consumer_mismatch": 403,
+      "missing_scope": 401,
+      "missing_token": 401,
+      "rotation_beta-jwt-k1": 200,
+      "rotation_beta-jwt-k2": 200,
+      "wrong_audience": 401,
+      "wrong_environment": 401
+    },
+    "cursor_consumer_scope": "CURSOR_INVALID",
+    "cursor_expiry": "CURSOR_EXPIRED",
+    "cursor_tamper": "CURSOR_INVALID",
+    "dependency_outage_query_status": 503,
+    "dependency_outage_ready_status": 503,
+    "dependency_recovery_ready_status": 200,
+    "malformed_request_status": 400,
+    "oversized_request_status": 413,
+    "partition_epoch_after": 2,
+    "partition_epoch_before": 1,
+    "rate_limit_requests_until_reject": 119,
+    "rate_limit_status": 429
+  }
+}

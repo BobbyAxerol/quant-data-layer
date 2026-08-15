@@ -1,0 +1,19 @@
+{
+  "authority": "RUST_SHADOW",
+  "canonical_mismatches": 0,
+  "complete_market_session": {
+    "date": "2026-08-14",
+    "resolution": "1m",
+    "rows": 241,
+    "venue": "DNSE"
+  },
+  "deterministic_replay_events": 99600,
+  "justification": "One complete bounded DNSE market session plus concurrent authentic Binance/OKX live capture and repeated clean-process replay; authority stays shadow.",
+  "live_window_seconds": 189.03419377701357,
+  "production_writes": 0,
+  "public_or_legacy_writes": 0,
+  "rust_clean_process_runs": 3,
+  "schema": "qdl.phase8.soak.v1",
+  "status": "PASS",
+  "wall_seconds": 240.9809877872467
+}

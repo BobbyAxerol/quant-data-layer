@@ -1,0 +1,53 @@
+schema: qdl.observability.policy.v1
+telemetry:
+  protocol: otlp_grpc
+  endpoint_ref: env://QDL_OTEL_EXPORTER_OTLP_ENDPOINT
+  collector_required_for_authority: true
+  metric_series_limit_per_process: 2048
+  instrument_bucket_count: 64
+  forbidden_metric_labels: [event_id, instrument_id, source_sequence, raw_error]
+
+slo_profiles:
+  execution_grade:
+    availability_min: 0.999
+    completeness_min: 1.0
+    latency_p99_ms_max: 250
+    canonical_drops_max: 0
+  alpha_grade:
+    availability_min: 0.995
+    completeness_min: 0.9999
+    latency_p99_ms_max: 1000
+    canonical_drops_max: 0
+  research_grade:
+    availability_min: 0.99
+    completeness_min: 0.999
+    latency_p99_ms_max: 5000
+    canonical_drops_max: 0
+
+alerts:
+  canonical_drop:
+    severity: SEV1
+    condition: qdl_ingest_dropped_total_delta > 0
+    action: block_affected_requirement_and_page
+  open_sequence_gap:
+    severity: SEV2
+    condition: qdl_sequence_gap_open > 0
+    action: mark_feed_recovering_and_reconcile
+  stale_authoritative_feed:
+    severity: SEV2
+    condition: qdl_venue_heartbeat_lag_seconds > feed_policy_threshold
+    action: remove_execution_eligibility_and_page_owner
+  capacity_warning:
+    severity: SEV4
+    condition: queue_or_storage_utilization > 0.70
+    action: create_capacity_ticket
+
+required_dashboards:
+  - global_market_data_health
+  - venue_operations
+  - durable_pipeline
+  - data_quality
+  - alpha_readiness
+  - historical_store
+  - api_sdk
+  - capacity

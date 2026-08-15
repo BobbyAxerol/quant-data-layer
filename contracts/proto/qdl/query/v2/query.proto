@@ -1,0 +1,162 @@
+syntax = "proto3";
+
+package qdl.query.v2;
+
+import "qdl/marketdata/v2/market_data.proto";
+
+enum FeedType {
+  FEED_TYPE_UNSPECIFIED = 0;
+  FEED_TYPE_TRADE = 1;
+  FEED_TYPE_QUOTE = 2;
+  FEED_TYPE_BAR = 3;
+  FEED_TYPE_BOOK_SNAPSHOT = 4;
+  FEED_TYPE_BOOK_DELTA = 5;
+  FEED_TYPE_FUNDING_RATE = 6;
+  FEED_TYPE_OPEN_INTEREST = 7;
+  FEED_TYPE_MARK_INDEX_PRICE = 8;
+  FEED_TYPE_TICKER = 9;
+}
+
+enum ConsumerGrade {
+  CONSUMER_GRADE_UNSPECIFIED = 0;
+  CONSUMER_GRADE_EXECUTION = 1;
+  CONSUMER_GRADE_ALPHA = 2;
+  CONSUMER_GRADE_RESEARCH = 3;
+}
+
+enum StalePolicy {
+  STALE_POLICY_UNSPECIFIED = 0;
+  STALE_POLICY_BLOCK = 1;
+  STALE_POLICY_PAUSE = 2;
+  STALE_POLICY_OBSERVE = 3;
+}
+
+enum GapPolicy {
+  GAP_POLICY_UNSPECIFIED = 0;
+  GAP_POLICY_BLOCK = 1;
+  GAP_POLICY_PAUSE = 2;
+  GAP_POLICY_OBSERVE = 3;
+}
+
+enum RecoveryPolicy {
+  RECOVERY_POLICY_UNSPECIFIED = 0;
+  RECOVERY_POLICY_SNAPSHOT_AND_REPLAY = 1;
+  RECOVERY_POLICY_FRESH_SNAPSHOT = 2;
+  RECOVERY_POLICY_NONE = 3;
+}
+
+enum BarRevisionPolicy {
+  BAR_REVISION_POLICY_UNSPECIFIED = 0;
+  BAR_REVISION_POLICY_LATEST = 1;
+  BAR_REVISION_POLICY_INITIAL_ONLY = 2;
+  BAR_REVISION_POLICY_EMIT_REVISIONS = 3;
+}
+
+message DataRequirement {
+  string instrument_uid = 1;
+  string feed = 2 [deprecated = true];
+  string interval = 3;
+  string consumer_grade = 4 [deprecated = true];
+  string source_policy_id = 5;
+  uint32 warmup_limit = 6;
+  uint64 max_freshness_ms = 7;
+  bool require_full_coverage = 8;
+  bool require_final_bars = 9;
+  string stale_policy = 10 [deprecated = true];
+  string gap_policy = 11 [deprecated = true];
+  string recovery = 12 [deprecated = true];
+  string bar_revision_policy = 13 [deprecated = true];
+  FeedType feed_type = 20;
+  ConsumerGrade grade = 21;
+  StalePolicy stale_policy_type = 22;
+  GapPolicy gap_policy_type = 23;
+  RecoveryPolicy recovery_policy = 24;
+  BarRevisionPolicy revision_policy = 25;
+}
+
+message SubscribeRequest {
+  reserved 3, 4;
+  reserved "stream", "partition_key";
+
+  string consumer_id = 1;
+  DataRequirement requirement = 2;
+  string cursor_token = 5;
+  uint32 max_buffer_events = 6;
+}
+
+message ReplayRequest {
+  reserved 2, 3;
+  reserved "stream", "partition_key";
+
+  string consumer_id = 1;
+  string cursor_token = 4;
+  uint32 limit = 5;
+}
+
+enum StreamControlState {
+  STREAM_CONTROL_STATE_UNSPECIFIED = 0;
+  STREAM_CONTROL_STATE_REPLAYING = 1;
+  STREAM_CONTROL_STATE_LIVE = 2;
+  STREAM_CONTROL_STATE_BACKPRESSURE = 3;
+  STREAM_CONTROL_STATE_RECOVERY_REQUIRED = 4;
+}
+
+message StreamControl {
+  StreamControlState state = 1;
+  string code = 2;
+  string detail = 3;
+  uint64 high_watermark = 4;
+}
+
+message StreamRecord {
+  uint64 logical_offset = 1;
+  string resume_token = 2;
+  oneof payload {
+    qdl.marketdata.v2.EventEnvelope event = 10;
+    StreamControl control = 11;
+  }
+}
+
+message SubscribeResponse {
+  StreamRecord record = 1;
+}
+
+message ReplayResponse {
+  StreamRecord record = 1;
+}
+
+message GetSnapshotRequest {
+  string consumer_id = 1;
+  DataRequirement requirement = 2;
+}
+
+message GetSnapshotResponse {
+  string request_id = 1;
+  string snapshot_id = 2;
+  string stream_cursor = 3;
+  int64 data_as_of_ns = 4;
+  uint64 watermark_offset = 5;
+  repeated qdl.marketdata.v2.EventEnvelope events = 6;
+}
+
+message GetFeedStatusRequest {
+  DataRequirement requirement = 1;
+  string consumer_id = 2;
+}
+
+message GetFeedStatusResponse {
+  string state = 1;
+  uint64 freshness_ms = 2;
+  bool gap_open = 3;
+  bool complete = 4;
+  bool execution_eligible = 5;
+  string policy_id = 6;
+  repeated string flags = 7;
+}
+
+service MarketDataStreamService {
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+  rpc Replay(ReplayRequest) returns (stream ReplayResponse);
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
+  rpc GetFeedStatus(GetFeedStatusRequest) returns (GetFeedStatusResponse);
+}

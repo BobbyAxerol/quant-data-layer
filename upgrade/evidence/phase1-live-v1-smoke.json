@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-08-13T08:05:03.099786+00:00",
+  "mode": "bounded_read_only",
+  "running_container": {
+    "data_layer_image": "data-layer:v0.1.0",
+    "data_layer_restart_count": 0,
+    "data_layer_started_at": "2026-08-12T07:01:50.674023049Z",
+    "redis_image": "redis:7.2-alpine",
+    "redis_restart_count": 0,
+    "redis_started_at": "2026-08-06T02:41:31.328220016Z"
+  },
+  "statuses": {
+    "binance_history_two_bars": 200,
+    "binance_usdm_latest_kline": 200,
+    "binance_usdm_latest_trade": 200,
+    "okx_history_two_bars": 200,
+    "service_health": 200,
+    "vn_last_quote": 200,
+    "vn_preload_two_bars": 200
+  },
+  "summary": {
+    "failed": 0,
+    "passed": 7,
+    "total": 7
+  }
+}
+

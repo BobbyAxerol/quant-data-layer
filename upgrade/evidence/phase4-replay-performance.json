@@ -1,0 +1,52 @@
+{
+  "append": {
+    "duplicate_retry_events_per_second": 1306.8187339097356,
+    "latency_ms": {
+      "max": 69.65881,
+      "mean": 39.20343998,
+      "p50": 37.000674,
+      "p95": 53.440421,
+      "p99": 60.391392,
+      "p99_9": 69.65881
+    },
+    "throughput_events_per_second": 1547.5173681936856
+  },
+  "capacity": {
+    "benchmark_consumer_groups": 8,
+    "checkpoint_rows": 80,
+    "checkpoint_writes_per_second": 1748.195665196276,
+    "logical_utilization": 0.9900990099009901,
+    "replay_horizon_seconds_at_100_events_per_second": 101.0
+  },
+  "config": {
+    "batch_size": 100,
+    "consumer_groups": 8,
+    "event_count": 10000,
+    "partition_count": 10,
+    "payload_size_bytes": 512,
+    "sqlite_journal": "WAL",
+    "sqlite_synchronous": "FULL"
+  },
+  "gates": {
+    "failures": [],
+    "max_disk_amplification": 4.0,
+    "max_p99_ms": 250.0,
+    "min_throughput": 500.0
+  },
+  "replay": {
+    "checksum": "4360b2c47feb524b66eb539b9a9fd9d874bbb984bcc81b2e9be3468f646d395c",
+    "events": 10000,
+    "events_per_second": 8538.577687338877
+  },
+  "resources": {
+    "disk_amplification": 2.0721625,
+    "max_rss_kib": 32760,
+    "network_amplification": 0.0,
+    "payload_bytes": 5120000,
+    "process_cpu_seconds": 6.029068748,
+    "python_peak_allocation_bytes": 3124332,
+    "storage_bytes": 10609472
+  },
+  "schema": "qdl.phase2.benchmark.v1",
+  "status": "PASS"
+}

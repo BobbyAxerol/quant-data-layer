@@ -1,0 +1,21 @@
+{
+  "authority": "V1_SHADOW_READ_ONLY",
+  "decision": "PASS",
+  "gateway_topology": "ACTIVE_PASSIVE_PER_SHARD",
+  "results": {
+    "append_before_fanout": true,
+    "blocking_partition_does_not_block_peer": true,
+    "bounded_outbound_buffer": true,
+    "duplicate_durable_event_redelivery": 0,
+    "fencing_epoch_after": 2,
+    "fencing_epoch_before": 1,
+    "global_async_io_lock_removed": true,
+    "live_handoff_gap_events": 0,
+    "old_epoch_rejected": true,
+    "per_partition_order_preserved": true,
+    "replay_limit_fail_closed": true,
+    "slow_consumer_requires_replay": true
+  },
+  "schema": "qdl.phase7.1.cursor-handoff.v1",
+  "tested_commit": "5e013be6431944f199beb5bc26de7d9e537006d5"
+}

@@ -1,0 +1,38 @@
+{
+  "artifacts": {
+    "upgrade/evidence/phase7-auth-matrix.json": "e3bc509349413077138e96afd2aca9fb56a63f716c5b476c3bcd287bb47bf1d4",
+    "upgrade/evidence/phase7-buf-breaking.json": "c5ab7e41e278b8edd68135756fb7660c947caec5273b4cf4d76ae64f485e9cdd",
+    "upgrade/evidence/phase7-capacity.json": "94ae8ef118f39564a86b2e348ad04641136d35bbb2a2c4313fc93aa2cfb700c9",
+    "upgrade/evidence/phase7-consumer-parity.json": "cf46c1f4b3cfde2b045453ccf0694df85d45483d5b6455900bcdab9f8a21cc34",
+    "upgrade/evidence/phase7-contract-freeze.json": "1de247c8cec1f2fdb82c71484c1efe448f54dd14381c7737441ea498c972b6bd",
+    "upgrade/evidence/phase7-cursor-handoff.json": "c8defe4772bfa9e1c7d64cf034e1e465374dae1391957ccaad86231cb2216042",
+    "upgrade/evidence/phase7-openapi-diff.json": "a20d334fadc23e3e103edce18b946aa761c7585ca5892d4c7895840305443ef3",
+    "upgrade/evidence/phase7-readiness-matrix.json": "c9b146f02d79c5c688d7de139e168d4ce501cc7d568c477dd523d80e5253fa87",
+    "upgrade/evidence/phase7-sdk-checkpoint.json": "4c00e977edf262cb397af382145e7e83ee585d05fdb3a1f98866c5d1d9ab5181",
+    "upgrade/evidence/phase7-security-adversarial.json": "1a3d30f6fa4085b9fee7cdad0565ea2fba5fb3273ba690de881073f923f59bb4",
+    "upgrade/evidence/phase7-topology-rollback.json": "3730679ab5afe64b5d306c562629c137dd4500117dd631654057ce9f085ede80"
+  },
+  "authority": "V1_SHADOW_READ_ONLY",
+  "commands": [
+    "docker run data-layer:phase7-test python -m unittest discover -s tests",
+    "docker run rust:1.82-slim cargo fmt/clippy/test --workspace --locked",
+    "buf format/lint/breaking against phase1 and phase7-beta baselines",
+    "scripts/phase73_public_beta_certification.sh"
+  ],
+  "contract_version": "2.0.0-beta.1",
+  "decision": "BETA-GO_READ_ONLY",
+  "generated_market_events": 0,
+  "harness_commit": "49c576468870a4760893f34b53f5a87132a42b8f",
+  "image": "sha256:bc7b40bcb773b1cefd58a71d2625b769ee64bbd37f3d93e0780b9f013ddf0d1f",
+  "manifests": {
+    "config/phase7/canary-sources.yaml": "3274f5911f8e4db01fb2bbc5f5d02dae6d600c354852606e4b3de5a80265b107",
+    "consumers/beta/phase7-capacity-binance.yaml": "2d55dfcb52b3b693c256f223aea4f0e75e4adafd242c506a996b2531e62e3597",
+    "consumers/beta/phase7-monitoring-binance.yaml": "d41a9df91fc9f9d5918bd7363d6c349cefb06fb2139163a8e6d30dda604cb723",
+    "consumers/beta/phase7-paper-alpha-binance.yaml": "fc0f3632fb5756bf77bee4fa2794c3e5a33e2ac7de87d31cc4a8562795fb66dd"
+  },
+  "openapi_sha256": "bea44d3920db52f5893eb773aa195ae7f4abd2684d5ca65d904e995934fabcea",
+  "runtime_commit": "49c576468870a4760893f34b53f5a87132a42b8f",
+  "schema": "qdl.phase7.evidence-freeze.v1",
+  "status": "FROZEN",
+  "tested_at_utc": "2026-08-15T04:10:00Z"
+}

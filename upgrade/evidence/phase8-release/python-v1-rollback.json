@@ -1,0 +1,24 @@
+{
+  "compose_artifacts": [
+    {
+      "path": "docker-compose.yml",
+      "sha256": "5750ce1adfed40d1172bdd3164217956bd849846da2d5355edf533022c2d5551"
+    }
+  ],
+  "container_image_id": "sha256:33382a8d9c4050de0fd7ce84a155ba08ca84ef01a842f62383ac1ec124f556d4",
+  "container_image_reference": "data-layer:v0.1.0",
+  "container_name": "data_layer_service",
+  "container_started_at": "2026-08-12T07:01:50.674023049Z",
+  "destructive_actions": [],
+  "expected_v1_health": 200,
+  "restore_authority": "PYTHON_V1_PRIMARY",
+  "rollback_order": [
+    "persist RUST_SHADOW authority at a higher revision",
+    "verify Rust public and legacy writes are fenced",
+    "verify Python V1 health and demanded feed freshness",
+    "retain durable shadow offsets for incident replay"
+  ],
+  "schema": "qdl.phase8.python-rollback.v1",
+  "slice_id": "BINANCE:USDM:TRADE:BTCUSDT",
+  "v1_health_url": "http://127.0.0.1:8100/v1/health"
+}

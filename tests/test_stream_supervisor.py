@@ -197,6 +197,36 @@ class TestRedisPublisherTask(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(keys, {"trade:price:binance_spot:BTCUSDT", "trade:price:BTCUSDT"})
         self.assertEqual(channels, {"stream:trade:binance_spot:BTCUSDT", "stream:trade:BTCUSDT"})
 
+    async def test_raw_usdm_kline_records_provider_scoped_demand_health(self):
+        queue = asyncio.Queue(maxsize=10)
+        redis_cache = FakeRedisCache()
+        supervisor = StreamSupervisor()
+        supervisor.expect_feed("binance_futures_kline", "kline", "BTCUSDT", "1m")
+        await queue.put(
+            (
+                "binance_futures_kline",
+                {
+                    "e": "kline",
+                    "E": 1786579260050,
+                    "s": "BTCUSDT",
+                    "k": {"s": "BTCUSDT", "i": "1m", "x": True},
+                },
+            )
+        )
+
+        task = asyncio.create_task(redis_publisher_task(queue, redis_cache, supervisor=supervisor))
+        await asyncio.sleep(0.15)
+        task.cancel()
+        await task
+
+        snapshot = supervisor.snapshot(
+            demanded_feed_keys={"kline:binance_usdm:1m:BTCUSDT"}
+        )
+        self.assertEqual(snapshot["feeds"]["demanded_missing_count"], 0)
+        self.assertEqual(snapshot["feeds"]["demanded_stale_count"], 0)
+        self.assertEqual(redis_cache.items[0]["data"]["e"], "kline")
+        self.assertNotIn("source", redis_cache.items[0]["data"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,24 @@
+{
+  "canonical_sha256": [
+    "6acb2db82fb7e252356c893bd1ae155125ec5300531112775b6a8026480bf24d",
+    "53163ba9f3a6d4a65816bb0629496fb742537d80a6702757f0b3261a8ce430fb",
+    "1e963a1bbd83877f358823b3b8c7a5a8087b9eb928962b7047dba8a9e6fef429"
+  ],
+  "event_count": 3,
+  "event_ids": [
+    "9bce76b7465e32b9f9b3115143f6fba8",
+    "30754cc9ae76c50b55291dc2b88ad762",
+    "dcfab951caf4a364c34f23b0b9581d36"
+  ],
+  "exact_python_rust_parity": true,
+  "image_id": "sha256:206bca9222c2633daae1c293e49a5c90e5d1c1a356a986e24c4369e074cfe5a7",
+  "production_writes": 0,
+  "provenance": "REAL_PROVIDER_READ_ONLY",
+  "schema": "qdl.phase3.rust-binance-real-parity.v1",
+  "source_event_time_ns": [
+    1786616892956000000,
+    1786616893018000000,
+    1786616894498000000
+  ],
+  "status": "PASS"
+}
