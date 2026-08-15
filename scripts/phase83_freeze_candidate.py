@@ -44,6 +44,15 @@ def docker_json(*arguments: str) -> dict:
     return json.loads(result.stdout)
 
 
+def inspect_payload(path: pathlib.Path | None, *docker_arguments: str) -> dict:
+    payload = json.loads(path.read_text()) if path is not None else docker_json(
+        *docker_arguments
+    )
+    if not isinstance(payload, list) or len(payload) != 1:
+        raise RuntimeError("Docker inspect evidence must contain exactly one object")
+    return payload[0]
+
+
 def write_json(path: pathlib.Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
@@ -54,12 +63,15 @@ def main() -> int:
     parser.add_argument("--git-sha", required=True)
     parser.add_argument("--image", required=True)
     parser.add_argument("--image-ref", required=True)
+    parser.add_argument("--image-inspect-json", type=pathlib.Path)
+    parser.add_argument("--runtime-inspect-json", type=pathlib.Path)
+    parser.add_argument("--v1-health-status", type=int)
     args = parser.parse_args()
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
     for path in RELEASE_DIR.iterdir():
         if path.is_file():
             path.unlink()
-    image = docker_json("image", "inspect", args.image)[0]
+    image = inspect_payload(args.image_inspect_json, "image", "inspect", args.image)
     if f"sha256:{image['Id'].removeprefix('sha256:')}" not in args.image_ref:
         raise RuntimeError("image ref does not match inspected immutable image ID")
     labels = image.get("Config", {}).get("Labels", {}) or {}
@@ -95,7 +107,9 @@ def main() -> int:
     }
     write_json(candidate_path, candidate)
 
-    container = docker_json("inspect", "data_layer_service")[0]
+    container = inspect_payload(
+        args.runtime_inspect_json, "inspect", "data_layer_service"
+    )
     compose_paths = [ROOT / "docker-compose.yml"]
     rollback_path = RELEASE_DIR / "python-v1-rollback.json"
     rollback = {
@@ -121,9 +135,12 @@ def main() -> int:
         "destructive_actions": [],
     }
     write_json(rollback_path, rollback)
-    with urllib.request.urlopen(rollback["v1_health_url"], timeout=10) as response:
-        if response.status != 200:
-            raise RuntimeError("V1 is not healthy while freezing rollback manifest")
+    health_status = args.v1_health_status
+    if health_status is None:
+        with urllib.request.urlopen(rollback["v1_health_url"], timeout=10) as response:
+            health_status = response.status
+    if health_status != 200:
+        raise RuntimeError("V1 is not healthy while freezing rollback manifest")
 
     with tempfile.TemporaryDirectory(prefix="qdl-phase83-signing-") as directory:
         private_key = pathlib.Path(directory) / "private.pem"

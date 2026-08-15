@@ -20,6 +20,12 @@ class Phase83CandidateContractTests(unittest.TestCase):
         self.assertIn('"production_writes": 0', source)
         self.assertIn('"fixture_only_venues": ["DERIBIT"]', source)
 
+    def test_freeze_can_use_offline_inspect_evidence_without_docker_socket(self):
+        source = (ROOT / "scripts/phase83_freeze_candidate.py").read_text()
+        self.assertIn('"--image-inspect-json"', source)
+        self.assertIn('"--runtime-inspect-json"', source)
+        self.assertIn('"--v1-health-status"', source)
+
     def test_candidate_partition_plan_is_shadow_only_and_single_owner(self):
         plan = json.loads(
             (ROOT / "config/phase8/candidate-partition-plan.json").read_text()
