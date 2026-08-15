@@ -43,6 +43,11 @@ class Phase83CandidateContractTests(unittest.TestCase):
             ROOT / "rust/qdl-kafka/src/bin/qdl-authority-rehearsal.rs"
         ).read_text()
         self.assertIn('required("QDL_AUDIT_TOPIC")', rehearsal)
+        certification = (
+            ROOT / "scripts/phase83_authority_certification.py"
+        ).read_text()
+        self.assertNotIn('f"phase83-', certification)
+        self.assertIn('f"phase8-phase83-audit-restart-', certification)
         dockerfile = (ROOT / "Dockerfile.phase8-rust").read_text()
         runtime_from = next(
             line for line in dockerfile.splitlines()

@@ -125,7 +125,7 @@ def main() -> int:
             wait_for_cluster(env)
             wait_for_replicas(env)
             audit_records = consume(
-                env, audit_topic, 3, f"phase83-audit-restart-{nonce}"
+                env, audit_topic, 3, f"phase8-phase83-audit-restart-{nonce}"
             )
             audit_decoded = [json.loads(item) for item in audit_records]
             audit_revisions = [item["revision"] for item in audit_decoded]
@@ -134,7 +134,11 @@ def main() -> int:
                 "RUST_SHADOW", "RUST_CANARY", "RUST_SHADOW"
             ]
             authority_records = consume(
-                env, authority_topic, 3, f"phase83-state-restart-{nonce}"
+                env,
+                authority_topic,
+                3,
+                f"phase8-phase83-state-restart-{nonce}",
+                minimum_count=1,
             )
             authority_decoded = [json.loads(item) for item in authority_records]
             authority_latest_revision = max(

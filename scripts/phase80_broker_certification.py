@@ -290,6 +290,7 @@ def consume(
     group: str,
     *,
     timeout: float = 40.0,
+    minimum_count: int | None = None,
 ) -> list[str]:
     result = kafka(
         env,
@@ -309,7 +310,14 @@ def consume(
         str(int(timeout * 1000) - 2000),
         timeout=timeout,
     )
-    return [line for line in result.stdout.splitlines() if line.strip()]
+    records = [line for line in result.stdout.splitlines() if line.strip()]
+    required = count if minimum_count is None else minimum_count
+    if len(records) < required:
+        raise RuntimeError(
+            f"consumer returned {len(records)} records; expected at least {required} "
+            f"for topic={topic} group={group}; stderr={result.stderr[-1200:]}"
+        )
+    return records
 
 
 def total_end_offset(env: dict[str, str], topic: str) -> int:
