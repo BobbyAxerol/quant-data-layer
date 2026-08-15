@@ -137,6 +137,7 @@ class DurableStreamGateway:
         partition_key: str,
         token: str,
         max_buffer_events: int | None = None,
+        max_consumer_streams: int | None = None,
         replay_limit: int = 10_000,
     ) -> StreamSubscription:
         lease_epoch = self.assert_active()
@@ -145,6 +146,9 @@ class DurableStreamGateway:
         buffer_size = max_buffer_events or self.max_buffer_events
         if not 1 <= buffer_size <= self.max_buffer_events:
             raise ValueError("requested stream buffer exceeds the server bound")
+        consumer_limit = max_consumer_streams or self.max_subscribers
+        if not 1 <= consumer_limit <= self.max_subscribers:
+            raise ValueError("requested consumer stream limit exceeds the server bound")
         partition_lock = self._partition_lock(stream, partition_key)
         async with partition_lock:
             self.assert_active(lease_epoch)
@@ -173,6 +177,14 @@ class DurableStreamGateway:
             async with self._subscriptions_lock:
                 if len(self._subscriptions) >= self.max_subscribers:
                     raise StreamCapacityExceeded("stream subscriber capacity exhausted")
+                consumer_streams = sum(
+                    subscription.consumer_id == consumer_id
+                    for _, _, subscription in self._subscriptions.values()
+                )
+                if consumer_streams >= consumer_limit:
+                    raise StreamCapacityExceeded(
+                        "consumer concurrent stream quota exhausted"
+                    )
                 subscription_id = self._next_id
                 self._next_id += 1
                 subscription = StreamSubscription(

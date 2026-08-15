@@ -21,7 +21,7 @@ x-beta-common: &beta-common
     QDL_BETA_SCHEMA_DIGEST: ${QDL_BETA_SCHEMA_DIGEST:-bea44d3920db52f5893eb773aa195ae7f4abd2684d5ca65d904e995934fabcea}
     QDL_BETA_STATE_DIR: /var/lib/qdl-beta
     QDL_BETA_DURABLE_STATE_DIR: /var/lib/qdl-beta-durable
-    QDL_BETA_CONSUMER_MANIFESTS: ${QDL_BETA_CONSUMER_MANIFESTS:-/app/consumers/beta/phase7-monitoring-binance.yaml:/app/consumers/beta/phase7-paper-alpha-binance.yaml}
+    QDL_BETA_CONSUMER_MANIFESTS: ${QDL_BETA_CONSUMER_MANIFESTS:-/app/consumers/beta/phase7-monitoring-binance.yaml:/app/consumers/beta/phase7-paper-alpha-binance.yaml:/app/consumers/beta/phase7-capacity-binance.yaml}
     QDL_BETA_SOURCE_BINDINGS: ${QDL_BETA_SOURCE_BINDINGS-/app/config/phase7/canary-sources.yaml}
     QDL_BETA_INTERNAL_INGEST_SECRET: ${QDL_BETA_INTERNAL_INGEST_SECRET:-}
     QDL_BETA_REDIS_URL: redis://qdl_beta_redis:6379/0
