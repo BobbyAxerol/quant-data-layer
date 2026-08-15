@@ -4,17 +4,45 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 container="qdl-phase5-postgres-${$}"
 password="phase5-disposable-only"
+postgres_image="${QDL_PHASE5_POSTGRES_IMAGE:-postgres:16-alpine}"
 
 cleanup() {
   docker rm -f "${container}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-docker run -d --name "${container}" \
-  --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=512m \
-  -e POSTGRES_PASSWORD="${password}" \
-  -v "${root_dir}/migrations/postgres:/migrations:ro" \
-  postgres:16-alpine >/dev/null
+if ! docker image inspect "${postgres_image}" >/dev/null 2>&1; then
+  image_ready=false
+  for attempt in 1 2 3; do
+    if docker pull "${postgres_image}"; then
+      image_ready=true
+      break
+    fi
+    sleep "${attempt}"
+  done
+  if [[ "${image_ready}" != "true" ]]; then
+    echo "phase5 could not pull PostgreSQL image after 3 attempts" >&2
+    exit 1
+  fi
+fi
+
+container_started=false
+for attempt in 1 2 3; do
+  docker rm -f "${container}" >/dev/null 2>&1 || true
+  if docker run -d --name "${container}" \
+      --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=512m \
+      -e POSTGRES_PASSWORD="${password}" \
+      -v "${root_dir}/migrations/postgres:/migrations:ro" \
+      "${postgres_image}" >/dev/null; then
+    container_started=true
+    break
+  fi
+  sleep "${attempt}"
+done
+if [[ "${container_started}" != "true" ]]; then
+  echo "phase5 disposable PostgreSQL did not start after 3 attempts" >&2
+  exit 1
+fi
 
 ready=false
 for _ in $(seq 1 240); do
