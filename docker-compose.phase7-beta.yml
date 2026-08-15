@@ -49,7 +49,7 @@ services:
   qdl_beta_state_init:
     image: ${QDL_BETA_INIT_IMAGE:?set QDL_BETA_INIT_IMAGE to an immutable sha256 image ID or digest}
     user: "0:0"
-    command: ["sh", "-c", "chown 10001:10001 /query /stream /durable && chmod 0700 /query /stream /durable"]
+    command: ["sh", "-c", "chown 10001:10001 /query /stream /durable && chmod 0700 /query /stream /durable && chown 999:999 /redis && chmod 0700 /redis"]
     restart: "no"
     read_only: true
     cap_drop: ["ALL"]
@@ -60,6 +60,7 @@ services:
       - qdl_beta_query_state:/query
       - qdl_beta_stream_state:/stream
       - qdl_beta_durable_state:/durable
+      - qdl_beta_redis_state:/redis
     networks: [qdl_beta_internal]
     profiles: ["phase7-beta"]
 
@@ -69,7 +70,9 @@ services:
     command:
       - redis-server
       - --appendonly
-      - "no"
+      - "yes"
+      - --appendfsync
+      - everysec
       - --save
       - ""
       - --maxmemory
@@ -84,8 +87,8 @@ services:
     pids_limit: 64
     mem_limit: 96m
     cpus: 0.25
-    tmpfs:
-      - /data:rw,noexec,nosuid,nodev,size=16m,uid=999,gid=999
+    volumes:
+      - qdl_beta_redis_state:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
@@ -93,6 +96,9 @@ services:
       retries: 15
     networks: [qdl_beta_internal]
     profiles: ["phase7-beta"]
+    depends_on:
+      qdl_beta_state_init:
+        condition: service_completed_successfully
 
   qdl_query_v2_beta:
     <<: *beta-common
@@ -204,4 +210,8 @@ volumes:
   qdl_beta_durable_state:
     labels:
       qdl.phase: "7.2"
+      qdl.legacy-shared: "false"
+  qdl_beta_redis_state:
+    labels:
+      qdl.phase: "7.3"
       qdl.legacy-shared: "false"

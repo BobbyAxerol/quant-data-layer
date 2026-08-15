@@ -377,6 +377,11 @@ class Phase71ConfigAndTopologyTests(unittest.TestCase):
         self.assertNotIn("events.market", raw)
         self.assertIn("qdl:beta:v2:", raw)
         self.assertEqual(compose["services"]["qdl_beta_redis"]["user"], "999:999")
+        self.assertIn("yes", compose["services"]["qdl_beta_redis"]["command"])
+        self.assertEqual(
+            compose["services"]["qdl_beta_redis"]["volumes"],
+            ["qdl_beta_redis_state:/data"],
+        )
         for name in ("qdl_query_v2_beta", "qdl_stream_v2_beta_a", "qdl_stream_v2_beta_b"):
             service = compose["services"][name]
             self.assertEqual(service["user"], "10001:10001")
