@@ -1,4 +1,4 @@
-.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify phase81-test phase81-certify phase82-test phase82-dnse-acquire phase82-certify phase83-test phase83-build phase83-authority phase83-freeze python-test rust-test
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify phase81-test phase81-certify phase82-test phase82-dnse-acquire phase82-certify phase83-test phase83-build phase83-authority phase83-release-capacity phase83-freeze python-test rust-test
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
 RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
@@ -201,6 +201,9 @@ phase83-build:
 
 phase83-authority:
 	python3 scripts/phase83_authority_certification.py --image $(PHASE8_RUST_IMAGE) --image-digest "$$(docker image inspect $(PHASE8_RUST_IMAGE) --format '{{.Id}}')"
+
+phase83-release-capacity:
+	python3 scripts/phase83_release_capacity.py --rust-replay target/qdl-parity-replay-release --candidate-image-digest "$$(docker image inspect $(PHASE8_RUST_IMAGE) --format '{{.Id}}')" --dnse-input target/phase82-dnse-authentic.json --dnse-date 2026-08-14
 
 phase83-freeze:
 	python3 scripts/phase83_freeze_candidate.py --release $(PHASE8_RELEASE) --git-sha $(PHASE8_GIT_SHA) --image $(PHASE8_RUST_IMAGE) --image-ref "qdl-phase8-rust@sha256:$$(docker image inspect $(PHASE8_RUST_IMAGE) --format '{{.Id}}' | sed 's/^sha256://')"

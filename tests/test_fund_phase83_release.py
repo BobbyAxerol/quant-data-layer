@@ -13,6 +13,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class Phase83CandidateContractTests(unittest.TestCase):
+    def test_release_capacity_uses_authentic_multi_venue_inputs(self):
+        source = (ROOT / "scripts/phase83_release_capacity.py").read_text()
+        self.assertIn("phase82._collect_live", source)
+        self.assertIn("phase82._collect_dnse", source)
+        self.assertIn('"production_writes": 0', source)
+        self.assertIn('"fixture_only_venues": ["DERIBIT"]', source)
+
     def test_candidate_partition_plan_is_shadow_only_and_single_owner(self):
         plan = json.loads(
             (ROOT / "config/phase8/candidate-partition-plan.json").read_text()
