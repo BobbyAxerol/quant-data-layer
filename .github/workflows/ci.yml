@@ -62,7 +62,7 @@ jobs:
       - name: Test Rust generated contracts
         run: |
           docker run --rm -v "$PWD:/workspace" -w /workspace rust:1.82-slim \
-            sh -c 'cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked'
+            sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends pkg-config libssl-dev zlib1g-dev >/dev/null && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked'
 
       - name: Check Rust dependency, license and advisory policy
         env:
@@ -100,7 +100,7 @@ jobs:
             python -c "from importlib.metadata import version; from packaging.version import Version; assert Version(version(\"msgpack\")) >= Version(\"1.2.1\"); assert Version(version(\"setuptools\")) >= Version(\"78.1.1\")"
             python -m pip freeze --local > /tmp/qdl-runtime-requirements.txt
             python -m pip install --disable-pip-version-check --no-cache-dir "pip-audit>=2.9,<3"
-            pip-audit -r /tmp/qdl-runtime-requirements.txt --progress-spinner=off
+            pip-audit --cache-dir /tmp/qdl-pip-audit-cache -r /tmp/qdl-runtime-requirements.txt --progress-spinner=off
           '
 
       - name: Run unit tests

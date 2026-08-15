@@ -30,6 +30,8 @@ class ReleaseBundleTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("if [[ -d ../base-contracts/contracts ]]", workflow)
         self.assertIn("frozen Phase 1/7 baselines remain authoritative", workflow)
+        self.assertIn("pkg-config libssl-dev zlib1g-dev", workflow)
+        self.assertIn("pip-audit --cache-dir /tmp/qdl-pip-audit-cache", workflow)
         ignored = {
             line.strip()
             for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()
