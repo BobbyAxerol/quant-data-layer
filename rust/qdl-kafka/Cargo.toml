@@ -12,6 +12,7 @@ indexmap.workspace = true
 jobserver.workspace = true
 proc-macro-crate.workspace = true
 qdl-core.workspace = true
+qdl-venue-core = { path = "../qdl-venue-core", version = "=0.1.0" }
 rdkafka.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -21,3 +22,7 @@ tokio.workspace = true
 [[bin]]
 name = "qdl-kafka-smoke"
 path = "src/bin/qdl-kafka-smoke.rs"
+
+[[bin]]
+name = "qdl-authority-rehearsal"
+path = "src/bin/qdl-authority-rehearsal.rs"

@@ -53,7 +53,7 @@ def build_spdx(repo: Path, *, release: str) -> dict[str, Any]:
         "documentNamespace": f"https://bobbyaxerol.github.io/qdl/sbom/{release}/{namespace}",
         "creationInfo": {
             "created": "1970-01-01T00:00:00Z",
-            "creators": ["Tool: qdl-phase6-release-bundle"],
+            "creators": ["Tool: qdl-release-bundle"],
         },
         "packages": [
             {
@@ -90,6 +90,15 @@ def _artifact_paths(repo: Path) -> tuple[Path, ...]:
         repo / "Cargo.lock",
         repo / "Dockerfile",
         repo / "Dockerfile.qdl-core",
+        repo / "Dockerfile.phase8-rust",
+        repo / "config/phase8/broker-topology.yaml",
+        repo / "config/phase8/candidate-partition-plan.json",
+        repo / "config/phase8/capabilities/binance-usdm-trade.yaml",
+        repo / "config/phase8/capabilities/okx-swap-trade.yaml",
+        repo / "config/phase8/capabilities/dnse-vn-bar.yaml",
+        repo / "config/phase8/capabilities/deribit-option-book-fixture.yaml",
+        repo / "contracts/proto/qdl/provider/v1/raw_provider.proto",
+        repo / "contracts/proto/qdl/marketdata/v2/market_data.proto",
     )
     missing = [str(path.relative_to(repo)) for path in paths if not path.is_file()]
     if missing:

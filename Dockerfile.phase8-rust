@@ -9,14 +9,29 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY rust ./rust
 COPY generated/rust ./generated/rust
-RUN cargo build --release --locked --bin qdl-kafka-smoke
+RUN cargo build --release --locked \
+    --bin qdl-kafka-smoke \
+    --bin qdl-authority-rehearsal \
+    --bin qdl-binance-shadow \
+    --bin qdl-parity-replay \
+    --bin qdl-venue-core-certify
 
 FROM debian:bookworm-slim
+ARG QDL_GIT_SHA=unknown
+ARG QDL_RELEASE=phase8-candidate
+LABEL org.opencontainers.image.revision="${QDL_GIT_SHA}" \
+      org.opencontainers.image.version="${QDL_RELEASE}" \
+      org.opencontainers.image.title="Quant Data Layer Rust realtime core" \
+      io.qdl.authority.default="RUST_SHADOW"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libssl3 libzstd1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 qdl \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin qdl
 COPY --from=builder /src/target/release/qdl-kafka-smoke /usr/local/bin/qdl-kafka-smoke
+COPY --from=builder /src/target/release/qdl-authority-rehearsal /usr/local/bin/qdl-authority-rehearsal
+COPY --from=builder /src/target/release/qdl-binance-shadow /usr/local/bin/qdl-binance-shadow
+COPY --from=builder /src/target/release/qdl-parity-replay /usr/local/bin/qdl-parity-replay
+COPY --from=builder /src/target/release/qdl-venue-core-certify /usr/local/bin/qdl-venue-core-certify
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/qdl-kafka-smoke"]

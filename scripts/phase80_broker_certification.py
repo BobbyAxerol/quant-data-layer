@@ -163,7 +163,10 @@ def create_topic(
     *,
     partitions: int = 3,
     retention_ms: int = 86_400_000,
+    cleanup_policy: str = "delete",
 ) -> None:
+    if cleanup_policy not in {"delete", "compact", "compact,delete"}:
+        raise ValueError(f"unsupported Kafka cleanup policy: {cleanup_policy}")
     kafka(
         env,
         "kafka-topics.sh",
@@ -187,6 +190,8 @@ def create_topic(
         "compression.type=producer",
         "--config",
         "max.message.bytes=1048576",
+        "--config",
+        f"cleanup.policy={cleanup_policy}",
     )
 
 
@@ -510,7 +515,12 @@ def main() -> int:
             compose(env, "up", "-d", timeout=180.0)
             wait_for_cluster(env)
             for item in topology["topics"]:
-                create_topic(env, item["name"], partitions=item["partitions"])
+                create_topic(
+                    env,
+                    item["name"],
+                    partitions=item["partitions"],
+                    cleanup_policy=item.get("cleanup_policy", "delete"),
+                )
             add_acls(env)
             wait_for_replicas(env)
             rust_transport = rust_transport_smoke(cert_dir)

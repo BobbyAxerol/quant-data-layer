@@ -1,10 +1,13 @@
-.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify phase81-test phase81-certify phase82-test phase82-dnse-acquire phase82-certify python-test rust-test
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify phase81-test phase81-certify phase82-test phase82-dnse-acquire phase82-certify phase83-test phase83-build phase83-authority phase83-freeze python-test rust-test
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
 RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
 PHASE45_TEST_IMAGE ?= data-layer:phase45-test
 PHASE5_TEST_IMAGE ?= data-layer:phase5-test
 PHASE7_TEST_IMAGE ?= data-layer:phase7-test
+PHASE8_RUST_IMAGE ?= qdl-phase8-rust:phase8-candidate
+PHASE8_RELEASE ?= phase8-rust-realtime-core-v0.1.0-beta
+PHASE8_GIT_SHA ?= $(shell git rev-parse HEAD)
 
 contract-generate:
 	docker run --rm -v "$(CURDIR):/workspace" -w /workspace/contracts $(BUF_IMAGE) generate
@@ -188,6 +191,19 @@ phase82-dnse-acquire:
 
 phase82-certify:
 	docker run --rm --user 0:0 -v "$(CURDIR):/app" -w /app data-layer:phase8-test python scripts/phase82_exact_frame_certification.py --live-seconds 180 --retain-per-venue 128 --repeat 200 --dnse-date "$${QDL_DNSE_SMOKE_DATE:?set a completed trading date}" --dnse-input /app/target/phase82-dnse-authentic.json
+
+phase83-test:
+	docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,size=128m --tmpfs /app/logs:rw,uid=10001,gid=10001,size=16m -v "$(CURDIR):/app:ro" -w /app data-layer:phase8-test python -m unittest -v tests.test_fund_phase83_release tests.test_fund_phase82_conformance tests.test_fund_phase6_release
+	docker run --rm -v "$(CURDIR):/workspace" -w /workspace qdl-phase8-rust-builder:phase8 bash -c 'cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace'
+
+phase83-build:
+	docker build --provenance=false -f Dockerfile.phase8-rust --build-arg QDL_GIT_SHA=$(PHASE8_GIT_SHA) --build-arg QDL_RELEASE=$(PHASE8_RELEASE) -t $(PHASE8_RUST_IMAGE) .
+
+phase83-authority:
+	python3 scripts/phase83_authority_certification.py --image $(PHASE8_RUST_IMAGE) --image-digest "$$(docker image inspect $(PHASE8_RUST_IMAGE) --format '{{.Id}}')"
+
+phase83-freeze:
+	python3 scripts/phase83_freeze_candidate.py --release $(PHASE8_RELEASE) --git-sha $(PHASE8_GIT_SHA) --image $(PHASE8_RUST_IMAGE) --image-ref "qdl-phase8-rust@sha256:$$(docker image inspect $(PHASE8_RUST_IMAGE) --format '{{.Id}}' | sed 's/^sha256://')"
 
 phase7-clean:
 	docker image rm $(PHASE7_TEST_IMAGE) 2>/dev/null || true

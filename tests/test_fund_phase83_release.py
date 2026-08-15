@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+import json
+import pathlib
+import unittest
+
+import yaml
+
+from qdl.certification.release import build_spdx
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+class Phase83CandidateContractTests(unittest.TestCase):
+    def test_candidate_partition_plan_is_shadow_only_and_single_owner(self):
+        plan = json.loads(
+            (ROOT / "config/phase8/candidate-partition-plan.json").read_text()
+        )
+        self.assertEqual(plan["schema"], "qdl.partition-plan.v1")
+        self.assertEqual(plan["authority"], "RUST_SHADOW")
+        self.assertFalse(plan["public_write_allowed"])
+        self.assertFalse(plan["legacy_write_allowed"])
+        self.assertEqual(len(plan["assignments"]), 1)
+        self.assertEqual(plan["assignments"][0]["native_symbol"], "BTCUSDT")
+
+    def test_authority_topic_is_compacted_and_candidate_image_is_non_root(self):
+        topology = yaml.safe_load(
+            (ROOT / "config/phase8/broker-topology.yaml").read_text()
+        )
+        authority = next(
+            item for item in topology["topics"]
+            if item["name"] == "qdl.phase8.control.authority.v1"
+        )
+        self.assertEqual(authority["cleanup_policy"], "compact")
+        dockerfile = (ROOT / "Dockerfile.phase8-rust").read_text()
+        self.assertIn("USER 10001:10001", dockerfile)
+        for binary in (
+            "qdl-kafka-smoke", "qdl-authority-rehearsal",
+            "qdl-binance-shadow", "qdl-parity-replay", "qdl-venue-core-certify",
+        ):
+            self.assertIn(f"/usr/local/bin/{binary}", dockerfile)
+        self.assertIn('io.qdl.authority.default="RUST_SHADOW"', dockerfile)
+
+    def test_sbom_includes_authority_transport_dependencies(self):
+        packages = build_spdx(ROOT, release="phase8-test")["packages"]
+        purls = {item["externalRefs"][0]["referenceLocator"] for item in packages}
+        self.assertTrue(any(item.startswith("pkg:cargo/rdkafka@") for item in purls))
+        self.assertTrue(any(item.startswith("pkg:cargo/rustls@") for item in purls))
+
+
+if __name__ == "__main__":
+    unittest.main()

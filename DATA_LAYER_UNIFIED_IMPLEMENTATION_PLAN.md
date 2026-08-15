@@ -2207,6 +2207,14 @@ Phase 8 is `COMPLETE` only when:
   running workload identity acquired successfully. Secrets were not copied;
   operator secret rotation must reconcile these sources independently of the
   completed canonical parity gate.
+- `8.3 IMPLEMENTATION CHECKPOINT` on 2026-08-15. Added the provider-neutral
+  persistent authority record, monotonic authority/lease fence and fenced Kafka
+  sink. Unit gates prove `RUST_SHADOW -> RUST_CANARY -> RUST_SHADOW`, reject
+  stale revision/lease conflicts and never permit public V2 or legacy V1 writes.
+  The release image now contains separate non-root realtime, transport, parity,
+  venue-core and authority-rehearsal binaries. Immutable build, replicated
+  broker rehearsal, signed evidence freeze and cleanup remain pending before
+  8.3 can be marked complete.
 
 ### Technical Debt / Decision Gate
 

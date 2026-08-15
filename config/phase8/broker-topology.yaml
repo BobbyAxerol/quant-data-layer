@@ -40,6 +40,7 @@ topics:
     partitions: 3
     owner: qdl-control
     partition_key: authority_slice
+    cleanup_policy: compact
   - name: qdl.phase8.quarantine.binance.trade.v1
     partitions: 3
     owner: rust-ingestor-binance-usdm
@@ -68,4 +69,3 @@ authority:
   public_write_allowed: false
   legacy_projection_allowed: false
   v1_authoritative: true
-

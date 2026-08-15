@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use qdl_core::transport::{AppendResult, Cursor, DurableRecord, RetryClass};
+use qdl_venue_core::authority::{AuthorityFence, AuthorityRecord, PublicationContext};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::error::KafkaError;
@@ -98,14 +99,16 @@ pub enum KafkaTransportError {
     MissingField(&'static str),
     InvalidOffset(i64),
     InvalidUtf8(&'static str),
+    Fencing(String),
 }
 
 impl KafkaTransportError {
     pub fn retry_class(&self) -> RetryClass {
         match self {
-            Self::Configuration(_) | Self::MissingField(_) | Self::InvalidUtf8(_) => {
-                RetryClass::NonRetryable
-            }
+            Self::Configuration(_)
+            | Self::MissingField(_)
+            | Self::InvalidUtf8(_)
+            | Self::Fencing(_) => RetryClass::NonRetryable,
             Self::InvalidOffset(_) => RetryClass::NonRetryable,
             Self::Kafka(KafkaError::MessageProduction(code))
             | Self::Delivery(KafkaError::MessageProduction(code))
@@ -127,6 +130,7 @@ impl Display for KafkaTransportError {
             Self::MissingField(field) => write!(formatter, "Kafka record missing {field}"),
             Self::InvalidOffset(offset) => write!(formatter, "invalid Kafka offset: {offset}"),
             Self::InvalidUtf8(field) => write!(formatter, "Kafka {field} is not UTF-8"),
+            Self::Fencing(message) => write!(formatter, "Kafka sink fencing rejected: {message}"),
         }
     }
 }
@@ -136,6 +140,41 @@ impl std::error::Error for KafkaTransportError {}
 impl From<KafkaError> for KafkaTransportError {
     fn from(error: KafkaError) -> Self {
         Self::Kafka(error)
+    }
+}
+
+pub struct FencedKafkaSink {
+    sink: KafkaDurableSink,
+    fence: std::sync::Mutex<AuthorityFence>,
+}
+
+impl FencedKafkaSink {
+    pub fn new(config: &KafkaTransportConfig) -> Result<Self, KafkaTransportError> {
+        Ok(Self {
+            sink: KafkaDurableSink::new(config)?,
+            fence: std::sync::Mutex::new(AuthorityFence::default()),
+        })
+    }
+
+    pub fn apply_authority(&self, record: AuthorityRecord) -> Result<(), KafkaTransportError> {
+        self.fence
+            .lock()
+            .map_err(|_| KafkaTransportError::Fencing("authority lock poisoned".into()))?
+            .apply(record)
+            .map_err(KafkaTransportError::Fencing)
+    }
+
+    pub async fn append(
+        &self,
+        record: &DurableRecord,
+        publication: &PublicationContext,
+    ) -> Result<AppendResult, KafkaTransportError> {
+        self.fence
+            .lock()
+            .map_err(|_| KafkaTransportError::Fencing("authority lock poisoned".into()))?
+            .permits(publication)
+            .map_err(KafkaTransportError::Fencing)?;
+        self.sink.append(record).await
     }
 }
 
