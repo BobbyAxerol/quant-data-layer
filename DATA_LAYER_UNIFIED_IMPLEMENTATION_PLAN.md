@@ -174,7 +174,7 @@ These rules apply to all phases.
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `COMPLETE (FROZEN SHADOW)` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `BLOCKED (SHADOW PASS; PRIMARY NO-GO)` |
 | 7 | V2 public beta and consumer canary | Publish a protected read-only V2 surface and validate real consumer behavior without changing authority | `COMPLETE (BETA-GO READ-ONLY)` |
-| 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `IN_PROGRESS (8.0)` |
+| 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `IN_PROGRESS (8.2; 8.0-8.1 complete)` |
 | 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
@@ -1610,7 +1610,7 @@ Phase 7 is `COMPLETE` only when all conditions below pass:
 
 ## 12. Phase 8 - Multi-Venue Rust Realtime Core And Reference Slice
 
-**Status:** `IN_PROGRESS (8.1; 8.0 COMPLETE)`
+**Status:** `IN_PROGRESS (8.2; 8.0-8.1 COMPLETE)`
 
 ### Goal
 
@@ -2159,6 +2159,32 @@ Phase 8 is `COMPLETE` only when:
 - This same-host three-broker test certifies protocol, replication, fencing and
   recovery behavior for shadow development. It does not claim independent
   rack/region failure domains or authorize Phase 9 production cutover.
+- `8.1 COMPLETE` on 2026-08-15. Added a generated `qdl.provider.v1`
+  raw-envelope/quarantine contract with explicit capture boundary, transport
+  codec, exact raw bytes/hash, session/generation, lease/authority/partition
+  epochs and fixture provenance. Added wire-compatible EventEnvelope fields for
+  session/generation/authority/plan and canonical payload hash.
+- Added provider-neutral `qdl-provider-envelope` and `qdl-venue-core` crates.
+  The core owns full session lifecycle, subscription ACK/reject state,
+  heartbeat/read deadlines, lease/generation fencing, sequence/dedup/gap
+  decisions, lifecycle-aware bounded backpressure and stable SHA-256 rendezvous
+  assignment. Binance-specific command/ACK JSON stays in its adapter module.
+- Removed plausible Binance defaults for buyer-maker, final-bar flag, last trade
+  ID and trade count in both Python and Rust canonicalizers. Missing or invalid
+  values now fail to quarantine upstream rather than silently becoming
+  `false`/`0`.
+- Added shadow-only capability manifests for Binance USD-M TRADE, OKX SWAP
+  TRADE, DNSE/VN BAR and a fixture-only Deribit option BOOK boundary. None is
+  authority-eligible.
+- Contract format/lint and breaking checks passed against both frozen Phase 1
+  and Phase 7 beta baselines. Targeted Python regression passed 17 tests; Rust
+  fmt/clippy and 24 tests passed. A 10,000-instrument rendezvous test moved
+  33.6% of assignments when adding a third owner and moved zero existing
+  assignments when only one instrument was added. Evidence:
+  [raw golden](upgrade/evidence/phase8-raw-envelope-golden.json),
+  [session chaos](upgrade/evidence/phase8-rust-session-chaos.json),
+  [stable sharding](upgrade/evidence/phase8-stable-sharding.json) and
+  [implementation report](upgrade/evidence/PHASE81_RAW_ENVELOPE_RUST_CORE_REPORT.md).
 
 ### Technical Debt / Decision Gate
 

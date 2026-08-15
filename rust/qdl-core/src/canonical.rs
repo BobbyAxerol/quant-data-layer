@@ -31,6 +31,14 @@ pub struct TradeContext {
     pub config_revision: u64,
     #[serde(default)]
     pub correlation_id: String,
+    #[serde(default)]
+    pub source_session_id: String,
+    #[serde(default)]
+    pub connection_generation: u64,
+    #[serde(default)]
+    pub authority_revision: u64,
+    #[serde(default)]
+    pub partition_plan_epoch: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -52,6 +60,43 @@ fn integer(raw: &Value, field: &str) -> Result<i64, String> {
     text(raw, field)?
         .parse::<i64>()
         .map_err(|_| format!("invalid integer provider field: {field}"))
+}
+
+fn unsigned(raw: &Value, field: &str) -> Result<u64, String> {
+    text(raw, field)?
+        .parse::<u64>()
+        .map_err(|_| format!("invalid unsigned provider field: {field}"))
+}
+
+fn boolean(raw: &Value, field: &str) -> Result<bool, String> {
+    raw.get(field)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("required provider boolean is missing or invalid: {field}"))
+}
+
+fn set_payload_hash(envelope: &mut EventEnvelope) -> Result<(), String> {
+    if envelope.source_session_id.is_empty() {
+        return Ok(());
+    }
+    let payload = envelope
+        .payload
+        .as_ref()
+        .ok_or_else(|| "canonical payload is required before hashing".to_owned())?;
+    let bytes = match payload {
+        event_envelope::Payload::Trade(value) => value.encode_to_vec(),
+        event_envelope::Payload::Quote(value) => value.encode_to_vec(),
+        event_envelope::Payload::Bar(value) => value.encode_to_vec(),
+        event_envelope::Payload::BookSnapshot(value) => value.encode_to_vec(),
+        event_envelope::Payload::BookDelta(value) => value.encode_to_vec(),
+        event_envelope::Payload::FundingRate(value) => value.encode_to_vec(),
+        event_envelope::Payload::OpenInterest(value) => value.encode_to_vec(),
+        event_envelope::Payload::MarkIndexPrice(value) => value.encode_to_vec(),
+        event_envelope::Payload::Ticker(value) => value.encode_to_vec(),
+        event_envelope::Payload::FeedState(value) => value.encode_to_vec(),
+        event_envelope::Payload::QualityEvent(value) => value.encode_to_vec(),
+    };
+    envelope.canonical_payload_hash = Sha256::digest(bytes).to_vec();
+    Ok(())
 }
 
 fn canonical_json(raw: &Value) -> Result<Vec<u8>, String> {
@@ -116,6 +161,11 @@ fn base_envelope(
         raw_payload_hash: Sha256::digest(raw_bytes).to_vec(),
         correlation_id: context.correlation_id.clone(),
         config_revision: context.config_revision,
+        source_session_id: context.source_session_id.clone(),
+        connection_generation: context.connection_generation,
+        authority_revision: context.authority_revision,
+        partition_plan_epoch: context.partition_plan_epoch,
+        canonical_payload_hash: vec![],
         payload: None,
     })
 }
@@ -144,6 +194,7 @@ fn canonicalize_binance_bbo(fixture: &TradeFixture) -> Result<EventEnvelope, Str
         ask_quantity: Some(parse_decimal(&text(&fixture.raw, "A")?)?),
         level: 1,
     }));
+    set_payload_hash(&mut envelope)?;
     Ok(envelope)
 }
 
@@ -160,11 +211,11 @@ fn canonicalize_binance_bar(fixture: &TradeFixture) -> Result<EventEnvelope, Str
     let sequence = format!(
         "{}:{}:{}",
         text(kline, "t")?,
-        kline.get("L").and_then(Value::as_i64).unwrap_or(0),
+        integer(kline, "L")?,
         source_time
     );
     let mut envelope = base_envelope(fixture, "bar", sequence, source_time)?;
-    let is_final = kline.get("x").and_then(Value::as_bool).unwrap_or(false);
+    let is_final = boolean(kline, "x")?;
     envelope.payload = Some(event_envelope::Payload::Bar(Bar {
         interval: text(kline, "i")?,
         open_time_ns: integer(kline, "t")? * 1_000_000,
@@ -174,7 +225,7 @@ fn canonicalize_binance_bar(fixture: &TradeFixture) -> Result<EventEnvelope, Str
         low: Some(parse_decimal(&text(kline, "l")?)?),
         close: Some(parse_decimal(&text(kline, "c")?)?),
         volume: Some(parse_decimal(&text(kline, "v")?)?),
-        trade_count: kline.get("n").and_then(Value::as_u64).unwrap_or(0),
+        trade_count: unsigned(kline, "n")?,
         is_final,
         revision: 0,
         origin: BarOrigin::VenueNative as i32,
@@ -185,6 +236,7 @@ fn canonicalize_binance_bar(fixture: &TradeFixture) -> Result<EventEnvelope, Str
         },
         supersedes_event_id: None,
     }));
+    set_payload_hash(&mut envelope)?;
     Ok(envelope)
 }
 
@@ -193,11 +245,7 @@ fn canonicalize_binance(fixture: &TradeFixture) -> Result<EventEnvelope, String>
         return Err("provider symbol does not match resolved instrument".into());
     }
     let native_trade_id = text(&fixture.raw, "a").or_else(|_| text(&fixture.raw, "t"))?;
-    let buyer_maker = fixture
-        .raw
-        .get("m")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let buyer_maker = boolean(&fixture.raw, "m")?;
     build_trade(
         fixture,
         native_trade_id,
@@ -262,7 +310,7 @@ fn build_trade(
         ],
         16,
     )?;
-    Ok(EventEnvelope {
+    let mut envelope = EventEnvelope {
         schema_name: "qdl.marketdata.trade".into(),
         schema_major: 2,
         schema_minor: 0,
@@ -290,6 +338,11 @@ fn build_trade(
         raw_payload_hash: Sha256::digest(raw_bytes).to_vec(),
         correlation_id: context.correlation_id.clone(),
         config_revision: context.config_revision,
+        source_session_id: context.source_session_id.clone(),
+        connection_generation: context.connection_generation,
+        authority_revision: context.authority_revision,
+        partition_plan_epoch: context.partition_plan_epoch,
+        canonical_payload_hash: vec![],
         payload: Some(event_envelope::Payload::Trade(Trade {
             native_trade_id,
             price: Some(parse_decimal(&price)?),
@@ -298,7 +351,9 @@ fn build_trade(
             is_block_trade: false,
             is_buyer_maker,
         })),
-    })
+    };
+    set_payload_hash(&mut envelope)?;
+    Ok(envelope)
 }
 
 pub fn canonical_bytes(fixture: &TradeFixture) -> Result<Vec<u8>, String> {

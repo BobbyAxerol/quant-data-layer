@@ -46,6 +46,15 @@ pub mod qdl {
             ));
         }
     }
+
+    pub mod provider {
+        pub mod v1 {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../generated/rust/qdl/provider/v1/qdl.provider.v1.rs"
+            ));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -91,6 +100,11 @@ mod tests {
             raw_payload_hash: (16_u8..48).collect(),
             correlation_id: "phase1-golden-trade".into(),
             config_revision: 9,
+            source_session_id: String::new(),
+            connection_generation: 0,
+            authority_revision: 0,
+            partition_plan_epoch: 0,
+            canonical_payload_hash: vec![],
             payload: Some(event_envelope::Payload::Trade(Trade {
                 native_trade_id: "184467440737095516160".into(),
                 price: Some(decimal(6_123_410, 2, "61234.10")),

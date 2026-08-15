@@ -190,6 +190,16 @@ pub struct EventEnvelope {
     pub correlation_id: ::prost::alloc::string::String,
     #[prost(uint64, tag="27")]
     pub config_revision: u64,
+    #[prost(string, tag="28")]
+    pub source_session_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag="29")]
+    pub connection_generation: u64,
+    #[prost(uint64, tag="30")]
+    pub authority_revision: u64,
+    #[prost(uint64, tag="31")]
+    pub partition_plan_epoch: u64,
+    #[prost(bytes="vec", tag="32")]
+    pub canonical_payload_hash: ::prost::alloc::vec::Vec<u8>,
     #[prost(oneof="event_envelope::Payload", tags="40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50")]
     pub payload: ::core::option::Option<event_envelope::Payload>,
 }

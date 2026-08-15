@@ -32,6 +32,10 @@ class TradeContext:
     adapter_version: str
     config_revision: int
     correlation_id: str = ""
+    source_session_id: str = ""
+    connection_generation: int = 0
+    authority_revision: int = 0
+    partition_plan_epoch: int = 0
 
 
 def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
@@ -60,6 +64,25 @@ def _required(raw: Mapping[str, Any], field: str) -> Any:
     return value
 
 
+def _required_bool(raw: Mapping[str, Any], field: str) -> bool:
+    value = raw.get(field)
+    if not isinstance(value, bool):
+        raise ValueError(f"required provider boolean is missing or invalid: {field}")
+    return value
+
+
+def _set_canonical_payload_hash(
+    envelope: market_data_pb2.EventEnvelope, *, enabled: bool
+) -> None:
+    if not enabled:
+        return
+    payload_name = envelope.WhichOneof("payload")
+    if not payload_name:
+        raise ValueError("canonical payload is required before hashing")
+    payload = getattr(envelope, payload_name).SerializeToString(deterministic=True)
+    envelope.canonical_payload_hash = hashlib.sha256(payload).digest()
+
+
 def _trade_envelope(
     *,
     raw: Mapping[str, Any],
@@ -83,7 +106,7 @@ def _trade_envelope(
             native_trade_id,
         ]
     )
-    return market_data_pb2.EventEnvelope(
+    envelope = market_data_pb2.EventEnvelope(
         schema_name="qdl.marketdata.trade",
         schema_major=2,
         schema_minor=0,
@@ -110,6 +133,10 @@ def _trade_envelope(
         raw_payload_hash=hashlib.sha256(raw_bytes).digest(),
         correlation_id=context.correlation_id,
         config_revision=context.config_revision,
+        source_session_id=context.source_session_id,
+        connection_generation=context.connection_generation,
+        authority_revision=context.authority_revision,
+        partition_plan_epoch=context.partition_plan_epoch,
         trade=market_data_pb2.Trade(
             native_trade_id=native_trade_id,
             price=_decimal(price),
@@ -119,6 +146,8 @@ def _trade_envelope(
             is_buyer_maker=is_buyer_maker,
         ),
     )
+    _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))
+    return envelope
 
 
 def canonicalize_binance_usdm_trade(
@@ -128,7 +157,7 @@ def canonicalize_binance_usdm_trade(
     if symbol != context.native_symbol.upper():
         raise ValueError("provider symbol does not match resolved instrument")
     native_trade_id = str(raw.get("a") or _required(raw, "t"))
-    buyer_maker = bool(raw.get("m", False))
+    buyer_maker = _required_bool(raw, "m")
     return _trade_envelope(
         raw=raw,
         context=context,

@@ -7,7 +7,14 @@ from qdl.common.v1 import common_pb2
 from qdl.domain.event_id import deterministic_event_id
 from qdl.marketdata.v2 import market_data_pb2
 
-from qdl.canonical.trade import TradeContext, _decimal, _required, canonical_json_bytes
+from qdl.canonical.trade import (
+    TradeContext,
+    _decimal,
+    _required,
+    _required_bool,
+    _set_canonical_payload_hash,
+    canonical_json_bytes,
+)
 
 
 def _envelope(
@@ -38,6 +45,10 @@ def _envelope(
         raw_payload_hash=hashlib.sha256(raw_bytes).digest(),
         correlation_id=context.correlation_id,
         config_revision=context.config_revision,
+        source_session_id=context.source_session_id,
+        connection_generation=context.connection_generation,
+        authority_revision=context.authority_revision,
+        partition_plan_epoch=context.partition_plan_epoch,
     )
 
 
@@ -61,6 +72,7 @@ def canonicalize_binance_usdm_bbo(
         ask_price=_decimal(_required(raw, "a")),
         ask_quantity=_decimal(_required(raw, "A")), level=1,
     ))
+    _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))
     return envelope
 
 
@@ -74,26 +86,28 @@ def canonicalize_binance_usdm_bar(
     if str(_required(kline, "s")).upper() != context.native_symbol.upper():
         raise ValueError("provider kline symbol does not match resolved instrument")
     source_time = int(_required(raw, "E"))
-    sequence = f"{_required(kline, 't')}:{kline.get('L', 0)}:{source_time}"
+    sequence = f"{_required(kline, 't')}:{_required(kline, 'L')}:{source_time}"
     envelope = _envelope(
         raw=raw, context=context, feed="bar", source_sequence=sequence,
         source_event_time_ms=source_time,
     )
+    is_final = _required_bool(kline, "x")
     envelope.bar.CopyFrom(market_data_pb2.Bar(
         interval=str(_required(kline, "i")),
         open_time_ns=int(_required(kline, "t")) * 1_000_000,
         close_time_ns=int(_required(kline, "T")) * 1_000_000,
         open=_decimal(_required(kline, "o")), high=_decimal(_required(kline, "h")),
         low=_decimal(_required(kline, "l")), close=_decimal(_required(kline, "c")),
-        volume=_decimal(_required(kline, "v")), trade_count=int(kline.get("n") or 0),
-        is_final=bool(kline.get("x", False)), revision=0,
+        volume=_decimal(_required(kline, "v")), trade_count=int(_required(kline, "n")),
+        is_final=is_final, revision=0,
         origin=common_pb2.BAR_ORIGIN_VENUE_NATIVE,
         lifecycle=(
             market_data_pb2.BAR_LIFECYCLE_FINAL
-            if bool(kline.get("x", False))
+            if is_final
             else market_data_pb2.BAR_LIFECYCLE_IN_PROGRESS
         ),
     ))
+    _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))
     return envelope
 
 
@@ -120,4 +134,5 @@ def canonicalize_binance_usdm_rest_bar(
         is_final=True, revision=0, origin=common_pb2.BAR_ORIGIN_BACKFILLED,
         lifecycle=market_data_pb2.BAR_LIFECYCLE_FINAL,
     ))
+    _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))
     return envelope

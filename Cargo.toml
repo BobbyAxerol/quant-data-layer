@@ -1,5 +1,11 @@
 [workspace]
-members = ["rust/qdl-contracts", "rust/qdl-core", "rust/qdl-kafka"]
+members = [
+    "rust/qdl-contracts",
+    "rust/qdl-core",
+    "rust/qdl-kafka",
+    "rust/qdl-provider-envelope",
+    "rust/qdl-venue-core",
+]
 resolver = "2"
 
 [workspace.package]
