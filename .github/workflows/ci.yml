@@ -36,7 +36,12 @@ jobs:
       - name: Check schema against pull-request base
         if: github.event_name == 'pull_request'
         working-directory: contracts
-        run: buf breaking --against ../base-contracts/contracts
+        run: |
+          if [[ -d ../base-contracts/contracts ]]; then
+            buf breaking --against ../base-contracts/contracts
+          else
+            echo "Base branch has no contract module; frozen Phase 1/7 baselines remain authoritative."
+          fi
 
       - name: Verify generated contracts are current
         working-directory: contracts

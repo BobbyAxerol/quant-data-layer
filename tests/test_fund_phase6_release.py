@@ -21,6 +21,15 @@ class ReleaseBundleTests(unittest.TestCase):
         self.assertIn('QDL_RUNTIME_UID:-10001', preparation)
         self.assertIn('QDL_RUNTIME_GID:-10001', preparation)
         self.assertIn('for relative in data logs', preparation)
+        docker_ignored = {
+            line.strip()
+            for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        }
+        self.assertTrue({"data", "logs"}.issubset(docker_ignored))
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("if [[ -d ../base-contracts/contracts ]]", workflow)
+        self.assertIn("frozen Phase 1/7 baselines remain authoritative", workflow)
         ignored = {
             line.strip()
             for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()

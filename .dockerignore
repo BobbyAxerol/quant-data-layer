@@ -5,6 +5,7 @@ __pycache__
 .venv
 venv
 data
+logs
 target
 *.parquet
 *.csv
