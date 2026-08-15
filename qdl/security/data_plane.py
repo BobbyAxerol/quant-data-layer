@@ -12,7 +12,7 @@ from typing import Mapping, Protocol
 from redis import Redis
 from redis.exceptions import RedisError
 
-from qdl.consumer import ConsumerManifest, ConsumerManifestRegistry
+from qdl.consumer.manifest import ConsumerManifest, ConsumerManifestRegistry
 from qdl.query import AccessPurpose, DataRequirement, FeedType
 from qdl.security.policy import Permission, Principal, ServiceTokenVerifier
 
