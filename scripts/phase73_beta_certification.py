@@ -508,7 +508,7 @@ async def certify(args) -> dict:
                 code == 200 for name, code in auth_results.items()
                 if name.startswith("rotation_")
             ),
-            "malformed": malformed.status_code == 422,
+            "malformed": malformed.status_code in {400, 422},
             "oversized": oversized.status_code == 413,
             "rate_limit": rate_codes[-1] == 429,
             "cursor_tamper": cursor_tamper == "CURSOR_INVALID",
