@@ -1,0 +1,188 @@
+{
+  "datasets": [
+    {
+      "conflicting_revision_groups": 0,
+      "exact_duplicate_groups": 241,
+      "exact_duplicate_rows_removed": 241,
+      "fabricated_rows": 0,
+      "first_open_time_ns": 1771812000000000000,
+      "interpretations": {
+        "LEGACY_NAIVE_ASIA_HO_CHI_MINH": 8194,
+        "LEGACY_NAIVE_UTC": 20002
+      },
+      "interval": "1m",
+      "last_open_time_ns": 1786607100000000000,
+      "legacy_derived": null,
+      "path": "/app/data/preload/1m/VN30F1M.parquet",
+      "recovered_rows": 27955,
+      "rows": 27955,
+      "snapshot_data_sha256": "6183039f31193795ccf2b1965ed244bb0b705e12661d78284f1ed73c314d1c9f",
+      "snapshot_id": "a06ea507-6dac-4646-8645-e497b39835e7",
+      "source_rows": 28196,
+      "source_sha256": "c14749ec9317cedf2000c38005932f7878c209274e8bfef5072afb6c127493b1"
+    },
+    {
+      "conflicting_revision_groups": 0,
+      "exact_duplicate_groups": 241,
+      "exact_duplicate_rows_removed": 241,
+      "fabricated_rows": 0,
+      "first_open_time_ns": 1771812000000000000,
+      "interpretations": {
+        "LEGACY_NAIVE_ASIA_HO_CHI_MINH": 8194,
+        "LEGACY_NAIVE_UTC": 20002
+      },
+      "interval": "5m",
+      "last_open_time_ns": 1786607100000000000,
+      "legacy_derived": {
+        "authority": "RECONCILIATION_ONLY",
+        "path": "/app/data/preload/5m/VN30F1M.parquet",
+        "rows": 5733,
+        "source_sha256": "2e21e66e2c6353b5c1e9790f939e4f957416ed14d271688e1d2b0168fdd5ec74"
+      },
+      "path": "/app/data/preload/1m/VN30F1M.parquet",
+      "recovered_rows": 5684,
+      "rows": 5684,
+      "snapshot_data_sha256": "ed9ad1c0d997dbd5f2fc7ff291999f4e6e677f8100519a54b4f770287f91e4dd",
+      "snapshot_id": "892fd55f-951d-46cb-8504-fe91eb61c4dd",
+      "source_rows": 27955,
+      "source_sha256": "c14749ec9317cedf2000c38005932f7878c209274e8bfef5072afb6c127493b1"
+    },
+    {
+      "conflicting_revision_groups": 0,
+      "exact_duplicate_groups": 241,
+      "exact_duplicate_rows_removed": 241,
+      "fabricated_rows": 0,
+      "first_open_time_ns": 1771811700000000000,
+      "interpretations": {
+        "LEGACY_NAIVE_ASIA_HO_CHI_MINH": 8194,
+        "LEGACY_NAIVE_UTC": 20002
+      },
+      "interval": "10m",
+      "last_open_time_ns": 1786606800000000000,
+      "legacy_derived": {
+        "authority": "RECONCILIATION_ONLY",
+        "path": "/app/data/preload/10m/VN30F1M.parquet",
+        "rows": 2925,
+        "source_sha256": "6c25e1732118eb1e403f05e2b9f41b5a909641adc17dbac19ab4f58282ab8df3"
+      },
+      "path": "/app/data/preload/1m/VN30F1M.parquet",
+      "recovered_rows": 3016,
+      "rows": 3016,
+      "snapshot_data_sha256": "ab17ec4d806f3a7ef75ed34232b3a15db20e32119dcd8530acc54e4f83f40f2e",
+      "snapshot_id": "2ad91e49-2dcf-49bd-b81b-277be52a26e6",
+      "source_rows": 27955,
+      "source_sha256": "c14749ec9317cedf2000c38005932f7878c209274e8bfef5072afb6c127493b1"
+    },
+    {
+      "conflicting_revision_groups": 0,
+      "exact_duplicate_groups": 241,
+      "exact_duplicate_rows_removed": 241,
+      "fabricated_rows": 0,
+      "first_open_time_ns": 1771812000000000000,
+      "interpretations": {
+        "LEGACY_NAIVE_ASIA_HO_CHI_MINH": 8194,
+        "LEGACY_NAIVE_UTC": 20002
+      },
+      "interval": "15m",
+      "last_open_time_ns": 1786607100000000000,
+      "legacy_derived": {
+        "authority": "RECONCILIATION_ONLY",
+        "path": "/app/data/preload/15m/VN30F1M.parquet",
+        "rows": 1989,
+        "source_sha256": "dcfee9df7115f014fb18d33f1ad873379171efd5b0dca22d84c795fa59d2da8d"
+      },
+      "path": "/app/data/preload/1m/VN30F1M.parquet",
+      "recovered_rows": 1972,
+      "rows": 1972,
+      "snapshot_data_sha256": "6f8e776b09a1b4388f9475d7153c6d2da641377a6231c61c305d0bf3a9b32e84",
+      "snapshot_id": "b3d4530a-d7be-4754-8af9-9a7edcf9d25d",
+      "source_rows": 27955,
+      "source_sha256": "c14749ec9317cedf2000c38005932f7878c209274e8bfef5072afb6c127493b1"
+    },
+    {
+      "conflicting_revision_groups": 0,
+      "exact_duplicate_groups": 241,
+      "exact_duplicate_rows_removed": 241,
+      "fabricated_rows": 0,
+      "first_open_time_ns": 1771811100000000000,
+      "interpretations": {
+        "LEGACY_NAIVE_ASIA_HO_CHI_MINH": 8194,
+        "LEGACY_NAIVE_UTC": 20002
+      },
+      "interval": "30m",
+      "last_open_time_ns": 1786606200000000000,
+      "legacy_derived": {
+        "authority": "RECONCILIATION_ONLY",
+        "path": "/app/data/preload/30m/VN30F1M.parquet",
+        "rows": 1053,
+        "source_sha256": "3f3ecb38c87bf2e56c1fea58f5a34be7e929117bdab10f62fccf929cdd95caf8"
+      },
+      "path": "/app/data/preload/1m/VN30F1M.parquet",
+      "recovered_rows": 1160,
+      "rows": 1160,
+      "snapshot_data_sha256": "1b55a4c76999d63ec2e33f125d31bc641557b3fe8b2c384592356d4f4ef7609f",
+      "snapshot_id": "f3c0b77a-fdfb-4c08-8494-2fce6b3ba7fd",
+      "source_rows": 27955,
+      "source_sha256": "c14749ec9317cedf2000c38005932f7878c209274e8bfef5072afb6c127493b1"
+    },
+    {
+      "conflicting_revision_groups": 0,
+      "exact_duplicate_groups": 241,
+      "exact_duplicate_rows_removed": 241,
+      "fabricated_rows": 0,
+      "first_open_time_ns": 1771811100000000000,
+      "interpretations": {
+        "LEGACY_NAIVE_ASIA_HO_CHI_MINH": 8194,
+        "LEGACY_NAIVE_UTC": 20002
+      },
+      "interval": "1h",
+      "last_open_time_ns": 1786604400000000000,
+      "legacy_derived": {
+        "authority": "RECONCILIATION_ONLY",
+        "path": "/app/data/preload/1h/VN30F1M.parquet",
+        "rows": 585,
+        "source_sha256": "9a3f04fb72cf70364916370a4d6bf587bb57071bce30617f18f22fe6b4b1c3a7"
+      },
+      "path": "/app/data/preload/1m/VN30F1M.parquet",
+      "recovered_rows": 580,
+      "rows": 580,
+      "snapshot_data_sha256": "1cdd6aa58b4095a858f58ef2ccb83f1db7b2d70eb2af8943076ecc0f59b68324",
+      "snapshot_id": "46de1c5c-7acf-41b2-9b17-ff31a89c5c36",
+      "source_rows": 27955,
+      "source_sha256": "c14749ec9317cedf2000c38005932f7878c209274e8bfef5072afb6c127493b1"
+    },
+    {
+      "conflicting_revision_groups": 0,
+      "exact_duplicate_groups": 241,
+      "exact_duplicate_rows_removed": 241,
+      "fabricated_rows": 0,
+      "first_open_time_ns": 1771811100000000000,
+      "interpretations": {
+        "LEGACY_NAIVE_ASIA_HO_CHI_MINH": 8194,
+        "LEGACY_NAIVE_UTC": 20002
+      },
+      "interval": "4h",
+      "last_open_time_ns": 1786600800000000000,
+      "legacy_derived": {
+        "authority": "RECONCILIATION_ONLY",
+        "path": "/app/data/preload/4h/VN30F1M.parquet",
+        "rows": 234,
+        "source_sha256": "cb5aba3d7344397a5c4b65ef4fed4798792f49120859debebe77c5c4a44b4974"
+      },
+      "path": "/app/data/preload/1m/VN30F1M.parquet",
+      "recovered_rows": 232,
+      "rows": 232,
+      "snapshot_data_sha256": "56225858e6634217dcecc5ce76b8f34d8ae7ed79e53fed252230585465c1495b",
+      "snapshot_id": "592029b3-809a-4d52-84c9-96fc446177a4",
+      "source_rows": 27955,
+      "source_sha256": "c14749ec9317cedf2000c38005932f7878c209274e8bfef5072afb6c127493b1"
+    }
+  ],
+  "derived_policy": "SESSION_AWARE_AGGREGATION_FROM_CANONICAL_1M",
+  "fabricated_rows": 0,
+  "production_writes": 0,
+  "provenance": "REAL_EXISTING_PROVIDER_PARQUET_READ_ONLY",
+  "schema": "qdl.phase4.vn-shadow-migration.v1",
+  "status": "PASS",
+  "symbol": "VN30F1M"
+}

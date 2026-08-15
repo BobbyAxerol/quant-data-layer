@@ -1,0 +1,24 @@
+{
+  "authentic_venues": [
+    "BINANCE",
+    "DNSE",
+    "OKX"
+  ],
+  "authority": "RUST_SHADOW",
+  "canonical_mismatches": 0,
+  "capability_failures_isolated": true,
+  "deribit_live_certified": false,
+  "fixture_only_venues": [
+    "DERIBIT"
+  ],
+  "production_writes": 0,
+  "public_or_legacy_writes": 0,
+  "schema": "qdl.phase8.cross-venue-conformance.v1",
+  "status": "PASS",
+  "venue_fixture_counts": {
+    "BINANCE": 128,
+    "DERIBIT": 1,
+    "DNSE": 241,
+    "OKX": 128
+  }
+}

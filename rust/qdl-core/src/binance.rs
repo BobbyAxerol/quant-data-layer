@@ -1,0 +1,159 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::canonical::{canonical_bytes, TradeContext, TradeFixture};
+
+pub const WS_COMBINED_BASE: &str = "wss://fstream.binance.com/stream?streams=";
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ShadowConfig {
+    pub context: TradeContext,
+    pub streams: Vec<String>,
+    pub exchange_info_path: String,
+    pub wal_path: String,
+    pub max_events: usize,
+    #[serde(default = "default_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_timeout() -> u64 {
+    30
+}
+
+#[derive(Clone, Debug)]
+pub struct ProviderFrame {
+    pub stream: String,
+    pub data: Value,
+    pub raw_frame: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct WalRecord {
+    pub schema: &'static str,
+    pub provenance: &'static str,
+    pub stream: String,
+    pub raw_frame: String,
+    pub canonical_hex: String,
+    pub canonical_sha256: String,
+}
+
+pub fn validate_stream(stream: &str) -> Result<(), String> {
+    let normalized = stream.trim();
+    if normalized.is_empty()
+        || normalized != normalized.to_ascii_lowercase() && !normalized.ends_with("@bookTicker")
+    {
+        // Native Binance event names retain documented casing; symbol must be lower-case.
+        let symbol = normalized.split('@').next().unwrap_or_default();
+        if symbol != symbol.to_ascii_lowercase() {
+            return Err("Binance stream symbols must be lowercase".into());
+        }
+    }
+    if !(normalized.ends_with("@trade")
+        || normalized.ends_with("@bookTicker")
+        || normalized.contains("@kline_"))
+    {
+        return Err(format!("unsupported Binance USD-M stream: {normalized}"));
+    }
+    Ok(())
+}
+
+pub fn combined_url(streams: &[String]) -> Result<String, String> {
+    if streams.is_empty() {
+        return Err("at least one demanded stream is required".into());
+    }
+    for stream in streams {
+        validate_stream(stream)?;
+    }
+    Ok(format!("{WS_COMBINED_BASE}{}", streams.join("/")))
+}
+
+pub fn decode_combined(raw_frame: String) -> Result<ProviderFrame, String> {
+    let decoded: Value = serde_json::from_str(&raw_frame).map_err(|error| error.to_string())?;
+    let stream = decoded
+        .get("stream")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "combined frame missing stream".to_owned())?
+        .to_owned();
+    let data = decoded
+        .get("data")
+        .filter(|value| value.is_object())
+        .ok_or_else(|| "combined frame missing data object".to_owned())?
+        .clone();
+    Ok(ProviderFrame {
+        stream,
+        data,
+        raw_frame,
+    })
+}
+
+pub fn canonicalize_frame(
+    frame: &ProviderFrame,
+    mut context: TradeContext,
+    partition_sequence: u64,
+    received_at_ns: i64,
+) -> Result<WalRecord, String> {
+    context.partition_sequence = partition_sequence;
+    context.received_at_ns = received_at_ns;
+    context.normalized_at_ns = received_at_ns;
+    context.published_at_ns = received_at_ns;
+    let provider_kind = if frame.stream.ends_with("@trade") {
+        "binance_usdm_agg_trade"
+    } else if frame.stream.ends_with("@bookTicker") {
+        "binance_usdm_bbo"
+    } else if frame.stream.contains("@kline_") {
+        "binance_usdm_bar"
+    } else {
+        return Err("unsupported provider frame".into());
+    };
+    let canonical = canonical_bytes(&TradeFixture {
+        provider_kind: provider_kind.to_owned(),
+        context,
+        raw: frame.data.clone(),
+    })?;
+    use sha2::{Digest, Sha256};
+    Ok(WalRecord {
+        schema: "qdl.binance-shadow-wal.v1",
+        provenance: "REAL_PROVIDER",
+        stream: frame.stream.clone(),
+        raw_frame: frame.raw_frame.clone(),
+        canonical_hex: hex::encode(&canonical),
+        canonical_sha256: format!("{:x}", Sha256::digest(&canonical)),
+    })
+}
+
+pub fn exchange_info_has_active_symbol(payload: &Value, symbol: &str) -> bool {
+    payload
+        .get("symbols")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|item| {
+            item.get("symbol").and_then(Value::as_str) == Some(symbol)
+                && item.get("status").and_then(Value::as_str) == Some("TRADING")
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{combined_url, decode_combined, exchange_info_has_active_symbol};
+    use serde_json::json;
+
+    #[test]
+    fn demanded_streams_are_not_truncated() {
+        let streams = vec![
+            "btcusdt@trade".to_owned(),
+            "btcusdt@bookTicker".to_owned(),
+            "btcusdt@kline_1m".to_owned(),
+        ];
+        let url = combined_url(&streams).unwrap();
+        assert!(streams.iter().all(|stream| url.contains(stream)));
+    }
+
+    #[test]
+    fn malformed_frames_and_delisted_symbols_fail_closed() {
+        assert!(decode_combined(r#"{"stream":"x"}"#.into()).is_err());
+        let info = json!({"symbols": [{"symbol": "BTCUSDT", "status": "CLOSE"}]});
+        assert!(!exchange_info_has_active_symbol(&info, "BTCUSDT"));
+    }
+}

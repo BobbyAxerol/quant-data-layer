@@ -1,0 +1,43 @@
+{
+  "provider_kind": "binance_usdm_bar",
+  "context": {
+    "instrument_uid": "85ad7cb6-7ebf-5c81-9d82-12c4c10ca85c",
+    "instrument_id": "BINANCE.USDM.PERPETUAL.BTCUSDT",
+    "instrument_revision": 7,
+    "venue": "BINANCE",
+    "market": "USDM",
+    "product_type": "PERPETUAL",
+    "native_symbol": "BTCUSDT",
+    "provider": "BINANCE_DIRECT",
+    "source_id": "binance-usdm-bar-shadow-001",
+    "lease_epoch": 42,
+    "received_at_ns": 1786352400123456000,
+    "normalized_at_ns": 1786352400123500000,
+    "published_at_ns": 1786352400123700000,
+    "partition_sequence": 1234,
+    "normalizer_version": "qdl-normalizer/2.0.0",
+    "adapter_version": "binance-json/1.0.0",
+    "config_revision": 9,
+    "correlation_id": "phase3-binance-bar"
+  },
+  "raw": {
+    "e": "kline",
+    "E": 1786352400123,
+    "s": "BTCUSDT",
+    "k": {
+      "t": 1786352340000,
+      "T": 1786352399999,
+      "s": "BTCUSDT",
+      "i": "1m",
+      "f": 100,
+      "L": 110,
+      "o": "61200.00",
+      "c": "61234.10",
+      "h": "61240.00",
+      "l": "61190.00",
+      "v": "12.500",
+      "n": 11,
+      "x": true
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "bytes": 256,
+  "capture_boundary": "POST_DECOMPRESSION",
+  "protobuf_sha256": "2b67e5169171702c6c0352ff838473abc668a10f74624af6dc55d6302823236b",
+  "provenance": "DETERMINISTIC_FIXTURE",
+  "python_rust_golden_path": "contracts/golden/phase8/raw-provider-envelope.bin",
+  "raw_frame_sha256": "bdaa11190b4dec6381f03f2f6c726612775689c9ec38b63b95826d2531a698ef",
+  "schema": "qdl.phase8.raw-envelope-golden.v1",
+  "status": "PASS"
+}

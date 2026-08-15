@@ -1,0 +1,338 @@
+{
+  "base_url": "http://127.0.0.1:8100",
+  "checks": [
+    {
+      "latency_ms": 73.708,
+      "name": "service_health",
+      "ok": true,
+      "path": "/v1/health",
+      "payload": {
+        "binance_stream": {
+          "feeds": {
+            "broad_missing_count": 2105,
+            "broad_stale_count": 597,
+            "demanded_count": 6,
+            "demanded_missing_count": 1,
+            "demanded_stale_count": 0,
+            "expected_count": 4202,
+            "health_missing_count": 2101,
+            "missing_count": 2105,
+            "observed_count": 2097,
+            "stale_count": 597
+          },
+          "health_warnings": [
+            "missing_demanded_feeds",
+            "missing_expected_feeds",
+            "stale_expected_feeds"
+          ],
+          "publisher": {
+            "batch_count": 31200514,
+            "item_count": 97600022,
+            "last_publisher_at": "2026-08-13T07:14:45Z",
+            "last_redis_error": null,
+            "redis_error_count": 0
+          },
+          "queue": {
+            "drop_count": 3790249,
+            "maxsize": 10000,
+            "recent_drop_count": 0,
+            "size": 0,
+            "window_seconds": 300.0
+          },
+          "shards": {
+            "connected_count": 44,
+            "count": 44,
+            "reconnect_count": 1
+          },
+          "status": "degraded",
+          "strict_feed_health": false,
+          "uptime_seconds": 87168.753
+        },
+        "dnse_stream": {
+          "client_healthy": true,
+          "market_open": true,
+          "metrics": {
+            "connect_attempts": 1,
+            "connect_failures": 0,
+            "last_connected_at": "2026-08-12T07:01:59Z",
+            "last_error": null,
+            "last_message_at": "2026-08-13T07:14:45Z",
+            "reconnect_count": 0,
+            "redis_latency_ms": 1.072,
+            "redis_write_count": 152425,
+            "stale_age_seconds": 0.014,
+            "ws_msg_count": 270146
+          },
+          "queue": {
+            "drop_count": 0,
+            "maxsize": 5000,
+            "size": 0
+          },
+          "running": true,
+          "status": "OPEN_HEALTHY",
+          "symbols_count": 82
+        },
+        "feed_demands": {
+          "by_feed": {
+            "kline": 3,
+            "trade": 5,
+            "vn_quote": 2
+          },
+          "by_source": {
+            "binance": 1,
+            "binance_auto": 1,
+            "binance_futures_trade": 4,
+            "dnse": 2,
+            "dnse_vnstock": 2
+          },
+          "demanded_feed_count": 10,
+          "feed_keys_sha256": "78b152ba835c211d16576212c7efa58d3cf399e262d7e4a69df107d4b19a1c1a",
+          "lease_count": 11
+        },
+        "preload_topup": {
+          "active_local_scopes": 0,
+          "failure_count": 3,
+          "provider_fetch_count": 853,
+          "waiter_count": 0
+        },
+        "redis": true,
+        "status": "degraded"
+      },
+      "payload_sha256": "fecd5696f65e2e1d1ad07ddf063f617d01f370559d2263f06ab2d14370354b1e",
+      "required": true,
+      "status": 200
+    },
+    {
+      "latency_ms": 7.239,
+      "name": "binance_usdm_latest_trade",
+      "ok": true,
+      "path": "/v1/binance/price/BTCUSDT?market=usdm",
+      "payload": {
+        "authoritative": true,
+        "event_time": 1786605285347,
+        "is_live": true,
+        "market": "binance_usdm",
+        "price": 63842.7,
+        "provider": "binance",
+        "quantity": 0.015,
+        "raw": {
+          "E": 1786605285347,
+          "T": 1786605285347,
+          "X": "MARKET",
+          "e": "trade",
+          "m": true,
+          "p": "63842.70",
+          "q": "0.015",
+          "s": "BTCUSDT",
+          "st": 1,
+          "t": 7969009088
+        },
+        "side": "sell",
+        "source": "binance_futures_trade",
+        "symbol": "BTCUSDT",
+        "trade_id": 7969009088,
+        "trade_time": 1786605285347
+      },
+      "payload_sha256": "f0da7606dae43af2fffb787e1a62b182f222635f40735b5cfa5ef9a6938767b6",
+      "required": true,
+      "status": 200
+    },
+    {
+      "latency_ms": 3.161,
+      "name": "binance_usdm_latest_kline",
+      "ok": true,
+      "path": "/v1/binance/kline/BTCUSDT?interval=1m",
+      "payload": {
+        "E": 1786605284073,
+        "e": "kline",
+        "k": {
+          "B": "0",
+          "L": 6571458502,
+          "Q": "14169.66133180",
+          "T": 1786605299999,
+          "V": "0.22182000",
+          "c": "63878.02000000",
+          "f": 6571458198,
+          "h": "63879.36000000",
+          "i": "1m",
+          "l": "63878.01000000",
+          "n": 305,
+          "o": "63879.35000000",
+          "q": "185913.97588500",
+          "s": "BTCUSDT",
+          "t": 1786605240000,
+          "v": "2.91040000",
+          "x": false
+        },
+        "s": "BTCUSDT"
+      },
+      "payload_sha256": "b8cd905a3d8927bb96d3fcab6696bbd5ca43db05c79fe1f50fed827721bc9de1",
+      "required": true,
+      "status": 200
+    },
+    {
+      "latency_ms": 183.167,
+      "name": "binance_history_two_bars",
+      "ok": true,
+      "path": "/v1/crypto/ohlcv/binance/BTCUSDT?interval=15m&limit=2&market=usdm",
+      "payload": {
+        "cached": false,
+        "data": {
+          "count": 2,
+          "sample": [
+            {
+              "count": 12,
+              "sample": [
+                1786603500000,
+                "63730.10",
+                "63914.60"
+              ],
+              "sha256": "6a970aaa776a1858c1142f1ccd50cae03ef7e5e8bbeb3714f3ce75b68eed3a28"
+            },
+            {
+              "count": 12,
+              "sample": [
+                1786604400000,
+                "63914.50",
+                "63916.60"
+              ],
+              "sha256": "b003a83657aefdfe7bc454f8e9a9406e9d179fa087746a456a188cd7917d179c"
+            }
+          ],
+          "sha256": "edf4363c4621276ebfcf292f8a263987a74a7e82b647576a0876dca2d9639e92"
+        },
+        "market": "usdm",
+        "params": {
+          "interval": "15m",
+          "limit": 2,
+          "symbol": "BTCUSDT"
+        },
+        "provider": "binance",
+        "provider_interval": "15m",
+        "requested_interval": "15m",
+        "stored": false,
+        "symbol": "BTCUSDT"
+      },
+      "payload_sha256": "e32237f00544aacd5e0db8e207522c0a338278eb689940ea4817d8d379d0ad65",
+      "required": true,
+      "status": 200
+    },
+    {
+      "latency_ms": 351.827,
+      "name": "okx_history_two_bars",
+      "ok": true,
+      "path": "/v1/crypto/ohlcv/okx/BTCUSDT?interval=15m&limit=2",
+      "payload": {
+        "cached": false,
+        "data": {
+          "count": 2,
+          "sample": [
+            {
+              "count": 9,
+              "sample": [
+                "1786604400000",
+                "63935.4",
+                "63940"
+              ],
+              "sha256": "c55df281af3449a8a49cf0d5a4e03f74eab08a415fe036d0fd9f581af32d5281"
+            },
+            {
+              "count": 9,
+              "sample": [
+                "1786603500000",
+                "63756.8",
+                "63935.3"
+              ],
+              "sha256": "77dddebeaf4f2128ba6ee76af7736d68205a1daa864920e9175bd2f9fdad1be9"
+            }
+          ],
+          "sha256": "9642f831ac996704864a08379b84b98a3cf0bcf409b69961cebe739c3bb91cb3"
+        },
+        "instId": "BTC-USDT",
+        "params": {
+          "bar": "15m",
+          "instId": "BTC-USDT",
+          "limit": 2
+        },
+        "provider": "okx",
+        "provider_interval": "15m",
+        "requested_interval": "15m",
+        "stored": false,
+        "symbol": "BTCUSDT"
+      },
+      "payload_sha256": "a0cb5de67a8e786b99d51025cceebac4b268e0045386d0be284bf5b9afaa4f91",
+      "required": true,
+      "status": 200
+    },
+    {
+      "latency_ms": 110.731,
+      "name": "vn_preload_two_bars",
+      "ok": true,
+      "path": "/v1/preload/VN30F1M?interval=1m&limit=2&fresh=false",
+      "payload": {
+        "count": 2,
+        "data": {
+          "count": 2,
+          "sample": [
+            {
+              "close": 1914.8,
+              "high": 1915.5,
+              "low": 1913.2,
+              "open": 1915.4,
+              "symbol": "VN30F1M",
+              "time": "2026-08-13 07:12:00",
+              "volume": 1775
+            },
+            {
+              "close": 1915.7,
+              "high": 1917.0,
+              "low": 1914.6,
+              "open": 1914.8,
+              "symbol": "VN30F1M",
+              "time": "2026-08-13 07:13:00",
+              "volume": 1505
+            }
+          ],
+          "sha256": "60be435c0b3181a3c57bd2c3f17b72f6fe08d668a91edd718e0f60571041a7dc"
+        },
+        "interval": "1m",
+        "symbol": "VN30F1M"
+      },
+      "payload_sha256": "e4cebf4cd25a253f71c1a6ace5ba612c53ea0a0aca8a632dc7ab781a43c8679d",
+      "required": true,
+      "status": 200
+    },
+    {
+      "latency_ms": 25.951,
+      "name": "vn_last_quote",
+      "ok": true,
+      "path": "/v1/vn/quote-last/VN30F1M",
+      "payload": {
+        "is_live": false,
+        "snapshot": {
+          "high": 1917.0,
+          "low": 1913.2,
+          "open": 1917.0,
+          "price": 1915.5,
+          "source": "preload_snapshot",
+          "symbol": "VN30F1M",
+          "timestamp": 1786604880.0,
+          "volume": 3576.0
+        },
+        "symbol": "VN30F1M"
+      },
+      "payload_sha256": "81e542e46c5d7a16af626e55d47d9524d5fcda438cf5dcb2eb5e910e51be29c8",
+      "required": true,
+      "status": 200
+    }
+  ],
+  "generated_at": "2026-08-13T07:14:46.558499+00:00",
+  "mode": "bounded_read_only",
+  "schema_version": 1,
+  "summary": {
+    "failed": 0,
+    "failures": [],
+    "passed": 7,
+    "total": 7
+  }
+}

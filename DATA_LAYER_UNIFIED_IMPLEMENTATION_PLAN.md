@@ -1,0 +1,3027 @@
+# Quant Data Layer Unified Implementation Plan
+
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9 remains planned. V1 remains authoritative and no runtime cutover has started.
+> **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
+> **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
+> **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
+> **Compatibility boundary:** Existing `/v1`, SDK v1, Redis keys and Redis Pub/Sub remain supported until a governed per-consumer sunset.
+
+## 1. How To Use This Tracker
+
+This file is the tracked implementation journal for the fund-grade data-layer upgrade. The architecture guide owns detailed design and rationale; this file owns execution order, status, evidence, decisions and remaining debt.
+
+Every phase must keep the following fields current:
+
+- **Goal:** the measurable outcome, not merely files to create.
+- **Guide index:** links to the detailed architecture sections that govern implementation.
+- **To do:** approved scope for the phase.
+- **Completed:** exact code, configuration, migration and operational work actually performed.
+- **Verification:** commands, fixtures, data comparisons, latency/capacity results and cleanup evidence that actually ran.
+- **Technical debt / decision gate:** only unresolved matters that require a user, infrastructure, cost or business-semantics decision. In-scope defects are fixed before phase closure, not relabeled as debt.
+- **Rollback:** a tested path back to the last authoritative producer/read path.
+
+Phase status is one of `PLANNED`, `IN_PROGRESS`, `BLOCKED`, `COMPLETE`. A phase is not `COMPLETE` while a required gate is untested or while test artifacts affect live data.
+
+## 2. Program-Wide Rules And Invariants
+
+These rules apply to all phases.
+
+1. **No big-bang cutover.** Use strangler migration, shadow reads/writes, parity reports and per-feed authority flags as defined in [Sections 30-33](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#30-migration-strategy-no-big-bang-rewrite).
+2. **V1 remains stable.** Existing alpha and Trading System consumers must not change merely because internal transport, schemas or implementation language changes. Protect `/v1`, SDK v1 and legacy Redis payloads with golden tests.
+3. **One canonical contract across languages.** Python and Rust generate types from the same Protobuf/OpenAPI sources. External projects are behavioral references, not naming authorities for established data-layer fields.
+4. **Correctness before throughput.** Validate exact decimal representation, venue/market/instrument identity, source/event/receive timestamps, sequence semantics, bar closure, provenance and quality flags before accepting performance results.
+5. **No silent loss.** Trade and order-book delta queues must never use “drop oldest and continue healthy”. Backpressure, spool, reconnect, resnapshot and feed-state transitions must be explicit and observable.
+6. **Demand controls cost, capability controls architecture.** Unused Spot feeds are disabled by configuration and zero-demand evidence, not deleted. A new consumer can re-enable them through a reviewed `DataRequirement` without code changes.
+7. **Multi-venue by capability.** Core code must not route with growing `if venue == ...` branches. Market types include spot, equity, perpetual, dated futures, option and index/reference products. Future Deribit support must fit the existing instrument/event/order-book contracts.
+8. **Rust is promoted by evidence.** Rust owns approved hot paths only after shadow parity, replay determinism, failure recovery and capacity gates pass. Python remains the control/query/history authority where it is the better fit.
+9. **Tests are isolated and cleaned.** Use deterministic venue fixtures and disposable Compose project names, topics, Redis prefixes, PostgreSQL schemas and object-store buckets. Do not flush shared Redis, alter production parquet, or reuse live consumer groups. Remove test resources and report cleanup after each phase.
+10. **Real-provider tests are bounded.** Read-only venue smoke tests use small symbol/feed sets, respect rate limits and never seed/bypass missing data. They supplement deterministic tests; they do not replace them.
+11. **Evidence is concise and durable.** Store checksums, counts, latency percentiles, gap/duplicate results and compact report files. Do not paste unbounded logs into this plan.
+12. **Commit discipline.** Commit one coherent, tested implementation slice at a time with the configured BobbyAxerol identity. Do not bundle unrelated `symbols.json`, local data, logs or caches. Open PRs into `dev`; promote to `main` only through release gates.
+13. **New debt is governed.** Fix in-scope bugs during the phase. Stop and request direction only for a material architecture, infrastructure-cost, licensing, source-authority or public-contract decision.
+14. **Provider guides refine, not fork, the platform.** OKX `P0-P4` work follows the seven-phase mapping in its guide. Public V2 remains provider-neutral; provider routes are authenticated diagnostics/control-plane only. Provider docs and changelog are re-verified for every touched endpoint/channel and the verification date is recorded.
+15. **Running consumers are protected by default.** Development, fixtures, load tests and shadow producers use isolated process/container names, ports, Redis prefixes, consumer groups, schemas and output paths. No phase may restart, reconfigure, flush, prune, overwrite or redirect the running producer/consumer path unless an approved cutover step explicitly names the blast radius and rollback.
+16. **Source changes require a coordinated release plan.** A new producer/source remains shadow until contract, domain parity, freshness, recovery and capacity gates pass. Authority changes use immutable artifacts and one versioned deployment manifest so every owner for the selected feed slice changes consistently; partial mixed ownership is prohibited. Consumer migration remains per declared manifest and does not require a big-bang V1 sunset.
+17. **Testing covers behavior, not only availability.** Each slice runs applicable unit, contract/golden, deterministic replay, domain-oracle, integration, failure/reconnect, compatibility, resource/capacity and bounded real-provider checks. Reports state cases run, exact results, untested cases and cleanup evidence. A healthy HTTP response alone is never phase acceptance.
+18. **Correctness, stability and scalability are release gates.** No optimization is promoted if it changes identity, units, timestamps, ordering, bar closure, source authority or legacy behavior without an approved versioned contract. No benchmark is accepted without zero unexplained loss/duplicate/gap and bounded CPU, memory, disk, queue and lag under measured load plus headroom.
+19. **Production data is provider-authentic.** Production and shadow ingestion
+    paths may only publish bytes received from an approved real venue/provider or
+    replay those previously durably captured bytes. They must never fabricate,
+    seed, interpolate or silently substitute market events. Synthetic, generated
+    and simulator payloads are restricted to isolated tests and are marked as
+    test provenance. Bounded read-only provider smoke is mandatory before a feed
+    implementation is frozen; fixtures remain the deterministic failure oracle,
+    never evidence that a live source works.
+20. **Public beta is not source-authority promotion.** V2 beta data-plane routes
+    are versioned, authenticated, rate-limited and read-only. Control mutations
+    remain on an internal network. V1 remains authoritative and available as the
+    rollback path until an independently approved feed-slice cutover.
+21. **Implementation language stays behind the contract.** Rust may replace a
+    Python hot path only behind the existing canonical Protobuf, V2 API/SDK and
+    compatibility boundaries. Rust implementation names must not leak into
+    public schemas or force alpha/Trading System consumers to change.
+22. **Rust replaces core paths by evidence, not aspiration.** Each feed moves
+    `PYTHON_PRIMARY -> RUST_SHADOW -> RUST_CANARY -> RUST_PRIMARY` independently.
+    Exact domain parity, real-provider shadow evidence, replay determinism,
+    reconnect/gap recovery, bounded resources and tested rollback are mandatory.
+    An unexplained mismatch blocks promotion regardless of throughput gain.
+23. **Python remains the outer platform layer.** Python continues to own REST and
+    gRPC query/control surfaces, SDK/facades, consumer requirements, historical
+    orchestration, reconciliation, operational tooling and low-rate adapters
+    unless profiling plus a separate approval demonstrates a material benefit.
+    Rust targets venue ingestion, native decoding, canonicalization,
+    ordering/dedup/gap state, realtime books/bars, durable publishing and other
+    measured hot paths.
+24. **Every venue converges on one Rust core.** Binance is the first real
+    vertical slice, not a separate core or a Binance-only target. Binance, OKX,
+    DNSE/VN, future Deribit and other adapters must implement the same capability
+    and canonical-core traits. A venue whose network/SDK edge remains Python
+    publishes an authenticated raw provider envelope into the Rust core rather
+    than maintaining a second Python canonical/quality implementation.
+
+25. **Data-plane identity is application-enforced and consumer-bound.** Gateway
+    authentication is not the sole trust boundary. REST dependencies and gRPC
+    interceptors verify short-lived workload identity, audience, issuer,
+    environment and scopes inside the V2 application. The authenticated subject
+    resolves to one registered consumer manifest; a caller-supplied
+    `consumer_id`, purpose, grade or execution flag cannot elevate entitlement.
+26. **Public V2 payloads are typed and closed.** A public beta response or SDK
+    model must use feed-discriminated payload types with `extra = forbid`,
+    generated enums and exact decimal semantics. `dict[str, Any]`, unversioned
+    provider payloads and ambiguous string enums are restricted to authenticated
+    diagnostics. `UNSPECIFIED` enum values fail validation rather than selecting
+    a production default.
+27. **Delivery policy follows event lifecycle, not only feed name.** Trade,
+    order-book delta/snapshot/reset, final bar, bar revision/correction,
+    source-authority transition and quality-state transition are lossless
+    canonical events. BBO, ticker and explicitly marked in-progress bar updates
+    may be coalesced only by a deterministic lifecycle-aware key. A final or
+    revised bar may never be overwritten by an in-progress update.
+28. **Readiness is measured, not declared.** Liveness, process readiness,
+    dependency readiness, data readiness, authority readiness and per-consumer
+    eligibility are separate states. A route or runtime role cannot return
+    `ready` from a phase constant or static manifest when its broker, query
+    store, cursor signer, catalog, source policy, auth state or projector is
+    unavailable or outside the approved lag/freshness bound.
+29. **Cursor claims bind the complete recovery contract.** Signed cursors bind
+    environment, authenticated consumer, requirement digest, stream/partition,
+    snapshot watermark, schema major, partition epoch, source-policy revision,
+    instrument-catalog revision and expiry. A cursor from a previous
+    repartition, policy revision, environment or consumer is rejected
+    deterministically.
+30. **Snapshots and checkpoints are immutable facts.** SDKs and services must
+    not fabricate a placeholder snapshot ID, cursor or watermark. Missing
+    immutable snapshot identity or a signed resume cursor is a fail-closed
+    contract error. Execution-grade consumers acknowledge only a contiguous
+    applied range and persist checkpoints through a consumer-owned durable or
+    transactional adapter.
+31. **Raw lineage preserves exact provider evidence.** The raw-provider envelope
+    stores the exact received frame bytes, the declared transport transform,
+    source session and connection generation. `raw_frame_hash` covers exact
+    bytes at the declared capture boundary; `canonical_payload_hash` covers the
+    deterministic canonical representation. Re-serialized JSON is not evidence
+    of byte-for-byte source fidelity.
+32. **Replicated durability precedes authority.** A local SQLite WAL, local file
+    or single-node Redis Stream may support bounded shadow certification, but no
+    canonical feed becomes the sole production authority until replicated
+    durable transport, acknowledgements, retention, failover, restore, quotas,
+    ACLs and cursor recovery are proven on the real deployment topology.
+33. **Authority is persistent, compare-and-swap and sink-fenced.** Every
+    venue/market/product/feed/partition slice has one durable authority record,
+    monotonically increasing revision and lease epoch. Producers include owner,
+    slice, authority revision and lease epoch in publication metadata. The
+    authoritative sink/projector rejects stale or non-owner writes; producer-side
+    self-checks alone are insufficient against zombie writers.
+34. **Partition ownership is stable and versioned.** Canary selection and
+    subscription sharding operate on stable instrument or durable-partition
+    identity, never per event. Rendezvous/consistent hashing or a persisted
+    assignment table limits churn. Any partition-count or hash-function change
+    creates a new partition-plan epoch with an explicit handoff watermark.
+35. **Corrections and revisions are append-only domain events.** Trade busts,
+    trade corrections, bar revisions, instrument metadata revisions and source
+    authority revisions reference the superseded event or revision. Historical
+    state is rebuilt into a new snapshot; canonical history is not silently
+    mutated in place.
+36. **Capacity gates are machine-evaluable.** A report is `PASS` only when every
+    configured throughput, bytes/s, latency, loss, duplicate, gap, queue, spool,
+    CPU, RSS, disk and recovery criterion passes exactly or an explicit approved
+    tolerance is recorded. Tools may not label a result `PASS` when the measured
+    target is missed implicitly.
+37. **An in-process lock is not a distributed handoff proof.** A local lock may
+    protect one replica, but multi-replica replay-to-live continuity requires a
+    broker-native cursor/barrier or one active fenced gateway per partition.
+    Remote durable I/O is not held under one global event-loop lock.
+38. **Execution eligibility is derived server-side.** Data grade, authority,
+    source policy, freshness, completeness, open-gap state and consumer
+    entitlement jointly determine execution eligibility. A request header or
+    payload field cannot assert that a response is execution-grade.
+39. **Disaster recovery precedes execution dependency.** A critical alpha or
+    execution service may not depend solely on V2 until broker failover,
+    PostgreSQL control-state restore, cursor-key rotation, object-store/PITR,
+    Redis/projector rebuild and authority reconstruction from the audit log have
+    passed the approved recovery objectives.
+
+## 3. Phase Summary
+
+| Phase | Name | Primary outcome | Status |
+|---:|---|---|---|
+| 0 | Containment, inventory and measurable baseline | Freeze compatibility, stop unused cost and establish reproducible truth | `COMPLETE` |
+| 1 | Canonical contracts, identity and runtime boundaries | Stable venue-neutral domain plus separately scalable Python roles | `COMPLETE (DARK)` |
+| 2 | Durability contract, bridge and Rust foundation | Replayable transport boundary and deterministic cross-language core without premature broker cutover | `COMPLETE (DARK)` |
+| 3 | Scalable ingestion and compatibility projection | Demand-driven Rust hot path with legacy V1/Redis parity | `COMPLETE (FROZEN SHADOW)` |
+| 4 | Quality, history, replay and gap-free handoff | Certified data products from warmup through live recovery | `COMPLETE (FROZEN SHADOW)` |
+| 4.5 | V2 readiness and debt closure | Freeze query semantics and remove correctness/security ambiguity before endpoint work | `COMPLETE (FROZEN DARK)` |
+| 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `COMPLETE (FROZEN SHADOW)` |
+| 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `BLOCKED (SHADOW PASS; PRIMARY NO-GO)` |
+| 7 | V2 public beta and consumer canary | Publish a protected read-only V2 surface and validate real consumer behavior without changing authority | `COMPLETE (BETA-GO READ-ONLY)` |
+| 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `COMPLETE (8.0-8.3; RUST_SHADOW only)` |
+| 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
+
+## 4. Phase 0 - Containment, Inventory And Measurable Baseline
+
+**Status:** `COMPLETE`
+
+### Goal
+
+Create a trustworthy, reproducible baseline before changing transport or schemas; freeze V1 behavior; identify every real consumer; and stop broad Spot streaming only when no active/declared consumer requires it.
+
+### Guide Index
+
+- [Phase 0 detailed guide index: Sections 2, 4, 24, 27, 30-31 and Epic E0](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-0)
+- [OKX Phase 0 workstream: compatibility inventory, fixtures, profiles and known pagination defect](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-program-phase-0)
+
+### To Do
+
+- Inventory all REST routes, request/response examples, SDK public methods, Redis keys/channels, source/market semantics and known consumers in alpha, Trading System and diagnostics.
+- Snapshot V1 OpenAPI and legacy Redis payloads as golden compatibility artifacts. Record owner, criticality, freshness, warmup and fallback requirements per consumer.
+- Measure current host/runtime baseline: enabled feeds, shard count, messages/s, queue depth/drop delta, reconnects, Redis commands/memory/network, API latency, CPU/RSS, parquet coverage and provider REST pressure.
+- Add a deterministic baseline corpus for Binance USD-M, Binance Spot, OKX and VN payloads, including malformed, duplicate, out-of-order, reconnect and market-closed cases.
+- For OKX, freeze `/v1/crypto/ohlcv/okx/...`/SDK output, capture exact native `instId` and REST/WS profile fixtures, and characterize the current `after`/`before` defect before correcting it in an approved implementation slice.
+- Separate `liveness`, service `readiness`, feed readiness and execution eligibility in reports without changing V1 response shape.
+- Add explicit source/market feature flags and validate configuration at startup. Remove duplicate/hardcoded universe overrides from runtime ownership.
+- Prove Spot demand from declaration plus telemetry. If demand is zero, set Spot ingestion disabled by default while preserving Spot REST wrappers, adapter code and a tested re-enable path.
+- Establish test-resource namespaces and cleanup commands for broker topics, Redis, PostgreSQL and object storage before those dependencies are introduced.
+- Record baseline budgets and acceptance thresholds used by later phases. Thresholds must reflect measured load plus agreed headroom, not arbitrary aspirational numbers.
+
+### Verification And Exit Gate
+
+- Golden `/v1`, SDK and Redis compatibility tests pass against the current implementation.
+- Consumer inventory covers every observed and declared caller; unknown callers are listed and block destructive contract changes.
+- Two bounded runtime windows show demand telemetry, feed freshness, queue/drop deltas, reconnect behavior and resource usage.
+- Spot-off configuration starts without Spot WebSocket shards, leaves USD-M/VN demanded feeds healthy, reduces resource use measurably and can be rolled back with one configuration change.
+- Existing unit suite, Docker integration suite and read-only sampled provider smoke pass; generated test state is cleaned.
+- Baseline report and machine-readable artifacts are committed without credentials or raw unbounded logs.
+
+### Completed
+
+- Added validated source ownership configuration. The new artifact defaults to Binance USD-M trade+kline; Spot, DNSE, vnstock and preload ownership remain independently configurable. The running service was not restarted.
+- Frozen V1 OpenAPI, route/method/name inventory, SDK signatures and Redis payload shapes under [`contracts/v1`](contracts/v1).
+- Added a read-only audit tool, bounded provider smoke and deterministic Binance/OKX/VN/malformed fixture corpus.
+- Inventoried the full workspace, Trading System and active migrated alpha tree without reading generated logs/state/data.
+- Captured two bounded runtime windows and a resource/topology baseline. Details and exact artifacts are in the [Phase 0 baseline report](upgrade/evidence/PHASE0_BASELINE_REPORT.md).
+- Detected and fixed provider-scoped kline demand health correlation without changing V1 Redis payloads (`965275e`). Runtime verification remains part of the coordinated immutable-image deployment because Phase 0 did not restart the live process.
+- Measured current source topology: 44 full Binance shards versus 16 USD-M-only shards, a projected 63.636% connection reduction. No active demand lease required Spot during observation.
+
+### Technical Debt / Decision Gate
+
+- Phase 1 must turn measured load into explicit SLO/headroom budgets. Baseline observed approximately 4.3k-4.5k Redis commands/s and 1.98-2.04 MB/s input during the two ten-second windows.
+- The running image still has four Binance sources because no cutover was allowed. Deploying the USD-M-only default requires immutable-image V1/Redis shadow parity and coordinated recreation with the documented source-list rollback.
+- Legacy `stream:trade:{symbol}` source authority must be frozen to USD-M (or explicitly versioned) before Spot producer removal. Active alphas had no direct-provider usage, but workspace-wide legacy/reference files remain and are tracked in inventory evidence.
+- Existing queue code has 3,790,249 cumulative drops. Recent drops were zero in final windows, but Phases 2-3 must replace feed-agnostic drop/coalesce behavior before trade/book delta certification.
+- OKX `after`/`before` pagination remains a characterized defect in the compatibility facade; it is corrected under the async adapter/history implementation with V1 golden protection, not silently in Phase 0.
+- Existing `websockets.legacy` and `InvalidStatusCode` deprecation warnings must be removed during the scalable adapter implementation.
+
+### Rollback
+
+- Restore the previous feed-enable configuration and immutable image. No schema, topic or consumer cutover occurs in Phase 0.
+
+## 5. Phase 1 - Canonical Contracts, Identity And Runtime Boundaries
+
+**Status:** `COMPLETE (DARK / NO V1 CUTOVER)`
+
+### Goal
+
+Define one precise, venue-neutral data domain and split the combined process into independently scalable roles while preserving all V1 behavior.
+
+### Guide Index
+
+- [Phase 1 detailed guide index: Sections 8-10, 12, 20-23, P1 and Epics E1-E3](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-1)
+- [OKX Phase 1 workstream: canonical identity, authoritative registry and capability profiles](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-program-phase-1)
+
+### To Do
+
+- Create versioned Protobuf packages and Buf configuration for common envelope, instrument, trade, BBO/quote, bar, order-book snapshot/delta, quality and feed-state events.
+- Preserve price/quantity as exact decimal coefficient/scale or venue-native string; prohibit canonical binary float.
+- Implement canonical `instrument_uid`, aliases, venue, source/provider, market/product type, contract expiry, strike, option type, multiplier, tick/lot metadata and trading calendar/session model.
+- Define capability descriptors for REST history, trades, BBO, bars, L2 snapshots/deltas, sequence/checksum, resubscribe/resnapshot and source authority. Ensure options and dated contracts need no core schema redesign.
+- Model OKX Spot, Swap, dated Futures, Options and Event contracts from `/public/instruments`; never derive a derivatives `instId` with string heuristics. Region/entity/tier availability is explicit capability metadata.
+- Build PostgreSQL migrations for instrument master, aliases, source policy, subscription registry, config revisions, leases/fencing and job state. Do not store the tick stream in PostgreSQL.
+- Extract deployable Python roles (`api`, `control`, `history`, compatibility facade) from the current combined lifespan. A role flag must have one owner and fail startup on contradictory ownership.
+- Keep legacy imports and application entrypoints through explicit facades. API replicas must not create venue subscriptions.
+- Write ADRs for contract representation, instrument identity, role boundaries, transport decision inputs and V1 compatibility ownership.
+
+### Verification And Exit Gate
+
+- Buf lint/generation and breaking checks pass; generated Python and Rust types encode/decode the same golden bytes.
+- Exact decimal, timestamp, event-ID and identity collision suites pass for spot, perpetual, dated futures, VN derivative and option fixtures.
+- Role-topology integration test proves scaling API replicas does not increase provider connections or duplicate publication.
+- V1 OpenAPI/Redis/SDK golden artifacts are byte/semantic compatible with Phase 0.
+- Schema migrations are forward-only, idempotent in clean and existing DB cases, and have backup/rollback evidence.
+- Static dependency tests prevent API/control/history modules from importing and starting ingestion ownership accidentally.
+
+### Completed
+
+- Added canonical Protobuf packages, pinned Buf code generation and a frozen
+  Phase 1 breaking baseline. Generated Python/Rust models share one contract;
+  exact decimal, nanosecond timestamp, large native ID and deterministic golden
+  binary tests pass.
+- Added UUIDv5 canonical instrument identity, temporal aliases, metadata
+  revisions, source/venue separation, session calendars and capability profiles.
+  OKX Spot/Swap/Futures/Option/Event records are parsed from authoritative
+  `/public/instruments` fields without symbol heuristics.
+- Added forward-only PostgreSQL migrations for instrument/control metadata,
+  source policies, subscriptions, revisions/audit, leases/fencing and jobs. Clean
+  and legacy-seeded disposable databases pass second-apply idempotence with
+  identical QDL schema hashes; no tick-event table was introduced.
+- Added dark `api`, `control` and `history` entrypoints with fail-closed role
+  ownership. Three API replicas instantiate no venue-loop owner. Existing
+  `app.main:app` remains the sole V1 combined ingestion/projection authority.
+- Added ADRs `0001`-`0005`, contract CI, Compose role profile and Phase 1 evidence.
+- Verification: Buf format/lint/build/generate/breaking PASS; Python/Rust golden
+  parity PASS; migration smoke PASS; full application regression `125 passed`;
+  both environment-gated Redis integration tests separately PASS on disposable
+  Redis; frozen V1 OpenAPI/Redis/SDK artifacts PASS.
+- Evidence: [Phase 1 report](upgrade/evidence/PHASE1_IMPLEMENTATION_REPORT.md),
+  [contract gate](upgrade/evidence/phase1-contract-gate.json), and
+  [migration smoke](upgrade/evidence/phase1-migration-smoke.json). The unchanged
+  live V1 path also passed [7/7 bounded read-only checks](upgrade/evidence/phase1-live-v1-smoke.json)
+  with both running containers still at restart count zero.
+
+### Technical Debt / Decision Gate
+
+- Contract naming or semantics that affect public V2 behavior require explicit approval before schema freeze. Pure implementation details do not.
+- Phase 1 schema bootstrap uses a checked-in binary breaking baseline. Once this
+  branch lands on the protected base branch, add Git-ref breaking comparison as
+  a second gate; do not replace the immutable initial baseline.
+- Control tables and separated roles remain dark. Connecting them to authority,
+  adding durable transport, or starting role services belongs to later approved
+  phases and requires a coordinated immutable-image deployment.
+
+### Rollback
+
+- New roles and schemas remain dark. Existing combined runtime stays authoritative until a later per-feed cutover.
+
+## 6. Phase 2 - Durability Contract, Bridge And Rust Foundation
+
+**Status:** `COMPLETE (DARK / NO V1 CUTOVER)`
+
+### Goal
+
+Introduce a transport-neutral replay contract, a bounded durable bridge and a deterministic Rust data-plane foundation without making Rust or a Kafka-compatible broker authoritative prematurely.
+
+### Guide Index
+
+- [Phase 2 detailed guide index: Sections 6-7, 11, 28-29 and Epics E4-E5](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-2)
+- [OKX Phase 2 workstream: durable fixtures, simulator and cross-language deterministic parity](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-program-phase-2)
+
+### To Do
+
+- Define transport-neutral `EventSink`, `EventSource`, cursor/checkpoint, event-ID, retry and replay contracts before selecting infrastructure. Application and public contracts must not expose Redis- or Kafka-specific identifiers.
+- Implement a bounded bridge for the first isolated feed slice using a dedicated durable Redis Streams instance or local WAL/spool. It must have persistence, `noeviction`, strict memory/disk bounds, trimming, cursor-expiry behavior, monitoring and a tested cleanup/sunset path; the existing ephemeral `redis_marketdata` is forbidden for this role.
+- Measure bridge throughput, replay horizon, consumer-group count, lag, memory/disk amplification and operational recovery. Provision a Kafka-compatible broker only when the promotion gate demonstrates a real need; keep producer/consumer contracts Kafka-compatible from the start.
+- When the Kafka gate is approved, provision isolated raw, canonical, quality and DLQ/quarantine topics with explicit partition keys, retention, replication, quotas and ACLs. A single-node broker is a replay/durability step, not an HA claim.
+- Implement idempotent publication, deterministic event IDs, retry classification, bounded local spool and feed-state transition when durable commit is unavailable.
+- Create a Cargo workspace for contract types, decimal/time utilities, instrument identity, event IDs, adapter traits, broker client, telemetry and replay test tools.
+- Implement cross-language golden codecs/checksums and a deterministic venue simulator reusable by Python and Rust.
+- Include OKX REST envelopes and WS book snapshot/update/gap/keepalive/maintenance-reset/connection-generation frames in the same durable simulator; no separate OKX event backbone is introduced.
+- Build a shadow raw-to-canonical pipeline for one small, demand-backed slice. The provisional slice is selected Binance USD-M trade symbols, not broad Spot.
+- Keep Redis as latest-state/legacy projection only; prove it can be rebuilt from canonical events.
+- Add CI gates for formatting, lint, tests, unsafe-code policy, dependency/license/security audits, Buf compatibility and reproducible container artifacts.
+
+### Verification And Exit Gate
+
+- Restart/recovery tests for the selected bridge lose no acknowledged canonical events and do not expose non-idempotent duplicate state. If Kafka is promoted in this phase, broker restart/failover tests are additionally mandatory.
+- Same raw fixtures and config/normalizer revision produce identical canonical checksums across repeated replay and across Python/Rust reference implementations.
+- Slow/down broker tests prove spool bounds, backpressure and `DEGRADED/BLOCKED` semantics; no silent queue drop is allowed.
+- Redis flush/restart followed by replay rebuilds the same latest-state checksum and legacy projection fixture.
+- Performance baseline reports p50/p95/p99/p99.9, throughput, CPU, RSS, allocation and disk/network amplification using semantically identical parsing.
+- All ephemeral topics, groups, Redis prefixes and volumes created by tests are removed after evidence capture.
+
+### Completed
+
+- Defined portable event sink/source, batch append, logical cursor/checkpoint,
+  deterministic event-ID, retry and partition contracts without exposing a
+  Redis/Kafka offset in application contracts.
+- Implemented a bounded local SQLite WAL bridge for the selected BTCUSDT and
+  ETHUSDT Binance USD-M trade shadow slice. It uses `synchronous=FULL`, atomic
+  batches, raw-first durable acceptance, payload checksums, corruption checks,
+  monotonic offsets, consumer TTL and strict logical/physical metadata bounds.
+- Implemented restartable raw-to-canonical processing, idempotent compatibility
+  projection and Redis flush/restart/replay rebuild. All Redis writes use an
+  isolated `shadow:qdl:v2` namespace; legacy production publication is disabled.
+- Added Python/Rust exact-decimal golden parity for Binance and OKX plus a
+  deterministic OKX protocol simulator covering sequence gaps, stale connection
+  generations, keepalive and maintenance reset.
+- Added a Rust workspace and immutable replay tool with pinned compiler/base
+  image digests, `unsafe` forbidden, deterministic backoff/rate-limit/fencing
+  primitives and CI format/clippy/test/dependency policy gates.
+- Measured 10,000 durable events over 10 partitions and 8 consumer groups:
+  1,470.85 events/s append, 8,211.74 events/s replay, p99 62.28 ms per fsynced
+  batch, 33,004 KiB max RSS and 2.072x disk amplification. All configured gates
+  passed for the small shadow slice.
+- Verification: full Python regression 146 run (143 pass, 3 environment-gated skips);
+  Phase 2 focused tests 20 PASS; Rust 9 PASS; Buf compatibility PASS; isolated
+  Redis recovery PASS; Rust dependency/license/advisory policy PASS; two
+  immutable builds produced the same image ID.
+- Read-only live smoke loaded BTCUSDT/ETHUSDT through unchanged V1, produced two
+  raw and two canonical local records, and made zero production writes. Running
+  Data Layer/Redis restart counts remained zero and all Phase 2 resources were
+  cleaned.
+- Evidence: [Phase 2 implementation report](upgrade/evidence/PHASE2_IMPLEMENTATION_REPORT.md),
+  [verification summary](upgrade/evidence/phase2-verification.json),
+  [performance report](upgrade/evidence/phase2-performance.json), and
+  [live shadow smoke](upgrade/evidence/phase2-live-shadow-smoke.json).
+
+### Technical Debt / Decision Gate
+
+- Kafka promotion requires explicit approval after measured evidence shows at least one material trigger: multiple independent replay consumers, replay horizon beyond the bounded bridge, raw trade/book volume exceeding its safe budget, multi-node HA requirement, or unacceptable bridge lag/recovery time.
+- Until that gate passes, the dedicated bridge/local spool is transitional infrastructure with a declared limit and sunset path, not the canonical long-term target.
+- The bridge is a single-host, non-HA shadow mechanism and is not approved for
+  broad-universe trades or order-book deltas. Phase 3 must produce sustained
+  demand-backed parity/capacity evidence before any feed authority changes.
+- Existing Python V1/build dependencies have advisory findings in the current
+  image. Phase 2 added no Python dependency; a compatibility-tested dependency
+  refresh remains mandatory before production promotion. Rust Phase 2
+  dependencies pass advisory, license, ban and source policy checks.
+- OpenTelemetry export and multi-node durable-broker failover are later
+  certification work; Phase 2 supplies the stable interfaces, not an HA claim.
+
+### Rollback
+
+- Stop shadow Rust/broker services and remove their isolated resources. Existing Python-to-Redis path remains authoritative.
+
+## 7. Phase 3 - Scalable Ingestion And Compatibility Projection
+
+**Status:** `COMPLETE (FROZEN SHADOW)`
+
+### Goal
+
+Run high-throughput ingestion and canonical projection with explicit shard ownership, demand-driven subscriptions and V1-compatible outputs, initially in shadow and then per-feed authority slices.
+
+### Guide Index
+
+- [Phase 3 detailed guide index: Sections 12-14, 20, 23, 37, P2 and Epics E6-E8](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-3)
+- [OKX Phase 3 workstream: async ingestion, public/business WS and order-book state machine](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-program-phase-3)
+
+### To Do
+
+- Implement Rust Binance USD-M adapter for demanded trade/BBO/bar feeds using capability-based interfaces, validated instrument discovery and exact native sequence/time/decimal extraction.
+- Replace configured broad-universe ownership with declared baseline plus TTL demand leases; implement lease/fencing epochs so only one active owner publishes a shard.
+- Keep Spot disabled when registry refcount is zero. Add conformance tests showing Spot can be enabled without changing code or namespaces.
+- Implement bounded queues by feed class: lossless backpressure/spool for trade/book delta; explicit coalescing only for latest-state-safe projections.
+- Add reconnect/resubscribe, rate-limit budget, jittered backoff, heartbeat, gap detection and REST snapshot/resync appropriate to each feed.
+- Implement OKX endpoint-bucketed async REST and public/business WS supervisors. True book-sequence gaps invalidate executable state and require a fresh WS snapshot; REST `/books` must not be used as a fictitious delta bridge.
+- Implement canonical Redis projector plus V1 compatibility projector with checkpointed idempotence, versioned keys and legacy payload snapshots.
+- Shadow-compare Python and Rust on event count, IDs, price, quantity, side, timestamps, sequence, bar closure and quality flags before authority changes.
+- Provide adapter extension fixtures for OKX and a synthetic Deribit-style option/order-book source to prove capability boundaries without claiming those venues production-ready.
+
+### Verification And Exit Gate
+
+- Adapter conformance suite passes normal, malformed, duplicate, out-of-order, gap, reconnect storm, delist and graceful shutdown cases.
+- Two-owner fencing test proves stale owner cannot publish after lease loss.
+- Burst and sustained load at measured universe size plus headroom produces zero silent loss, bounded memory and controlled broker/Redis lag.
+- Python-versus-Rust shadow reports meet exact-field parity; every allowed divergence is versioned and approved.
+- Legacy V1/Redis consumers observe no shape, namespace or source-authority regression.
+- One low-risk feed slice can switch authority and roll back without restarting unrelated venue/feed shards.
+
+### Completed
+
+- Added deterministic demand registry, TTL leases, no-truncation shard planning,
+  PostgreSQL lease ownership and monotonically increasing fencing epochs.
+- Added feed-class queue policy: trade/book are lossless and block under
+  pressure; BBO/bar may coalesce only the same pending latest-state key. Spot
+  with zero declared demand creates zero shards but uses the same contract when
+  enabled later.
+- Added a provider-authentic Binance USD-M adapter with exchange-info
+  validation, exact tick/step metadata, demanded-only WebSocket streams,
+  reconnect/backoff and interruptible graceful shutdown. Added a bounded Rust
+  Binance trade hot path that writes raw provider frames before canonical bytes
+  to an fsynced shadow WAL.
+- Added an OKX V5 async REST client with endpoint buckets and retry, separate
+  public/business WebSocket supervisors with acknowledgement correlation,
+  heartbeat/reconnect/resubscribe and an executable book state machine. A true
+  `prevSeqId/seqId` gap clears the book and requires a fresh WebSocket snapshot;
+  REST `/books` is explicitly forbidden as a delta-continuity bridge.
+- Added exact canonical BBO, bar and book mappings; raw-first market events;
+  canonical latest-state and frozen V1 bar compatibility projection; atomic
+  Redis checkpoint/lease-epoch fencing; and a per-feed authority router that
+  switches `SHADOW/CANONICAL/LEGACY` without process restart.
+- Added adapter capability-boundary tests for an option/order-book source.
+  Deribit-shaped data is explicitly test-synthetic and cannot be certified as a
+  production source.
+- Added reconnect-storm and stop-interruption tests for Binance and OKX so a
+  requested shutdown does not wait for the heartbeat timeout.
+- Added bounded real-provider, burst/restart, sustained-load and Rust live-frame
+  parity evidence. Production/shadow implementations do not import fixtures or
+  simulator modules.
+- Froze the Phase 3 implementation in shadow mode. Evidence and immutable
+  artifact identity are recorded in
+  [`PHASE3_IMPLEMENTATION_REPORT.md`](upgrade/evidence/PHASE3_IMPLEMENTATION_REPORT.md)
+  and [`phase3-freeze.json`](upgrade/evidence/phase3-freeze.json). Reopening this
+  phase requires a reviewed contract/ADR change and new certification evidence.
+
+### Verification
+
+- Full Python/V1 regression: `177` tests run, `172` passed and `5` expected
+  environment-gated skips.
+- Phase 3 focused adapter/control/projection/provenance suite: `29/29` passed,
+  including malformed input, reconnect storm, delist/inactive symbol,
+  sequence gap and graceful shutdown.
+- Rust `1.82.0`: format, Clippy with warnings denied and `11/11` tests passed;
+  Python/Rust trade/BBO/bar golden bytes are exact.
+- Buf format/lint/breaking/codegen-diff gates passed against the frozen Phase 1
+  descriptor.
+- PostgreSQL disposable integration passed exclusive owner, renew, release,
+  expiry takeover and stale-epoch fencing.
+- Redis disposable integration passed AOF restart, deterministic flush/rebuild,
+  stale-epoch rejection and live authority switch/rollback across isolated
+  targets with no process restart.
+- Provider-authentic read-only smoke passed Binance USD-M trade/BBO/closed bar
+  and OKX trade/book snapshot/deltas, with `20` durable records and zero
+  production writes.
+- Rust read-only smoke consumed `3` real Binance events; every canonical byte
+  matched Python and was written to isolated fsynced WAL only.
+- Burst/restart gate accepted and replayed `20,000/20,000` events across `80`
+  partitions at `1,343.03 events/s`, with queue rejection `0` and peak traced
+  Python memory `1,965,064` bytes.
+- Sustained gate held `500.70 events/s` for `5,000` events across `80`
+  partitions; durable p95/p99 were `157.09/163.60 ms`, queue rejection `0`,
+  records survived restart and peak traced memory was `335,239` bytes.
+- Running `data_layer_service` and `redis_marketdata` stayed on their existing
+  images with restart count `0`; `/v1/health` remained `ok`. No production
+  Redis, PostgreSQL, Parquet, route, namespace or authority flag changed.
+- Cleanup left no Phase 3 test container/network, removed the disposable Python
+  test image and `709 MB` Cargo target cache, and retained only the frozen Rust
+  evidence image. Existing logs, volumes and running services were untouched.
+
+### Technical Debt / Decision Gate
+
+- Phase 3 is certified only as a dark/shadow implementation. SQLite remains a
+  single-host transitional spool, not an HA broad-universe authority. The
+  Kafka-compatible promotion trigger and production authority cutover remain
+  governed Phase 6 decisions.
+- Binance individual trade and BBO WebSockets plus closed-bar REST were
+  provider-certified from this host. The Binance USD-M kline WebSocket emitted
+  no frame during bounded probes, so its parser has deterministic golden parity
+  but is not falsely marked live-certified.
+- OKX public `books` is certified with `seqId/prevSeqId` continuity. The current
+  V5 `checksum` value is deprecated/fixed and is not represented as a valid CRC
+  capability. VIP/deep-book channels remain separately uncertified.
+- Historical completeness, raw retention governance, quarantine, source
+  failover and gap-free warmup/live cursor handoff are Phase 4 scope. No
+  generated bar, REST order-book bridge or synthetic source is used to conceal
+  those pending capabilities.
+- Production promotion remains deliberately unperformed under Rules 15-16.
+  The authority mechanism is integration-certified, but V1 stays authoritative
+  until the Phase 6 release/cutover gate is explicitly approved.
+
+### Rollback
+
+- No live rollback was needed because no authority changed. For an isolated
+  shadow deployment, stop only its shard owner, return its per-feed authority
+  to `LEGACY`, verify the fencing epoch, and delete only its namespaced shadow
+  checkpoints/spool after checksum capture. Existing Python/V1 publication
+  continues uninterrupted.
+
+## 8. Phase 4 - Quality, History, Replay And Gap-Free Handoff
+
+**Status:** `COMPLETE (FROZEN SHADOW)`
+
+### Goal
+
+Produce auditable, replayable and revision-aware data from raw ingestion through historical warmup and live continuation, with no undetected gap or duplicate at the handoff.
+
+### Guide Index
+
+- [Phase 4 detailed guide index: Sections 13-16, 38 and Epics E7/E9](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-4)
+- [OKX Phase 4 workstream: historical pagination, reference data coverage and handoff](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-program-phase-4)
+
+### To Do
+
+- Implement canonical validation levels, duplicate/out-of-order handling, sequence/gap ledger, clock-discipline metrics and failover/source-authority state machine.
+- Preserve raw source payload and lineage for governed retention; quarantine malformed/unknown-instrument events instead of coercing invalid values.
+- Add S3-compatible object storage and Iceberg/Parquet materialization with immutable data files, atomic snapshots, schema evolution and compaction governance.
+- Migrate existing VN canonical 1m and derived intervals without fabrication; preserve session calendars, origin, revision and sparse-market semantics.
+- Materialize crypto history/replay only where demand/cost evidence requires it; retain direct bounded REST wrappers for ordinary warmup.
+- Implement snapshot plus durable cursor/watermark protocol, cursor persistence and reconnect replay so warmup transitions to live without gap or duplicate.
+- Add historical/live reconciliation, bar revision behavior and replay determinism reports keyed by source/config/normalizer versions.
+- For OKX, correct `after`/`before` traversal with exact window filtering/dedup/no-progress guards; expose explicit funding/mark/index/OI provenance and coverage. Current OI snapshots never imply pre-ingestion historical coverage.
+
+### Verification And Exit Gate
+
+- OHLCV oracle tests verify first/max/min/last/sum rules, market-session boundaries, DST/time zones, daily close and late/revised bars.
+- Crash tests at file upload/metadata commit boundaries expose either old or new Iceberg snapshot, never partial state.
+- Snapshot-cursor tests cover cold start, reconnect, cursor expiration, compaction boundary, late event and consumer restart.
+- Historical/live overlap checks produce zero unexplained gaps/duplicates for certified feeds.
+- Raw replay produces deterministic canonical checksums and traceable lineage to historical rows and Redis latest state.
+- VN real-provider bounded checks distinguish market closed/sparse/late data from outage without synthetic seeding.
+
+### Completed
+
+- Phase 4 verification matrix frozen before implementation: canonical quality
+  and source authority; immutable/revision-aware history; deterministic replay
+  and signed cursor handoff; OKX pagination/reference coverage; VN sparse
+  session migration; bounded real-provider checks; crash/restart/cleanup gates.
+- Production V1, Redis, PostgreSQL and existing VN Parquet remain read-only for
+  this phase. All new catalog/object-store resources use isolated shadow paths;
+  no object-store or historical authority cutover is approved here.
+- History shadow slice implemented: exact-decimal revision-aware bars,
+  session/DST-aware OHLCV aggregation, immutable ZSTD Parquet snapshots,
+  conditional atomic catalog heads, S3-compatible and PyIceberg boundaries,
+  plus crash/concurrent-writer tests. The real VN migration canonicalizes the
+  mixed legacy UTC/VN-naive 1m file, deduplicates only exact OHLCV duplicates
+  with full source lineage, fails closed on conflicting revisions, and derives
+  all larger intervals from canonical 1m without fabricating bars.
+- Real read-only VN evidence: 28,196 legacy rows -> 27,955 canonical 1m rows;
+  241 exact duplicate groups, zero conflicting revisions, zero fabricated rows;
+  all seven interval snapshots round-trip from isolated shadow storage. See
+  `upgrade/evidence/phase4-vn-shadow-migration.json`.
+- Gap-free handoff/replay slice implemented with HMAC-signed, rotation-aware,
+  consumer/stream/partition/snapshot-scoped cursors; snapshot watermarks,
+  durable consumer checkpoints and offset-contiguity checks. Cursor tampering,
+  wrong scope, expiry, compaction loss and unexplained gaps fail closed; late
+  arrivals appended after the watermark remain replayable by durable offset.
+- Deterministic raw replay now reports raw/canonical/lineage checksums keyed by
+  source revision, normalizer version and config revision. History/live overlap
+  reconciliation supports explicit higher revisions and checks only the open
+  times supplied by a session calendar, preserving legitimate sparse feeds.
+- OKX V5 shadow history/reference client implemented without changing the V1
+  route: documented `after=oldest_ts` backward traversal, inclusive exact-window
+  filtering, overlap dedup, confirmed-candle revision preference, no-progress
+  failure, page/record budgets and explicit coverage. Trade, mark and index
+  candles remain distinct contracts; funding retains formula/method/raw lineage;
+  OI is explicitly `SNAPSHOT_ONLY` and never claims historical coverage.
+- Bounded real OKX public-API evidence passed with 30 trade, 30 mark and 30 index
+  1m bars, six funding records and one OI snapshot; all requested historical
+  windows reported full coverage, with zero production writes. See
+  `upgrade/evidence/phase4-okx-real-history.json`.
+- Calendar quality policy now distinguishes closed sessions/holidays, legitimate
+  sparse feeds, late bars and missing continuous bars. A real read-only DNSE
+  probe for completed date 2026-08-12 returned exactly 241 VN30F1M bars over
+  provider bar sessions 09:00-11:29, 13:00-14:29 and close 14:45, with zero
+  missing/out-of-session/fabricated rows. The 08:45 market pre-open is retained
+  as market-calendar context and is not fabricated as provider OHLCV. See
+  `upgrade/evidence/phase4-dnse-provider-coverage.json`.
+- Historical catalog governance now enforces additive-compatible schemas,
+  records compaction operations, identifies uncommitted orphan files and
+  requires exact dataset confirmation before deletion. S3 CAS uses the ETag
+  from the same read (preventing a concurrent-head race) and paginates listings;
+  dedicated race/immutability tests pass.
+- Full-suite certification found and fixed a handwritten-package collision with
+  generated protobuf namespace `qdl.quality.v1`; the implementation now lives
+  under `qdl.data_quality`, leaving the stable generated contract untouched.
+  Durable replay performance over 10,000 events passed all gates: 1,547.52
+  append events/s, 8,538.58 replay events/s, 60.39 ms append p99 and 2.07x
+  disk amplification. See `upgrade/evidence/phase4-replay-performance.json`.
+- Final verification passed 36/36 focused Phase 4 tests and the full Python/V1
+  regression (213 run, five expected environment skips). PostgreSQL migrations
+  passed on a clean database, an existing database and a second idempotent
+  apply while preserving legacy data (16 `qdl_*` tables and three lease
+  functions). Rust fmt/Clippy `-D warnings`/11 tests, Buf format/lint/breaking/
+  generated-code diff, and Redis AOF restart/rebuild checks also passed.
+- Production compatibility remained read-only: the running V1 container kept
+  restart count zero and health, VN preload and Binance USD-M OHLCV endpoints
+  returned HTTP 200. No production Redis, PostgreSQL, Parquet or authority
+  state was modified. The implementation report and machine-readable freeze
+  are `upgrade/evidence/PHASE4_IMPLEMENTATION_REPORT.md` and
+  `upgrade/evidence/phase4-freeze.json`.
+
+### Technical Debt / Decision Gate
+
+- Object-store/catalog deployment and retention cost require approval before production provisioning; local MinIO/catalog remains a test implementation only.
+- Provider licensing constraints must be recorded before raw retention is enabled for a new source.
+- Production HMAC key custody/rotation, externally exposed handoff endpoints and
+  per-dataset authority promotion remain Phase 5/6 gates; test keys and local
+  catalog boundaries are not production credentials or a cutover claim.
+- OKX open interest remains a truthful point-in-time snapshot. Historical OI
+  coverage requires a separately certified provider capability and must never
+  be inferred from the current endpoint.
+
+### Rollback
+
+- Existing VN Parquet/read path remains available until shadow snapshot reconciliation passes. Historical authority switches per dataset, never globally.
+
+## 8A. Phase 4.5 - V2 Readiness And Debt Closure
+
+**Status:** `COMPLETE (FROZEN DARK)`
+
+### Goal
+
+Close cross-phase correctness, security and compatibility ambiguity before any
+public V2 route or gRPC service is implemented. Freeze provider-neutral query
+semantics over transport/storage interfaces so Phase 5 adds delivery surfaces,
+not new domain behavior.
+
+### Guide Index
+
+- [Pre-Phase 5 readiness guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-4-5)
+- [Stable API, SDK and consumer semantics: Sections 17-19](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#17-stable-api-design)
+- [Failure semantics: Section 38](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#38-failure-semantics-exposed-to-consumers)
+
+### To Do
+
+- Reconcile the conflicting Section 17/38 error names into one stable internal
+  taxonomy and freeze `DataRequirement`, consumer grade, completeness/partial,
+  freshness, bar revision, source-policy and recovery semantics.
+- Define bounded provider-neutral query/result contracts before HTTP/gRPC
+  serialization. An execution-grade all-instruments requirement must fail
+  closed on partial, stale, gapped, non-authoritative or unentitled data.
+- Replace handoff's concrete SQLite dependency with durable transport/catalog
+  protocols. Bind immutable historical snapshot cursor end to the captured live
+  watermark before issuing a signed token; mismatch must fail closed and retry.
+- Introduce a rotation-aware signing-key provider boundary. Unsigned logical
+  cursor tokens remain internal only and must never be accepted on a public V2
+  boundary.
+- Add source entitlement/licensing policy with default-deny external
+  redistribution and raw-history access. Capability and provenance cannot imply
+  entitlement.
+- Close safe legacy compatibility debt needed by certification (notably the
+  deprecated WebSocket client/exception API) without changing V1 routes, SDK or
+  Redis payloads.
+- Resolve stale debt notes from Phases 0-4 as `CLOSED`, `SUPERSEDED` or an
+  explicit Phase 6 infrastructure/authority decision. Do not hide an in-scope
+  defect as a decision gate.
+
+### Verification And Exit Gate
+
+- Pure-domain tests cover invalid/bounded requirements, strict versus partial
+  batches, all consumer grades, freshness/gap/authority decisions and licensing
+  denial without provider calls.
+- Handoff tests cover snapshot/watermark match, mismatch, concurrent head move,
+  key rotation, unknown/retired key, tamper, wrong scope, expiration, compaction,
+  restart and transport substitution without SQLite-specific API assumptions.
+- Existing Phase 1-4 focused suites, full Python/V1 regression, Buf breaking and
+  generated-code gates, Rust fmt/Clippy/tests, Redis rebuild and PostgreSQL
+  migration smoke pass.
+- A Python dependency/advisory report is recorded. Unfixed exploitable runtime
+  findings block Phase 5; accepted non-runtime/tooling findings require an owner
+  and expiry.
+- Read-only V1 health, VN preload and Binance USD-M history smoke return the
+  frozen behavior while the running service restart count remains unchanged.
+- Test containers, images, databases, Redis state, object-store paths and build
+  caches are isolated and removed. User-owned `symbols.json` remains untouched.
+
+### Completed
+
+- Cross-phase audit identified four endpoint blockers: inconsistent failure
+  names, absent query/requirement domain contracts, SQLite-coupled handoff and
+  in-memory-only signing/entitlement boundaries. Provider certification and HA
+  authority gates were separated from endpoint semantics instead of being
+  pulled prematurely into Phase 5.
+- Added provider-neutral query contracts for one canonical error vocabulary,
+  bounded `DataRequirement`/batch semantics, consumer grades, coverage,
+  freshness/gap/recovery and bar-revision policies. Execution-grade requests
+  cannot relax full coverage, authoritative source, gap or freshness gates.
+- Added source licensing/entitlement contracts with explicit purpose and data
+  product. Missing, expired, raw-history and external-redistribution grants
+  fail closed independently of provider capability.
+- Refactored handoff to portable durable-store, catalog and signing-key-provider
+  protocols. `SnapshotHandoffCoordinator` issues a signed grant only when the
+  immutable snapshot cursor end exactly equals the captured durable watermark;
+  live events after that capture remain replayable. Static keys are test/local
+  only, rotation overlap works and retired/unknown/tampered/unsigned cursors
+  fail closed.
+- Reconciled Section 17/38 error names and added legacy alias mapping without
+  creating extra public values. CI now checks Buf against both the immutable
+  Phase 1 baseline and the pull-request base branch.
+- Replaced deprecated legacy WebSocket APIs with `websockets.asyncio` and
+  verified one real Binance USD-M trade frame read-only. V1 route, payload,
+  Redis and reconnect semantics remain unchanged.
+- Closed Python runtime dependency debt: multi-stage image excludes Poetry and
+  build dependencies; patched runtime dependencies audit at 0 findings across
+  61 packages. Full regression exposed and fixed undeclared DNSE `msgpack`
+  ownership. The tested image content size was 163,007,213 bytes versus
+  394,348,787 bytes for the running image (58.66% smaller).
+- Certification passed 11/11 Phase 4.5 tests, 47/47 combined Phase 4/4.5 tests
+  and 224 full Python tests with five expected environment skips. Redis rebuild
+  3/3, PostgreSQL clean/existing/idempotent migration, Buf gates and Rust
+  fmt/Clippy/11 tests passed. The 10,000-event durability benchmark passed at
+  1,432.70 append/s, 8,266.96 replay/s, 59.70 ms p99 and 2.072x disk
+  amplification.
+- Read-only production smoke returned HTTP 200 for health, VN preload and
+  Binance USD-M history; the running V1 restart count stayed zero. No endpoint,
+  producer, storage or source authority was activated. Test image, containers,
+  networks, temporary reports and 520.3 MiB Cargo artifacts were removed.
+- Cross-phase closure matrix, implementation details and machine-readable
+  evidence are in `upgrade/evidence/PHASE45_V2_READINESS_REPORT.md` and
+  `upgrade/evidence/phase45-freeze.json`.
+
+### Technical Debt / Decision Gate
+
+- Kafka-compatible HA promotion, production object-store/Iceberg provisioning,
+  production secret backend, raw-data licensing approval and per-feed authority
+  cutover remain Phase 6 decisions. Phase 4.5 must provide stable interfaces and
+  fail-closed readiness for them; it must not fake infrastructure approval.
+- OKX historical OI and VIP/deep-book capability remain unavailable until a
+  separately licensed/certified provider source exists. Public contracts expose
+  this honestly as capability/coverage state.
+
+### Rollback
+
+- Phase 4.5 adds dark pure-domain contracts and compatibility-safe internals.
+  Revert its commits if required; V1 remains authoritative and no runtime,
+  storage, source or consumer manifest is changed.
+
+## 9. Phase 5 - V2 API, SDK And Controlled Consumer Migration
+
+**Status:** `COMPLETE (FROZEN SHADOW)`
+
+### Goal
+
+Expose provider-neutral V2 snapshot/query/stream contracts and migrate consumers one `DataRequirement` at a time while V1 remains fully operational.
+
+### Guide Index
+
+- [Phase 5 detailed guide index: Sections 17-19, 24-25, 32, P2/P3 and Epics E10-E13](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-5)
+- [OKX Phase 5 workstream: provider-neutral V2, internal diagnostics and controlled migration](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-program-phase-5)
+
+### To Do
+
+- Implement provider-neutral V2 REST snapshot/batch/history endpoints, typed errors, explicit quality/provenance and partial-batch semantics.
+- Serve OKX through those provider-neutral contracts using canonical `instrument_uid`; keep capability/status/subscription reconcile routes internal rather than making alpha code depend on `/providers/okx` paths.
+- Implement gRPC server-streaming with snapshot cursor, durable replay, backpressure status and consumer telemetry.
+- Generate Python SDK V2 from canonical contracts; provide sync/async wrappers, cursor persistence, freshness/source validators and V1 compatibility facade.
+- Make `DataRequirement` manifests the audited source for subscription, startup readiness, fallback, revision and warmup needs.
+- Integrate one reference alpha-grade and one execution-grade consumer in shadow. Trading System must not need Kafka knowledge.
+- Validate current alpha runtime and Trading System V1 behavior unchanged; migrate only explicitly selected consumers after parity evidence.
+- Publish deprecation telemetry and owner notifications, but do not remove V1 or legacy Redis in this phase.
+
+### Verification And Exit Gate
+
+- OpenAPI/Buf breaking gates and generated-client tests pass in CI.
+- End-to-end tests cover venue simulator -> durable log -> canonicalizer -> Redis/V1 and gRPC/V2 -> reference consumers.
+- Consumer restart, slow consumer, cursor expiration, fallback activation and revised-bar cases produce documented deterministic behavior.
+- V1 and V2 shadow responses match canonical values and differ only in declared metadata/versioning.
+- Selected alpha and Trading System consumers pass warmup, latest, stream, reconnect and freshness tests without direct venue connections.
+- Load tests prove API replicas scale independently and do not multiply ingestion connections.
+
+### Completed
+
+- Phase 5 implementation started on `feat/fund-grade-data-layer-v2` after the
+  Phase 4.5 dark freeze. Delivery is split into three independently tested
+  slices: provider-neutral REST/OpenAPI, cursor-backed stream plus SDK V2, and
+  controlled shadow-consumer migration/certification.
+- V1 remains authoritative throughout this phase. No existing route, Redis
+  payload, venue subscription, source authority or running consumer is changed
+  implicitly; `symbols.json` remains user-owned and excluded from phase commits.
+- REST/governance slice implemented provider-neutral instrument, snapshot,
+  warmup, history, batch, feed-status, gap and readiness contracts with stable
+  RFC 9457-style problem details. Binance and OKX are addressed only through
+  canonical instrument identity; provider remains response provenance.
+- Added strict consumer manifest parsing, aggregate deprecation telemetry and a
+  governed `REGISTERED -> SHADOW -> ACCEPTED -> ACTIVE` migration state machine
+  with explicit V1 rollback. PostgreSQL migration `0004` stores manifests,
+  requirements, migration audit and hourly usage aggregates, never tick data.
+- REST/query/consumer focused certification passed `20/20`; disposable
+  PostgreSQL clean/existing/idempotent migration passed with `20` QDL tables,
+  three lease functions and preserved legacy rows. No production DB was used.
+- Added signed opaque cursor scope resolution so SDK consumers never provide or
+  learn internal stream/partition topology. Removed topology fields reserve their
+  Protobuf numbers/names, preserving wire safety rather than reusing tags.
+- Added gRPC `REPLAYING`, `LIVE` and `RATE_LIMITED` controls, durable-first
+  fanout, duplicate suppression, bounded buffers and isolated slow-consumer
+  disconnect. SDK recovery covers explicit acknowledge, restored-state resume,
+  cursor expiry snapshot replacement, transient reconnect and monotonic offsets.
+- Completed async/sync SDK query wrappers and strict source-policy, entitlement,
+  freshness, coverage, final-bar, revision, gap and execution-authority checks
+  on both server and client boundaries. Direct REST and SDK clients now preserve
+  all declared `DataRequirement` policy fields.
+- Certified an OKX reference alpha and Binance execution-grade Trading System
+  shadow consumer without direct venue connections. Reference fallback is
+  visible to alpha-grade policy and rejected for execution-grade use.
+- Froze CI/Make targets for OpenAPI/Buf/codegen, Phase 5 tests, dependency audit,
+  migrations, Redis rebuild, load and bounded real-provider smoke. Full results
+  are in
+  [`PHASE5_V2_API_SDK_MIGRATION_REPORT.md`](upgrade/evidence/PHASE5_V2_API_SDK_MIGRATION_REPORT.md).
+
+### Verification
+
+- Phase 5 focused suite: `27/27` pass. Full Python/V1 regression: `251`
+  executed, `246` pass and `5` expected environment skips.
+- Buf format/lint/breaking/codegen and frozen OpenAPI gates pass. Rust format,
+  Clippy `-D warnings` and `11/11` tests pass. Dependency audit reports zero
+  known vulnerabilities.
+- PostgreSQL clean/existing/idempotent migration preserves legacy data; Redis
+  AOF restart/rebuild passes `3/3` with identical checksum and test DB cleanup.
+- Eight independent API replicas served 2,000 requests at concurrency 100:
+  `317.45 req/s`, p50 `266.942 ms`, p99 `444.088 ms`, zero venue connections and
+  zero ingestion owners. An earlier p99 failure exposed sync thread-pool cost;
+  async query handlers fixed it before freeze.
+- Read-only real-provider smoke passed Binance USD-M canonical value parity and
+  returned five authentic OKX swap bars with `production_writes=0`. Running V1
+  health remained `ok`; no service restart, authority switch or consumer
+  activation occurred.
+
+### Technical Debt / Decision Gate
+
+- No unresolved Phase 5 P0/P1 defect remains. No consumer is forced to migrate
+  without owner acceptance; sunset dates remain a governed telemetry decision.
+- Production HA broker/object store, external AuthN/AuthZ/TLS, secret-manager
+  custody, OpenTelemetry SLO operations and per-feed authority promotion are
+  Phase 6 certification/activation gates. Phase 5 does not represent local
+  shadow durability or test credentials as production infrastructure.
+
+### Rollback
+
+- Move the selected consumer manifest back to V1/legacy projection. V2 and durable state remain available for diagnosis; no shared contract reversion is needed.
+
+## 10. Phase 6 - Production Certification And Multi-Venue Readiness
+
+**Status:** `BLOCKED` - implementation and shadow certification are complete;
+production authority is intentionally `NO-GO` until the infrastructure gates in
+the Phase 6 report pass.
+
+### Goal
+
+Certify production reliability, security, resource efficiency and operational recovery; complete controlled authority cutover for approved feeds; and prove the architecture can add OKX, DNSE/VN and future Deribit options without core redesign.
+
+### Guide Index
+
+- [Phase 6 detailed guide index: Sections 25-29, P3, 34-35, 37-41 and Appendix B](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-6)
+- [OKX Phase 6 workstream: profile-aware certification, P4 products and optional SBE/Rust promotion](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-program-phase-6)
+
+### To Do
+
+- Add OpenTelemetry traces/metrics/log correlation, role/feed dashboards, error budgets and actionable alerts for connection, lag, gaps, quality, projection, history and consumers.
+- Enforce network zones, control-plane AuthN/AuthZ, secret handling, egress allowlists, SSRF/payload limits, audit logs and supply-chain/container policies.
+- Run chaos matrix: process kill, broker failover, Redis loss/rebuild, projector checkpoint boundaries, DB/object-store outage, network partition, malformed frames, reconnect storm and slow consumers.
+- Run sustained and burst performance/soak against measured production load plus headroom; verify CPU/RSS/disk/network and no monotonic memory/lag growth.
+- Certify Binance USD-M first; certify OKX and Python VN adapters independently using the common conformance suite and explicit source-authority policies.
+- Certify OKX JSON core feeds before any SBE promotion. Tier/profile products fail independently; SBE requires pinned schema/version, JSON shadow parity, unknown-schema fail-closed behavior and tested JSON rollback.
+- Prove option readiness with instrument discovery, expiry/strike/call-put identity and order-book snapshot/delta/checksum fixtures representative of Deribit. Actual Deribit production activation remains a separate adapter certification, not a core rewrite.
+- Cut over authority per venue/market/feed/hash range only after shadow parity and rollback rehearsal. Keep V1 compatibility projector until registered consumer sunset criteria are met.
+- Remove obsolete combined-runtime producers and unused broad Spot runtime only after ownership, consumer and rollback gates pass; retain reusable adapter capability.
+- Produce immutable artifacts, SBOM/provenance, release notes, runbooks and DR evidence; clean all test infrastructure and generated state.
+
+### Verification And Exit Gate
+
+- Every item in [Section 41 production acceptance checklist](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#41-production-acceptance-checklist) and Appendix B has evidence or an explicitly approved non-applicable rationale.
+- Certified feeds meet correctness, freshness, gap, durability, replay, latency and recovery SLOs under normal, burst and failure tests.
+- Security scans and AuthN/AuthZ/egress/secret-redaction tests meet policy with no unresolved critical/high issue.
+- Capacity report demonstrates safe headroom on the current host or supplies a measured scale-out requirement before cutover.
+- Rollback rehearsal restores the previous authoritative producer without data ambiguity.
+- Test topics, consumer groups, schemas, Redis prefixes, buckets, volumes and containers are removed; production state remains untouched.
+
+### Completed
+
+- Added bounded OpenTelemetry-compatible correlation/metrics primitives, SLO
+  evaluation and low-cardinality rules. Canonical drops and completeness breach
+  fail as SEV-1 conditions.
+- Added fail-closed JWT/RBAC control identity, environment/venue scope, exact
+  egress allowlists, SSRF/private-address blocking, payload/decompression
+  bounds, secret redaction and hash-chained mutation audit records.
+- Added deterministic chaos/recovery tests for restart, transient durable sink,
+  slow consumer, Redis rebuild, projector replay, object-store commit failure,
+  lease/fencing failover, malformed/duplicate/gap inputs and OKX
+  make-before-break reconnect.
+- Added capability-scoped adapter certification. Binance USD-M selected TRADE,
+  OKX V5 JSON reference/history and DNSE BAR scopes passed their bounded gates;
+  OKX SBE and actual Deribit activation remain fail-closed capabilities.
+- Added capacity certification with normal/burst windows, p50/p95/p99/p99.9,
+  restart replay, queue rejection and memory-growth evidence.
+- Added deterministic SPDX release manifests, immutable image enforcement,
+  checksums, signature verification rehearsal, pinned CI actions, Python/Rust
+  dependency gates and Trivy image/repository scans.
+- Hardened the runtime image to fixed non-root UID/GID `10001`; upgraded final
+  runtime `setuptools`; verified no unresolved HIGH/CRITICAL image finding,
+  leaked secret or HIGH/CRITICAL repository misconfiguration.
+- Ran the full final-image suite: 274 Python tests passed with five conditional
+  integration skips whose Docker/Buf/Redis equivalents passed separately; 11
+  Rust tests passed; Buf lint/breaking/generation, isolated Redis rebuild and
+  PostgreSQL migration gates passed.
+- Captured authentic read-only evidence from Binance USD-M, OKX V5 and DNSE.
+  No synthetic/provider-fabricated production evidence and no production write
+  were used.
+- Preserved the running V1 authority and production state. At certification
+  close it remained healthy, with restart count zero and no OOM.
+- Frozen evidence:
+  [Phase 6 production certification report](upgrade/evidence/PHASE6_PRODUCTION_CERTIFICATION_REPORT.md),
+  [machine-readable decision](upgrade/evidence/phase6-certification-freeze.json),
+  [capacity](upgrade/evidence/phase6-capacity.json),
+  [service/provider smoke](upgrade/evidence/phase6-real-provider-service-smoke.json),
+  [OKX](upgrade/evidence/phase6-okx-real-provider.json) and
+  [DNSE](upgrade/evidence/phase6-dnse-real-provider.json).
+
+### Technical Debt / Decision Gate
+
+- `BLOCKED`: deploy a replicated Kafka-compatible durable broker and prove
+  producer acknowledgements, replication, broker failover and restore. The
+  certified SQLite implementation remains a bounded bridge only.
+- `BLOCKED`: deploy OTel collector/dashboards/alert routing and approve the
+  production SLO/error budget.
+- `BLOCKED`: apply production workload identity, RBAC/network policy, external
+  secret rotation, registry signature admission and entitlement/retention
+  governance.
+- `BLOCKED`: rehearse object-store/PITR and regional DR on independent
+  infrastructure. A same-host test cannot certify regional recovery.
+- `BLOCKED`: register and migrate every critical consumer, then run an
+  operator-approved `SHADOW -> CANARY -> PRIMARY` cutover for one exact feed
+  slice. Combined V1 and broad Spot producers are not removed automatically.
+- Actual Deribit, additional options vendors or regional HA are separate production activations requiring credentials, licensing, capacity and source-semantics approval. The core architecture must already support them.
+- V1/legacy Redis removal is not part of automatic Phase 6 closure; it requires zero-consumer telemetry and an approved sunset release.
+
+### Rollback
+
+- Authority flags roll back per feed/partition to the last certified producer. Durable cursors and canonical data remain available for reconciliation.
+
+## 11. Phase 7 - V2 Public Beta And Consumer Canary
+
+**Status:** `COMPLETE` (`7.0-7.3 COMPLETE`; `BETA-GO READ-ONLY`; V1 authoritative)
+
+### Goal
+
+Publish the provider-neutral V2 data plane as a protected, read-only beta and
+prove that real monitoring and paper-alpha consumers can use typed snapshot,
+warmup, history, signed cursor, replay and live stream contracts without an
+undetected handoff gap. Phase 7 must harden the public contract, application-level
+identity, readiness and SDK checkpoint behavior before exposure. V1 remains the
+unchanged production authority and rollback path throughout this phase.
+
+### Non-Goals
+
+- Phase 7 does not change venue subscription ownership.
+- Phase 7 does not grant Rust, V2 or the beta gateway authority to write legacy
+  production keys/channels.
+- Phase 7 does not allow a live execution service to depend solely on V2.
+- Phase 7 does not use beta traffic as evidence for replicated durability or
+  production source-authority promotion.
+- Phase 7 does not sunset `/v1`, SDK v1 or direct legacy Redis consumers.
+- Phase 7 does not make provider-native payloads part of the public contract.
+
+### Architecture Boundary
+
+```text
+Approved venue/provider bytes
+            |
+            v
+V1 production authority ---------------------> existing V1/Redis consumers
+            |
+            +-> canonical shadow state/log
+                        |
+                        +-> V2 query/snapshot/warmup
+                        |
+                        +-> V2 signed cursor/replay/live
+                                    |
+                                    +-> monitoring consumer
+                                    +-> disposable paper alpha
+
+Control mutation, authority mutation, diagnostics and provider-native raw
+payload routes remain private and use separate permissions.
+```
+
+“Public beta” means a documented and reachable contract behind approved workload
+identity, entitlement, quotas and rate limits. It is not an anonymous endpoint,
+a source-authority claim or approval for execution dependency.
+
+### Phase Decomposition
+
+| Subphase | Outcome | Authority impact |
+|---|---|---|
+| 7.0 | Contract, bar lifecycle, data-plane identity, readiness and SDK hardening | None |
+| 7.1 | Isolated beta deployment with real dependency health and protected routes | None |
+| 7.2 | Monitoring consumer and disposable paper-alpha canary | None |
+| 7.3 | Multi-session evidence freeze, cleanup and beta release decision | None |
+
+Subphase 7.1 cannot begin until 7.0 contract/security gates pass. Subphase 7.2
+cannot begin until isolated deployment, cursor recovery and rollback topology
+tests pass. The phase remains `PLANNED` or `IN_PROGRESS` until all 7.3 evidence
+is frozen.
+
+### Required V2 Contract Shape
+
+The public data-plane contract uses a discriminated payload union. The concrete
+generated/Pydantic names may vary, but the semantic boundary is mandatory:
+
+```python
+MarketDataView = Annotated[
+    TradeView
+    | BboView
+    | BarView
+    | BookSnapshotView
+    | BookDeltaView
+    | FundingView
+    | OpenInterestView
+    | MarkPriceView
+    | IndexPriceView
+    | TickerView,
+    Field(discriminator="feed"),
+]
+```
+
+Every public model uses closed-field validation. A `TRADE` envelope cannot carry
+bar fields, a `BAR` cannot omit its lifecycle/finality semantics, and unknown
+provider fields do not leak into the contract accidentally.
+
+Required response metadata:
+
+```text
+contract_schema
+contract_version
+schema_digest
+normalizer_version
+adapter_version
+instrument_revision
+source_policy_revision
+authority_revision
+request_id / correlation_id
+snapshot_id
+watermark_offset
+signed stream cursor
+```
+
+Canonical decimal values remain coefficient/scale or a contractually equivalent
+exact representation. Public and SDK models must not convert price or quantity
+to binary float.
+
+### Data-Plane Identity And Consumer Manifest
+
+Every beta consumer has a durable manifest resolved from the authenticated
+workload subject. The manifest, not request-controlled fields, owns entitlement:
+
+```yaml
+consumer_id: paper-alpha-momentum-01
+subject: spiffe-or-jwt-subject
+owner: alpha-team
+environment: beta
+criticality: paper
+allowed_purposes:
+  - research
+allowed_contracts:
+  - snapshot
+  - warmup
+  - stream
+allowed_feeds:
+  - TRADE
+  - BAR
+allowed_instrument_patterns:
+  - "BINANCE:USDM:PERPETUAL:*"
+allowed_source_policy_ids:
+  - "binance-usdm-primary-v1"
+max_request_rate_per_second: 20
+max_concurrent_streams: 4
+max_stream_buffer_events: 1000
+max_warmup_rows: 5000
+cursor_retention_requirement_seconds: 86400
+sdk_min_version: "2.0.0b1"
+sdk_max_major: 2
+direct_venue_access: forbidden
+direct_legacy_redis_access: forbidden
+execution_dependency: forbidden
+```
+
+The exact persistence schema may be PostgreSQL-backed, but it must support
+revisioned manifests, owner, environment, effective dates, audit identity and a
+fail-closed disabled state.
+
+Required data-plane permissions:
+
+```text
+market_data.query
+market_data.snapshot
+market_data.history
+market_data.stream
+instrument.read
+diagnostics.read       # private, never implied by query
+control.mutate         # private and separate from data-plane scopes
+```
+
+### Bar Lifecycle And Delivery Semantics
+
+The delivery decision is event-lifecycle aware:
+
+| Canonical event | Delivery policy |
+|---|---|
+| Trade | `LOSSLESS` |
+| Book delta | `LOSSLESS` |
+| Book snapshot/reset | `LOSSLESS` |
+| Final bar | `LOSSLESS` |
+| Bar revision/correction | `LOSSLESS` |
+| Quality-state transition | `LOSSLESS` |
+| Source-authority transition | `LOSSLESS` |
+| BBO | `LATEST_STATE` |
+| Ticker | `LATEST_STATE` |
+| In-progress bar | `COALESCE_BY_BAR_KEY` |
+
+A canonical bar must expose or derive the following semantics without ambiguity:
+
+```text
+bar_state = IN_PROGRESS | FINAL | REVISED | CANCELLED
+interval
+open_time_ns
+close_time_ns
+revision
+origin
+supersedes_event_id
+aggregation_version
+source_role
+```
+
+The coalescing key for an in-progress bar is at least:
+
+```text
+instrument_uid + interval + open_time_ns + lifecycle_class
+```
+
+A final bar is never removed by coalescing, and a correction creates a new
+lineage-bearing event rather than mutating the prior canonical event silently.
+
+### Readiness Model
+
+Phase 7 replaces static/scaffold readiness with measured components:
+
+```text
+/health/live
+    process is alive; no dependency claim
+
+/health/ready
+    this runtime role can serve its declared contract
+
+/v2/system/dependencies
+    auth/JWK, query store, durable source, Redis projector, catalog,
+    source policy, cursor signer and audit dependencies
+
+/v2/system/data-readiness
+    feed freshness, completeness, open gaps, replay lag and projector lag
+
+/v2/system/authority-readiness
+    current authority revision, owner, lease epoch and compatibility projection
+
+/v2/consumers/{consumer_id}/eligibility
+    manifest entitlement plus current data quality and dependency state
+```
+
+Examples of role readiness:
+
+- `query_v2` is ready only when the canonical query store, active cursor signing
+  key, instrument catalog revision, source-policy revision and workload identity
+  verifier are valid.
+- `stream_v2` is ready only when replay cursors resolve, the durable source/live
+  tail is reachable, per-partition handoff is available and subscriber limits
+  are loaded.
+- `compat_projector` is ready only when canonical lag is inside threshold,
+  Redis is reachable and its authority/fencing revision is current.
+- `history_query` may remain ready for immutable historical snapshots while a
+  live venue is degraded, but its response explicitly reports the data
+  `as_of`/coverage revision.
+- A process can remain live while data readiness is degraded; orchestrator
+  restart behavior must not confuse venue outage with process death.
+
+### Snapshot, Cursor And Multi-Replica Handoff
+
+The signed cursor claim set binds:
+
+```text
+environment
+consumer_subject
+consumer_id
+requirement_digest
+stream
+partition_key
+snapshot_id
+snapshot_watermark
+logical_offset
+schema_major
+partition_plan_epoch
+instrument_catalog_revision
+source_policy_revision
+authority_revision
+issued_at
+expires_at
+key_id
+```
+
+Phase 7 must select and document one beta topology:
+
+1. **Active/passive beta gateway:** one active gateway owns each partition behind
+   a distributed lease and sink-visible fencing epoch; passive replicas do not
+   independently create a second live barrier.
+2. **Partition-affine gateways:** a stable partition plan routes cursor replay
+   and live tail to one owner, using broker-native offsets and a per-partition
+   replay/live barrier.
+
+A process-local global lock is insufficient as multi-replica evidence. Remote
+replay/durable I/O must be asynchronous and bounded; unrelated partitions must
+not serialize behind one global event-loop lock.
+
+### SDK Continuity And Checkpoint Contract
+
+The V2 SDK must:
+
+- Return generated or typed public models instead of unvalidated dictionaries.
+- Accept a `CredentialProvider` capable of short-lived token refresh and key
+  rotation; REST and gRPC transports apply the same workload identity.
+- Reject a response without immutable `snapshot_id`, signed cursor or required
+  watermark. The SDK must never synthesize `"latest-snapshot"`.
+- Enforce sequential observation and contiguous acknowledgement.
+- Distinguish `observed`, `applied` and `checkpointed` offsets.
+- Expose a consumer-owned transactional/checkpoint adapter for critical clients.
+- Mark memory/file cursor stores as development, monitoring or paper-only unless
+  their durability boundary is explicitly approved.
+- Fail closed on cursor/requirement/environment/consumer mismatch.
+- Resnapshot only through an explicit `SNAPSHOT_REPLACED` control event that
+  requires the consumer to rebuild local state.
+- Emit SDK version, contract version, cursor offset and requirement digest
+  telemetry without high-cardinality raw symbols where prohibited.
+
+Minimum acknowledgement invariant:
+
+```text
+acknowledged_offset == previous_acknowledged_offset + 1
+acknowledged_offset <= highest_applied_offset
+```
+
+A batch acknowledgement may advance a contiguous range only when its start is
+the previous checkpoint plus one.
+
+Recommended extension boundary:
+
+```python
+class CheckpointTransaction(Protocol):
+    async def save_applied_cursor(
+        self,
+        *,
+        consumer_id: str,
+        requirement_digest: str,
+        cursor_token: str,
+        offset: int,
+    ) -> None: ...
+
+class CredentialProvider(Protocol):
+    async def get_access_token(self) -> str: ...
+```
+
+### Runtime Roles
+
+Phase 7 adds explicit role names instead of extending the Phase 1 dark-role
+manifest indefinitely:
+
+```text
+api_v1
+query_v2
+stream_v2
+control
+history_query
+history_materializer
+compat_projector
+reconciliation
+```
+
+A role owns only the dependencies and lifecycle required by that role. API/query
+replicas never open venue sockets. The beta deployment uses separate image
+digests, ports, state paths, credentials, Redis prefixes, consumer groups,
+PostgreSQL schemas/rows and network policy from the V1 production authority.
+
+### Guide Index
+
+- [V2 API, SDK and migration design: Sections 17-19, 24-25 and 32](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-5)
+- [Security, operations and cutover boundaries: Sections 25-29 and 34-41](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-6)
+- [Phase 6 certification decision](upgrade/evidence/PHASE6_PRODUCTION_CERTIFICATION_REPORT.md)
+- [Canonical contract and runtime boundaries](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-1)
+- [Gap-free handoff and consumer migration](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-4)
+
+### To Do
+
+#### 7.0 Contract And Security Hardening
+
+- Add a data-plane security configuration and REST guard separate from the
+  control-plane permission. Apply it to every V2 snapshot, warmup, history,
+  instrument and stream bootstrap route.
+- Add a gRPC server interceptor and client call credentials with the same issuer,
+  audience, environment, token-expiry and scope semantics as REST.
+- Resolve `principal.subject -> consumer manifest`; reject a request when
+  authenticated subject, requested `consumer_id`, environment or manifest
+  revision does not match.
+- Derive allowed purpose, data grade, source policy, feed, instrument scope,
+  quotas and execution eligibility server-side.
+- Add token/JWK rotation tests, expired/not-yet-valid token tests, wrong
+  audience/environment tests, scope escalation tests and credential redaction.
+- Introduce typed feed-discriminated REST responses and typed SDK models. Forbid
+  unknown public fields and provider-native payload fallthrough.
+- Replace contract-critical free-form strings with generated enums containing an
+  explicit `UNSPECIFIED = 0`; reject unspecified values at service boundaries.
+- Add `schema_digest`, contract version, normalizer/adapter version,
+  instrument/source-policy/authority revision metadata.
+- Add bar lifecycle/finality/revision fields and replace feed-only delivery
+  policy with lifecycle-aware policy.
+- Add compatibility fixtures proving that typed V2 changes do not affect V1
+  OpenAPI, SDK v1 signatures or Redis payload bytes.
+- Add Git-reference plus immutable-baseline Buf breaking checks and OpenAPI
+  semantic diff. A beta contract freeze candidate is an immutable artifact.
+
+#### 7.1 Isolated Beta Runtime
+
+- Build immutable non-root beta images for `query_v2`, `stream_v2` and required
+  supporting roles. Pin image digests and record SBOM/provenance.
+- Replace hardcoded readiness with dependency probes, lag/freshness evaluation
+  and authority/manifest revision checks.
+- Choose and implement the active/passive or partition-affine stream topology.
+  Add distributed lease/fencing for the selected beta gateway ownership.
+- Replace blocking replay/durable calls under a global async lock with an async
+  repository and per-partition handoff barrier.
+- Configure dedicated beta ports, DNS/hostname, JWT audience, credentials,
+  network policy, Redis prefix, consumer group, cursor keyring, state path,
+  quotas and audit sink.
+- Enforce request-size, decompression-size, deadline, concurrency, stream-count,
+  warmup-row and replay-limit bounds at both gateway and application layers.
+- Run a topology protection test:
+  1. capture V1 processes, connections, Redis namespaces and restart counters;
+  2. deploy V2 beta;
+  3. execute beta traffic;
+  4. stop V2 beta;
+  5. prove exact V1 ownership/topology remains unchanged.
+- Ensure no V2 beta component writes legacy production keys/channels or shares a
+  writable local history/cursor path with V1.
+- Publish beta OpenAPI, Protobuf descriptor set, schema digest, SDK package,
+  compatibility statement, cursor TTL and rate-limit documentation.
+
+#### 7.2 Consumer Canary
+
+- Register one monitoring/reference consumer with read-only query/stream scopes.
+- Register one disposable paper alpha after the monitoring consumer passes.
+- Require both consumers to use the V2 SDK and prohibit direct venue access,
+  direct beta broker access and reuse of a production durable consumer group.
+- Exercise snapshot/warmup, signed cursor, replay/live handoff, client restart,
+  credential rotation, cursor expiry, stale data, open gap, slow consumer,
+  gateway failover and V1 fallback.
+- Compare V1 and V2 on exact instrument identity, decimal coefficient/scale,
+  source/event/receive times, source role, authority revision, event count,
+  final-bar lifecycle, freshness, coverage and quality flags.
+- Repeat closed-bar/live handoff across multiple complete bar intervals and, for
+  applicable VN feeds, across market-session open/close boundaries.
+- Record consumer-applied and checkpointed offsets. Verify a paper alpha restart
+  reconstructs the same local signal state from snapshot plus replay.
+- Keep `execution_dependency = forbidden` in both consumer manifests.
+
+#### 7.3 Evidence Freeze And Beta Decision
+
+- Run normal and burst beta traffic with multiple fan-out consumers, including
+  one intentionally slow consumer.
+- Measure request rate, events/s, bytes/s, p50/p95/p99/p99.9, cursor lag, replay
+  lag, end-to-end freshness, CPU/core, RSS, network, durable-store/Redis growth,
+  subscriber count, disconnect/replay count and error-budget consumption.
+- Run malformed/oversized request, auth failure, token rotation, rate-limit,
+  cursor tamper, cursor expiry, partition-epoch mismatch and dependency outage
+  tests.
+- Freeze compact checksummed evidence, immutable manifests and exact commands.
+- Revoke disposable credentials and remove temporary consumers, keys, cursor
+  files, containers, networks and isolated state after certification.
+- Record an explicit `BETA-GO` or `BETA-NO-GO`. `BETA-GO` does not change source
+  authority or allow execution-only dependency.
+
+### Verification Matrix
+
+| Area | Required cases | Pass condition |
+|---|---|---|
+| V1 compatibility | OpenAPI, SDK signatures, Redis keys/channels/payloads | Byte/behavior compatible; V1 restart count unchanged |
+| REST identity | valid, expired, wrong audience, wrong environment, wrong scope, consumer mismatch | Fail closed with typed errors and no data leak |
+| gRPC identity | same cases as REST plus reconnect/token rotation | Same principal/manifest decision as REST |
+| Typed contract | each feed payload, unknown field, invalid discriminator, unspecified enum | Invalid states are unrepresentable or rejected |
+| Bar lifecycle | in-progress, final, revised, reconnect boundary | Final/revision never coalesced or lost |
+| Cursor integrity | tamper, expiry, policy/catalog/partition revision mismatch | Deterministic rejection or explicit resnapshot |
+| Handoff | snapshot/replay/live during concurrent publication | No duplicate or missing logical offset |
+| Gateway HA | active failure/passive takeover or partition-owner restart | One owner, fenced takeover, bounded reconnect |
+| SDK checkpoint | sequential apply, skipped ACK, duplicate ACK, crash before/after checkpoint | No forward checkpoint over unapplied data |
+| Slow consumer | outbound buffer exhaustion | Explicit disconnect/control error; replay from confirmed cursor |
+| Dependency health | auth, query store, durable source, Redis, catalog, signer outage | Readiness/data eligibility degrade accurately |
+| Consumer parity | monitoring and paper alpha | Zero unexplained value/count/finality/authority mismatch |
+| Capacity | normal and burst profiles | Every machine-readable threshold passes |
+| Rollback | remove beta route/roles | Exact pre-beta V1 topology remains |
+
+### Required Evidence Artifacts
+
+At minimum, Phase 7 produces:
+
+```text
+upgrade/evidence/phase7-contract-freeze.json
+upgrade/evidence/phase7-openapi-diff.json
+upgrade/evidence/phase7-buf-breaking.json
+upgrade/evidence/phase7-auth-matrix.json
+upgrade/evidence/phase7-readiness-matrix.json
+upgrade/evidence/phase7-cursor-handoff.json
+upgrade/evidence/phase7-sdk-checkpoint.json
+upgrade/evidence/phase7-consumer-parity.json
+upgrade/evidence/phase7-capacity.json
+upgrade/evidence/phase7-security-adversarial.json
+upgrade/evidence/phase7-evidence-freeze.json
+upgrade/evidence/phase7-topology-rollback.json
+upgrade/evidence/PHASE7_PUBLIC_BETA_REPORT.md
+```
+
+Reports record exact artifact/image/schema/config revisions, test cases run, skipped
+cases, cleanup evidence and the remaining authority restrictions.
+
+### Verification And Exit Gate
+
+Phase 7 is `COMPLETE` only when all conditions below pass:
+
+- Application-level REST and gRPC workload identity, principal-to-consumer
+  binding, entitlement and rate-limit tests pass.
+- The public beta contract has no generic provider payload dictionary and
+  critical semantic fields use typed closed models/enums.
+- Final bars, bar revisions, quality transitions and authority transitions use
+  lossless delivery semantics.
+- Role and data readiness are dependency-derived; no beta route reports ready
+  from a static phase note.
+- Snapshot/cursor/replay/live continuity passes in the selected multi-replica or
+  active/passive fenced topology.
+- The SDK does not fabricate snapshot/cursor state and enforces contiguous
+  applied/checkpointed offsets.
+- V1 golden API/Redis/SDK compatibility remains byte/behavior compatible; V1
+  authority is not restarted or reconfigured by beta deployment.
+- Real-provider read-only smoke passes; no generated market event is admitted to
+  beta evidence.
+- Monitoring and paper-alpha consumers complete multiple handoffs with zero
+  unexplained identity/value/count/finality/source-authority mismatch and zero
+  undetected gap.
+- Capacity evidence passes every configured threshold exactly, with no
+  unexplained loss, duplicate, monotonic queue/spool growth or unbounded resource
+  growth.
+- Stopping beta routes/containers, revoking beta credentials and deleting
+  isolated state restores the exact pre-beta topology.
+- The release decision states explicitly that V2 remains read-only beta,
+  non-authoritative and forbidden as a sole execution dependency.
+
+### Completed
+
+- `7.0 COMPLETE` on 2026-08-14. Added application-level REST and gRPC workload
+  identity, immutable consumer-manifest binding, server-derived entitlement and
+  execution eligibility, closed feed-discriminated models, generated enums,
+  contract lineage, lifecycle-aware lossless final/revised bars and typed SDK
+  responses/checkpoint behavior.
+- Full Python regression passed 285 tests with five conditional skips covered by
+  separate Docker/Buf/migration integration gates. Rust fmt, clippy with warnings
+  denied and all 11 Rust tests passed. PostgreSQL clean/existing/idempotent
+  migration passed with legacy rows retained and 21 QDL tables.
+- Buf format/lint and breaking checks passed against both the immutable Phase 1
+  baseline and the Phase 7 beta freeze candidate. OpenAPI semantic diff found no
+  removed operation, response, schema or enum value. V1 OpenAPI, SDK surface and
+  Redis payload golden hashes remain unchanged.
+- Evidence: [Phase 7.0 report](upgrade/evidence/PHASE7_CONTRACT_SECURITY_HARDENING_REPORT.md),
+  [contract freeze](upgrade/evidence/phase7-contract-freeze.json),
+  [OpenAPI diff](upgrade/evidence/phase7-openapi-diff.json),
+  [Buf gates](upgrade/evidence/phase7-buf-breaking.json) and
+  [auth matrix](upgrade/evidence/phase7-auth-matrix.json).
+- No V1 runtime, source authority, provider connection or production state was
+  restarted or mutated. This completion does not authorize beta deployment.
+- `7.1 COMPLETE` on 2026-08-14. Added isolated non-root `query_v2` and
+  active/passive `stream_v2` roles, dependency-derived readiness, a monotonic
+  Redis fencing lease, atomic shared Redis quotas, per-partition gap-free
+  replay/live barriers and bounded HTTP/gRPC/resource controls.
+- The real topology gate authenticated a beta query, fenced one stream owner,
+  promoted the passive owner from epoch `1` to `2`, then removed every beta
+  container/network/volume. Canonical V1 container IDs, images, restart counts,
+  networks and mounts were unchanged; production Redis contained zero beta keys
+  before and after.
+- Full Python regression passed 296 tests with five existing conditional skips.
+  Rust fmt/clippy with warnings denied and 11 Rust tests passed. Both Buf
+  breaking baselines and the frozen OpenAPI digest passed unchanged. The tested
+  non-root image, SBOM and SHADOW release manifest are immutable and verified.
+- Evidence: [Phase 7.1 report](upgrade/evidence/PHASE71_ISOLATED_BETA_RUNTIME_REPORT.md),
+  [readiness matrix](upgrade/evidence/phase7-readiness-matrix.json),
+  [cursor handoff](upgrade/evidence/phase7-cursor-handoff.json),
+  [topology rollback](upgrade/evidence/phase7-topology-rollback.json) and
+  [release bundle](upgrade/evidence/phase71-release-bundle/release-manifest.json).
+- Phase 7.1 activates no consumer data source and does not authorize execution
+  dependency or beta authority. Real monitoring and paper-alpha activation are
+  exclusively Phase 7.2 work.
+- `7.2 COMPLETE` on 2026-08-14. Added a strict canonical source catalog, bounded
+  V1 read-only bridge, shared durable query/stream watermark, per-consumer
+  signed handoff cursors, monitoring consumer and disposable paper-alpha
+  consumer. Both consumers use only the V2 SDK and explicitly forbid execution
+  dependency.
+- The real-provider topology canary seeded 117 closed BTCUSDT 1m bars, started
+  monitoring before paper, observed/checkpointed offsets `118/119`, promoted the
+  passive gateway from epoch `1` to `2`, then resumed the paper consumer at
+  offset `120` on the next real closed bar. V1/V2 mismatch count and restarted
+  signal-state mismatch were both zero.
+- Stale data, missing closed-bar intervals, cursor scope/expiry, credential
+  rotation, bounded slow-consumer recovery, final-only authenticated ingest,
+  duplicate ingest, V1 fallback and exact topology rollback passed. No generated
+  market event entered real evidence.
+- Full Python regression passed 305 tests with five existing conditional skips;
+  Rust fmt/clippy with warnings denied and 11 tests passed. Both Buf breaking
+  baselines and the frozen OpenAPI digest remained unchanged.
+- Evidence: [Phase 7.2 report](upgrade/evidence/PHASE72_CONSUMER_CANARY_REPORT.md),
+  [consumer parity](upgrade/evidence/phase7-consumer-parity.json),
+  [SDK checkpoint](upgrade/evidence/phase7-sdk-checkpoint.json) and
+  [topology canary](upgrade/evidence/phase72-topology-canary.json).
+- V1 remains authoritative and was not restarted or reconfigured. Phase 7.2
+  does not authorize V2 execution dependency, production durable groups or
+  public authority.
+- `7.3 COMPLETE` on 2026-08-15. Added per-consumer concurrent-stream quota
+  enforcement and one bounded read-only capacity manifest, then ran normal and
+  burst REST traffic plus four-way replay/live fan-out against real V1/provider
+  closed bars. No generated market event entered beta evidence.
+- Normal traffic reached 39.120 requests/s at p99.9 211.058 ms; burst traffic
+  reached 36.362 requests/s at p99.9 628.694 ms, both with zero errors. Three
+  fast stream consumers drained 64 offsets to zero lag at 652.316 events/s; one
+  slow consumer was explicitly disconnected without blocking peers or losing
+  durable data.
+- Missing/invalid identity, two-key rotation, malformed/oversized request,
+  rate limit, cursor tamper/expiry/scope, Redis outage and active/passive
+  failover gates passed. The Redis restart test found and closed an ephemeral
+  fencing-epoch defect by adding an isolated beta-only AOF volume; epoch then
+  persisted and advanced from `1` to `2`.
+- Peak application RSS was about 68.2 MiB, peak CPU 75.21% of one core, durable
+  growth 73728 bytes and all machine thresholds passed. Exact rollback removed
+  every beta container, network, volume, key and cursor file while preserving
+  byte-equal V1 topology and HTTP 200 fallback.
+- Final regression passed 309 Python tests with five conditional skips covered
+  by dedicated integration gates; targeted Phase 7 regression passed 35 tests.
+  Rust fmt/clippy and all 11 tests passed, as did both immutable Buf breaking
+  baselines.
+- Final decision: `BETA-GO` for protected read-only V2 only. V1 remains source
+  authority and the sole approved execution fallback. Evidence: [final report](upgrade/evidence/PHASE7_PUBLIC_BETA_REPORT.md),
+  [capacity](upgrade/evidence/phase7-capacity.json), [security/adversarial](upgrade/evidence/phase7-security-adversarial.json)
+  and [runbook](docs/runbooks/phase73-public-beta-decision.md).
+
+### Technical Debt / Decision Gate
+
+- A certified bounded bridge may support Phase 7 while V1 remains authoritative,
+  but it cannot satisfy Phase 8 authority-capable or Phase 9 primary gates.
+- The beta stream topology must choose active/passive or partition-affine
+  ownership explicitly; “multiple stateless replicas” is not a valid handoff
+  design by itself.
+- File cursor storage is acceptable only for disposable paper/monitoring use.
+  Any critical consumer requires an approved durable/transactional adapter.
+- Any contract change after the beta freeze candidate requires a new schema
+  digest, compatibility report and SDK support decision.
+
+### Rollback
+
+- Remove the V2 beta gateway route and stop only dedicated V2 roles.
+- Revoke beta credentials and disable/delete beta consumer manifests.
+- Delete isolated beta cursor/checkpoint state, Redis prefixes, consumer groups,
+  containers and networks after evidence capture.
+- V1 requires no replay, schema rollback, venue reconnection or service restart.
+- If a beta contract defect is found, revoke the affected schema/SDK release,
+  keep V1 authoritative and issue a new beta contract revision rather than
+  silently changing semantics in place.
+
+## 12. Phase 8 - Multi-Venue Rust Realtime Core And Reference Slice
+
+**Status:** `COMPLETE (8.0-8.3; RUST_SHADOW only; V1 authoritative)`
+
+### Goal
+
+Build one production-shaped, provider-neutral Rust realtime core and a
+replicated shadow durability substrate; prove the same identity, decimal,
+timestamp, session, ordering, gap, quality, replay and durable-publish semantics
+across Binance, OKX, DNSE/VN and Deribit-style capability inputs; then certify a
+demanded Binance USD-M TRADE reference shadow using the exact same authentic
+provider frames as the Python primary. No Rust output receives public or legacy
+write authority in this phase.
+
+### Non-Goals
+
+- Phase 8 does not change public source authority.
+- Phase 8 does not certify BBO, L2 or BAR merely because TRADE passes.
+- Phase 8 does not move Python query/control/history/SDK ownership into Rust.
+- Phase 8 does not embed the production realtime loop in FastAPI or call Rust
+  once per event through PyO3.
+- Phase 8 does not treat a local file/SQLite bridge as the production broker.
+- Phase 8 does not certify every venue edge from Binance evidence.
+- Phase 8 does not fabricate real-provider evidence from fixtures or simulators.
+
+### Target Ownership
+
+```text
+Binance Rust edge --------\
+OKX Rust edge -------------+--> versioned raw-provider envelope
+DNSE Python/SDK edge ------+             |
+Deribit future Rust edge --/             v
+                                Rust canonical realtime core
+                                - instrument resolution
+                                - exact decimal/time
+                                - source session/generation
+                                - event identity
+                                - ordering/dedup/gap
+                                - quality/book/bar lifecycle
+                                - backpressure/spool
+                                - DurableSink
+                                      |
+                 +--------------------+-------------------+
+                 |                                        |
+                 v                                        v
+        replicated shadow raw log                replicated shadow
+                                                  canonical/quality log
+                                                           |
+                                                           v
+                                            shadow query/projector/replay
+
+Python remains:
+- V1 production authority
+- public V1 compatibility writer
+- V2 outer API/SDK/control/history/reconciliation
+- low-rate/proprietary acquisition edge where justified
+```
+
+The shared core is a set of provider-neutral crates and contracts, not one giant
+multi-venue process. Deployment shards remain separated by venue/market/feed
+blast radius.
+
+### Phase Decomposition
+
+| Subphase | Outcome | Authority impact |
+|---|---|---|
+| 8.0 | Replicated shadow broker, topics, security, observability and recovery baseline | None |
+| 8.1 | Versioned raw envelope, Rust session/core traits and full failure semantics | None |
+| 8.2 | Exact-frame Python/Rust tee, cross-venue conformance and long shadow soak | None |
+| 8.3 | Immutable authority-capable Rust artifact, rollback manifest and evidence bundle, still fenced | None |
+
+The production-shaped broker begins in 8.0 so Rust backpressure, ACK latency,
+retention, replay, partitioning and recovery are measured against the real
+transport before any Phase 9 decision.
+
+### Replicated Durable Transport Contract
+
+A Kafka-compatible deployment is the default target selected by the architecture
+guide. Another implementation requires an ADR proving equivalent semantics.
+
+Minimum shadow topics/streams:
+
+```text
+qdl.<env>.raw.<venue>.<market>.<feed>.v1
+qdl.<env>.canonical.<feed>.v2
+qdl.<env>.quality.v2
+qdl.<env>.control.authority.v1
+qdl.<env>.quarantine.<venue>.<feed>.v1
+qdl.<env>.audit.v1
+```
+
+Topic names are infrastructure details and do not appear in public cursors or API
+contracts.
+
+Required broker properties:
+
+```text
+replication factor >= approved failure-domain requirement
+acks = all
+min in-sync replicas enforced
+idempotent producer enabled
+unclean leader election disabled
+retention >= maximum cursor TTL + recovery/incident margin
+bounded message size and batch size
+per-service ACLs and quotas
+encryption in transit
+disk/partition monitoring
+tested node loss, leader change, restore and retention expiry
+```
+
+The system targets loss-detected, replayable and effectively-once canonical
+projection. It does not make a vague end-to-end exactly-once claim across an
+external venue.
+
+### Versioned Raw Provider Envelope
+
+The raw envelope is a first-class contract shared by native Rust edges and
+approved thin Python acquisition edges:
+
+```text
+raw_schema_name
+raw_schema_major/minor
+capture_id
+provider
+venue
+market
+product_type
+native_symbol
+native_channel
+subscription_id
+source_session_id
+connection_generation
+lease_epoch
+authority_revision
+partition_plan_epoch
+received_at_ns
+transport_protocol
+transport_compression
+capture_boundary
+raw_frame_bytes
+raw_frame_sha256
+adapter_version
+config_revision
+instrument_catalog_revision
+correlation_id
+test_provenance
+```
+
+Rules:
+
+- `raw_frame_bytes` are exact bytes at the declared capture boundary.
+- If WebSocket compression is used, both the transport codec and whether the
+  capture is pre- or post-decompression are explicit.
+- `raw_frame_sha256` hashes those exact bytes.
+- `canonical_payload_hash` is computed separately after deterministic canonical
+  serialization.
+- Required provider fields never default to plausible market values such as
+  `0`, `false` or empty string. Missing/invalid required data is quarantined and
+  drives an observable quality transition.
+- Raw records remain immutable; a corrected normalizer creates a new canonical
+  revision/version rather than rewriting raw evidence.
+- Synthetic fixtures set `test_provenance = true` and cannot enter production or
+  public-beta evidence namespaces.
+
+### Source Session, Sequence And Offset Semantics
+
+The core distinguishes:
+
+```text
+native_sequence
+    venue/provider sequence or trade ID within its documented scope
+
+source_session_id
+    epoch in which native sequence continuity semantics apply
+
+connection_generation
+    monotonically increasing reconnect/resubscription generation
+
+event_id
+    deterministic source event identity
+
+logical_partition_offset
+    durable-log ordering position exposed through a transport-neutral cursor
+
+lease_epoch
+    ingestion owner generation
+
+authority_revision
+    control-plane authority record revision
+
+partition_plan_epoch
+    version of the stable shard/partition assignment
+```
+
+A process-local accepted-event counter is not a production partition sequence.
+Old-generation frames arriving after reconnect are rejected/quarantined.
+Provider-specific sequence reset rules are declared in the capability manifest.
+
+### Rust Core And Crate Boundaries
+
+Recommended workspace boundaries:
+
+```text
+rust/crates/qdl-domain
+rust/crates/qdl-contracts
+rust/crates/qdl-provider-envelope
+rust/crates/qdl-venue-core
+rust/crates/qdl-quality
+rust/crates/qdl-ordering
+rust/crates/qdl-orderbook
+rust/crates/qdl-bars
+rust/crates/qdl-durable-sink
+rust/crates/qdl-kafka
+rust/crates/qdl-replay
+rust/crates/qdl-telemetry
+rust/crates/qdl-binance
+rust/crates/qdl-okx
+```
+
+Core crates must not branch on venue for canonical identity, exact decimal,
+quality-state, ordering, replay or durable publication. Provider modules own
+wire-protocol parsing and documented native semantics through capability traits.
+
+Rust runs as separate process/container roles such as:
+
+```text
+rust-ingestor-binance-usdm-shard-*
+rust-ingestor-okx-swap-shard-*
+rust-canonicalizer-*
+rust-quality-projector-*
+rust-replay-worker-*
+```
+
+A thin DNSE/proprietary Python edge may publish authenticated raw envelopes but
+does not retain a separate Python canonical/quality engine.
+
+### Full-Duplex Venue Session Engine
+
+Each production-shaped venue edge implements:
+
+- Connection state machine and connection-generation increment.
+- Reader and writer halves.
+- Ping/Pong and provider heartbeat semantics.
+- Subscription command, acknowledgement and rejection tracking.
+- Desired-versus-actual subscription reconciliation.
+- Provider rate-limit budget and endpoint/channel bucket.
+- Read/freshness deadlines.
+- Exponential backoff with jitter and a retry budget.
+- Make-before-break only where provider semantics permit it.
+- Old-generation frame rejection.
+- Graceful drain and terminal durable watermark.
+- Lease renewal and immediate fail-closed publication on lease loss.
+- Bounded in-memory queue and local spool with explicit disk quota.
+- Degraded, blocked, disconnected and recovering feed states.
+- Quarantine path for malformed, schema-unknown and semantic-invalid frames.
+
+Queue saturation behavior:
+
+```text
+lossless canonical lifecycle:
+    apply backpressure
+    -> bounded durable/local spool
+    -> degrade or disconnect before unacknowledged loss
+    -> replay/reconcile
+
+latest-state lifecycle:
+    deterministic lifecycle-aware coalescing
+    -> increment coalescing metrics
+    -> preserve freshness/quality semantics
+```
+
+No canonical event may be silently dropped while the feed remains healthy.
+
+### Stable Subscription And Partition Planning
+
+Replace sort/chunk reshuffling for production ownership with rendezvous hashing,
+consistent hashing or a persisted assignment table.
+
+Each assignment plan records:
+
+```text
+partition_plan_epoch
+hash_algorithm/version
+partition_count
+assignment_revision
+instrument_uid
+old_owner
+new_owner
+handoff_watermark
+created_at
+approved_by
+```
+
+Adding one instrument must not reshuffle most existing subscriptions. Canary and
+primary authority use the same stable partition key. An order book, bar
+aggregator or sequence scope cannot be split across owners.
+
+### Exact-Frame Tee And Oracle Comparison
+
+The first real reference slice uses one received provider frame:
+
+```text
+provider frame
+    -> immutable capture_id + raw hash
+        -> Python primary oracle
+        -> Rust shadow core
+```
+
+Do not compare two independent WebSocket connections as the primary correctness
+oracle because connection timing, provider batching and subscription boundaries
+can create false mismatches.
+
+Comparison dimensions:
+
+```text
+capture_id
+event_id
+instrument_uid/revision
+venue/market/product
+exact price/quantity decimals
+side and provider flags
+source event time
+received time policy
+native sequence
+source session/generation
+bar lifecycle/finality/revision
+quality transitions
+output count
+quarantine decision
+canonical payload hash
+```
+
+Allowed divergences require an explicit versioned contract decision; unexplained
+divergence blocks Phase 8.
+
+### Machine-Readable Venue Capability Manifest
+
+Each venue/market/feed capability publishes a manifest, for example:
+
+```yaml
+venue: BINANCE
+market: USDM
+product_type: PERPETUAL
+feed: TRADE
+adapter_version: "..."
+native_sequence_field: aggregate_trade_id
+sequence_scope: instrument
+source_timestamp_precision: millisecond
+heartbeat: websocket_ping_pong
+subscription_ack: provider_defined
+snapshot_required: false
+duplicate_identity: native_trade_id
+reconnect_sequence_continuity: provider_defined
+rate_limit_profile: binance-usdm-v1
+supports_raw_exact_frame: true
+authority_eligible: false
+```
+
+For order book capabilities the manifest additionally defines:
+
+```text
+snapshot source
+first valid update rule
+delta range/sequence rule
+checksum algorithm
+gap detection rule
+resnapshot rule
+maximum recovery window
+```
+
+Unsupported capabilities fail independently. Binance TRADE success does not
+certify Binance L2, OKX SBE, DNSE bars or Deribit options.
+
+### Guide Index
+
+- [Python/Rust role model and canonical hot path: Sections 8-14 and 20-23](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-1)
+- [Durable transport and Rust foundation: Sections 6-7, 11 and 28-29](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-2)
+- [Ingestion, fencing and compatibility projection: Sections 12-14, 23 and 37](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-3)
+- [Production certification and failure testing](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#implementation-phase-6)
+- [OKX V5 capability and sequence guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
+
+### To Do
+
+#### 8.0 Replicated Shadow Substrate
+
+- Select/provision the approved Kafka-compatible broker on isolated shadow
+  namespaces and real failure domains.
+- Define raw, canonical, quality, authority, quarantine and audit topic
+  configurations: partition key, retention, replication, min-ISR, compression,
+  maximum record size, quota, ACL and owner.
+- Implement broker-backed `DurableSink`/`EventSource` with idempotent producer,
+  bounded retry, explicit ACK classification and transport-neutral cursor
+  mapping.
+- Keep the existing bounded bridge as an evidence/fallback tool, not hidden
+  authority. Add a documented sunset path.
+- Deploy OTel collector, dashboards and alert routing for broker ACK latency,
+  produce failure, partition lag, spool growth, replay throughput, consumer lag,
+  disk pressure and leader changes.
+- Run broker node loss, leader election, network partition, disk pressure,
+  retention expiry, producer restart and restore tests.
+- Prove Redis latest/legacy shadow projection can be rebuilt from the replicated
+  canonical log.
+
+#### 8.1 Raw Envelope And Rust Session/Core
+
+- Add generated raw-provider-envelope Protobuf/schema and cross-language golden
+  bytes.
+- Capture exact frame bytes and separate raw-frame/canonical hashes.
+- Add source session, connection generation, authority revision and partition
+  plan epoch to raw and canonical metadata where required.
+- Remove plausible defaults for required provider fields; quarantine malformed or
+  incomplete frames with reason codes and bounded payload evidence.
+- Implement provider-neutral connection, subscription, rate-limit, heartbeat,
+  lease/fencing, decoder and capability traits.
+- Implement full-duplex Binance USD-M session handling and deterministic
+  reconnect/resubscription state.
+- Implement deterministic ordering, deduplication, gap detection, quarantine and
+  quality transitions.
+- Implement lifecycle-aware queue/backpressure/spool policy including lossless
+  final bars/corrections and coalescible in-progress state.
+- Replace production shard planning with stable versioned assignment.
+- Ensure Rust binaries use independent lifecycle/resources and do not share the
+  FastAPI event loop.
+
+#### 8.2 Reference Shadow And Cross-Venue Conformance
+
+- Tee exact authentic Binance USD-M TRADE frames to Python primary and Rust
+  shadow.
+- Feed bounded authentic OKX and DNSE captures through approved native/raw
+  envelope edges and compare against the existing Python canonical oracle.
+- Run Deribit-style deterministic option/book fixtures to prove identity and
+  capability boundaries without claiming a live adapter.
+- Run long deterministic raw-frame replay repeatedly and across clean/restarted
+  processes; compare event IDs, hashes, sequence/session, quality transitions and
+  counts.
+- Exercise controlled reconnect, stale-generation arrival, subscription reject,
+  lease loss, durable-sink outage, spool bound, malformed frame, slow projector,
+  Redis loss and restart/replay.
+- Run normal, burst and replay-concurrent-with-live profiles with production-like
+  payload mix and consumer fan-out.
+- Measure events/s, bytes/s, p50/p95/p99/p99.9, CPU/core, RSS, allocation,
+  network, broker ACK, queue/spool depth, projector lag and recovery time.
+- Soak across an approved duration or complete market sessions; justify the
+  chosen window by venue/feed behavior.
+
+#### 8.3 Authority-Capable Artifact, Still Fenced
+
+- Produce immutable Rust image digest, SBOM, signature/provenance,
+  capability-manifest digest, contract/schema digest and configuration revision.
+- Produce an immutable Python rollback manifest for the exact candidate slice.
+- Implement/read the persistent authority record and sink-side fencing contract,
+  but keep the Rust slice in `RUST_SHADOW`.
+- Rehearse `SHADOW -> CANARY -> SHADOW` without public write authority.
+- Freeze the exact production candidate slice and partition plan for Phase 9
+  approval.
+- Retain only compact checksummed evidence and approved replay captures; clean
+  disposable topics/groups/prefixes/containers.
+
+### Verification Matrix
+
+| Area | Required cases | Pass condition |
+|---|---|---|
+| Broker durability | producer restart, broker node loss, leader change, min-ISR failure, restore | No acknowledged canonical loss inside certified boundary |
+| Broker security | ACL, quota, TLS, unauthorized topic access | Least privilege; fail closed |
+| Raw fidelity | exact capture bytes, compression boundary, hash | Stable exact raw hash and separate canonical hash |
+| Decoder | malformed, missing required field, unknown schema | Quarantine; no plausible default |
+| Session engine | ping/pong, ACK reject, timeout, reconnect storm, stale generation | Deterministic state and bounded reconnect |
+| Lease/fencing | owner loss, zombie producer, epoch change | Stale publication rejected |
+| Ordering | duplicate, out-of-order, sequence reset, reconnect | Deterministic dedup/gap/session behavior |
+| Backpressure | broker slow/down, memory queue full, spool full | Explicit degrade/block/disconnect; zero silent loss |
+| Stable sharding | add/remove instruments, owner change | Bounded churn and explicit plan epoch |
+| Cross-language | long replay Python versus Rust | Exact canonical parity |
+| Exact-frame shadow | shared capture into Python/Rust | Zero unexplained mismatch |
+| Cross-venue core | Binance, OKX, DNSE/VN, Deribit-style fixtures | Shared core; capability-specific failures isolated |
+| Capacity | mixed live, burst, replay+live | Every machine threshold passes with headroom |
+| Cleanup | topics, groups, prefixes, state | No test artifact affects V1 or future authority |
+
+### Required Evidence Artifacts
+
+```text
+upgrade/evidence/phase8-broker-topology.json
+upgrade/evidence/phase8-broker-failover.json
+upgrade/evidence/phase8-broker-security.json
+upgrade/evidence/phase8-raw-envelope-golden.json
+upgrade/evidence/phase8-rust-session-chaos.json
+upgrade/evidence/phase8-stable-sharding.json
+upgrade/evidence/phase8-cross-venue-conformance.json
+upgrade/evidence/phase8-python-rust-parity.json
+upgrade/evidence/phase8-real-provider-shadow.json
+upgrade/evidence/phase8-capacity.json
+upgrade/evidence/phase8-release-capacity.json
+upgrade/evidence/phase8-soak.json
+upgrade/evidence/phase8-authority-rehearsal.json
+upgrade/evidence/phase8-release/
+upgrade/evidence/PHASE8_RUST_REALTIME_CORE_REPORT.md
+```
+
+### Verification And Exit Gate
+
+Phase 8 is `COMPLETE` only when:
+
+- Replicated shadow transport, ACK, retention, ACL/quota, node-failure and restore
+  evidence pass.
+- Exact raw provider bytes, source session/generation and separate raw/canonical
+  hashes are implemented and golden-tested.
+- Required provider fields fail closed to quarantine rather than defaulting to
+  plausible market values.
+- The Rust session engine handles full-duplex lifecycle, subscription state,
+  reconnect, stale generation, lease loss and bounded backpressure.
+- Stable versioned shard/partition ownership passes bounded-churn tests.
+- Shared core conformance passes Binance, OKX, DNSE/VN and Deribit-style
+  capability inputs without venue branches in canonical identity, decimal,
+  ordering, quality, replay or durable-publish modules.
+- Exact-frame Binance Python/Rust shadow and authentic bounded OKX/DNSE captures
+  have zero unexplained semantic/count/quality mismatch.
+- Process kill, broker outage, spool exhaustion, Redis loss, slow projector and
+  restart/replay tests recover without acknowledged canonical loss or ambiguous
+  owner.
+- Normal, burst, soak and replay-concurrent-with-live evidence passes every
+  configured machine threshold with bounded resources and lag.
+- The candidate Rust artifact, capability manifest, partition plan, evidence
+  bundle and Python rollback manifest are immutable and signed/verified.
+- All Rust output remains isolated shadow data; no public endpoint, legacy key or
+  production authority is changed.
+
+### Completed
+
+- `8.0 COMPLETE` on 2026-08-15 for the isolated shadow substrate. Added a
+  digest-pinned Apache Kafka 4.2.0 three-replica KRaft topology with
+  `acks=all`, idempotence, RF3/minISR2, unclean-election disabled, mTLS,
+  fail-closed ACLs, bounded resources and six separately owned raw/canonical/
+  quality/authority/quarantine/audit topics.
+- Added the async Rust `KafkaDurableSink`/`KafkaEventSource`. Producer cursors
+  come only from broker ACK partition/offset; consumer checkpoints remain
+  explicit after local offset storage. The release smoke used the Rust client,
+  PEM mTLS identities and actual broker records rather than Kafka CLI alone.
+- Added bounded OTel collector and alert contracts for ACK latency, produce
+  failure, consumer lag, spool/disk pressure, leader churn and stalled replay;
+  high-cardinality instrument/event labels are forbidden.
+- Certified 65/65 acknowledged records through full restart and one replica
+  volume loss. One-node loss remained writable; below-minISR writes did not
+  advance durable offsets; unauthorized writes did not advance offsets; Redis
+  shadow projection rebuilt byte-equivalent from replay. Full ISR returned
+  after restore.
+- Cleanup removed all Phase 8.0 containers, networks and volumes. V1 stayed
+  HTTP 200 and its inspected topology was unchanged. Evidence:
+  [broker topology](upgrade/evidence/phase8-broker-topology.json),
+  [failover](upgrade/evidence/phase8-broker-failover.json),
+  [security](upgrade/evidence/phase8-broker-security.json) and
+  [implementation report](upgrade/evidence/PHASE80_REPLICATED_SHADOW_SUBSTRATE_REPORT.md).
+- This same-host three-broker test certifies protocol, replication, fencing and
+  recovery behavior for shadow development. It does not claim independent
+  rack/region failure domains or authorize Phase 9 production cutover.
+- `8.1 COMPLETE` on 2026-08-15. Added a generated `qdl.provider.v1`
+  raw-envelope/quarantine contract with explicit capture boundary, transport
+  codec, exact raw bytes/hash, session/generation, lease/authority/partition
+  epochs and fixture provenance. Added wire-compatible EventEnvelope fields for
+  session/generation/authority/plan and canonical payload hash.
+- Added provider-neutral `qdl-provider-envelope` and `qdl-venue-core` crates.
+  The core owns full session lifecycle, subscription ACK/reject state,
+  heartbeat/read deadlines, lease/generation fencing, sequence/dedup/gap
+  decisions, lifecycle-aware bounded backpressure and stable SHA-256 rendezvous
+  assignment. Binance-specific command/ACK JSON stays in its adapter module.
+- Removed plausible Binance defaults for buyer-maker, final-bar flag, last trade
+  ID and trade count in both Python and Rust canonicalizers. Missing or invalid
+  values now fail to quarantine upstream rather than silently becoming
+  `false`/`0`.
+- Added shadow-only capability manifests for Binance USD-M TRADE, OKX SWAP
+  TRADE, DNSE/VN BAR and a fixture-only Deribit option BOOK boundary. None is
+  authority-eligible.
+- Contract format/lint and breaking checks passed against both frozen Phase 1
+  and Phase 7 beta baselines. Targeted Python regression passed 17 tests; Rust
+  fmt/clippy and 24 tests passed. A 10,000-instrument rendezvous test moved
+  33.6% of assignments when adding a third owner and moved zero existing
+  assignments when only one instrument was added. Evidence:
+  [raw golden](upgrade/evidence/phase8-raw-envelope-golden.json),
+  [session chaos](upgrade/evidence/phase8-rust-session-chaos.json),
+  [stable sharding](upgrade/evidence/phase8-stable-sharding.json) and
+  [implementation report](upgrade/evidence/PHASE81_RAW_ENVELOPE_RUST_CORE_REPORT.md).
+- `8.2 COMPLETE` on 2026-08-15. Added an atomic exact-frame tee to Binance
+  USD-M and OKX V5 without changing existing callback consumers, plus an
+  append-only canonical `raw_capture_id` and exact raw-frame hash linkage in
+  both Python and Rust. Missing linkage fails closed in shadow mode.
+- Certified 189.03 seconds of concurrent authentic Binance/OKX trade traffic:
+  1,855 Binance and 510 OKX events observed, with a bounded 128 captures per
+  venue retained. A credential-owning DNSE acquisition edge delivered a full
+  authentic 241-row `VN30F1M` session for 2026-08-14. Deribit remains explicit
+  fixture-only and cannot claim live provenance.
+- Replayed 498 cross-venue records 200 times (99,600 events) through Python and
+  three clean Rust processes. Deterministic Protobuf bytes, identities,
+  decimals, timestamps, sequences, session/generation, quality flags and
+  canonical hashes had zero mismatch and zero restart divergence. Python p99
+  was 0.230 ms; debug Rust exceeded the 1,000 events/s Phase 8.2 floor. Release
+  capacity is deliberately deferred to the immutable 8.3 artifact.
+- No public endpoint, V1 key, Redis projection or production authority was
+  written. Compact checksummed evidence and the implementation report are in
+  [Phase 8.2 report](upgrade/evidence/PHASE82_REFERENCE_SHADOW_CONFORMANCE_REPORT.md).
+- Operator note: host `.env` DNSE credentials were stale (`OA-401`) while the
+  running workload identity acquired successfully. Secrets were not copied;
+  operator secret rotation must reconcile these sources independently of the
+  completed canonical parity gate.
+- `8.3 COMPLETE` on 2026-08-15. Built immutable image
+  `qdl-phase8-rust@sha256:46a7c3fa516c0035c3ce41add0ce77e9acb4d4dfd1b0ac74130c894ca7ad5280`
+  from revision `053ec76`, with pinned builder/runtime bases, non-root
+  `10001:10001`, SBOM, signed checksummed provenance, exact candidate partition
+  plan and Python V1 rollback manifest.
+- Authority is split correctly between compacted latest state and append-only
+  audit history. A replicated full-broker restart restored state revision 3 and
+  audit revisions `[1, 2, 3]`; stale, public, legacy and canary-after-rollback
+  writes were rejected. Final authority remained `RUST_SHADOW`.
+- Release-profile replay processed 139,500 cross-venue events with zero
+  semantic/byte/restart mismatch across three clean Rust processes. Python p99
+  was 0.224 ms and minimum Rust release throughput was 81,710 events/s.
+- Buf format/lint and both frozen-baseline breaking gates passed; 45 targeted
+  Python regressions and the full Rust fmt/clippy/workspace suite passed.
+  Cleanup left zero Phase 8 containers, networks or volumes. V1 stayed HTTP 200
+  and its inspected topology was unchanged. See the
+  [Phase 8 report](upgrade/evidence/PHASE8_RUST_REALTIME_CORE_REPORT.md).
+
+### Technical Debt / Decision Gate
+
+- Broker product, topology, retention and failure-domain cost require explicit
+  infrastructure approval before 8.0 deployment.
+- TRADE, BBO, L2/book and BAR are separate certification units.
+- OKX JSON and SBE are separate capabilities; SBE requires entitlement, pinned
+  schema/version, unknown-schema fail-closed behavior and tested JSON rollback.
+- Binance reference success certifies the shared core only for declared
+  capability semantics. Each venue network edge still needs provider-specific
+  reconnect, rate-limit, session and capacity evidence.
+- A Python acquisition edge is allowed only when provider SDK/legal/operational
+  constraints justify it and it forwards through the common raw-envelope/core
+  boundary.
+- Phase 8 may create an authority-capable artifact, but cannot move it beyond
+  fenced shadow without an independently approved Phase 9 slice.
+
+### Rollback
+
+- Fence and stop Rust shadow roles.
+- Stop shadow broker producers/consumers for the affected test namespace without
+  deleting frozen evidence required for investigation.
+- Continue Python V1 production authority unchanged.
+- Rebuild/remove shadow projections from the replicated log as needed.
+- No public endpoint, SDK v1, legacy key/channel or venue subscription owner
+  changes in Phase 8.
+
+## 13. Phase 9 - Rust Core Canary And Progressive Replacement
+
+**Status:** `PLANNED`
+
+### Goal
+
+Promote Rust from shadow to authoritative realtime ownership one explicitly
+approved venue/market/product/feed/partition slice at a time. Every promotion
+uses persistent compare-and-swap authority, sink-side fencing, a formal terminal
+watermark handoff, exact-frame parity evidence and a rehearsed rollback.
+Python remains the stable API/SDK/control/history/reconciliation platform and V1
+compatibility boundary.
+
+### Non-Goals
+
+- Phase 9 is not a multi-venue or all-feed cutover.
+- Phase 9 does not authorize two unfenced public writers for safety.
+- Phase 9 does not sunset V1 automatically.
+- Phase 9 does not make a low-rate Python acquisition edge invalid.
+- Phase 9 does not promote BBO, L2 or BAR from TRADE evidence.
+- Phase 9 does not promote OKX SBE from OKX JSON evidence.
+- Phase 9 does not allow a critical consumer to depend solely on V2 before DR
+  and recovery gates pass.
+
+### Promotion Sequence
+
+```text
+Shared Rust canonical/quality/durable core
+    |
+    +-> BINANCE / USD-M / TRADE -> BBO -> L2 -> BAR
+    +-> OKX / SPOT+SWAP / JSON TRADE -> BBO -> L2 -> BAR
+    +-> DNSE/VN Python acquisition edge -> Rust BAR/quality core
+    +-> Deribit option TRADE/BOOK after independent activation
+    +-> future venue capability adapters
+```
+
+Each arrow represents separate capability evidence and approval. A later
+capability does not inherit certification from an earlier one.
+
+### Phase Decomposition
+
+| Subphase | Outcome |
+|---|---|
+| 9.0 | Close Phase 6 infrastructure/security/observability/DR blockers and approve exact slice |
+| 9.1 | `RUST_CANARY`: dual-read/compare, one public authority remains Python |
+| 9.2 | `RUST_PRIMARY`: terminal-watermark cutover for one bounded slice |
+| 9.3 | Hold period, rollback-window closure and independent expansion decision |
+
+### Mandatory Preconditions
+
+Phase 9 cannot start until:
+
+- Replicated durable transport and restore tests from Phase 8 pass.
+- Production OTel collector, dashboards, alerts and SLO/error budget are active.
+- Workload identity, RBAC, network policy, external secret rotation, artifact
+  signature admission and retention/entitlement governance pass.
+- PostgreSQL control-plane backup/PITR and object-store restore pass.
+- Regional/failure-domain DR is rehearsed on independent infrastructure.
+- Redis and compatibility projections rebuild from canonical log.
+- Persistent authority records and sink-side fencing pass zombie-writer tests.
+- Every affected consumer is registered with owner, criticality, contract,
+  freshness, recovery, SDK and rollback requirements.
+- Exact candidate slice, hash range/partition plan, artifact digest, blast radius
+  and immutable Python rollback manifest receive explicit approval.
+
+### Authority Slice Identity
+
+The authority key is at least:
+
+```text
+environment
+venue
+market
+product_type
+feed
+partition_plan_epoch
+hash_range_or_partition_id
+schema_major
+```
+
+An authority record contains:
+
+```text
+slice_id
+state
+authority_revision
+owner_id
+lease_epoch
+partition_plan_epoch
+terminal_watermark
+artifact_image_digest
+sbom_digest
+signature_identity
+contract_schema_digest
+normalizer_version
+adapter_version
+config_revision
+instrument_catalog_revision
+source_policy_revision
+evidence_bundle_id
+rollback_manifest_digest
+approved_by
+approved_at
+hold_until
+```
+
+### Authority State Machine
+
+```text
+PYTHON_PRIMARY
+    -> RUST_SHADOW
+    -> VALIDATING
+    -> RUST_CANARY
+    -> RUST_PRIMARY
+
+VALIDATING | RUST_CANARY | RUST_PRIMARY
+    -> BLOCKED
+    -> ROLLBACK_PENDING
+    -> PYTHON_PRIMARY
+```
+
+Every transition uses compare-and-swap:
+
+```text
+expected_current_state
+expected_authority_revision
+expected_owner_id
+expected_lease_epoch
+expected_partition_plan_epoch
+```
+
+No operator or deployment script writes `RUST_PRIMARY=true` directly. A
+transition creates an immutable audit record with previous/new state, owner,
+epoch, terminal watermark, artifacts, config/schema revisions, evidence,
+operator and change ticket.
+
+### Sink-Side Fencing
+
+Every raw/canonical/projected write carries:
+
+```text
+slice_id
+owner_id
+authority_revision
+lease_epoch
+partition_plan_epoch
+```
+
+The durable sink or authoritative projector rejects:
+
+```text
+event.owner_id != active_owner
+event.authority_revision != active_authority_revision
+event.lease_epoch < active_lease_epoch
+event.partition_plan_epoch != active_partition_plan_epoch
+```
+
+The V1 compatibility projector applies the same authority decision before
+emitting legacy output. Producer-side lease checks alone are not sufficient.
+
+One-authority invariant:
+
+```text
+For one authoritative slice and logical offset range:
+exactly one owner may create canonical/public/legacy authoritative output.
+Any number of shadow readers/comparators may observe it.
+```
+
+### Formal Cutover Watermark Protocol
+
+A `RUST_CANARY -> RUST_PRIMARY` transition executes:
+
+1. Freeze subscription/config/partition mutation for the exact slice.
+2. Verify current authority record and acquire the cutover lock/lease through
+   compare-and-swap.
+3. Confirm Python primary and Rust canary consume the same authentic capture
+   range and parity is clean through watermark `W`.
+4. Instruct the Python owner to stop accepting new ownership after its terminal
+   durable commit and drain to `W`.
+5. Persist Python terminal owner checkpoint, source session/generation and
+   terminal watermark `W`.
+6. Increment authority revision and lease epoch; set Rust owner in one durable
+   CAS transaction.
+7. Make the final sink/projector reject all writes from the old owner/epoch.
+8. Start/continue Rust authority from `W + 1` or the documented provider-specific
+   handoff boundary. Reconnect/resnapshot if provider sequence semantics require
+   it.
+9. Reconcile an approved overlap/boundary range by event ID, source sequence,
+   decimal value, timestamp, quality and output count.
+10. Enable V1 compatibility projection from canonical Rust-authoritative events.
+11. Disable only the exact Python venue subscription for the promoted slice.
+12. Observe the hold period with enhanced alerts and keep the immutable Python
+    rollback manifest available.
+13. Close the transition only after consumer, SLO, lag and parity gates remain
+    clean through the hold period.
+
+Example transition:
+
+```json
+{
+  "slice_id": "prod/binance/usdm/perpetual/trade/plan-7/partition-03",
+  "old_owner": "python-ingestor-v1",
+  "new_owner": "rust-ingestor-v2",
+  "old_epoch": 19,
+  "new_epoch": 20,
+  "old_authority_revision": 42,
+  "new_authority_revision": 43,
+  "terminal_watermark": 913880123,
+  "first_new_watermark": 913880124
+}
+```
+
+### Formal Rollback Protocol
+
+Rollback is not “start Python again”:
+
+1. Trigger `BLOCKED` or `ROLLBACK_PENDING`; fence Rust at the final sink.
+2. Persist the last accepted Rust watermark, source session/generation and
+   incident reason.
+3. Activate the immutable Python rollback artifact/config under a new authority
+   revision and lease epoch.
+4. Reconnect/resnapshot according to provider semantics.
+5. Replay/reconcile from the last common durable cursor and deduplicate by
+   deterministic event ID.
+6. Resume V1 compatibility output only from the newly active owner.
+7. Verify affected consumers observe no duplicate external publication and
+   recover within the approved RTO.
+8. Preserve incident evidence and do not re-enter canary until a hold-down period
+   and new approval prevent flapping.
+
+### Stable Canary Selection
+
+Canary selection hashes stable `instrument_uid` or uses a durable partition ID.
+It never hashes individual events. All events that share sequence/book/bar state
+remain with one owner.
+
+Canary configuration records:
+
+```text
+partition_plan_epoch
+hash function/version
+selected range or partition IDs
+expected instruments
+owner assignments
+start watermark
+maximum blast radius
+hold duration
+rollback trigger thresholds
+```
+
+Changing partition count/hash algorithm creates a new plan epoch and separate
+handoff; it is not an in-place config edit.
+
+### Automated Guardrails And Anti-Flapping
+
+The control plane moves a canary/primary slice to `BLOCKED` or
+`ROLLBACK_PENDING` when any approved trigger fires:
+
+```text
+unexplained canonical mismatch > 0 for correctness-critical fields
+undetected/open gap beyond policy
+final-bar or revision mismatch > 0
+durable ACK timeout or replication failure
+projector/consumer lag above threshold
+freshness or completeness SLO breach
+monotonic queue/spool growth
+duplicate external publication
+authority ambiguity or stale-owner write attempt
+resource headroom breach
+consumer error-rate breach
+```
+
+For execution-dependent data the immediate automated action is fence/degrade/
+fail closed. Automatic owner rollback versus operator-approved rollback is
+declared per slice. A hold-down period prevents repeated
+`Python -> Rust -> Python -> Rust` transitions near a noisy threshold.
+
+### V1 Compatibility And Consumer Migration Registry
+
+The V1 compatibility projector remains the public legacy writer after Rust
+promotion. Existing consumers do not learn whether Python or Rust produced the
+canonical event.
+
+Each consumer record includes:
+
+```text
+consumer_id
+owner
+criticality
+execution_dependency
+feeds/instruments
+minimum_data_grade
+maximum_freshness
+maximum_replay_lag
+cursor_retention_requirement
+SDK/contract version
+fallback contract
+kill switch
+migration state
+last observed V1 demand
+last observed V2 demand
+owner sign-off
+```
+
+Migration states:
+
+```text
+V1_ONLY
+V1_WITH_V2_SHADOW
+V2_PAPER
+V2_PRIMARY_WITH_V1_FALLBACK
+V2_ONLY
+DECOMMISSIONED
+```
+
+V1 sunset requires all of:
+
+- no registered consumer for the contract/key/channel;
+- zero observed demand for the approved observation period;
+- consumer owner sign-off;
+- replacement and rollback documentation;
+- completed retention/audit requirement;
+- approved sunset release.
+
+Rust promotion alone never authorizes V1 removal.
+
+### Correction And Revision Protocol
+
+Canonical corrections are append-only:
+
+```text
+EVENT_CORRECTION
+TRADE_BUST
+TRADE_CORRECTION
+BAR_REVISION
+INSTRUMENT_METADATA_REVISION
+SOURCE_AUTHORITY_REVISION
+```
+
+Correction metadata:
+
+```text
+revision
+supersedes_event_id
+reason_code
+detected_at_ns
+effective_at_ns
+reconciler_or_operator
+evidence_reference
+source_policy_revision
+```
+
+Historical materializers create a new snapshot/manifest revision. Consumers may
+apply, recompute, rewind or fail closed according to `DataRequirement`; canonical
+history is never silently rewritten.
+
+### Disaster Recovery And Reconstruction
+
+Before a critical alpha or execution consumer may depend solely on V2, Phase 9
+must prove:
+
+- Broker node and approved failure-domain failover.
+- Broker restore with event/order/cursor reconciliation.
+- PostgreSQL authority/consumer/config restore and PITR.
+- Object-store historical snapshot/manifest restore.
+- Cursor signing-key rotation and retired-key verification window.
+- Complete Redis/latest/V1 compatibility rebuild from canonical log.
+- Projector rebuild from checkpoints.
+- Authority-state reconstruction from immutable audit records.
+- Clock-skew detection and timestamp-quality degradation.
+- Recovery without duplicate external publication.
+- Recovery within approved RPO/RTO for each consumer grade.
+
+### Guide Index
+
+- [Authority ownership and no-big-bang migration: Sections 30-33](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#30-migration-strategy-no-big-bang-rewrite)
+- [Production acceptance and adapter definition of done: Sections 37-41 and Appendix B](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#41-production-acceptance-checklist)
+- [OKX JSON/SBE promotion boundary](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-program-phase-6)
+- [Phase 6 production certification decision](upgrade/evidence/PHASE6_PRODUCTION_CERTIFICATION_REPORT.md)
+- [Phase 8 Rust realtime-core evidence](#12-phase-8---multi-venue-rust-realtime-core-and-reference-slice)
+
+### To Do
+
+#### 9.0 Production Prerequisites And Exact Slice Approval
+
+- Close every applicable Phase 6 `NO-GO` blocker with real infrastructure
+  evidence.
+- Deploy production durable transport, OTel collector/dashboards/alerts,
+  workload identity, RBAC/network policy, secret rotation and signed artifact
+  admission.
+- Rehearse PostgreSQL/object-store/PITR and approved failure-domain DR.
+- Implement persistent authority tables/state machine, immutable transition
+  audit and sink-side fencing.
+- Register all consumers affected by the exact candidate slice and record
+  fallback/kill-switch behavior.
+- Freeze the exact venue, market, product, feed, partition-plan epoch, hash range,
+  artifact digest, source policy, blast radius, hold period and rollback
+  manifest.
+- Obtain explicit approval naming that exact slice. A general Phase 9 approval is
+  not sufficient for later slices.
+
+#### 9.1 Rust Canary
+
+- Transition only the selected slice to `RUST_CANARY` by CAS.
+- Keep Python as the sole authoritative public writer.
+- Dual-read/compare canonical Rust output against the same authentic frame range.
+- Run live, replay, reconnect, lease loss, producer crash, broker failover,
+  projector restart and slow-consumer tests.
+- Exercise automated blocking thresholds without allowing dual public writes.
+- Verify the compatibility projector remains fed only by the active authority.
+- Hold the canary for the approved traffic/session window.
+- Revert to `RUST_SHADOW` on any unexplained semantic mismatch.
+
+#### 9.2 Bounded Rust Primary
+
+- Execute the formal terminal-watermark cutover.
+- Increment authority revision and lease epoch atomically.
+- Enforce final-sink and compatibility-projector fencing.
+- Disable only the exact Python venue subscription after Rust ownership is
+  accepted and the handoff boundary reconciles.
+- Monitor consumer state, quality, freshness, broker/projector lag, queue/spool,
+  resource headroom and stale-owner attempts under enhanced alerting.
+- Rehearse the formal rollback within the approved RTO before closing the
+  rollback window.
+- Preserve V1 contract behavior and V2 snapshot/cursor/replay continuity.
+
+#### 9.3 Hold, Close And Expand Independently
+
+- Keep the slice in an enhanced-observation hold period.
+- Close the rollback window only after all SLO, consumer and authority evidence
+  remains clean.
+- Update the consumer/authority registries and freeze the production report.
+- Decide independently whether to expand:
+  1. more partitions/instruments of the same TRADE capability;
+  2. BBO;
+  3. L2 snapshot/delta/checksum;
+  4. BAR lifecycle/revision;
+  5. another venue/market.
+- Repeat full capability/provider/chaos/capacity/rollback certification for each
+  expansion. Do not infer certification transitively.
+- Remove a replaced Python hot-path implementation only after zero ownership,
+  tested rollback posture and approved repository cleanup. Reusable adapter and
+  compatibility knowledge remain until explicit decommission.
+
+### Verification Matrix
+
+| Area | Required cases | Pass condition |
+|---|---|---|
+| Authority CAS | stale expected revision/state/epoch | Transition rejected |
+| Sink fencing | zombie Python/Rust write, delayed buffered write | Stale/non-owner write rejected |
+| Canary | exact-frame dual read, normal/burst/reconnect | Zero unexplained semantic mismatch |
+| Cutover boundary | terminal `W`, first new offset, overlap reconciliation | No acknowledged loss or duplicate external output |
+| Compatibility | V1 API/SDK/Redis consumers | No behavior/shape/source regression |
+| Consumer continuity | V2 snapshot/cursor/replay during cutover | No undetected gap |
+| Broker failure | node loss, leader change, min-ISR failure | Authority degrades/fences correctly and recovers |
+| Projector failure | Redis loss, checkpoint rollback, rebuild | Deterministic rebuild and no duplicate public output |
+| Owner failure | Python/Rust crash before/after CAS | One owner and recoverable watermark |
+| Rollback | Rust fenced, Python reactivated | RTO met and cursor range reconciled |
+| Auto guardrails | mismatch, lag, freshness, resource breach | Block/fence according to policy; no flapping |
+| Correction | trade/bar/source revision | Append-only lineage and consumer policy enforced |
+| DR | broker/DB/object store/key rotation/authority rebuild | Approved RPO/RTO |
+| Capacity | normal/burst/soak after authority | Headroom and bounded resources/lag |
+| Cleanup | canary/test state | Only governed production state/evidence remains |
+
+### Required Evidence Artifacts
+
+Per promoted slice:
+
+```text
+upgrade/evidence/phase9-<slice>-approval.json
+upgrade/evidence/phase9-<slice>-authority-cas.json
+upgrade/evidence/phase9-<slice>-sink-fencing.json
+upgrade/evidence/phase9-<slice>-canary-parity.json
+upgrade/evidence/phase9-<slice>-cutover-watermark.json
+upgrade/evidence/phase9-<slice>-consumer-continuity.json
+upgrade/evidence/phase9-<slice>-capacity.json
+upgrade/evidence/phase9-<slice>-rollback.json
+upgrade/evidence/phase9-<slice>-dr.json
+upgrade/evidence/PHASE9_<SLICE>_PROMOTION_REPORT.md
+```
+
+### Verification And Exit Gate
+
+A slice is `RUST_PRIMARY` only when:
+
+- Every applicable Phase 6 production checklist and Appendix B item passes on
+  real infrastructure with authentic provider events.
+- Persistent authority CAS, immutable audit and sink-side fencing reject stale
+  or zombie writers.
+- Exact-frame Python/Rust parity remains exact through the canary and cutover
+  boundary.
+- The formal terminal-watermark protocol completes with one owner, no
+  acknowledged loss and no duplicate external publication.
+- The exact Python subscription is disabled only after Rust ownership is
+  accepted; unrelated slices are unchanged.
+- V1 compatibility tests and selected consumers remain unchanged.
+- V2 beta consumers continue snapshot/cursor/replay through cutover and rollback
+  tests.
+- Broker, Redis/projector, process crash, reconnect, gap and DR cases recover
+  inside approved objectives.
+- Resource, latency, queue, spool and lag measurements meet approved headroom
+  without monotonic growth.
+- Rollback to Python passes within the approved RTO and reconciles the affected
+  cursor range.
+- The hold period completes without authority ambiguity, unexplained mismatch or
+  SLO breach.
+- Production state, consumer registrations, immutable manifests and evidence are
+  governed; all disposable canary/test resources are removed.
+
+Phase 9 as a program remains `IN_PROGRESS` while additional slices are planned.
+Completing one Rust primary slice does not mark every venue/feed complete.
+
+### Completed
+
+- Not started. User approval is required independently for each authority slice.
+
+### Technical Debt / Decision Gate
+
+- Python outer-layer replacement is not a Phase 9 objective. A future change
+  requires profiling and a separate contract-preserving decision.
+- V1 sunset remains owner- and telemetry-based; Rust promotion does not authorize
+  removal.
+- Automatic rollback versus automatic fence-plus-operator-approval is selected
+  per consumer criticality and slice risk.
+- Regional DR topology, RPO/RTO and cost require explicit production approval.
+- Deribit/options and OKX SBE remain separately licensed, entitled and certified
+  activations.
+- A new partition count/hash algorithm requires a new partition-plan epoch and
+  migration protocol.
+- Any correction semantics not covered by the canonical contract block
+  authoritative use for that feed until versioned.
+
+### Rollback
+
+- Set the slice to `BLOCKED/ROLLBACK_PENDING` and fence Rust at the final sink.
+- Persist the last accepted Rust watermark and incident evidence.
+- Activate the immutable Python rollback manifest under a new authority revision
+  and lease epoch.
+- Reconnect/resnapshot according to provider semantics.
+- Replay/reconcile from the last common durable cursor and restore V1
+  compatibility output from only the Python authority.
+- Verify recovery within RTO and no duplicate external publication.
+- Other venue/feed/partition slices remain untouched.
+
+## 14. Approval Gates Before Further Implementation
+
+The original foundation is implemented through Phase 6 shadow certification.
+Phases 7-9 are a new governed program and require phase/subphase approval before
+runtime deployment or source-authority mutation.
+
+### Phase 7 Approval
+
+Phase 7 approval authorizes:
+
+- contract/security/readiness/SDK hardening;
+- isolated protected read-only beta deployment;
+- monitoring and disposable paper-alpha consumers;
+- real-provider read-only comparison and bounded beta load.
+
+It does not authorize:
+
+- V1 restart or reconfiguration;
+- venue/source ownership change;
+- Rust public/legacy write authority;
+- live execution dependency;
+- V1/legacy Redis sunset.
+
+The deployment manifest must name beta hostname, JWT issuer/audience, cursor
+keyring/TTL, monitoring consumer, paper alpha, resource namespaces and rollback
+topology.
+
+### Phase 8 Approval
+
+Phase 8 approval authorizes:
+
+- isolated replicated shadow durable infrastructure after cost/topology review;
+- shared provider-neutral Rust core and separate runtime roles;
+- Binance USD-M TRADE exact-frame reference shadow;
+- bounded authentic OKX/DNSE capture comparison;
+- deterministic Deribit-style conformance;
+- authority-capable artifact rehearsal that remains fenced shadow.
+
+It does not authorize any Rust public, canonical-authoritative or legacy write
+authority.
+
+### Phase 9 Approval
+
+Each Phase 9 approval must name:
+
+```text
+environment
+venue
+market
+product_type
+feed
+partition plan epoch
+hash range or partition IDs
+artifact/image digest
+schema/normalizer/adapter/config revisions
+source policy
+consumer blast radius
+cutover window
+hold period
+automatic guardrails
+rollback manifest
+operator/change ticket
+```
+
+Approval for one slice does not authorize another feed, venue, market or
+partition range.
+
+### Historical Foundation Approval
+
+The original implementation began after approval of these architecture choices:
+
+1. Use a demand-backed Binance USD-M slice instead of blindly starting with
+   broad Binance Spot.
+2. Treat options/Deribit as a first-class capability test while deferring actual
+   venue activation until its own certification.
+3. Preserve Python as the outer platform and use Rust for measured realtime hot
+   paths behind stable contracts.
+4. Keep V1 compatibility until per-consumer telemetry and owner-governed sunset.
+
+Later phases may refine measured thresholds but may not weaken compatibility,
+correctness, no-silent-loss, source authenticity, identity binding, durability,
+fencing, recovery or cleanup gates without explicit approval.
+
+## 15. Phase 7-9 Critical Path And Parallel Work
+
+### Critical Path
+
+```text
+7.0 typed contract + data-plane identity + bar lifecycle + real readiness
+    -> 7.1 isolated beta topology + cursor/handoff certification
+        -> 7.2 monitoring/paper consumers
+            -> 7.3 beta evidence freeze
+                -> 8.0 replicated shadow broker + production telemetry
+                    -> 8.1 raw envelope + Rust session/core
+                        -> 8.2 exact-frame shadow + conformance + soak
+                            -> 8.3 authority-capable fenced artifact
+                                -> 9.0 production blockers + exact slice approval
+                                    -> 9.1 Rust canary
+                                        -> 9.2 bounded Rust primary
+                                            -> 9.3 hold/close/independent expansion
+```
+
+### Parallel Work Allowed
+
+These workstreams may run in parallel when they do not bypass the critical path:
+
+- Phase 7 typed REST/SDK work and application auth/interceptor work.
+- Phase 7 consumer manifest persistence and dependency readiness probes.
+- Phase 8 broker infrastructure and raw-envelope schema/golden fixtures.
+- Phase 8 stable sharding and venue capability manifests.
+- Phase 8 Rust Binance session engine and cross-venue deterministic fixtures.
+- Phase 9 authority schema/audit tooling and DR runbook development before the
+  first authority approval, provided no source mutation occurs.
+
+### Work That Must Not Be Parallelized Across An Authority Boundary
+
+- Two owners writing authoritative canonical or legacy output for the same
+  logical slice.
+- Repartitioning during canary/cutover.
+- Source-policy mutation during terminal-watermark handoff.
+- SDK/public contract semantic change during consumer canary without a new
+  schema digest.
+- Rust primary promotion while replicated broker, sink fencing or DR evidence is
+  incomplete.
+
+## 16. Suggested Implementation Slices
+
+Commits remain coherent and independently testable. Suggested slices:
+
+| Slice | Scope | Mandatory evidence before merge |
+|---|---|---|
+| F7-01 | Typed V2 REST/SDK payloads and enums | OpenAPI/Buf/golden diff |
+| F7-02 | Bar lifecycle and lifecycle-aware delivery policy | Final/revision lossless tests |
+| F7-03 | REST data-plane guard and consumer manifest | Auth/entitlement matrix |
+| F7-04 | gRPC interceptor and SDK credential provider | REST/gRPC identity parity |
+| F7-05 | Dependency/data/authority readiness | Outage/readiness matrix |
+| F7-06 | Cursor claim expansion and multi-replica handoff | Cursor/HA continuity report |
+| F7-07 | Contiguous SDK checkpoint adapters | Crash/apply/checkpoint tests |
+| F7-08 | Isolated beta deployment and topology rollback | V1 unchanged proof |
+| F7-09 | Monitoring and paper-alpha canary | Consumer parity report |
+| F8-01 | Replicated broker substrate and telemetry | Failover/security/restore |
+| F8-02 | Raw provider envelope and exact-byte lineage | Cross-language golden |
+| F8-03 | Rust session/core traits | Unit/conformance/chaos |
+| F8-04 | Stable partition planner | Churn/epoch tests |
+| F8-05 | Binance exact-frame shadow | Python/Rust parity |
+| F8-06 | OKX/DNSE/Deribit-style conformance | Capability matrix |
+| F8-07 | Soak/capacity and authority rehearsal | Phase 8 report |
+| F9-01 | Persistent authority CAS and audit | State-machine tests |
+| F9-02 | Sink/projector fencing | Zombie-writer tests |
+| F9-03 | Cutover/rollback orchestrator | Terminal watermark rehearsal |
+| F9-04 | Consumer migration registry and guardrails | Manifest/alert tests |
+| F9-05 | First exact Rust canary | Slice-specific canary report |
+| F9-06 | First bounded Rust primary | Promotion/rollback/DR report |
+
+A slice does not merge merely because code compiles. Its relevant contract,
+correctness, failure, compatibility, capacity and cleanup evidence must pass.
+
+## 17. Machine-Readable Evidence Rules
+
+Every Phase 7-9 JSON evidence file contains:
+
+```text
+schema
+phase
+subphase
+status
+generated_at
+git_commit
+image_digests
+contract_schema_digest
+config_revision
+instrument_catalog_revision
+source_policy_revision
+authority_revision
+partition_plan_epoch
+environment
+scope
+commands
+cases_run
+cases_passed
+cases_failed
+cases_skipped
+thresholds
+measurements
+unexplained_mismatches
+acknowledged_loss
+duplicates
+open_gaps
+cleanup
+decision
+```
+
+Rules:
+
+- `status = PASS` only when all required machine conditions pass.
+- A skipped required case makes the relevant gate `BLOCKED`, not `PASS`.
+- Tolerances are explicit fields with owner/approval; they are not hidden in
+  report code.
+- Provider-authentic and synthetic evidence are counted separately.
+- Raw unbounded production logs and secrets are not committed.
+- Evidence references immutable image/schema/config revisions.
+- Cleanup records exact deleted namespaces/resources and confirms production
+  state was untouched.
+
+## 18. Final Definition Of Done
+
+The Phase 7-9 program achieves its target when:
+
+1. V2 is a typed, authenticated, consumer-bound, observable and recoverable data
+   contract.
+2. Monitoring and approved alpha consumers use snapshot/cursor/replay/live
+   without undetected gaps.
+3. Rust provides one shared provider-neutral realtime core with exact raw
+   lineage, stable session/sequence semantics and bounded backpressure.
+4. Replicated durable transport is the canonical replay source; Redis is a
+   rebuildable projection/compatibility layer.
+5. At least one explicitly approved feed slice completes
+   `PYTHON_PRIMARY -> RUST_SHADOW -> RUST_CANARY -> RUST_PRIMARY`.
+6. Persistent authority CAS and sink-side fencing prove exactly one
+   authoritative writer per slice.
+7. Cutover and rollback meet approved RPO/RTO without acknowledged loss or
+   duplicate external publication.
+8. V1 behavior remains stable until every consumer completes a governed
+   migration/sunset.
+9. DR reconstructs broker, authority, cursor, historical and Redis/projector
+   state within approved objectives.
+10. Further venue/feed expansion uses the same contracts, capability manifests
+    and evidence gates without redesigning the core.

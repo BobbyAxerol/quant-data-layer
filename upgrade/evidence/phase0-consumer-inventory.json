@@ -1,0 +1,2760 @@
+{
+  "audit_mode": "read_only",
+  "consumer_inventory": {
+    "active_alphas": {
+      "direct_provider_files": {},
+      "redis_contracts": [],
+      "routes": [
+        {
+          "references": 1,
+          "value": "/v1/binance/futures/basis-bundle"
+        },
+        {
+          "references": 1,
+          "value": "/v1/binance/futures/continuous-basis-bundle"
+        },
+        {
+          "references": 2,
+          "value": "/v1/binance/futures/exchange-info"
+        },
+        {
+          "references": 1,
+          "value": "/v1/binance/futures/funding-rate/{symbol.upper"
+        },
+        {
+          "references": 1,
+          "value": "/v1/order-brackets/{bracket_group_id}"
+        }
+      ],
+      "scanned_files": 261,
+      "sdk_files": [
+        "deep_momentum/main/deep_momentum_runner.py",
+        "deep_momentum/main/feature_pipeline.py",
+        "deep_momentum/scripts/production_smoke.py"
+      ],
+      "status": "ok"
+    },
+    "trading_system": {
+      "direct_provider_files": {
+        "binance_direct": [
+          "shared/config.py"
+        ],
+        "dnse_direct": [
+          "dnse_openapi_sdk/python/broker_api/get_list_care_by.py",
+          "dnse_openapi_sdk/python/dnse/client.py",
+          "dnse_openapi_sdk/python/marketdata_api/get_instruments.py",
+          "dnse_openapi_sdk/python/marketdata_api/get_latest_trade.py",
+          "dnse_openapi_sdk/python/marketdata_api/get_ohlc.py",
+          "dnse_openapi_sdk/python/marketdata_api/get_security_definition.py",
+          "dnse_openapi_sdk/python/marketdata_api/get_trades.py",
+          "dnse_openapi_sdk/python/marketdata_api/get_working_dates.py",
+          "dnse_openapi_sdk/python/trading_api/cancel_order.py",
+          "dnse_openapi_sdk/python/trading_api/close_position.py",
+          "dnse_openapi_sdk/python/trading_api/create_trading_token.py",
+          "dnse_openapi_sdk/python/trading_api/get_accounts.py",
+          "dnse_openapi_sdk/python/trading_api/get_balances.py",
+          "dnse_openapi_sdk/python/trading_api/get_close_price.py",
+          "dnse_openapi_sdk/python/trading_api/get_execution_detail.py",
+          "dnse_openapi_sdk/python/trading_api/get_loan_packages.py",
+          "dnse_openapi_sdk/python/trading_api/get_order_detail.py",
+          "dnse_openapi_sdk/python/trading_api/get_order_history.py",
+          "dnse_openapi_sdk/python/trading_api/get_orders.py",
+          "dnse_openapi_sdk/python/trading_api/get_position_by_id.py",
+          "dnse_openapi_sdk/python/trading_api/get_positions.py",
+          "dnse_openapi_sdk/python/trading_api/get_ppse.py",
+          "dnse_openapi_sdk/python/trading_api/post_order.py",
+          "dnse_openapi_sdk/python/trading_api/put_order.py",
+          "dnse_openapi_sdk/python/trading_api/send_email_otp.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/expected_price.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/foreign_investor.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/market_index.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/ohlc.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/ohlc_closed.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/order.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/quote.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/sec_def.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/trade.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/trade_extra.py",
+          "dnse_openapi_sdk/python/websocket_marketdata/trading_websocket/client.py",
+          "services/executor/adapters/dnse_stock.py",
+          "services/listener/adapters/dnse_order_listener.py"
+        ]
+      },
+      "redis_contracts": [
+        {
+          "references": 1,
+          "value": "kline:*:*"
+        },
+        {
+          "references": 1,
+          "value": "stream:group"
+        },
+        {
+          "references": 1,
+          "value": "stream:kline:"
+        },
+        {
+          "references": 1,
+          "value": "stream:kline:1m:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "stream:kline:{interval}:{symbol.upper"
+        },
+        {
+          "references": 1,
+          "value": "stream:trade:"
+        },
+        {
+          "references": 1,
+          "value": "stream:trade:{symbol.upper"
+        },
+        {
+          "references": 1,
+          "value": "stream:trade:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "stream:vn:"
+        },
+        {
+          "references": 1,
+          "value": "stream:vn:{symbol.upper"
+        },
+        {
+          "references": 1,
+          "value": "stream:vn:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "trade:BTCUSDT.BINANCE"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:*"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:last:"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:last:binance_{market_name}:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:last:{expected_market}:{identity.symbol}"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:last:{market_name}:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:last:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:{expected_market}:{identity.symbol}"
+        },
+        {
+          "references": 3,
+          "value": "trade:{INSTRUMENT_ID}"
+        },
+        {
+          "references": 1,
+          "value": "trade:{SYMBOL}.{VENUE}"
+        },
+        {
+          "references": 2,
+          "value": "trade:{instrument_id}"
+        },
+        {
+          "references": 1,
+          "value": "trade:{order.instrument_id}"
+        },
+        {
+          "references": 1,
+          "value": "trade:{snapshot.instrument_id}"
+        },
+        {
+          "references": 1,
+          "value": "trade:{symbol}.BINANCE"
+        },
+        {
+          "references": 2,
+          "value": "trade:{symbol}.{venue}"
+        },
+        {
+          "references": 1,
+          "value": "vn:quote:*"
+        },
+        {
+          "references": 1,
+          "value": "vn:quote:last:*"
+        }
+      ],
+      "routes": [
+        {
+          "references": 5,
+          "value": "/v1/accounts/{account_id}/balances"
+        },
+        {
+          "references": 5,
+          "value": "/v1/accounts/{account_id}/preflight"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/accounts/paper/seed"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/accounts/{account_id}/policy"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/accounts/{account_id}/reconcile-open-orders"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/accounts/{account_id}/reconcile-positions"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/accounts/{account_id}/state"
+        },
+        {
+          "references": 7,
+          "value": "/v1/admin/accounts/{account_id}/sync"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/accounts/{args.account_id}/policy"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/accounts/{args.account_id}/reconcile-open-orders"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/accounts/{args.account_id}/reconcile-positions"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/accounts/{args.account_id}/state"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/accounts/{args.account_id}/sync"
+        },
+        {
+          "references": 16,
+          "value": "/v1/admin/alphas/register"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/alphas/{alpha_id}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/alphas/{alpha_id}/risk"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/alphas/{args.alpha_id}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/alphas/{args.alpha_id}/risk"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/broker-bindings"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/broker-bindings/{args.external_account_ref}/exposure"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/broker-bindings/{args.external_account_ref}/reconcile-open-orders"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/broker-bindings/{args.external_account_ref}/reconcile-positions"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/broker-bindings/{args.external_account_ref}/state"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/broker-bindings/{external_account_ref}/exposure"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/broker-bindings/{external_account_ref}/reconcile-open-orders"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/broker-bindings/{external_account_ref}/reconcile-positions"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/broker-bindings/{external_account_ref}/state"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/copy/policies"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/copy/policies/{args.strategy_id}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/copy/policies/{strategy_id}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/deployments/{args.deployment_id}/state"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/deployments/{deployment_id}/state"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/events"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/market/seed"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/ops/emergency-close"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/ops/emergency-close/plan"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/ops/emergency-close/{args.operation_id}/verify"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/ops/emergency-close/{operation_id}"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/ops/emergency-close/{operation_id}/verify"
+        },
+        {
+          "references": 3,
+          "value": "/v1/admin/order-brackets/lifecycle-audit"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/order-groups"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/order-groups/{args.group_id}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/order-groups/{args.group_id}/{args.action}"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/order-groups/{group_id}"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/order-groups/{group_id}/reconcile"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/order-groups/{group_id}/release"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/performance/accounts/latest"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/performance/accounts/{account_id}/history"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/performance/accounts/{args.account_id}/history"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/performance/dashboard"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/performance/instruments/latest"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/performance/portfolios/{args.portfolio_id}/history"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/performance/portfolios/{args.portfolio_id}/latest"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/performance/portfolios/{portfolio_id}/history"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/performance/portfolios/{portfolio_id}/latest"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/portfolio-allocations"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/portfolio-capital/history"
+        },
+        {
+          "references": 9,
+          "value": "/v1/admin/portfolios"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/portfolios/{args.portfolio_id}/state"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/portfolios/{portfolio_id}/state"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/replay/compare"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/replay/export"
+        },
+        {
+          "references": 8,
+          "value": "/v1/admin/replay/jobs"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/replay/jobs/{args.replay_id}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/replay/jobs/{args.replay_id}/run"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/replay/jobs/{replay_id}"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/replay/jobs/{replay_id}/run"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/replay/order-lifecycle"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/replay/quantbt-diff"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/sizing/decisions"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/sizing/decisions/summary"
+        },
+        {
+          "references": 1,
+          "value": "/v1/admin/sizing/decisions/{args.decision_id}"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/sizing/decisions/{decision_id}"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/symbols"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/symbols/sync"
+        },
+        {
+          "references": 16,
+          "value": "/v1/admin/trading-state"
+        },
+        {
+          "references": 2,
+          "value": "/v1/algoOrder"
+        },
+        {
+          "references": 1,
+          "value": "/v1/batchOrders"
+        },
+        {
+          "references": 1,
+          "value": "/v1/binance/kline/{symbol.upper"
+        },
+        {
+          "references": 1,
+          "value": "/v1/binance/price-last/{symbol.upper"
+        },
+        {
+          "references": 1,
+          "value": "/v1/binance/price/{symbol.upper"
+        },
+        {
+          "references": 3,
+          "value": "/v1/contracts"
+        },
+        {
+          "references": 1,
+          "value": "/v1/control/feed-leases"
+        },
+        {
+          "references": 1,
+          "value": "/v1/control/feed-leases/{owner_id}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/crypto/ohlcv/{provider.lower"
+        },
+        {
+          "references": 4,
+          "value": "/v1/events"
+        },
+        {
+          "references": 1,
+          "value": "/v1/exchangeInfo"
+        },
+        {
+          "references": 5,
+          "value": "/v1/execution-sessions"
+        },
+        {
+          "references": 8,
+          "value": "/v1/execution-sessions/{execution_session_id}"
+        },
+        {
+          "references": 4,
+          "value": "/v1/execution-sessions/{execution_session_id}/pre-risk"
+        },
+        {
+          "references": 1,
+          "value": "/v1/execution-sessions/{session_id}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/execution-sessions/{session_id}/pre-risk"
+        },
+        {
+          "references": 1,
+          "value": "/v1/fallback/crypto/reference/{symbol.upper"
+        },
+        {
+          "references": 1,
+          "value": "/v1/fallback/crypto/status/{symbol.upper"
+        },
+        {
+          "references": 6,
+          "value": "/v1/fills"
+        },
+        {
+          "references": 13,
+          "value": "/v1/health"
+        },
+        {
+          "references": 7,
+          "value": "/v1/health/capabilities"
+        },
+        {
+          "references": 2,
+          "value": "/v1/health/streams"
+        },
+        {
+          "references": 2,
+          "value": "/v1/market/info/{venue}/{symbol.upper"
+        },
+        {
+          "references": 4,
+          "value": "/v1/market/info/{venue}/{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/market/latest/BINANCE/{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/market/latest/{VENUE}/{SYMBOL}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/market/latest/{venue}/{symbol.upper"
+        },
+        {
+          "references": 5,
+          "value": "/v1/market/latest/{venue}/{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/openAlgoOrders"
+        },
+        {
+          "references": 1,
+          "value": "/v1/openOrders"
+        },
+        {
+          "references": 4,
+          "value": "/v1/order"
+        },
+        {
+          "references": 8,
+          "value": "/v1/order-brackets"
+        },
+        {
+          "references": 12,
+          "value": "/v1/order-brackets/{bracket_group_id}"
+        },
+        {
+          "references": 8,
+          "value": "/v1/order-groups"
+        },
+        {
+          "references": 12,
+          "value": "/v1/order-groups/{group_id}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/order-packages/arb"
+        },
+        {
+          "references": 21,
+          "value": "/v1/orders"
+        },
+        {
+          "references": 6,
+          "value": "/v1/orders/bulk"
+        },
+        {
+          "references": 24,
+          "value": "/v1/orders/{client_order_id}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/orders/{spec.client_order_id}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/performance/accounts/latest"
+        },
+        {
+          "references": 5,
+          "value": "/v1/performance/accounts/{account_id}/history"
+        },
+        {
+          "references": 5,
+          "value": "/v1/performance/dashboard"
+        },
+        {
+          "references": 4,
+          "value": "/v1/performance/instruments/latest"
+        },
+        {
+          "references": 4,
+          "value": "/v1/performance/portfolios/{portfolio_id}/history"
+        },
+        {
+          "references": 4,
+          "value": "/v1/performance/portfolios/{portfolio_id}/latest"
+        },
+        {
+          "references": 1,
+          "value": "/v1/phase7-microbench.json"
+        },
+        {
+          "references": 1,
+          "value": "/v1/phase7-phase6-ab-benchmark.json"
+        },
+        {
+          "references": 1,
+          "value": "/v1/phase7-polyglot-benchmark.json"
+        },
+        {
+          "references": 1,
+          "value": "/v1/phase7-storage-health-disposable.json"
+        },
+        {
+          "references": 1,
+          "value": "/v1/ping"
+        },
+        {
+          "references": 5,
+          "value": "/v1/portfolio-targets/rebalance"
+        },
+        {
+          "references": 5,
+          "value": "/v1/portfolio/summary"
+        },
+        {
+          "references": 2,
+          "value": "/v1/positionSide/dual"
+        },
+        {
+          "references": 6,
+          "value": "/v1/positions"
+        },
+        {
+          "references": 2,
+          "value": "/v1/preload/status"
+        },
+        {
+          "references": 1,
+          "value": "/v1/preload/{symbol.upper"
+        },
+        {
+          "references": 1,
+          "value": "/v1/push"
+        },
+        {
+          "references": 1,
+          "value": "/v1/replay/"
+        },
+        {
+          "references": 4,
+          "value": "/v1/replay/compare"
+        },
+        {
+          "references": 4,
+          "value": "/v1/replay/order-lifecycle"
+        },
+        {
+          "references": 5,
+          "value": "/v1/sizing/decisions"
+        },
+        {
+          "references": 4,
+          "value": "/v1/sizing/decisions/summary"
+        },
+        {
+          "references": 6,
+          "value": "/v1/sizing/estimate"
+        },
+        {
+          "references": 1,
+          "value": "/v1/stream"
+        },
+        {
+          "references": 1,
+          "value": "/v1/userTrades"
+        },
+        {
+          "references": 1,
+          "value": "/v1/vn/quote-last/{symbol.upper"
+        },
+        {
+          "references": 1,
+          "value": "/v1/vn/quote/{symbol.upper"
+        }
+      ],
+      "scanned_files": 361,
+      "sdk_files": [
+        "adapters/market_data/data_layer_client.py",
+        "adapters/market_data/rest_recovery.py",
+        "scripts/data_layer_contract_report.py",
+        "scripts/data_layer_contract_smoke.py",
+        "services/gateway/main.py",
+        "services/gateway/repository/admin_config.py",
+        "services/market_data/data_layer_bridge.py",
+        "services/market_data/main.py",
+        "services/paper_execution/client.py",
+        "services/paper_execution/main.py",
+        "services/performance/main.py",
+        "services/performance/repository.py",
+        "services/risk_engine/data_layer_recovery.py",
+        "services/risk_engine/main.py"
+      ],
+      "status": "ok"
+    },
+    "workspace": {
+      "direct_provider_files": {
+        "binance_direct": [
+          "Papertrade_DB/execution_OPF/trade/action.py",
+          "Papertrade_DB/execution_OPF/trade/buffer.py",
+          "Papertrade_DB/execution_OPF/trade/ohlcv.py",
+          "Papertrade_DB/execution_alphatestpaper/trade/ohlcv.py",
+          "Papertrade_DB/execution_alphatestpaper/trade/tick.py",
+          "Papertrade_DB/execution_combine_weight_sl_tp/trade/buffer.py",
+          "Papertrade_DB/execution_combine_weight_sl_tp/trade/ohlcv.py",
+          "Papertrade_DB/execution_combine_weight_sl_tp/trade/tick.py",
+          "Papertrade_DB/execution_combine_weight_sl_tp/update_symbols.py",
+          "Papertrade_DB/execution_dca_vwrsi_sl_tp/trade/buffer.py",
+          "Papertrade_DB/execution_dca_vwrsi_sl_tp/trade/ohlcv.py",
+          "Papertrade_DB/execution_dca_vwrsi_sl_tp/trade/tick.py",
+          "Papertrade_DB/execution_dca_vwrsi_sl_tp/update_symbols.py",
+          "Papertrade_DB/execution_etfarbbtc/trade/action.py",
+          "Papertrade_DB/execution_etfarbbtc/trade/ohlcv.py",
+          "Papertrade_DB/execution_fib_sl_tp_strength/trade/buffer.py",
+          "Papertrade_DB/execution_fib_sl_tp_strength/trade/ohlcv.py",
+          "Papertrade_DB/execution_fib_sl_tp_strength/trade/tick.py",
+          "Papertrade_DB/execution_fib_sl_tp_strength/update_symbols.py",
+          "Papertrade_DB/execution_fib_sl_tp_test_data_layer/trade/ohlcv.py",
+          "Papertrade_DB/execution_fib_sl_tp_test_data_layer/trade/tick.py",
+          "Papertrade_DB/execution_fib_sl_tp_test_data_layer/update_symbols.py",
+          "Papertrade_DB/execution_grid_long_only/trade/buffer.py",
+          "Papertrade_DB/execution_grid_long_only/trade/ohlcv.py",
+          "Papertrade_DB/execution_grid_long_only/trade/tick.py",
+          "Papertrade_DB/execution_grid_long_only/update_symbols.py",
+          "Papertrade_DB/execution_hull_ma/trade/ohlcv.py",
+          "Papertrade_DB/execution_hull_ma/trade/tick.py",
+          "Papertrade_DB/execution_hull_ma_version3/trade/ohlcv.py",
+          "Papertrade_DB/execution_hull_ma_version3/trade/tick.py",
+          "Papertrade_DB/execution_hull_ma_version3_10m/trade/ohlcv.py",
+          "Papertrade_DB/execution_hull_ma_version3_10m/trade/tick.py",
+          "Papertrade_DB/execution_maattack/trade/ohlcv.py",
+          "Papertrade_DB/execution_maattack/trade/tick.py",
+          "Papertrade_DB/execution_maattack_1h/trade/ohlcv.py",
+          "Papertrade_DB/execution_maattack_1h/trade/tick.py",
+          "Papertrade_DB/execution_portfolioalpha/trade/action.py",
+          "Papertrade_DB/execution_portfolioalpha/trade/action_async.py",
+          "Papertrade_DB/execution_portfolioalpha/trade/buffer.py",
+          "Papertrade_DB/execution_portfolioalpha/trade/ohlcv.py",
+          "Papertrade_DB/execution_portfolioalpha/trade/tick.py",
+          "Papertrade_DB/execution_portfolioalpha/update_symbols.py",
+          "Papertrade_DB/execution_portfolioalpha/update_symbols_300.py",
+          "Papertrade_DB/execution_qqe_ssl_wae_risk/trade/buffer.py",
+          "Papertrade_DB/execution_qqe_ssl_wae_risk/trade/ohlcv.py",
+          "Papertrade_DB/execution_qqe_ssl_wae_risk/trade/tick.py",
+          "Papertrade_DB/execution_qqe_ssl_wae_risk/update_symbols.py",
+          "Papertrade_DB/execution_rsitrailling001/trade/ohlcv.py",
+          "Papertrade_DB/execution_rsitrailling001/trade/tick.py",
+          "Papertrade_DB/execution_scalping_PSAR/trade/buffer.py",
+          "Papertrade_DB/execution_scalping_PSAR/trade/ohlcv.py",
+          "Papertrade_DB/execution_scalping_PSAR/trade/tick.py",
+          "Papertrade_DB/execution_scalping_PSAR/update_symbols.py",
+          "Papertrade_DB/execution_scalping_sl_tp/trade/buffer.py",
+          "Papertrade_DB/execution_scalping_sl_tp/trade/ohlcv.py",
+          "Papertrade_DB/execution_scalping_sl_tp/trade/tick.py",
+          "Papertrade_DB/execution_scalping_sl_tp/update_symbols.py",
+          "Papertrade_DB/execution_signal_combine/trade/ohlcv.py",
+          "Papertrade_DB/execution_signal_combine/trade/tick.py",
+          "Papertrade_DB/execution_signal_combine_v2/trade/buffer.py",
+          "Papertrade_DB/execution_signal_combine_v2/trade/ohlcv.py",
+          "Papertrade_DB/execution_signal_combine_v2/trade/tick.py",
+          "Papertrade_DB/execution_signal_combine_v2/update_symbols.py",
+          "Papertrade_DB/execution_taalpha/trade/buffer.py",
+          "Papertrade_DB/execution_taalpha/trade/ohlcv.py",
+          "Papertrade_DB/execution_taalpha/trade/tick.py",
+          "Papertrade_DB/execution_taalpha/update_symbols.py",
+          "Papertrade_DB/execution_vol_breakout_sl_tp/trade/buffer.py",
+          "Papertrade_DB/execution_vol_breakout_sl_tp/trade/ohlcv.py",
+          "Papertrade_DB/execution_vol_breakout_sl_tp/trade/tick.py",
+          "Papertrade_DB/execution_vol_breakout_sl_tp/update_symbols.py",
+          "Papertrade_DB/execution_vwma/trade/ohlcv.py",
+          "Papertrade_DB/execution_vwma/trade/tick.py",
+          "Papertrade_DB/execution_vwma002/trade/ohlcv.py",
+          "Papertrade_DB/execution_vwma002/trade/tick.py",
+          "Papertrade_DB/execution_vwma003/trade/ohlcv.py",
+          "Papertrade_DB/execution_vwma003/trade/tick.py",
+          "Papertrade_DB/execution_vwma00315/trade/buffer.py",
+          "Papertrade_DB/execution_vwma00315/trade/ohlcv.py",
+          "Papertrade_DB/execution_vwma00315/trade/tick.py",
+          "Papertrade_DB/execution_watr_15m/trade/ohlcv.py",
+          "Papertrade_DB/execution_watr_15m/trade/tick.py",
+          "Papertrade_DB/execution_watr_30m/trade/ohlcv.py",
+          "Papertrade_DB/execution_watr_30m/trade/tick.py",
+          "Papertrade_DB/execution_zigzag/trade/ohlcv.py",
+          "Papertrade_DB/execution_zigzag/trade/tick.py",
+          "_research_sources/basis-arb-binance/util/data_preprocessor.py",
+          "alphagateway/_shared/config.py",
+          "copy_agent/src/copy_agent/brokers/binance_direct.py",
+          "data_layer/app/diagnostics/run_data_checks.py",
+          "data_layer/app/providers/binance/derivatives.py",
+          "data_layer/app/providers/binance/rest.py",
+          "data_layer/app/stream/async_live_feed.py",
+          "data_layer/app/stream/binance_ws.py",
+          "data_layer/app/stream/feed_builder.py",
+          "data_layer/scripts/phase0_audit.py",
+          "data_layer/upgrade/evidence/phase0-provider-smoke_20260813T071313.372847+0000.json",
+          "data_layer/upgrade/evidence/phase0-provider-smoke_latest.json",
+          "data_layer/upgrade/evidence/phase0-readonly-provider-smoke_20260813T071051.771977+0000.json",
+          "data_layer/upgrade/evidence/phase0-readonly-provider-smoke_20260813T071211.275038+0000.json",
+          "data_layer/upgrade/evidence/phase0-readonly-provider-smoke_latest.json",
+          "execution_alpha/OPF/trade/action.py",
+          "execution_alpha/OPF/trade/buffer.py",
+          "execution_alpha/OPF/trade/ohlcv.py",
+          "execution_alpha/combine_weight_sl_tp/trade/buffer.py",
+          "execution_alpha/combine_weight_sl_tp/trade/ohlcv.py",
+          "execution_alpha/combine_weight_sl_tp/trade/tick.py",
+          "execution_alpha/dca_vwrsi_sl_tp/trade/buffer.py",
+          "execution_alpha/dca_vwrsi_sl_tp/trade/ohlcv.py",
+          "execution_alpha/dca_vwrsi_sl_tp/trade/tick.py",
+          "execution_alpha/dca_vwrsi_sl_tp/update_symbols.py",
+          "execution_alpha/dynamic_grid/trade/buffer.py",
+          "execution_alpha/dynamic_grid/trade/ohlcv.py",
+          "execution_alpha/dynamic_grid/trade/tick.py",
+          "execution_alpha/dynamic_grid/update_symbols.py",
+          "execution_alpha/etfarbbtc/trade/action.py",
+          "execution_alpha/etfarbbtc/trade/ohlcv.py",
+          "execution_alpha/fib_sl_tp_strength/trade/buffer.py",
+          "execution_alpha/fib_sl_tp_strength/trade/ohlcv.py",
+          "execution_alpha/fib_sl_tp_strength/trade/tick.py",
+          "execution_alpha/fib_sl_tp_strength/update_symbols.py",
+          "execution_alpha/fib_sl_tp_test_data_layer/trade/ohlcv.py",
+          "execution_alpha/fib_sl_tp_test_data_layer/trade/tick.py",
+          "execution_alpha/fib_sl_tp_test_data_layer/update_symbols.py",
+          "execution_alpha/grid_long_only/trade/buffer.py",
+          "execution_alpha/grid_long_only/trade/ohlcv.py",
+          "execution_alpha/grid_long_only/trade/tick.py",
+          "execution_alpha/grid_long_only/update_symbols.py",
+          "execution_alpha/hull_ma/trade/ohlcv.py",
+          "execution_alpha/hull_ma/trade/tick.py",
+          "execution_alpha/hull_ma_version3/trade/ohlcv.py",
+          "execution_alpha/hull_ma_version3/trade/tick.py",
+          "execution_alpha/hull_ma_version3_10m/trade/ohlcv.py",
+          "execution_alpha/hull_ma_version3_10m/trade/tick.py",
+          "execution_alpha/maattack/trade/ohlcv.py",
+          "execution_alpha/maattack/trade/tick.py",
+          "execution_alpha/maattack_1h/trade/ohlcv.py",
+          "execution_alpha/maattack_1h/trade/tick.py",
+          "execution_alpha/portfolioalpha/trade/action.py",
+          "execution_alpha/portfolioalpha/trade/action_async.py",
+          "execution_alpha/portfolioalpha/trade/buffer.py",
+          "execution_alpha/portfolioalpha/trade/ohlcv.py",
+          "execution_alpha/portfolioalpha/trade/tick.py",
+          "execution_alpha/portfolioalpha/update_symbols.py",
+          "execution_alpha/portfolioalpha/update_symbols_300.py",
+          "execution_alpha/qqe_ssl_wae_risk/trade/buffer.py",
+          "execution_alpha/qqe_ssl_wae_risk/trade/ohlcv.py",
+          "execution_alpha/qqe_ssl_wae_risk/trade/tick.py",
+          "execution_alpha/qqe_ssl_wae_risk/update_symbols.py",
+          "execution_alpha/rsitrailling001/trade/ohlcv.py",
+          "execution_alpha/rsitrailling001/trade/tick.py",
+          "execution_alpha/scalping_PSAR/trade/buffer.py",
+          "execution_alpha/scalping_PSAR/trade/ohlcv.py",
+          "execution_alpha/scalping_PSAR/trade/tick.py",
+          "execution_alpha/scalping_PSAR/update_symbols.py",
+          "execution_alpha/scalping_sl_tp/trade/buffer.py",
+          "execution_alpha/scalping_sl_tp/trade/ohlcv.py",
+          "execution_alpha/scalping_sl_tp/trade/tick.py",
+          "execution_alpha/scalping_sl_tp/update_symbols.py",
+          "execution_alpha/signal_combine/trade/buffer.py",
+          "execution_alpha/signal_combine/trade/ohlcv.py",
+          "execution_alpha/signal_combine/trade/tick.py",
+          "execution_alpha/signal_combine/update_symbols.py",
+          "execution_alpha/taalpha/trade/buffer.py",
+          "execution_alpha/taalpha/trade/ohlcv.py",
+          "execution_alpha/taalpha/trade/tick.py",
+          "execution_alpha/taalpha/update_symbols.py",
+          "execution_alpha/vwma002/trade/ohlcv.py",
+          "execution_alpha/vwma002/trade/tick.py",
+          "execution_alpha/vwma003/trade/ohlcv.py",
+          "execution_alpha/vwma003/trade/tick.py",
+          "execution_alpha/vwma00315/trade/buffer.py",
+          "execution_alpha/vwma00315/trade/ohlcv.py",
+          "execution_alpha/vwma00315/trade/tick.py",
+          "execution_service/project/services/arb_funding.py",
+          "execution_service/project/services/async_execute.py",
+          "execution_service/project/utils/feed_builder.py",
+          "execution_service/project/utils/symbol_manager.py",
+          "trading_system/shared/config.py"
+        ],
+        "dnse_direct": [
+          "data_layer/app/config.py",
+          "data_layer/app/diagnostics/run_data_checks.py",
+          "data_layer/app/openapi_sdk/python/broker-api/get_list_care_by.py",
+          "data_layer/app/openapi_sdk/python/dnse/client.py",
+          "data_layer/app/openapi_sdk/python/marketdata-api/get_instruments.py",
+          "data_layer/app/openapi_sdk/python/marketdata-api/get_latest_trade.py",
+          "data_layer/app/openapi_sdk/python/marketdata-api/get_ohlc.py",
+          "data_layer/app/openapi_sdk/python/marketdata-api/get_security_definition.py",
+          "data_layer/app/openapi_sdk/python/marketdata-api/get_trades.py",
+          "data_layer/app/openapi_sdk/python/marketdata-api/get_working_dates.py",
+          "data_layer/app/openapi_sdk/python/trading-api/cancel_order.py",
+          "data_layer/app/openapi_sdk/python/trading-api/close_position.py",
+          "data_layer/app/openapi_sdk/python/trading-api/create_trading_token.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_accounts.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_balances.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_close_price.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_execution_detail.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_loan_packages.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_order_detail.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_order_history.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_orders.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_position_by_id.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_positions.py",
+          "data_layer/app/openapi_sdk/python/trading-api/get_ppse.py",
+          "data_layer/app/openapi_sdk/python/trading-api/post_order.py",
+          "data_layer/app/openapi_sdk/python/trading-api/put_order.py",
+          "data_layer/app/openapi_sdk/python/trading-api/send_email_otp.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/expected_price.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/foreign_investor.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/market_index.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/ohlc.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/ohlc_closed.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/order.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/quote.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/sec_def.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/trade.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/trade_extra.py",
+          "data_layer/app/openapi_sdk/python/websocket_marketdata/trading_websocket/client.py",
+          "data_layer/scripts/phase0_audit.py",
+          "trading_system/dnse_openapi_sdk/python/broker_api/get_list_care_by.py",
+          "trading_system/dnse_openapi_sdk/python/dnse/client.py",
+          "trading_system/dnse_openapi_sdk/python/marketdata_api/get_instruments.py",
+          "trading_system/dnse_openapi_sdk/python/marketdata_api/get_latest_trade.py",
+          "trading_system/dnse_openapi_sdk/python/marketdata_api/get_ohlc.py",
+          "trading_system/dnse_openapi_sdk/python/marketdata_api/get_security_definition.py",
+          "trading_system/dnse_openapi_sdk/python/marketdata_api/get_trades.py",
+          "trading_system/dnse_openapi_sdk/python/marketdata_api/get_working_dates.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/cancel_order.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/close_position.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/create_trading_token.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_accounts.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_balances.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_close_price.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_execution_detail.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_loan_packages.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_order_detail.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_order_history.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_orders.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_position_by_id.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_positions.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/get_ppse.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/post_order.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/put_order.py",
+          "trading_system/dnse_openapi_sdk/python/trading_api/send_email_otp.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/expected_price.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/foreign_investor.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/market_index.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/ohlc.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/ohlc_closed.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/order.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/quote.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/sec_def.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/trade.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/trade_extra.py",
+          "trading_system/dnse_openapi_sdk/python/websocket_marketdata/trading_websocket/client.py",
+          "trading_system/services/executor/adapters/dnse_stock.py",
+          "trading_system/services/listener/adapters/dnse_order_listener.py"
+        ],
+        "okx_direct": [
+          "data_layer/app/providers/okx/rest.py",
+          "data_layer/scripts/phase0_audit.py"
+        ],
+        "vnstock_direct": [
+          "data_layer/app/database/preload.py",
+          "data_layer/app/diagnostics/run_data_checks.py",
+          "data_layer/app/main.py",
+          "data_layer/app/stream/vnstock_poller.py",
+          "data_layer/scripts/phase0_audit.py",
+          "data_layer/upgrade/evidence/phase0-provider-smoke_20260813T071313.372847+0000.json",
+          "data_layer/upgrade/evidence/phase0-provider-smoke_latest.json",
+          "data_layer/upgrade/evidence/phase0-readonly-provider-smoke_20260813T071051.771977+0000.json",
+          "data_layer/upgrade/evidence/phase0-readonly-provider-smoke_20260813T071211.275038+0000.json",
+          "data_layer/upgrade/evidence/phase0-readonly-provider-smoke_latest.json"
+        ]
+      },
+      "redis_contracts": [
+        {
+          "references": 1,
+          "value": "feed:demand:lease"
+        },
+        {
+          "references": 1,
+          "value": "feed:demand:lease:*"
+        },
+        {
+          "references": 2,
+          "value": "feed:demand:lease:17f5518368b143666b5b:5f483a1cc0c172848b0c"
+        },
+        {
+          "references": 2,
+          "value": "feed:demand:lease:767fca3e9bdcace75638:6743666cc42d9376e106"
+        },
+        {
+          "references": 2,
+          "value": "feed:demand:lease:ee58cf2566e445c5def1:5ac11106a04e8fb0c8b8"
+        },
+        {
+          "references": 2,
+          "value": "feed:demand:lease:ee58cf2566e445c5def1:91ad4670526d67bc616b"
+        },
+        {
+          "references": 2,
+          "value": "feed:demand:lease:ee58cf2566e445c5def1:9f31cfbfcbb1ea721c4d"
+        },
+        {
+          "references": 2,
+          "value": "feed:demand:lease:ee58cf2566e445c5def1:a1bced8ed9d45ea5ce46"
+        },
+        {
+          "references": 2,
+          "value": "feed:demand:lease:ee58cf2566e445c5def1:cb3368faf80a01e7c89a"
+        },
+        {
+          "references": 2,
+          "value": "feed:demand:lease:ee58cf2566e445c5def1:e4906b2997ff8499803b"
+        },
+        {
+          "references": 2,
+          "value": "kline:*:*"
+        },
+        {
+          "references": 6,
+          "value": "kline:15m:BCHUSDT"
+        },
+        {
+          "references": 10,
+          "value": "kline:15m:BTCUSDT"
+        },
+        {
+          "references": 6,
+          "value": "kline:15m:ETHUSDT"
+        },
+        {
+          "references": 6,
+          "value": "kline:1h:BCHUSDT"
+        },
+        {
+          "references": 10,
+          "value": "kline:1h:BTCUSDT"
+        },
+        {
+          "references": 6,
+          "value": "kline:1h:ETHUSDT"
+        },
+        {
+          "references": 4,
+          "value": "kline:1m:*"
+        },
+        {
+          "references": 6,
+          "value": "kline:1m:BCHUSDT"
+        },
+        {
+          "references": 14,
+          "value": "kline:1m:BTCUSDT"
+        },
+        {
+          "references": 6,
+          "value": "kline:1m:ETHUSDT"
+        },
+        {
+          "references": 1,
+          "value": "kline:1m:{symbol}"
+        },
+        {
+          "references": 6,
+          "value": "kline:30m:BCHUSDT"
+        },
+        {
+          "references": 10,
+          "value": "kline:30m:BTCUSDT"
+        },
+        {
+          "references": 6,
+          "value": "kline:30m:ETHUSDT"
+        },
+        {
+          "references": 6,
+          "value": "kline:5m:BCHUSDT"
+        },
+        {
+          "references": 10,
+          "value": "kline:5m:BTCUSDT"
+        },
+        {
+          "references": 6,
+          "value": "kline:5m:ETHUSDT"
+        },
+        {
+          "references": 10,
+          "value": "kline:binance_spot:1m:BNBBTC"
+        },
+        {
+          "references": 10,
+          "value": "kline:binance_spot:1m:BNBETH"
+        },
+        {
+          "references": 10,
+          "value": "kline:binance_spot:1m:BTCUSDT"
+        },
+        {
+          "references": 5,
+          "value": "kline:binance_spot:1m:ETCBTC"
+        },
+        {
+          "references": 10,
+          "value": "kline:binance_spot:1m:ETHBTC"
+        },
+        {
+          "references": 10,
+          "value": "kline:binance_spot:1m:ETHUSDT"
+        },
+        {
+          "references": 5,
+          "value": "kline:binance_spot:1m:LINKBTC"
+        },
+        {
+          "references": 5,
+          "value": "kline:binance_spot:1m:LINKETH"
+        },
+        {
+          "references": 10,
+          "value": "kline:binance_spot:1m:LTCBTC"
+        },
+        {
+          "references": 5,
+          "value": "kline:binance_spot:1m:ZECBTC"
+        },
+        {
+          "references": 12,
+          "value": "kline:binance_usdm:1m:BTCUSDT"
+        },
+        {
+          "references": 10,
+          "value": "kline:dnse_vnstock:1m:VN30F1M"
+        },
+        {
+          "references": 10,
+          "value": "kline:dnse_vnstock:5m:VN30F1M"
+        },
+        {
+          "references": 2,
+          "value": "kline:last:{interval}:{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "kline:{interval}:{symbol.upper"
+        },
+        {
+          "references": 3,
+          "value": "kline:{interval}:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "kline:{interval}:{sym}"
+        },
+        {
+          "references": 1,
+          "value": "kline:{self.interval}:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "stream:*"
+        },
+        {
+          "references": 2,
+          "value": "stream:group"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:15m:ETHUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:15m:SOLUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:15m:VN30F1M"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1d:BTCUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1h:BNBUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1h:BTCUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1h:DOGEUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1h:ETHUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1h:SOLUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:0GTRY"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:0GUSDC"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:0GUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:1000000BOBUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:1000000MOGUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:1000BONKUSDC"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:1000BONKUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:1000CATTRY"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:1000CATUSDC"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:1000CATUSDT"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:1000CHEEMSUSDC"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:1m:{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "stream:kline:{interval}:{symbol.upper"
+        },
+        {
+          "references": 7,
+          "value": "stream:kline:{interval}:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "stream:kline:{interval}:{sym}"
+        },
+        {
+          "references": 1,
+          "value": "stream:kline:{self.interval}:{symbol}"
+        },
+        {
+          "references": 3,
+          "value": "stream:kline:{stream_interval}:*"
+        },
+        {
+          "references": 3,
+          "value": "stream:kline:{stream_interval}:{s.upper"
+        },
+        {
+          "references": 2,
+          "value": "stream:trade:"
+        },
+        {
+          "references": 1,
+          "value": "stream:trade:{market}:{sym}"
+        },
+        {
+          "references": 2,
+          "value": "stream:trade:{symbol.upper"
+        },
+        {
+          "references": 8,
+          "value": "stream:trade:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "stream:trade:{sym}"
+        },
+        {
+          "references": 6,
+          "value": "stream:vn:"
+        },
+        {
+          "references": 3,
+          "value": "stream:vn:*"
+        },
+        {
+          "references": 3,
+          "value": "stream:vn:{s.upper"
+        },
+        {
+          "references": 2,
+          "value": "stream:vn:{symbol.upper"
+        },
+        {
+          "references": 11,
+          "value": "stream:vn:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "stream:vn:{sym}"
+        },
+        {
+          "references": 5,
+          "value": "trade:0"
+        },
+        {
+          "references": 5,
+          "value": "trade:1"
+        },
+        {
+          "references": 5,
+          "value": "trade:2"
+        },
+        {
+          "references": 5,
+          "value": "trade:3"
+        },
+        {
+          "references": 5,
+          "value": "trade:4"
+        },
+        {
+          "references": 5,
+          "value": "trade:5"
+        },
+        {
+          "references": 5,
+          "value": "trade:6"
+        },
+        {
+          "references": 5,
+          "value": "trade:7"
+        },
+        {
+          "references": 5,
+          "value": "trade:8"
+        },
+        {
+          "references": 5,
+          "value": "trade:9"
+        },
+        {
+          "references": 2,
+          "value": "trade:BTCUSDT.BINANCE"
+        },
+        {
+          "references": 4,
+          "value": "trade:binance_spot:ADABTC"
+        },
+        {
+          "references": 2,
+          "value": "trade:binance_spot:ADAETH"
+        },
+        {
+          "references": 5,
+          "value": "trade:binance_spot:BCHUSD1"
+        },
+        {
+          "references": 1,
+          "value": "trade:binance_spot:BNBETH"
+        },
+        {
+          "references": 5,
+          "value": "trade:binance_spot:DASHBTC"
+        },
+        {
+          "references": 5,
+          "value": "trade:binance_spot:ETCBTC"
+        },
+        {
+          "references": 5,
+          "value": "trade:binance_spot:LINKBTC"
+        },
+        {
+          "references": 5,
+          "value": "trade:binance_spot:LINKETH"
+        },
+        {
+          "references": 3,
+          "value": "trade:binance_spot:LTCBTC"
+        },
+        {
+          "references": 5,
+          "value": "trade:binance_spot:SCRIDR"
+        },
+        {
+          "references": 2,
+          "value": "trade:binance_spot:TRXBTC"
+        },
+        {
+          "references": 5,
+          "value": "trade:binance_spot:TRXETH"
+        },
+        {
+          "references": 5,
+          "value": "trade:binance_spot:UUSD"
+        },
+        {
+          "references": 2,
+          "value": "trade:binance_spot:XLMETH"
+        },
+        {
+          "references": 5,
+          "value": "trade:binance_spot:XLMUSD1"
+        },
+        {
+          "references": 1,
+          "value": "trade:binance_spot:XRPBTC"
+        },
+        {
+          "references": 2,
+          "value": "trade:binance_spot:XRPETH"
+        },
+        {
+          "references": 5,
+          "value": "trade:binance_spot:ZECBTC"
+        },
+        {
+          "references": 3,
+          "value": "trade:binance_spot:ZECETH"
+        },
+        {
+          "references": 10,
+          "value": "trade:binance_usdm:BNBUSDT"
+        },
+        {
+          "references": 10,
+          "value": "trade:binance_usdm:BTCUSDT"
+        },
+        {
+          "references": 10,
+          "value": "trade:binance_usdm:BTCUSDT_260925"
+        },
+        {
+          "references": 10,
+          "value": "trade:binance_usdm:ETHUSDT"
+        },
+        {
+          "references": 10,
+          "value": "trade:binance_usdm:SOLUSDT"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:"
+        },
+        {
+          "references": 6,
+          "value": "trade:price:*"
+        },
+        {
+          "references": 4,
+          "value": "trade:price:ADABTC"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:ADAETH"
+        },
+        {
+          "references": 3,
+          "value": "trade:price:BCHUSDT"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:BNBETH"
+        },
+        {
+          "references": 5,
+          "value": "trade:price:BTCUSDT"
+        },
+        {
+          "references": 5,
+          "value": "trade:price:DASHBTC"
+        },
+        {
+          "references": 5,
+          "value": "trade:price:ETCBTC"
+        },
+        {
+          "references": 3,
+          "value": "trade:price:ETHUSDT"
+        },
+        {
+          "references": 5,
+          "value": "trade:price:LINKBTC"
+        },
+        {
+          "references": 5,
+          "value": "trade:price:LINKETH"
+        },
+        {
+          "references": 3,
+          "value": "trade:price:LTCBTC"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:TRXBTC"
+        },
+        {
+          "references": 5,
+          "value": "trade:price:TRXETH"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:XLMETH"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:XRPBTC"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:XRPETH"
+        },
+        {
+          "references": 5,
+          "value": "trade:price:ZECBTC"
+        },
+        {
+          "references": 3,
+          "value": "trade:price:ZECETH"
+        },
+        {
+          "references": 4,
+          "value": "trade:price:binance_spot:*"
+        },
+        {
+          "references": 4,
+          "value": "trade:price:binance_usdm:*"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:last:"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:last:binance_{market_name}:{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:last:{expected_market}:{identity.symbol}"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:last:{market_name}:{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:last:{market}:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:last:{parts"
+        },
+        {
+          "references": 3,
+          "value": "trade:price:last:{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:{expected_market}:{identity.symbol}"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:{market}:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:{market}:{sym}"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:{symbol.upper"
+        },
+        {
+          "references": 2,
+          "value": "trade:price:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "trade:price:{sym}"
+        },
+        {
+          "references": 4,
+          "value": "trade:{INSTRUMENT_ID}"
+        },
+        {
+          "references": 2,
+          "value": "trade:{SYMBOL}.{VENUE}"
+        },
+        {
+          "references": 3,
+          "value": "trade:{instrument_id}"
+        },
+        {
+          "references": 2,
+          "value": "trade:{order.instrument_id}"
+        },
+        {
+          "references": 2,
+          "value": "trade:{snapshot.instrument_id}"
+        },
+        {
+          "references": 2,
+          "value": "trade:{symbol}.BINANCE"
+        },
+        {
+          "references": 3,
+          "value": "trade:{symbol}.{venue}"
+        },
+        {
+          "references": 2,
+          "value": "vn:board:latest"
+        },
+        {
+          "references": 2,
+          "value": "vn:quote:"
+        },
+        {
+          "references": 6,
+          "value": "vn:quote:*"
+        },
+        {
+          "references": 5,
+          "value": "vn:quote:FPT"
+        },
+        {
+          "references": 3,
+          "value": "vn:quote:HPG"
+        },
+        {
+          "references": 3,
+          "value": "vn:quote:VN30F1M"
+        },
+        {
+          "references": 2,
+          "value": "vn:quote:last:"
+        },
+        {
+          "references": 2,
+          "value": "vn:quote:last:*"
+        },
+        {
+          "references": 3,
+          "value": "vn:quote:last:VN30F1M"
+        },
+        {
+          "references": 1,
+          "value": "vn:quote:last:{symbol.upper"
+        },
+        {
+          "references": 2,
+          "value": "vn:quote:last:{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "vn:quote:{symbol.upper"
+        },
+        {
+          "references": 6,
+          "value": "vn:quote:{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "vn:quote:{sym}"
+        }
+      ],
+      "routes": [
+        {
+          "references": 6,
+          "value": "/v1/accounts/{account_id}/balances"
+        },
+        {
+          "references": 6,
+          "value": "/v1/accounts/{account_id}/preflight"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/"
+        },
+        {
+          "references": 9,
+          "value": "/v1/admin/accounts/paper/seed"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/accounts/{account_id}/policy"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/accounts/{account_id}/reconcile-open-orders"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/accounts/{account_id}/reconcile-positions"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/accounts/{account_id}/state"
+        },
+        {
+          "references": 8,
+          "value": "/v1/admin/accounts/{account_id}/sync"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/accounts/{args.account_id}/policy"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/accounts/{args.account_id}/reconcile-open-orders"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/accounts/{args.account_id}/reconcile-positions"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/accounts/{args.account_id}/state"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/accounts/{args.account_id}/sync"
+        },
+        {
+          "references": 20,
+          "value": "/v1/admin/alphas/register"
+        },
+        {
+          "references": 8,
+          "value": "/v1/admin/alphas/{alpha_id}"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/alphas/{alpha_id}/risk"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/alphas/{args.alpha_id}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/alphas/{args.alpha_id}/risk"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/broker-bindings"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/broker-bindings/{args.external_account_ref}/exposure"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/broker-bindings/{args.external_account_ref}/reconcile-open-orders"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/broker-bindings/{args.external_account_ref}/reconcile-positions"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/broker-bindings/{args.external_account_ref}/state"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/broker-bindings/{external_account_ref}/exposure"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/broker-bindings/{external_account_ref}/reconcile-open-orders"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/broker-bindings/{external_account_ref}/reconcile-positions"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/broker-bindings/{external_account_ref}/state"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/copy/policies"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/copy/policies/{args.strategy_id}"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/copy/policies/{strategy_id}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/deployments/{args.deployment_id}/state"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/deployments/{deployment_id}/state"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/events"
+        },
+        {
+          "references": 8,
+          "value": "/v1/admin/market/seed"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/ops/emergency-close"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/ops/emergency-close/plan"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/ops/emergency-close/{args.operation_id}/verify"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/ops/emergency-close/{operation_id}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/ops/emergency-close/{operation_id}/verify"
+        },
+        {
+          "references": 4,
+          "value": "/v1/admin/order-brackets/lifecycle-audit"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/order-groups"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/order-groups/{args.group_id}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/order-groups/{args.group_id}/{args.action}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/order-groups/{group_id}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/order-groups/{group_id}/reconcile"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/order-groups/{group_id}/release"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/performance/accounts/latest"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/performance/accounts/{account_id}/history"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/performance/accounts/{args.account_id}/history"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/performance/dashboard"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/performance/instruments/latest"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/performance/portfolios/{args.portfolio_id}/history"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/performance/portfolios/{args.portfolio_id}/latest"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/performance/portfolios/{portfolio_id}/history"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/performance/portfolios/{portfolio_id}/latest"
+        },
+        {
+          "references": 7,
+          "value": "/v1/admin/portfolio-allocations"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/portfolio-capital/history"
+        },
+        {
+          "references": 10,
+          "value": "/v1/admin/portfolios"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/portfolios/{args.portfolio_id}/state"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/portfolios/{portfolio_id}/state"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/replay/compare"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/replay/export"
+        },
+        {
+          "references": 9,
+          "value": "/v1/admin/replay/jobs"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/replay/jobs/{args.replay_id}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/replay/jobs/{args.replay_id}/run"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/replay/jobs/{replay_id}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/replay/jobs/{replay_id}/run"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/replay/order-lifecycle"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/replay/quantbt-diff"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/sizing/decisions"
+        },
+        {
+          "references": 6,
+          "value": "/v1/admin/sizing/decisions/summary"
+        },
+        {
+          "references": 2,
+          "value": "/v1/admin/sizing/decisions/{args.decision_id}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/sizing/decisions/{decision_id}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/admin/symbols"
+        },
+        {
+          "references": 9,
+          "value": "/v1/admin/symbols/sync"
+        },
+        {
+          "references": 20,
+          "value": "/v1/admin/trading-state"
+        },
+        {
+          "references": 3,
+          "value": "/v1/algoOrder"
+        },
+        {
+          "references": 2,
+          "value": "/v1/batchOrders"
+        },
+        {
+          "references": 1,
+          "value": "/v1/binance/futures"
+        },
+        {
+          "references": 7,
+          "value": "/v1/binance/futures/basis-bundle"
+        },
+        {
+          "references": 1,
+          "value": "/v1/binance/futures/basis/{pair.upper"
+        },
+        {
+          "references": 2,
+          "value": "/v1/binance/futures/basis/{pair}"
+        },
+        {
+          "references": 6,
+          "value": "/v1/binance/futures/continuous-basis-bundle"
+        },
+        {
+          "references": 1,
+          "value": "/v1/binance/futures/depth/{symbol.upper"
+        },
+        {
+          "references": 2,
+          "value": "/v1/binance/futures/depth/{symbol}"
+        },
+        {
+          "references": 6,
+          "value": "/v1/binance/futures/exchange-info"
+        },
+        {
+          "references": 3,
+          "value": "/v1/binance/futures/funding-rate/{symbol.upper"
+        },
+        {
+          "references": 3,
+          "value": "/v1/binance/futures/funding-rate/{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/binance/futures/klines/{symbol.upper"
+        },
+        {
+          "references": 2,
+          "value": "/v1/binance/futures/klines/{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/binance/futures/long-short/{kind"
+        },
+        {
+          "references": 2,
+          "value": "/v1/binance/futures/long-short/{kind}/{symbol}"
+        },
+        {
+          "references": 3,
+          "value": "/v1/binance/futures/open-interest-history/{symbol}"
+        },
+        {
+          "references": 3,
+          "value": "/v1/binance/futures/open-interest/{symbol}"
+        },
+        {
+          "references": 3,
+          "value": "/v1/binance/futures/taker-long-short/{symbol}"
+        },
+        {
+          "references": 9,
+          "value": "/v1/binance/kline/BTCUSDT"
+        },
+        {
+          "references": 6,
+          "value": "/v1/binance/kline/{symbol.upper"
+        },
+        {
+          "references": 8,
+          "value": "/v1/binance/kline/{symbol}"
+        },
+        {
+          "references": 3,
+          "value": "/v1/binance/klines/{symbol.upper"
+        },
+        {
+          "references": 3,
+          "value": "/v1/binance/klines/{symbol}"
+        },
+        {
+          "references": 4,
+          "value": "/v1/binance/price-last/{symbol.upper"
+        },
+        {
+          "references": 6,
+          "value": "/v1/binance/price-last/{symbol}"
+        },
+        {
+          "references": 9,
+          "value": "/v1/binance/price/BTCUSDT"
+        },
+        {
+          "references": 4,
+          "value": "/v1/binance/price/{symbol.upper"
+        },
+        {
+          "references": 12,
+          "value": "/v1/binance/price/{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/commands"
+        },
+        {
+          "references": 4,
+          "value": "/v1/contracts"
+        },
+        {
+          "references": 1,
+          "value": "/v1/control"
+        },
+        {
+          "references": 6,
+          "value": "/v1/control/feed-demands"
+        },
+        {
+          "references": 4,
+          "value": "/v1/control/feed-leases"
+        },
+        {
+          "references": 4,
+          "value": "/v1/control/feed-leases/{owner_id}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/control/provider-priority"
+        },
+        {
+          "references": 5,
+          "value": "/v1/control/runtime-roles"
+        },
+        {
+          "references": 2,
+          "value": "/v1/control/session-calendar"
+        },
+        {
+          "references": 6,
+          "value": "/v1/control/universe/active"
+        },
+        {
+          "references": 2,
+          "value": "/v1/control/universe/configured"
+        },
+        {
+          "references": 2,
+          "value": "/v1/control/universe/priority"
+        },
+        {
+          "references": 3,
+          "value": "/v1/crypto/ohlcv/binance/BTCUSDT"
+        },
+        {
+          "references": 5,
+          "value": "/v1/crypto/ohlcv/binance/{symbol}"
+        },
+        {
+          "references": 9,
+          "value": "/v1/crypto/ohlcv/okx/BTCUSDT"
+        },
+        {
+          "references": 2,
+          "value": "/v1/crypto/ohlcv/{provider.lower"
+        },
+        {
+          "references": 2,
+          "value": "/v1/crypto/ohlcv/{provider}/batch"
+        },
+        {
+          "references": 2,
+          "value": "/v1/crypto/ohlcv/{provider}/{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/crypto/ohlcv/{provider}/{symbol}/{interval}"
+        },
+        {
+          "references": 4,
+          "value": "/v1/crypto/ohlcv/{resolved_provider}/batch"
+        },
+        {
+          "references": 4,
+          "value": "/v1/crypto/ohlcv/{resolved_provider}/{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/depth"
+        },
+        {
+          "references": 5,
+          "value": "/v1/events"
+        },
+        {
+          "references": 90,
+          "value": "/v1/exchangeInfo"
+        },
+        {
+          "references": 6,
+          "value": "/v1/execution-sessions"
+        },
+        {
+          "references": 9,
+          "value": "/v1/execution-sessions/{execution_session_id}"
+        },
+        {
+          "references": 5,
+          "value": "/v1/execution-sessions/{execution_session_id}/pre-risk"
+        },
+        {
+          "references": 2,
+          "value": "/v1/execution-sessions/{session_id}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/execution-sessions/{session_id}/pre-risk"
+        },
+        {
+          "references": 1,
+          "value": "/v1/fallback"
+        },
+        {
+          "references": 7,
+          "value": "/v1/fallback/crypto/reference/BTCUSDT"
+        },
+        {
+          "references": 6,
+          "value": "/v1/fallback/crypto/reference/{symbol.upper"
+        },
+        {
+          "references": 2,
+          "value": "/v1/fallback/crypto/reference/{symbol}"
+        },
+        {
+          "references": 7,
+          "value": "/v1/fallback/crypto/status/BTCUSDT"
+        },
+        {
+          "references": 6,
+          "value": "/v1/fallback/crypto/status/{symbol.upper"
+        },
+        {
+          "references": 2,
+          "value": "/v1/fallback/crypto/status/{symbol}"
+        },
+        {
+          "references": 7,
+          "value": "/v1/fills"
+        },
+        {
+          "references": 3,
+          "value": "/v1/fundingRate"
+        },
+        {
+          "references": 37,
+          "value": "/v1/health"
+        },
+        {
+          "references": 8,
+          "value": "/v1/health/capabilities"
+        },
+        {
+          "references": 13,
+          "value": "/v1/health/streams"
+        },
+        {
+          "references": 1,
+          "value": "/v1/heartbeat"
+        },
+        {
+          "references": 33,
+          "value": "/v1/klines"
+        },
+        {
+          "references": 3,
+          "value": "/v1/market/info/{venue}/{symbol.upper"
+        },
+        {
+          "references": 5,
+          "value": "/v1/market/info/{venue}/{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/market/latest/BINANCE/{symbol}"
+        },
+        {
+          "references": 3,
+          "value": "/v1/market/latest/{VENUE}/{SYMBOL}"
+        },
+        {
+          "references": 3,
+          "value": "/v1/market/latest/{venue}/{symbol.upper"
+        },
+        {
+          "references": 6,
+          "value": "/v1/market/latest/{venue}/{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/openAlgoOrders"
+        },
+        {
+          "references": 1,
+          "value": "/v1/openInterest"
+        },
+        {
+          "references": 3,
+          "value": "/v1/openOrders"
+        },
+        {
+          "references": 8,
+          "value": "/v1/order"
+        },
+        {
+          "references": 9,
+          "value": "/v1/order-brackets"
+        },
+        {
+          "references": 16,
+          "value": "/v1/order-brackets/{bracket_group_id}"
+        },
+        {
+          "references": 9,
+          "value": "/v1/order-groups"
+        },
+        {
+          "references": 13,
+          "value": "/v1/order-groups/{group_id}"
+        },
+        {
+          "references": 6,
+          "value": "/v1/order-packages/arb"
+        },
+        {
+          "references": 22,
+          "value": "/v1/orders"
+        },
+        {
+          "references": 7,
+          "value": "/v1/orders/bulk"
+        },
+        {
+          "references": 25,
+          "value": "/v1/orders/{client_order_id}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/orders/{spec.client_order_id}"
+        },
+        {
+          "references": 6,
+          "value": "/v1/performance/accounts/latest"
+        },
+        {
+          "references": 6,
+          "value": "/v1/performance/accounts/{account_id}/history"
+        },
+        {
+          "references": 6,
+          "value": "/v1/performance/dashboard"
+        },
+        {
+          "references": 5,
+          "value": "/v1/performance/instruments/latest"
+        },
+        {
+          "references": 5,
+          "value": "/v1/performance/portfolios/{portfolio_id}/history"
+        },
+        {
+          "references": 5,
+          "value": "/v1/performance/portfolios/{portfolio_id}/latest"
+        },
+        {
+          "references": 2,
+          "value": "/v1/phase7-microbench.json"
+        },
+        {
+          "references": 2,
+          "value": "/v1/phase7-phase6-ab-benchmark.json"
+        },
+        {
+          "references": 2,
+          "value": "/v1/phase7-polyglot-benchmark.json"
+        },
+        {
+          "references": 2,
+          "value": "/v1/phase7-storage-health-disposable.json"
+        },
+        {
+          "references": 3,
+          "value": "/v1/ping"
+        },
+        {
+          "references": 6,
+          "value": "/v1/portfolio-targets/rebalance"
+        },
+        {
+          "references": 6,
+          "value": "/v1/portfolio/summary"
+        },
+        {
+          "references": 3,
+          "value": "/v1/positionSide/dual"
+        },
+        {
+          "references": 7,
+          "value": "/v1/positions"
+        },
+        {
+          "references": 1,
+          "value": "/v1/preload"
+        },
+        {
+          "references": 2,
+          "value": "/v1/preload/FPT"
+        },
+        {
+          "references": 1,
+          "value": "/v1/preload/NOTREAL"
+        },
+        {
+          "references": 2,
+          "value": "/v1/preload/VN30F1M"
+        },
+        {
+          "references": 3,
+          "value": "/v1/preload/append/{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/preload/materialize"
+        },
+        {
+          "references": 2,
+          "value": "/v1/preload/materialize/{symbol}"
+        },
+        {
+          "references": 3,
+          "value": "/v1/preload/run"
+        },
+        {
+          "references": 11,
+          "value": "/v1/preload/status"
+        },
+        {
+          "references": 5,
+          "value": "/v1/preload/{symbol.upper"
+        },
+        {
+          "references": 12,
+          "value": "/v1/preload/{symbol}"
+        },
+        {
+          "references": 2,
+          "value": "/v1/push"
+        },
+        {
+          "references": 2,
+          "value": "/v1/replay/"
+        },
+        {
+          "references": 5,
+          "value": "/v1/replay/compare"
+        },
+        {
+          "references": 5,
+          "value": "/v1/replay/order-lifecycle"
+        },
+        {
+          "references": 1,
+          "value": "/v1/results"
+        },
+        {
+          "references": 6,
+          "value": "/v1/sizing/decisions"
+        },
+        {
+          "references": 5,
+          "value": "/v1/sizing/decisions/summary"
+        },
+        {
+          "references": 7,
+          "value": "/v1/sizing/estimate"
+        },
+        {
+          "references": 3,
+          "value": "/v1/stream"
+        },
+        {
+          "references": 5,
+          "value": "/v1/ticker/24hr"
+        },
+        {
+          "references": 10,
+          "value": "/v1/ticker/price"
+        },
+        {
+          "references": 2,
+          "value": "/v1/userTrades"
+        },
+        {
+          "references": 4,
+          "value": "/v1/vn/board"
+        },
+        {
+          "references": 1,
+          "value": "/v1/vn/quote-last/FPT"
+        },
+        {
+          "references": 6,
+          "value": "/v1/vn/quote-last/VCB"
+        },
+        {
+          "references": 2,
+          "value": "/v1/vn/quote-last/VN30F1M"
+        },
+        {
+          "references": 2,
+          "value": "/v1/vn/quote-last/{symbol.upper"
+        },
+        {
+          "references": 11,
+          "value": "/v1/vn/quote-last/{symbol}"
+        },
+        {
+          "references": 1,
+          "value": "/v1/vn/quote/FPT"
+        },
+        {
+          "references": 2,
+          "value": "/v1/vn/quote/{symbol.upper"
+        },
+        {
+          "references": 7,
+          "value": "/v1/vn/quote/{symbol}"
+        }
+      ],
+      "scanned_files": 1748,
+      "sdk_files": [
+        "Papertrade_DB/execution_taalpha_gateway-sdk-test/main/run_alpha.py",
+        "Papertrade_DB/execution_taalpha_gateway-sdk-test/orchestration/data_layer_client.py",
+        "Papertrade_DB/trading_system_alpha_tests/main/rsibound_trading_system_e2e.py",
+        "copy_agent/src/copy_agent/cli/main.py",
+        "copy_agent/src/copy_agent/data_layer/__init__.py",
+        "copy_agent/src/copy_agent/data_layer/client.py",
+        "data_layer/app/alpha/run_alpha.py",
+        "data_layer/app/alpha/strategy.py",
+        "data_layer/app/diagnostics/run_data_checks.py",
+        "data_layer/app/sdk/__init__.py",
+        "data_layer/app/sdk/client.py",
+        "data_layer/scripts/phase0_audit.py",
+        "data_layer/upgrade/evidence/phase0-consumer-inventory.json",
+        "data_layer/upgrade/evidence/phase0-provider-smoke_20260813T071313.372847+0000.json",
+        "data_layer/upgrade/evidence/phase0-provider-smoke_latest.json",
+        "data_layer/upgrade/evidence/phase0-readonly-provider-smoke_20260813T071051.771977+0000.json",
+        "data_layer/upgrade/evidence/phase0-readonly-provider-smoke_20260813T071211.275038+0000.json",
+        "data_layer/upgrade/evidence/phase0-readonly-provider-smoke_latest.json",
+        "execution_alpha/alphas/deep_momentum/main/deep_momentum_runner.py",
+        "execution_alpha/alphas/deep_momentum/main/feature_pipeline.py",
+        "execution_alpha/alphas/deep_momentum/scripts/production_smoke.py",
+        "execution_alpha/runtime/app/alpha_runtime/legacy/action_async.py",
+        "execution_alpha/runtime/app/alpha_runtime/legacy/buffer.py",
+        "execution_alpha/runtime/app/alpha_runtime/legacy/handler.py",
+        "execution_alpha/runtime/app/alpha_runtime/legacy/single_order/buffer.py",
+        "execution_alpha/runtime/app/alpha_runtime/legacy/single_order/handler.py",
+        "execution_alpha/runtime/app/alpha_runtime/orchestration/cycle.py",
+        "execution_alpha/runtime/app/alpha_runtime/orchestration/streaming.py",
+        "execution_alpha/taalpha_gateway-sdk-test/main/run_alpha.py",
+        "execution_alpha/taalpha_gateway-sdk-test/orchestration/data_layer_client.py",
+        "trading_system/adapters/market_data/data_layer_client.py",
+        "trading_system/adapters/market_data/rest_recovery.py",
+        "trading_system/scripts/data_layer_contract_report.py",
+        "trading_system/scripts/data_layer_contract_smoke.py",
+        "trading_system/services/gateway/main.py",
+        "trading_system/services/gateway/repository/admin_config.py",
+        "trading_system/services/market_data/data_layer_bridge.py",
+        "trading_system/services/market_data/main.py",
+        "trading_system/services/paper_execution/client.py",
+        "trading_system/services/paper_execution/main.py",
+        "trading_system/services/performance/main.py",
+        "trading_system/services/performance/repository.py",
+        "trading_system/services/risk_engine/data_layer_recovery.py",
+        "trading_system/services/risk_engine/main.py"
+      ],
+      "status": "ok"
+    }
+  },
+  "contract_manifest_sha256": null,
+  "generated_at": "2026-08-13T07:16:27.033180+00:00",
+  "repository_commit": "e55b1e35ba7a78fd7c6dcd1e8f05f57fadd09f3c",
+  "samples": [
+    {
+      "http": {
+        "status": "not_requested"
+      },
+      "observed_at": "2026-08-13T07:16:27.007626+00:00",
+      "redis": {
+        "status": "not_requested"
+      },
+      "source_plan": {
+        "batch_size": 100,
+        "estimated_full_shards": 44,
+        "estimated_shard_reduction_percent": 63.636,
+        "estimated_spot_off_shards": 16,
+        "method": "ceil(symbol_count/batch_size) per trade and kline source",
+        "spot_symbols": 1377,
+        "usdm_symbols": 731
+      },
+      "storage": {
+        "data/binance_vision_cache": {
+          "bytes": 111025,
+          "file_count": 49,
+          "parquet_files": 0
+        },
+        "data/preload": {
+          "bytes": 43181892,
+          "file_count": 627,
+          "parquet_files": 574
+        },
+        "logs": {
+          "bytes": 58559991,
+          "file_count": 22,
+          "parquet_files": 0
+        }
+      },
+      "system": {
+        "filesystem_bytes": {
+          "free": 18470633472,
+          "total": 63310585856,
+          "used": 41602125824
+        },
+        "load_average": [
+          3.14,
+          3.99,
+          3.19
+        ],
+        "memory_bytes": {
+          "available": 3329363968,
+          "total": 11269316608
+        }
+      }
+    }
+  ],
+  "schema_version": 1
+}

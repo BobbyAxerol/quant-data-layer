@@ -1,0 +1,32 @@
+{
+  "schema": "qdl.phase2.shadow-bridge.v1",
+  "enabled": false,
+  "authority": "SHADOW",
+  "slice": {
+    "venue": "BINANCE",
+    "market": "USDM",
+    "feed": "TRADE",
+    "symbols": ["BTCUSDT", "ETHUSDT"]
+  },
+  "spool": {
+    "path": "/var/lib/qdl-shadow/phase2.sqlite3",
+    "max_records": 100000,
+    "max_payload_bytes": 268435456,
+    "max_event_bytes": 2097152,
+    "max_batch_events": 1000,
+    "max_storage_bytes": 402653184,
+    "max_partitions": 1024,
+    "max_consumer_checkpoints": 4096,
+    "max_quarantine_records": 10000,
+    "min_free_disk_bytes": 536870912,
+    "consumer_ttl_seconds": 3600,
+    "replay_retention_seconds": 86400,
+    "maintenance_interval_seconds": 30,
+    "sqlite_journal": "WAL",
+    "sqlite_synchronous": "FULL"
+  },
+  "redis_projection": {
+    "namespace": "shadow:qdl:v2",
+    "production_legacy_publish": false
+  }
+}

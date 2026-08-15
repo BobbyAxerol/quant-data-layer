@@ -1,0 +1,21 @@
+{
+  "buf": {
+    "breaking_against": "contracts/baseline/qdl-v2-phase1.binpb",
+    "build": "PASS",
+    "format": "PASS",
+    "generate": "PASS",
+    "lint": "PASS",
+    "version": "1.50.0"
+  },
+  "canonical_golden": {
+    "path": "contracts/golden/canonical/trade-envelope.bin",
+    "python_roundtrip": "PASS",
+    "rust_roundtrip": "PASS",
+    "sha256": "671935121f18ac43f6a2bbfa23d5f940c0028cc176c8dcfde657a70ae91ea48c"
+  },
+  "generated": {
+    "python_plugin": "buf.build/protocolbuffers/python:v31.1 revision 1",
+    "rust_plugin": "buf.build/community/neoeinstein-prost:v0.5.0 revision 1"
+  },
+  "recorded_at": "2026-08-13T08:05:00Z"
+}

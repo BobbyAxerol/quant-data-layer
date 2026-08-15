@@ -1,0 +1,382 @@
+{
+  "openapi_sha256": "ec40e3ce580eb5360463a42d4d3eced3c73fcf8217917aab3c674dd69ba446cb",
+  "redis_payload_shapes_sha256": "35b3368562d94c26ea585db6492969cb3bb30f67cc5157ff0c8d60d0cb9ab59b",
+  "routes": [
+    {
+      "methods": [
+        "POST"
+      ],
+      "name": "post_basis_bundle",
+      "path": "/v1/binance/futures/basis-bundle"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_basis",
+      "path": "/v1/binance/futures/basis/{pair}"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "name": "post_continuous_basis_bundle",
+      "path": "/v1/binance/futures/continuous-basis-bundle"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_derivative_depth",
+      "path": "/v1/binance/futures/depth/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_exchange_info",
+      "path": "/v1/binance/futures/exchange-info"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_funding_rate",
+      "path": "/v1/binance/futures/funding-rate/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_derivative_klines",
+      "path": "/v1/binance/futures/klines/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_long_short_ratio",
+      "path": "/v1/binance/futures/long-short/{kind}/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_open_interest_history",
+      "path": "/v1/binance/futures/open-interest-history/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_open_interest",
+      "path": "/v1/binance/futures/open-interest/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_taker_long_short_ratio",
+      "path": "/v1/binance/futures/taker-long-short/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_binance_kline",
+      "path": "/v1/binance/kline/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_binance_klines",
+      "path": "/v1/binance/klines/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_binance_price_last",
+      "path": "/v1/binance/price-last/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_binance_price",
+      "path": "/v1/binance/price/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "feed_demands",
+      "path": "/v1/control/feed-demands"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "name": "renew_feed_leases",
+      "path": "/v1/control/feed-leases"
+    },
+    {
+      "methods": [
+        "DELETE"
+      ],
+      "name": "release_feed_leases",
+      "path": "/v1/control/feed-leases/{owner_id}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "provider_priority",
+      "path": "/v1/control/provider-priority"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "runtime_roles",
+      "path": "/v1/control/runtime-roles"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "session_calendar",
+      "path": "/v1/control/session-calendar"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "active_universe",
+      "path": "/v1/control/universe/active"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "configured_universe",
+      "path": "/v1/control/universe/configured"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "priority_universe",
+      "path": "/v1/control/universe/priority"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "name": "post_crypto_ohlcv_batch",
+      "path": "/v1/crypto/ohlcv/{provider}/batch"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_crypto_ohlcv",
+      "path": "/v1/crypto/ohlcv/{provider}/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_crypto_ohlcv",
+      "path": "/v1/crypto/ohlcv/{provider}/{symbol}/{interval}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_crypto_fallback_reference",
+      "path": "/v1/fallback/crypto/reference/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_crypto_fallback_status",
+      "path": "/v1/fallback/crypto/status/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "health",
+      "path": "/v1/health"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "health_streams",
+      "path": "/v1/health/streams"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "name": "trigger_append",
+      "path": "/v1/preload/append/{symbol}"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "name": "trigger_materialize_all",
+      "path": "/v1/preload/materialize"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "name": "trigger_materialize_symbol",
+      "path": "/v1/preload/materialize/{symbol}"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "name": "trigger_preload",
+      "path": "/v1/preload/run"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "preload_status",
+      "path": "/v1/preload/status"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_preload_data",
+      "path": "/v1/preload/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_vn_board",
+      "path": "/v1/vn/board"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_vn_quote_last",
+      "path": "/v1/vn/quote-last/{symbol}"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "name": "get_vn_quote",
+      "path": "/v1/vn/quote/{symbol}"
+    }
+  ],
+  "schema_version": 1,
+  "scope": "v1-public-compatibility",
+  "sdk_methods": [
+    {
+      "name": "binance_basis_bundle",
+      "signature": "(self, perp_symbol: 'str', delivery_symbol: 'str', *, pair: 'str | None' = None, interval: 'str' = '1d', period: 'str' = '1d', limit: 'int' = 30, include_depth: 'bool' = True, depth_limit: 'int' = 5, contract_type: 'str' = 'CURRENT_QUARTER', start_time: 'int | None' = None, end_time: 'int | None' = None) -> 'dict'"
+    },
+    {
+      "name": "binance_continuous_basis_bundle",
+      "signature": "(self, pair: 'str', *, interval: 'str' = '1d', lookback_days: 'int' = 365, buffer_days: 'int' = 14, roll_policy: 'str' = 'research_volume_crossover', current_delivery_symbol: 'str | None' = None, include_components: 'bool' = False, fallback_url: 'str | None' = None) -> 'dict'"
+    },
+    {
+      "name": "binance_futures_basis",
+      "signature": "(self, pair: 'str', *, contract_type: 'str' = 'CURRENT_QUARTER', period: 'str' = '1d', limit: 'int' = 30, start_time: 'int | None' = None, end_time: 'int | None' = None) -> 'dict'"
+    },
+    {
+      "name": "binance_futures_depth",
+      "signature": "(self, symbol: 'str', limit: 'int' = 5) -> 'dict'"
+    },
+    {
+      "name": "binance_futures_klines",
+      "signature": "(self, symbol: 'str', interval: 'str' = '1d', limit: 'int' = 30, *, start_time: 'int | None' = None, end_time: 'int | None' = None) -> 'dict'"
+    },
+    {
+      "name": "binance_futures_metric",
+      "signature": "(self, metric: 'str', symbol: 'str', *, kind: 'str | None' = None, period: 'str' = '1d', limit: 'int' = 30, start_time: 'int | None' = None, end_time: 'int | None' = None) -> 'dict'"
+    },
+    {
+      "name": "control_contracts",
+      "signature": "(self) -> 'dict'"
+    },
+    {
+      "name": "fallback_reference",
+      "signature": "(self, symbol: 'str', interval: 'str' = '1m', *, feed: 'str' = 'kline', force: 'bool' = False, include_data: 'bool' = True, limit: 'int' = 1) -> 'dict'"
+    },
+    {
+      "name": "fallback_status",
+      "signature": "(self, symbol: 'str', interval: 'str' = '1m') -> 'dict'"
+    },
+    {
+      "name": "health",
+      "signature": "(self) -> 'dict'"
+    },
+    {
+      "name": "latest_kline",
+      "signature": "(self, provider: 'str', symbol: 'str', interval: 'str' = '1m') -> 'dict'"
+    },
+    {
+      "name": "latest_trade",
+      "signature": "(self, provider: 'str', symbol: 'str', *, allow_last_snapshot: 'bool' = False, market: 'str' = 'auto') -> 'dict'"
+    },
+    {
+      "name": "latest_vn_quote",
+      "signature": "(self, symbol: 'str', *, allow_last_snapshot: 'bool' = True) -> 'dict'"
+    },
+    {
+      "name": "redis_get",
+      "signature": "(self, key: 'str') -> 'dict | None'"
+    },
+    {
+      "name": "stream_health",
+      "signature": "(self) -> 'dict'"
+    },
+    {
+      "name": "stream_klines",
+      "signature": "(self, symbols: 'str | Iterable[str]', interval: 'str' = '1m')"
+    },
+    {
+      "name": "stream_trades",
+      "signature": "(self, symbols: 'str | Iterable[str]')"
+    },
+    {
+      "name": "stream_vn_quotes",
+      "signature": "(self, symbols: 'str | Iterable[str]')"
+    },
+    {
+      "name": "subscribe",
+      "signature": "(self, channels: 'str | Iterable[str]')"
+    },
+    {
+      "name": "validate_freshness",
+      "signature": "(payload: 'dict', max_age_seconds: 'float', *, now: 'datetime | None' = None) -> 'dict'"
+    },
+    {
+      "name": "validate_source",
+      "signature": "(payload: 'dict', allowed_sources: 'set[str] | list[str] | tuple[str, ...]') -> 'bool'"
+    },
+    {
+      "name": "warmup_ohlcv",
+      "signature": "(self, market: 'str', symbol: 'str', interval: 'str' = '1m', limit: 'int' = 1000, provider: 'str | None' = None, **kwargs) -> 'dict'"
+    },
+    {
+      "name": "warmup_ohlcv_batch",
+      "signature": "(self, market: 'str', symbols: 'str | Iterable[str]', interval: 'str' = '1m', limit: 'int' = 1000, provider: 'str | None' = None, concurrency: 'int' = 8, **kwargs) -> 'dict'"
+    }
+  ]
+}

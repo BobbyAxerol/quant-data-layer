@@ -732,3 +732,56 @@ Anything running as an alpha, executor, risk service, portfolio service, or trad
 - [ ] OKX fallback is treated as non-authoritative unless risk policy says otherwise.
 - [ ] VN `quote-last` is not treated as live tradable data.
 - [ ] `data_source_checker` passes, or remaining warnings are documented provider/sparse-market warnings.
+
+## Runtime Feed Demand And Recovery Contract
+
+Broad configured universes are best-effort telemetry. A feed becomes execution-demanded only while
+at least one live TTL lease exists. Trading System renews leases for open positions and resting
+orders, while latest-state and warmup requests create short request leases automatically.
+
+Lease endpoints:
+
+```text
+GET    /v1/control/feed-demands
+POST   /v1/control/feed-leases
+DELETE /v1/control/feed-leases/{owner_id}
+```
+
+Example renewal:
+
+```json
+{
+  "owner_id": "trading_system:market_data:execution",
+  "ttl_seconds": 180,
+  "demands": [
+    {
+      "source": "binance_futures_trade",
+      "feed": "trade",
+      "symbol": "BTCUSDT",
+      "reason": "open_position"
+    }
+  ]
+}
+```
+
+Operational rules:
+
+- Use a stable owner ID and renew at no more than one third of the TTL.
+- Multiple owners create a refcount; deleting one owner never removes another owner's demand.
+- Let stale process leases expire naturally. Persisted open positions/resting orders are renewed by
+  Trading System independently of alpha container liveness.
+- `/v1/health` is strict for demanded missing/stale feeds. Missing broad-universe symbols remain
+  informational unless legacy strict diagnostics are explicitly enabled.
+- Queue-drop health uses a rolling window; old lifetime counters remain telemetry and no longer keep
+  health permanently degraded after recovery.
+- The Binance USD-M WebSocket universe includes every contract whose exchange metadata reports
+  `status=TRADING`, including current/next delivery contracts as well as perpetuals. Execution
+  demand must never point at a delivery symbol omitted by a perpetual-only bootstrap filter.
+- Binance reconnect telemetry records outage duration and gap-fill results. Demanded closed klines
+  are recovered from REST; an open candle is never relabeled as closed. Trade state recovery still
+  requires latest-price freshness validation rather than pretending every missed trade was replayed.
+
+VN `fresh=true` preload reads use per-symbol/interval local singleflight plus a Redis fencing lock.
+Concurrent callers wait for one owner, provider failures create a short negative/backoff cache, and
+bounded timeout returns typed HTTP 503. Canonical sparse parquet remains authoritative; the lock
+does not synthesize or duplicate candles.

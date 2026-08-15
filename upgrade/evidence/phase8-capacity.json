@@ -1,0 +1,54 @@
+{
+  "authority": "RUST_SHADOW",
+  "canonical_mismatches": 0,
+  "live": {
+    "duration_seconds": 189.03419377701357,
+    "observed_events": {
+      "BINANCE": 1855,
+      "OKX": 510
+    },
+    "observed_raw_bytes": {
+      "BINANCE": 311986,
+      "OKX": 111878
+    },
+    "retained_per_venue_limit": 128
+  },
+  "peak_rss_kib": 134856,
+  "production_writes": 0,
+  "profile": "bounded-real-live-plus-replay-burst",
+  "public_or_legacy_writes": 0,
+  "replay": {
+    "aggregate_sha256": "80cbbc22db8911a6653f4bfa0b38b40820439661810ee137de3fa8644b106d5c",
+    "events": 99600,
+    "fixture_count": 498,
+    "process_restart_mismatches": 0,
+    "python": {
+      "cpu_seconds": 9.457217519,
+      "elapsed_seconds": 9.514027105993591,
+      "events_per_second": 10468.753020185803,
+      "latency_ms": {
+        "mean": 0.09192680917670683,
+        "p50": 0.088696,
+        "p95": 0.169396,
+        "p99": 0.230035,
+        "p99_9": 0.414617
+      }
+    },
+    "record_mismatches": 0,
+    "repeat": 200,
+    "rust": {
+      "elapsed_seconds_max": 14.114840742,
+      "events_per_second_max": 7284.5474112708325,
+      "events_per_second_min": 7056.402677192885
+    },
+    "rust_process_runs": 3
+  },
+  "schema": "qdl.phase8.capacity.v1",
+  "status": "PASS",
+  "thresholds": {
+    "canonical_mismatches_max": 0,
+    "python_p99_ms_max": 10.0,
+    "rust_events_per_second_min": 1000.0
+  },
+  "thresholds_pass": true
+}

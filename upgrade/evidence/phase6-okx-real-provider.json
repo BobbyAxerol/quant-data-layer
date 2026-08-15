@@ -1,0 +1,81 @@
+{
+  "funding_history": {
+    "checksum": "1cd62d528f447a7d120da1fae0f4147096040c2e3144e9b94eed928d2c09f405",
+    "coverage": {
+      "complete_left": true,
+      "complete_right": true,
+      "observed_max_ts_ms": 1786608000000,
+      "observed_min_ts_ms": 1786464000000,
+      "provider_endpoint": "/api/v5/public/funding-rate-history",
+      "requested_end_ms": 1786634027923,
+      "requested_start_ms": 1786461227923,
+      "source_role": "PRIMARY",
+      "terminal_reason": "REACHED_REQUEST_START",
+      "truncated": false
+    },
+    "coverage_status": "FULL",
+    "rows": 6
+  },
+  "index_candles": {
+    "checksum": "2837a704ae626a70ae14d99628f41e5c361d5827b04b1dfd75695cebf07ed9df",
+    "coverage": {
+      "complete_left": true,
+      "complete_right": true,
+      "observed_max_ts_ms": 1786633980000,
+      "observed_min_ts_ms": 1786632240000,
+      "provider_endpoint": "/api/v5/market/history-index-candles",
+      "requested_end_ms": 1786634027923,
+      "requested_start_ms": 1786632227923,
+      "source_role": "PRIMARY",
+      "terminal_reason": "REACHED_REQUEST_START",
+      "truncated": false
+    },
+    "coverage_status": "FULL",
+    "rows": 30
+  },
+  "mark_candles": {
+    "checksum": "741b573a57a82c209b8ca298cf71b58689db32f3fa2bbf1214f863eba257e392",
+    "coverage": {
+      "complete_left": true,
+      "complete_right": true,
+      "observed_max_ts_ms": 1786633980000,
+      "observed_min_ts_ms": 1786632240000,
+      "provider_endpoint": "/api/v5/market/history-mark-price-candles",
+      "requested_end_ms": 1786634027923,
+      "requested_start_ms": 1786632227923,
+      "source_role": "PRIMARY",
+      "terminal_reason": "REACHED_REQUEST_START",
+      "truncated": false
+    },
+    "coverage_status": "FULL",
+    "rows": 30
+  },
+  "open_interest": {
+    "checksum": "cb5bce2a032ac8a08129ae4b2e18d7ee3116c80082fb379cc8deff72ef05fbf8",
+    "coverage": "SNAPSHOT_ONLY",
+    "observed_ts_ms": 1786634029279,
+    "rows": 1
+  },
+  "production_writes": 0,
+  "provenance": "REAL_OKX_V5_PUBLIC_API",
+  "requested_at_ms": 1786634027923,
+  "schema": "qdl.phase4.okx-real-history.v1",
+  "status": "PASS",
+  "trade_candles": {
+    "checksum": "39c22c9c2991e42647f05e4d1f0c344bce2e879d228d1b16b6da5bf6c84da38e",
+    "coverage": {
+      "complete_left": true,
+      "complete_right": true,
+      "observed_max_ts_ms": 1786633980000,
+      "observed_min_ts_ms": 1786632240000,
+      "provider_endpoint": "/api/v5/market/history-candles",
+      "requested_end_ms": 1786634027923,
+      "requested_start_ms": 1786632227923,
+      "source_role": "PRIMARY",
+      "terminal_reason": "REACHED_REQUEST_START",
+      "truncated": false
+    },
+    "coverage_status": "FULL",
+    "rows": 30
+  }
+}

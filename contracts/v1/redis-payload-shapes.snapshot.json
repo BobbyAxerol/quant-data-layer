@@ -1,0 +1,113 @@
+{
+  "kline:1m:*": {
+    "E": "integer",
+    "e": "string",
+    "k": {
+      "B": "string",
+      "L": "integer",
+      "Q": "string",
+      "T": "integer",
+      "V": "string",
+      "c": "string",
+      "f": "integer",
+      "h": "string",
+      "i": "string",
+      "l": "string",
+      "n": "integer",
+      "o": "string",
+      "q": "string",
+      "s": "string",
+      "t": "integer",
+      "v": "string",
+      "x": "boolean"
+    },
+    "s": "string"
+  },
+  "trade:price:*": {
+    "authoritative": "boolean",
+    "event_time": "integer",
+    "is_live": "boolean",
+    "market": "string",
+    "price": "number",
+    "provider": "string",
+    "quantity": "number",
+    "raw": {
+      "E": "integer",
+      "M": "boolean",
+      "T": "integer",
+      "e": "string",
+      "m": "boolean",
+      "p": "string",
+      "q": "string",
+      "s": "string",
+      "t": "integer"
+    },
+    "side": "string",
+    "source": "string",
+    "symbol": "string",
+    "trade_id": "integer",
+    "trade_time": "integer"
+  },
+  "trade:price:binance_spot:*": {
+    "authoritative": "boolean",
+    "event_time": "integer",
+    "is_live": "boolean",
+    "market": "string",
+    "price": "number",
+    "provider": "string",
+    "quantity": "number",
+    "raw": {
+      "E": "integer",
+      "M": "boolean",
+      "T": "integer",
+      "e": "string",
+      "m": "boolean",
+      "p": "string",
+      "q": "string",
+      "s": "string",
+      "t": "integer"
+    },
+    "side": "string",
+    "source": "string",
+    "symbol": "string",
+    "trade_id": "integer",
+    "trade_time": "integer"
+  },
+  "trade:price:binance_usdm:*": {
+    "authoritative": "boolean",
+    "event_time": "integer",
+    "is_live": "boolean",
+    "market": "string",
+    "price": "number",
+    "provider": "string",
+    "quantity": "number",
+    "raw": {
+      "E": "integer",
+      "T": "integer",
+      "X": "string",
+      "e": "string",
+      "m": "boolean",
+      "p": "string",
+      "q": "string",
+      "s": "string",
+      "st": "integer",
+      "t": "integer"
+    },
+    "side": "string",
+    "source": "string",
+    "symbol": "string",
+    "trade_id": "integer",
+    "trade_time": "integer"
+  },
+  "vn:quote:*": {
+    "high": "number",
+    "low": "number",
+    "open": "number",
+    "price": "number",
+    "quantity": "integer",
+    "source": "string",
+    "symbol": "string",
+    "timestamp": "number",
+    "total_volume": "integer"
+  }
+}

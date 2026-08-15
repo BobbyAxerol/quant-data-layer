@@ -1,0 +1,17 @@
+{
+  "database_image": "timescale/timescaledb:latest-pg15",
+  "existing_database_case": {
+    "legacy_row_preserved": true,
+    "qdl_table_count": 11,
+    "schema_sha256": "fc808113fc6186d744fa0f43803e9077537c7ad045e037b8cbc14a1654f1fd44"
+  },
+  "fresh_database_case": {
+    "qdl_table_count": 11,
+    "schema_sha256": "fc808113fc6186d744fa0f43803e9077537c7ad045e037b8cbc14a1654f1fd44"
+  },
+  "idempotent_second_apply": true,
+  "production_database_touched": false,
+  "rollback": "Disable the dark registry/control resolver and use the exported static registry snapshot; retain additive tables for audit.",
+  "storage_scope": "control metadata only; no tick/trade/order-book event table",
+  "recorded_at": "2026-08-13T08:05:00Z"
+}

@@ -1,0 +1,40 @@
+schema: qdl.security.policy.v1
+control_plane:
+  auth_required: true
+  identity: short_lived_jwt_oidc
+  max_token_lifetime_seconds: 900
+  audit: hash_chain_fsync
+  audit_path_ref: env://QDL_CONTROL_AUDIT_PATH
+  production_algorithms: [RS256, ES256]
+
+roles:
+  - market_data_reader
+  - historical_reader
+  - stream_consumer
+  - consumer_registry_writer
+  - venue_operator
+  - schema_operator
+  - platform_admin
+  - auditor
+
+environment_isolation:
+  required: true
+  dimensions: [broker_namespace, redis_namespace, database, object_store, identity]
+
+egress:
+  default: deny
+  registered_sources_only: true
+  reject_private_and_metadata_addresses: true
+  cross_host_redirects: false
+  response_size_limit_required: true
+
+payload:
+  max_json_bytes: 2097152
+  max_nesting_depth: 32
+  max_numeric_characters: 128
+  max_decompression_ratio: 100
+
+secrets:
+  external_manager_required_for_production: true
+  dual_credential_rotation_required_when_supported: true
+  log_redaction_required: true

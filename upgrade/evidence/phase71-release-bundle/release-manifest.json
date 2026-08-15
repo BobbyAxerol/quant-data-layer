@@ -1,0 +1,65 @@
+{
+  "artifacts": [
+    {
+      "path": "contracts/baseline/qdl-v2-phase1.binpb",
+      "sha256": "c42a9d592ab776257ae4ab210c59309202b12816720c6b7d9d0441be82070f2f",
+      "size_bytes": 24756
+    },
+    {
+      "path": "contracts/v1/openapi.snapshot.json",
+      "sha256": "d1eb1ab5eca5161cf4d0f743737f70d32a2cec66918d5cd68ab198c12aa3de30",
+      "size_bytes": 55336
+    },
+    {
+      "path": "contracts/v1/public-surface.snapshot.json",
+      "sha256": "2161c540ae26b4c0027b55694f29b2fb8a19029dc5d35439d14612ec90acc2fe",
+      "size_bytes": 9749
+    },
+    {
+      "path": "contracts/v1/redis-payload-shapes.snapshot.json",
+      "sha256": "48fcf64c00065142e6d92f8314ea7f457b8db7990b319fa8bc662b78c0c1bf73",
+      "size_bytes": 2404
+    },
+    {
+      "path": "contracts/v2/openapi.snapshot.json",
+      "sha256": "bea44d3920db52f5893eb773aa195ae7f4abd2684d5ca65d904e995934fabcea",
+      "size_bytes": 68635
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "023f58cf0bb079756f714b99e862c2574eebefad4fab43164e0a7756a28de2d8",
+      "size_bytes": 1090
+    },
+    {
+      "path": "poetry.lock",
+      "sha256": "c83c9801977fe5a3e39a4dc8d8f2df3008fefe92ddce95483f74df8f467eeea9",
+      "size_bytes": 295009
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "24369614f6cca6beba5b8146c0268f2861d055b8a24186190b751f8047322cbd",
+      "size_bytes": 19772
+    },
+    {
+      "path": "Dockerfile",
+      "sha256": "93639ee4e650576f3f7d647bdabb8b63d6d55271e0e1143cf2e7dde40dd0990a",
+      "size_bytes": 1075
+    },
+    {
+      "path": "Dockerfile.qdl-core",
+      "sha256": "ddcc26bbc281637ce43746007c72cae9217ebe4a5d2c39b8f5cb6b23690a86ff",
+      "size_bytes": 641
+    },
+    {
+      "path": "sbom.spdx.json",
+      "sha256": "bcb637f089fc752e34a141a82efbee617e84bf9d28f3ff0eb70fea803fe8a08e",
+      "size_bytes": 63482
+    }
+  ],
+  "authority": "SHADOW",
+  "generated_at_ns": 1786728693707461523,
+  "git_sha": "5e013be6431944f199beb5bc26de7d9e537006d5",
+  "image_ref": "local/data-layer@sha256:e640b0e7afe54790ebe0d6ee240e8d45ec86a09b247411dd7d3087cb261a6bfb",
+  "release": "qdl-v2-beta-phase71",
+  "schema": "qdl.release-manifest.v1"
+}

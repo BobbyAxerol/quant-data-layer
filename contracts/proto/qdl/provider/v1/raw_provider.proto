@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package qdl.provider.v1;
+
+enum TransportProtocol {
+  TRANSPORT_PROTOCOL_UNSPECIFIED = 0;
+  TRANSPORT_PROTOCOL_WEBSOCKET = 1;
+  TRANSPORT_PROTOCOL_HTTP = 2;
+  TRANSPORT_PROTOCOL_SDK_CALLBACK = 3;
+  TRANSPORT_PROTOCOL_FILE_REPLAY = 4;
+}
+
+enum TransportCompression {
+  TRANSPORT_COMPRESSION_UNSPECIFIED = 0;
+  TRANSPORT_COMPRESSION_NONE = 1;
+  TRANSPORT_COMPRESSION_GZIP = 2;
+  TRANSPORT_COMPRESSION_DEFLATE = 3;
+  TRANSPORT_COMPRESSION_ZSTD = 4;
+  TRANSPORT_COMPRESSION_PROVIDER_NATIVE = 5;
+}
+
+enum CaptureBoundary {
+  CAPTURE_BOUNDARY_UNSPECIFIED = 0;
+  CAPTURE_BOUNDARY_WIRE_COMPRESSED = 1;
+  CAPTURE_BOUNDARY_POST_DECOMPRESSION = 2;
+  CAPTURE_BOUNDARY_SDK_DELIVERY = 3;
+  CAPTURE_BOUNDARY_REPLAY_BYTES = 4;
+}
+
+enum QuarantineReason {
+  QUARANTINE_REASON_UNSPECIFIED = 0;
+  QUARANTINE_REASON_MALFORMED = 1;
+  QUARANTINE_REASON_MISSING_REQUIRED_FIELD = 2;
+  QUARANTINE_REASON_UNKNOWN_SCHEMA = 3;
+  QUARANTINE_REASON_UNKNOWN_INSTRUMENT = 4;
+  QUARANTINE_REASON_STALE_GENERATION = 5;
+  QUARANTINE_REASON_FENCING_REJECTED = 6;
+  QUARANTINE_REASON_SEQUENCE_GAP = 7;
+  QUARANTINE_REASON_SEMANTIC_INVALID = 8;
+  QUARANTINE_REASON_OVERSIZED = 9;
+}
+
+message RawProviderEnvelope {
+  string raw_schema_name = 1;
+  uint32 raw_schema_major = 2;
+  uint32 raw_schema_minor = 3;
+  bytes capture_id = 4;
+  string provider = 5;
+  string venue = 6;
+  string market = 7;
+  string product_type = 8;
+  string native_symbol = 9;
+  string native_channel = 10;
+  string subscription_id = 11;
+  string source_session_id = 12;
+  uint64 connection_generation = 13;
+  uint64 lease_epoch = 14;
+  uint64 authority_revision = 15;
+  uint64 partition_plan_epoch = 16;
+  int64 received_at_ns = 17;
+  TransportProtocol transport_protocol = 18;
+  TransportCompression transport_compression = 19;
+  CaptureBoundary capture_boundary = 20;
+  bytes raw_frame_bytes = 21;
+  bytes raw_frame_sha256 = 22;
+  string adapter_version = 23;
+  uint64 config_revision = 24;
+  uint64 instrument_catalog_revision = 25;
+  string correlation_id = 26;
+  bool test_provenance = 27;
+}
+
+message QuarantineRecord {
+  RawProviderEnvelope raw = 1;
+  QuarantineReason reason = 2;
+  string safe_summary = 3;
+  int64 quarantined_at_ns = 4;
+  uint32 retry_count = 5;
+  bytes evidence_sha256 = 6;
+}

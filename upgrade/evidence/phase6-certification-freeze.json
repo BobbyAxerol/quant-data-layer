@@ -1,0 +1,47 @@
+{
+  "schema": "qdl.phase6.certification-freeze.v1",
+  "recorded_at": "2026-08-13",
+  "branch": "feat/fund-grade-data-layer-v2",
+  "implementation_status": "PASS",
+  "shadow_certification_status": "PASS",
+  "production_authority_status": "NO_GO",
+  "production_runtime_changed": false,
+  "v1_authority": "UNCHANGED",
+  "test_summary": {
+    "python_tests": 274,
+    "python_skipped_conditional": 5,
+    "rust_tests": 11,
+    "phase6_operations_tests": 14,
+    "phase6_resilience_matrix_tests": 43,
+    "image_high_critical_findings": 0,
+    "repository_high_critical_misconfigurations": 0,
+    "repository_secret_findings": 0
+  },
+  "capacity": {
+    "status": "PASS",
+    "scope": "LOCAL_SQLITE_DURABLE_BRIDGE",
+    "normal_events_per_second": 500,
+    "burst_target_events_per_second": 1500,
+    "burst_achieved_events_per_second": 1410.899357436627,
+    "max_p999_latency_ms": 314.262186,
+    "canonical_queue_rejected": 0,
+    "replay_mismatch": false
+  },
+  "provider_evidence": {
+    "binance_usdm_selected_trade": "SHADOW_CERTIFIED",
+    "okx_v5_json_reference": "SHADOW_CERTIFIED",
+    "dnse_vn30f1m_bar": "READ_ONLY_PROVIDER_CERTIFIED",
+    "okx_sbe": "BLOCKED_ENTITLEMENT_SCHEMA_PARITY",
+    "deribit_options": "CORE_CONTRACT_READY_ADAPTER_NOT_ACTIVATED"
+  },
+  "production_blockers": [
+    "REPLICATED_DURABLE_BROKER_NOT_DEPLOYED",
+    "OTEL_COLLECTOR_DASHBOARDS_ALERT_ROUTING_NOT_DEPLOYED",
+    "PRODUCTION_SERVICE_IDENTITY_RBAC_SECRET_ROTATION_NOT_DEPLOYED",
+    "PRODUCTION_SIGNING_KEY_REGISTRY_ADMISSION_NOT_DEPLOYED",
+    "REGIONAL_DR_AND_PITR_NOT_REHEARSED",
+    "DEDICATED_RUNTIME_ROLES_AND_ALL_CRITICAL_CONSUMERS_NOT_CUT_OVER",
+    "BROAD_SPOT_LEGACY_PRODUCER_NOT_YET_SUNSET_BY_DEMAND_TELEMETRY"
+  ],
+  "decision": "Keep V1 authoritative. Permit merge and controlled shadow deployment only; require a new operator-approved production activation gate for each venue/market/feed slice."
+}

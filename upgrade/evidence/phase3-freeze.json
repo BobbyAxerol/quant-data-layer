@@ -1,0 +1,30 @@
+{
+  "schema": "qdl.phase3.freeze.v1",
+  "status": "FROZEN_SHADOW",
+  "frozen_at": "2026-08-13T10:39:48Z",
+  "branch": "feat/fund-grade-data-layer-v2",
+  "implementation_head": "50e2cbb304b7aac3c7bc36f7d302e2e11b0285dc",
+  "implementation_commits": [
+    "f2ac229",
+    "14c7499",
+    "47fb7b6",
+    "58a299a",
+    "ddb06cb",
+    "1933099",
+    "50e2cbb"
+  ],
+  "authority": "LEGACY_V1_UNCHANGED",
+  "production_writes": 0,
+  "running_service_restart_delta": 0,
+  "artifacts": {
+    "rust_shadow_image": "sha256:206bca9222c2633daae1c293e49a5c90e5d1c1a356a986e24c4369e074cfe5a7",
+    "production_v1_image": "sha256:33382a8d9c4050de0fd7ce84a155ba08ca84ef01a842f62383ac1ec124f556d4"
+  },
+  "evidence_sha256": {
+    "phase3-real-provider-smoke.json": "0d7fbdd27f0e506df1a1a364c975199e732d4a85076457cdde261548f5374fc7",
+    "phase3-rust-binance-real-parity.json": "87b497774b0d6bf094aacf07f783db3aee585e82163ac2e8108a98c6bebca80f",
+    "phase3-load-recovery.json": "2adf8db2c79d57497b9b83693ae5c3788d6731da80f71dcb77c888a5fa55cf14",
+    "phase3-sustained-load.json": "54c3e32a857f06d2e9e4b365454e8ff7f9acea26a9f7d2fb011821fe5b121eee"
+  },
+  "reopen_policy": "ADR plus contract, parity, recovery, capacity and real-provider recertification"
+}

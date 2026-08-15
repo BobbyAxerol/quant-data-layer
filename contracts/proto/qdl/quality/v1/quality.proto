@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package qdl.quality.v1;
+
+import "qdl/common/v1/common.proto";
+
+message FeedStateEvent {
+  qdl.common.v1.FeedLifecycleState previous_state = 1;
+  qdl.common.v1.FeedLifecycleState state = 2;
+  string feed_type = 3;
+  string reason_code = 4;
+  string reason_message = 5;
+  bool executable = 6;
+  int64 state_since_ns = 7;
+}
+
+message DataQualityEvent {
+  repeated qdl.common.v1.QualityFlag flags = 1;
+  string reason_code = 2;
+  string reason_message = 3;
+  bytes related_event_id = 4;
+  string quarantine_reference = 5;
+}

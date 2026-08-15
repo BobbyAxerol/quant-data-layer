@@ -1,8 +1,10 @@
 import asyncio
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.cache.redis_cache import RedisCache
 from app.stream.async_live_feed import coalesce_redis_items, get_spot_symbols, redis_publisher_task
@@ -67,6 +69,18 @@ class TestStreamSupervisor(unittest.TestCase):
         self.assertEqual(snapshot["status"], "degraded")
         self.assertIn("queue_drop_observed", snapshot["health_warnings"])
 
+    def test_old_queue_drop_does_not_permanently_degrade_health(self):
+        supervisor = StreamSupervisor(strict_feed_health=True)
+        supervisor.queue_drop_window_seconds = 1
+        shard_id = supervisor.register_shard("binance_spot_kline", "wss://example")
+        supervisor.mark_connected(shard_id)
+        supervisor.record_queue_drop("binance_spot_kline", shard_id)
+
+        snapshot = supervisor.snapshot(now=time.time() + 2)
+
+        self.assertEqual(snapshot["status"], "ok")
+        self.assertEqual(snapshot["queue"]["recent_drop_count"], 0)
+
     def test_missing_trade_feed_is_diagnostic_not_health_failure(self):
         supervisor = StreamSupervisor(startup_grace_seconds=0)
         shard_id = supervisor.register_shard("binance_spot_trade", "wss://example")
@@ -104,6 +118,18 @@ class TestStreamSupervisor(unittest.TestCase):
             path.write_text(json.dumps(["BTCUSDT", "ETHUSDT"]), encoding="utf-8")
 
             symbols = get_spot_symbols(str(path))
+
+        self.assertEqual(symbols, ["BTCUSDT", "ETHUSDT"])
+
+    def test_spot_symbol_refresh_falls_back_to_last_good_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "symbols_spot.json"
+            path.write_text(json.dumps(["BTCUSDT", "ETHUSDT"]), encoding="utf-8")
+            with patch(
+                "app.stream.async_live_feed.requests.get",
+                side_effect=RuntimeError("exchange info offline"),
+            ):
+                symbols = get_spot_symbols(str(path), refresh=True)
 
         self.assertEqual(symbols, ["BTCUSDT", "ETHUSDT"])
 
@@ -170,6 +196,36 @@ class TestRedisPublisherTask(unittest.IsolatedAsyncioTestCase):
         channels = {item["channel"] for item in redis_cache.items}
         self.assertEqual(keys, {"trade:price:binance_spot:BTCUSDT", "trade:price:BTCUSDT"})
         self.assertEqual(channels, {"stream:trade:binance_spot:BTCUSDT", "stream:trade:BTCUSDT"})
+
+    async def test_raw_usdm_kline_records_provider_scoped_demand_health(self):
+        queue = asyncio.Queue(maxsize=10)
+        redis_cache = FakeRedisCache()
+        supervisor = StreamSupervisor()
+        supervisor.expect_feed("binance_futures_kline", "kline", "BTCUSDT", "1m")
+        await queue.put(
+            (
+                "binance_futures_kline",
+                {
+                    "e": "kline",
+                    "E": 1786579260050,
+                    "s": "BTCUSDT",
+                    "k": {"s": "BTCUSDT", "i": "1m", "x": True},
+                },
+            )
+        )
+
+        task = asyncio.create_task(redis_publisher_task(queue, redis_cache, supervisor=supervisor))
+        await asyncio.sleep(0.15)
+        task.cancel()
+        await task
+
+        snapshot = supervisor.snapshot(
+            demanded_feed_keys={"kline:binance_usdm:1m:BTCUSDT"}
+        )
+        self.assertEqual(snapshot["feeds"]["demanded_missing_count"], 0)
+        self.assertEqual(snapshot["feeds"]["demanded_stale_count"], 0)
+        self.assertEqual(redis_cache.items[0]["data"]["e"], "kline")
+        self.assertNotIn("source", redis_cache.items[0]["data"])
 
 
 if __name__ == "__main__":

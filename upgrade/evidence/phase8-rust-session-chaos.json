@@ -1,0 +1,20 @@
+{
+  "authority": "RUST_SHADOW",
+  "backpressure": {
+    "latest_state_coalesced": true,
+    "lossless_spooled": true,
+    "spool_full_disconnect": true
+  },
+  "capability_count": 4,
+  "capability_digest": "cba230d81a58022afa192ab0b2217a9259d6b736e5a107efd38a06ec0a359a44",
+  "ordering": {
+    "duplicate_gap_session_reset_pass": true
+  },
+  "schema": "qdl.phase8.rust-session-chaos.v1",
+  "session": {
+    "stale_generation_rejected": true,
+    "subscription_count": 2,
+    "timeout_degraded": true
+  },
+  "status": "PASS"
+}

@@ -1,0 +1,6 @@
+# CI must not depend on or mutate host-wide production networks.
+networks:
+  bobby_network:
+    external: false
+  executor_network:
+    external: false

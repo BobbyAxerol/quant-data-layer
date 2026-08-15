@@ -1,0 +1,34 @@
+{
+  "provider_kind": "binance_usdm_bbo",
+  "context": {
+    "instrument_uid": "85ad7cb6-7ebf-5c81-9d82-12c4c10ca85c",
+    "instrument_id": "BINANCE.USDM.PERPETUAL.BTCUSDT",
+    "instrument_revision": 7,
+    "venue": "BINANCE",
+    "market": "USDM",
+    "product_type": "PERPETUAL",
+    "native_symbol": "BTCUSDT",
+    "provider": "BINANCE_DIRECT",
+    "source_id": "binance-usdm-bbo-shadow-001",
+    "lease_epoch": 42,
+    "received_at_ns": 1786352400123456000,
+    "normalized_at_ns": 1786352400123500000,
+    "published_at_ns": 1786352400123700000,
+    "partition_sequence": 1234,
+    "normalizer_version": "qdl-normalizer/2.0.0",
+    "adapter_version": "binance-json/1.0.0",
+    "config_revision": 9,
+    "correlation_id": "phase3-binance-bbo"
+  },
+  "raw": {
+    "e": "bookTicker",
+    "u": 400900217,
+    "E": 1786352400123,
+    "T": 1786352400122,
+    "s": "BTCUSDT",
+    "b": "61234.10",
+    "B": "1.250",
+    "a": "61234.20",
+    "A": "0.500"
+  }
+}

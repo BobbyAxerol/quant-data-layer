@@ -1,0 +1,54 @@
+{
+  "schema": "qdl.phase2.verification.v1",
+  "verified_at": "2026-08-13T09:25:49Z",
+  "status": "PASS_DARK_NO_CUTOVER",
+  "python": {
+    "full_tests": 146,
+    "skipped_environment_gated": 3,
+    "phase2_tests": 20,
+    "failures": 0
+  },
+  "rust": {
+    "compiler": "1.82.0",
+    "workspace_tests": 9,
+    "clippy_warnings": 0,
+    "unsafe_code_allowed": false,
+    "cargo_deny_version": "0.20.2",
+    "advisories": "ok",
+    "bans": "ok",
+    "licenses": "ok",
+    "sources": "ok"
+  },
+  "contracts": {
+    "buf_format": "PASS",
+    "buf_lint": "PASS",
+    "buf_breaking_phase1_baseline": "PASS",
+    "generated_diff": "CLEAN"
+  },
+  "recovery": {
+    "raw_commit_restart_replay": "PASS",
+    "redis_restart_flush_rebuild": "PASS",
+    "rebuild_checksum": "075f80d62fbb9e50b0caf8eeb6973d8eeb20361bacb83e46f64155123c8af55b",
+    "silent_loss": 0,
+    "non_idempotent_duplicates": 0
+  },
+  "live_shadow": {
+    "symbols": ["BTCUSDT", "ETHUSDT"],
+    "v1_reads": 2,
+    "production_writes": 0,
+    "status": "PASS"
+  },
+  "artifact": {
+    "image_id_first_build": "sha256:ffd746fccf0f6192b6074f6043add935d148e3e38576357b0bad272204ef4748",
+    "image_id_second_build": "sha256:ffd746fccf0f6192b6074f6043add935d148e3e38576357b0bad272204ef4748",
+    "size_bytes": 28564989,
+    "binance_golden_sha256": "67942fef883171e1507371a6590c73145dab13aafa5399cc852453352e74b34c",
+    "okx_golden_sha256": "edcdde102151b0e213fa19ecf25ae0181b2843f7a0ed60a3858d045f158f0b21"
+  },
+  "runtime_impact": {
+    "data_layer_service_restart_count": 0,
+    "redis_marketdata_restart_count": 0,
+    "production_resources_mutated": false,
+    "ephemeral_resources_remaining": 0
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "baseline_git_ref": "origin/feat/fund-grade-data-layer-v2",
+  "baseline_sha256": "d199b992c0aa09142d5daab7fb0bc04b1e86099fcc52c436532d0b40a7654e5b",
+  "candidate_sha256": "bea44d3920db52f5893eb773aa195ae7f4abd2684d5ca65d904e995934fabcea",
+  "hard_breaks": {
+    "removed_enum_values": {},
+    "removed_operations": [],
+    "removed_responses": [],
+    "removed_schemas": []
+  },
+  "intentional_pre_freeze_hardening": {
+    "newly_required_parameters": [
+      "GET /v2/market-data/{instrument_uid}/history header=X-QDL-Purpose",
+      "GET /v2/market-data/{instrument_uid}/snapshot header=X-QDL-Purpose",
+      "GET /v2/market-data/{instrument_uid}/warmup header=X-QDL-Purpose",
+      "POST /v2/market-data/warmup:batch header=X-QDL-Purpose",
+      "POST /v2/system/readiness:check header=X-QDL-Purpose"
+    ],
+    "security_changes": [
+      "GET /v2/data-quality/gaps",
+      "GET /v2/feeds/{instrument_uid}/status",
+      "GET /v2/instruments",
+      "GET /v2/instruments/{identity}",
+      "GET /v2/market-data/{instrument_uid}/history",
+      "GET /v2/market-data/{instrument_uid}/snapshot",
+      "GET /v2/market-data/{instrument_uid}/warmup",
+      "GET /v2/system/readiness",
+      "POST /v2/market-data/warmup:batch",
+      "POST /v2/system/readiness:check"
+    ]
+  },
+  "operation_count": 10,
+  "schema": "qdl.phase7.openapi-semantic-diff.v1",
+  "schema_count": 40,
+  "status": "PASS_PRE_BETA_FREEZE"
+}

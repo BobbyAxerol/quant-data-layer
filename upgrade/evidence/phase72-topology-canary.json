@@ -1,0 +1,16 @@
+{
+  "authority": "V1_SHADOW_READ_ONLY",
+  "beta_keys_in_v1_after": 0,
+  "decision": "PASS",
+  "execution_dependency": "FORBIDDEN",
+  "gateway_epoch_after": 2,
+  "gateway_epoch_before": 1,
+  "monitoring_then_paper": true,
+  "paper_restart_state_mismatch": 0,
+  "production_mutations": 0,
+  "real_provider_data": true,
+  "schema": "qdl.phase7.2.topology-canary.v1",
+  "v1_fallback_status": 200,
+  "v1_topology_unchanged": true,
+  "v1_v2_mismatches": 0
+}

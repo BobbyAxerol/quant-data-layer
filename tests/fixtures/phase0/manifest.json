@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "file": "binance_events.json",
+      "provider": "binance",
+      "markets": ["spot", "usdm"],
+      "scenarios": ["trade", "closed_candle", "duplicate", "out_of_order"]
+    },
+    {
+      "file": "okx_events.json",
+      "provider": "okx",
+      "markets": ["spot", "swap"],
+      "scenarios": ["candle_page", "cursor_overlap", "cache_regression", "book_snapshot", "book_keepalive", "book_maintenance_reset", "book_gap"]
+    },
+    {
+      "file": "vn_events.json",
+      "provider": "dnse_vnstock",
+      "markets": ["vn_derivative"],
+      "scenarios": ["quote", "market_closed", "stale", "duplicate"]
+    },
+    {
+      "file": "malformed_events.json",
+      "provider": "multi",
+      "markets": ["spot", "usdm", "swap", "vn_derivative"],
+      "scenarios": ["invalid_json_shape", "missing_identity", "invalid_decimal", "unknown_event"]
+    }
+  ]
+}
