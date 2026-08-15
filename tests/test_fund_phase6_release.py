@@ -36,6 +36,8 @@ class ReleaseBundleTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("pip-audit --cache-dir /tmp/qdl-pip-audit-cache", workflow)
+        self.assertIn('python-version: "3.12"', workflow)
+        self.assertIn("python -m scripts.phase6_release_bundle", workflow)
         ignored = {
             line.strip()
             for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()
