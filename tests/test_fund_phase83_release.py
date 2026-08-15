@@ -44,6 +44,11 @@ class Phase83CandidateContractTests(unittest.TestCase):
         ).read_text()
         self.assertIn('required("QDL_AUDIT_TOPIC")', rehearsal)
         dockerfile = (ROOT / "Dockerfile.phase8-rust").read_text()
+        runtime_from = next(
+            line for line in dockerfile.splitlines()
+            if line.startswith("FROM debian:bookworm-slim")
+        )
+        self.assertRegex(runtime_from, r"@sha256:[0-9a-f]{64}$")
         self.assertIn("USER 10001:10001", dockerfile)
         for binary in (
             "qdl-kafka-smoke", "qdl-authority-rehearsal",
