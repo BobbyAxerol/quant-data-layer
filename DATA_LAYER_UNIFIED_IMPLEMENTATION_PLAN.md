@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phases 8-9 remain planned for evidence-driven Rust realtime-core promotion. V1 remains authoritative and no runtime cutover has started.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is in progress for evidence-driven Rust realtime-core shadow certification and Phase 9 remains planned. V1 remains authoritative and no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -173,8 +173,8 @@ These rules apply to all phases.
 | 4.5 | V2 readiness and debt closure | Freeze query semantics and remove correctness/security ambiguity before endpoint work | `COMPLETE (FROZEN DARK)` |
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `COMPLETE (FROZEN SHADOW)` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `BLOCKED (SHADOW PASS; PRIMARY NO-GO)` |
-| 7 | V2 public beta and consumer canary | Publish a protected read-only V2 surface and validate real consumer behavior without changing authority | `IN_PROGRESS` (7.0 complete) |
-| 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `PLANNED` |
+| 7 | V2 public beta and consumer canary | Publish a protected read-only V2 surface and validate real consumer behavior without changing authority | `COMPLETE (BETA-GO READ-ONLY)` |
+| 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `IN_PROGRESS (8.0)` |
 | 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
@@ -1610,7 +1610,7 @@ Phase 7 is `COMPLETE` only when all conditions below pass:
 
 ## 12. Phase 8 - Multi-Venue Rust Realtime Core And Reference Slice
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS (8.1; 8.0 COMPLETE)`
 
 ### Goal
 
@@ -2133,9 +2133,32 @@ Phase 8 is `COMPLETE` only when:
 
 ### Completed
 
-- Not started. Existing `qdl-core` contract/replay and bounded Binance shadow
-  binaries are inputs to this phase, not evidence that a production Rust venue
-  ingestor or replicated durable substrate is complete.
+- `8.0 COMPLETE` on 2026-08-15 for the isolated shadow substrate. Added a
+  digest-pinned Apache Kafka 4.2.0 three-replica KRaft topology with
+  `acks=all`, idempotence, RF3/minISR2, unclean-election disabled, mTLS,
+  fail-closed ACLs, bounded resources and six separately owned raw/canonical/
+  quality/authority/quarantine/audit topics.
+- Added the async Rust `KafkaDurableSink`/`KafkaEventSource`. Producer cursors
+  come only from broker ACK partition/offset; consumer checkpoints remain
+  explicit after local offset storage. The release smoke used the Rust client,
+  PEM mTLS identities and actual broker records rather than Kafka CLI alone.
+- Added bounded OTel collector and alert contracts for ACK latency, produce
+  failure, consumer lag, spool/disk pressure, leader churn and stalled replay;
+  high-cardinality instrument/event labels are forbidden.
+- Certified 65/65 acknowledged records through full restart and one replica
+  volume loss. One-node loss remained writable; below-minISR writes did not
+  advance durable offsets; unauthorized writes did not advance offsets; Redis
+  shadow projection rebuilt byte-equivalent from replay. Full ISR returned
+  after restore.
+- Cleanup removed all Phase 8.0 containers, networks and volumes. V1 stayed
+  HTTP 200 and its inspected topology was unchanged. Evidence:
+  [broker topology](upgrade/evidence/phase8-broker-topology.json),
+  [failover](upgrade/evidence/phase8-broker-failover.json),
+  [security](upgrade/evidence/phase8-broker-security.json) and
+  [implementation report](upgrade/evidence/PHASE80_REPLICATED_SHADOW_SUBSTRATE_REPORT.md).
+- This same-host three-broker test certifies protocol, replication, fencing and
+  recovery behavior for shadow development. It does not claim independent
+  rack/region failure domains or authorize Phase 9 production cutover.
 
 ### Technical Debt / Decision Gate
 

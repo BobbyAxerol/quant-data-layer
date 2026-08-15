@@ -1,6 +1,7 @@
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Cursor {
     pub stream: String,
+    pub transport_partition: i32,
     pub partition_key: String,
     pub offset: u64,
 }

@@ -1,0 +1,20 @@
+{
+  "authorization": "kafka_standard_authorizer",
+  "authorized_producer_status": 0,
+  "cleanup": {
+    "containers_after": 0,
+    "networks_after": 0,
+    "v1_health_after": 200,
+    "v1_health_before": 200,
+    "v1_topology_unchanged": true,
+    "volumes_after": 0
+  },
+  "durable_offset_after": 64,
+  "durable_offset_before": 64,
+  "public_ports": 0,
+  "schema": "qdl.phase8.broker-security-evidence.v1",
+  "status": "PASS",
+  "transport": "mutual_tls",
+  "unauthorized_failed_closed": true,
+  "unauthorized_producer_status": 0
+}

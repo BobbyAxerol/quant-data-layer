@@ -1,0 +1,42 @@
+schema_version: 1
+scope: phase8-shadow
+labels_allowed:
+  - environment
+  - venue
+  - market
+  - feed
+  - role
+  - result
+labels_forbidden:
+  - instrument_uid
+  - native_symbol
+  - event_id
+alerts:
+  - name: Phase8BrokerAckLatencyHigh
+    expression: histogram_quantile(0.99, rate(qdl_broker_ack_latency_seconds_bucket[5m])) > 0.250
+    for: 5m
+    severity: page
+  - name: Phase8ProduceFailure
+    expression: increase(qdl_broker_produce_failures_total[5m]) > 0
+    for: 0m
+    severity: page
+  - name: Phase8ConsumerLagHigh
+    expression: max(qdl_broker_consumer_lag) > 10000
+    for: 10m
+    severity: ticket
+  - name: Phase8SpoolPressure
+    expression: max(qdl_spool_utilization_ratio) > 0.80
+    for: 5m
+    severity: page
+  - name: Phase8BrokerDiskPressure
+    expression: min(qdl_broker_disk_free_ratio) < 0.20
+    for: 5m
+    severity: page
+  - name: Phase8LeaderChangeStorm
+    expression: increase(qdl_broker_leader_changes_total[10m]) > 3
+    for: 0m
+    severity: ticket
+  - name: Phase8ReplayThroughputStalled
+    expression: qdl_replay_backlog > 0 and rate(qdl_replay_events_total[5m]) == 0
+    for: 5m
+    severity: page

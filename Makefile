@@ -1,4 +1,4 @@
-.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify python-test rust-test
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify python-test rust-test
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
 RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
@@ -165,6 +165,14 @@ phase73-certify: phase7-build
 	QDL_BETA_JWT_KEYS_JSON='{"beta-jwt-k1":"phase73-first-jwt-key-material-32bytes","beta-jwt-k2":"phase73-second-jwt-key-material-32bytes"}' \
 	QDL_BETA_INTERNAL_INGEST_SECRET='phase73-internal-ingest-secret-32bytes' \
 	scripts/phase73_public_beta_certification.sh
+
+phase80-test:
+	python3 -m unittest -v tests.test_fund_phase80_broker_substrate
+	QDL_PHASE8_CERT_DIR=/tmp docker compose -f docker-compose.phase8-kafka.yml config --quiet
+	docker build --provenance=false -f Dockerfile.phase8-rust -t qdl-phase8-rust:test .
+
+phase80-certify:
+	scripts/phase80_broker_certification.py
 
 phase7-clean:
 	docker image rm $(PHASE7_TEST_IMAGE) 2>/dev/null || true

@@ -1,0 +1,79 @@
+{
+  "authority": "RUST_SHADOW",
+  "cleanup": {
+    "containers_after": 0,
+    "networks_after": 0,
+    "v1_health_after": 200,
+    "v1_health_before": 200,
+    "v1_topology_unchanged": true,
+    "volumes_after": 0
+  },
+  "exact_record_parity": true,
+  "produce_elapsed_seconds": 15.64223,
+  "records_acked": 65,
+  "records_replayed": 65,
+  "redis_projection_rebuild_equal": true,
+  "resource_snapshots": [
+    {
+      "BlockIO": "38.5MB / 48.5MB",
+      "CPUPerc": "3.27%",
+      "Container": "qdl_phase80_certification-kafka1-1",
+      "ID": "4c74e11fd63a",
+      "MemPerc": "69.53%",
+      "MemUsage": "356MiB / 512MiB",
+      "Name": "qdl_phase80_certification-kafka1-1",
+      "NetIO": "912kB / 629kB",
+      "PIDs": "103"
+    },
+    {
+      "BlockIO": "274kB / 4.04MB",
+      "CPUPerc": "4.61%",
+      "Container": "qdl_phase80_certification-kafka2-1",
+      "ID": "21afd5bd3daf",
+      "MemPerc": "76.27%",
+      "MemUsage": "390.5MiB / 512MiB",
+      "Name": "qdl_phase80_certification-kafka2-1",
+      "NetIO": "999kB / 1.48MB",
+      "PIDs": "103"
+    },
+    {
+      "BlockIO": "7.82MB / 2.08MB",
+      "CPUPerc": "6.83%",
+      "Container": "qdl_phase80_certification-kafka3-1",
+      "ID": "9e64e2f4b9b4",
+      "MemPerc": "69.17%",
+      "MemUsage": "354.1MiB / 512MiB",
+      "Name": "qdl_phase80_certification-kafka3-1",
+      "NetIO": "401kB / 242kB",
+      "PIDs": "100"
+    },
+    {
+      "BlockIO": "3.95MB / 0B",
+      "CPUPerc": "4.23%",
+      "Container": "qdl_phase80_certification-phase8_redis-1",
+      "ID": "b84abfe14248",
+      "MemPerc": "5.97%",
+      "MemUsage": "3.82MiB / 64MiB",
+      "Name": "qdl_phase80_certification-phase8_redis-1",
+      "NetIO": "15.7kB / 126B",
+      "PIDs": "5"
+    }
+  ],
+  "rust_transport": {
+    "checkpointed": true,
+    "elapsed_seconds": 5.669413,
+    "event_id_sha256": "346777cd3638ac5a58a3ffc80de1bc6935c9911cc5abc8354f4d092f97e976da",
+    "offset": 0,
+    "partition": 1,
+    "payload_bytes": 65,
+    "status": "PASS",
+    "topic": "qdl.phase8.audit.v1"
+  },
+  "rust_transport_image_id": "sha256:00881d18b7e6e3b2406139778cd8d9157bcb362b65560ee90f1251edb59076a0",
+  "schema": "qdl.phase8.broker-topology-evidence.v1",
+  "status": "PASS",
+  "topic_count": 6,
+  "topic_describe_sha256": "b21af56c35d137b56a929def223d8ff1e7b7e8c13ff89f8142ccc89deccf00e2",
+  "topology_sha256": "588f3d25e1854bfad79abef44362c42fbd1d042eb2c60ba2656588a8ffc46960",
+  "v1_authoritative": true
+}

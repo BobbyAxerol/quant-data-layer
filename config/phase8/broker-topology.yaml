@@ -1,0 +1,71 @@
+schema: qdl.phase8.broker-topology.v1
+environment: phase8-certification
+protocol: kafka
+implementation:
+  name: apache-kafka
+  version: 4.2.0
+  image: apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9
+durability:
+  broker_count: 3
+  replication_factor: 3
+  min_in_sync_replicas: 2
+  producer_acks: all
+  idempotent_producer: true
+  unclean_leader_election: false
+  retention_ms: 86400000
+  maximum_record_bytes: 1048576
+  compression: zstd
+security:
+  transport: mutual_tls
+  authorization: kafka_standard_authorizer
+  allow_everyone_if_no_acl_found: false
+  principals:
+    administrator: phase8-admin
+    producer: phase8-producer
+    consumer: phase8-consumer
+topics:
+  - name: qdl.phase8.raw.binance.usdm.trade.v1
+    partitions: 3
+    owner: rust-ingestor-binance-usdm
+    partition_key: instrument_uid
+  - name: qdl.phase8.canonical.trade.v2
+    partitions: 3
+    owner: rust-canonicalizer
+    partition_key: instrument_uid
+  - name: qdl.phase8.quality.v2
+    partitions: 3
+    owner: rust-quality-projector
+    partition_key: feed_slice
+  - name: qdl.phase8.control.authority.v1
+    partitions: 3
+    owner: qdl-control
+    partition_key: authority_slice
+  - name: qdl.phase8.quarantine.binance.trade.v1
+    partitions: 3
+    owner: rust-ingestor-binance-usdm
+    partition_key: source_session_id
+  - name: qdl.phase8.audit.v1
+    partitions: 3
+    owner: qdl-audit
+    partition_key: correlation_id
+observability:
+  metrics:
+    - broker_ack_latency_seconds
+    - broker_produce_failures_total
+    - broker_partition_under_replicated
+    - broker_consumer_lag
+    - broker_disk_bytes
+    - local_spool_bytes
+    - replay_events_total
+  alerts:
+    - phase8_min_isr_unavailable
+    - phase8_under_replicated_partition
+    - phase8_producer_ack_failure
+    - phase8_consumer_lag_breach
+    - phase8_spool_quota_breach
+authority:
+  mode: RUST_SHADOW
+  public_write_allowed: false
+  legacy_projection_allowed: false
+  v1_authoritative: true
+
