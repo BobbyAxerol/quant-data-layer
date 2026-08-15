@@ -105,6 +105,7 @@ mod tests {
             authority_revision: 0,
             partition_plan_epoch: 0,
             canonical_payload_hash: vec![],
+            raw_capture_id: vec![],
             payload: Some(event_envelope::Payload::Trade(Trade {
                 native_trade_id: "184467440737095516160".into(),
                 price: Some(decimal(6_123_410, 2, "61234.10")),

@@ -7,6 +7,7 @@
   "feed": "book",
   "change_id": "1001",
   "prev_change_id": "1000",
+  "timestamp": 1786579200000,
   "bids": [["0.0100", "5.0"]],
   "asks": [["0.0110", "3.0"]]
 }

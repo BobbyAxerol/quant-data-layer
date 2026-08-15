@@ -1,4 +1,4 @@
-.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify phase81-test phase81-certify python-test rust-test
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify phase81-test phase81-certify phase82-test phase82-dnse-acquire phase82-certify python-test rust-test
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
 RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
@@ -179,6 +179,15 @@ phase81-test:
 
 phase81-certify:
 	scripts/phase81_core_certification.py
+
+phase82-test:
+	docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,size=128m --tmpfs /app/logs:rw,uid=10001,gid=10001,size=16m -v "$(CURDIR):/app:ro" -w /app data-layer:phase8-test python -m unittest -v tests.test_fund_phase82_conformance tests.test_fund_phase81_raw_core tests.test_fund_phase2_pipeline tests.test_fund_phase3_binance tests.test_fund_phase3_okx
+
+phase82-dnse-acquire:
+	docker compose exec -T data_layer python scripts/phase82_dnse_acquire.py --date "$${QDL_DNSE_SMOKE_DATE:?set a completed trading date}" --output /app/target/phase82-dnse-authentic.json
+
+phase82-certify:
+	docker run --rm --user 0:0 -v "$(CURDIR):/app" -w /app data-layer:phase8-test python scripts/phase82_exact_frame_certification.py --live-seconds 180 --retain-per-venue 128 --repeat 200 --dnse-date "$${QDL_DNSE_SMOKE_DATE:?set a completed trading date}" --dnse-input /app/target/phase82-dnse-authentic.json
 
 phase7-clean:
 	docker image rm $(PHASE7_TEST_IMAGE) 2>/dev/null || true

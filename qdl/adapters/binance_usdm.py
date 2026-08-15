@@ -193,11 +193,15 @@ class BinanceUsdmSupervisor:
         self,
         *,
         on_frame: Callable[[str, dict[str, Any], int], Awaitable[None]],
+        on_exact_frame: Callable[
+            [bytes, str, dict[str, Any], int], Awaitable[None]
+        ] | None = None,
         connect_timeout_seconds: float = 10.0,
         heartbeat_seconds: float = 20.0,
         max_backoff_seconds: float = 30.0,
     ) -> None:
         self._on_frame = on_frame
+        self._on_exact_frame = on_exact_frame
         self._connect_timeout = connect_timeout_seconds
         self._heartbeat = heartbeat_seconds
         self._max_backoff = max_backoff_seconds
@@ -231,8 +235,14 @@ class BinanceUsdmSupervisor:
                         )
                         if message is None:
                             break
+                        received_at_ns = time.time_ns()
+                        raw_bytes = message if isinstance(message, bytes) else message.encode("utf-8")
                         stream, frame = decode_combined_frame(message)
-                        await self._on_frame(stream, frame, time.time_ns())
+                        if self._on_exact_frame is not None:
+                            await self._on_exact_frame(
+                                raw_bytes, stream, frame, received_at_ns
+                            )
+                        await self._on_frame(stream, frame, received_at_ns)
                         received += 1
             except asyncio.CancelledError:
                 raise

@@ -200,6 +200,8 @@ pub struct EventEnvelope {
     pub partition_plan_epoch: u64,
     #[prost(bytes="vec", tag="32")]
     pub canonical_payload_hash: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes="vec", tag="33")]
+    pub raw_capture_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(oneof="event_envelope::Payload", tags="40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50")]
     pub payload: ::core::option::Option<event_envelope::Payload>,
 }

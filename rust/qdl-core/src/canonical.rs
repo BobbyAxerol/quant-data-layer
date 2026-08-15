@@ -1,7 +1,7 @@
 use prost::Message;
-use qdl_contracts::qdl::common::v1::{AggressorSide, BarOrigin, SourceRole};
+use qdl_contracts::qdl::common::v1::{AggressorSide, BarOrigin, BookSide, QualityFlag, SourceRole};
 use qdl_contracts::qdl::marketdata::v2::{
-    event_envelope, Bar, BarLifecycle, EventEnvelope, Quote, Trade,
+    event_envelope, Bar, BarLifecycle, BookLevel, EventEnvelope, OrderBookSnapshot, Quote, Trade,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -39,6 +39,10 @@ pub struct TradeContext {
     pub authority_revision: u64,
     #[serde(default)]
     pub partition_plan_epoch: u64,
+    #[serde(default)]
+    pub raw_capture_id: Vec<u8>,
+    #[serde(default)]
+    pub raw_frame_sha256: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -105,10 +109,12 @@ fn canonical_json(raw: &Value) -> Result<Vec<u8>, String> {
 
 pub fn canonicalize_trade(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
     match fixture.provider_kind.as_str() {
-        "binance_usdm_agg_trade" => canonicalize_binance(fixture),
+        "binance_usdm_trade" | "binance_usdm_agg_trade" => canonicalize_binance(fixture),
         "binance_usdm_bbo" => canonicalize_binance_bbo(fixture),
         "binance_usdm_bar" => canonicalize_binance_bar(fixture),
         "okx_trade" => canonicalize_okx(fixture),
+        "dnse_bar" => canonicalize_dnse_bar(fixture),
+        "deribit_option_book_fixture" => canonicalize_deribit_fixture(fixture),
         other => Err(format!("unsupported provider fixture: {other}")),
     }
 }
@@ -120,6 +126,7 @@ fn base_envelope(
     source_event_time_ms: i64,
 ) -> Result<EventEnvelope, String> {
     let context = &fixture.context;
+    validate_shadow_context(context)?;
     let raw_bytes = canonical_json(&fixture.raw)?;
     let event_id = deterministic_event_id(
         &[
@@ -158,7 +165,11 @@ fn base_envelope(
         normalizer_version: context.normalizer_version.clone(),
         adapter_version: context.adapter_version.clone(),
         quality_flags: vec![],
-        raw_payload_hash: Sha256::digest(raw_bytes).to_vec(),
+        raw_payload_hash: if context.raw_frame_sha256.is_empty() {
+            Sha256::digest(raw_bytes).to_vec()
+        } else {
+            context.raw_frame_sha256.clone()
+        },
         correlation_id: context.correlation_id.clone(),
         config_revision: context.config_revision,
         source_session_id: context.source_session_id.clone(),
@@ -166,8 +177,19 @@ fn base_envelope(
         authority_revision: context.authority_revision,
         partition_plan_epoch: context.partition_plan_epoch,
         canonical_payload_hash: vec![],
+        raw_capture_id: context.raw_capture_id.clone(),
         payload: None,
     })
+}
+
+fn validate_shadow_context(context: &TradeContext) -> Result<(), String> {
+    if !context.source_session_id.is_empty() && context.raw_capture_id.len() != 16 {
+        return Err("exact-frame shadow context requires a 16-byte raw_capture_id".to_owned());
+    }
+    if !context.source_session_id.is_empty() && context.raw_frame_sha256.len() != 32 {
+        return Err("exact-frame shadow context requires a 32-byte raw_frame_sha256".to_owned());
+    }
+    Ok(())
 }
 
 fn verify_binance_symbol(fixture: &TradeFixture) -> Result<(), String> {
@@ -286,6 +308,112 @@ fn canonicalize_okx(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
     )
 }
 
+fn canonicalize_dnse_bar(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
+    if text(&fixture.raw, "symbol")?.to_uppercase() != fixture.context.native_symbol.to_uppercase()
+    {
+        return Err("DNSE bar symbol does not match resolved instrument".into());
+    }
+    let open_time_ms = integer(&fixture.raw, "open_time_ms")?;
+    let close_time_ms = integer(&fixture.raw, "close_time_ms")?;
+    let is_final = boolean(&fixture.raw, "is_final")?;
+    let trade_count_available = boolean(&fixture.raw, "trade_count_available")?;
+    let trade_count = if trade_count_available {
+        unsigned(&fixture.raw, "trade_count")?
+    } else {
+        0
+    };
+    let sequence = format!("{open_time_ms}:{close_time_ms}");
+    let mut envelope = base_envelope(fixture, "bar", sequence, close_time_ms)?;
+    if !trade_count_available {
+        envelope
+            .quality_flags
+            .push(QualityFlag::FieldMissing as i32);
+    }
+    envelope.payload = Some(event_envelope::Payload::Bar(Bar {
+        interval: text(&fixture.raw, "interval")?,
+        open_time_ns: open_time_ms * 1_000_000,
+        close_time_ns: close_time_ms * 1_000_000,
+        open: Some(parse_decimal(&text(&fixture.raw, "o")?)?),
+        high: Some(parse_decimal(&text(&fixture.raw, "h")?)?),
+        low: Some(parse_decimal(&text(&fixture.raw, "l")?)?),
+        close: Some(parse_decimal(&text(&fixture.raw, "c")?)?),
+        volume: Some(parse_decimal(&text(&fixture.raw, "v")?)?),
+        trade_count,
+        is_final,
+        revision: unsigned(&fixture.raw, "revision")?
+            .try_into()
+            .map_err(|_| "DNSE revision exceeds uint32".to_owned())?,
+        origin: BarOrigin::VenueNative as i32,
+        lifecycle: if is_final {
+            BarLifecycle::Final as i32
+        } else {
+            BarLifecycle::InProgress as i32
+        },
+        supersedes_event_id: None,
+    }));
+    set_payload_hash(&mut envelope)?;
+    Ok(envelope)
+}
+
+fn deribit_levels(raw: &Value, field: &str, side: BookSide) -> Result<Vec<BookLevel>, String> {
+    let rows = raw
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("Deribit fixture {field} must be a list"))?;
+    rows.iter()
+        .map(|row| {
+            let values = row
+                .as_array()
+                .filter(|items| items.len() >= 2)
+                .ok_or_else(|| "Deribit fixture level requires price and amount".to_owned())?;
+            let price = values[0]
+                .as_str()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| values[0].to_string());
+            let quantity = values[1]
+                .as_str()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| values[1].to_string());
+            Ok(BookLevel {
+                side: side as i32,
+                price: Some(parse_decimal(&price)?),
+                quantity: Some(parse_decimal(&quantity)?),
+                order_count: 0,
+            })
+        })
+        .collect()
+}
+
+fn canonicalize_deribit_fixture(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
+    if text(&fixture.raw, "provenance")? != "TEST_SYNTHETIC_EXTENSION_FIXTURE" {
+        return Err("Deribit fixture parser cannot accept live provenance".into());
+    }
+    if text(&fixture.raw, "native_symbol")? != fixture.context.native_symbol {
+        return Err("Deribit fixture instrument mismatch".into());
+    }
+    let sequence = text(&fixture.raw, "change_id")?;
+    let source_time = integer(&fixture.raw, "timestamp")?;
+    let mut envelope = base_envelope(fixture, "book_snapshot", sequence.clone(), source_time)?;
+    let bids = deribit_levels(&fixture.raw, "bids", BookSide::Bid)?;
+    let asks = deribit_levels(&fixture.raw, "asks", BookSide::Ask)?;
+    let depth = bids.len().max(asks.len());
+    let mut levels = bids;
+    levels.extend(asks);
+    envelope
+        .quality_flags
+        .push(QualityFlag::FieldMissing as i32);
+    envelope.payload = Some(event_envelope::Payload::BookSnapshot(OrderBookSnapshot {
+        native_sequence: sequence,
+        checksum: String::new(),
+        levels,
+        depth: depth
+            .try_into()
+            .map_err(|_| "Deribit depth exceeds uint32".to_owned())?,
+    }));
+    set_payload_hash(&mut envelope)?;
+    Ok(envelope)
+}
+
 fn build_trade(
     fixture: &TradeFixture,
     native_trade_id: String,
@@ -296,6 +424,7 @@ fn build_trade(
     is_buyer_maker: bool,
 ) -> Result<EventEnvelope, String> {
     let context = &fixture.context;
+    validate_shadow_context(context)?;
     let raw_bytes = canonical_json(&fixture.raw)?;
     let schema_major = b"2";
     let event_id = deterministic_event_id(
@@ -335,7 +464,11 @@ fn build_trade(
         normalizer_version: context.normalizer_version.clone(),
         adapter_version: context.adapter_version.clone(),
         quality_flags: vec![],
-        raw_payload_hash: Sha256::digest(raw_bytes).to_vec(),
+        raw_payload_hash: if context.raw_frame_sha256.is_empty() {
+            Sha256::digest(raw_bytes).to_vec()
+        } else {
+            context.raw_frame_sha256.clone()
+        },
         correlation_id: context.correlation_id.clone(),
         config_revision: context.config_revision,
         source_session_id: context.source_session_id.clone(),
@@ -343,6 +476,7 @@ fn build_trade(
         authority_revision: context.authority_revision,
         partition_plan_epoch: context.partition_plan_epoch,
         canonical_payload_hash: vec![],
+        raw_capture_id: context.raw_capture_id.clone(),
         payload: Some(event_envelope::Payload::Trade(Trade {
             native_trade_id,
             price: Some(parse_decimal(&price)?),

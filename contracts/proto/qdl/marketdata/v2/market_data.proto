@@ -128,6 +128,7 @@ message EventEnvelope {
   uint64 authority_revision = 30;
   uint64 partition_plan_epoch = 31;
   bytes canonical_payload_hash = 32;
+  bytes raw_capture_id = 33;
 
   oneof payload {
     Trade trade = 40;

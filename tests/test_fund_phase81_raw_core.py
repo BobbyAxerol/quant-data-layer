@@ -76,6 +76,8 @@ class Phase81RawCoreTests(unittest.TestCase):
             partition_sequence=1, normalizer_version="n", adapter_version="a",
             config_revision=1, source_session_id="session-1",
             connection_generation=2, authority_revision=3, partition_plan_epoch=4,
+            raw_capture_id=bytes(range(16)),
+            raw_frame_sha256=bytes(range(32)),
         )
         event = canonicalize_binance_usdm_trade(
             {"s": "BTCUSDT", "a": 1, "p": "1", "q": "1", "T": 1, "m": False},
@@ -83,7 +85,25 @@ class Phase81RawCoreTests(unittest.TestCase):
         )
         self.assertEqual(event.source_session_id, "session-1")
         self.assertEqual(event.connection_generation, 2)
+        self.assertEqual(event.raw_capture_id, bytes(range(16)))
+        self.assertEqual(event.raw_payload_hash, bytes(range(32)))
         self.assertEqual(len(event.canonical_payload_hash), 32)
+
+    def test_shadow_context_requires_exact_capture_identity(self):
+        context = TradeContext(
+            instrument_uid="i", instrument_id="id", instrument_revision=1,
+            venue="BINANCE", market="USDM", product_type="PERPETUAL",
+            native_symbol="BTCUSDT", provider="BINANCE_DIRECT", source_id="s",
+            lease_epoch=1, received_at_ns=1, normalized_at_ns=2, published_at_ns=3,
+            partition_sequence=1, normalizer_version="n", adapter_version="a",
+            config_revision=1, source_session_id="session-1",
+            connection_generation=2, authority_revision=3, partition_plan_epoch=4,
+        )
+        with self.assertRaisesRegex(ValueError, "16-byte raw_capture_id"):
+            canonicalize_binance_usdm_trade(
+                {"s": "BTCUSDT", "a": 1, "p": "1", "q": "1", "T": 1, "m": False},
+                context,
+            )
 
     def test_all_capability_manifests_are_fail_closed_and_shadow_only(self):
         paths = sorted((ROOT / "config/phase8/capabilities").glob("*.yaml"))

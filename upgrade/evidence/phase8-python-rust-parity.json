@@ -1,0 +1,44 @@
+{
+  "aggregate_sha256": "80cbbc22db8911a6653f4bfa0b38b40820439661810ee137de3fa8644b106d5c",
+  "authority": "RUST_SHADOW",
+  "canonical_mismatches": 0,
+  "comparison": [
+    "raw_capture_id",
+    "event_id",
+    "instrument_identity",
+    "exact_decimal",
+    "source_time",
+    "native_sequence",
+    "session_generation",
+    "quality_flags",
+    "canonical_payload_hash",
+    "deterministic_protobuf_bytes"
+  ],
+  "events": 99600,
+  "fixture_count": 498,
+  "process_restart_mismatches": 0,
+  "production_writes": 0,
+  "public_or_legacy_writes": 0,
+  "python": {
+    "cpu_seconds": 9.457217519,
+    "elapsed_seconds": 9.514027105993591,
+    "events_per_second": 10468.753020185803,
+    "latency_ms": {
+      "mean": 0.09192680917670683,
+      "p50": 0.088696,
+      "p95": 0.169396,
+      "p99": 0.230035,
+      "p99_9": 0.414617
+    }
+  },
+  "record_mismatches": 0,
+  "repeat": 200,
+  "rust": {
+    "elapsed_seconds_max": 14.114840742,
+    "events_per_second_max": 7284.5474112708325,
+    "events_per_second_min": 7056.402677192885
+  },
+  "rust_process_runs": 3,
+  "schema": "qdl.phase8.python-rust-parity.v1",
+  "status": "PASS"
+}

@@ -174,7 +174,7 @@ These rules apply to all phases.
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `COMPLETE (FROZEN SHADOW)` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `BLOCKED (SHADOW PASS; PRIMARY NO-GO)` |
 | 7 | V2 public beta and consumer canary | Publish a protected read-only V2 surface and validate real consumer behavior without changing authority | `COMPLETE (BETA-GO READ-ONLY)` |
-| 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `IN_PROGRESS (8.2; 8.0-8.1 complete)` |
+| 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `IN_PROGRESS (8.3; 8.0-8.2 complete)` |
 | 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
@@ -1610,7 +1610,7 @@ Phase 7 is `COMPLETE` only when all conditions below pass:
 
 ## 12. Phase 8 - Multi-Venue Rust Realtime Core And Reference Slice
 
-**Status:** `IN_PROGRESS (8.2; 8.0-8.1 COMPLETE)`
+**Status:** `IN_PROGRESS (8.3; 8.0-8.2 COMPLETE)`
 
 ### Goal
 
@@ -2185,6 +2185,28 @@ Phase 8 is `COMPLETE` only when:
   [session chaos](upgrade/evidence/phase8-rust-session-chaos.json),
   [stable sharding](upgrade/evidence/phase8-stable-sharding.json) and
   [implementation report](upgrade/evidence/PHASE81_RAW_ENVELOPE_RUST_CORE_REPORT.md).
+- `8.2 COMPLETE` on 2026-08-15. Added an atomic exact-frame tee to Binance
+  USD-M and OKX V5 without changing existing callback consumers, plus an
+  append-only canonical `raw_capture_id` and exact raw-frame hash linkage in
+  both Python and Rust. Missing linkage fails closed in shadow mode.
+- Certified 189.03 seconds of concurrent authentic Binance/OKX trade traffic:
+  1,855 Binance and 510 OKX events observed, with a bounded 128 captures per
+  venue retained. A credential-owning DNSE acquisition edge delivered a full
+  authentic 241-row `VN30F1M` session for 2026-08-14. Deribit remains explicit
+  fixture-only and cannot claim live provenance.
+- Replayed 498 cross-venue records 200 times (99,600 events) through Python and
+  three clean Rust processes. Deterministic Protobuf bytes, identities,
+  decimals, timestamps, sequences, session/generation, quality flags and
+  canonical hashes had zero mismatch and zero restart divergence. Python p99
+  was 0.230 ms; debug Rust exceeded the 1,000 events/s Phase 8.2 floor. Release
+  capacity is deliberately deferred to the immutable 8.3 artifact.
+- No public endpoint, V1 key, Redis projection or production authority was
+  written. Compact checksummed evidence and the implementation report are in
+  [Phase 8.2 report](upgrade/evidence/PHASE82_REFERENCE_SHADOW_CONFORMANCE_REPORT.md).
+- Operator note: host `.env` DNSE credentials were stale (`OA-401`) while the
+  running workload identity acquired successfully. Secrets were not copied;
+  operator secret rotation must reconcile these sources independently of the
+  completed canonical parity gate.
 
 ### Technical Debt / Decision Gate
 

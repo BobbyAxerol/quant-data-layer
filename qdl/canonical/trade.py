@@ -36,6 +36,8 @@ class TradeContext:
     connection_generation: int = 0
     authority_revision: int = 0
     partition_plan_epoch: int = 0
+    raw_capture_id: bytes = b""
+    raw_frame_sha256: bytes = b""
 
 
 def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
@@ -83,6 +85,13 @@ def _set_canonical_payload_hash(
     envelope.canonical_payload_hash = hashlib.sha256(payload).digest()
 
 
+def _validate_shadow_context(context: TradeContext) -> None:
+    if context.source_session_id and len(context.raw_capture_id) != 16:
+        raise ValueError("exact-frame shadow context requires a 16-byte raw_capture_id")
+    if context.source_session_id and len(context.raw_frame_sha256) != 32:
+        raise ValueError("exact-frame shadow context requires a 32-byte raw_frame_sha256")
+
+
 def _trade_envelope(
     *,
     raw: Mapping[str, Any],
@@ -94,6 +103,7 @@ def _trade_envelope(
     source_event_time_ms: int,
     is_buyer_maker: bool,
 ) -> market_data_pb2.EventEnvelope:
+    _validate_shadow_context(context)
     raw_bytes = canonical_json_bytes(raw)
     event_id = deterministic_event_id(
         [
@@ -130,13 +140,14 @@ def _trade_envelope(
         partition_sequence=context.partition_sequence,
         normalizer_version=context.normalizer_version,
         adapter_version=context.adapter_version,
-        raw_payload_hash=hashlib.sha256(raw_bytes).digest(),
+        raw_payload_hash=context.raw_frame_sha256 or hashlib.sha256(raw_bytes).digest(),
         correlation_id=context.correlation_id,
         config_revision=context.config_revision,
         source_session_id=context.source_session_id,
         connection_generation=context.connection_generation,
         authority_revision=context.authority_revision,
         partition_plan_epoch=context.partition_plan_epoch,
+        raw_capture_id=context.raw_capture_id,
         trade=market_data_pb2.Trade(
             native_trade_id=native_trade_id,
             price=_decimal(price),

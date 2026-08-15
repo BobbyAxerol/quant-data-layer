@@ -1,0 +1,27 @@
+{
+  "authority": "RUST_SHADOW",
+  "canonical_mismatches": 0,
+  "capture_bundle": "upgrade/evidence/captures/phase8-real-provider-frames.json.gz",
+  "capture_bundle_sha256": "0912db1d39ddf1ec27414bccc55e096467305534aa581f9d217b179b7a95ff46",
+  "dnse_complete_session_rows": 241,
+  "dnse_trading_date": "2026-08-14",
+  "live": {
+    "duration_seconds": 189.03419377701357,
+    "observed_events": {
+      "BINANCE": 1855,
+      "OKX": 510
+    },
+    "observed_raw_bytes": {
+      "BINANCE": 311986,
+      "OKX": 111878
+    },
+    "retained_per_venue_limit": 128
+  },
+  "production_writes": 0,
+  "provenance": "REAL_PROVIDER_READ_ONLY",
+  "public_or_legacy_writes": 0,
+  "retained_authentic_captures": 497,
+  "schema": "qdl.phase8.real-provider-shadow.v1",
+  "status": "PASS",
+  "test_provenance_in_real_capture_namespace": 0
+}

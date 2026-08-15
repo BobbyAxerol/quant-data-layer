@@ -217,10 +217,14 @@ class OkxWebSocketSupervisor:
         self,
         *,
         on_frame: Callable[[Mapping[str, Any], int], Awaitable[None]],
+        on_exact_frame: Callable[
+            [bytes, Mapping[str, Any], int, int], Awaitable[None]
+        ] | None = None,
         heartbeat_seconds: float = 20.0,
         max_backoff_seconds: float = 30.0,
     ) -> None:
         self._on_frame = on_frame
+        self._on_exact_frame = on_exact_frame
         self._heartbeat = heartbeat_seconds
         self._max_backoff = max_backoff_seconds
 
@@ -258,7 +262,13 @@ class OkxWebSocketSupervisor:
                         )
                         if message is None:
                             return received
+                        received_at_ns = time.time_ns()
+                        raw_bytes = message if isinstance(message, bytes) else message.encode("utf-8")
                         payload = json.loads(message)
+                        if self._on_exact_frame is not None:
+                            await self._on_exact_frame(
+                                raw_bytes, payload, generation, received_at_ns
+                            )
                         if payload.get("event") == "error":
                             raise RuntimeError(f"OKX subscription rejected: {payload.get('code')} {payload.get('msg')}")
                         if payload.get("event") == "subscribe":
@@ -278,7 +288,13 @@ class OkxWebSocketSupervisor:
                             if pong != "pong":
                                 raise RuntimeError("OKX heartbeat pong missing")
                             continue
+                        received_at_ns = time.time_ns()
+                        raw_bytes = message if isinstance(message, bytes) else message.encode("utf-8")
                         payload = json.loads(message)
+                        if self._on_exact_frame is not None:
+                            await self._on_exact_frame(
+                                raw_bytes, payload, generation, received_at_ns
+                            )
                         if payload.get("event"):
                             continue
                         await self._on_frame(payload, generation)
