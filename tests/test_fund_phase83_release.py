@@ -33,6 +33,16 @@ class Phase83CandidateContractTests(unittest.TestCase):
             if item["name"] == "qdl.phase8.control.authority.v1"
         )
         self.assertEqual(authority["cleanup_policy"], "compact")
+        self.assertEqual(authority["partition_key"], "authority_slice")
+        audit = next(
+            item for item in topology["topics"]
+            if item["name"] == "qdl.phase8.audit.v1"
+        )
+        self.assertNotEqual(audit.get("cleanup_policy"), "compact")
+        rehearsal = (
+            ROOT / "rust/qdl-kafka/src/bin/qdl-authority-rehearsal.rs"
+        ).read_text()
+        self.assertIn('required("QDL_AUDIT_TOPIC")', rehearsal)
         dockerfile = (ROOT / "Dockerfile.phase8-rust").read_text()
         self.assertIn("USER 10001:10001", dockerfile)
         for binary in (

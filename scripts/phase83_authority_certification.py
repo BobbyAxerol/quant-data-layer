@@ -81,8 +81,10 @@ def main() -> int:
             add_acls(env)
             wait_for_replicas(env)
             authority_topic = "qdl.phase8.control.authority.v1"
+            audit_topic = "qdl.phase8.audit.v1"
             canonical_topic = "qdl.phase8.canonical.trade.v2"
             authority_before = total_end_offset(env, authority_topic)
+            audit_before = total_end_offset(env, audit_topic)
             canonical_before = total_end_offset(env, canonical_topic)
             nonce = hashlib.sha256(str(time.time_ns()).encode()).hexdigest()[:16]
             result = run(
@@ -95,6 +97,7 @@ def main() -> int:
                     "--env", f"QDL_KAFKA_BOOTSTRAP_SERVERS={BOOTSTRAP}",
                     "--env", "QDL_KAFKA_CERT_ROOT=/certs",
                     "--env", f"QDL_AUTHORITY_TOPIC={authority_topic}",
+                    "--env", f"QDL_AUDIT_TOPIC={audit_topic}",
                     "--env", f"QDL_CANONICAL_TOPIC={canonical_topic}",
                     "--env", f"QDL_AUTHORITY_NONCE={nonce}",
                     "--env", f"QDL_CANDIDATE_IMAGE_DIGEST={args.image_digest}",
@@ -107,9 +110,11 @@ def main() -> int:
             )
             runtime = json.loads(result.stdout.strip().splitlines()[-1])
             authority_after = total_end_offset(env, authority_topic)
+            audit_after = total_end_offset(env, audit_topic)
             canonical_after = total_end_offset(env, canonical_topic)
             offsets_exact = (
                 authority_after - authority_before == 3
+                and audit_after - audit_before == 3
                 and canonical_after - canonical_before == 3
             )
             if runtime.get("status") != "PASS" or not offsets_exact:
@@ -119,15 +124,43 @@ def main() -> int:
             compose(env, "restart", "kafka1", "kafka2", "kafka3", timeout=120)
             wait_for_cluster(env)
             wait_for_replicas(env)
-            records = consume(env, authority_topic, 3, f"phase83-restart-{nonce}")
-            decoded = [json.loads(item) for item in records]
-            revisions = [item["revision"] for item in decoded]
-            modes = [item["mode"] for item in decoded]
-            persisted_after_restart = revisions == [1, 2, 3] and modes == [
+            audit_records = consume(
+                env, audit_topic, 3, f"phase83-audit-restart-{nonce}"
+            )
+            audit_decoded = [json.loads(item) for item in audit_records]
+            audit_revisions = [item["revision"] for item in audit_decoded]
+            audit_modes = [item["mode"] for item in audit_decoded]
+            audit_persisted_after_restart = audit_revisions == [1, 2, 3] and audit_modes == [
                 "RUST_SHADOW", "RUST_CANARY", "RUST_SHADOW"
             ]
-            if not persisted_after_restart:
-                raise RuntimeError("authority records did not survive restart in order")
+            authority_records = consume(
+                env, authority_topic, 3, f"phase83-state-restart-{nonce}"
+            )
+            authority_decoded = [json.loads(item) for item in authority_records]
+            authority_latest_revision = max(
+                (item["revision"] for item in authority_decoded), default=0
+            )
+            authority_latest = next(
+                (
+                    item for item in authority_decoded
+                    if item["revision"] == authority_latest_revision
+                ),
+                {},
+            )
+            authority_state_persisted_after_restart = (
+                authority_latest_revision == 3
+                and authority_latest.get("mode") == "RUST_SHADOW"
+            )
+            if not audit_persisted_after_restart:
+                raise RuntimeError(
+                    "authority audit did not survive restart in order: "
+                    f"revisions={audit_revisions} modes={audit_modes}"
+                )
+            if not authority_state_persisted_after_restart:
+                raise RuntimeError(
+                    "latest compacted authority state did not survive restart: "
+                    f"records={authority_decoded}"
+                )
             evidence = {
                 "schema": "qdl.phase8.authority-rehearsal.v1",
                 "status": "PASS",
@@ -137,9 +170,13 @@ def main() -> int:
                 "partition_plan_digest": partition_digest,
                 "runtime": runtime,
                 "authority_offset_delta": authority_after - authority_before,
+                "authority_audit_offset_delta": audit_after - audit_before,
                 "canonical_shadow_offset_delta": canonical_after - canonical_before,
                 "rejected_write_offset_delta": 0,
-                "persisted_after_full_broker_restart": persisted_after_restart,
+                "authority_audit_revisions_after_restart": audit_revisions,
+                "authority_state_latest_revision_after_restart": authority_latest_revision,
+                "authority_audit_persisted_after_full_broker_restart": audit_persisted_after_restart,
+                "authority_state_persisted_after_full_broker_restart": authority_state_persisted_after_restart,
                 "authority_topic_cleanup_policy": "compact",
                 "final_authority": "RUST_SHADOW",
                 "public_writes": 0,

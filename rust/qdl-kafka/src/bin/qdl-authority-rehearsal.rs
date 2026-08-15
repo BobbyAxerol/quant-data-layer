@@ -117,6 +117,7 @@ fn publication(revision: u64, lease_epoch: u64, target: SinkTarget) -> Publicati
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let authority_topic = required("QDL_AUTHORITY_TOPIC")?;
+    let audit_topic = required("QDL_AUDIT_TOPIC")?;
     let canonical_topic = required("QDL_CANONICAL_TOPIC")?;
     let nonce = required("QDL_AUTHORITY_NONCE")?;
     let image_digest = required("QDL_CANDIDATE_IMAGE_DIGEST")?;
@@ -128,9 +129,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let producer_config = transport_config("producer", &group)?;
     let consumer_config = transport_config("consumer", &group)?;
     let authority_sink = KafkaDurableSink::new(&producer_config)?;
+    let audit_sink = KafkaDurableSink::new(&producer_config)?;
     let authority_source = KafkaEventSource::new(&consumer_config, &[&authority_topic])?;
     let fenced_sink = FencedKafkaSink::new(&producer_config)?;
     let mut authority_offsets = Vec::new();
+    let mut audit_offsets = Vec::new();
     let mut canonical_offsets = Vec::new();
 
     for (revision, mode) in [
@@ -155,6 +158,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         let append = authority_sink.append(&durable).await?;
         authority_offsets.push(append.cursor.offset);
+        let audit = durable_record(
+            &audit_topic,
+            slice_id,
+            serde_json::to_vec(&authority)?,
+            &format!("{nonce}:authority-audit:{revision}"),
+        )?;
+        let append = audit_sink.append(&audit).await?;
+        audit_offsets.push(append.cursor.offset);
         let persisted = receive_authority(&authority_source, slice_id, revision).await?;
         fenced_sink.apply_authority(persisted)?;
 
@@ -234,6 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         && stale_revision_rejected
         && canary_after_rollback_rejected
         && authority_offsets.len() == 3
+        && audit_offsets.len() == 3
         && canonical_offsets.len() == 3;
     println!(
         "{}",
@@ -241,8 +253,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "status": if status { "PASS" } else { "FAIL" },
             "transitions": ["RUST_SHADOW", "RUST_CANARY", "RUST_SHADOW"],
             "authority_offsets": authority_offsets,
+            "authority_audit_offsets": audit_offsets,
             "canonical_shadow_offsets": canonical_offsets,
-            "persistent_authority_records": 3,
+            "compacted_authority_updates": 3,
+            "persistent_authority_audit_records": 3,
             "public_write_attempts": 1,
             "public_writes": 0,
             "legacy_write_attempts": 1,
