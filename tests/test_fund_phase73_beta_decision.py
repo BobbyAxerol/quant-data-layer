@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,6 +33,23 @@ class Phase73ManifestAndMetricTests(unittest.TestCase):
         self.assertEqual(_percentile([1.0, 2.0, 3.0, 4.0], 0.999), 4.0)
         self.assertEqual(_bytes("1MiB"), 1024 * 1024)
         self.assertEqual(_bytes("1.5 MB"), 1_500_000)
+
+    def test_frozen_beta_evidence_is_complete_and_checksummed(self):
+        evidence = ROOT / "upgrade/evidence"
+        capacity = json.loads((evidence / "phase7-capacity.json").read_text())
+        security = json.loads(
+            (evidence / "phase7-security-adversarial.json").read_text()
+        )
+        freeze = json.loads((evidence / "phase7-evidence-freeze.json").read_text())
+        self.assertEqual(capacity["status"], "PASS")
+        self.assertTrue(all(capacity["checks"].values()))
+        self.assertEqual(capacity["generated_market_events"], 0)
+        self.assertEqual(security["status"], "PASS")
+        self.assertEqual(freeze["decision"], "BETA-GO_READ_ONLY")
+        self.assertEqual(freeze["status"], "FROZEN")
+        for relative, expected in (freeze["artifacts"] | freeze["manifests"]).items():
+            actual = hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+            self.assertEqual(actual, expected, relative)
 
 
 class Phase73ConsumerStreamQuotaTests(unittest.IsolatedAsyncioTestCase):

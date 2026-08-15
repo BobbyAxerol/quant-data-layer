@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 public beta is in progress with subphases 7.0-7.2 complete and 7.3 pending; Phases 8-9 remain planned for evidence-driven Rust realtime-core promotion. V1 remains authoritative and no runtime cutover has started.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phases 8-9 remain planned for evidence-driven Rust realtime-core promotion. V1 remains authoritative and no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -976,7 +976,7 @@ Certify production reliability, security, resource efficiency and operational re
 
 ## 11. Phase 7 - V2 Public Beta And Consumer Canary
 
-**Status:** `IN_PROGRESS` (`7.0-7.2 COMPLETE`; `7.3 NOT STARTED`)
+**Status:** `COMPLETE` (`7.0-7.3 COMPLETE`; `BETA-GO READ-ONLY`; V1 authoritative)
 
 ### Goal
 
@@ -1451,6 +1451,8 @@ upgrade/evidence/phase7-cursor-handoff.json
 upgrade/evidence/phase7-sdk-checkpoint.json
 upgrade/evidence/phase7-consumer-parity.json
 upgrade/evidence/phase7-capacity.json
+upgrade/evidence/phase7-security-adversarial.json
+upgrade/evidence/phase7-evidence-freeze.json
 upgrade/evidence/phase7-topology-rollback.json
 upgrade/evidence/PHASE7_PUBLIC_BETA_REPORT.md
 ```
@@ -1556,12 +1558,35 @@ Phase 7 is `COMPLETE` only when all conditions below pass:
 - V1 remains authoritative and was not restarted or reconfigured. Phase 7.2
   does not authorize V2 execution dependency, production durable groups or
   public authority.
+- `7.3 COMPLETE` on 2026-08-15. Added per-consumer concurrent-stream quota
+  enforcement and one bounded read-only capacity manifest, then ran normal and
+  burst REST traffic plus four-way replay/live fan-out against real V1/provider
+  closed bars. No generated market event entered beta evidence.
+- Normal traffic reached 39.120 requests/s at p99.9 211.058 ms; burst traffic
+  reached 36.362 requests/s at p99.9 628.694 ms, both with zero errors. Three
+  fast stream consumers drained 64 offsets to zero lag at 652.316 events/s; one
+  slow consumer was explicitly disconnected without blocking peers or losing
+  durable data.
+- Missing/invalid identity, two-key rotation, malformed/oversized request,
+  rate limit, cursor tamper/expiry/scope, Redis outage and active/passive
+  failover gates passed. The Redis restart test found and closed an ephemeral
+  fencing-epoch defect by adding an isolated beta-only AOF volume; epoch then
+  persisted and advanced from `1` to `2`.
+- Peak application RSS was about 68.2 MiB, peak CPU 75.21% of one core, durable
+  growth 73728 bytes and all machine thresholds passed. Exact rollback removed
+  every beta container, network, volume, key and cursor file while preserving
+  byte-equal V1 topology and HTTP 200 fallback.
+- Final regression passed 309 Python tests with five conditional skips covered
+  by dedicated integration gates; targeted Phase 7 regression passed 35 tests.
+  Rust fmt/clippy and all 11 tests passed, as did both immutable Buf breaking
+  baselines.
+- Final decision: `BETA-GO` for protected read-only V2 only. V1 remains source
+  authority and the sole approved execution fallback. Evidence: [final report](upgrade/evidence/PHASE7_PUBLIC_BETA_REPORT.md),
+  [capacity](upgrade/evidence/phase7-capacity.json), [security/adversarial](upgrade/evidence/phase7-security-adversarial.json)
+  and [runbook](docs/runbooks/phase73-public-beta-decision.md).
 
 ### Technical Debt / Decision Gate
 
-- Phase 7.3 must complete normal/burst capacity, adversarial security, resource
-  growth and final credential/state cleanup evidence before an explicit
-  `BETA-GO` or `BETA-NO-GO` decision.
 - A certified bounded bridge may support Phase 7 while V1 remains authoritative,
   but it cannot satisfy Phase 8 authority-capable or Phase 9 primary gates.
 - The beta stream topology must choose active/passive or partition-affine

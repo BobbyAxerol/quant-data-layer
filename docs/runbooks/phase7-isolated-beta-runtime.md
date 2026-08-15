@@ -16,8 +16,10 @@ old epoch fails closed.
 
 - Application images are immutable and run as UID/GID `10001` with a read-only
   root filesystem, dropped capabilities and bounded CPU, memory and PIDs.
-- Redis runs non-root and ephemeral with no AOF/RDB. It owns only lease,
-  fencing and shared request-quota keys below `qdl:beta:v2:*`.
+- Redis runs non-root with a dedicated beta-only AOF volume. The AOF preserves
+  the monotonic fencing epoch across a Redis process restart; it owns only
+  lease, fencing and shared request-quota keys below `qdl:beta:v2:*`. The
+  volume is never shared with V1 and is deleted by beta rollback/certification.
 - Query and stream state use dedicated bounded volumes. They never mount V1
   history, Redis persistence, data or cursor paths.
 - Redis is reachable only through `qdl_beta_internal`. Query/stream routes use
@@ -29,7 +31,7 @@ old epoch fails closed.
 
 1. Resolve the application, Redis and init-helper images to immutable registry
    digests or local `sha256:` image IDs.
-2. Confirm both registered manifests retain `execution_dependency: FORBIDDEN`.
+2. Confirm every registered beta manifest retains `execution_dependency: FORBIDDEN`.
 3. Confirm the V2 OpenAPI digest and cursor TTL match the frozen beta contract.
 4. Capture V1 container IDs, image IDs, restart counts, networks, mounts and the
    count of `qdl:beta:v2:*` keys in production Redis.
