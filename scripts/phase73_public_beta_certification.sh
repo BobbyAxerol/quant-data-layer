@@ -75,6 +75,31 @@ for item in json.load(sys.stdin).get("components",[]):
 raise SystemExit(1)' "$2"
 }
 
+select_active_gateway() {
+  local attempts="${1:-30}" status_a status_b
+  for ((index=1; index<=attempts; index++)); do
+    status_a="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${STREAM_A_HEALTH_PORT}/health/ready" || true)"
+    status_b="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${STREAM_B_HEALTH_PORT}/health/ready" || true)"
+    if [[ "${status_a}:${status_b}" == "200:503" ]]; then
+      active_service=qdl_stream_v2_beta_a
+      active_health_port="${STREAM_A_HEALTH_PORT}"
+      active_grpc_port="${STREAM_A_GRPC_PORT}"
+      passive_health_port="${STREAM_B_HEALTH_PORT}"
+      return 0
+    fi
+    if [[ "${status_a}:${status_b}" == "503:200" ]]; then
+      active_service=qdl_stream_v2_beta_b
+      active_health_port="${STREAM_B_HEALTH_PORT}"
+      active_grpc_port="${STREAM_B_GRPC_PORT}"
+      passive_health_port="${STREAM_A_HEALTH_PORT}"
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'expected one active stream gateway, got A=%s B=%s\n' "${status_a}" "${status_b}" >&2
+  return 1
+}
+
 snapshot_v1 "${temporary}/v1-before.json"
 keys_before="$(beta_keys_in_v1)"
 docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --profile phase7-beta config --quiet
@@ -83,18 +108,7 @@ wait_http "http://127.0.0.1:${QUERY_PORT}/health/ready" 200
 wait_http "http://127.0.0.1:${STREAM_A_HEALTH_PORT}/health/live" 200
 wait_http "http://127.0.0.1:${STREAM_B_HEALTH_PORT}/health/live" 200
 
-status_a="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${STREAM_A_HEALTH_PORT}/health/ready" || true)"
-status_b="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${STREAM_B_HEALTH_PORT}/health/ready" || true)"
-if [[ "${status_a}:${status_b}" == "200:503" ]]; then
-  active_service=qdl_stream_v2_beta_a; active_health_port="${STREAM_A_HEALTH_PORT}"; active_grpc_port="${STREAM_A_GRPC_PORT}"
-  passive_health_port="${STREAM_B_HEALTH_PORT}"
-elif [[ "${status_a}:${status_b}" == "503:200" ]]; then
-  active_service=qdl_stream_v2_beta_b; active_health_port="${STREAM_B_HEALTH_PORT}"; active_grpc_port="${STREAM_B_GRPC_PORT}"
-  passive_health_port="${STREAM_A_HEALTH_PORT}"
-else
-  printf 'expected one active stream gateway, got A=%s B=%s\n' "${status_a}" "${status_b}" >&2
-  exit 1
-fi
+select_active_gateway 30
 epoch_before="$(component_revision "http://127.0.0.1:${active_health_port}/health/dependencies" gateway_lease)"
 
 redis_container="$(docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --profile phase7-beta ps -q qdl_beta_redis)"
@@ -143,18 +157,7 @@ docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --profile phase7-beta start 
 wait_http "http://127.0.0.1:${QUERY_PORT}/health/ready" 200 30
 recovery_ready=200
 
-status_a="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${STREAM_A_HEALTH_PORT}/health/ready" || true)"
-status_b="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${STREAM_B_HEALTH_PORT}/health/ready" || true)"
-if [[ "${status_a}:${status_b}" == "200:503" ]]; then
-  active_service=qdl_stream_v2_beta_a; active_health_port="${STREAM_A_HEALTH_PORT}"
-  passive_health_port="${STREAM_B_HEALTH_PORT}"
-elif [[ "${status_a}:${status_b}" == "503:200" ]]; then
-  active_service=qdl_stream_v2_beta_b; active_health_port="${STREAM_B_HEALTH_PORT}"
-  passive_health_port="${STREAM_A_HEALTH_PORT}"
-else
-  printf 'expected one recovered stream gateway, got A=%s B=%s\n' "${status_a}" "${status_b}" >&2
-  exit 1
-fi
+select_active_gateway 30
 epoch_before="$(component_revision "http://127.0.0.1:${active_health_port}/health/dependencies" gateway_lease)"
 docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --profile phase7-beta stop "${active_service}" >/dev/null
 wait_http "http://127.0.0.1:${passive_health_port}/health/ready" 200 30
