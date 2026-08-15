@@ -1,0 +1,14 @@
+{
+  "authority": "RUST_SHADOW",
+  "candidate_slice_sha256": "af8f31f367f8cd1df5f71e0eb66e88ea878d01a89eb91b5724bfa85c68aceb12",
+  "git_sha": "053ec76",
+  "image_ref": "qdl-phase8-rust@sha256:46a7c3fa516c0035c3ce41add0ce77e9acb4d4dfd1b0ac74130c894ca7ad5280",
+  "private_key_retained": false,
+  "python_rollback_sha256": "36acbeacf0e26efbfb38973957331dd383f639aecd08dc4cedfa5f3812f451f1",
+  "registry_signature_admission": false,
+  "release": "phase8-rust-realtime-core-v0.1.0-beta",
+  "release_manifest_sha256": "61ed74d03004fde6ae6f51b000ec844ba49fea387057b1d8a433f099083ad005",
+  "sbom_sha256": "eab28f6b6685d6f2e748d5f12b540f2ced62c6f8f4686a1dc31d67084aaa5d36",
+  "schema": "qdl.phase8.artifact-provenance.v1",
+  "signature_scheme": "RSA-3072-SHA256"
+}

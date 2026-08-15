@@ -1,0 +1,25 @@
+{
+  "authority": "RUST_SHADOW",
+  "authority_rehearsal_digest": "ec5efe8b99687055eb42ae481b00201937a297148e479c6822b0fa3d4fb29f4a",
+  "capability_manifest_digest": "6c807fdd059475a032d8443f8e276f31b2cbcb4350620d3687e02793fdbb77e6",
+  "contract_digest": "f26d0369d73db3c6943e08824c62925507b91f6bdabef4636f48f3037734ebec",
+  "git_sha": "053ec76",
+  "image_architecture": "amd64",
+  "image_created": "2026-08-15T07:32:37.131962396Z",
+  "image_labels": {
+    "io.qdl.authority.default": "RUST_SHADOW",
+    "org.opencontainers.image.revision": "053ec76",
+    "org.opencontainers.image.title": "Quant Data Layer Rust realtime core",
+    "org.opencontainers.image.version": "phase8-rust-realtime-core-v0.1.0-beta"
+  },
+  "image_os": "linux",
+  "image_ref": "qdl-phase8-rust@sha256:46a7c3fa516c0035c3ce41add0ce77e9acb4d4dfd1b0ac74130c894ca7ad5280",
+  "legacy_write_allowed": false,
+  "partition_plan_digest": "72baa5414df483293389a8da6a69ddbda8ac7e169e1cd4234a1c9477412e9781",
+  "phase9_authority_approval_required": true,
+  "public_write_allowed": false,
+  "real_capture_bundle_digest": "0912db1d39ddf1ec27414bccc55e096467305534aa581f9d217b179b7a95ff46",
+  "release": "phase8-rust-realtime-core-v0.1.0-beta",
+  "schema": "qdl.phase8.candidate-slice.v1",
+  "slice_id": "BINANCE:USDM:TRADE:BTCUSDT"
+}

@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is in progress for evidence-driven Rust realtime-core shadow certification and Phase 9 remains planned. V1 remains authoritative and no runtime cutover has started.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9 remains planned. V1 remains authoritative and no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -174,7 +174,7 @@ These rules apply to all phases.
 | 5 | V2 API/SDK and controlled consumer migration | Stable snapshot/cursor interface without breaking existing consumers | `COMPLETE (FROZEN SHADOW)` |
 | 6 | Production certification and multi-venue readiness | HA/security/SLO gates, controlled authority cutover and adapter scalability | `BLOCKED (SHADOW PASS; PRIMARY NO-GO)` |
 | 7 | V2 public beta and consumer canary | Publish a protected read-only V2 surface and validate real consumer behavior without changing authority | `COMPLETE (BETA-GO READ-ONLY)` |
-| 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `IN_PROGRESS (8.3; 8.0-8.2 complete)` |
+| 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `COMPLETE (8.0-8.3; RUST_SHADOW only)` |
 | 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
@@ -1610,7 +1610,7 @@ Phase 7 is `COMPLETE` only when all conditions below pass:
 
 ## 12. Phase 8 - Multi-Venue Rust Realtime Core And Reference Slice
 
-**Status:** `IN_PROGRESS (8.3; 8.0-8.2 COMPLETE)`
+**Status:** `COMPLETE (8.0-8.3; RUST_SHADOW only; V1 authoritative)`
 
 ### Goal
 
@@ -2098,8 +2098,10 @@ upgrade/evidence/phase8-cross-venue-conformance.json
 upgrade/evidence/phase8-python-rust-parity.json
 upgrade/evidence/phase8-real-provider-shadow.json
 upgrade/evidence/phase8-capacity.json
+upgrade/evidence/phase8-release-capacity.json
 upgrade/evidence/phase8-soak.json
 upgrade/evidence/phase8-authority-rehearsal.json
+upgrade/evidence/phase8-release/
 upgrade/evidence/PHASE8_RUST_REALTIME_CORE_REPORT.md
 ```
 
@@ -2207,14 +2209,23 @@ Phase 8 is `COMPLETE` only when:
   running workload identity acquired successfully. Secrets were not copied;
   operator secret rotation must reconcile these sources independently of the
   completed canonical parity gate.
-- `8.3 IMPLEMENTATION CHECKPOINT` on 2026-08-15. Added the provider-neutral
-  persistent authority record, monotonic authority/lease fence and fenced Kafka
-  sink. Unit gates prove `RUST_SHADOW -> RUST_CANARY -> RUST_SHADOW`, reject
-  stale revision/lease conflicts and never permit public V2 or legacy V1 writes.
-  The release image now contains separate non-root realtime, transport, parity,
-  venue-core and authority-rehearsal binaries. Immutable build, replicated
-  broker rehearsal, signed evidence freeze and cleanup remain pending before
-  8.3 can be marked complete.
+- `8.3 COMPLETE` on 2026-08-15. Built immutable image
+  `qdl-phase8-rust@sha256:46a7c3fa516c0035c3ce41add0ce77e9acb4d4dfd1b0ac74130c894ca7ad5280`
+  from revision `053ec76`, with pinned builder/runtime bases, non-root
+  `10001:10001`, SBOM, signed checksummed provenance, exact candidate partition
+  plan and Python V1 rollback manifest.
+- Authority is split correctly between compacted latest state and append-only
+  audit history. A replicated full-broker restart restored state revision 3 and
+  audit revisions `[1, 2, 3]`; stale, public, legacy and canary-after-rollback
+  writes were rejected. Final authority remained `RUST_SHADOW`.
+- Release-profile replay processed 139,500 cross-venue events with zero
+  semantic/byte/restart mismatch across three clean Rust processes. Python p99
+  was 0.224 ms and minimum Rust release throughput was 81,710 events/s.
+- Buf format/lint and both frozen-baseline breaking gates passed; 45 targeted
+  Python regressions and the full Rust fmt/clippy/workspace suite passed.
+  Cleanup left zero Phase 8 containers, networks or volumes. V1 stayed HTTP 200
+  and its inspected topology was unchanged. See the
+  [Phase 8 report](upgrade/evidence/PHASE8_RUST_REALTIME_CORE_REPORT.md).
 
 ### Technical Debt / Decision Gate
 

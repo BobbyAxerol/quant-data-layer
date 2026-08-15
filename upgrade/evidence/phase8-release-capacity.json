@@ -1,0 +1,70 @@
+{
+  "authentic_venues": [
+    "BINANCE",
+    "DNSE",
+    "OKX"
+  ],
+  "authority": "RUST_SHADOW",
+  "candidate_image_digest": "sha256:46a7c3fa516c0035c3ce41add0ce77e9acb4d4dfd1b0ac74130c894ca7ad5280",
+  "fixture_only_venues": [
+    "DERIBIT"
+  ],
+  "live": {
+    "duration_seconds": 27.56399550999049,
+    "observed_events": {
+      "BINANCE": 52,
+      "OKX": 5
+    },
+    "observed_raw_bytes": {
+      "BINANCE": 8748,
+      "OKX": 1096
+    },
+    "retained_per_venue_limit": 32
+  },
+  "peak_rss_kib": 133908,
+  "production_writes": 0,
+  "public_or_legacy_writes": 0,
+  "real_provider_read_only": true,
+  "release_binary_sha256": "ea4413d5f71d57742da24ac4fae44009a18788d9e612a732f8f17381e97f9931",
+  "replay": {
+    "aggregate_sha256": "b5a6b8b6a50e7cf9383f4a921384ffa58b7d6edb88ff963e715ff449208a30f2",
+    "events": 139500,
+    "fixture_count": 279,
+    "process_restart_mismatches": 0,
+    "python": {
+      "cpu_seconds": 14.914214558,
+      "elapsed_seconds": 15.03000677691307,
+      "events_per_second": 9281.432940820745,
+      "latency_ms": {
+        "mean": 0.10389371356989248,
+        "p50": 0.092272,
+        "p95": 0.173478,
+        "p99": 0.22424,
+        "p99_9": 0.355434
+      }
+    },
+    "record_mismatches": 0,
+    "repeat": 500,
+    "rust": {
+      "elapsed_seconds_max": 1.7072431940000001,
+      "events_per_second_max": 90686.94795551531,
+      "events_per_second_min": 81710.67864863311
+    },
+    "rust_process_runs": 3
+  },
+  "schema": "qdl.phase8.release-capacity.v1",
+  "status": "PASS",
+  "thresholds": {
+    "canonical_mismatches_max": 0,
+    "python_p99_ms_max": 10.0,
+    "rust_release_events_per_second_min": 1000.0
+  },
+  "thresholds_pass": true,
+  "venue_fixture_counts": {
+    "BINANCE": 32,
+    "DERIBIT": 1,
+    "DNSE": 241,
+    "OKX": 5
+  },
+  "wall_seconds": 48.06054756906815
+}

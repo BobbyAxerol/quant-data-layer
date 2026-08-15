@@ -6,13 +6,37 @@ import unittest
 
 import yaml
 
-from qdl.certification.release import build_spdx
+from qdl.certification.release import build_spdx, verify_release_bundle
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class Phase83CandidateContractTests(unittest.TestCase):
+    def test_frozen_candidate_evidence_passes_and_signatures_verify(self):
+        authority = json.loads(
+            (ROOT / "upgrade/evidence/phase8-authority-rehearsal.json").read_text()
+        )
+        capacity = json.loads(
+            (ROOT / "upgrade/evidence/phase8-release-capacity.json").read_text()
+        )
+        release_dir = ROOT / "upgrade/evidence/phase8-release"
+        self.assertEqual(authority["status"], "PASS")
+        self.assertEqual(authority["final_authority"], "RUST_SHADOW")
+        self.assertEqual(authority["authority_audit_revisions_after_restart"], [1, 2, 3])
+        self.assertTrue(authority["authority_state_persisted_after_full_broker_restart"])
+        self.assertEqual(authority["public_writes"], 0)
+        self.assertEqual(authority["legacy_writes"], 0)
+        self.assertEqual(capacity["status"], "PASS")
+        self.assertTrue(capacity["thresholds_pass"])
+        self.assertEqual(capacity["replay"]["record_mismatches"], 0)
+        self.assertFalse((release_dir / "private.pem").exists())
+        verify_release_bundle(
+            ROOT,
+            release_dir,
+            verification_key=release_dir / "attestation-public.pem",
+        )
+
     def test_release_capacity_uses_authentic_multi_venue_inputs(self):
         source = (ROOT / "scripts/phase83_release_capacity.py").read_text()
         self.assertIn("phase82._collect_live", source)
