@@ -100,7 +100,8 @@ epoch_before="$(component_revision "http://127.0.0.1:${active_health_port}/healt
 redis_container="$(docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --profile phase7-beta ps -q qdl_beta_redis)"
 redis_before="$(docker exec "${redis_container}" redis-cli INFO memory | awk -F: '/^used_memory:/{gsub(/\r/,"",$2); print $2}')"
 durable_volume="${PROJECT}_qdl_beta_durable_state"
-store_before="$(docker run --rm -v "${durable_volume}:/data:ro" "${QDL_BETA_INIT_IMAGE}" sh -c "du -sk /data | awk '{print \\$1 * 1024}'")"
+store_before_kib="$(docker run --rm -v "${durable_volume}:/data:ro" "${QDL_BETA_INIT_IMAGE}" sh -c 'du -sk /data | cut -f1')"
+store_before="$((store_before_kib * 1024))"
 
 mapfile -t beta_ids < <(docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --profile phase7-beta ps -q | sort)
 : >"${temporary}/stats.jsonl"
@@ -130,7 +131,8 @@ done
 wait "${cert_pid}"
 
 redis_after="$(docker exec "${redis_container}" redis-cli INFO memory | awk -F: '/^used_memory:/{gsub(/\r/,"",$2); print $2}')"
-store_after="$(docker run --rm -v "${durable_volume}:/data:ro" "${QDL_BETA_INIT_IMAGE}" sh -c "du -sk /data | awk '{print \\$1 * 1024}'")"
+store_after_kib="$(docker run --rm -v "${durable_volume}:/data:ro" "${QDL_BETA_INIT_IMAGE}" sh -c 'du -sk /data | cut -f1')"
+store_after="$((store_after_kib * 1024))"
 
 capacity_token="$(docker run --rm --network none -e QDL_BETA_JWT_KEYS_JSON -e QDL_BETA_JWT_ISSUER -e QDL_BETA_JWT_AUDIENCE "${QDL_BETA_IMAGE}" python /app/scripts/phase73_token.py)"
 docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --profile phase7-beta stop qdl_beta_redis >/dev/null
