@@ -7,6 +7,10 @@ redis_container="qdl_phase2_redis_${run_id}"
 state_dir="$(mktemp -d /tmp/qdl-phase2-redis.XXXXXX)"
 test_image="${QDL_TEST_IMAGE:-data-layer:v0.1.0}"
 
+# The runtime image uses fixed UID 10001. This random, ephemeral directory holds
+# test-only SQLite state and is removed by the EXIT trap.
+chmod 0777 "${state_dir}"
+
 cleanup() {
   docker rm -f "${redis_container}" >/dev/null 2>&1 || true
   docker network rm "${network}" >/dev/null 2>&1 || true
