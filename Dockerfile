@@ -26,12 +26,17 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 ENV VIRTUAL_ENV=/opt/venv
+ENV HOME=/home/qdl
+ENV XDG_CACHE_HOME=/home/qdl/.cache
+ENV MPLCONFIGDIR=/home/qdl/.cache/matplotlib
 ENV PATH=/opt/venv/bin:$PATH
 
 WORKDIR /app
 
 RUN groupadd --gid ${QDL_GID} qdl && \
-    useradd --uid ${QDL_UID} --gid ${QDL_GID} --no-create-home --shell /usr/sbin/nologin qdl
+    useradd --uid ${QDL_UID} --gid ${QDL_GID} --create-home \
+      --home-dir /home/qdl --shell /usr/sbin/nologin qdl && \
+    install -d -o qdl -g qdl -m 0750 /home/qdl/.cache/matplotlib
 
 COPY --from=builder --chown=qdl:qdl /opt/venv /opt/venv
 

@@ -100,5 +100,7 @@ revision, shadow authority and evidence remain unchanged. Verification of that
 historical candidate is explicitly separated from verification of artifacts at
 the current repository HEAD. The CI Compose overlay now removes fixed container
 names, host ports and host bind volumes, preventing a local CI rehearsal from
-joining or replacing production runtime resources. No Phase 9 canary or
-authority transition occurred.
+joining or replacing production runtime resources. The non-root Python runtime
+now has an owned `/home/qdl` cache/config boundary so provider libraries cannot
+enter a permission-error retry loop. No Phase 9 canary or authority transition
+occurred.

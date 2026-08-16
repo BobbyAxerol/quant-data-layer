@@ -2236,8 +2236,10 @@ Phase 8 is `COMPLETE` only when:
   HEAD; newly generated bundles still verify current repository artifacts by
   default. The CI Compose overlay also resets fixed container names, host ports
   and bind volumes so local certification cannot replace production Redis or
-  mutate production data/log paths. PR #3 checks passed and the Phase 8 head is
-  contained in `dev`.
+  mutate production data/log paths. The non-root runtime also owns an explicit
+  `/home/qdl` cache/config boundary for provider SDKs and plotting imports;
+  runtime code no longer retries against an absent home directory. PR #3 checks
+  passed and the Phase 8 head is contained in `dev`.
 
 ### Technical Debt / Decision Gate
 

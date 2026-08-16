@@ -16,6 +16,11 @@ class ReleaseBundleTests(unittest.TestCase):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("USER qdl:qdl", dockerfile)
         self.assertIn("python -m venv /opt/venv", dockerfile)
+        self.assertIn("ENV HOME=/home/qdl", dockerfile)
+        self.assertIn("ENV XDG_CACHE_HOME=/home/qdl/.cache", dockerfile)
+        self.assertIn("ENV MPLCONFIGDIR=/home/qdl/.cache/matplotlib", dockerfile)
+        self.assertIn("--create-home", dockerfile)
+        self.assertNotIn("--no-create-home", dockerfile)
         self.assertIn(
             "COPY --from=builder --chown=qdl:qdl /opt/venv /opt/venv",
             dockerfile,
