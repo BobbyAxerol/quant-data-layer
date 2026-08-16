@@ -2240,6 +2240,11 @@ Phase 8 is `COMPLETE` only when:
   `/home/qdl` cache/config boundary for provider SDKs and plotting imports;
   runtime code no longer retries against an absent home directory. PR #3 checks
   passed and the Phase 8 head is contained in `dev`.
+- Runtime venue discovery no longer mutates tracked source configuration.
+  `/app/symbols.json` is a read-only bootstrap seed; refreshed Binance USD-M
+  metadata is atomically replaced under writable `data/cache/`. A cache write
+  failure returns the valid provider result and raises one warning instead of
+  misclassifying it as a provider outage and retrying the REST request.
 
 ### Technical Debt / Decision Gate
 

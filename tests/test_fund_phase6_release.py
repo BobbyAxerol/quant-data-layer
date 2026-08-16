@@ -21,6 +21,8 @@ class ReleaseBundleTests(unittest.TestCase):
         self.assertIn("ENV MPLCONFIGDIR=/home/qdl/.cache/matplotlib", dockerfile)
         self.assertIn("--create-home", dockerfile)
         self.assertNotIn("--no-create-home", dockerfile)
+        config = (ROOT / "app/config.py").read_text(encoding="utf-8")
+        self.assertIn("/app/data/cache/binance_usdm_symbols.json", config)
         self.assertIn(
             "COPY --from=builder --chown=qdl:qdl /opt/venv /opt/venv",
             dockerfile,

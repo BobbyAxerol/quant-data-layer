@@ -104,3 +104,8 @@ joining or replacing production runtime resources. The non-root Python runtime
 now has an owned `/home/qdl` cache/config boundary so provider libraries cannot
 enter a permission-error retry loop. No Phase 9 canary or authority transition
 occurred.
+
+The final V1 audit also separated tracked universe seed configuration from the
+runtime Binance metadata cache. Refreshes now use atomic replacement under
+`data/cache/`; a cache persistence error cannot trigger redundant provider
+retries or discard an otherwise valid exchange-info response.
