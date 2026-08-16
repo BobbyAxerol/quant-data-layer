@@ -88,3 +88,24 @@ shadow evidence before any canary. OKX SBE, Deribit live, BBO, L2/book and BAR
 remain separate capability certifications. Regional failure domains, production
 workload identity, external secret rotation and registry admission are not
 claimed by this same-host shadow certification.
+
+## Post-Merge Runtime Closure
+
+On 2026-08-16, final runtime inspection found that the Python V1 image copied a
+Poetry environment from `/app/.venv` to `/opt/venv`, leaving console-script
+shebangs pointed at the builder path. The image now builds the environment at
+`/opt/venv` directly, and CI invokes the actual `uvicorn` executable. This is a
+V1 packaging correction only: the signed Phase 8 Rust candidate, its source
+revision, shadow authority and evidence remain unchanged. Verification of that
+historical candidate is explicitly separated from verification of artifacts at
+the current repository HEAD. The CI Compose overlay now removes fixed container
+names, host ports and host bind volumes, preventing a local CI rehearsal from
+joining or replacing production runtime resources. The non-root Python runtime
+now has an owned `/home/qdl` cache/config boundary so provider libraries cannot
+enter a permission-error retry loop. No Phase 9 canary or authority transition
+occurred.
+
+The final V1 audit also separated tracked universe seed configuration from the
+runtime Binance metadata cache. Refreshes now use atomic replacement under
+`data/cache/`; a cache persistence error cannot trigger redundant provider
+retries or discard an otherwise valid exchange-info response.

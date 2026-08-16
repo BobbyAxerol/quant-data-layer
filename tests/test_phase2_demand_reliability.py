@@ -131,6 +131,31 @@ class UsdmStreamUniverseTests(unittest.TestCase):
             )
         self.assertEqual(symbols, ["BTCUSDT"])
 
+    @patch("app.stream.binance_ws.os.replace", side_effect=PermissionError("readonly"))
+    @patch("app.stream.binance_ws.requests.get")
+    def test_cache_write_failure_does_not_retry_or_drop_provider_result(
+        self, get, _replace
+    ):
+        response = get.return_value
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "symbols": [
+                {
+                    "symbol": "BTCUSDT",
+                    "contractType": "PERPETUAL",
+                    "status": "TRADING",
+                }
+            ]
+        }
+        with TemporaryDirectory() as directory:
+            symbols = get_usdm_symbols(
+                str(Path(directory) / "symbols.json"),
+                contract_type=None,
+                refresh=True,
+            )
+        self.assertEqual(symbols, ["BTCUSDT"])
+        get.assert_called_once()
+
 
 class TopupCoordinatorTests(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_topups_call_provider_once(self):

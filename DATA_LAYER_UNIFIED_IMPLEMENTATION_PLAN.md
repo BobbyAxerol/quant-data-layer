@@ -2226,6 +2226,25 @@ Phase 8 is `COMPLETE` only when:
   Cleanup left zero Phase 8 containers, networks or volumes. V1 stayed HTTP 200
   and its inspected topology was unchanged. See the
   [Phase 8 report](upgrade/evidence/PHASE8_RUST_REALTIME_CORE_REPORT.md).
+- Post-merge closure on 2026-08-16 fixed the Python V1 runtime image without
+  changing the frozen Rust candidate or starting Phase 9. The builder now
+  creates `/opt/venv` at its final path, so console-script shebangs do not retain
+  the obsolete `/app/.venv` interpreter after the multi-stage copy. CI executes
+  the real `uvicorn` binary and checks its shebang. Frozen candidate verification
+  now verifies the signed manifest, bundled SBOM and immutable artifact metadata
+  without incorrectly comparing an old candidate to mutable files at repository
+  HEAD; newly generated bundles still verify current repository artifacts by
+  default. The CI Compose overlay also resets fixed container names, host ports
+  and bind volumes so local certification cannot replace production Redis or
+  mutate production data/log paths. The non-root runtime also owns an explicit
+  `/home/qdl` cache/config boundary for provider SDKs and plotting imports;
+  runtime code no longer retries against an absent home directory. PR #3 checks
+  passed and the Phase 8 head is contained in `dev`.
+- Runtime venue discovery no longer mutates tracked source configuration.
+  `/app/symbols.json` is a read-only bootstrap seed; refreshed Binance USD-M
+  metadata is atomically replaced under writable `data/cache/`. A cache write
+  failure returns the valid provider result and raises one warning instead of
+  misclassifying it as a provider outage and retrying the REST request.
 
 ### Technical Debt / Decision Gate
 

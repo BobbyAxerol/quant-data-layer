@@ -171,18 +171,31 @@ def verify_release_bundle(
     output_dir: Path,
     *,
     verification_key: Path | None = None,
+    verify_repository_artifacts: bool = True,
 ) -> dict[str, Any]:
     manifest_path = output_dir / "release-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("schema") != "qdl.release-manifest.v1":
         raise ValueError("unsupported release manifest schema")
     for artifact in manifest["artifacts"]:
+        expected_hash = str(artifact.get("sha256") or "")
+        expected_size = artifact.get("size_bytes")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+            raise ValueError(f"invalid release artifact hash: {artifact.get('path')}")
+        if not isinstance(expected_size, int) or expected_size < 0:
+            raise ValueError(f"invalid release artifact size: {artifact.get('path')}")
+        if artifact["path"] != "sbom.spdx.json" and not verify_repository_artifacts:
+            continue
         path = (
             output_dir / artifact["path"]
             if artifact["path"] == "sbom.spdx.json"
             else repo / artifact["path"]
         )
-        if not path.is_file() or sha256_file(path) != artifact["sha256"]:
+        if (
+            not path.is_file()
+            or path.stat().st_size != expected_size
+            or sha256_file(path) != expected_hash
+        ):
             raise ValueError(f"release artifact checksum mismatch: {artifact['path']}")
     if verification_key is not None:
         subprocess.run(
