@@ -15,6 +15,12 @@ class ReleaseBundleTests(unittest.TestCase):
     def test_runtime_image_is_non_root_and_trivy_waiver_is_narrow(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("USER qdl:qdl", dockerfile)
+        self.assertIn("python -m venv /opt/venv", dockerfile)
+        self.assertIn(
+            "COPY --from=builder --chown=qdl:qdl /opt/venv /opt/venv",
+            dockerfile,
+        )
+        self.assertNotIn("COPY --from=builder --chown=qdl:qdl /app/.venv", dockerfile)
         preparation = (ROOT / "scripts/prepare_nonroot_runtime.sh").read_text(
             encoding="utf-8"
         )
@@ -38,6 +44,11 @@ class ReleaseBundleTests(unittest.TestCase):
         self.assertIn("pip-audit --cache-dir /tmp/qdl-pip-audit-cache", workflow)
         self.assertIn('python-version: "3.12"', workflow)
         self.assertIn("python -m scripts.phase6_release_bundle", workflow)
+        self.assertIn(
+            'test "$(head -n 1 /opt/venv/bin/uvicorn)" = '
+            '"#!/opt/venv/bin/python"',
+            workflow,
+        )
         ignored = {
             line.strip()
             for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()

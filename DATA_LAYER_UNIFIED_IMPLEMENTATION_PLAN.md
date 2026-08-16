@@ -2226,6 +2226,15 @@ Phase 8 is `COMPLETE` only when:
   Cleanup left zero Phase 8 containers, networks or volumes. V1 stayed HTTP 200
   and its inspected topology was unchanged. See the
   [Phase 8 report](upgrade/evidence/PHASE8_RUST_REALTIME_CORE_REPORT.md).
+- Post-merge closure on 2026-08-16 fixed the Python V1 runtime image without
+  changing the frozen Rust candidate or starting Phase 9. The builder now
+  creates `/opt/venv` at its final path, so console-script shebangs do not retain
+  the obsolete `/app/.venv` interpreter after the multi-stage copy. CI executes
+  the real `uvicorn` binary and checks its shebang. Frozen candidate verification
+  now verifies the signed manifest, bundled SBOM and immutable artifact metadata
+  without incorrectly comparing an old candidate to mutable files at repository
+  HEAD; newly generated bundles still verify current repository artifacts by
+  default. PR #3 checks passed and the Phase 8 head is contained in `dev`.
 
 ### Technical Debt / Decision Gate
 

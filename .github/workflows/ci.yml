@@ -102,6 +102,8 @@ jobs:
         run: |
           docker run --rm data-layer:v0.1.0 sh -c '
             test ! -e /opt/venv/bin/poetry
+            test "$(head -n 1 /opt/venv/bin/uvicorn)" = "#!/opt/venv/bin/python"
+            uvicorn --version
             python -c "from importlib.metadata import version; from packaging.version import Version; assert Version(version(\"msgpack\")) >= Version(\"1.2.1\"); assert Version(version(\"setuptools\")) >= Version(\"78.1.1\")"
             python -m pip freeze --local > /tmp/qdl-runtime-requirements.txt
             python -m pip install --disable-pip-version-check --no-cache-dir "pip-audit>=2.9,<3"
