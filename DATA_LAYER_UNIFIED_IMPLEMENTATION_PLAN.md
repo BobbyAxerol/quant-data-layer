@@ -2234,7 +2234,10 @@ Phase 8 is `COMPLETE` only when:
   now verifies the signed manifest, bundled SBOM and immutable artifact metadata
   without incorrectly comparing an old candidate to mutable files at repository
   HEAD; newly generated bundles still verify current repository artifacts by
-  default. PR #3 checks passed and the Phase 8 head is contained in `dev`.
+  default. The CI Compose overlay also resets fixed container names, host ports
+  and bind volumes so local certification cannot replace production Redis or
+  mutate production data/log paths. PR #3 checks passed and the Phase 8 head is
+  contained in `dev`.
 
 ### Technical Debt / Decision Gate
 

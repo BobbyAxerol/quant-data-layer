@@ -98,4 +98,7 @@ shebangs pointed at the builder path. The image now builds the environment at
 V1 packaging correction only: the signed Phase 8 Rust candidate, its source
 revision, shadow authority and evidence remain unchanged. Verification of that
 historical candidate is explicitly separated from verification of artifacts at
-the current repository HEAD. No Phase 9 canary or authority transition occurred.
+the current repository HEAD. The CI Compose overlay now removes fixed container
+names, host ports and host bind volumes, preventing a local CI rehearsal from
+joining or replacing production runtime resources. No Phase 9 canary or
+authority transition occurred.

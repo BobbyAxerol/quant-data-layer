@@ -49,6 +49,10 @@ class ReleaseBundleTests(unittest.TestCase):
             '"#!/opt/venv/bin/python"',
             workflow,
         )
+        ci_compose = (ROOT / "docker-compose.ci.yml").read_text(encoding="utf-8")
+        self.assertGreaterEqual(ci_compose.count("container_name: !reset null"), 5)
+        self.assertIn("ports: !reset []", ci_compose)
+        self.assertGreaterEqual(ci_compose.count("volumes: !reset []"), 4)
         ignored = {
             line.strip()
             for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()
