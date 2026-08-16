@@ -23,6 +23,11 @@ class ReleaseBundleTests(unittest.TestCase):
         self.assertNotIn("--no-create-home", dockerfile)
         config = (ROOT / "app/config.py").read_text(encoding="utf-8")
         self.assertIn("/app/data/cache/binance_usdm_symbols.json", config)
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        self.assertIn(
+            "BINANCE_SYMBOLS_FILE=/app/data/cache/binance_usdm_symbols.json",
+            env_example,
+        )
         self.assertIn(
             "COPY --from=builder --chown=qdl:qdl /opt/venv /opt/venv",
             dockerfile,
