@@ -15,6 +15,24 @@ class ReleaseBundleTests(unittest.TestCase):
     def test_runtime_image_is_non_root_and_trivy_waiver_is_narrow(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("USER qdl:qdl", dockerfile)
+        self.assertIn("python -m venv /opt/venv", dockerfile)
+        self.assertIn("ENV HOME=/home/qdl", dockerfile)
+        self.assertIn("ENV XDG_CACHE_HOME=/home/qdl/.cache", dockerfile)
+        self.assertIn("ENV MPLCONFIGDIR=/home/qdl/.cache/matplotlib", dockerfile)
+        self.assertIn("--create-home", dockerfile)
+        self.assertNotIn("--no-create-home", dockerfile)
+        config = (ROOT / "app/config.py").read_text(encoding="utf-8")
+        self.assertIn("/app/data/cache/binance_usdm_symbols.json", config)
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        self.assertIn(
+            "BINANCE_SYMBOLS_FILE=/app/data/cache/binance_usdm_symbols.json",
+            env_example,
+        )
+        self.assertIn(
+            "COPY --from=builder --chown=qdl:qdl /opt/venv /opt/venv",
+            dockerfile,
+        )
+        self.assertNotIn("COPY --from=builder --chown=qdl:qdl /app/.venv", dockerfile)
         preparation = (ROOT / "scripts/prepare_nonroot_runtime.sh").read_text(
             encoding="utf-8"
         )
@@ -38,6 +56,15 @@ class ReleaseBundleTests(unittest.TestCase):
         self.assertIn("pip-audit --cache-dir /tmp/qdl-pip-audit-cache", workflow)
         self.assertIn('python-version: "3.12"', workflow)
         self.assertIn("python -m scripts.phase6_release_bundle", workflow)
+        self.assertIn(
+            'test "$(head -n 1 /opt/venv/bin/uvicorn)" = '
+            '"#!/opt/venv/bin/python"',
+            workflow,
+        )
+        ci_compose = (ROOT / "docker-compose.ci.yml").read_text(encoding="utf-8")
+        self.assertGreaterEqual(ci_compose.count("container_name: !reset null"), 5)
+        self.assertIn("ports: !reset []", ci_compose)
+        self.assertGreaterEqual(ci_compose.count("volumes: !reset []"), 4)
         ignored = {
             line.strip()
             for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()

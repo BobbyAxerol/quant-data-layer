@@ -31,11 +31,14 @@ class Phase83CandidateContractTests(unittest.TestCase):
         self.assertTrue(capacity["thresholds_pass"])
         self.assertEqual(capacity["replay"]["record_mismatches"], 0)
         self.assertFalse((release_dir / "private.pem").exists())
-        verify_release_bundle(
+        manifest = verify_release_bundle(
             ROOT,
             release_dir,
             verification_key=release_dir / "attestation-public.pem",
+            verify_repository_artifacts=False,
         )
+        self.assertEqual(manifest["git_sha"], "053ec76")
+        self.assertEqual(manifest["authority"], "SHADOW")
 
     def test_release_capacity_uses_authentic_multi_venue_inputs(self):
         source = (ROOT / "scripts/phase83_release_capacity.py").read_text()

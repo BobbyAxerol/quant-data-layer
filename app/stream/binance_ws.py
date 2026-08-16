@@ -14,9 +14,12 @@ import orjson
 import threading
 import time
 import os
+import json
 import logging
 import requests
+import tempfile
 import websocket
+from pathlib import Path
 from queue import Queue, Full, Empty
 from time import perf_counter
 
@@ -41,15 +44,24 @@ def get_usdm_symbols(
     refresh: bool = False,
 ) -> list:
     """Load active symbols from venue metadata, with the last good cache as fallback."""
+    explicit_file_path = file_path is not None
     file_path = file_path or BINANCE_SYMBOLS_FILE
+    cache_path = Path(file_path)
     cached_symbols = None
-    if os.path.exists(file_path):
-        with open(file_path, "r") as f:
-            import json
-            cached_symbols = json.load(f)
-        if not refresh:
-            logger.info(f"Loaded {len(cached_symbols)} symbols from {file_path}")
-            return cached_symbols
+    read_path = cache_path
+    seed_path = Path("/app/symbols.json")
+    if not read_path.exists() and not explicit_file_path and seed_path.exists():
+        read_path = seed_path
+    if read_path.exists():
+        try:
+            with read_path.open("r", encoding="utf-8") as f:
+                cached_symbols = json.load(f)
+            if not refresh:
+                logger.info("Loaded %s symbols from %s", len(cached_symbols), read_path)
+                return cached_symbols
+        except (OSError, TypeError, ValueError) as cache_error:
+            logger.warning("Ignoring invalid symbol cache %s: %s", read_path, cache_error)
+            cached_symbols = None
 
     url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
     max_retries = 3
@@ -63,10 +75,33 @@ def get_usdm_symbols(
                 if (contract_type is None or s["contractType"] == contract_type)
                 and s["status"] == "TRADING"
             ]
-            with open(file_path, "w") as f:
-                import json
-                json.dump(symbols, f)
-            logger.info(f"Fetched and cached {len(symbols)} symbols from Binance API")
+            temporary_path = None
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=cache_path.parent,
+                    prefix=f".{cache_path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as handle:
+                    json.dump(symbols, handle)
+                    temporary_path = Path(handle.name)
+                os.replace(temporary_path, cache_path)
+            except Exception as cache_error:
+                if temporary_path is not None:
+                    try:
+                        temporary_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                logger.warning(
+                    "Fetched %s Binance symbols but could not persist cache %s: %s",
+                    len(symbols),
+                    cache_path,
+                    cache_error,
+                )
+            logger.info("Fetched %s symbols from Binance API", len(symbols))
             return symbols
         except Exception as e:
             logger.warning(f"[get_usdm_symbols] Attempt {attempt + 1}/{max_retries} failed: {e}")

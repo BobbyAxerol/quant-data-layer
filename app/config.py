@@ -33,7 +33,9 @@ PRELOAD_API_TOPUP_MAX_LAG_MINUTES = int(os.getenv("PRELOAD_API_TOPUP_MAX_LAG_MIN
 BINANCE_WS_BATCH_SIZE = int(os.getenv("BINANCE_WS_BATCH_SIZE", 100))
 BINANCE_WS_QUEUE_MAXSIZE = int(os.getenv("BINANCE_WS_QUEUE_MAXSIZE", 10000))
 BINANCE_WS_MAX_CONNS_PER_SOURCE = int(os.getenv("BINANCE_WS_MAX_CONNS_PER_SOURCE", 0))
-BINANCE_SYMBOLS_FILE = os.getenv("BINANCE_SYMBOLS_FILE", "/app/symbols.json")
+BINANCE_SYMBOLS_FILE = os.getenv(
+    "BINANCE_SYMBOLS_FILE", "/app/data/cache/binance_usdm_symbols.json"
+)
 BINANCE_SPOT_SYMBOLS_FILE = os.getenv("BINANCE_SPOT_SYMBOLS_FILE", "/app/symbols_spot.json")
 STREAM_STALE_SECONDS = float(os.getenv("STREAM_STALE_SECONDS", "180"))
 STREAM_STRICT_FEED_HEALTH = os.getenv("STREAM_STRICT_FEED_HEALTH", "false").lower() in {"1", "true", "yes", "on"}

@@ -1,4 +1,25 @@
 # CI must not depend on or mutate host-wide production networks.
+services:
+  redis_marketdata:
+    container_name: !reset null
+
+  data_layer:
+    container_name: !reset null
+    ports: !reset []
+    volumes: !reset []
+
+  alpha_service:
+    container_name: !reset null
+    volumes: !reset []
+
+  test_runner:
+    container_name: !reset null
+    volumes: !reset []
+
+  data_source_checker:
+    container_name: !reset null
+    volumes: !reset []
+
 networks:
   bobby_network:
     external: false
