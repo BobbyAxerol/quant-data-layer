@@ -144,7 +144,8 @@ else
   exit 1
 fi
 
-bridge_id="$(docker compose -p "${BRIDGE_PROJECT}" -f "${COMPOSE_FILE}" --profile phase7-canary ps -q qdl_beta_v1_bridge)"
+bridge_id="$(docker compose -p "${BRIDGE_PROJECT}" -f "${COMPOSE_FILE}" \
+  --profile phase7-beta --profile phase7-canary ps -q qdl_beta_v1_bridge)"
 [[ -n "${bridge_id}" ]]
 docker inspect "${bridge_id}" >"${temporary}/bridge-inspect.json"
 docker image inspect "${image_id}" >"${temporary}/image-inspect.json"

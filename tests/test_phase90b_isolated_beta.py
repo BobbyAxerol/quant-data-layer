@@ -97,6 +97,10 @@ class Phase90BBridgeParityTest(unittest.TestCase):
         phase90b = Path("scripts/phase90b_isolated_beta_certification.sh").read_text()
         self.assertIn('CERT_UID="${QDL_CERT_UID:-$(id -u)}"', phase90b)
         self.assertIn('CERT_GID="${QDL_CERT_GID:-$(id -g)}"', phase90b)
+        self.assertIn(
+            '--profile phase7-beta --profile phase7-canary ps -q qdl_beta_v1_bridge',
+            phase90b,
+        )
         self.assertNotIn('chown 10001:10001 "${temporary}"', phase90b)
 
     def test_window_rejects_regression_and_unbounded_growth(self):
