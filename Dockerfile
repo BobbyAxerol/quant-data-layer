@@ -21,6 +21,13 @@ FROM python:3.12-slim AS runtime
 
 ARG QDL_UID=10001
 ARG QDL_GID=10001
+ARG QDL_GIT_SHA=unknown
+ARG QDL_RELEASE=development
+
+LABEL org.opencontainers.image.title="Quant Data Layer" \
+      org.opencontainers.image.revision="${QDL_GIT_SHA}" \
+      org.opencontainers.image.version="${QDL_RELEASE}" \
+      org.opencontainers.image.source="https://github.com/BobbyAxerol/quant-data-layer"
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1

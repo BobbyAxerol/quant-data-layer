@@ -1,4 +1,4 @@
-.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify phase81-test phase81-certify phase82-test phase82-dnse-acquire phase82-certify phase83-test phase83-build phase83-authority phase83-release-capacity phase83-freeze python-test rust-test
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify phase81-test phase81-certify phase82-test phase82-dnse-acquire phase82-certify phase83-test phase83-build phase83-authority phase83-release-capacity phase83-freeze phase90b-build phase90b-test phase90b-certify phase90b-clean python-test rust-test
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
 RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
@@ -8,6 +8,9 @@ PHASE7_TEST_IMAGE ?= data-layer:phase7-test
 PHASE8_RUST_IMAGE ?= qdl-phase8-rust:phase8-candidate
 PHASE8_RELEASE ?= phase8-rust-realtime-core-v0.1.0-beta
 PHASE8_GIT_SHA ?= $(shell git rev-parse HEAD)
+PHASE90B_IMAGE ?= data-layer:phase90b-candidate
+PHASE90B_RELEASE ?= phase90b-isolated-v2-beta
+PHASE90B_GIT_SHA ?= $(shell git rev-parse HEAD)
 
 contract-generate:
 	docker run --rm -v "$(CURDIR):/workspace" -w /workspace/contracts $(BUF_IMAGE) generate
@@ -210,3 +213,17 @@ phase83-freeze:
 
 phase7-clean:
 	docker image rm $(PHASE7_TEST_IMAGE) 2>/dev/null || true
+
+phase90b-build:
+	docker build --provenance=false --build-arg QDL_GIT_SHA=$(PHASE90B_GIT_SHA) --build-arg QDL_RELEASE=$(PHASE90B_RELEASE) -t $(PHASE90B_IMAGE) .
+
+phase90b-test: phase90b-build
+	docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 256 --memory 768m --cpus 1.5 --user 10001:10001 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=128m,uid=10001,gid=10001 --tmpfs /app/logs:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001 $(PHASE90B_IMAGE) python -m unittest -v tests.test_phase90b_isolated_beta tests.test_phase90a_runtime_correctness tests.test_fund_phase73_beta_decision tests.test_fund_phase72_consumer_canary tests.test_fund_phase71_beta_runtime tests.test_fund_phase7_contract_security tests.test_phase0_contract_golden tests.test_fund_phase5_contracts
+	docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 256 --memory 768m --cpus 1.5 --user 10001:10001 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=128m,uid=10001,gid=10001 --tmpfs /app/logs:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001 $(PHASE90B_IMAGE) python -m unittest discover -s tests
+
+phase90b-certify: phase90b-test
+	docker image inspect redis:7.2-alpine >/dev/null 2>&1 || docker pull redis:7.2-alpine
+	QDL_PHASE90B_IMAGE=$(PHASE90B_IMAGE) scripts/phase90b_isolated_beta_certification.sh
+
+phase90b-clean:
+	docker image rm $(PHASE90B_IMAGE) 2>/dev/null || true
