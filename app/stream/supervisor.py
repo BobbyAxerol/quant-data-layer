@@ -194,7 +194,15 @@ class StreamSupervisor:
             now = _now()
             shard.status = "connected"
             shard.last_connected_at = now
-            shard.last_error = None
+            data_timeout_active = bool(
+                shard.last_data_timeout_at
+                and (
+                    not shard.last_message_at
+                    or shard.last_data_timeout_at >= shard.last_message_at
+                )
+            )
+            if not data_timeout_active:
+                shard.last_error = None
             if recovered:
                 duration = max(0.0, now - float(shard.outage_started_at))
                 shard.last_outage_seconds = duration
@@ -346,7 +354,14 @@ class StreamSupervisor:
                         stale.append(shard)
                 elif shard.status == "connected" and shard.last_connected_at:
                     age = max(0.0, now - float(shard.last_connected_at))
-                    if age <= self.first_frame_timeout_seconds:
+                    data_timeout_active = bool(
+                        shard.last_data_timeout_at
+                        and (
+                            not shard.last_message_at
+                            or shard.last_data_timeout_at >= shard.last_message_at
+                        )
+                    )
+                    if not data_timeout_active and age <= self.first_frame_timeout_seconds:
                         waiting.append(shard)
                     else:
                         unavailable.append(shard)

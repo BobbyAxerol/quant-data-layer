@@ -109,6 +109,19 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertTrue(all(item["data_ready"] for item in snapshot["sources"].values()))
 
 
+    def test_transport_reconnect_cannot_clear_active_data_outage(self):
+        supervisor = StreamSupervisor(first_frame_timeout_seconds=15)
+        shard = supervisor.register_shard("binance_futures_kline", "wss://kline")
+        supervisor.mark_connected(shard)
+        supervisor.mark_data_timeout(shard, "first_frame")
+        supervisor.mark_reconnect(shard, "first_frame timeout")
+        supervisor.mark_connected(shard)
+
+        snapshot = supervisor.snapshot()
+
+        self.assertEqual(snapshot["sources"]["binance_futures_kline"]["status"], "unavailable")
+        self.assertEqual(snapshot["status"], "degraded")
+
 class FakeWebSocketContext:
     def __init__(self, messages: list[str]):
         self.messages = list(messages)
