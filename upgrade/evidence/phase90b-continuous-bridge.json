@@ -1,0 +1,32 @@
+{
+  "authority": "V1_SHADOW_READ_ONLY",
+  "canonical_mismatches": 0,
+  "duplicate_open_times": 0,
+  "execution_eligible_events": 0,
+  "first": {
+    "count": 30,
+    "first_open_time_ns": 1787053080000000000,
+    "last_open_time_ns": 1787054820000000000,
+    "watermark_offset": 119
+  },
+  "generated_market_events": 0,
+  "non_final_bars": 0,
+  "schema": "qdl.phase9.0-b.bridge-parity.v1",
+  "second": {
+    "count": 30,
+    "first_open_time_ns": 1787053080000000000,
+    "last_open_time_ns": 1787054820000000000,
+    "watermark_offset": 119
+  },
+  "slice": {
+    "feed": "BAR",
+    "interval": "1m",
+    "market": "USDM",
+    "product_type": "PERPETUAL",
+    "symbol": "BTCUSDT",
+    "venue": "BINANCE"
+  },
+  "source": "REAL_V1_PROVIDER_DATA",
+  "status": "PASS",
+  "watermark_delta": 0
+}

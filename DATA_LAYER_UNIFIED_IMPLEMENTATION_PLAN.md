@@ -1,7 +1,7 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A runtime correctness is complete in isolation and Phase 9.0-B isolated V2 beta is in progress, while authority promotion remains planned and blocked on its explicit gates. V1 remains authoritative and no runtime cutover has started.
-> **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A runtime correctness and Phase 9.0-B isolated V2 beta certification are complete in isolation, while authority promotion remains planned and blocked on its explicit gates. V1 remains authoritative and no runtime cutover has started.
+> **Working branch:** `feat/phase9-isolated-v2-beta`, stacked on the completed Phase 9.0-A branch and intended for PR into `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
 > **Compatibility boundary:** Existing `/v1`, SDK v1, Redis keys and Redis Pub/Sub remain supported until a governed per-consumer sunset.
@@ -2274,7 +2274,7 @@ Phase 8 is `COMPLETE` only when:
 
 ## 13. Phase 9 - Rust Core Canary And Progressive Replacement
 
-**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B IN_PROGRESS`; authority promotion remains `PLANNED` and Phase 9.1 remains blocked on explicit infrastructure and operator gates
+**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B COMPLETE_ISOLATED`; authority promotion remains `PLANNED` and Phase 9.1 remains blocked on explicit infrastructure and operator gates
 
 ### Goal
 
@@ -2801,7 +2801,7 @@ separate operator-approved deployment is prepared.
 
 ##### 9.0-B Isolated V2 Beta
 
-**Status:** `IN_PROGRESS`
+**Status:** `COMPLETE_ISOLATED`
 
 **Purpose:** Re-certify the existing provider-neutral V2 query/stream beta on
 the migrated host using the Phase 9.0-A runtime-correctness baseline. The beta
@@ -2816,6 +2816,7 @@ authority transition.
 - [No-big-bang migration](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#30-migration-strategy-no-big-bang-rewrite)
 - [Production acceptance checklist](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#41-production-acceptance-checklist)
 - [Phase 7 isolated beta runbook](docs/runbooks/phase7-isolated-beta-runtime.md)
+- [Phase 9.0-B certification runbook](docs/runbooks/phase90b-isolated-v2-beta.md)
 
 **Invariants:**
 
@@ -2876,6 +2877,48 @@ authority transition.
 **Rollback:** Stop and remove only the isolated Compose project and its volumes,
 revoke beta credentials, verify zero beta keys in production Redis and continue
 the unchanged V1 path. V1 requires no replay, resubscription or restart.
+
+**Completed:**
+
+- Reused the frozen Phase 7 V2 query/stream/bridge topology with dedicated
+  Phase 9.0-B projects, AOF Redis, stores, credentials, ports and namespaces.
+- Built and certified immutable candidate revision `1c881389b4ee21a153903505822c61512b176044`
+  as non-root UID/GID `10001`, read-only root, no host source bind and bounded
+  resources.
+- Added exact provider-bar parity, continuous bridge, immutable provenance,
+  adversarial/security, capacity, V1 topology and deterministic cleanup gates.
+- Fixed rootless evidence ownership and complete Compose profile activation in
+  the certification harness; both defects now have regression coverage.
+
+**Verification:**
+
+- Full Python regression: `351` tests, `346` passed, `5` skipped, `0` failed.
+- Real provider slice: `BINANCE / USDM / PERPETUAL / BTCUSDT / BAR / 1m`;
+  canonical mismatches `0`, generated market events `0`, duplicate timestamps
+  `0`, non-final bars `0`, execution-eligible events `0`.
+- Query load: normal `110.204 req/s`, burst `65.012 req/s`; `0` errors;
+  p99.9 `72.211 ms` and `486.649 ms`. Stream throughput was `1815.252`
+  events/s and measured end-to-end freshness was `6695.751 ms`.
+- Authentication, entitlement, cursor tamper/expiry/scope, malformed/oversized
+  request, rate limit, active/passive fencing, Redis outage/recovery, slow
+  consumer isolation and replay continuity all passed fail-closed gates.
+- Production V1 container/image/start time and OpenAPI digest were unchanged;
+  beta containers/networks/volumes/image tags and production beta keys after
+  cleanup were all `0`.
+- Frozen evidence: [human report](upgrade/evidence/PHASE90B_ISOLATED_V2_BETA_REPORT.md),
+  [machine decision](upgrade/evidence/phase90b-isolated-v2-beta.json),
+  [continuous parity](upgrade/evidence/phase90b-continuous-bridge.json),
+  [capacity](upgrade/evidence/phase90b-capacity.json),
+  [security](upgrade/evidence/phase90b-security-adversarial.json) and
+  [checksums](upgrade/evidence/phase90b-evidence.sha256).
+
+**Technical debt / decision gate:** No in-scope Phase 9.0-B defect remains.
+This result authorizes only isolated read-only beta review. Phase 9.1 remains
+blocked on replicated production transport, OTel/alert routing, workload
+identity/RBAC, external secret rotation, signature admission, independent DR,
+complete critical-consumer registration and explicit exact-slice approval.
+
+**Phase 9.1 prerequisites:**
 
 - Close every applicable Phase 6 `NO-GO` blocker with real infrastructure
   evidence.

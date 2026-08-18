@@ -4924,6 +4924,13 @@ does not close replicated broker, production OTel/alerting, workload identity,
 external secrets, signature admission, independent DR, consumer registration
 or exact authority-slice approval. Those remain mandatory before Phase 9.1.
 
+Phase 9.0-B certification completed on candidate revision
+`1c881389b4ee21a153903505822c61512b176044` with exact authentic-bar parity,
+active/passive fencing, dependency recovery, adversarial security, bounded load
+and zero-residue cleanup all passing. The frozen report is
+[`PHASE90B_ISOLATED_V2_BETA_REPORT.md`](evidence/PHASE90B_ISOLATED_V2_BETA_REPORT.md).
+This evidence does not alter the authority boundary above.
+
 ### Option and Deribit extension boundary
 
 Adding an option venue must not require changing canonical core identities or rewriting distribution. The common boundary must represent:
