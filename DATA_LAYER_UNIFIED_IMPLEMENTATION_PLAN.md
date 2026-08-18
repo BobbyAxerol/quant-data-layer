@@ -1,7 +1,7 @@
 # Quant Data Layer Unified Implementation Plan
 
 > **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`. Authority promotion remains planned and blocked on explicit production infrastructure and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
-> **Working branch:** `feat/phase90c-production-prerequisites`, intended for PR into `dev`; no push, merge or authority cutover is implied by phase completion.
+> **Working branch:** `feat/phase91-rust-canary`, stacked on the completed Phase 9.0-C checkpoint and intended for PR into `dev`; no push, merge or authority cutover is implied by implementation progress.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
 > **Compatibility boundary:** Existing `/v1`, SDK v1, Redis keys and Redis Pub/Sub remain supported until a governed per-consumer sunset.
@@ -2289,7 +2289,7 @@ Phase 8 is `COMPLETE` only when:
 
 ## 13. Phase 9 - Rust Core Canary And Progressive Replacement
 
-**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B COMPLETE_ISOLATED`; `9.0-C COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; authority promotion remains `PLANNED` and Phase 9.1 remains blocked on explicit infrastructure and operator gates
+**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B COMPLETE_ISOLATED`; `9.0-C COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; `9.1 IN_PROGRESS / PRODUCTION_AUTHORITY_BLOCKED`; Phase 9.1 implementation and isolated rehearsal are allowed, but an actual production `RUST_CANARY` transition remains blocked on an exact `GO` bundle
 
 ### Goal
 
@@ -3067,15 +3067,86 @@ subphase does not authorize public V2, Rust canary or any authority cutover.
 
 #### 9.1 Rust Canary
 
-- Transition only the selected slice to `RUST_CANARY` by CAS.
-- Keep Python as the sole authoritative public writer.
-- Dual-read/compare canonical Rust output against the same authentic frame range.
-- Run live, replay, reconnect, lease loss, producer crash, broker failover,
-  projector restart and slow-consumer tests.
-- Exercise automated blocking thresholds without allowing dual public writes.
-- Verify the compatibility projector remains fed only by the active authority.
-- Hold the canary for the approved traffic/session window.
-- Revert to `RUST_SHADOW` on any unexplained semantic mismatch.
+**Status:** `IN_PROGRESS / PRODUCTION_AUTHORITY_BLOCKED`
+
+**Purpose:** Implement and certify the exact-slice Rust canary path while Python
+remains the sole authoritative public/V1 writer. Because Phase 9.0-C currently
+returns `NO_GO_EXTERNAL`, this phase may run only isolated rehearsal and
+fail-closed authorization tests. It must not persist a production
+`RUST_CANARY`, publish public/legacy output or imply production readiness.
+
+**Guide index:**
+
+- [Phase 9.1 canary boundary](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#appendix-g--phase-91-rust-canary-boundary)
+- [Migration and authority](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#30-migration-strategy-no-big-bang-rewrite)
+- [Performance policy](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#37-performance-engineering-policy)
+- [Operational runbooks](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#34-operational-runbooks)
+- [Production acceptance checklist](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#41-production-acceptance-checklist)
+
+**Invariants:**
+
+- The exact candidate remains `BINANCE / USDM / PERPETUAL / TRADE / BTCUSDT /
+  partition-plan epoch 1`; a changed image, contract, catalog, source policy,
+  normalizer, adapter or partition plan creates a new candidate digest.
+- Python V1 remains the only public and legacy writer. Rust canary output uses a
+  dedicated isolated canonical namespace; two public writers are impossible.
+- Production authorization consumes the strict Phase 9.0-C decision. Missing,
+  stale, `NO_GO`, mismatched or unapproved evidence cannot be bypassed by an
+  environment variable, test flag or direct state boolean.
+- Every canary publication binds exact slice, owner, authority revision, lease
+  epoch and partition-plan epoch. Sink-side fencing rejects stale/conflicting
+  writers, not only producer-side self-checks.
+- Parity uses the same authentic captured provider frames and compares identity,
+  exact decimals, timestamps, sequence, quality, event ID, payload hash and
+  deterministic bytes. Generated events are test-only and never parity proof.
+- Any correctness mismatch, open gap, duplicate external output, stale-writer
+  attempt, lag/freshness/resource breach or authority ambiguity blocks the
+  canary. A hold-down prevents automatic re-entry/flapping.
+
+**Implementation tasks:**
+
+1. Add a provider-neutral Phase 9 canary manifest and strict authorizer bound to
+   the Phase 9.0-C candidate/evidence decision. Separate production activation
+   from isolated rehearsal at the type/API boundary.
+2. Extend the Rust authority/sink core with a versioned Phase 9 record carrying
+   owner, authority/lease/partition epochs, candidate and prerequisite bundle,
+   start watermark, approval and hold window. Preserve the Phase 8 V1 internal
+   record decoder for compatibility.
+3. Enforce sink fencing for wrong slice, owner, revision, lease, partition plan,
+   target, watermark and expired/blocked state. `RUST_CANARY` permits only
+   isolated canary canonical output; public and legacy targets remain denied.
+4. Add deterministic same-frame parity and guardrail evaluation with bounded
+   lag/freshness/resource thresholds, first-failure reason, immutable
+   observations and anti-flapping/hold-down behavior.
+5. Build an isolated canary certification harness using the frozen authentic
+   Binance capture and replicated test broker. Exercise normal/burst/replay,
+   process restart, lease loss, stale owner, broker restart/min-ISR failure,
+   slow consumer, guardrail block and rollback to shadow. It must verify zero
+   public/legacy writes and unchanged V1 topology/health.
+6. Produce strict machine/human evidence, checksums and an operator runbook.
+   Clean all disposable topics/groups/containers/networks/volumes/images and
+   record exact test counts and unresolved external gates.
+
+**Verification and exit gate:**
+
+- Unit/contract/golden tests cover malformed manifests, candidate mismatch,
+  `NO_GO`, expiry, stale authority fields, forbidden targets, guardrail triggers
+  and anti-flapping.
+- Python/Rust replay over the same authentic frame range has zero unexplained
+  mismatch across clean process restarts and burst repetition.
+- Isolated broker/recovery tests preserve one canary owner, reject stale writes,
+  keep public/legacy write counts at zero and clean all test resources.
+- Full Data Layer suite passes and V1 container identity, OpenAPI/health, Redis
+  namespaces and source ownership remain unchanged.
+- With the current Phase 9.0-C decision, the maximum allowed closure is
+  `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`. Only a fresh exact-candidate
+  `GO` bundle plus explicit operator approval can advance the production state
+  to `RUST_CANARY` and begin the approved hold window.
+
+**Rollback:** In rehearsal, persist a higher-revision `RUST_SHADOW` record,
+fence the canary owner, reconcile the bounded cursor range and remove only the
+isolated namespace. In production, use the formal rollback protocol above; do
+not restart Python or edit authority state outside the CAS/audit path.
 
 #### 9.2 Bounded Rust Primary
 

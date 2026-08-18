@@ -4970,6 +4970,59 @@ checksummed evidence are complete. Local, focused and full candidate suites pass
 with V1 unchanged. The external infrastructure/operator gates remain explicit;
 none was relabeled or bypassed to manufacture a production approval.
 
+## Appendix G — Phase 9.1 Rust canary boundary
+
+Phase 9.1 is an exact-slice dual-read/compare stage, not source-authority
+cutover. Python remains the only public and V1 compatibility writer. Rust may
+publish only to a dedicated canary canonical namespace that no production
+consumer treats as authoritative.
+
+The production path accepts one Phase 9.0-C decision bundle only when it is
+`GO`, fresh, checksummed and bound to the exact candidate digest, partition-plan
+epoch, image/signature, contract, normalizer, adapter, catalog, source policy,
+consumer set, blast radius, operator and hold window. The isolated rehearsal
+path has a separate entrypoint and cannot invoke production CAS or public sinks.
+No environment variable or test mode may convert rehearsal evidence into a
+production decision.
+
+A versioned Phase 9 authority record binds:
+
+```text
+slice_id
+state
+owner_id
+authority_revision
+lease_epoch
+partition_plan_epoch
+candidate_digest
+prerequisite_bundle_id
+start_watermark
+approved_by
+approved_at
+hold_until
+```
+
+Every canary publication repeats slice, owner and all three epochs plus source
+watermark. The sink rejects wrong or stale identity before durable append.
+`RUST_SHADOW` can write shadow targets; `RUST_CANARY` adds only the isolated
+canary canonical target; `BLOCKED` writes nothing. Public V2 and Legacy V1 remain
+forbidden throughout Phase 9.1.
+
+Parity compares Python and Rust outputs from the same authentic captured frame
+range. Correctness-critical fields have zero tolerance. Guardrails block on any
+unexplained mismatch, open gap, final/revision mismatch, duplicate external
+publication, stale writer, authority ambiguity, durable ACK failure or approved
+lag/freshness/resource threshold breach. A monotonic hold-down prevents noisy
+automatic re-entry.
+
+The certification matrix includes deterministic replay, burst, clean-process
+restart, stale lease/owner/revision/partition, producer and broker interruption,
+slow consumer, guardrail block, rollback to shadow, V1 compatibility and exact
+cleanup. Same-host Kafka and captured frames prove implementation behavior only;
+they do not close the production/failure-domain prerequisites from Appendix F.
+With a `NO_GO_EXTERNAL` prerequisite decision the only valid result is
+`COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`.
+
 ### Option and Deribit extension boundary
 
 Adding an option venue must not require changing canonical core identities or rewriting distribution. The common boundary must represent:
