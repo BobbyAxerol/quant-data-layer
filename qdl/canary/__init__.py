@@ -4,6 +4,14 @@ from qdl.canary.consumer import (
     PaperAlphaCanary,
     sdk_requirement,
 )
+from qdl.canary.phase92 import (
+    AcceptedHandoff,
+    HandoffDirection,
+    PrimaryAuthorization,
+    PrimaryAuthorizationMode,
+    ProductionPrimaryAuthorizer,
+    TerminalOwnerCheckpoint,
+)
 from qdl.canary.phase9 import (
     CanaryAuthorization,
     CanaryAuthorizationMode,
@@ -15,6 +23,12 @@ from qdl.canary.phase9 import (
 )
 
 __all__ = [
+    "AcceptedHandoff",
+    "HandoffDirection",
+    "PrimaryAuthorization",
+    "PrimaryAuthorizationMode",
+    "ProductionPrimaryAuthorizer",
+    "TerminalOwnerCheckpoint",
     "CanaryAuthorization",
     "CanaryAuthorizationMode",
     "CanaryGuardrailDecision",

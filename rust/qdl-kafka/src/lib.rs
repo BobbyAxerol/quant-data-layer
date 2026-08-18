@@ -6,8 +6,10 @@ use std::time::Duration;
 
 use qdl_core::transport::{AppendResult, Cursor, DurableRecord, RetryClass};
 use qdl_venue_core::authority::{
-    AuthorityFence, AuthorityRecord, Phase9AuthorityFence, Phase9AuthorityRecord,
-    Phase9PublicationContext, PublicationContext,
+    AuthorityFence, AuthorityRecord, Phase92AcceptedHandoff, Phase92AuthorityFence,
+    Phase92AuthorityRecord, Phase92PublicationContext, Phase92TerminalCheckpoint,
+    Phase9AuthorityFence, Phase9AuthorityRecord, Phase9PublicationContext, PublicationContext,
+    SinkTarget,
 };
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
@@ -214,7 +216,7 @@ impl Phase9SinkTopics {
             SinkTarget::ShadowRaw => stream == self.shadow_raw,
             SinkTarget::ShadowCanonical => stream == self.shadow_canonical,
             SinkTarget::CanaryCanonical => stream == self.canary_canonical,
-            SinkTarget::PublicV2 | SinkTarget::LegacyV1 => false,
+            SinkTarget::PrimaryCanonical | SinkTarget::PublicV2 | SinkTarget::LegacyV1 => false,
         }
     }
 }
@@ -260,6 +262,115 @@ impl Phase9FencedKafkaSink {
         if !self.topics.permits(publication.target, &record.stream) {
             return Err(KafkaTransportError::Fencing(
                 "publication target does not match its isolated Kafka topic".into(),
+            ));
+        }
+        let mut fence = self.fence.lock().await;
+        fence
+            .permits(publication, now_ns)
+            .map_err(KafkaTransportError::Fencing)?;
+        let result = self.sink.append(record).await?;
+        fence
+            .commit(publication)
+            .map_err(KafkaTransportError::Fencing)?;
+        Ok(result)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Phase92SinkTopics {
+    pub primary_canonical: String,
+    pub public_v2: String,
+    pub legacy_v1: String,
+}
+
+impl Phase92SinkTopics {
+    pub fn validate(&self) -> Result<(), KafkaTransportError> {
+        let topics = [
+            self.primary_canonical.as_str(),
+            self.public_v2.as_str(),
+            self.legacy_v1.as_str(),
+        ];
+        if topics.iter().any(|topic| topic.trim().is_empty()) {
+            return Err(KafkaTransportError::Configuration(
+                "Phase 9.2 sink/projector topics must not be empty".into(),
+            ));
+        }
+        if topics[0] == topics[1] || topics[0] == topics[2] || topics[1] == topics[2] {
+            return Err(KafkaTransportError::Configuration(
+                "Phase 9.2 sink/projector topics must be isolated and unique".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn permits(&self, target: SinkTarget, stream: &str) -> bool {
+        match target {
+            SinkTarget::PrimaryCanonical => stream == self.primary_canonical,
+            SinkTarget::PublicV2 => stream == self.public_v2,
+            SinkTarget::LegacyV1 => stream == self.legacy_v1,
+            SinkTarget::ShadowRaw | SinkTarget::ShadowCanonical | SinkTarget::CanaryCanonical => {
+                false
+            }
+        }
+    }
+}
+
+/// Phase 9.2 final sink and compatibility projector share one authority fence.
+/// The mutex remains held through durable ACK so an authority update cannot race
+/// between sink acceptance and watermark commit.
+pub struct Phase92FencedKafkaSink {
+    sink: KafkaDurableSink,
+    fence: tokio::sync::Mutex<Phase92AuthorityFence>,
+    topics: Phase92SinkTopics,
+}
+
+impl Phase92FencedKafkaSink {
+    pub fn new(
+        config: &KafkaTransportConfig,
+        topics: Phase92SinkTopics,
+    ) -> Result<Self, KafkaTransportError> {
+        topics.validate()?;
+        Ok(Self {
+            sink: KafkaDurableSink::new(config)?,
+            fence: tokio::sync::Mutex::new(Phase92AuthorityFence::default()),
+            topics,
+        })
+    }
+
+    pub async fn apply_authority(
+        &self,
+        record: Phase92AuthorityRecord,
+    ) -> Result<(), KafkaTransportError> {
+        self.fence
+            .lock()
+            .await
+            .apply(record)
+            .map_err(KafkaTransportError::Fencing)
+    }
+
+    pub async fn apply_handoff(
+        &self,
+        checkpoint: &Phase92TerminalCheckpoint,
+        handoff: &Phase92AcceptedHandoff,
+        record: Phase92AuthorityRecord,
+        now_ns: i64,
+    ) -> Result<(), KafkaTransportError> {
+        self.fence
+            .lock()
+            .await
+            .apply_handoff(checkpoint, handoff, record, now_ns)
+            .map_err(KafkaTransportError::Fencing)
+    }
+
+    pub async fn append(
+        &self,
+        record: &DurableRecord,
+        publication: &Phase92PublicationContext,
+        now_ns: i64,
+    ) -> Result<AppendResult, KafkaTransportError> {
+        if !self.topics.permits(publication.target, &record.stream) {
+            return Err(KafkaTransportError::Fencing(
+                "Phase 9.2 publication target does not match its topic".into(),
             ));
         }
         let mut fence = self.fence.lock().await;
@@ -419,7 +530,10 @@ impl KafkaEventSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, Phase9SinkTopics};
+    use super::{
+        KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, Phase92SinkTopics,
+        Phase9SinkTopics,
+    };
     use qdl_core::transport::RetryClass;
     use qdl_venue_core::authority::SinkTarget;
     use std::time::Duration;
@@ -462,6 +576,28 @@ mod tests {
             shadow_raw: "same".into(),
             shadow_canonical: "same".into(),
             canary_canonical: "other".into(),
+        };
+        assert!(duplicate.validate().is_err());
+    }
+
+    #[test]
+    fn phase92_topics_are_unique_and_bind_final_and_projector_targets() {
+        let topics = Phase92SinkTopics {
+            primary_canonical: "qdl.phase92.primary.canonical".into(),
+            public_v2: "qdl.phase92.public.v2".into(),
+            legacy_v1: "qdl.phase92.legacy.v1".into(),
+        };
+        topics.validate().unwrap();
+        assert!(topics.permits(SinkTarget::PrimaryCanonical, &topics.primary_canonical));
+        assert!(topics.permits(SinkTarget::PublicV2, &topics.public_v2));
+        assert!(topics.permits(SinkTarget::LegacyV1, &topics.legacy_v1));
+        assert!(!topics.permits(SinkTarget::PublicV2, &topics.legacy_v1));
+        assert!(!topics.permits(SinkTarget::CanaryCanonical, &topics.primary_canonical));
+
+        let duplicate = Phase92SinkTopics {
+            primary_canonical: "same".into(),
+            public_v2: "same".into(),
+            legacy_v1: "other".into(),
         };
         assert!(duplicate.validate().is_err());
     }

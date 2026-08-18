@@ -9,12 +9,13 @@ pub enum AuthorityMode {
     RustCanary,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SinkTarget {
     ShadowRaw,
     ShadowCanonical,
     CanaryCanonical,
+    PrimaryCanonical,
     PublicV2,
     LegacyV1,
 }
@@ -396,6 +397,461 @@ impl Phase9AuthorityFence {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Phase92AuthorityState {
+    RustCanary,
+    RustPrimary,
+    Blocked,
+    RollbackPending,
+    PythonPrimary,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Phase92HandoffDirection {
+    PythonToRust,
+    RustToPython,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Phase92TerminalCheckpoint {
+    pub schema: String,
+    pub checkpoint_id: String,
+    pub slice_id: String,
+    pub owner_id: String,
+    pub authority_revision: u64,
+    pub lease_epoch: u64,
+    pub partition_plan_epoch: u64,
+    pub source_session_id: String,
+    pub connection_generation: u64,
+    pub terminal_watermark: u64,
+    pub terminal_event_id: String,
+    pub terminal_payload_sha256: String,
+    pub candidate_digest: String,
+    pub committed_at_ns: i64,
+}
+
+impl Phase92TerminalCheckpoint {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema != "qdl.terminal-owner-checkpoint.v1"
+            || !valid_uuid(&self.checkpoint_id)
+            || self.slice_id.trim().is_empty()
+            || self.owner_id.trim().is_empty()
+            || self.source_session_id.trim().is_empty()
+            || self.terminal_event_id.trim().is_empty()
+            || self.authority_revision == 0
+            || self.lease_epoch == 0
+            || self.partition_plan_epoch == 0
+            || self.connection_generation == 0
+            || self.committed_at_ns <= 0
+            || !valid_digest(&self.terminal_payload_sha256, false)
+            || !valid_digest(&self.candidate_digest, false)
+        {
+            return Err("Phase 9.2 terminal checkpoint is invalid".into());
+        }
+        Ok(())
+    }
+
+    pub fn digest(&self) -> Result<String, String> {
+        self.validate()?;
+        let payload = serde_json::to_vec(self)
+            .map_err(|error| format!("terminal checkpoint encoding failed: {error}"))?;
+        use sha2::Digest;
+        Ok(hex::encode(sha2::Sha256::digest(payload)))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Phase92AcceptedHandoff {
+    pub schema: String,
+    pub handoff_id: String,
+    pub direction: Phase92HandoffDirection,
+    pub checkpoint_digest: String,
+    pub slice_id: String,
+    pub old_owner_id: String,
+    pub new_owner_id: String,
+    pub expected_state: Phase92AuthorityState,
+    pub new_state: Phase92AuthorityState,
+    pub expected_authority_revision: u64,
+    pub new_authority_revision: u64,
+    pub expected_lease_epoch: u64,
+    pub new_lease_epoch: u64,
+    pub partition_plan_epoch: u64,
+    pub terminal_watermark: u64,
+    pub first_new_watermark: u64,
+    pub overlap_start_watermark: u64,
+    pub overlap_end_watermark: u64,
+    pub old_event_count: u64,
+    pub new_event_count: u64,
+    pub semantic_mismatches: u64,
+    pub open_gaps: u64,
+    pub candidate_digest: String,
+    pub prerequisite_bundle_id: String,
+    pub approved_by: String,
+    pub approved_at_ns: i64,
+    pub expires_at_ns: i64,
+}
+
+impl Phase92AcceptedHandoff {
+    pub fn validate(&self, checkpoint: &Phase92TerminalCheckpoint) -> Result<(), String> {
+        checkpoint.validate()?;
+        if self.schema != "qdl.accepted-authority-handoff.v1"
+            || !valid_uuid(&self.handoff_id)
+            || !valid_uuid(&self.prerequisite_bundle_id)
+            || self.slice_id.trim().is_empty()
+            || self.old_owner_id.trim().is_empty()
+            || self.new_owner_id.trim().is_empty()
+            || self.old_owner_id == self.new_owner_id
+            || self.approved_by.trim().is_empty()
+            || self.partition_plan_epoch == 0
+            || !valid_digest(&self.checkpoint_digest, false)
+            || !valid_digest(&self.candidate_digest, false)
+            || self.approved_at_ns <= 0
+            || self.expires_at_ns <= self.approved_at_ns
+        {
+            return Err("Phase 9.2 handoff identity/approval is invalid".into());
+        }
+        let states_match = match self.direction {
+            Phase92HandoffDirection::PythonToRust => {
+                self.expected_state == Phase92AuthorityState::RustCanary
+                    && self.new_state == Phase92AuthorityState::RustPrimary
+            }
+            Phase92HandoffDirection::RustToPython => {
+                self.expected_state == Phase92AuthorityState::RollbackPending
+                    && self.new_state == Phase92AuthorityState::PythonPrimary
+            }
+        };
+        if !states_match
+            || self.new_authority_revision != self.expected_authority_revision + 1
+            || self.new_lease_epoch <= self.expected_lease_epoch
+            || self.first_new_watermark != self.terminal_watermark + 1
+            || self.overlap_start_watermark > self.overlap_end_watermark
+            || self.overlap_end_watermark != self.terminal_watermark
+            || self.old_event_count == 0
+            || self.old_event_count != self.new_event_count
+            || self.semantic_mismatches != 0
+            || self.open_gaps != 0
+        {
+            return Err("Phase 9.2 handoff boundary/reconciliation is invalid".into());
+        }
+        if self.checkpoint_digest != checkpoint.digest()?
+            || self.slice_id != checkpoint.slice_id
+            || self.old_owner_id != checkpoint.owner_id
+            || self.expected_authority_revision != checkpoint.authority_revision
+            || self.expected_lease_epoch != checkpoint.lease_epoch
+            || self.partition_plan_epoch != checkpoint.partition_plan_epoch
+            || self.terminal_watermark != checkpoint.terminal_watermark
+            || self.candidate_digest != checkpoint.candidate_digest
+        {
+            return Err("Phase 9.2 handoff does not bind the terminal checkpoint".into());
+        }
+        Ok(())
+    }
+
+    pub fn digest(&self) -> Result<String, String> {
+        let payload = serde_json::to_vec(self)
+            .map_err(|error| format!("accepted handoff encoding failed: {error}"))?;
+        use sha2::Digest;
+        Ok(hex::encode(sha2::Sha256::digest(payload)))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Phase92AuthorityRecord {
+    pub schema: String,
+    pub slice_id: String,
+    pub state: Phase92AuthorityState,
+    pub owner_id: String,
+    pub authority_revision: u64,
+    pub lease_epoch: u64,
+    pub partition_plan_epoch: u64,
+    pub candidate_digest: String,
+    pub prerequisite_bundle_id: Option<String>,
+    pub start_watermark: u64,
+    pub terminal_watermark: Option<u64>,
+    pub previous_owner_id: Option<String>,
+    pub handoff_digest: Option<String>,
+    pub approved_by: Option<String>,
+    pub approved_at_ns: Option<i64>,
+    pub hold_until_ns: Option<i64>,
+    pub public_write_allowed: bool,
+    pub legacy_write_allowed: bool,
+}
+
+impl Phase92AuthorityRecord {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema != "qdl.authority-record.v3"
+            || self.slice_id.trim().is_empty()
+            || self.owner_id.trim().is_empty()
+            || self.authority_revision == 0
+            || self.lease_epoch == 0
+            || self.partition_plan_epoch == 0
+            || !valid_digest(&self.candidate_digest, false)
+        {
+            return Err("Phase 9.2 authority identity/epoch is invalid".into());
+        }
+        let approval_valid = || {
+            self.approved_by
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+                && self.approved_at_ns.is_some_and(|value| value > 0)
+                && self
+                    .hold_until_ns
+                    .is_some_and(|hold| self.approved_at_ns.is_some_and(|approved| hold > approved))
+        };
+        match self.state {
+            Phase92AuthorityState::RustCanary => {
+                if self.public_write_allowed
+                    || self.legacy_write_allowed
+                    || self.terminal_watermark.is_some()
+                    || self.previous_owner_id.is_some()
+                    || self.handoff_digest.is_some()
+                    || !self
+                        .prerequisite_bundle_id
+                        .as_deref()
+                        .is_some_and(valid_uuid)
+                    || !approval_valid()
+                {
+                    return Err("Phase 9.2 canary authority is invalid".into());
+                }
+            }
+            Phase92AuthorityState::RustPrimary | Phase92AuthorityState::PythonPrimary => {
+                if !self.public_write_allowed
+                    || !self.legacy_write_allowed
+                    || self
+                        .previous_owner_id
+                        .as_deref()
+                        .is_none_or(|value| value.trim().is_empty() || value == self.owner_id)
+                    || self.terminal_watermark != Some(self.start_watermark)
+                    || !self
+                        .handoff_digest
+                        .as_deref()
+                        .is_some_and(|value| valid_digest(value, false))
+                    || !approval_valid()
+                {
+                    return Err("Phase 9.2 primary authority/handoff is invalid".into());
+                }
+                if self.state == Phase92AuthorityState::RustPrimary
+                    && !self
+                        .prerequisite_bundle_id
+                        .as_deref()
+                        .is_some_and(valid_uuid)
+                {
+                    return Err("Rust primary requires a prerequisite bundle".into());
+                }
+            }
+            Phase92AuthorityState::Blocked | Phase92AuthorityState::RollbackPending => {
+                if self.public_write_allowed || self.legacy_write_allowed {
+                    return Err("blocked/rollback authority cannot write".into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Phase92PublicationContext {
+    pub slice_id: String,
+    pub owner_id: String,
+    pub authority_revision: u64,
+    pub shard_id: String,
+    pub lease_epoch: u64,
+    pub partition_plan_epoch: u64,
+    pub source_watermark: u64,
+    pub target: SinkTarget,
+}
+
+#[derive(Default)]
+pub struct Phase92AuthorityFence {
+    current: Option<Phase92AuthorityRecord>,
+    committed_watermarks: HashMap<(String, SinkTarget), u64>,
+}
+
+impl Phase92AuthorityFence {
+    pub fn apply(&mut self, record: Phase92AuthorityRecord) -> Result<(), String> {
+        record.validate()?;
+        if self.current.is_none() {
+            self.current = Some(record);
+            return Ok(());
+        }
+        if matches!(
+            record.state,
+            Phase92AuthorityState::RustPrimary | Phase92AuthorityState::PythonPrimary
+        ) {
+            return Err("primary ownership transition requires accepted handoff".into());
+        }
+        self.apply_transition(record)
+    }
+
+    pub fn apply_handoff(
+        &mut self,
+        checkpoint: &Phase92TerminalCheckpoint,
+        handoff: &Phase92AcceptedHandoff,
+        record: Phase92AuthorityRecord,
+        now_ns: i64,
+    ) -> Result<(), String> {
+        handoff.validate(checkpoint)?;
+        record.validate()?;
+        if now_ns <= 0 || now_ns < handoff.approved_at_ns || now_ns >= handoff.expires_at_ns {
+            return Err("Phase 9.2 handoff approval window is not active".into());
+        }
+        let current = self
+            .current
+            .as_ref()
+            .ok_or_else(|| "Phase 9.2 authority record is not loaded".to_owned())?;
+        if current.slice_id != handoff.slice_id
+            || current.owner_id != handoff.old_owner_id
+            || current.state != handoff.expected_state
+            || current.authority_revision != handoff.expected_authority_revision
+            || current.lease_epoch != handoff.expected_lease_epoch
+            || current.partition_plan_epoch != handoff.partition_plan_epoch
+            || current.candidate_digest != handoff.candidate_digest
+            || record.slice_id != handoff.slice_id
+            || record.owner_id != handoff.new_owner_id
+            || record.state != handoff.new_state
+            || record.authority_revision != handoff.new_authority_revision
+            || record.lease_epoch != handoff.new_lease_epoch
+            || record.partition_plan_epoch != handoff.partition_plan_epoch
+            || record.candidate_digest != handoff.candidate_digest
+            || record.start_watermark != handoff.terminal_watermark
+            || record.terminal_watermark != Some(handoff.terminal_watermark)
+            || record.previous_owner_id.as_deref() != Some(handoff.old_owner_id.as_str())
+            || record.handoff_digest.as_deref() != Some(handoff.digest()?.as_str())
+        {
+            return Err("Phase 9.2 authority CAS/handoff binding failed".into());
+        }
+        self.apply_transition(record)
+    }
+
+    fn apply_transition(&mut self, record: Phase92AuthorityRecord) -> Result<(), String> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or_else(|| "Phase 9.2 authority record is not loaded".to_owned())?;
+        if record.slice_id != current.slice_id
+            || record.candidate_digest != current.candidate_digest
+            || record.partition_plan_epoch != current.partition_plan_epoch
+            || record.authority_revision != current.authority_revision + 1
+            || record.lease_epoch < current.lease_epoch
+            || (record.owner_id != current.owner_id && record.lease_epoch <= current.lease_epoch)
+        {
+            return Err("Phase 9.2 authority compare-and-swap failed".into());
+        }
+        let allowed = match current.state {
+            Phase92AuthorityState::RustCanary => matches!(
+                record.state,
+                Phase92AuthorityState::RustPrimary | Phase92AuthorityState::Blocked
+            ),
+            Phase92AuthorityState::RustPrimary => matches!(
+                record.state,
+                Phase92AuthorityState::Blocked | Phase92AuthorityState::RollbackPending
+            ),
+            Phase92AuthorityState::Blocked => {
+                record.state == Phase92AuthorityState::RollbackPending
+            }
+            Phase92AuthorityState::RollbackPending => {
+                record.state == Phase92AuthorityState::PythonPrimary
+            }
+            Phase92AuthorityState::PythonPrimary => record.state == Phase92AuthorityState::Blocked,
+        };
+        if !allowed {
+            return Err("Phase 9.2 authority transition is not permitted".into());
+        }
+        self.current = Some(record);
+        Ok(())
+    }
+
+    pub fn permits(&self, context: &Phase92PublicationContext, now_ns: i64) -> Result<(), String> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or_else(|| "Phase 9.2 authority record is not loaded".to_owned())?;
+        if now_ns <= 0
+            || context.slice_id != current.slice_id
+            || context.owner_id != current.owner_id
+            || context.authority_revision != current.authority_revision
+            || context.lease_epoch != current.lease_epoch
+            || context.partition_plan_epoch != current.partition_plan_epoch
+            || context.shard_id.trim().is_empty()
+        {
+            return Err("publication identity does not match Phase 9.2 authority".into());
+        }
+        let target_allowed = match current.state {
+            Phase92AuthorityState::RustCanary => context.target == SinkTarget::CanaryCanonical,
+            Phase92AuthorityState::RustPrimary | Phase92AuthorityState::PythonPrimary => matches!(
+                context.target,
+                SinkTarget::PrimaryCanonical | SinkTarget::PublicV2 | SinkTarget::LegacyV1
+            ),
+            Phase92AuthorityState::Blocked | Phase92AuthorityState::RollbackPending => false,
+        };
+        if !target_allowed {
+            return Err("sink target is not permitted by Phase 9.2 authority".into());
+        }
+        if matches!(
+            current.state,
+            Phase92AuthorityState::RustCanary
+                | Phase92AuthorityState::RustPrimary
+                | Phase92AuthorityState::PythonPrimary
+        ) {
+            let approved_at = current
+                .approved_at_ns
+                .ok_or_else(|| "authority approval is missing".to_owned())?;
+            let hold_until = current
+                .hold_until_ns
+                .ok_or_else(|| "authority hold window is missing".to_owned())?;
+            if now_ns < approved_at || now_ns >= hold_until {
+                return Err("Phase 9.2 authority approval window is not active".into());
+            }
+        }
+        let key = (context.shard_id.clone(), context.target);
+        let committed = self
+            .committed_watermarks
+            .get(&key)
+            .copied()
+            .unwrap_or(current.start_watermark);
+        if context.source_watermark != committed + 1 {
+            return Err("Phase 9.2 source watermark is duplicate, stale or gapped".into());
+        }
+        Ok(())
+    }
+
+    pub fn commit(&mut self, context: &Phase92PublicationContext) -> Result<(), String> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or_else(|| "Phase 9.2 authority record is not loaded".to_owned())?;
+        if context.slice_id != current.slice_id
+            || context.owner_id != current.owner_id
+            || context.authority_revision != current.authority_revision
+            || context.lease_epoch != current.lease_epoch
+            || context.partition_plan_epoch != current.partition_plan_epoch
+        {
+            return Err("Phase 9.2 authority changed before commit".into());
+        }
+        let key = (context.shard_id.clone(), context.target);
+        let committed = self
+            .committed_watermarks
+            .get(&key)
+            .copied()
+            .unwrap_or(current.start_watermark);
+        if context.source_watermark != committed + 1 {
+            return Err("Phase 9.2 watermark commit is not contiguous".into());
+        }
+        self.committed_watermarks
+            .insert(key, context.source_watermark);
+        Ok(())
+    }
+
+    pub fn current(&self) -> Option<&Phase92AuthorityRecord> {
+        self.current.as_ref()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AuthorityFence, AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
@@ -649,5 +1105,331 @@ mod phase9_tests {
         let mut wrong_candidate = record(3, 3, Phase9AuthorityState::RustShadow);
         wrong_candidate.candidate_digest = "2".repeat(64);
         assert!(fence.apply(wrong_candidate).is_err());
+    }
+}
+
+#[cfg(test)]
+mod phase92_tests {
+    use super::{
+        Phase92AcceptedHandoff, Phase92AuthorityFence, Phase92AuthorityRecord,
+        Phase92AuthorityState, Phase92HandoffDirection, Phase92PublicationContext,
+        Phase92TerminalCheckpoint, SinkTarget,
+    };
+
+    const SLICE: &str = "production/binance/usdm/perpetual/trade/plan-1/btcusdt";
+    const BUNDLE: &str = "558042db-a766-5a55-b5b3-4b508d649df9";
+
+    fn canary() -> Phase92AuthorityRecord {
+        Phase92AuthorityRecord {
+            schema: "qdl.authority-record.v3".into(),
+            slice_id: SLICE.into(),
+            state: Phase92AuthorityState::RustCanary,
+            owner_id: "python-primary".into(),
+            authority_revision: 7,
+            lease_epoch: 11,
+            partition_plan_epoch: 1,
+            candidate_digest: "1".repeat(64),
+            prerequisite_bundle_id: Some(BUNDLE.into()),
+            start_watermark: 89,
+            terminal_watermark: None,
+            previous_owner_id: None,
+            handoff_digest: None,
+            approved_by: Some("phase92-operator".into()),
+            approved_at_ns: Some(1),
+            hold_until_ns: Some(10_000),
+            public_write_allowed: false,
+            legacy_write_allowed: false,
+        }
+    }
+
+    fn checkpoint(
+        owner: &str,
+        revision: u64,
+        lease: u64,
+        watermark: u64,
+    ) -> Phase92TerminalCheckpoint {
+        Phase92TerminalCheckpoint {
+            schema: "qdl.terminal-owner-checkpoint.v1".into(),
+            checkpoint_id: "11111111-1111-4111-8111-111111111111".into(),
+            slice_id: SLICE.into(),
+            owner_id: owner.into(),
+            authority_revision: revision,
+            lease_epoch: lease,
+            partition_plan_epoch: 1,
+            source_session_id: "session-1".into(),
+            connection_generation: 1,
+            terminal_watermark: watermark,
+            terminal_event_id: format!("event-{watermark}"),
+            terminal_payload_sha256: "2".repeat(64),
+            candidate_digest: "1".repeat(64),
+            committed_at_ns: 1,
+        }
+    }
+
+    fn handoff(
+        checkpoint: &Phase92TerminalCheckpoint,
+        direction: Phase92HandoffDirection,
+        new_owner: &str,
+        new_state: Phase92AuthorityState,
+    ) -> Phase92AcceptedHandoff {
+        Phase92AcceptedHandoff {
+            schema: "qdl.accepted-authority-handoff.v1".into(),
+            handoff_id: "22222222-2222-4222-8222-222222222222".into(),
+            direction,
+            checkpoint_digest: checkpoint.digest().unwrap(),
+            slice_id: SLICE.into(),
+            old_owner_id: checkpoint.owner_id.clone(),
+            new_owner_id: new_owner.into(),
+            expected_state: if direction == Phase92HandoffDirection::PythonToRust {
+                Phase92AuthorityState::RustCanary
+            } else {
+                Phase92AuthorityState::RollbackPending
+            },
+            new_state,
+            expected_authority_revision: checkpoint.authority_revision,
+            new_authority_revision: checkpoint.authority_revision + 1,
+            expected_lease_epoch: checkpoint.lease_epoch,
+            new_lease_epoch: checkpoint.lease_epoch + 1,
+            partition_plan_epoch: 1,
+            terminal_watermark: checkpoint.terminal_watermark,
+            first_new_watermark: checkpoint.terminal_watermark + 1,
+            overlap_start_watermark: checkpoint.terminal_watermark - 10,
+            overlap_end_watermark: checkpoint.terminal_watermark,
+            old_event_count: 11,
+            new_event_count: 11,
+            semantic_mismatches: 0,
+            open_gaps: 0,
+            candidate_digest: "1".repeat(64),
+            prerequisite_bundle_id: BUNDLE.into(),
+            approved_by: "phase92-operator".into(),
+            approved_at_ns: 1,
+            expires_at_ns: 10_000,
+        }
+    }
+
+    fn primary(
+        checkpoint: &Phase92TerminalCheckpoint,
+        handoff: &Phase92AcceptedHandoff,
+    ) -> Phase92AuthorityRecord {
+        Phase92AuthorityRecord {
+            schema: "qdl.authority-record.v3".into(),
+            slice_id: SLICE.into(),
+            state: handoff.new_state,
+            owner_id: handoff.new_owner_id.clone(),
+            authority_revision: handoff.new_authority_revision,
+            lease_epoch: handoff.new_lease_epoch,
+            partition_plan_epoch: 1,
+            candidate_digest: "1".repeat(64),
+            prerequisite_bundle_id: (handoff.new_state == Phase92AuthorityState::RustPrimary)
+                .then(|| BUNDLE.into()),
+            start_watermark: checkpoint.terminal_watermark,
+            terminal_watermark: Some(checkpoint.terminal_watermark),
+            previous_owner_id: Some(checkpoint.owner_id.clone()),
+            handoff_digest: Some(handoff.digest().unwrap()),
+            approved_by: Some("phase92-operator".into()),
+            approved_at_ns: Some(1),
+            hold_until_ns: Some(10_000),
+            public_write_allowed: true,
+            legacy_write_allowed: true,
+        }
+    }
+
+    fn publication(
+        record: &Phase92AuthorityRecord,
+        target: SinkTarget,
+        watermark: u64,
+    ) -> Phase92PublicationContext {
+        Phase92PublicationContext {
+            slice_id: SLICE.into(),
+            owner_id: record.owner_id.clone(),
+            authority_revision: record.authority_revision,
+            shard_id: "binance-usdm-trade-0".into(),
+            lease_epoch: record.lease_epoch,
+            partition_plan_epoch: 1,
+            source_watermark: watermark,
+            target,
+        }
+    }
+
+    #[test]
+    fn accepted_handoff_is_required_and_first_primary_watermark_is_terminal_plus_one() {
+        let current = canary();
+        let checkpoint = checkpoint("python-primary", 7, 11, 100);
+        let handoff = handoff(
+            &checkpoint,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        let primary = primary(&checkpoint, &handoff);
+        let mut fence = Phase92AuthorityFence::default();
+        fence.apply(current).unwrap();
+        assert!(fence.apply(primary.clone()).is_err());
+        fence
+            .apply_handoff(&checkpoint, &handoff, primary.clone(), 2)
+            .unwrap();
+
+        for target in [
+            SinkTarget::PrimaryCanonical,
+            SinkTarget::PublicV2,
+            SinkTarget::LegacyV1,
+        ] {
+            assert!(fence
+                .permits(&publication(&primary, target, 100), 2)
+                .is_err());
+            assert!(fence
+                .permits(&publication(&primary, target, 102), 2)
+                .is_err());
+            let first = publication(&primary, target, 101);
+            fence.permits(&first, 2).unwrap();
+            fence.commit(&first).unwrap();
+            assert!(fence.permits(&first, 2).is_err());
+        }
+    }
+
+    #[test]
+    fn final_sink_and_projector_watermarks_are_independent_and_gap_free() {
+        let checkpoint = checkpoint("python-primary", 7, 11, 100);
+        let handoff = handoff(
+            &checkpoint,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        let primary = primary(&checkpoint, &handoff);
+        let mut fence = Phase92AuthorityFence::default();
+        fence.apply(canary()).unwrap();
+        fence
+            .apply_handoff(&checkpoint, &handoff, primary.clone(), 2)
+            .unwrap();
+
+        let canonical = publication(&primary, SinkTarget::PrimaryCanonical, 101);
+        fence.permits(&canonical, 2).unwrap();
+        fence.commit(&canonical).unwrap();
+        assert!(fence
+            .permits(&publication(&primary, SinkTarget::PrimaryCanonical, 102), 2)
+            .is_ok());
+        assert!(fence
+            .permits(&publication(&primary, SinkTarget::PublicV2, 101), 2)
+            .is_ok());
+        assert!(fence
+            .permits(&publication(&primary, SinkTarget::LegacyV1, 101), 2)
+            .is_ok());
+    }
+
+    #[test]
+    fn stale_owner_revision_lease_plan_and_wrong_target_fail_closed() {
+        let checkpoint = checkpoint("python-primary", 7, 11, 100);
+        let handoff = handoff(
+            &checkpoint,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        let primary = primary(&checkpoint, &handoff);
+        let mut fence = Phase92AuthorityFence::default();
+        fence.apply(canary()).unwrap();
+        fence
+            .apply_handoff(&checkpoint, &handoff, primary.clone(), 2)
+            .unwrap();
+        let base = publication(&primary, SinkTarget::PrimaryCanonical, 101);
+        let variants = [
+            Phase92PublicationContext {
+                owner_id: "python-primary".into(),
+                ..base.clone()
+            },
+            Phase92PublicationContext {
+                authority_revision: 7,
+                ..base.clone()
+            },
+            Phase92PublicationContext {
+                lease_epoch: 11,
+                ..base.clone()
+            },
+            Phase92PublicationContext {
+                partition_plan_epoch: 2,
+                ..base.clone()
+            },
+            Phase92PublicationContext {
+                target: SinkTarget::CanaryCanonical,
+                ..base
+            },
+        ];
+        for value in variants {
+            assert!(fence.permits(&value, 2).is_err());
+        }
+    }
+
+    #[test]
+    fn formal_rollback_fences_rust_and_hands_off_to_python_with_new_epoch() {
+        let initial_checkpoint = checkpoint("python-primary", 7, 11, 100);
+        let to_rust = handoff(
+            &initial_checkpoint,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        let rust_primary = primary(&initial_checkpoint, &to_rust);
+        let mut fence = Phase92AuthorityFence::default();
+        fence.apply(canary()).unwrap();
+        fence
+            .apply_handoff(&initial_checkpoint, &to_rust, rust_primary.clone(), 2)
+            .unwrap();
+
+        let mut blocked = rust_primary.clone();
+        blocked.state = Phase92AuthorityState::Blocked;
+        blocked.authority_revision += 1;
+        blocked.public_write_allowed = false;
+        blocked.legacy_write_allowed = false;
+        fence.apply(blocked.clone()).unwrap();
+        let mut pending = blocked;
+        pending.state = Phase92AuthorityState::RollbackPending;
+        pending.authority_revision += 1;
+        fence.apply(pending.clone()).unwrap();
+
+        let rollback_checkpoint = checkpoint(
+            "rust-primary",
+            pending.authority_revision,
+            pending.lease_epoch,
+            120,
+        );
+        let to_python = handoff(
+            &rollback_checkpoint,
+            Phase92HandoffDirection::RustToPython,
+            "python-rollback",
+            Phase92AuthorityState::PythonPrimary,
+        );
+        let python_primary = primary(&rollback_checkpoint, &to_python);
+        fence
+            .apply_handoff(&rollback_checkpoint, &to_python, python_primary.clone(), 2)
+            .unwrap();
+        assert!(fence
+            .permits(
+                &publication(&rust_primary, SinkTarget::PrimaryCanonical, 101),
+                2,
+            )
+            .is_err());
+        assert!(fence
+            .permits(
+                &publication(&python_primary, SinkTarget::PrimaryCanonical, 121),
+                2,
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn dirty_or_off_by_one_handoff_is_rejected() {
+        let checkpoint = checkpoint("python-primary", 7, 11, 100);
+        let mut dirty = handoff(
+            &checkpoint,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        dirty.semantic_mismatches = 1;
+        assert!(dirty.validate(&checkpoint).is_err());
+        dirty.semantic_mismatches = 0;
+        dirty.first_new_watermark = 102;
+        assert!(dirty.validate(&checkpoint).is_err());
     }
 }

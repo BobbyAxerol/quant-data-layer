@@ -3290,7 +3290,22 @@ canonical/public/legacy destinations.
 
 **Implementation journal (2026-08-18):**
 
-- `IN_PROGRESS`: detailed primary/handoff boundary frozen before code changes.
+- `COMPLETE` control and evidence contracts: production primary authorization
+  requires a fresh exact Phase 9.0-C `GO`, completed production canary hold,
+  immutable rollback manifest and explicit bounded-slice approval. Isolated
+  rehearsal remains a separate non-production authorization type.
+- `COMPLETE` additive persistence boundary: migration `0007` adds immutable
+  terminal checkpoints and accepted handoffs, a primary/rollback bypass guard
+  and exact handoff-aware CAS. Disposable PostgreSQL smoke passed both
+  Python-to-Rust primary and Rust-to-Python rollback, rejected stale/direct CAS
+  and preserved evidence across idempotent migration replay.
+- `COMPLETE` Rust authority/sink core: v1/v2 decoders remain intact; v3 binds
+  terminal checkpoint, accepted handoff, exact revision/lease/plan and
+  independently contiguous canonical/public/legacy target watermarks. Rust
+  fmt/clippy pass and 23/23 focused crate tests pass; Python/control regression
+  is 26/26.
+- `IN_PROGRESS`: replicated-broker N/N+1, process-loss, projector continuity
+  and measured rollback certification.
 - `OPEN EXTERNAL GATE`: Phase 9.0-C production prerequisites and real canary
   hold remain unavailable; V1 stays authoritative.
 
