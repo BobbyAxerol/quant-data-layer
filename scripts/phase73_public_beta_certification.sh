@@ -32,7 +32,8 @@ export QDL_BETA_STREAM_A_GRPC_PORT="${STREAM_A_GRPC_PORT}"
 export QDL_BETA_STREAM_B_GRPC_PORT="${STREAM_B_GRPC_PORT}"
 
 temporary="$(mktemp -d)"
-chown 10001:10001 "${temporary}"
+CERT_UID="${QDL_CERT_UID:-$(id -u)}"
+CERT_GID="${QDL_CERT_GID:-$(id -g)}"
 cleanup() {
   docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" \
     --profile phase7-beta down -v --remove-orphans >/dev/null 2>&1 || true
@@ -121,7 +122,7 @@ mapfile -t beta_ids < <(docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --pr
 : >"${temporary}/stats.jsonl"
 docker run --rm --network host --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 256 --memory 512m --cpus 1 \
-  --user 10001:10001 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=32m,uid=10001,gid=10001 \
+  --user "${CERT_UID}:${CERT_GID}" --tmpfs "/tmp:rw,noexec,nosuid,nodev,size=32m,uid=${CERT_UID},gid=${CERT_GID}" \
   -v "${durable_volume}:/var/lib/qdl-beta-durable" \
   -v "${temporary}:/evidence" \
   "${QDL_BETA_IMAGE}" python /app/scripts/phase73_beta_certification.py \

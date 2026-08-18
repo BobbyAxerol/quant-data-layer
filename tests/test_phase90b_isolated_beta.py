@@ -85,6 +85,16 @@ class Phase90BBridgeParityTest(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "duplicated"):
             validate_sample(v1, v2, self.binding)
 
+    def test_certification_harness_is_rootless_host_portable(self):
+        for name in (
+            "scripts/phase73_public_beta_certification.sh",
+            "scripts/phase90b_isolated_beta_certification.sh",
+        ):
+            script = Path(name).read_text()
+            self.assertIn('CERT_UID="${QDL_CERT_UID:-$(id -u)}"', script)
+            self.assertIn('CERT_GID="${QDL_CERT_GID:-$(id -g)}"', script)
+            self.assertNotIn("chown 10001:10001", script)
+
     def test_window_rejects_regression_and_unbounded_growth(self):
         first = {"watermark_offset": 5, "last_open_time_ns": 100}
         with self.assertRaisesRegex(AssertionError, "outside"):

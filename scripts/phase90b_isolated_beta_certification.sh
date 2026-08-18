@@ -42,7 +42,8 @@ export QDL_BETA_AUTHORITY_REVISION="1"
 export QDL_BETA_BRIDGE_RUN_ONCE="false"
 
 temporary="$(mktemp -d)"
-chown 10001:10001 "${temporary}"
+CERT_UID="${QDL_CERT_UID:-$(id -u)}"
+CERT_GID="${QDL_CERT_GID:-$(id -g)}"
 cleanup() {
   docker compose -p "${MATRIX_PROJECT}" -f "${COMPOSE_FILE}" \
     --profile phase7-beta down -v --remove-orphans >/dev/null 2>&1 || true
@@ -182,7 +183,7 @@ curl -fsS --max-time 10 'http://127.0.0.1:8100/v1/crypto/ohlcv/binance/BTCUSDT/1
 
 docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 64 --memory 256m --cpus 0.5 \
-  --user 10001:10001 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001 \
+  --user "${CERT_UID}:${CERT_GID}" --tmpfs "/tmp:rw,noexec,nosuid,nodev,size=16m,uid=${CERT_UID},gid=${CERT_GID}" \
   -v "${temporary}:/evidence" "${image_id}" \
   python /app/scripts/phase90b_bridge_parity.py \
   --source-bindings /app/config/phase7/canary-sources.yaml \
