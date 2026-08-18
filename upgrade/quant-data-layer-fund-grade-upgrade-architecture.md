@@ -5043,6 +5043,65 @@ still returns `NO_GO_EXTERNAL`; no production authority transition is allowed
 until independent production prerequisites and exact-slice approval are
 provided.
 
+## Appendix H — Phase 9.2 bounded Rust primary boundary
+
+Phase 9.2 promotes no broad venue and changes no public API. It defines one
+provider-neutral ownership handoff for one exact slice. With the current
+`NO_GO_EXTERNAL` decision, only an isolated rehearsal is legal; production V1,
+Redis, subscriptions and public destinations remain untouched.
+
+The immutable handoff chain is:
+
+```text
+old-owner durable terminal checkpoint at W
+    -> same-range parity/reconciliation accepted through W
+    -> persistent CAS: revision + 1, lease epoch + 1, new owner
+    -> final sink and compatibility projector load accepted authority
+    -> first new-owner authoritative watermark W + 1
+```
+
+A terminal checkpoint binds slice, old owner, authority revision, lease epoch,
+partition-plan epoch, source session, connection generation, terminal event ID,
+terminal payload hash and durable watermark. An accepted handoff additionally
+binds the checkpoint digest, exact overlap range, zero gaps, zero semantic
+mismatches, matching event/output counts, candidate and prerequisite bundle,
+approver and expiration. These records are append-only.
+
+The authority schema is additive. Phase 8 v1 and Phase 9.1 v2 records remain
+decodable. Phase 9.2 v3 grants authoritative targets only in `RUST_PRIMARY` (or
+the newer fenced `PYTHON_PRIMARY` rollback owner). Revision must advance exactly
+one per transition. Owner changes require a strictly newer lease. A changed
+slice, candidate or partition plan cannot be smuggled through a handoff.
+
+Final canonical, public V2 and legacy V1 compatibility destinations each keep an
+independent acknowledged watermark under the same authority identity. A write
+is accepted only for the active owner/revision/lease/plan, correct target and
+next boundary. Watermark state advances after durable ACK. A crash before ACK is
+retryable; a crash after ACK is reconciled by deterministic event ID and durable
+cursor. Stale and zombie writers are rejected at the sink/projector, even if a
+producer process still believes its lease is valid.
+
+Production authorization is distinct from rehearsal. It requires:
+
+- a fresh exact Phase 9.0-C `GO` bundle;
+- a real `RUST_CANARY` hold completed with zero correctness breach;
+- registered consumers and immutable Python rollback manifest;
+- accepted terminal/handoff records for the exact slice;
+- explicit operator, ticket, blast-radius and hold-window approval.
+
+The isolated harness uses authentic frozen provider frames and replicated
+test-only topics to model final/public/legacy projections. Those topic names can
+never equal production destinations. It tests `N-1/N/N+1`, off-by-one, gap,
+duplicate, stale owner/revision/lease/plan, competing CAS, process loss before
+and after CAS, sink/projector restart, broker replica loss/min-ISR, full restart,
+slow consumer and formal rollback. It records production mutations as zero,
+checks V1 topology before/after and deletes only disposable resources.
+
+A valid isolated result is
+`COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED`. It proves protocol and
+recovery behavior; it does not authorize disabling the Python subscription or
+claim independent failure-domain resilience.
+
 ### Option and Deribit extension boundary
 
 Adding an option venue must not require changing canonical core identities or rewriting distribution. The common boundary must represent:

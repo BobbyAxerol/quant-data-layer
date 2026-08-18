@@ -3189,16 +3189,115 @@ not restart Python or edit authority state outside the CAS/audit path.
 
 #### 9.2 Bounded Rust Primary
 
-- Execute the formal terminal-watermark cutover.
-- Increment authority revision and lease epoch atomically.
-- Enforce final-sink and compatibility-projector fencing.
-- Disable only the exact Python venue subscription after Rust ownership is
-  accepted and the handoff boundary reconciles.
-- Monitor consumer state, quality, freshness, broker/projector lag, queue/spool,
-  resource headroom and stale-owner attempts under enhanced alerting.
-- Rehearse the formal rollback within the approved RTO before closing the
-  rollback window.
-- Preserve V1 contract behavior and V2 snapshot/cursor/replay continuity.
+**Status:** `PLANNED / PRODUCTION_PRIMARY_BLOCKED`
+
+**Purpose:** Implement the terminal-watermark ownership protocol required to
+promote one exact, already-certified `RUST_CANARY` slice to `RUST_PRIMARY` while
+preserving one authoritative writer, V1 compatibility and V2 cursor/replay
+continuity. Phase 9.0-C is still `NO_GO_EXTERNAL`; therefore this phase may
+certify only an isolated bounded-primary rehearsal. It must not disable a real
+Python subscription, mutate production authority or write production
+canonical/public/legacy destinations.
+
+**Guide index:**
+
+- [Phase 9.2 bounded-primary boundary](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#appendix-h--phase-92-bounded-rust-primary-boundary)
+- [Formal authority model](#authority-state-machine)
+- [Terminal-watermark protocol](#formal-cutover-watermark-protocol)
+- [Formal rollback protocol](#formal-rollback-protocol)
+- [Operational runbooks](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#34-operational-runbooks)
+- [Production acceptance checklist](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#41-production-acceptance-checklist)
+
+**Exact scope and invariants:**
+
+- The rehearsal remains bound to the frozen Phase 9.1 candidate slice and
+  candidate/partition/config/schema digests. Any changed identity creates a new
+  candidate and invalidates inherited evidence.
+- A terminal checkpoint is immutable and identifies the old owner, authority
+  revision, lease epoch, partition-plan epoch, source session/generation,
+  terminal event and final durable watermark `W`.
+- Primary authorization requires an accepted handoff whose parity range is
+  gap-free and mismatch-free through `W`. Rust begins authoritative output at
+  exactly `W + 1`; `<= W` is stale and `> W + 1` before the boundary commit is
+  an open gap.
+- Authority owner, revision and lease epoch change together in one persistent
+  compare-and-swap transaction. Revision advances exactly by one and a changed
+  owner requires a strictly newer lease epoch.
+- Final canonical sink and V1 compatibility projector independently enforce the
+  same authority record. Producer self-checks are insufficient. The old owner,
+  stale lease/revision, wrong plan, wrong destination and duplicate watermark
+  all fail closed.
+- Only `RUST_PRIMARY` may emit authoritative canonical, public V2 and legacy V1
+  compatibility output for the promoted range. Shadow/canary/blocked states
+  retain their narrower Phase 9.1 permissions.
+- Isolated rehearsal topics may model final/public/legacy projection but are
+  explicitly test-only and must be unique, disposable and counted separately.
+  Production write counts remain zero.
+- The exact Python subscription is disabled only after durable authority CAS,
+  sink/projector acceptance and boundary reconciliation. Under current
+  `NO_GO_EXTERNAL`, this action is simulated only; the real V1 topology remains
+  unchanged.
+- Rollback records the last accepted Rust watermark, fences Rust first, then
+  grants the immutable Python rollback owner a new revision/lease and resumes
+  from the next reconciled watermark. Restarting Python without authority is
+  forbidden.
+
+**Implementation tasks:**
+
+1. Add strict bounded-primary authorization that consumes a fresh exact
+   Phase 9.0-C `GO`, completed production canary hold evidence, candidate/bundle
+   identity and explicit slice approval. Keep isolated rehearsal a distinct
+   non-production type that cannot be converted to production authority.
+2. Add immutable terminal-checkpoint and accepted-handoff contracts plus a
+   PostgreSQL migration. A database trigger must prevent direct or legacy
+   transition paths from entering `RUST_PRIMARY` or rollback `PYTHON_PRIMARY`
+   without accepted matching handoff evidence.
+3. Extend the provider-neutral Rust authority core additively. Preserve Phase 8
+   v1 and Phase 9.1 v2 decoders; add a v3 primary record/state machine with
+   exact `revision + 1`, strict owner/lease CAS, terminal boundary and rollback
+   transitions.
+4. Add final-sink and compatibility-projector fencing with independent durable
+   watermark tracking per target. Authority changes between ACK and watermark
+   commit must fail closed and remain recoverable by deterministic replay.
+5. Build an isolated replicated-broker certification over authentic frozen
+   provider frames. Exercise `N-1/N/N+1`, duplicate/out-of-order/gap input,
+   stale/zombie writer, CAS conflict, crash before/after CAS, sink/projector
+   restart, one-replica loss, below-min-ISR, full broker restart, slow consumer
+   and bounded rollback.
+6. Verify exact Python/Rust canonical parity, output counts/order/digests, V1
+   projected schema behavior and V2 snapshot/cursor/replay continuity. Measure
+   cutover/rollback RTO without turning the measurement into a production SLO.
+7. Freeze machine/human evidence, checksums and a runbook; remove only
+   Phase 9.2 disposable resources. Record V1 topology/health before and after.
+
+**Verification and exit gate:**
+
+- Rust unit/contract tests cover every state transition, malformed checkpoint,
+  boundary off-by-one, stale owner/revision/lease/plan, wrong target, duplicate,
+  gap, ACK failure and rollback path.
+- PostgreSQL migration tests prove transactionality, append-only evidence,
+  direct-primary bypass rejection, CAS conflict rejection and both handoff
+  directions.
+- Replicated-broker rehearsal has one authoritative owner, zero unexplained
+  semantic mismatch, zero external duplicate/gap, ordered compatibility output
+  and recovery after process/broker failure.
+- Full Python and Rust suites pass. V1 OpenAPI/health, container identity,
+  Redis namespaces and live subscription ownership remain unchanged.
+- While Phase 9.0-C remains `NO_GO_EXTERNAL`, maximum closure is
+  `COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED`. Production promotion
+  requires a fresh exact `GO`, successful real canary hold and explicit
+  operator approval; repository tests cannot fabricate those gates.
+
+**Implementation journal (2026-08-18):**
+
+- `IN_PROGRESS`: detailed primary/handoff boundary frozen before code changes.
+- `OPEN EXTERNAL GATE`: Phase 9.0-C production prerequisites and real canary
+  hold remain unavailable; V1 stays authoritative.
+
+**Rollback:** Before production authorization, remove only isolated Phase 9.2
+topics/groups/containers/networks/volumes and retain Phase 9.1 code/evidence. A
+future production rollback must follow the formal protocol above and may never
+use a direct owner flag or uncoordinated Python restart.
 
 #### 9.3 Hold, Close And Expand Independently
 
