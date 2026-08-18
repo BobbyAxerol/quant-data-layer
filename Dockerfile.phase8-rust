@@ -12,6 +12,7 @@ COPY generated/rust ./generated/rust
 RUN cargo build --release --locked \
     --bin qdl-kafka-smoke \
     --bin qdl-authority-rehearsal \
+    --bin qdl-phase91-canary-rehearsal \
     --bin qdl-binance-shadow \
     --bin qdl-parity-replay \
     --bin qdl-venue-core-certify
@@ -30,6 +31,7 @@ RUN apt-get update \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin qdl
 COPY --from=builder /src/target/release/qdl-kafka-smoke /usr/local/bin/qdl-kafka-smoke
 COPY --from=builder /src/target/release/qdl-authority-rehearsal /usr/local/bin/qdl-authority-rehearsal
+COPY --from=builder /src/target/release/qdl-phase91-canary-rehearsal /usr/local/bin/qdl-phase91-canary-rehearsal
 COPY --from=builder /src/target/release/qdl-binance-shadow /usr/local/bin/qdl-binance-shadow
 COPY --from=builder /src/target/release/qdl-parity-replay /usr/local/bin/qdl-parity-replay
 COPY --from=builder /src/target/release/qdl-venue-core-certify /usr/local/bin/qdl-venue-core-certify

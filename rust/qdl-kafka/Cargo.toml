@@ -26,3 +26,7 @@ path = "src/bin/qdl-kafka-smoke.rs"
 [[bin]]
 name = "qdl-authority-rehearsal"
 path = "src/bin/qdl-authority-rehearsal.rs"
+
+[[bin]]
+name = "qdl-phase91-canary-rehearsal"
+path = "src/bin/qdl-phase91-canary-rehearsal.rs"

@@ -181,18 +181,62 @@ impl FencedKafkaSink {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Phase9SinkTopics {
+    pub shadow_raw: String,
+    pub shadow_canonical: String,
+    pub canary_canonical: String,
+}
+
+impl Phase9SinkTopics {
+    pub fn validate(&self) -> Result<(), KafkaTransportError> {
+        let topics = [
+            self.shadow_raw.as_str(),
+            self.shadow_canonical.as_str(),
+            self.canary_canonical.as_str(),
+        ];
+        if topics.iter().any(|topic| topic.trim().is_empty()) {
+            return Err(KafkaTransportError::Configuration(
+                "Phase 9 sink topics must not be empty".into(),
+            ));
+        }
+        if topics[0] == topics[1] || topics[0] == topics[2] || topics[1] == topics[2] {
+            return Err(KafkaTransportError::Configuration(
+                "Phase 9 sink topics must be isolated and unique".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn permits(&self, target: qdl_venue_core::authority::SinkTarget, stream: &str) -> bool {
+        use qdl_venue_core::authority::SinkTarget;
+        match target {
+            SinkTarget::ShadowRaw => stream == self.shadow_raw,
+            SinkTarget::ShadowCanonical => stream == self.shadow_canonical,
+            SinkTarget::CanaryCanonical => stream == self.canary_canonical,
+            SinkTarget::PublicV2 | SinkTarget::LegacyV1 => false,
+        }
+    }
+}
+
 /// Phase 9.1 sink keeps authority stable through durable ACK, then commits
 /// the source watermark. A failed append remains retryable at the same watermark.
 pub struct Phase9FencedKafkaSink {
     sink: KafkaDurableSink,
     fence: tokio::sync::Mutex<Phase9AuthorityFence>,
+    topics: Phase9SinkTopics,
 }
 
 impl Phase9FencedKafkaSink {
-    pub fn new(config: &KafkaTransportConfig) -> Result<Self, KafkaTransportError> {
+    pub fn new(
+        config: &KafkaTransportConfig,
+        topics: Phase9SinkTopics,
+    ) -> Result<Self, KafkaTransportError> {
+        topics.validate()?;
         Ok(Self {
             sink: KafkaDurableSink::new(config)?,
             fence: tokio::sync::Mutex::new(Phase9AuthorityFence::default()),
+            topics,
         })
     }
 
@@ -213,6 +257,11 @@ impl Phase9FencedKafkaSink {
         publication: &Phase9PublicationContext,
         now_ns: i64,
     ) -> Result<AppendResult, KafkaTransportError> {
+        if !self.topics.permits(publication.target, &record.stream) {
+            return Err(KafkaTransportError::Fencing(
+                "publication target does not match its isolated Kafka topic".into(),
+            ));
+        }
         let mut fence = self.fence.lock().await;
         fence
             .permits(publication, now_ns)
@@ -370,8 +419,9 @@ impl KafkaEventSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError};
+    use super::{KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, Phase9SinkTopics};
     use qdl_core::transport::RetryClass;
+    use qdl_venue_core::authority::SinkTarget;
     use std::time::Duration;
 
     #[test]
@@ -391,6 +441,29 @@ mod tests {
         let error = config.validate().expect_err("missing TLS must fail");
         assert!(matches!(error, KafkaTransportError::Configuration(_)));
         assert_eq!(error.retry_class(), RetryClass::NonRetryable);
+    }
+
+    #[test]
+    fn phase9_topics_are_unique_and_bind_target_to_stream() {
+        let topics = Phase9SinkTopics {
+            shadow_raw: "qdl.phase8.phase91.shadow.raw".into(),
+            shadow_canonical: "qdl.phase8.phase91.shadow.canonical".into(),
+            canary_canonical: "qdl.phase8.phase91.canary.canonical".into(),
+        };
+        topics.validate().unwrap();
+        assert!(topics.permits(
+            SinkTarget::CanaryCanonical,
+            "qdl.phase8.phase91.canary.canonical"
+        ));
+        assert!(!topics.permits(SinkTarget::CanaryCanonical, "qdl.phase8.phase91.public"));
+        assert!(!topics.permits(SinkTarget::PublicV2, &topics.canary_canonical));
+
+        let duplicate = Phase9SinkTopics {
+            shadow_raw: "same".into(),
+            shadow_canonical: "same".into(),
+            canary_canonical: "other".into(),
+        };
+        assert!(duplicate.validate().is_err());
     }
 
     #[test]
