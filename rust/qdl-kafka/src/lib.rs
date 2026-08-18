@@ -5,7 +5,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use qdl_core::transport::{AppendResult, Cursor, DurableRecord, RetryClass};
-use qdl_venue_core::authority::{AuthorityFence, AuthorityRecord, PublicationContext};
+use qdl_venue_core::authority::{
+    AuthorityFence, AuthorityRecord, Phase9AuthorityFence, Phase9AuthorityRecord,
+    Phase9PublicationContext, PublicationContext,
+};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::error::KafkaError;
@@ -175,6 +178,50 @@ impl FencedKafkaSink {
             .permits(publication)
             .map_err(KafkaTransportError::Fencing)?;
         self.sink.append(record).await
+    }
+}
+
+/// Phase 9.1 sink keeps authority stable through durable ACK, then commits
+/// the source watermark. A failed append remains retryable at the same watermark.
+pub struct Phase9FencedKafkaSink {
+    sink: KafkaDurableSink,
+    fence: tokio::sync::Mutex<Phase9AuthorityFence>,
+}
+
+impl Phase9FencedKafkaSink {
+    pub fn new(config: &KafkaTransportConfig) -> Result<Self, KafkaTransportError> {
+        Ok(Self {
+            sink: KafkaDurableSink::new(config)?,
+            fence: tokio::sync::Mutex::new(Phase9AuthorityFence::default()),
+        })
+    }
+
+    pub async fn apply_authority(
+        &self,
+        record: Phase9AuthorityRecord,
+    ) -> Result<(), KafkaTransportError> {
+        self.fence
+            .lock()
+            .await
+            .apply(record)
+            .map_err(KafkaTransportError::Fencing)
+    }
+
+    pub async fn append(
+        &self,
+        record: &DurableRecord,
+        publication: &Phase9PublicationContext,
+        now_ns: i64,
+    ) -> Result<AppendResult, KafkaTransportError> {
+        let mut fence = self.fence.lock().await;
+        fence
+            .permits(publication, now_ns)
+            .map_err(KafkaTransportError::Fencing)?;
+        let result = self.sink.append(record).await?;
+        fence
+            .commit(publication)
+            .map_err(KafkaTransportError::Fencing)?;
+        Ok(result)
     }
 }
 

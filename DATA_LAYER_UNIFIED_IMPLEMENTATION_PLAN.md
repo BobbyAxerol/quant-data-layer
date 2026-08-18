@@ -3153,8 +3153,12 @@ fail-closed authorization tests. It must not persist a production
   checks, bounded lag/freshness/resource checks, first-failure capture and
   explicit reset only after hold-down. Targeted result: 9/9 tests pass in a
   disposable container; production mutations remain zero.
-- `PENDING` Rust authority/sink v2, authentic parity/broker rehearsal, full
-  suite/evidence/runbook and cleanup.
+- `COMPLETE` Rust authority/sink v2: Phase 8 record/sink v1 remains unchanged;
+  v2 binds slice/owner/revision/lease/partition-plan/candidate/bundle/watermark,
+  denies public/V1 targets and advances watermark only after durable ACK.
+  Rust result: clippy with `-D warnings` passes; 16/16 focused crate tests pass.
+- `PENDING` authentic parity/broker rehearsal, full suite/evidence/runbook and
+  cleanup.
 
 **Rollback:** In rehearsal, persist a higher-revision `RUST_SHADOW` record,
 fence the canary owner, reconcile the bounded cursor range and remove only the
