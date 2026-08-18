@@ -1,0 +1,17 @@
+{
+  "audit_mutation_rejected": true,
+  "audit_records": 2,
+  "candidate_mismatch_rejected": true,
+  "final_test_state": "RUST_CANARY:3:rust-canary-owner:2",
+  "hold_beyond_bundle_expiry_rejected": true,
+  "idempotent_migration": true,
+  "missing_hold_window_rejected": true,
+  "missing_terminal_watermark_rejected": true,
+  "no_go_bundle_rejected": true,
+  "prerequisite_bundles": 3,
+  "production_mutations": 0,
+  "schema": "qdl.phase9.0-c.authority-migration.v1",
+  "stale_cas_rejected": true,
+  "stale_owner_rejected": true,
+  "status": "PASS"
+}

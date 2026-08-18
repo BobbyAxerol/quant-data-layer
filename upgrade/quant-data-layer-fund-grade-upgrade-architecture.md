@@ -4963,6 +4963,13 @@ Passing Phase 9.0-C code and local tests may yield
 yield `PRODUCTION_PREREQUISITES_PASS`. Neither result changes V1 automatically;
 Phase 9.1 remains a separately approved exact-slice canary.
 
+Implementation status (2026-08-18): `COMPLETE_CONTROL_PLANE /
+NO_GO_EXTERNAL`. The strict 12-gate evaluator, additive persistent authority
+CAS/audit schema, frozen candidate, migration smoke, operator runbook and
+checksummed evidence are complete. Local, focused and full candidate suites pass
+with V1 unchanged. The external infrastructure/operator gates remain explicit;
+none was relabeled or bypassed to manufacture a production approval.
+
 ### Option and Deribit extension boundary
 
 Adding an option venue must not require changing canonical core identities or rewriting distribution. The common boundary must represent:

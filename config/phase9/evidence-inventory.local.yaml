@@ -1,0 +1,101 @@
+schema: qdl.production-prerequisite-inventory.v1
+evidence:
+  - evidence_id: phase8-local-kafka-failover
+    gate_id: replicated_durable_transport
+    environment: production
+    scope: LOCAL_REHEARSAL
+    status: PASS
+    issuer: qdl-phase8-certification
+    observed_at_ns: 1786806000000000000
+    expires_at_ns: 1789398000000000000
+    artifact_path: upgrade/evidence/phase8-broker-failover.json
+    artifact_sha256: a9b43e4d70b2002032d9c397aea0bb265c50122969f3e3c808f1b284a353ce55
+    details:
+      replication_factor: 3
+      min_isr: 2
+      acks_all: true
+      idempotent_producer: true
+      broker_failover: true
+      restore_test_id: phase8-same-host-volume-loss
+  - evidence_id: phase8-local-otel-debug
+    gate_id: production_observability
+    environment: production
+    scope: LOCAL_REHEARSAL
+    status: PASS
+    issuer: qdl-phase8-certification
+    observed_at_ns: 1786806000000000000
+    expires_at_ns: 1789398000000000000
+    artifact_path: config/observability/phase8-otel-collector.yaml
+    artifact_sha256: 915e0ac483b436aaf9f50ffee4cb7196e74aafd2425f0c9f34318089ed1a86c9
+    details:
+      collector_backend: debug-only
+      dashboard_revision: not-deployed
+      alert_route_id: not-deployed
+      page_ack_id: not-deployed
+  - evidence_id: phase8-local-kafka-mtls
+    gate_id: workload_identity_rbac_network
+    environment: production
+    scope: LOCAL_REHEARSAL
+    status: PASS
+    issuer: qdl-phase8-certification
+    observed_at_ns: 1786806000000000000
+    expires_at_ns: 1789398000000000000
+    artifact_path: upgrade/evidence/phase8-broker-security.json
+    artifact_sha256: 289dd9a2cda61121bc7518718b3b5fdde976235e212720ffd28389e26ecc6a5b
+    details:
+      identity_provider: ephemeral-self-signed-mtls
+      rbac_revision: phase8-kafka-acl
+      network_policy_revision: same-host-internal-compose
+  - evidence_id: phase8-signature-rehearsal-no-admission
+    gate_id: signed_artifact_admission
+    environment: production
+    scope: LOCAL_REHEARSAL
+    status: BLOCKED
+    issuer: qdl-phase8-certification
+    observed_at_ns: 1786806000000000000
+    expires_at_ns: 1789398000000000000
+    artifact_path: null
+    artifact_sha256: null
+    details:
+      reason: registry-admission-not-installed
+  - evidence_id: phase8-local-projection-rebuild
+    gate_id: redis_projector_rebuild
+    environment: production
+    scope: LOCAL_REHEARSAL
+    status: PASS
+    issuer: qdl-phase8-certification
+    observed_at_ns: 1786806000000000000
+    expires_at_ns: 1789398000000000000
+    artifact_path: upgrade/evidence/phase8-broker-topology.json
+    artifact_sha256: 68d2d6e409c1cf5428ce437e753653b24ddd16afc8e7cff208dd087b3ae1d500
+    details:
+      canonical_watermark: phase8-offset-65
+      rebuild_checksum: phase8-isolated-equal
+      source_log_cluster: qdl-phase8-same-host
+  - evidence_id: phase90b-partial-consumer-beta
+    gate_id: consumer_registration_rollback
+    environment: production
+    scope: LOCAL_REHEARSAL
+    status: BLOCKED
+    issuer: qdl-phase90b-certification
+    observed_at_ns: 1787061600000000000
+    expires_at_ns: 1789653600000000000
+    artifact_path: null
+    artifact_sha256: null
+    details:
+      reason: beta-consumers-do-not-cover-trade-authority-slice
+  - evidence_id: phase8-local-authority-rehearsal
+    gate_id: persistent_authority_sink_fencing
+    environment: production
+    scope: LOCAL_REHEARSAL
+    status: PASS
+    issuer: qdl-phase8-certification
+    observed_at_ns: 1786806000000000000
+    expires_at_ns: 1789398000000000000
+    artifact_path: upgrade/evidence/phase8-authority-rehearsal.json
+    artifact_sha256: ec5efe8b99687055eb42ae481b00201937a297148e479c6822b0fa3d4fb29f4a
+    details:
+      authority_store: same-host-compacted-kafka
+      transition_audit_id: phase8-shadow-canary-shadow
+      zombie_writer_rejected: true
+      candidate_digest: 72eb1500e19a7e738373c85442c6fc42331cebd15aba86a8b746f62c2fedc037

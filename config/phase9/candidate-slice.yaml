@@ -1,0 +1,28 @@
+schema: qdl.authority-candidate.v1
+slice_id: production/binance/usdm/perpetual/trade/plan-1/btcusdt
+environment: production
+venue: BINANCE
+market: USDM
+product_type: PERPETUAL
+feed: TRADE
+instrument_uids:
+  - 85ad7cb6-7ebf-5c81-9d82-12c4c10ca85c
+partition_plan_epoch: 1
+partition_id: rendezvous-sha256-v1:epoch-1:btcusdt
+schema_major: 2
+authority_state: RUST_SHADOW
+owner_id: rust-ingestor-binance-usdm-shard-0
+lease_epoch: 1
+artifact_image_digest: sha256:46a7c3fa516c0035c3ce41add0ce77e9acb4d4dfd1b0ac74130c894ca7ad5280
+sbom_digest: eab28f6b6685d6f2e748d5f12b540f2ced62c6f8f4686a1dc31d67084aaa5d36
+contract_digest: f26d0369d73db3c6943e08824c62925507b91f6bdabef4636f48f3037734ebec
+partition_plan_digest: 72baa5414df483293389a8da6a69ddbda8ac7e169e1cd4234a1c9477412e9781
+rollback_manifest_digest: 36acbeacf0e26efbfb38973957331dd383f639aecd08dc4cedfa5f3812f451f1
+signature_identity: phase8-rehearsal-only-not-admitted
+normalizer_version: qdl-rust-core/0.1.0-beta
+adapter_version: binance-usdm/2.0.0-shadow
+config_revision: phase8-candidate-1
+instrument_catalog_revision: phase8-catalog-1
+source_policy_revision: binance-usdm-trade-shadow-1
+public_write_allowed: false
+legacy_write_allowed: false

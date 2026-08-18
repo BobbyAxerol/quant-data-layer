@@ -2274,7 +2274,7 @@ Phase 8 is `COMPLETE` only when:
 
 ## 13. Phase 9 - Rust Core Canary And Progressive Replacement
 
-**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B COMPLETE_ISOLATED`; `9.0-C IN_PROGRESS`; authority promotion remains `PLANNED` and Phase 9.1 remains blocked on explicit infrastructure and operator gates
+**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B COMPLETE_ISOLATED`; `9.0-C COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; authority promotion remains `PLANNED` and Phase 9.1 remains blocked on explicit infrastructure and operator gates
 
 ### Goal
 
@@ -2920,7 +2920,7 @@ complete critical-consumer registration and explicit exact-slice approval.
 
 ##### 9.0-C Production Prerequisites
 
-**Status:** `IN_PROGRESS`
+**Status:** `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL` (2026-08-18)
 
 **Purpose:** Turn every Phase 9 production prerequisite into an explicit,
 machine-verifiable, fail-closed gate. Reuse valid Phase 6/8/9 evidence without
@@ -2988,6 +2988,45 @@ authority or approve an exact slice by implication.
 resources, and retain additive control-plane/audit records. Revoking or expiring
 any prerequisite evidence immediately restores `NO_GO`; it never starts or
 restarts a producer.
+
+**Implementation and verification (2026-08-18):**
+
+- Added a provider-neutral 12-gate production policy, strict candidate/evidence
+  models and deterministic evaluator. Unknown gates, nested secret fields,
+  duplicate bindings, unsafe artifact paths, invalid hashes/timestamps, stale or
+  lower-scope evidence, semantic threshold failures and candidate mismatches all
+  fail closed.
+- Froze candidate digest
+  `72eb1500e19a7e738373c85442c6fc42331cebd15aba86a8b746f62c2fedc037`
+  at `RUST_SHADOW`; public/legacy writes remain disabled. Release provenance
+  includes image/SBOM/signature, contract, normalizer, adapter, config, catalog,
+  source-policy, partition-plan and rollback revisions.
+- Added additive prerequisite-bundle, authority-slice and immutable transition
+  audit schema. The database CAS rejects stale state/revision/owner/lease/plan,
+  stale owners, missing terminal watermark, missing/expired hold windows,
+  `NO_GO`, expired or candidate-mismatched bundles and audit mutation.
+- Isolated PostgreSQL migration applied twice successfully. Nine negative safety
+  outcomes passed, two valid state transitions were audited, production
+  mutations were zero and the disposable container was removed.
+- Targeted control-plane suite passed `13/13`; focused cross-phase candidate
+  suite passed `29/29`; full candidate-image suite ran `364` tests with `359`
+  pass, `5` intentional skips and `0` failures.
+- Machine evaluation correctly produced `NO_GO_EXTERNAL`: `0/12` production
+  gates passed because the available proof is local, missing or explicitly
+  blocked. V1 container identity, topology and `/v1/health` remained unchanged
+  and healthy before/after evaluation; no production database or Redis was
+  mutated.
+- Runbook and portable evidence are frozen at
+  [phase90c-production-prerequisites.md](docs/runbooks/phase90c-production-prerequisites.md),
+  [phase90c-production-prerequisites.json](upgrade/evidence/phase90c-production-prerequisites.json),
+  [phase90c-authority-migration.json](upgrade/evidence/phase90c-authority-migration.json)
+  and [phase90c-evidence.sha256](upgrade/evidence/phase90c-evidence.sha256).
+
+**Technical debt / decision gate:** No in-scope control-plane defect remains.
+The 12 blockers are deliberately external production deployment/operator gates,
+not evidence that can be fabricated in this repository. Phase 9.1 remains
+blocked until a fresh exact-candidate bundle evaluates `GO`; completing this
+subphase does not authorize public V2, Rust canary or any authority cutover.
 
 **Phase 9.1 prerequisites:**
 
