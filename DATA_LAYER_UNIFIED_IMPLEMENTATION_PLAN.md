@@ -1,7 +1,7 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A runtime correctness and Phase 9.0-B isolated V2 beta certification are complete in isolation, while authority promotion remains planned and blocked on its explicit gates. V1 remains authoritative and no runtime cutover has started.
-> **Working branch:** `feat/phase9-isolated-v2-beta`, stacked on the completed Phase 9.0-A branch and intended for PR into `dev`.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`. Authority promotion remains planned and blocked on explicit production infrastructure and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
+> **Working branch:** `feat/phase90c-production-prerequisites`, intended for PR into `dev`; no push, merge or authority cutover is implied by phase completion.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
 > **Compatibility boundary:** Existing `/v1`, SDK v1, Redis keys and Redis Pub/Sub remain supported until a governed per-consumer sunset.
@@ -160,6 +160,21 @@ These rules apply to all phases.
     PostgreSQL control-state restore, cursor-key rotation, object-store/PITR,
     Redis/projector rebuild and authority reconstruction from the audit log have
     passed the approved recovery objectives.
+40. **The main plan is a transactional implementation journal.** Before code,
+    record the approved phase/scope, guide links, invariants, test gates and
+    rollback here. After every coherent tested slice, record exact completion,
+    verification, cleanup, decision gates and debt here in the same commit. A
+    phase cannot be reported complete while this tracker or its governing guide
+    disagrees with code/evidence.
+41. **Scope and approval are explicit.** A discussion/evaluation request causes
+    no mutation. Newly discovered work outside the approved scope is reported
+    with impact and recommendation before implementation. Restart, cutover,
+    authority change, destructive cleanup, push and merge require the user's
+    explicit approval for that action.
+42. **Final reporting is evidence-bound.** Every completion report names the
+    plan status, tests actually run with pass/fail/skip counts, untested/external
+    gates, runtime impact, cleanup, commit/branch and push/merge state. Local or
+    same-host proof is never upgraded linguistically into production evidence.
 
 ## 3. Phase Summary
 
@@ -3016,6 +3031,10 @@ restarts a producer.
   blocked. V1 container identity, topology and `/v1/health` remained unchanged
   and healthy before/after evaluation; no production database or Redis was
   mutated.
+- Workspace governance is canonical in `/home/bobby/AGENTS.md` and its
+  repository-tracked [AGENTS.md](AGENTS.md) copy; Rules 40-42 make plan
+  synchronization, explicit approval boundaries and evidence-bound final
+  reporting mandatory for every later slice and cloned workspace.
 - Runbook and portable evidence are frozen at
   [phase90c-production-prerequisites.md](docs/runbooks/phase90c-production-prerequisites.md),
   [phase90c-production-prerequisites.json](upgrade/evidence/phase90c-production-prerequisites.json),
