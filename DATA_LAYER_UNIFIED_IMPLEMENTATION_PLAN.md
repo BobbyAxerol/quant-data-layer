@@ -3143,6 +3143,19 @@ fail-closed authorization tests. It must not persist a production
   `GO` bundle plus explicit operator approval can advance the production state
   to `RUST_CANARY` and begin the approved hold window.
 
+**Implementation journal (2026-08-18):**
+
+- `COMPLETE` control-plane slice: strict production authorizer consumes the
+  exact Phase 9.0-C decision/candidate/bundle and rejects `NO_GO`, stale,
+  incomplete, mismatched or V1-mutating evidence. Isolated rehearsal is a
+  separate non-production authorization mode.
+- `COMPLETE` guardrail slice: immutable observations, zero-tolerance semantic
+  checks, bounded lag/freshness/resource checks, first-failure capture and
+  explicit reset only after hold-down. Targeted result: 9/9 tests pass in a
+  disposable container; production mutations remain zero.
+- `PENDING` Rust authority/sink v2, authentic parity/broker rehearsal, full
+  suite/evidence/runbook and cleanup.
+
 **Rollback:** In rehearsal, persist a higher-revision `RUST_SHADOW` record,
 fence the canary owner, reconcile the bounded cursor range and remove only the
 isolated namespace. In production, use the formal rollback protocol above; do
