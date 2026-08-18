@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A runtime correctness is complete in isolation, while Phase 9 authority promotion remains planned and blocked on its explicit gates. V1 remains authoritative and no runtime cutover has started.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A runtime correctness is complete in isolation and Phase 9.0-B isolated V2 beta is in progress, while authority promotion remains planned and blocked on its explicit gates. V1 remains authoritative and no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -2274,7 +2274,7 @@ Phase 8 is `COMPLETE` only when:
 
 ## 13. Phase 9 - Rust Core Canary And Progressive Replacement
 
-**Status:** `9.0-A COMPLETE_ISOLATED`; authority promotion remains `PLANNED` and Phase 9.1 remains blocked on explicit infrastructure and operator gates
+**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B IN_PROGRESS`; authority promotion remains `PLANNED` and Phase 9.1 remains blocked on explicit infrastructure and operator gates
 
 ### Goal
 
@@ -2798,6 +2798,84 @@ separate operator-approved deployment is prepared.
   OpenAPI/Redis compatibility plus provider data readiness.
 - REST recovery can be disabled independently; source health must remain
   degraded rather than reverting to connected-is-ready semantics.
+
+##### 9.0-B Isolated V2 Beta
+
+**Status:** `IN_PROGRESS`
+
+**Purpose:** Re-certify the existing provider-neutral V2 query/stream beta on
+the migrated host using the Phase 9.0-A runtime-correctness baseline. The beta
+is a read-only, non-authoritative consumer of one explicitly bounded V1 source
+slice; it is not a Rust canary, a public-internet deployment or a source
+authority transition.
+
+**Guide index:**
+
+- [Phase 9.0-B isolated beta boundary](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#appendix-e--phase-90-b-isolated-v2-beta-boundary)
+- [V2 API/SDK and consumer migration](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#18-sdk-v2-architecture)
+- [No-big-bang migration](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#30-migration-strategy-no-big-bang-rewrite)
+- [Production acceptance checklist](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#41-production-acceptance-checklist)
+- [Phase 7 isolated beta runbook](docs/runbooks/phase7-isolated-beta-runtime.md)
+
+**Invariants:**
+
+- V1 remains the only production/source authority and keeps its existing
+  container, networks, mounts, Redis namespaces and public contracts.
+- Beta reads only the approved internal V1 endpoint and publishes only into its
+  dedicated canonical spool, Redis prefix, consumer group and loopback ports.
+- The beta image is content-addressed, non-root, read-only, bounded and contains
+  no host source bind. JWT, cursor and bridge secrets are beta-only.
+- Beta output uses provider-authentic, final closed bars. Fixtures/synthetic
+  events are permitted only in isolated deterministic tests and cannot satisfy
+  the real-provider gate.
+- Process readiness, dependency readiness and data availability are tested
+  separately. Missing/stale source data must produce typed unavailability, not
+  a false-green data claim.
+
+**Implementation tasks:**
+
+1. Reuse the Phase 7 V2 query, active/passive stream, dedicated AOF Redis and
+   read-only V1 bridge topology; do not fork or rename stable contracts merely
+   because this is a new certification phase.
+2. Pin the candidate and helper images by digest, stamp the application artifact
+   with source revision, and use a Phase 9.0-B-specific config revision, Redis
+   prefix, consumer group, project name, leases, credentials and evidence paths.
+3. Run the continuous bridge only with the `phase7-canary` profile and prove it
+   cannot call a venue directly, write V1 state or publish non-final bars.
+4. Validate authenticated V2 warmup/query and gRPC replay/live handoff for the
+   approved BTCUSDT USD-M 1m BAR slice, including decimal/timestamp/finality,
+   event identity, cursor continuity and V1-vs-V2 parity.
+5. Exercise active/passive failover and fencing, Redis outage/recovery, process
+   restart, stale/invalid cursor, malformed/auth abuse, rate/concurrency bounds,
+   slow consumer and duplicate bridge polling.
+6. Measure bounded CPU, memory, PIDs, Redis/durable-store growth, request and
+   stream latency. Record untested infrastructure gates honestly.
+7. Tear down all beta containers, networks, volumes, images, keys and temporary
+   credentials; prove V1 topology/state and API remain unchanged. Freeze a
+   checksummed human and machine-readable report.
+
+**Verification and exit gate:**
+
+- Existing V2 contract/security/unit suites and the Phase 9.0-A regression
+  matrix pass with zero unexplained domain mismatch.
+- Exactly one stream replica is active; failover increments the fencing epoch
+  and stale-owner operations fail closed.
+- Authentic V1 and V2 closed bars match exactly for identity, interval, OHLCV,
+  timestamps and finality; replay/live offsets are contiguous with no duplicate
+  external event.
+- Missing credentials, wrong audience/environment/scope/consumer, malformed
+  requests and expired/tampered cursors fail closed with typed errors.
+- Dependency failure makes readiness unavailable while V1 fallback remains
+  healthy. Recovery is bounded and does not require V1 restart.
+- Resource limits hold, no beta state enters production Redis, V1 OpenAPI paths
+  remain unchanged, and cleanup counters are all zero.
+- Completion authorizes review of an isolated V2 beta only. Phase 9.1 and any
+  Rust/source authority promotion remain blocked on the mandatory production
+  infrastructure and exact-slice operator gates.
+
+**Rollback:** Stop and remove only the isolated Compose project and its volumes,
+revoke beta credentials, verify zero beta keys in production Redis and continue
+the unchanged V1 path. V1 requires no replay, resubscription or restart.
 
 - Close every applicable Phase 6 `NO-GO` blocker with real infrastructure
   evidence.

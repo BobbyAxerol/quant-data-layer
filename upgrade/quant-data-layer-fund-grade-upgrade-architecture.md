@@ -4884,6 +4884,46 @@ replicated transport, production telemetry/security, full consumer cutover and
 regional DR claims until their real infrastructure exists. V1 remains
 authoritative and was not restarted or mutated.
 
+## Appendix E — Phase 9.0-B isolated V2 beta boundary
+
+Phase 9.0-B reuses the Phase 7 V2 API/query/stream topology after the runtime
+correctness fixes of Phase 9.0-A. It is an evidence refresh on the migrated
+host, not a new public contract and not a Rust authority promotion.
+
+The approved topology contains one immutable query replica, two fenced
+active/passive stream replicas, one dedicated AOF Redis, bounded canonical
+spool volumes and an optional continuous V1 read-only bridge. Only the bridge
+joins the existing internal V1 network. All V2 ingress is loopback-only and all
+state, keys, groups, credentials, audit files and Compose resources use an
+isolated Phase 9.0-B namespace.
+
+The first slice is fixed to `BINANCE / USDM / PERPETUAL / BTCUSDT / BAR / 1m`.
+The bridge obtains authentic final bars through the internal V1 API and cannot
+resolve arbitrary URLs or call a venue directly. V1 remains source authority;
+the beta canonical spool is shadow evidence only. The beta may neither write
+legacy Redis keys/channels nor claim execution eligibility.
+
+Certification combines Sections 18-19, 24-25, 30, 32, 37-41 and Appendix B:
+
+1. freeze V2 OpenAPI/Protobuf/SDK and verify V1 compatibility;
+2. prove consumer-bound workload identity, entitlement, rate/concurrency bounds
+   and cursor signing/rotation/adversarial rejection;
+3. compare provider-authentic V1 and V2 final bars field-for-field and prove
+   deterministic event identity, deduplication and contiguous replay-to-live;
+4. stop the active stream owner and require a higher fencing epoch before the
+   passive owner serves work; stale-owner writes remain rejected;
+5. stop/restart beta Redis and processes, require dependency-derived readiness,
+   preserve bounded durable state and keep V1 fallback available;
+6. measure CPU, memory, PIDs, Redis/spool growth and latency under normal, burst
+   and slow-consumer cases; and
+7. remove all disposable resources and verify the V1 topology, state and public
+   contract are byte/identity-equivalent before and after.
+
+Passing this appendix permits only an isolated `V2_BETA_READ_ONLY` review. It
+does not close replicated broker, production OTel/alerting, workload identity,
+external secrets, signature admission, independent DR, consumer registration
+or exact authority-slice approval. Those remain mandatory before Phase 9.1.
+
 ### Option and Deribit extension boundary
 
 Adding an option venue must not require changing canonical core identities or rewriting distribution. The common boundary must represent:
