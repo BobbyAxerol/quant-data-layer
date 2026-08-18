@@ -4931,6 +4931,38 @@ and zero-residue cleanup all passing. The frozen report is
 [`PHASE90B_ISOLATED_V2_BETA_REPORT.md`](evidence/PHASE90B_ISOLATED_V2_BETA_REPORT.md).
 This evidence does not alter the authority boundary above.
 
+## Appendix F — Phase 9.0-C production prerequisite boundary
+
+Phase 9.0-C converts the Phase 6 and Phase 9 production blockers into one
+provider-neutral, machine-verifiable gate bundle. The evaluator distinguishes
+`TEST`, `LOCAL_REHEARSAL`, `PRODUCTION` and `INDEPENDENT_FAILURE_DOMAIN`
+evidence. A stronger gate cannot be satisfied by evidence from a weaker scope.
+
+The mandatory gates are replicated durable transport; OTel collection,
+persistent dashboards and acknowledged alert routing; workload identity, RBAC
+and network policy; external secret rotation; signed artifact admission;
+PostgreSQL PITR; object-store restore; independent failure-domain DR;
+Redis/projector reconstruction; complete affected-consumer registration and
+rollback; persistent authority/sink fencing; and explicit exact-slice approval.
+
+Evidence records carry an ID, gate, environment, scope, status, artifact hash,
+observation/expiry time, issuer and immutable details. Missing, duplicate,
+expired, malformed, contradictory or lower-scope evidence fails closed. Local
+Kafka replication, debug OTel exporters, self-signed test keys and same-host
+restore remain useful rehearsal evidence but never become production proof.
+
+Authority identity and transitions follow Section 30. PostgreSQL stores the
+current exact slice and append-only audit; compacted Kafka remains the durable
+distribution/audit substrate. A compare-and-swap transition checks current
+state, authority revision, owner, lease epoch and partition-plan epoch. Canary
+and primary transitions additionally require the exact passing prerequisite
+bundle and named operator approval.
+
+Passing Phase 9.0-C code and local tests may yield
+`COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`. Only real infrastructure evidence can
+yield `PRODUCTION_PREREQUISITES_PASS`. Neither result changes V1 automatically;
+Phase 9.1 remains a separately approved exact-slice canary.
+
 ### Option and Deribit extension boundary
 
 Adding an option venue must not require changing canonical core identities or rewriting distribution. The common boundary must represent:

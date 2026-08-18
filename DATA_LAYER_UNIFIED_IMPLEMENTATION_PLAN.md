@@ -2274,7 +2274,7 @@ Phase 8 is `COMPLETE` only when:
 
 ## 13. Phase 9 - Rust Core Canary And Progressive Replacement
 
-**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B COMPLETE_ISOLATED`; authority promotion remains `PLANNED` and Phase 9.1 remains blocked on explicit infrastructure and operator gates
+**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B COMPLETE_ISOLATED`; `9.0-C IN_PROGRESS`; authority promotion remains `PLANNED` and Phase 9.1 remains blocked on explicit infrastructure and operator gates
 
 ### Goal
 
@@ -2917,6 +2917,77 @@ This result authorizes only isolated read-only beta review. Phase 9.1 remains
 blocked on replicated production transport, OTel/alert routing, workload
 identity/RBAC, external secret rotation, signature admission, independent DR,
 complete critical-consumer registration and explicit exact-slice approval.
+
+##### 9.0-C Production Prerequisites
+
+**Status:** `IN_PROGRESS`
+
+**Purpose:** Turn every Phase 9 production prerequisite into an explicit,
+machine-verifiable, fail-closed gate. Reuse valid Phase 6/8/9 evidence without
+misrepresenting same-host rehearsal as independent production infrastructure.
+This subphase does not deploy a public V2 endpoint, promote Rust, change V1
+authority or approve an exact slice by implication.
+
+**Guide index:**
+
+- [Phase 9 production prerequisite boundary](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#appendix-f--phase-90-c-production-prerequisite-boundary)
+- [Deployment architecture](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#29-deployment-architecture)
+- [Migration and authority](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#30-migration-strategy-no-big-bang-rewrite)
+- [Operational runbooks](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#34-operational-runbooks)
+- [Performance policy](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#37-performance-engineering-policy)
+- [Production acceptance checklist](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#41-production-acceptance-checklist)
+
+**Invariants:**
+
+- A local container, SQLite spool, in-process metric buffer, debug exporter,
+  self-signed test key or same-host broker replica can prove code behavior but
+  cannot satisfy a production/failure-domain gate.
+- Evidence is immutable, checksummed, scoped, expiring where applicable and
+  attributable to an operator or workload identity. Missing, malformed,
+  expired, lower-scope or contradictory evidence blocks promotion.
+- Authority state is persistent and transitions by compare-and-swap. Entering
+  `RUST_CANARY` or `RUST_PRIMARY` requires a passing prerequisite bundle and an
+  explicit exact-slice approval; config booleans cannot bypass this rule.
+- Existing V1 containers, OpenAPI, Redis namespaces and venue subscriptions
+  remain unchanged throughout isolated certification.
+
+**Implementation tasks:**
+
+1. Add a provider-neutral prerequisite policy covering replicated transport,
+   production telemetry/alert acknowledgement, workload identity/RBAC/network
+   policy, external secret rotation, signed-image admission, PostgreSQL PITR,
+   object-store restore, independent DR, Redis/projector rebuild, consumer
+   registration/rollback and exact-slice approval.
+2. Add strict evidence and exact-slice schemas plus a deterministic evaluator
+   that emits `GO` only when every required production gate passes. Preserve
+   local rehearsal as `LOCAL_ONLY`, never silently upgrade its scope.
+3. Add additive PostgreSQL authority/prerequisite/audit tables and a CAS
+   transition function with immutable audit, stale revision/owner/lease/plan
+   rejection and guarded canary/primary transitions.
+4. Freeze a candidate manifest for the bounded Binance USD-M BTCUSDT TRADE
+   slice in `RUST_SHADOW`; public and legacy writes remain forbidden.
+5. Re-run unit/contract/migration tests and applicable isolated broker,
+   security, recovery and V1 compatibility checks. Test malformed, missing,
+   stale, expired, forged, lower-scope and conflicting evidence.
+6. Produce a compact machine/human gate report, explicit blocker inventory,
+   deployment/rollback runbook and portable checksums; remove all disposable
+   resources and prove V1 unchanged.
+
+**Exit gate:**
+
+- Code/schema/migration/evaluator and local certification may close as
+  `COMPLETE_CONTROL_PLANE` while the overall decision remains `NO_GO_EXTERNAL`.
+- `PRODUCTION_PREREQUISITES_PASS` requires real replicated/failure-domain,
+  observability/page acknowledgement, identity/secret/admission, restore/DR,
+  consumer-owner and operator approval evidence. No test fixture can satisfy it.
+- Phase 9.1 remains blocked unless the exact bundle decision is `GO`, its
+  artifact/config/contract digests match the candidate, and the approval names
+  the exact authority slice.
+
+**Rollback:** Keep V1 authoritative, remove only Phase 9.0-C disposable test
+resources, and retain additive control-plane/audit records. Revoking or expiring
+any prerequisite evidence immediately restores `NO_GO`; it never starts or
+restarts a producer.
 
 **Phase 9.1 prerequisites:**
 
