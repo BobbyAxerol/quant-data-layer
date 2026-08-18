@@ -5,6 +5,7 @@ RUN apt-get update \
        clang cmake libclang-dev libcurl4-openssl-dev libssl-dev libzstd-dev \
        make pkg-config zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
+RUN rustup component add rustfmt clippy
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY rust ./rust
@@ -13,6 +14,7 @@ RUN cargo build --release --locked \
     --bin qdl-kafka-smoke \
     --bin qdl-authority-rehearsal \
     --bin qdl-phase91-canary-rehearsal \
+    --bin qdl-phase92-primary-rehearsal \
     --bin qdl-binance-shadow \
     --bin qdl-parity-replay \
     --bin qdl-venue-core-certify
@@ -32,6 +34,7 @@ RUN apt-get update \
 COPY --from=builder /src/target/release/qdl-kafka-smoke /usr/local/bin/qdl-kafka-smoke
 COPY --from=builder /src/target/release/qdl-authority-rehearsal /usr/local/bin/qdl-authority-rehearsal
 COPY --from=builder /src/target/release/qdl-phase91-canary-rehearsal /usr/local/bin/qdl-phase91-canary-rehearsal
+COPY --from=builder /src/target/release/qdl-phase92-primary-rehearsal /usr/local/bin/qdl-phase92-primary-rehearsal
 COPY --from=builder /src/target/release/qdl-binance-shadow /usr/local/bin/qdl-binance-shadow
 COPY --from=builder /src/target/release/qdl-parity-replay /usr/local/bin/qdl-parity-replay
 COPY --from=builder /src/target/release/qdl-venue-core-certify /usr/local/bin/qdl-venue-core-certify

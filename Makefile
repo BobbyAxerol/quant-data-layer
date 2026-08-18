@@ -1,4 +1,4 @@
-.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify phase81-test phase81-certify phase82-test phase82-dnse-acquire phase82-certify phase83-test phase83-build phase83-authority phase83-release-capacity phase83-freeze phase90b-build phase90b-test phase90b-certify phase90b-clean phase90c-build phase90c-test phase90c-migration phase90c-certify phase90c-clean python-test rust-test phase91-build phase91-test phase91-certify phase91-clean
+.PHONY: contract-check contract-generate phase2-benchmark phase2-redis-smoke phase2-test phase3-lease-smoke phase3-load-smoke phase3-real-provider-smoke phase3-rust-smoke phase3-test phase4-dnse-real-smoke phase4-history-test phase4-migration-smoke phase4-okx-real-smoke phase4-okx-test phase4-replay-test phase4-test phase4-vn-shadow-smoke phase45-build phase45-clean phase45-dependency-audit phase45-provider-smoke phase45-test phase5-api-test phase5-build phase5-clean phase5-contract-check phase5-dependency-audit phase5-load phase5-migration-smoke phase5-real-provider-smoke phase5-test phase7-build phase7-clean phase7-contract-check phase7-migration-smoke phase7-test phase71-topology-test phase71-test phase72-test phase72-topology-test phase73-test phase73-certify phase80-test phase80-certify phase81-test phase81-certify phase82-test phase82-dnse-acquire phase82-certify phase83-test phase83-build phase83-authority phase83-release-capacity phase83-freeze phase90b-build phase90b-test phase90b-certify phase90b-clean phase90c-build phase90c-test phase90c-migration phase90c-certify phase90c-clean python-test rust-test phase91-build phase91-test phase91-certify phase91-clean phase92-build phase92-test phase92-migration phase92-certify phase92-clean
 
 BUF_IMAGE ?= bufbuild/buf:1.50.0
 RUST_IMAGE ?= rust:1.82-slim@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010
@@ -17,6 +17,9 @@ PHASE90C_GIT_SHA ?= $(shell git rev-parse HEAD)
 PHASE91_RUST_IMAGE ?= qdl-phase91-rust:rehearsal
 PHASE91_BUILDER_IMAGE ?= qdl-phase91-rust-builder:rehearsal
 PHASE91_GIT_SHA ?= $(shell git rev-parse HEAD)
+PHASE92_RUST_IMAGE ?= qdl-phase92-rust:rehearsal
+PHASE92_BUILDER_IMAGE ?= qdl-phase92-rust-builder:rehearsal
+PHASE92_GIT_SHA ?= $(shell git rev-parse HEAD)
 
 contract-generate:
 	docker run --rm -v "$(CURDIR):/workspace" -w /workspace/contracts $(BUF_IMAGE) generate
@@ -270,3 +273,26 @@ phase91-clean:
 	docker compose --project-name qdl_phase91_certification -f docker-compose.phase8-kafka.yml down -v --remove-orphans
 	docker image rm $(PHASE91_RUST_IMAGE) 2>/dev/null || true
 	docker image rm $(PHASE91_BUILDER_IMAGE) 2>/dev/null || true
+
+phase92-build:
+	docker build --provenance=false --target builder -f Dockerfile.phase8-rust -t $(PHASE92_BUILDER_IMAGE) .
+	docker build --provenance=false -f Dockerfile.phase8-rust --build-arg QDL_GIT_SHA=$(PHASE92_GIT_SHA) --build-arg QDL_RELEASE=phase92-bounded-primary-rehearsal -t $(PHASE92_RUST_IMAGE) .
+
+phase92-test: phase92-build
+	docker run --rm --mount type=bind,source=$(CURDIR),target=/src --workdir /src/rust $(PHASE92_BUILDER_IMAGE) cargo fmt --all -- --check
+	docker run --rm --mount type=bind,source=$(CURDIR),target=/src --workdir /src/rust $(PHASE92_BUILDER_IMAGE) cargo clippy --workspace --all-targets --locked -- -D warnings
+	docker run --rm --mount type=bind,source=$(CURDIR),target=/src --workdir /src/rust $(PHASE92_BUILDER_IMAGE) cargo test --workspace --locked
+	docker compose run --rm --no-deps test_runner python -m unittest tests.test_phase92_primary_control tests.test_phase92_migration_contract tests.test_phase92_certification_contract tests.test_phase91_canary_control tests.test_phase91_certification_contract tests.test_phase90c_prerequisites tests.test_phase90c_migration_contract tests.test_phase90b_isolated_beta tests.test_phase90a_runtime_correctness tests.test_fund_phase80_broker_substrate tests.test_fund_phase81_raw_core tests.test_fund_phase82_conformance tests.test_fund_phase83_release
+	docker compose run --rm --no-deps test_runner python -m unittest discover tests
+
+phase92-migration:
+	scripts/phase92_migration_smoke.sh
+
+phase92-certify: phase92-test phase92-migration
+	python3 scripts/phase92_primary_certification.py --rust-image $(PHASE92_RUST_IMAGE) --repeat 200
+	sha256sum -c upgrade/evidence/phase92-evidence.sha256
+
+phase92-clean:
+	docker compose --project-name qdl_phase92_certification -f docker-compose.phase8-kafka.yml down -v --remove-orphans
+	docker image rm $(PHASE92_RUST_IMAGE) 2>/dev/null || true
+	docker image rm $(PHASE92_BUILDER_IMAGE) 2>/dev/null || true

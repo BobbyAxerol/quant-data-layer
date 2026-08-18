@@ -1,7 +1,7 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; Phase 9.1 is `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED` after isolated parity, fencing and replicated-broker certification. Authority promotion remains blocked on explicit production infrastructure and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
-> **Working branch:** `feat/phase91-rust-canary`, stacked on the completed Phase 9.0-C checkpoint and intended for PR into `dev`; no push, merge or authority cutover is implied by implementation progress.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; Phase 9.1 is `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`; Phase 9.2 is `COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED` after isolated terminal-handoff, process-restart recovery, rollback and replicated-broker certification. Authority promotion remains blocked on explicit production infrastructure, real canary hold and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
+> **Working branch:** `feat/phase92-bounded-rust-primary`, stacked on the completed Phase 9.1 checkpoint and intended for PR into `dev`; no push, merge or authority cutover is implied by implementation completion.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
 > **Compatibility boundary:** Existing `/v1`, SDK v1, Redis keys and Redis Pub/Sub remain supported until a governed per-consumer sunset.
@@ -3189,7 +3189,7 @@ not restart Python or edit authority state outside the CAS/audit path.
 
 #### 9.2 Bounded Rust Primary
 
-**Status:** `PLANNED / PRODUCTION_PRIMARY_BLOCKED`
+**Status:** `COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED`
 
 **Purpose:** Implement the terminal-watermark ownership protocol required to
 promote one exact, already-certified `RUST_CANARY` slice to `RUST_PRIMARY` while
@@ -3301,11 +3301,27 @@ canonical/public/legacy destinations.
   and preserved evidence across idempotent migration replay.
 - `COMPLETE` Rust authority/sink core: v1/v2 decoders remain intact; v3 binds
   terminal checkpoint, accepted handoff, exact revision/lease/plan and
-  independently contiguous canonical/public/legacy target watermarks. Rust
-  fmt/clippy pass and 23/23 focused crate tests pass; Python/control regression
-  is 26/26.
-- `IN_PROGRESS`: replicated-broker N/N+1, process-loss, projector continuity
-  and measured rollback certification.
+  independently contiguous canonical/public/legacy target watermarks. Loading
+  an already-primary authority is fail-closed until each target reconstructs
+  its durable contiguous watermark. Crash-before-CAS reconstruction, duplicate
+  W rejection and exact W+1 restart are covered. Rust fmt/clippy pass and the
+  full workspace is 40/40; the focused Python matrix is 87/87 and the full
+  Python suite is 395/395 with 5 intentional skips.
+- `COMPLETE` isolated replicated-broker certification: 25,600 authentic Binance
+  USD-M trade events across three clean Rust runs produced zero semantic
+  mismatch. The authority path completed `RUST_CANARY -> RUST_PRIMARY ->
+  BLOCKED -> ROLLBACK_PENDING -> PYTHON_PRIMARY`; canonical/public V2/legacy V1
+  projections are identical and gap-free for watermarks 101..181. A fresh Rust
+  process recovered watermark 180 independently from all three durable targets,
+  rejected writes before restore and duplicate 180 after restore, then emitted
+  exactly 181. One-replica-loss ACK and below-min-ISR fail-closed passed.
+- `COMPLETE` measured isolated operations and cleanup: cutover 22.200 ms, formal
+  rollback 533.237 ms and delayed-consumer catch-up 24.524 s. Production public
+  and legacy writes remained zero; V1 health stayed 200/200 with unchanged
+  topology; disposable containers/networks/volumes ended at 0/0/0. Migration
+  smoke passed both handoff directions and checksum verification passed. The
+  builder now carries pinned rustfmt/clippy, and the rebuilt runtime digest
+  exactly matches the certified image digest.
 - `OPEN EXTERNAL GATE`: Phase 9.0-C production prerequisites and real canary
   hold remain unavailable; V1 stays authoritative.
 

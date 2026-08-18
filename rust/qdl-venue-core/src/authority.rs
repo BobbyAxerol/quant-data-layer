@@ -670,12 +670,17 @@ pub struct Phase92PublicationContext {
 pub struct Phase92AuthorityFence {
     current: Option<Phase92AuthorityRecord>,
     committed_watermarks: HashMap<(String, SinkTarget), u64>,
+    recovery_required: bool,
 }
 
 impl Phase92AuthorityFence {
     pub fn apply(&mut self, record: Phase92AuthorityRecord) -> Result<(), String> {
         record.validate()?;
         if self.current.is_none() {
+            self.recovery_required = matches!(
+                record.state,
+                Phase92AuthorityState::RustPrimary | Phase92AuthorityState::PythonPrimary
+            );
             self.current = Some(record);
             return Ok(());
         }
@@ -763,6 +768,48 @@ impl Phase92AuthorityFence {
             return Err("Phase 9.2 authority transition is not permitted".into());
         }
         self.current = Some(record);
+        self.recovery_required = false;
+        Ok(())
+    }
+
+    pub fn restore_committed_watermark(
+        &mut self,
+        context: &Phase92PublicationContext,
+    ) -> Result<(), String> {
+        if !self.recovery_required {
+            return Err("Phase 9.2 watermark restore is only permitted during recovery".into());
+        }
+        let current = self
+            .current
+            .as_ref()
+            .ok_or_else(|| "Phase 9.2 authority record is not loaded".to_owned())?;
+        if !matches!(
+            current.state,
+            Phase92AuthorityState::RustPrimary | Phase92AuthorityState::PythonPrimary
+        ) || context.slice_id != current.slice_id
+            || context.owner_id != current.owner_id
+            || context.authority_revision != current.authority_revision
+            || context.lease_epoch != current.lease_epoch
+            || context.partition_plan_epoch != current.partition_plan_epoch
+            || context.shard_id.trim().is_empty()
+            || !matches!(
+                context.target,
+                SinkTarget::PrimaryCanonical | SinkTarget::PublicV2 | SinkTarget::LegacyV1
+            )
+            || context.source_watermark < current.start_watermark
+        {
+            return Err("Phase 9.2 recovered watermark identity is invalid".into());
+        }
+        let key = (context.shard_id.clone(), context.target);
+        if self
+            .committed_watermarks
+            .get(&key)
+            .is_some_and(|value| context.source_watermark < *value)
+        {
+            return Err("Phase 9.2 recovered watermark regressed".into());
+        }
+        self.committed_watermarks
+            .insert(key, context.source_watermark);
         Ok(())
     }
 
@@ -809,6 +856,9 @@ impl Phase92AuthorityFence {
             }
         }
         let key = (context.shard_id.clone(), context.target);
+        if self.recovery_required && !self.committed_watermarks.contains_key(&key) {
+            return Err("Phase 9.2 durable target watermark recovery is required".into());
+        }
         let committed = self
             .committed_watermarks
             .get(&key)
@@ -1268,6 +1318,9 @@ mod phase92_tests {
         fence
             .apply_handoff(&checkpoint, &handoff, primary.clone(), 2)
             .unwrap();
+        assert!(fence
+            .restore_committed_watermark(&publication(&primary, SinkTarget::PrimaryCanonical, 120,))
+            .is_err());
 
         for target in [
             SinkTarget::PrimaryCanonical,
@@ -1415,6 +1468,56 @@ mod phase92_tests {
                 2,
             )
             .is_ok());
+    }
+
+    #[test]
+    fn crash_before_cas_reconstructs_canary_and_accepts_only_exact_handoff() {
+        let persisted_canary = canary();
+        let terminal = checkpoint("python-primary", 7, 11, 100);
+        let accepted = handoff(
+            &terminal,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        let rust_primary = primary(&terminal, &accepted);
+
+        let mut recovered = Phase92AuthorityFence::default();
+        recovered.apply(persisted_canary).unwrap();
+        recovered
+            .apply_handoff(&terminal, &accepted, rust_primary.clone(), 2)
+            .unwrap();
+        assert_eq!(recovered.current(), Some(&rust_primary));
+        assert!(recovered
+            .apply_handoff(&terminal, &accepted, rust_primary, 2)
+            .is_err());
+    }
+
+    #[test]
+    fn restarted_primary_fails_closed_until_each_target_watermark_is_restored() {
+        let initial_checkpoint = checkpoint("python-primary", 7, 11, 100);
+        let to_rust = handoff(
+            &initial_checkpoint,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        let rust_primary = primary(&initial_checkpoint, &to_rust);
+        let mut recovered = Phase92AuthorityFence::default();
+        recovered.apply(rust_primary.clone()).unwrap();
+        let duplicate = publication(&rust_primary, SinkTarget::PrimaryCanonical, 120);
+        assert!(recovered.permits(&duplicate, 2).is_err());
+        recovered.restore_committed_watermark(&duplicate).unwrap();
+        assert!(recovered.permits(&duplicate, 2).is_err());
+        assert!(recovered
+            .permits(
+                &publication(&rust_primary, SinkTarget::PrimaryCanonical, 121),
+                2,
+            )
+            .is_ok());
+        assert!(recovered
+            .permits(&publication(&rust_primary, SinkTarget::PublicV2, 121), 2)
+            .is_err());
     }
 
     #[test]

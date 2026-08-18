@@ -5097,10 +5097,30 @@ and after CAS, sink/projector restart, broker replica loss/min-ISR, full restart
 slow consumer and formal rollback. It records production mutations as zero,
 checks V1 topology before/after and deletes only disposable resources.
 
+A process loading an already-primary v3 authority starts fail-closed. It must
+reconstruct the latest ACKed watermark independently from each durable final,
+public V2 and legacy V1 destination, validate identity and a contiguous range,
+and restore that target fence before any append. A duplicate terminal
+watermark remains rejected and the first permitted write is exactly W+1. This
+prevents a crash after durable broker ACK but before process-local commit from
+re-emitting an external duplicate.
+
 A valid isolated result is
 `COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED`. It proves protocol and
 recovery behavior; it does not authorize disabling the Python subscription or
 claim independent failure-domain resilience.
+
+**Implementation closure (2026-08-18):** The isolated Phase 9.2 harness passed
+over 25,600 authentic provider events with zero Python/Rust semantic mismatch.
+The broker-backed second-process recovery reconstructed three independent
+target watermarks at 180 and resumed exactly at 181; canonical, V2 and V1
+projections remained identical and gap-free. PostgreSQL CAS/handoff, formal
+rollback, replica-loss/min-ISR, full restart, slow-consumer, full Rust/Python
+regression and scoped cleanup gates passed. Evidence is frozen in
+[`phase92-bounded-primary-certification.json`](../upgrade/evidence/phase92-bounded-primary-certification.json),
+the [human report](../upgrade/evidence/PHASE92_BOUNDED_PRIMARY_REPORT.md) and
+[`phase92-evidence.sha256`](../upgrade/evidence/phase92-evidence.sha256). Phase
+9.0-C remains `NO_GO_EXTERNAL`, so this closure grants no production authority.
 
 ### Option and Deribit extension boundary
 

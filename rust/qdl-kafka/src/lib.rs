@@ -362,6 +362,17 @@ impl Phase92FencedKafkaSink {
             .map_err(KafkaTransportError::Fencing)
     }
 
+    pub async fn restore_committed_watermark(
+        &self,
+        publication: &Phase92PublicationContext,
+    ) -> Result<(), KafkaTransportError> {
+        self.fence
+            .lock()
+            .await
+            .restore_committed_watermark(publication)
+            .map_err(KafkaTransportError::Fencing)
+    }
+
     pub async fn append(
         &self,
         record: &DurableRecord,

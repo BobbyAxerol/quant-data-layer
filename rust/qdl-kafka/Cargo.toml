@@ -30,3 +30,7 @@ path = "src/bin/qdl-authority-rehearsal.rs"
 [[bin]]
 name = "qdl-phase91-canary-rehearsal"
 path = "src/bin/qdl-phase91-canary-rehearsal.rs"
+
+[[bin]]
+name = "qdl-phase92-primary-rehearsal"
+path = "src/bin/qdl-phase92-primary-rehearsal.rs"
