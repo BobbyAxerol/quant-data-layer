@@ -101,6 +101,8 @@ class Phase90BBridgeParityTest(unittest.TestCase):
             '--profile phase7-beta --profile phase7-canary ps -q qdl_beta_v1_bridge',
             phase90b,
         )
+        self.assertIn('realpath --relative-to="${ROOT_DIR}"', phase90b)
+        self.assertIn('(cd "${ROOT_DIR}" && sha256sum -c "${CHECKSUM_OUTPUT}")', phase90b)
         self.assertNotIn('chown 10001:10001 "${temporary}"', phase90b)
 
     def test_window_rejects_regression_and_unbounded_growth(self):

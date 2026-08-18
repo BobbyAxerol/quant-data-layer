@@ -218,6 +218,14 @@ python3 "${ROOT_DIR}/scripts/phase90b_finalize_evidence.py" \
   --containers-after "${containers_after}" --networks-after "${networks_after}" \
   --volumes-after "${volumes_after}" --images-after "${images_after}" \
   --output "${RESULT_OUTPUT}" --report "${REPORT_OUTPUT}"
-sha256sum "${CAPACITY_OUTPUT}" "${SECURITY_OUTPUT}" "${PARITY_OUTPUT}" \
-  "${RESULT_OUTPUT}" "${REPORT_OUTPUT}" >"${CHECKSUM_OUTPUT}"
-sha256sum -c "${CHECKSUM_OUTPUT}"
+capacity_rel="$(realpath --relative-to="${ROOT_DIR}" "${CAPACITY_OUTPUT}")"
+security_rel="$(realpath --relative-to="${ROOT_DIR}" "${SECURITY_OUTPUT}")"
+parity_rel="$(realpath --relative-to="${ROOT_DIR}" "${PARITY_OUTPUT}")"
+result_rel="$(realpath --relative-to="${ROOT_DIR}" "${RESULT_OUTPUT}")"
+report_rel="$(realpath --relative-to="${ROOT_DIR}" "${REPORT_OUTPUT}")"
+(
+  cd "${ROOT_DIR}"
+  sha256sum "${capacity_rel}" "${security_rel}" "${parity_rel}" \
+    "${result_rel}" "${report_rel}"
+) >"${CHECKSUM_OUTPUT}"
+(cd "${ROOT_DIR}" && sha256sum -c "${CHECKSUM_OUTPUT}")
