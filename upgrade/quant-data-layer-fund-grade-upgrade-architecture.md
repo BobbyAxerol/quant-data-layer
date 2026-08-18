@@ -5023,6 +5023,26 @@ they do not close the production/failure-domain prerequisites from Appendix F.
 With a `NO_GO_EXTERNAL` prerequisite decision the only valid result is
 `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`.
 
+
+### Phase 9.1 implementation closure (2026-08-18)
+
+The isolated implementation is certified as
+`COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`. The frozen authentic capture
+produced 25,600 events with zero Python/Rust semantic mismatch over three clean
+Rust processes. The replicated TLS/ACL broker rehearsal passed exact sink
+fencing, one-replica availability, below-min-ISR fail-closed behavior, full
+restart recovery, compacted authority reconstruction, immutable audit order,
+64-record slow-consumer catch-up and rollback to `RUST_SHADOW`. Public and
+legacy write counts remained zero; V1 health and topology were unchanged.
+
+Operator artifacts are the [runbook](../docs/runbooks/phase91-rust-canary.md),
+[machine evidence](../upgrade/evidence/phase91-rust-canary-certification.json),
+[human report](../upgrade/evidence/PHASE91_RUST_CANARY_REPORT.md) and
+[checksum manifest](../upgrade/evidence/phase91-evidence.sha256). Phase 9.0-C
+still returns `NO_GO_EXTERNAL`; no production authority transition is allowed
+until independent production prerequisites and exact-slice approval are
+provided.
+
 ### Option and Deribit extension boundary
 
 Adding an option venue must not require changing canonical core identities or rewriting distribution. The common boundary must represent:

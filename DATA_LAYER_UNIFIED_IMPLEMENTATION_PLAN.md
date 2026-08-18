@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`. Authority promotion remains planned and blocked on explicit production infrastructure and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; Phase 9.1 is `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED` after isolated parity, fencing and replicated-broker certification. Authority promotion remains blocked on explicit production infrastructure and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
 > **Working branch:** `feat/phase91-rust-canary`, stacked on the completed Phase 9.0-C checkpoint and intended for PR into `dev`; no push, merge or authority cutover is implied by implementation progress.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -2289,7 +2289,7 @@ Phase 8 is `COMPLETE` only when:
 
 ## 13. Phase 9 - Rust Core Canary And Progressive Replacement
 
-**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B COMPLETE_ISOLATED`; `9.0-C COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; `9.1 IN_PROGRESS / PRODUCTION_AUTHORITY_BLOCKED`; Phase 9.1 implementation and isolated rehearsal are allowed, but an actual production `RUST_CANARY` transition remains blocked on an exact `GO` bundle
+**Status:** `9.0-A COMPLETE_ISOLATED`; `9.0-B COMPLETE_ISOLATED`; `9.0-C COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; `9.1 COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`; an actual production `RUST_CANARY` transition remains blocked on an exact `GO` bundle
 
 ### Goal
 
@@ -3067,7 +3067,7 @@ subphase does not authorize public V2, Rust canary or any authority cutover.
 
 #### 9.1 Rust Canary
 
-**Status:** `IN_PROGRESS / PRODUCTION_AUTHORITY_BLOCKED`
+**Status:** `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`
 
 **Purpose:** Implement and certify the exact-slice Rust canary path while Python
 remains the sole authoritative public/V1 writer. Because Phase 9.0-C currently
@@ -3157,8 +3157,30 @@ fail-closed authorization tests. It must not persist a production
   v2 binds slice/owner/revision/lease/partition-plan/candidate/bundle/watermark,
   denies public/V1 targets and advances watermark only after durable ACK.
   Rust result: clippy with `-D warnings` passes; 16/16 focused crate tests pass.
-- `PENDING` authentic parity/broker rehearsal, full suite/evidence/runbook and
-  cleanup.
+- `COMPLETE` authentic same-frame parity: 128 frozen real Binance USD-M trade
+  frames repeated 200 times produced 25,600 canonical events. Python and three
+  clean Rust process runs matched exact record and aggregate hashes with zero
+  semantic mismatch. Measured throughput was 27,115.455 events/s for Python and
+  at least 350,581.025 events/s for Rust on this host; this is certification
+  evidence, not a capacity promise.
+- `COMPLETE` replicated-broker rehearsal: exact authority transitions were
+  `RUST_SHADOW -> RUST_CANARY -> BLOCKED -> RUST_SHADOW`; one-replica-loss ACK,
+  below-min-ISR fail-closed, full broker restart, compacted authority recovery,
+  immutable audit ordering and 64-record slow-consumer catch-up all passed.
+  Public and legacy writes remained zero.
+- `COMPLETE` verification: Rust format/clippy pass; Rust workspace 32/32; focused
+  Phase 8-9 Python matrix 73/73; full Python suite 381/381 with 5 intentional
+  skips. Certification cleanup left zero isolated containers, networks and
+  volumes; V1 health stayed HTTP 200 and topology remained unchanged.
+- `COMPLETE` evidence and operations: [machine evidence](upgrade/evidence/phase91-rust-canary-certification.json),
+  [human report](upgrade/evidence/PHASE91_RUST_CANARY_REPORT.md),
+  [checksums](upgrade/evidence/phase91-evidence.sha256) and
+  [runbook](docs/runbooks/phase91-rust-canary.md). The harness now separates
+  compacted authority partition reads from audit/consumer catch-up semantics and
+  uses process-loss fault injection through surviving bootstrap nodes.
+- `OPEN EXTERNAL GATE`: Phase 9.0-C production infrastructure/operator evidence
+  remains `NO_GO_EXTERNAL`; same-host replicas are not an independent failure
+  domain. No production canary authority or V1/public mutation was performed.
 
 **Rollback:** In rehearsal, persist a higher-revision `RUST_SHADOW` record,
 fence the canary owner, reconcile the bounded cursor range and remove only the
