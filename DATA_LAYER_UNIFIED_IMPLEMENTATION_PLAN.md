@@ -1,6 +1,6 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9 remains planned. V1 remains authoritative and no runtime cutover has started.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A runtime correctness is complete in isolation, while Phase 9 authority promotion remains planned and blocked on its explicit gates. V1 remains authoritative and no runtime cutover has started.
 > **Working branch:** `feat/fund-grade-data-layer-v2`, created from `dev`.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
@@ -2274,7 +2274,7 @@ Phase 8 is `COMPLETE` only when:
 
 ## 13. Phase 9 - Rust Core Canary And Progressive Replacement
 
-**Status:** `PLANNED`
+**Status:** `9.0-A COMPLETE_ISOLATED`; authority promotion remains `PLANNED` and Phase 9.1 remains blocked on explicit infrastructure and operator gates
 
 ### Goal
 
@@ -2659,7 +2659,7 @@ must prove:
 
 ##### 9.0-A Runtime Correctness Closure
 
-**Status:** `IN_PROGRESS`
+**Status:** `COMPLETE_ISOLATED`
 
 **Purpose:** Close correctness and deployment-boundary defects discovered after
 the server migration before any Phase 9 authority implementation or Rust
@@ -2741,12 +2741,21 @@ separate operator-approved deployment is prepared.
   own data readiness. Added owner visibility to the existing demand snapshot.
 - Added immutable isolated Compose candidate with non-root/read-only execution,
   no source bind, dedicated state, loopback-only ingress and CPU/RAM/PID limits.
-- Deterministic verification passed: targeted runtime matrix 34/34, full repository
-  suite 343/343 with 5 documented skips, compile/diff checks clean, and live-vs-
-  candidate OpenAPI path diff 40/40 with zero additions or removals.
-- Pending in this checkpoint: digest-pinned candidate build, isolated real-provider
-  smoke, resource/cleanup evidence and final Phase 9.0-A report. Production V1
-  remains unchanged.
+- Deterministic verification passed: targeted runtime matrix 35/35; full repository
+  suite ran 345 tests with 340 passes, 5 environment-gated skips and zero failures;
+  compile/diff checks clean; and
+  live-vs-candidate OpenAPI path diff 40/40 with zero additions or removals.
+- Built and ran immutable candidate digest `sha256:4a2723ec39057c75a89889d955feac7acc6fb01bc126a579f8c74d384b9b6999` as UID 10001 with read-only root, no source bind and declared CPU/RAM/PID limits.
+- Real-provider smoke proved 8/8 USD-M TRADE shards ready and 0/8 KLINE shards
+  unavailable; health stayed degraded while demand-only REST recovery returned a
+  final BTCUSDT bar exactly equal to Binance REST OHLCV. Lease expiry stopped
+  further provider fetches. Queue pressure and drop deltas remained zero.
+- The isolated smoke exposed and closed two candidate bugs before release: Redis
+  UID with `cap_drop: ALL`, and data outage being cleared by transport reconnect.
+- Candidate containers, networks, volumes and images were removed after evidence.
+  Production V1 remained unchanged and running throughout. Evidence: [Phase 9.0-A
+  report](upgrade/evidence/PHASE90A_RUNTIME_CORRECTNESS_REPORT.md) and [machine
+  result](upgrade/evidence/phase90a-runtime-correctness.json).
 
 **Verification cases:**
 
