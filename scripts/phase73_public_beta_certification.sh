@@ -38,7 +38,7 @@ OPERATOR_UID="$(id -u)"
 OPERATOR_GID="$(id -g)"
 set_evidence_owner() {
   local uid="$1" gid="$2"
-  docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN \
+  docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER \
     --security-opt no-new-privileges:true --entrypoint sh \
     -v "${runner_evidence}:/evidence" "${QDL_BETA_INIT_IMAGE}" \
     -c "chown ${uid}:${gid} /evidence && chmod 0755 /evidence"

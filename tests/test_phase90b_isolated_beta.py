@@ -89,7 +89,7 @@ class Phase90BBridgeParityTest(unittest.TestCase):
         phase73 = Path("scripts/phase73_public_beta_certification.sh").read_text()
         self.assertIn('runner_evidence="${temporary}/runner"', phase73)
         self.assertIn('OPERATOR_UID="$(id -u)"', phase73)
-        self.assertIn('--user 0:0 --cap-drop ALL --cap-add CHOWN', phase73)
+        self.assertIn('--user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER', phase73)
         self.assertIn('set_evidence_owner 10001 10001', phase73)
         self.assertIn('set_evidence_owner "${OPERATOR_UID}" "${OPERATOR_GID}"', phase73)
         self.assertNotIn('chown 10001:10001 "${temporary}"', phase73)
