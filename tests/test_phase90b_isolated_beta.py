@@ -86,14 +86,17 @@ class Phase90BBridgeParityTest(unittest.TestCase):
             validate_sample(v1, v2, self.binding)
 
     def test_certification_harness_is_rootless_host_portable(self):
-        for name in (
-            "scripts/phase73_public_beta_certification.sh",
-            "scripts/phase90b_isolated_beta_certification.sh",
-        ):
-            script = Path(name).read_text()
-            self.assertIn('CERT_UID="${QDL_CERT_UID:-$(id -u)}"', script)
-            self.assertIn('CERT_GID="${QDL_CERT_GID:-$(id -g)}"', script)
-            self.assertNotIn("chown 10001:10001", script)
+        phase73 = Path("scripts/phase73_public_beta_certification.sh").read_text()
+        self.assertIn('OPERATOR_UID="$(id -u)"', phase73)
+        self.assertIn('--user 0:0 --cap-drop ALL --cap-add CHOWN', phase73)
+        self.assertIn('set_evidence_owner 10001 10001', phase73)
+        self.assertIn('set_evidence_owner "${OPERATOR_UID}" "${OPERATOR_GID}"', phase73)
+        self.assertNotIn('chown 10001:10001 "${temporary}"', phase73)
+
+        phase90b = Path("scripts/phase90b_isolated_beta_certification.sh").read_text()
+        self.assertIn('CERT_UID="${QDL_CERT_UID:-$(id -u)}"', phase90b)
+        self.assertIn('CERT_GID="${QDL_CERT_GID:-$(id -g)}"', phase90b)
+        self.assertNotIn('chown 10001:10001 "${temporary}"', phase90b)
 
     def test_window_rejects_regression_and_unbounded_growth(self):
         first = {"watermark_offset": 5, "last_open_time_ns": 100}
