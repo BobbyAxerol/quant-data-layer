@@ -163,8 +163,11 @@ class FeedDemandRegistry:
                 float(item.get("expires_at_unix") or 0),
             )
         items = sorted(aggregate.values(), key=lambda item: item["feed_key"])
+        owners = sorted({str(item.get("owner_id")) for item in records if item.get("owner_id")})
         return {
             "lease_count": len(records),
+            "owner_count": len(owners),
+            "owners": owners,
             "demanded_feed_count": len(items),
             "feed_keys": [item["feed_key"] for item in items],
             "items": items,

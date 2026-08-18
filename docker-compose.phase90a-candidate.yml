@@ -1,0 +1,105 @@
+services:
+  qdl_phase90a_redis:
+    image: redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 384mb
+      - --maxmemory-policy
+      - allkeys-lru
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /data:rw,nosuid,nodev,noexec,size=448m,uid=999,gid=999
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 448m
+    cpus: 0.35
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 20
+    networks: [qdl_phase90a_internal]
+    labels:
+      qdl.scope: phase90a-candidate
+      qdl.authority: none
+
+  qdl_phase90a_data_layer:
+    image: ${QDL_PHASE90A_IMAGE:?set QDL_PHASE90A_IMAGE to an immutable image digest}
+    user: "10001:10001"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100", "--no-access-log"]
+    restart: "no"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1536m
+    cpus: 1.5
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
+      - /home/qdl/.cache:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
+    volumes:
+      - qdl_phase90a_data:/app/data
+      - qdl_phase90a_logs:/app/logs
+    environment:
+      REDIS_HOST: qdl_phase90a_redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      DATA_LAYER_BINANCE_SOURCES: binance_futures_trade,binance_futures_kline
+      DATA_LAYER_DNSE_STREAM_ENABLED: "false"
+      DATA_LAYER_VNSTOCK_POLLER_ENABLED: "false"
+      DATA_LAYER_PRELOAD_WATCHDOG_ENABLED: "false"
+      STREAM_STRICT_FEED_HEALTH: "true"
+      STREAM_STALE_SECONDS: "180"
+      BINANCE_WS_FIRST_FRAME_TIMEOUT_SECONDS: "15"
+      BINANCE_WS_IDLE_TIMEOUT_SECONDS: "90"
+      BINANCE_WS_QUEUE_MAXSIZE: "10000"
+      BINANCE_WS_QUEUE_PUT_TIMEOUT_SECONDS: "2"
+      BINANCE_KLINE_RECOVERY_ENABLED: "true"
+      BINANCE_KLINE_RECOVERY_POLL_SECONDS: "2"
+      BINANCE_KLINE_RECOVERY_SETTLE_SECONDS: "1"
+      BINANCE_KLINE_RECOVERY_CONCURRENCY: "4"
+    ports:
+      - "127.0.0.1:${QDL_PHASE90A_PORT:-18120}:8100"
+    depends_on:
+      qdl_phase90a_redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/v1/health', timeout=1)"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+    networks: [qdl_phase90a_internal, qdl_phase90a_ingress]
+    labels:
+      qdl.scope: phase90a-candidate
+      qdl.authority: none
+      qdl.source-bind: "false"
+
+networks:
+  qdl_phase90a_internal:
+    internal: true
+    labels:
+      qdl.scope: phase90a-candidate
+  qdl_phase90a_ingress:
+    labels:
+      qdl.scope: phase90a-candidate
+      qdl.exposure: loopback-only
+
+volumes:
+  qdl_phase90a_data:
+    labels:
+      qdl.scope: phase90a-candidate
+      qdl.production-shared: "false"
+  qdl_phase90a_logs:
+    labels:
+      qdl.scope: phase90a-candidate
+      qdl.production-shared: "false"

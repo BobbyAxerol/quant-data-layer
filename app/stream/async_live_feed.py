@@ -5,8 +5,6 @@ import traceback
 import time
 import random
 import os
-import math
-import re
 
 import requests
 from websockets.asyncio.client import connect as websocket_connect
@@ -16,93 +14,17 @@ from app.stream.binance_ws import get_usdm_symbols
 from app.stream.feed_builder import build_urls, validate_symbols
 from app.stream.feed_parsers import PARSERS
 from app.stream.supervisor import StreamSupervisor
-from app.stream.demand_registry import feed_key_for
-from app.providers.binance import rest as binance_rest
 from app.config import (
     BINANCE_SPOT_SYMBOLS_FILE,
     BINANCE_WS_BATCH_SIZE,
     BINANCE_WS_MAX_CONNS_PER_SOURCE,
     BINANCE_WS_QUEUE_MAXSIZE,
+    BINANCE_WS_FIRST_FRAME_TIMEOUT_SECONDS,
+    BINANCE_WS_IDLE_TIMEOUT_SECONDS,
+    BINANCE_WS_QUEUE_PUT_TIMEOUT_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
-
-_STREAM_SYMBOL_RE = re.compile(r"[=/]([a-z0-9_]+)@(kline_[^/]+|trade)")
-
-
-def symbols_from_stream_url(url: str) -> list[str]:
-    return [match.group(1).upper() for match in _STREAM_SYMBOL_RE.finditer(url)]
-
-
-def _interval_seconds(interval: str) -> int:
-    unit = interval[-1]
-    value = int(interval[:-1])
-    return value * {"s": 1, "m": 60, "h": 3600, "d": 86400}.get(unit, 60)
-
-
-def _rest_kline_event(symbol: str, interval: str, row: list) -> dict:
-    return {
-        "e": "kline_recovery",
-        "E": int(time.time() * 1000),
-        "s": symbol,
-        "k": {
-            "t": row[0], "T": row[6], "s": symbol, "i": interval,
-            "o": row[1], "c": row[4], "h": row[2], "l": row[3], "v": row[5], "x": True,
-        },
-        "recovery_source": "BINANCE_REST_GAP_FILL",
-    }
-
-
-async def recover_demanded_kline_gap(
-    *,
-    source: str,
-    url: str,
-    interval: str,
-    queue: asyncio.Queue,
-    supervisor: StreamSupervisor,
-    shard_id: str,
-    demand_registry,
-) -> int:
-    if source.endswith("_trade") or "kline" not in url:
-        return 0
-    active = await demand_registry.snapshot()
-    demanded = set(active["feed_keys"])
-    symbols = [
-        symbol for symbol in symbols_from_stream_url(url)
-        if feed_key_for(source, "kline", symbol, interval) in demanded
-    ]
-    if not symbols:
-        return 0
-    supervisor.record_gap_detected(shard_id)
-    shard = supervisor.shards.get(shard_id)
-    outage_seconds = float(shard.last_outage_seconds or 0) if shard else 0.0
-    limit = min(1000, max(3, math.ceil(outage_seconds / max(1, _interval_seconds(interval))) + 2))
-    market = "usdm" if source.startswith("binance_futures") else "spot"
-    recovered = 0
-    now_ms = int(time.time() * 1000)
-    try:
-        for symbol in symbols:
-            payload = await asyncio.to_thread(
-                binance_rest.fetch_klines,
-                symbol,
-                interval,
-                limit,
-                None,
-                None,
-                market,
-            )
-            for row in payload.get("data") or []:
-                if len(row) <= 6 or int(row[6]) > now_ms:
-                    continue
-                await queue.put((source, _rest_kline_event(symbol, interval, row)))
-                recovered += 1
-        supervisor.record_gap_fill(shard_id, success=True)
-        return recovered
-    except Exception:
-        supervisor.record_gap_fill(shard_id, success=False)
-        logger.exception("[WS] demanded kline gap-fill failed source=%s shard=%s", source, shard_id)
-        return 0
-
 
 def get_spot_symbols(
     file_path: str = BINANCE_SPOT_SYMBOLS_FILE,
@@ -157,10 +79,10 @@ def get_parser_key(source: str):
 
 def coalesce_redis_items(items: list[dict]) -> list[dict]:
     """Keep only the latest event per Redis key/channel within a publisher batch."""
-    coalesced: dict[tuple[str, str], dict] = {}
-    order: list[tuple[str, str]] = []
+    coalesced: dict[tuple[str, str, str | None], dict] = {}
+    order: list[tuple[str, str, str | None]] = []
     for item in items:
-        dedupe_key = (item.get("key"), item.get("channel"))
+        dedupe_key = (item.get("key"), item.get("channel"), item.get("coalesce_id"))
         if dedupe_key not in coalesced:
             order.append(dedupe_key)
         coalesced[dedupe_key] = item
@@ -176,6 +98,65 @@ def _source_market_namespace(source: str) -> str | None:
     return None
 
 
+class StreamDataTimeout(RuntimeError):
+    """A connected websocket failed to produce valid provider data in time."""
+
+
+class StreamBackpressureTimeout(RuntimeError):
+    """The bounded publisher queue could not accept a provider event in time."""
+
+
+def valid_provider_frame(source: str, item: object, interval: str = "1m") -> bool:
+    """Return true only for a complete frame belonging to the configured feed."""
+    if not isinstance(item, dict):
+        return False
+    if source.endswith("_trade"):
+        required = ("s", "p", "q", "t", "T")
+        return item.get("e") == "trade" and all(item.get(field) is not None for field in required)
+    if source.endswith("_kline"):
+        kline = item.get("k")
+        required = ("s", "i", "t", "T", "o", "h", "l", "c", "v", "x")
+        return (
+            item.get("e") == "kline"
+            and isinstance(kline, dict)
+            and str(kline.get("i")) == interval
+            and all(kline.get(field) is not None for field in required)
+        )
+    return False
+
+
+def provider_items(source: str, payload: object, interval: str = "1m") -> list[dict]:
+    """Extract validated data frames while ignoring subscription ACKs."""
+    if not isinstance(payload, dict):
+        raise ValueError("websocket payload must be an object")
+    if "data" not in payload and "id" in payload and "result" in payload:
+        return []
+    data = payload.get("data", payload)
+    items = data if isinstance(data, list) else [data]
+    if not items or not all(valid_provider_frame(source, item, interval) for item in items):
+        raise ValueError(f"invalid or wrong-feed provider frame for {source}")
+    return items
+
+
+async def _put_provider_item(
+    queue: asyncio.Queue,
+    item: tuple[str, dict],
+    *,
+    supervisor: StreamSupervisor,
+    timeout_seconds: float,
+) -> None:
+    try:
+        queue.put_nowait(item)
+    except asyncio.QueueFull:
+        supervisor.record_queue_pressure()
+        try:
+            await asyncio.wait_for(queue.put(item), timeout=max(0.05, timeout_seconds))
+        except asyncio.TimeoutError as exc:
+            raise StreamBackpressureTimeout(
+                f"publisher queue remained full for {timeout_seconds:.3f}s"
+            ) from exc
+
+
 async def handle_ws(
     url: str,
     queue: asyncio.Queue,
@@ -187,80 +168,72 @@ async def handle_ws(
     max_backoff: int = 300,
     demand_registry=None,
     interval: str = "1m",
+    first_frame_timeout_seconds: float = BINANCE_WS_FIRST_FRAME_TIMEOUT_SECONDS,
+    idle_timeout_seconds: float = BINANCE_WS_IDLE_TIMEOUT_SECONDS,
+    queue_put_timeout_seconds: float = BINANCE_WS_QUEUE_PUT_TIMEOUT_SECONDS,
 ):
-    """
-    Connect and stream messages from websocket. Reconnects on error.
-    parser_mode: "raw" (default) forwards original payload; "unified" forwards parsed data.
-    """
+    """Receive valid provider frames with bounded readiness and backpressure."""
+    del demand_registry  # Kept in the public signature for V1 caller compatibility.
     backoff = reconnect_delay
     last_connected_at = None
     while True:
         try:
             supervisor.mark_connecting(shard_id)
-            logger.info(f"[WS] Connecting {source} -> {url[:60]}...")
+            logger.info("[WS] Connecting %s -> %s...", source, url[:60])
             async with websocket_connect(url, ping_interval=30, max_size=None) as ws:
-                logger.info(f"[WS] Connected {source}")
-                recovered = supervisor.mark_connected(shard_id)
+                logger.info("[WS] Connected %s", source)
+                supervisor.mark_connected(shard_id)
                 last_connected_at = time.monotonic()
-                if recovered and demand_registry is not None:
-                    filled = await recover_demanded_kline_gap(
-                        source=source,
-                        url=url,
-                        interval=interval,
-                        queue=queue,
-                        supervisor=supervisor,
-                        shard_id=shard_id,
-                        demand_registry=demand_registry,
+                session_has_valid_frame = False
+
+                while True:
+                    timeout = (
+                        idle_timeout_seconds
+                        if session_has_valid_frame
+                        else first_frame_timeout_seconds
                     )
-                    if filled:
-                        logger.info(
-                            "[WS] demanded kline gap-fill complete source=%s shard=%s rows=%s",
-                            source,
-                            shard_id,
-                            filled,
-                        )
-
-                async for msg in ws:
                     try:
-                        supervisor.mark_message(shard_id)
-                        payload = json.loads(msg)
-                        data = payload.get("data") or payload.get("result") or payload
-                        if not data:
-                            continue
+                        msg = await asyncio.wait_for(ws.recv(), timeout=max(0.05, timeout))
+                    except asyncio.TimeoutError as exc:
+                        reason = "idle" if session_has_valid_frame else "first_frame"
+                        supervisor.mark_data_timeout(shard_id, reason)
+                        raise StreamDataTimeout(
+                            f"{source} {reason} timeout after {timeout:.3f}s"
+                        ) from exc
 
-                        output = data
-                        if parser_mode == "unified":
-                            parser_key = get_parser_key(source)
-                            if parser_key:
-                                parser = PARSERS.get(parser_key)
+                    try:
+                        raw_items = provider_items(source, json.loads(msg), interval)
+                        if not raw_items:
+                            continue
+                        supervisor.mark_message(shard_id)
+                        session_has_valid_frame = True
+                        backoff = reconnect_delay
+
+                        for data in raw_items:
+                            output = data
+                            if parser_mode == "unified":
+                                parser = PARSERS.get(get_parser_key(source) or "")
                                 if parser:
                                     parsed = parser(data)
                                     if parsed is None:
                                         continue
                                     output = parsed
-
-                        items = output if isinstance(output, list) else [output]
-                        for item in items:
-                            # We put to the queue for the Redis publisher
-                            # Structure: (source, item)
-                            try:
-                                queue.put_nowait((source, item))
-                            except asyncio.QueueFull:
-                                # Pop one to make room
-                                try:
-                                    queue.get_nowait()
-                                    queue.task_done()
-                                except asyncio.QueueEmpty:
-                                    pass
-                                supervisor.record_queue_drop(source, shard_id)
-                                queue.put_nowait((source, item))
-                                
-                    except Exception as e:
-                        supervisor.mark_parse_error(shard_id, e)
-                        logger.error(f"[WS] parse error: {e}")
-                        
-        except InvalidStatus as e:
-            status = getattr(getattr(e, "response", None), "status_code", None)
+                            items = output if isinstance(output, list) else [output]
+                            for item in items:
+                                await _put_provider_item(
+                                    queue,
+                                    (source, item),
+                                    supervisor=supervisor,
+                                    timeout_seconds=queue_put_timeout_seconds,
+                                )
+                    except StreamBackpressureTimeout:
+                        supervisor.mark_data_timeout(shard_id, "publisher_backpressure")
+                        raise
+                    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                        supervisor.mark_parse_error(shard_id, exc)
+                        logger.warning("[WS] rejected provider frame source=%s error=%s", source, exc)
+        except InvalidStatus as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
             elapsed = (time.monotonic() - last_connected_at) if last_connected_at else 0
             if status == 429:
                 backoff = min(max(backoff * 2, reconnect_delay * 2), max_backoff)
@@ -269,28 +242,37 @@ async def handle_ws(
             if elapsed >= 60:
                 backoff = reconnect_delay
             sleep_for = backoff + random.uniform(0, min(5, backoff * 0.2))
-            supervisor.mark_reconnect(shard_id, e)
-            logger.error(f"[WS] connection rejected ({source}): HTTP {status}. Reconnecting in {int(sleep_for)}s...")
+            supervisor.mark_reconnect(shard_id, exc)
+            logger.error(
+                "[WS] connection rejected (%s): HTTP %s. Reconnecting in %ss...",
+                source,
+                status,
+                int(sleep_for),
+            )
             await asyncio.sleep(sleep_for)
-        except (ConnectionClosedError, ConnectionClosedOK) as e:
+        except (ConnectionClosedError, ConnectionClosedOK) as exc:
             elapsed = (time.monotonic() - last_connected_at) if last_connected_at else 0
-            if elapsed >= 60:
-                backoff = reconnect_delay
-            else:
-                backoff = min(backoff + 5, max_backoff)
+            backoff = reconnect_delay if elapsed >= 60 else min(backoff + 5, max_backoff)
             sleep_for = backoff + random.uniform(0, min(5, backoff * 0.2))
-            supervisor.mark_reconnect(shard_id, e)
-            logger.error(f"[WS] connection closed ({source}): {e}. Reconnecting in {int(sleep_for)}s...")
+            supervisor.mark_reconnect(shard_id, exc)
+            logger.error(
+                "[WS] connection closed (%s): %s. Reconnecting in %ss...",
+                source,
+                exc,
+                int(sleep_for),
+            )
             await asyncio.sleep(sleep_for)
-        except Exception as e:
+        except Exception as exc:
             elapsed = (time.monotonic() - last_connected_at) if last_connected_at else 0
-            if elapsed >= 60:
-                backoff = reconnect_delay
-            else:
-                backoff = min(backoff + 5, max_backoff)
+            backoff = reconnect_delay if elapsed >= 60 else min(backoff + 5, max_backoff)
             sleep_for = backoff + random.uniform(0, min(5, backoff * 0.2))
-            supervisor.mark_reconnect(shard_id, e)
-            logger.error(f"[WS] connection error ({source}): {e}. Reconnecting in {int(sleep_for)}s...")
+            supervisor.mark_reconnect(shard_id, exc)
+            logger.error(
+                "[WS] connection error (%s): %s. Reconnecting in %ss...",
+                source,
+                exc,
+                int(sleep_for),
+            )
             await asyncio.sleep(sleep_for)
 
 
@@ -387,11 +369,20 @@ async def redis_publisher_task(
                         continue
                         
                     sym = sym.upper()
-                    key = f"kline:{interval}:{sym}"
-                    channel = f"stream:kline:{interval}:{sym}"
-                    redis_items.append(
-                        {"key": key, "channel": channel, "data": raw_data, "source": source}
-                    )
+                    kline = raw_data.get("k") if isinstance(raw_data, dict) else None
+                    event_interval = str((kline or {}).get("i") or interval)
+                    key = f"kline:{event_interval}:{sym}"
+                    channel = f"stream:kline:{event_interval}:{sym}"
+                    redis_item = {
+                        "key": key,
+                        "channel": channel,
+                        "data": raw_data,
+                        "source": source,
+                    }
+                    if isinstance(raw_data, dict) and raw_data.get("recovery_source"):
+                        kline = raw_data.get("k") or {}
+                        redis_item["coalesce_id"] = f"recovery:{kline.get('t')}"
+                    redis_items.append(redis_item)
                     
                 elif source == "dnse":
                     sym = data.get("symbol", "")
@@ -424,6 +415,7 @@ async def start_stream(
     max_conns_per_source: int | None = None,
     supervisor: StreamSupervisor | None = None,
     demand_registry=None,
+    queue: asyncio.Queue | None = None,
 ):
     """
     Main entrypoint used by services.
@@ -437,7 +429,7 @@ async def start_stream(
     )
     
     # 1. Setup Queue and Publisher
-    queue = asyncio.Queue(maxsize=BINANCE_WS_QUEUE_MAXSIZE)
+    queue = queue if queue is not None else asyncio.Queue(maxsize=BINANCE_WS_QUEUE_MAXSIZE)
     supervisor.record_queue_size(queue.qsize(), queue.maxsize)
     publisher_task = asyncio.create_task(redis_publisher_task(queue, redis_cache, interval, supervisor))
     

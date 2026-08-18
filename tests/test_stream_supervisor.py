@@ -30,6 +30,7 @@ class TestStreamSupervisor(unittest.TestCase):
 
         shard_id = supervisor.register_shard("binance_spot_trade", "wss://example")
         supervisor.mark_connected(shard_id)
+        supervisor.mark_message(shard_id)
         supervisor.record_publish(
             {
                 "key": "trade:price:BTCUSDT",
@@ -51,6 +52,7 @@ class TestStreamSupervisor(unittest.TestCase):
         supervisor = StreamSupervisor()
         shard_id = supervisor.register_shard("binance_spot_kline", "wss://example")
         supervisor.mark_connected(shard_id)
+        supervisor.mark_message(shard_id)
         supervisor.record_queue_drop("binance_spot_kline", shard_id)
 
         snapshot = supervisor.snapshot()
@@ -63,6 +65,7 @@ class TestStreamSupervisor(unittest.TestCase):
         supervisor = StreamSupervisor(strict_feed_health=True)
         shard_id = supervisor.register_shard("binance_spot_kline", "wss://example")
         supervisor.mark_connected(shard_id)
+        supervisor.mark_message(shard_id)
         supervisor.record_queue_drop("binance_spot_kline", shard_id)
 
         snapshot = supervisor.snapshot()
@@ -74,6 +77,7 @@ class TestStreamSupervisor(unittest.TestCase):
         supervisor.queue_drop_window_seconds = 1
         shard_id = supervisor.register_shard("binance_spot_kline", "wss://example")
         supervisor.mark_connected(shard_id)
+        supervisor.mark_message(shard_id)
         supervisor.record_queue_drop("binance_spot_kline", shard_id)
 
         snapshot = supervisor.snapshot(now=time.time() + 2)
@@ -86,6 +90,7 @@ class TestStreamSupervisor(unittest.TestCase):
         shard_id = supervisor.register_shard("binance_spot_trade", "wss://example")
         supervisor.expect_feed("binance_spot_trade", "trade", "ILLQUSDT")
         supervisor.mark_connected(shard_id)
+        supervisor.mark_message(shard_id)
 
         snapshot = supervisor.snapshot(now=supervisor.started_at + 10)
         self.assertEqual(snapshot["status"], "ok")
@@ -98,8 +103,8 @@ class TestStreamSupervisor(unittest.TestCase):
         supervisor.expect_feed("binance_spot_kline", "kline", "BTCUSDT", "1m")
         supervisor.mark_connected(shard_id)
 
-        snapshot = supervisor.snapshot(now=supervisor.started_at + 10)
-        self.assertEqual(snapshot["status"], "ok")
+        snapshot = supervisor.snapshot(now=supervisor.started_at + 20)
+        self.assertEqual(snapshot["status"], "degraded")
         self.assertEqual(snapshot["feeds"]["health_missing_count"], 1)
 
     def test_missing_kline_after_startup_grace_degrades_strict_health(self):
@@ -108,7 +113,7 @@ class TestStreamSupervisor(unittest.TestCase):
         supervisor.expect_feed("binance_spot_kline", "kline", "BTCUSDT", "1m")
         supervisor.mark_connected(shard_id)
 
-        snapshot = supervisor.snapshot(now=supervisor.started_at + 10)
+        snapshot = supervisor.snapshot(now=supervisor.started_at + 20)
         self.assertEqual(snapshot["status"], "degraded")
         self.assertTrue(snapshot["strict_feed_health"])
 

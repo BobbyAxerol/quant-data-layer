@@ -2657,6 +2657,139 @@ must prove:
 
 #### 9.0 Production Prerequisites And Exact Slice Approval
 
+##### 9.0-A Runtime Correctness Closure
+
+**Status:** `IN_PROGRESS`
+
+**Purpose:** Close correctness and deployment-boundary defects discovered after
+the server migration before any Phase 9 authority implementation or Rust
+canary. This slice changes no public V1 contract, source authority, canonical
+writer or running production container until isolated evidence passes and a
+separate operator-approved deployment is prepared.
+
+**Observed baseline (2026-08-18):**
+
+- The running service is the V1-only `data-layer:v0.1.0` image with host source
+  bind-mounted read-write at `/app`; OpenAPI exposes 40 V1 routes and zero V2
+  routes. No Phase 7 beta, Phase 8 Rust, Kafka or OTel role is active.
+- Binance USD-M TRADE is producing authentic frames, but all eight configured
+  USD-M KLINE shards have remained connected with `message_count=0`. All 734
+  expected one-minute kline feeds are missing while `/v1/health` incorrectly
+  reports `binance_kline_stream=true`.
+- Independent read-only probes reproduce provider ACK/connected-without-data:
+  raw trade and book-ticker produce frames, while kline, aggregate-trade and
+  mark-price subscriptions time out after successful connection/subscription.
+- Feed demand leases are zero while the runtime still opens the broad USD-M
+  universe. Historical queue-drop count is 138,060; the measured recent
+  five-minute delta is zero.
+- The production container has no explicit CPU, memory or PID limit. Redis and
+  V1 HTTP remain available; no production state was mutated during discovery.
+
+**Invariants:**
+
+- A WebSocket handshake or subscription ACK is transport state, never data
+  readiness. Enabled feeds that do not produce a valid provider frame inside
+  their declared first-frame/staleness deadline fail closed to a typed degraded
+  state.
+- Recovery uses provider-authentic Binance REST closed bars for active demand
+  only. It never fabricates candles, marks the open candle final, substitutes
+  OKX data as Binance authority or hides WebSocket degradation.
+- Trade/book canonical events are not silently coalesced or dropped. Existing
+  legacy latest-state projection behavior remains contract-compatible while
+  queue loss and recovery state stay observable.
+- Tests use isolated processes, Redis prefixes and Compose project names. They
+  do not restart V1, flush shared Redis, mutate production Parquet or reuse live
+  consumer groups. Disposable state is removed after evidence capture.
+
+**Implementation tasks:**
+
+1. Split stream transport, source and per-feed readiness. Report TRADE and
+   KLINE independently; expose connected shard count, producing shard count,
+   first-frame deadline, stale deadline, recovery source and active demand.
+2. Add a bounded data-frame watchdog. A connected shard with no valid frame by
+   deadline enters `DATA_UNAVAILABLE`, records the outage and reconnects with
+   jittered backoff rather than remaining green forever.
+3. Add one demand-scoped closed-kline recovery loop. It batches and rate-limits
+   Binance REST requests, emits only fully closed rows with explicit
+   `BINANCE_REST_GAP_FILL` provenance, deduplicates by symbol/interval/open time,
+   and stops after demand leases expire.
+4. Make demand registry ownership and TTL visible. REST/SDK demand renewal must
+   not make reads fail, but missing registration cannot authorize broad source
+   health or resource claims.
+5. Correct `/v1/health` without changing its response keys: boolean TRADE/KLINE
+   fields reflect their own data readiness; top-level status degrades for an
+   enabled unavailable source while market-closed DNSE remains healthy by
+   policy. Add detailed source readiness under the existing nested supervisor
+   payload.
+6. Add an immutable production Compose overlay with no host source bind and
+   explicit CPU, memory, PID, read-only-root, tmpfs and writable data/log/cache
+   boundaries. Keep the current deployment untouched; cutover requires a
+   digest-pinned image, preflight and operator approval.
+7. Freeze compact machine-readable evidence and an implementation report,
+   including authentic probe results, unit/integration counts, V1 golden diff,
+   resource limits, production-unchanged proof and cleanup.
+
+**Implementation checkpoint (2026-08-18):**
+
+- Implemented valid-frame watchdog, independent source readiness, bounded queue
+  backpressure and demand-only Binance closed-kline REST recovery. Removed the
+  reconnect-only recovery duplicate so one manager owns scheduling, dedup and
+  backoff.
+- Recovery preserves the provider interval from `k.i`, rejects open/invalid rows,
+  retains explicit provenance and expires work with the final demand lease.
+- V1 health keys remain unchanged; TRADE and KLINE booleans now represent their
+  own data readiness. Added owner visibility to the existing demand snapshot.
+- Added immutable isolated Compose candidate with non-root/read-only execution,
+  no source bind, dedicated state, loopback-only ingress and CPU/RAM/PID limits.
+- Deterministic verification passed: targeted runtime matrix 34/34, full repository
+  suite 343/343 with 5 documented skips, compile/diff checks clean, and live-vs-
+  candidate OpenAPI path diff 40/40 with zero additions or removals.
+- Pending in this checkpoint: digest-pinned candidate build, isolated real-provider
+  smoke, resource/cleanup evidence and final Phase 9.0-A report. Production V1
+  remains unchanged.
+
+**Verification cases:**
+
+- Valid TRADE plus valid KLINE frames make only their matching source ready.
+- Connected/ACKed KLINE with zero frames misses the first-frame deadline and is
+  degraded; `binance_kline_stream` must be false.
+- One dead kline shard cannot mark other feed types unavailable, and one healthy
+  trade shard cannot make kline healthy.
+- Stale, malformed and wrong-feed frames do not satisfy readiness.
+- Active kline demand receives provider-authentic fully closed REST recovery;
+  open rows, duplicates and non-demanded symbols are rejected.
+- REST timeout, 429/5xx, partial batch, reconnect, Redis outage, queue pressure,
+  lease expiry and process restart remain bounded and observable.
+- V1 OpenAPI/golden payloads and legacy Redis keys/channels do not change.
+- Isolated real-provider smoke proves the actual provider behavior and recovery
+  path; generated/simulated data is limited to deterministic failure tests and
+  is never counted as provider evidence.
+- Immutable image runs as non-root without source bind, honors resource limits,
+  passes liveness/readiness/data-readiness probes and leaves V1 unchanged.
+
+**Exit gate:**
+
+- Zero false-green source readiness in the verification matrix.
+- Zero fabricated/open-as-final bars and zero unexplained duplicate recovery
+  publication.
+- Zero V1 contract/golden regression and zero production mutation.
+- Bounded CPU, memory, queue, request rate and retry/backoff under normal,
+  outage and recovery cases.
+- All disposable containers, networks, volumes, Redis prefixes and captures are
+  removed; compact checksummed evidence remains.
+- Phase 9.1 remains blocked. Completing 9.0-A does not satisfy production OTel,
+  independent failure-domain DR, workload identity, external secrets,
+  signature admission, consumer registration or exact-slice approval.
+
+**Rollback:**
+
+- Do not deploy the candidate overlay; continue the unchanged V1 container.
+- If a later approved deployment regresses, restore the immutable V1 image and
+  source configuration, remove only the candidate namespace and verify V1
+  OpenAPI/Redis compatibility plus provider data readiness.
+- REST recovery can be disabled independently; source health must remain
+  degraded rather than reverting to connected-is-ready semantics.
+
 - Close every applicable Phase 6 `NO-GO` blocker with real infrastructure
   evidence.
 - Deploy production durable transport, OTel collector/dashboards/alerts,

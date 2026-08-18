@@ -28,6 +28,13 @@ from fastapi import FastAPI, HTTPException
 from app.config import (
     PRELOAD_DAILY_RUN_TIME,
     PRELOAD_DIR,
+    BINANCE_WS_QUEUE_MAXSIZE,
+    BINANCE_WS_FIRST_FRAME_TIMEOUT_SECONDS,
+    BINANCE_WS_QUEUE_PUT_TIMEOUT_SECONDS,
+    BINANCE_KLINE_RECOVERY_ENABLED,
+    BINANCE_KLINE_RECOVERY_POLL_SECONDS,
+    BINANCE_KLINE_RECOVERY_SETTLE_SECONDS,
+    BINANCE_KLINE_RECOVERY_CONCURRENCY,
     STREAM_STALE_SECONDS,
     STREAM_STRICT_FEED_HEALTH,
 )
@@ -43,6 +50,7 @@ from app.api import (
 )
 from app.cache.redis_cache import RedisCache
 from app.stream.async_live_feed import start_stream
+from app.stream.kline_recovery import DemandKlineRecovery, KlineRecoveryConfig
 from app.ingestion.supervisor import StreamSupervisor
 from app.stream.vnstock_poller import VnstockPoller
 from app.stream.dnse_ws import DnseStreamManager
@@ -74,9 +82,12 @@ dnse_stream_manager = None  # Will be initialized in lifespan
 preload_thread = None
 preload_stop_event = threading.Event()
 unified_stream_task = None
+kline_recovery_manager = None
+kline_recovery_task = None
 binance_stream_supervisor = StreamSupervisor(
     stale_after_seconds=STREAM_STALE_SECONDS,
     strict_feed_health=STREAM_STRICT_FEED_HEALTH,
+    first_frame_timeout_seconds=BINANCE_WS_FIRST_FRAME_TIMEOUT_SECONDS,
 )
 preload_daily_state_dir = os.path.join(os.path.dirname(PRELOAD_DIR), "_state")
 
@@ -261,14 +272,18 @@ async def lifespan(app: FastAPI):
     - Start the vnstock REST poller (FALLBACK only if DNSE stale)
     """
     global dnse_stream_manager, unified_stream_task, binance_stream_supervisor
+    global kline_recovery_manager, kline_recovery_task
     logger.info("=== data_layer service starting ===")
 
     await redis_cache.init_ping()
     runtime_sources = RuntimeSourceConfig.from_env()
     logger.info("Runtime source configuration: %s", runtime_sources.public_summary())
 
-    # 1. Unified stream (Binance)
+    # 1. Unified stream (Binance) and demand-only closed-kline recovery.
+    kline_recovery_manager = None
+    kline_recovery_task = None
     if runtime_sources.binance_sources:
+        stream_queue = asyncio.Queue(maxsize=BINANCE_WS_QUEUE_MAXSIZE)
         unified_stream_task = asyncio.create_task(
             start_stream(
                 redis_cache,
@@ -276,8 +291,26 @@ async def lifespan(app: FastAPI):
                 supervisor=binance_stream_supervisor,
                 demand_registry=demand_registry,
                 enabled_sources=list(runtime_sources.binance_sources),
+                queue=stream_queue,
             )
         )
+        if (
+            BINANCE_KLINE_RECOVERY_ENABLED
+            and "binance_futures_kline" in runtime_sources.binance_sources
+        ):
+            kline_recovery_manager = DemandKlineRecovery(
+                queue=stream_queue,
+                redis_cache=redis_cache,
+                demand_registry=demand_registry,
+                config=KlineRecoveryConfig(
+                    enabled=True,
+                    poll_seconds=BINANCE_KLINE_RECOVERY_POLL_SECONDS,
+                    settle_seconds=BINANCE_KLINE_RECOVERY_SETTLE_SECONDS,
+                    concurrency=BINANCE_KLINE_RECOVERY_CONCURRENCY,
+                    queue_put_timeout_seconds=BINANCE_WS_QUEUE_PUT_TIMEOUT_SECONDS,
+                ),
+            )
+            kline_recovery_task = asyncio.create_task(kline_recovery_manager.run())
         logger.info("Unified async Binance streams started: %s", runtime_sources.binance_sources)
     else:
         unified_stream_task = None
@@ -333,8 +366,13 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down services...")
     
-    if unified_stream_task:
-        unified_stream_task.cancel()
+    async_tasks = [
+        task for task in (kline_recovery_task, unified_stream_task) if task is not None
+    ]
+    for task in async_tasks:
+        task.cancel()
+    if async_tasks:
+        await asyncio.gather(*async_tasks, return_exceptions=True)
         
     if vn_poller:
         vn_poller.stop()
@@ -366,6 +404,7 @@ app.state.context = DataLayerContext(
     redis_cache=redis_cache,
     binance_stream_supervisor=binance_stream_supervisor,
     get_dnse_stream_manager=lambda: dnse_stream_manager,
+    get_kline_recovery_manager=lambda: kline_recovery_manager,
     demand_registry=demand_registry,
     preload_topup_coordinator=preload_topup_coordinator,
 )

@@ -10,7 +10,6 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app.history.topup_coordinator import PreloadTopupBackoff, PreloadTopupCoordinator
-from app.stream.async_live_feed import recover_demanded_kline_gap
 from app.stream.binance_ws import get_usdm_symbols
 from app.stream.demand_registry import FeedDemand, FeedDemandRegistry
 from app.stream.supervisor import StreamSupervisor
@@ -196,6 +195,7 @@ class DemandHealthTests(unittest.TestCase):
         supervisor = StreamSupervisor(startup_grace_seconds=0)
         shard = supervisor.register_shard("binance_spot_kline", "wss://example")
         supervisor.mark_connected(shard)
+        supervisor.mark_message(shard)
         supervisor.expect_feed("binance_spot_kline", "kline", "BROADUSDT", "1m")
 
         broad = supervisor.snapshot(now=supervisor.started_at + 10)
@@ -213,6 +213,7 @@ class DemandHealthTests(unittest.TestCase):
         supervisor = StreamSupervisor(startup_grace_seconds=0)
         shard = supervisor.register_shard("binance_spot_trade", "wss://example")
         supervisor.mark_connected(shard)
+        supervisor.mark_message(shard)
         supervisor.record_publish({
             "key": "trade:price:binance_spot:BTCUSDT",
             "data": {"source": "binance_spot_trade", "event_time": int(time.time() * 1000)},
@@ -225,81 +226,6 @@ class DemandHealthTests(unittest.TestCase):
 
         self.assertEqual(snapshot["status"], "degraded")
         self.assertEqual(snapshot["feeds"]["demanded_missing_count"], 1)
-
-
-class ReconnectGapFillTests(unittest.IsolatedAsyncioTestCase):
-    async def test_gap_fill_fetches_only_demanded_symbol(self):
-        class Demands:
-            async def snapshot(self):
-                return {"feed_keys": ["kline:binance_usdm:1m:BTCUSDT"]}
-
-        supervisor = StreamSupervisor()
-        shard = supervisor.register_shard(
-            "binance_futures_kline",
-            "wss://fstream.binance.com/stream?streams=btcusdt@kline_1m/ethusdt@kline_1m",
-        )
-        supervisor.shards[shard].last_outage_seconds = 120
-        queue = asyncio.Queue()
-        calls = []
-
-        def fetch(symbol, interval, limit, start, end, market):
-            calls.append((symbol, interval, limit, market))
-            return {
-                "data": [[1, "10", "12", "9", "11", "5", 2, "", "", "", "", ""]]
-            }
-
-        with patch("app.stream.async_live_feed.binance_rest.fetch_klines", side_effect=fetch):
-            recovered = await recover_demanded_kline_gap(
-                source="binance_futures_kline",
-                url=supervisor.shards[shard].url_preview,
-                interval="1m",
-                queue=queue,
-                supervisor=supervisor,
-                shard_id=shard,
-                demand_registry=Demands(),
-            )
-
-        self.assertEqual(recovered, 1)
-        self.assertEqual([item[0] for item in calls], ["BTCUSDT"])
-        self.assertEqual(supervisor.shards[shard].gap_fill_success_count, 1)
-        source, event = await queue.get()
-        self.assertEqual(source, "binance_futures_kline")
-        self.assertEqual(event["recovery_source"], "BINANCE_REST_GAP_FILL")
-
-    async def test_gap_fill_never_marks_current_open_candle_closed(self):
-        class Demands:
-            async def snapshot(self):
-                return {"feed_keys": ["kline:binance_usdm:1m:BTCUSDT"]}
-
-        now_ms = int(time.time() * 1000)
-        supervisor = StreamSupervisor()
-        shard = supervisor.register_shard(
-            "binance_futures_kline",
-            "wss://fstream.binance.com/stream?streams=btcusdt@kline_1m",
-        )
-        supervisor.shards[shard].last_outage_seconds = 60
-        queue = asyncio.Queue()
-        closed = [now_ms - 120_000, "1", "2", "0.5", "1.5", "10", now_ms - 60_000]
-        open_row = [now_ms - 30_000, "1", "2", "0.5", "1.5", "10", now_ms + 30_000]
-
-        with patch(
-            "app.stream.async_live_feed.binance_rest.fetch_klines",
-            return_value={"data": [closed, open_row]},
-        ):
-            recovered = await recover_demanded_kline_gap(
-                source="binance_futures_kline",
-                url=supervisor.shards[shard].url_preview,
-                interval="1m",
-                queue=queue,
-                supervisor=supervisor,
-                shard_id=shard,
-                demand_registry=Demands(),
-            )
-
-        self.assertEqual(recovered, 1)
-        _, event = await queue.get()
-        self.assertEqual(event["k"]["T"], now_ms - 60_000)
-        self.assertTrue(event["k"]["x"])
 
 
 if __name__ == "__main__":
