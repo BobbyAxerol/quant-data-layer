@@ -1,0 +1,371 @@
+schema: qdl.v2.stable-source-bindings.v1
+canonical_stream: md.canonical.v2
+catalog_revision: 1
+source_policy_revision: 1
+authority_revision: 1
+instruments:
+- instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  instrument_id: BINANCE.USDM.PERPETUAL.BTC-USDT
+  metadata_revision: 1
+  venue: BINANCE
+  market: USDM
+  product_type: PERPETUAL
+  canonical_symbol: BTC-USDT
+  native_symbol: BTCUSDT
+  asset_class: DERIVATIVE
+  base_asset: BTC
+  quote_asset: USDT
+  settlement_asset: USDT
+  price_tick: '0.10'
+  quantity_step: '0.001'
+  contract_multiplier: '1'
+  session_calendar_id: CRYPTO_24X7
+  attributes:
+    contract_type: PERPETUAL
+- instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
+  instrument_id: BINANCE.SPOT.SPOT.BTC-USDT
+  metadata_revision: 1
+  venue: BINANCE
+  market: SPOT
+  product_type: SPOT
+  canonical_symbol: BTC-USDT
+  native_symbol: BTCUSDT
+  asset_class: CRYPTO
+  base_asset: BTC
+  quote_asset: USDT
+  settlement_asset: USDT
+  price_tick: '0.10'
+  quantity_step: '0.000001'
+  contract_multiplier: '1'
+  session_calendar_id: CRYPTO_24X7
+  attributes: {}
+- instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  instrument_id: OKX.SWAP.PERPETUAL.BTC-USDT
+  metadata_revision: 1
+  venue: OKX
+  market: SWAP
+  product_type: PERPETUAL
+  canonical_symbol: BTC-USDT
+  native_symbol: BTC-USDT-SWAP
+  asset_class: DERIVATIVE
+  base_asset: BTC
+  quote_asset: USDT
+  settlement_asset: USDT
+  price_tick: '0.10'
+  quantity_step: '1'
+  contract_multiplier: '0.01'
+  session_calendar_id: CRYPTO_24X7
+  attributes:
+    instrument_type: SWAP
+    contract_type: linear
+- instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
+  instrument_id: OKX.SPOT.SPOT.BTC-USDT
+  metadata_revision: 1
+  venue: OKX
+  market: SPOT
+  product_type: SPOT
+  canonical_symbol: BTC-USDT
+  native_symbol: BTC-USDT
+  asset_class: CRYPTO
+  base_asset: BTC
+  quote_asset: USDT
+  settlement_asset: USDT
+  price_tick: '0.10'
+  quantity_step: '0.000001'
+  contract_multiplier: '1'
+  session_calendar_id: CRYPTO_24X7
+  attributes:
+    instrument_type: SPOT
+- instrument_uid: d0ac3d4c-2374-5690-8af5-b970448f91d3
+  instrument_id: HNX.VN_DERIVATIVES.FUTURE.VN30F1M
+  metadata_revision: 1
+  venue: HNX
+  market: VN_DERIVATIVES
+  product_type: FUTURE
+  canonical_symbol: VN30F1M
+  native_symbol: VN30F1M
+  asset_class: DERIVATIVE
+  base_asset: VN30
+  quote_asset: VND
+  settlement_asset: VND
+  price_tick: '0.1'
+  quantity_step: '1'
+  contract_multiplier: '100000'
+  session_calendar_id: VN_DERIVATIVES
+  attributes:
+    continuous_series: 'true'
+    roll_policy: front_month_provider_alias
+- instrument_uid: 6f025ab7-c0b4-5e08-866d-34ce62aef52f
+  instrument_id: HOSE.EQUITIES.COMMON_STOCK.FPT
+  metadata_revision: 1
+  venue: HOSE
+  market: EQUITIES
+  product_type: COMMON_STOCK
+  canonical_symbol: FPT
+  native_symbol: FPT
+  asset_class: EQUITY
+  base_asset: FPT
+  quote_asset: VND
+  settlement_asset: VND
+  price_tick: '100'
+  quantity_step: '100'
+  contract_multiplier: '1'
+  session_calendar_id: VN_EQUITIES
+  attributes: {}
+bindings:
+- binding_id: binance-usdm-btcusdt-trade
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: TRADE
+  interval: null
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-trade-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: true
+- binding_id: binance-usdm-btcusdt-quote
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: QUOTE
+  interval: null
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-quote-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5000
+    require_final_bar: false
+    continuous_calendar: true
+- binding_id: binance-usdm-btcusdt-bar-1m
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 1m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-rest/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: true
+- binding_id: binance-spot-btcusdt-trade
+  instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
+  feed: TRADE
+  interval: null
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-spot-btcusdt-trade-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-spot/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: true
+- binding_id: binance-spot-btcusdt-quote
+  instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
+  feed: QUOTE
+  interval: null
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-spot-btcusdt-quote-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-spot/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5000
+    require_final_bar: false
+    continuous_calendar: true
+- binding_id: binance-spot-btcusdt-bar-1m
+  instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
+  feed: BAR
+  interval: 1m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-spot-btcusdt-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-rest/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: true
+- binding_id: okx-swap-btcusdt-trade
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: TRADE
+  interval: null
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btcusdt-trade-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: true
+- binding_id: okx-swap-btcusdt-quote
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: QUOTE
+  interval: null
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btcusdt-quote-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5000
+    require_final_bar: false
+    continuous_calendar: true
+- binding_id: okx-swap-btcusdt-bar-1m
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 1m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btcusdt-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: true
+- binding_id: okx-spot-btcusdt-trade
+  instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
+  feed: TRADE
+  interval: null
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-spot-btcusdt-trade-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: true
+- binding_id: okx-spot-btcusdt-quote
+  instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
+  feed: QUOTE
+  interval: null
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-spot-btcusdt-quote-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5000
+    require_final_bar: false
+    continuous_calendar: true
+- binding_id: okx-spot-btcusdt-bar-1m
+  instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
+  feed: BAR
+  interval: 1m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-spot-btcusdt-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: true
+- binding_id: dnse-vn30f1m-trade
+  instrument_uid: d0ac3d4c-2374-5690-8af5-b970448f91d3
+  feed: TRADE
+  interval: null
+  source:
+    provider: DNSE_DIRECT
+    source_id: dnse-vn30f1m-trade-stable-001
+    source_role: PRIMARY
+    source_policy_id: vn_primary_v2
+    authoritative: true
+    adapter_version: dnse-openapi/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: false
+- binding_id: dnse-vn30f1m-bar-1m
+  instrument_uid: d0ac3d4c-2374-5690-8af5-b970448f91d3
+  feed: BAR
+  interval: 1m
+  source:
+    provider: DNSE_DIRECT
+    source_id: dnse-vn30f1m-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: vn_primary_v2
+    authoritative: true
+    adapter_version: dnse-openapi/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: false
+- binding_id: dnse-fpt-trade
+  instrument_uid: 6f025ab7-c0b4-5e08-866d-34ce62aef52f
+  feed: TRADE
+  interval: null
+  source:
+    provider: DNSE_DIRECT
+    source_id: dnse-fpt-trade-stable-001
+    source_role: PRIMARY
+    source_policy_id: vn_primary_v2
+    authoritative: true
+    adapter_version: dnse-openapi/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: false
+- binding_id: dnse-fpt-bar-1m
+  instrument_uid: 6f025ab7-c0b4-5e08-866d-34ce62aef52f
+  feed: BAR
+  interval: 1m
+  source:
+    provider: DNSE_DIRECT
+    source_id: dnse-fpt-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: vn_primary_v2
+    authoritative: true
+    adapter_version: dnse-openapi/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: false

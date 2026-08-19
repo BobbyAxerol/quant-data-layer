@@ -1,7 +1,7 @@
 # Quant Data Layer Unified Implementation Plan
 
 > **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; Phase 9.1 is `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`; Phase 9.2 is `COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED`; Phase 9.3 is `COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED` after isolated hold/closure/expansion governance certification. Authority promotion, production hold/closure and every expansion remain blocked on explicit production infrastructure, real canary/primary evidence and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
-> **Working branch:** `feat/phase93-hold-close-expand`, stacked on the completed Phase 9.2 checkpoint and intended for PR into `dev`; no push, merge or authority cutover is implied by control-plane completion.
+> **Working branch:** `feat/v2-stable-rust-binance-okx`, based on `dev`; Phase A commits are local and Phase B is in progress. No push, merge or authority cutover is implied.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
 > **Compatibility boundary:** Existing `/v1`, SDK v1, Redis keys and Redis Pub/Sub remain supported until a governed per-consumer sunset.
@@ -3827,7 +3827,7 @@ The Phase 7-9 program achieves its target when:
 
 ## 19. V2 Stable Rust Core And Binance/OKX/VN Equal-Source Closure
 
-**Status:** `PHASE A COMPLETE / ISOLATED CERTIFIED / PHASE B NOT STARTED / RUNTIME CUTOVER NOT AUTHORIZED`
+**Status:** `PHASE A COMPLETE / PHASE B IN PROGRESS (ISOLATED STABLE) / RUNTIME CUTOVER NOT AUTHORIZED`
 
 ### Purpose
 
@@ -3958,6 +3958,70 @@ sources, capability-truthful feeds and a durable canonical output contract.
 behind stable Python V2 endpoints and migrate real consumers without a public
 contract change.
 
+### Phase B Execution Boundary
+
+**Approved scope:** implement, deploy and certify an isolated `2.0.0` stable
+candidate. This approval does not change V1/Rust production authority, restart
+port `8100`, write current Redis namespaces, or authorize production cutover.
+Cutover remains a separate transaction after the exact topology, service/image
+digests, ports, credentials, volumes, affected consumers and rollback command
+are presented to and approved by the operator.
+
+**Stable topology:**
+
+```text
+Rust/Python acquisition edges
+  -> Kafka raw (RF3/minISR2, mTLS/ACL)
+  -> transactional Rust canonical core
+  -> Kafka canonical/quarantine (replay authority)
+  -> Python stable projector
+       -> active fenced stream_v2 gateway -> shared bounded SQLite query cache
+       -> dedicated Redis V2 latest + V1 compatibility projection
+       -> Kafka consumer checkpoint only after cache + Redis success
+  -> query_v2 replicas read the bounded cache
+  -> stream_v2 active/passive serves snapshot + signed cursor + replay + live
+```
+
+- The stable projector never calls a venue and never creates canonical market
+  semantics. It validates generated Protobuf and projects only Rust output.
+- SQLite is a rebuildable bounded cache, never the replay authority. Kafka raw
+  and canonical topics remain authoritative for recovery.
+- Active stream gateway commits a canonical event before fan-out. Projector
+  writes Redis and advances Kafka offsets only after that commit. Duplicate
+  replay is idempotent across gateway, SQLite and Redis checkpoints.
+- Binance, OKX and VN consumers use the same V2 API/SDK and stable catalog.
+  Provider/feed capability remains truthful; unavailable feeds fail readiness.
+- Dedicated stable Redis may contain root-shaped V1 compatibility keys only
+  inside the isolated deployment. Current `redis_marketdata` is never touched.
+- Stable runtime roles, health and data-readiness are separate. API replicas do
+  not open provider sockets and one slow consumer cannot block projector or
+  unrelated stream partitions.
+
+**Phase B acceptance gates:**
+
+1. Stable catalog/query models cover TRADE/QUOTE/BAR units, source role,
+   lifecycle/finality, quality/freshness and market-session semantics.
+2. Canonical-before-raw, duplicate replay, crash before/after cache/Redis/Kafka
+   checkpoint, active gateway failover, Redis loss/rebuild and Kafka restart
+   recover without acknowledged loss or duplicate external publication.
+3. V1 OpenAPI/SDK/Redis golden compatibility remains unchanged; V2 OpenAPI and
+   SDK freeze as `2.0.0` with generated artifacts current.
+4. Registered monitoring, Binance alpha, OKX alpha, VN alpha and Trading System
+   paper manifests complete warmup -> cursor -> replay -> live and restart with
+   no direct venue connection or domain mismatch.
+5. Real-provider lineage from Phase A is replayed through stable query/stream/
+   compatibility projection; generated data is limited to explicit failure and
+   capacity tests.
+6. Full Python/Rust/Buf/OpenAPI/security/capacity suites pass, immutable images
+   and compact evidence are frozen, all disposable resources are removed, and
+   V1 health/topology remain unchanged.
+
+**Rollback before cutover:** stop only the isolated stable project, revoke its
+credentials and remove its dedicated topics/groups/Redis/cache volumes. V1
+continues unchanged. Production rollback after a later approved cutover must
+use a newer authority revision and the frozen V1 manifest; it is not exercised
+by implication in Phase B implementation.
+
 **Implementation:**
 
 1. Replace beta/shadow product labels with stable `2.0.0` labels while
@@ -4049,9 +4113,35 @@ contract change.
   cleanup also removed 2.8 GiB of Cargo target artifacts and the 2.91 GB
   `qdl-v2-rust-builder:test` image. V1 health/topology remained unchanged. See
   [Phase A report](upgrade/evidence/PHASE_A_RUST_MULTIVENUE_CORE_REPORT.md).
-- `PHASE A COMPLETE / PHASE B NOT STARTED`: no in-scope Phase A defect remains.
-  Stable projector/query/stream deployment, consumer migration and authority
-  cutover remain Phase B and require a separate exact-topology approval.
+- `2026-08-19 PHASE B STARTED`: operator approved isolated stable
+  implementation, consumer-manifest migration and immutable `2.0.0` packaging.
+  Production authority/cutover was not approved. Phase B follows the execution
+  boundary and acceptance gates above; every tested slice is journaled here.
+- `2026-08-19 PHASE B SLICE B1 COMPLETE`: introduced the strict stable source
+  catalog and provider-neutral TRADE/QUOTE/BAR query backend. Instrument
+  metadata is declared once and feed bindings reference deterministic UIDs,
+  preventing per-feed metadata drift. Stable admission now requires exact raw
+  capture lineage, source session/generation, monotonic receive/normalize/
+  publish timestamps, quantity units, trade identity, source/adapter/
+  normalizer/authority revisions and final/revised BAR lifecycle where required.
+  The catalog baseline contains 16 bindings across Binance USD-M/Spot, OKX
+  SWAP/Spot, HNX VN derivatives and HOSE equity with truthful feed capability.
+- `2026-08-19 PHASE B IDENTITY DEFECT CLOSED`: Phase A golden fixtures retained
+  older arbitrary crypto UIDs and therefore cannot define the stable registry.
+  Stable B1 keeps the Phase 1 deterministic `InstrumentIdentity` authority and
+  refuses those legacy IDs. New Phase B provider evidence must be captured with
+  the stable catalog identities before release; validation was not weakened.
+  VN30F1M is modeled explicitly as a continuous FUTURE series with roll-policy
+  metadata, while dated futures still fail closed without an expiry.
+- `2026-08-19 PHASE B SLICE B1 VERIFICATION`: six isolated, network-disabled
+  tests passed for deterministic identity, unknown-field/provenance rejection,
+  continuous-vs-dated future semantics, exact TRADE/QUOTE/BAR units, crypto gap
+  blocking, sparse VN/market-closed behavior and consumer-bound signed replay
+  cursors. The test found and closed a query defect where `latest()` could miss
+  a gap immediately before its one-row window; latest/history now evaluate gap
+  state across all retained cache rows. No runtime container, Redis namespace,
+  consumer or production data was changed; the disposable test container was
+  removed by `--rm`.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
