@@ -3464,6 +3464,14 @@ transitive approval.
   V1 health remains 200 with unchanged topology, production mutations are zero,
   no Phase 9.3 container/network/volume remains and the temporary Rust builder
   image was removed without global prune.
+- `COMPLETE` post-closure CI hotfix (2026-08-19): GitHub run
+  `32210830176` showed that PR #7 full unit tests passed, while the additive
+  PostgreSQL migration step failed after one transient ready probe immediately
+  preceded an init restart. `phase5_migration_smoke.sh` now requires eight
+  consecutive successful probes over two seconds before `createdb`. The exact
+  CI-image unit command passes 415/415 with 5 intentional skips and the failing
+  migration gate passes 3/3 consecutive runs. All disposable Compose/PostgreSQL
+  resources were removed; no schema, authority or running service changed.
 - `OPEN EXTERNAL GATE`: Phase 9.0-C remains `NO_GO_EXTERNAL`; no real primary
   owner, production hold interval or operator closure approval exists.
 
