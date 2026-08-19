@@ -2,10 +2,16 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::fs::{self, File, OpenOptions};
+use std::future::Future;
+use std::io::{ErrorKind, Write};
+use std::path::{Component, Path};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
 use prost::Message as ProstMessage;
 use qdl_contracts::qdl::provider::v1::{
@@ -17,7 +23,9 @@ use qdl_core::okx::{
     parse_subscription_ack, subscription_command, ControlRequestBudget, OkxService, OkxSubscription,
 };
 use qdl_core::transport::{DurableRecord, RetryClass};
-use qdl_kafka::{FencedKafkaSink, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError};
+use qdl_kafka::{
+    FencedKafkaSink, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, PendingKafkaAppend,
+};
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -100,6 +108,8 @@ struct IngestorConfig {
     max_events: u64,
     max_runtime_seconds: u64,
     metrics_every_events: u64,
+    generation_state_path: String,
+    max_inflight_publishes: usize,
     authority: AuthorityRecord,
     bindings: Vec<RawBinding>,
 }
@@ -118,9 +128,19 @@ impl IngestorConfig {
             || self.heartbeat_seconds == 0
             || self.heartbeat_seconds >= 30
             || self.metrics_every_events == 0
+            || self.max_inflight_publishes == 0
+            || self.max_inflight_publishes > 4_096
             || self.bindings.is_empty()
         {
             return Err("native raw ingestor config is invalid or not RUST_SHADOW".into());
+        }
+        let generation_path = Path::new(&self.generation_state_path);
+        if !generation_path.is_absolute()
+            || generation_path
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+        {
+            return Err("generation state path must be absolute without parent traversal".into());
         }
         if self.runtime == ProviderRuntime::Okx {
             let business = self
@@ -169,6 +189,36 @@ fn now_ns() -> Result<i64, Box<dyn std::error::Error + Send + Sync>> {
         .try_into()?)
 }
 
+fn next_connection_generation(
+    state_path: &Path,
+) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    let parent = state_path
+        .parent()
+        .ok_or("generation state path has no parent")?;
+    fs::create_dir_all(parent)?;
+    let previous = match fs::read_to_string(state_path) {
+        Ok(value) => value
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| "generation state is corrupt")?,
+        Err(error) if error.kind() == ErrorKind::NotFound => 0,
+        Err(error) => return Err(error.into()),
+    };
+    let generation = previous
+        .checked_add(1)
+        .ok_or("connection generation overflow")?;
+    let temporary = state_path.with_extension(format!("tmp-{}-{}", std::process::id(), now_ns()?));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)?;
+    writeln!(file, "{generation}")?;
+    file.sync_all()?;
+    fs::rename(&temporary, state_path)?;
+    File::open(parent)?.sync_all()?;
+    Ok(generation)
+}
+
 fn capture_id(session: &str, generation: u64, received_at_ns: i64, frame: &[u8]) -> Vec<u8> {
     let mut digest = Sha256::new();
     digest.update(session.as_bytes());
@@ -206,14 +256,14 @@ impl RawPublisher {
         })
     }
 
-    async fn publish(
+    fn record(
         &self,
         binding: &RawBinding,
         session_id: &str,
         generation: u64,
         raw_frame: &[u8],
         received_at_ns: i64,
-    ) -> Result<(), KafkaTransportError> {
+    ) -> DurableRecord {
         let capture_id = capture_id(session_id, generation, received_at_ns, raw_frame);
         let raw = RawProviderEnvelope {
             raw_schema_name: "qdl.provider.raw".into(),
@@ -244,7 +294,7 @@ impl RawPublisher {
             correlation_id: hex::encode(&capture_id),
             test_provenance: false,
         };
-        let record = DurableRecord {
+        DurableRecord {
             stream: self.raw_stream.clone(),
             partition_key: format!(
                 "{}/{}/{}/{}",
@@ -253,20 +303,79 @@ impl RawPublisher {
             event_id: capture_id,
             payload: raw.encode_to_vec(),
             accepted_at_ns: received_at_ns,
-        };
-        self.sink
-            .append(
-                &record,
-                &PublicationContext {
-                    slice_id: self.authority.slice_id.clone(),
-                    authority_revision: self.authority.revision,
-                    shard_id: self.shard_id.clone(),
-                    lease_epoch: self.lease_epoch,
-                    target: SinkTarget::ShadowRaw,
-                },
-            )
-            .await?;
+        }
+    }
+
+    fn publication(&self) -> PublicationContext {
+        PublicationContext {
+            slice_id: self.authority.slice_id.clone(),
+            authority_revision: self.authority.revision,
+            shard_id: self.shard_id.clone(),
+            lease_epoch: self.lease_epoch,
+            target: SinkTarget::ShadowRaw,
+        }
+    }
+
+    async fn publish(
+        &self,
+        binding: &RawBinding,
+        session_id: &str,
+        generation: u64,
+        raw_frame: &[u8],
+        received_at_ns: i64,
+    ) -> Result<(), KafkaTransportError> {
+        let record = self.record(binding, session_id, generation, raw_frame, received_at_ns);
+        self.sink.append(&record, &self.publication()).await?;
         Ok(())
+    }
+
+    async fn enqueue_with_retry(
+        &self,
+        binding: &RawBinding,
+        session_id: &str,
+        generation: u64,
+        raw_frame: &[u8],
+        received_at_ns: i64,
+        stopped: &AtomicBool,
+    ) -> Result<PendingKafkaAppend, KafkaTransportError> {
+        let record = self.record(binding, session_id, generation, raw_frame, received_at_ns);
+        let publication = self.publication();
+        let backoff = BackoffPolicy {
+            initial_ms: 10,
+            maximum_ms: 1_000,
+            multiplier: 2,
+            jitter_bps: 2_000,
+        }
+        .validate()
+        .map_err(KafkaTransportError::Configuration)?;
+        let mut failures = 0_u32;
+        loop {
+            match self.sink.enqueue(&record, &publication) {
+                Ok(delivery) => return Ok(delivery),
+                Err(error)
+                    if error.retry_class() != RetryClass::NonRetryable
+                        && !stopped.load(Ordering::Acquire) =>
+                {
+                    failures = failures.saturating_add(1);
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "event": "qdl_native_raw_enqueue_retry",
+                            "runtime": binding.venue.as_str(),
+                            "attempt": failures,
+                            "retry_class": format!("{:?}", error.retry_class()).to_ascii_uppercase(),
+                            "error": error.to_string(),
+                        }))
+                        .unwrap_or_else(|_| "{\"event\":\"qdl_native_raw_enqueue_retry\"}".into())
+                    );
+                    tokio::time::sleep(Duration::from_millis(
+                        backoff.delay_ms(failures, failures.min(10_000) as u16),
+                    ))
+                    .await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     async fn publish_with_retry(
@@ -318,6 +427,12 @@ impl RawPublisher {
             }
         }
     }
+}
+
+type RawPublishFuture = Pin<Box<dyn Future<Output = Result<(), KafkaTransportError>> + Send>>;
+
+fn raw_publish_future(delivery: PendingKafkaAppend) -> RawPublishFuture {
+    Box::pin(async move { delivery.wait().await.map(|_| ()) })
 }
 
 fn deadline(seconds: u64) -> Option<tokio::time::Instant> {
@@ -378,21 +493,53 @@ async fn run_binance(
         jitter_bps: 2_000,
     }
     .validate()?;
+    let generation_path = format!("{}.binance", config.generation_state_path);
     let expires = deadline(config.max_runtime_seconds);
-    let mut generation = 0_u64;
     let mut failures = 0_u32;
     while !should_stop(&stopped, &accepted, config.max_events, expires) {
-        generation += 1;
+        let generation = next_connection_generation(Path::new(&generation_path))?;
         match connect_async(&url).await {
-            Ok((socket, _)) => {
+            Ok((mut socket, _)) => {
                 let session_id = format!(
                     "binance-{}-{generation}-{}",
                     config.market_name(),
                     now_ns()?
                 );
-                let mut socket = socket;
+                let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
+                let mut disconnected = false;
+                let mut publish_error = None;
                 while !should_stop(&stopped, &accepted, config.max_events, expires) {
-                    let message = match socket.next().await {
+                    if inflight.len() >= config.max_inflight_publishes {
+                        match inflight.next().await {
+                            Some(Ok(())) => {
+                                failures = 0;
+                                continue;
+                            }
+                            Some(Err(error)) => {
+                                publish_error = Some(error);
+                                break;
+                            }
+                            None => return Err("Binance publish window became inconsistent".into()),
+                        }
+                    }
+                    let message = tokio::select! {
+                        biased;
+                        message = socket.next() => message,
+                        completed = inflight.next(), if !inflight.is_empty() => {
+                            match completed {
+                                Some(Ok(())) => {
+                                    failures = 0;
+                                    continue;
+                                }
+                                Some(Err(error)) => {
+                                    publish_error = Some(error);
+                                    break;
+                                }
+                                None => return Err("Binance publish window became inconsistent".into()),
+                            }
+                        }
+                    };
+                    let message = match message {
                         Some(Ok(message)) => message,
                         Some(Err(error)) => {
                             failures = failures.saturating_add(1);
@@ -406,10 +553,7 @@ async fn run_binance(
                                     "error": error.to_string(),
                                 }))?
                             );
-                            tokio::time::sleep(Duration::from_millis(
-                                backoff.delay_ms(failures, failures.min(10_000) as u16),
-                            ))
-                            .await;
+                            disconnected = true;
                             break;
                         }
                         None => {
@@ -424,10 +568,7 @@ async fn run_binance(
                                     "error": "provider closed the WebSocket",
                                 }))?
                             );
-                            tokio::time::sleep(Duration::from_millis(
-                                backoff.delay_ms(failures, failures.min(10_000) as u16),
-                            ))
-                            .await;
+                            disconnected = true;
                             break;
                         }
                     };
@@ -442,29 +583,39 @@ async fn run_binance(
                     let frame = decode_combined(raw_text.clone())?;
                     let binding = bindings
                         .get(&frame.stream)
-                        .ok_or("Binance frame has no approved binding")?;
+                        .ok_or("Binance frame has no approved binding")?
+                        .clone();
                     if !reserve(&accepted, config.max_events).await {
-                        stopped.store(true, Ordering::Release);
                         break;
                     }
                     let received_at_ns = now_ns()?;
-                    if let Err(error) = publisher
-                        .publish_with_retry(
-                            binding,
+                    let delivery = publisher
+                        .enqueue_with_retry(
+                            &binding,
                             &session_id,
                             generation,
                             raw_text.as_bytes(),
                             received_at_ns,
                             &stopped,
                         )
-                        .await
-                    {
-                        if config.max_events > 0 {
-                            accepted.fetch_sub(1, Ordering::AcqRel);
-                        }
-                        return Err(error.into());
+                        .await?;
+                    inflight.push(raw_publish_future(delivery));
+                }
+                while let Some(result) = inflight.next().await {
+                    match result {
+                        Ok(()) => failures = 0,
+                        Err(error) if publish_error.is_none() => publish_error = Some(error),
+                        Err(_) => {}
                     }
-                    failures = 0;
+                }
+                if let Some(error) = publish_error {
+                    return Err(error.into());
+                }
+                if disconnected && !should_stop(&stopped, &accepted, config.max_events, expires) {
+                    tokio::time::sleep(Duration::from_millis(
+                        backoff.delay_ms(failures, failures.min(10_000) as u16),
+                    ))
+                    .await;
                 }
             }
             Err(error) => {
@@ -475,6 +626,7 @@ async fn run_binance(
                         "event": "qdl_native_connect_failed",
                         "runtime": "BINANCE",
                         "attempt": failures,
+                        "generation": generation,
                         "error": error.to_string(),
                     }))?
                 );
@@ -534,11 +686,15 @@ async fn run_okx_service(
     }
     .validate()?;
     let expires = deadline(config.max_runtime_seconds);
-    let mut generation = 0_u64;
+    let service_name = match service {
+        OkxService::Public => "public",
+        OkxService::Business => "business",
+    };
+    let generation_path = format!("{}.okx-{service_name}", config.generation_state_path);
     let mut failures = 0_u32;
     let mut budget = ControlRequestBudget::default();
     while !should_stop(&stopped, &accepted, config.max_events, expires) {
-        generation += 1;
+        let generation = next_connection_generation(Path::new(&generation_path))?;
         match connect_async(&url).await {
             Ok((socket, _)) => {
                 let (mut writer, mut reader) = socket.split();
@@ -832,4 +988,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }))?
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_connection_generation;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn generation_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "qdl-native-generation-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn durable_generation_advances_across_reopens_and_corruption_fails_closed() {
+        let directory = generation_path("restart");
+        let state = directory.join("binance-usdm");
+        assert_eq!(next_connection_generation(&state).unwrap(), 1);
+        assert_eq!(next_connection_generation(&state).unwrap(), 2);
+        assert_eq!(fs::read_to_string(&state).unwrap(), "2\n");
+        fs::write(&state, "not-a-generation\n").unwrap();
+        assert!(next_connection_generation(&state).is_err());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn venue_service_generation_files_are_independent() {
+        let directory = generation_path("services");
+        let public = directory.join("okx-swap.okx-public");
+        let business = directory.join("okx-swap.okx-business");
+        assert_eq!(next_connection_generation(&public).unwrap(), 1);
+        assert_eq!(next_connection_generation(&business).unwrap(), 1);
+        assert_eq!(next_connection_generation(&public).unwrap(), 2);
+        assert_eq!(fs::read_to_string(&business).unwrap(), "1\n");
+        fs::remove_dir_all(directory).unwrap();
+    }
 }

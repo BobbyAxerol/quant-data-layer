@@ -16,7 +16,7 @@ use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::error::KafkaError;
 use rdkafka::message::{Header, Headers, Message, OwnedHeaders};
-use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
+use rdkafka::producer::{DeliveryFuture, FutureProducer, FutureRecord, Producer};
 use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use rdkafka::util::Timeout;
 
@@ -171,17 +171,25 @@ impl FencedKafkaSink {
             .map_err(KafkaTransportError::Fencing)
     }
 
-    pub async fn append(
+    pub fn enqueue(
         &self,
         record: &DurableRecord,
         publication: &PublicationContext,
-    ) -> Result<AppendResult, KafkaTransportError> {
+    ) -> Result<PendingKafkaAppend, KafkaTransportError> {
         self.fence
             .lock()
             .map_err(|_| KafkaTransportError::Fencing("authority lock poisoned".into()))?
             .permits(publication)
             .map_err(KafkaTransportError::Fencing)?;
-        self.sink.append(record).await
+        self.sink.enqueue(record)
+    }
+
+    pub async fn append(
+        &self,
+        record: &DurableRecord,
+        publication: &PublicationContext,
+    ) -> Result<AppendResult, KafkaTransportError> {
+        self.enqueue(record, publication)?.wait().await
     }
 }
 
@@ -403,9 +411,35 @@ impl Phase92FencedKafkaSink {
     }
 }
 
+pub struct PendingKafkaAppend {
+    delivery: DeliveryFuture,
+    stream: String,
+    partition_key: String,
+}
+
+impl PendingKafkaAppend {
+    pub async fn wait(self) -> Result<AppendResult, KafkaTransportError> {
+        let delivery = self
+            .delivery
+            .await
+            .map_err(|_| KafkaTransportError::Delivery(KafkaError::Canceled))?
+            .map_err(|(error, _)| KafkaTransportError::Delivery(error))?;
+        let offset = u64::try_from(delivery.offset)
+            .map_err(|_| KafkaTransportError::InvalidOffset(delivery.offset))?;
+        Ok(AppendResult {
+            cursor: Cursor {
+                stream: self.stream,
+                transport_partition: delivery.partition,
+                partition_key: self.partition_key,
+                offset,
+            },
+            duplicate: false,
+        })
+    }
+}
+
 pub struct KafkaDurableSink {
     producer: FutureProducer,
-    request_timeout: Duration,
 }
 
 impl KafkaDurableSink {
@@ -423,14 +457,13 @@ impl KafkaDurableSink {
             );
         Ok(Self {
             producer: client.create()?,
-            request_timeout: config.request_timeout,
         })
     }
 
-    pub async fn append(
+    pub fn enqueue(
         &self,
         record: &DurableRecord,
-    ) -> Result<AppendResult, KafkaTransportError> {
+    ) -> Result<PendingKafkaAppend, KafkaTransportError> {
         if record.stream.trim().is_empty() {
             return Err(KafkaTransportError::MissingField("stream"));
         }
@@ -446,26 +479,25 @@ impl KafkaDurableSink {
         });
         let delivery = self
             .producer
-            .send(
+            .send_result(
                 FutureRecord::to(&record.stream)
                     .key(record.partition_key.as_bytes())
                     .payload(record.payload.as_slice())
                     .headers(headers),
-                Timeout::After(self.request_timeout),
             )
-            .await
-            .map_err(|(error, _)| KafkaTransportError::Delivery(error))?;
-        let offset = u64::try_from(delivery.offset)
-            .map_err(|_| KafkaTransportError::InvalidOffset(delivery.offset))?;
-        Ok(AppendResult {
-            cursor: Cursor {
-                stream: record.stream.clone(),
-                transport_partition: delivery.partition,
-                partition_key: record.partition_key.clone(),
-                offset,
-            },
-            duplicate: false,
+            .map_err(|(error, _)| KafkaTransportError::Kafka(error))?;
+        Ok(PendingKafkaAppend {
+            delivery,
+            stream: record.stream.clone(),
+            partition_key: record.partition_key.clone(),
         })
+    }
+
+    pub async fn append(
+        &self,
+        record: &DurableRecord,
+    ) -> Result<AppendResult, KafkaTransportError> {
+        self.enqueue(record)?.wait().await
     }
 }
 

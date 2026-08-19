@@ -262,6 +262,10 @@ class StableAcquisitionPlan:
                 "max_events": max_events,
                 "max_runtime_seconds": max_runtime_seconds,
                 "metrics_every_events": 1000,
+                "generation_state_path": (
+                    f"/var/lib/qdl-stable/runtime/generations/{key}"
+                ),
+                "max_inflight_publishes": 512,
                 "authority": dict(authority),
                 "bindings": bindings,
             }

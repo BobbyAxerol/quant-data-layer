@@ -183,6 +183,8 @@ def crypto_specs(authority_record: dict):
                 "max_events": count,
                 "max_runtime_seconds": 45,
                 "metrics_every_events": 1,
+                "generation_state_path": f"/state/{source_id}",
+                "max_inflight_publishes": 64,
                 "authority": authority_record,
                 "bindings": [binding],
             })
@@ -303,7 +305,10 @@ def main() -> int:
                     producer_certs,
                     [f"/config/{config_path.name}"],
                     entrypoint="/usr/local/bin/qdl-native-raw-ingestor",
-                    mounts=(f"type=bind,source={config_path},target=/config/{config_path.name},readonly",),
+                    mounts=(
+                        f"type=bind,source={config_path},target=/config/{config_path.name},readonly",
+                        f"type=bind,source={temp},target=/state",
+                    ),
                     timeout=90.0,
                     egress=True,
                 )

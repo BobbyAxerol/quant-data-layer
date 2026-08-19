@@ -4650,6 +4650,36 @@ by implication in Phase B implementation.
   the disposable test container, the unchanged source passed. A newly labeled
   immutable image must now remain fresh beyond the Binance heartbeat boundary
   and pass both-replica manifest smoke before this defect is closed.
+- `2026-08-19 PHASE B B5 NATIVE-INGEST RESTART/THROUGHPUT DEFECTS
+  IDENTIFIED`: the c1701c1 real-manifest retest still found Binance USD-M stale.
+  A unique admin read-only consumer sampled 11,016 committed quarantine records;
+  every record was `STALE_GENERATION`, primarily Binance BBO/trade frames whose
+  process-local generation reset after container recreation. The raw ingestor
+  also waits for one RF3/all-ISR Kafka delivery ACK before reading the next frame;
+  authentic BTCUSDT USD-M burst traffic can therefore outrun the reader and reset
+  the provider socket even when Ping/Pong is correct. The in-scope closure is a
+  durable, fsync-backed per-ingestor/per-service connection-generation counter
+  mounted only in isolated stable state, plus a strictly bounded concurrent
+  durable-publish window that preserves per-key enqueue order, backpressures at
+  its configured limit and never drops/fabricates frames. Restart must advance
+  generation, stale old generations must still quarantine, and broker failure
+  must fail closed. Unit, clean restart, authentic provider, lag and quarantine
+  gates are mandatory before immutable candidate acceptance.
+- `2026-08-19 PHASE B B5 NATIVE-INGEST CLOSURE UNIT-VERIFIED, CLEAN
+  RUNTIME PENDING`: every Rust-native config now owns a distinct absolute
+  generation-state path and a 512-record hard in-flight bound. Generation is
+  atomically persisted and fsynced before each connect/reconnect; OKX public and
+  business services use independent counters. Binance reads control/data frames
+  while Kafka `acks=all` deliveries are in flight, preserves enqueue order per
+  Kafka key, stops reading at the hard bound, retries retryable delivery failures
+  and drains every already-enqueued delivery before failing closed. Four native
+  services mount only the isolated stable-state volume; current V1 state is not
+  reachable. Rust format, full workspace Clippy and 59 workspace tests passed; a
+  final drain-safety edit additionally passed targeted Clippy and both ingestor
+  tests. Seven deployment tests and 62 broader Phase B/V2/security/release tests
+  passed with one separately gated Redis skip. A clean immutable candidate must
+  still prove restart generation advance, zero new quarantine, authentic Binance
+  freshness beyond heartbeat, bounded lag and broker-outage recovery.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

@@ -57,6 +57,17 @@ class StableDeploymentContractTests(unittest.TestCase):
         )
         self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 10)
         self.assertTrue(all(item["authority"]["mode"] == "RUST_SHADOW" for item in native.values()))
+        self.assertEqual(
+            {item["max_inflight_publishes"] for item in native.values()}, {512}
+        )
+        generation_paths = {
+            item["generation_state_path"] for item in native.values()
+        }
+        self.assertEqual(len(generation_paths), 4)
+        self.assertTrue(all(
+            value.startswith("/var/lib/qdl-stable/runtime/generations/")
+            for value in generation_paths
+        ))
         okx_bbo = {
             item.binding_id: item.sequence_policy
             for item in self.acquisition.bindings
@@ -305,6 +316,15 @@ class StableComposeAndBundleTests(unittest.TestCase):
             set(services["ingestor_okx_swap"]["networks"]),
             {"stable_internal", "stable_egress"},
         )
+        for name in (
+            "ingestor_binance_usdm", "ingestor_binance_spot",
+            "ingestor_okx_swap", "ingestor_okx_spot",
+        ):
+            with self.subTest(native_ingestor=name):
+                self.assertTrue(services[name]["read_only"])
+                self.assertIn(
+                    "stable_state:/var/lib/qdl-stable", services[name]["volumes"]
+                )
         core_names = ("rust_core", "rust_core_2", "rust_core_3")
         self.assertLessEqual(
             len(core_names), compose["x-kafka-env"]["KAFKA_NUM_PARTITIONS"]
