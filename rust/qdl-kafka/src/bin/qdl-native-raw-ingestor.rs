@@ -16,8 +16,8 @@ use qdl_core::binance::decode_combined;
 use qdl_core::okx::{
     parse_subscription_ack, subscription_command, ControlRequestBudget, OkxService, OkxSubscription,
 };
-use qdl_core::transport::DurableRecord;
-use qdl_kafka::{FencedKafkaSink, KafkaTlsConfig, KafkaTransportConfig};
+use qdl_core::transport::{DurableRecord, RetryClass};
+use qdl_kafka::{FencedKafkaSink, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError};
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -211,10 +211,10 @@ impl RawPublisher {
         binding: &RawBinding,
         session_id: &str,
         generation: u64,
-        raw_frame: Vec<u8>,
+        raw_frame: &[u8],
         received_at_ns: i64,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let capture_id = capture_id(session_id, generation, received_at_ns, &raw_frame);
+    ) -> Result<(), KafkaTransportError> {
+        let capture_id = capture_id(session_id, generation, received_at_ns, raw_frame);
         let raw = RawProviderEnvelope {
             raw_schema_name: "qdl.provider.raw".into(),
             raw_schema_major: 1,
@@ -236,8 +236,8 @@ impl RawPublisher {
             transport_protocol: TransportProtocol::Websocket as i32,
             transport_compression: TransportCompression::None as i32,
             capture_boundary: CaptureBoundary::PostDecompression as i32,
-            raw_frame_sha256: Sha256::digest(&raw_frame).to_vec(),
-            raw_frame_bytes: raw_frame,
+            raw_frame_sha256: Sha256::digest(raw_frame).to_vec(),
+            raw_frame_bytes: raw_frame.to_vec(),
             adapter_version: binding.adapter_version.clone(),
             config_revision: self.config_revision,
             instrument_catalog_revision: binding.instrument_catalog_revision,
@@ -267,6 +267,56 @@ impl RawPublisher {
             )
             .await?;
         Ok(())
+    }
+
+    async fn publish_with_retry(
+        &self,
+        binding: &RawBinding,
+        session_id: &str,
+        generation: u64,
+        raw_frame: &[u8],
+        received_at_ns: i64,
+        stopped: &AtomicBool,
+    ) -> Result<(), KafkaTransportError> {
+        let backoff = BackoffPolicy {
+            initial_ms: 100,
+            maximum_ms: 30_000,
+            multiplier: 2,
+            jitter_bps: 2_000,
+        }
+        .validate()
+        .map_err(KafkaTransportError::Configuration)?;
+        let mut failures = 0_u32;
+        loop {
+            match self
+                .publish(binding, session_id, generation, raw_frame, received_at_ns)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error)
+                    if error.retry_class() != RetryClass::NonRetryable
+                        && !stopped.load(Ordering::Acquire) =>
+                {
+                    failures = failures.saturating_add(1);
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "event": "qdl_native_raw_publish_retry",
+                            "runtime": binding.venue.as_str(),
+                            "attempt": failures,
+                            "retry_class": format!("{:?}", error.retry_class()).to_ascii_uppercase(),
+                            "error": error.to_string(),
+                        }))
+                        .unwrap_or_else(|_| "{\"event\":\"qdl_native_raw_publish_retry\"}".into())
+                    );
+                    tokio::time::sleep(Duration::from_millis(
+                        backoff.delay_ms(failures, failures.min(10_000) as u16),
+                    ))
+                    .await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 }
 
@@ -335,7 +385,6 @@ async fn run_binance(
         generation += 1;
         match connect_async(&url).await {
             Ok((socket, _)) => {
-                failures = 0;
                 let session_id = format!(
                     "binance-{}-{generation}-{}",
                     config.market_name(),
@@ -343,10 +392,45 @@ async fn run_binance(
                 );
                 let (_, mut reader) = socket.split();
                 while !should_stop(&stopped, &accepted, config.max_events, expires) {
-                    let Some(message) = reader.next().await else {
-                        break;
+                    let message = match reader.next().await {
+                        Some(Ok(message)) => message,
+                        Some(Err(error)) => {
+                            failures = failures.saturating_add(1);
+                            eprintln!(
+                                "{}",
+                                serde_json::to_string(&json!({
+                                    "event": "qdl_native_session_disconnected",
+                                    "runtime": "BINANCE",
+                                    "attempt": failures,
+                                    "generation": generation,
+                                    "error": error.to_string(),
+                                }))?
+                            );
+                            tokio::time::sleep(Duration::from_millis(
+                                backoff.delay_ms(failures, failures.min(10_000) as u16),
+                            ))
+                            .await;
+                            break;
+                        }
+                        None => {
+                            failures = failures.saturating_add(1);
+                            eprintln!(
+                                "{}",
+                                serde_json::to_string(&json!({
+                                    "event": "qdl_native_session_disconnected",
+                                    "runtime": "BINANCE",
+                                    "attempt": failures,
+                                    "generation": generation,
+                                    "error": "provider closed the WebSocket",
+                                }))?
+                            );
+                            tokio::time::sleep(Duration::from_millis(
+                                backoff.delay_ms(failures, failures.min(10_000) as u16),
+                            ))
+                            .await;
+                            break;
+                        }
                     };
-                    let message = message?;
                     if !message.is_text() {
                         continue;
                     }
@@ -359,15 +443,24 @@ async fn run_binance(
                         stopped.store(true, Ordering::Release);
                         break;
                     }
-                    publisher
-                        .publish(
+                    let received_at_ns = now_ns()?;
+                    if let Err(error) = publisher
+                        .publish_with_retry(
                             binding,
                             &session_id,
                             generation,
-                            raw_text.into_bytes(),
-                            now_ns()?,
+                            raw_text.as_bytes(),
+                            received_at_ns,
+                            &stopped,
                         )
-                        .await?;
+                        .await
+                    {
+                        if config.max_events > 0 {
+                            accepted.fetch_sub(1, Ordering::AcqRel);
+                        }
+                        return Err(error.into());
+                    }
+                    failures = 0;
                 }
             }
             Err(error) => {
@@ -444,7 +537,6 @@ async fn run_okx_service(
         generation += 1;
         match connect_async(&url).await {
             Ok((socket, _)) => {
-                failures = 0;
                 let (mut writer, mut reader) = socket.split();
                 let command_id = generation.to_string();
                 budget.permit(now_ns()?)?;
@@ -532,15 +624,41 @@ async fn run_okx_service(
                         stopped.store(true, Ordering::Release);
                         break;
                     }
-                    publisher
-                        .publish(
+                    let received_at_ns = now_ns()?;
+                    if let Err(error) = publisher
+                        .publish_with_retry(
                             binding,
                             &session_id,
                             generation,
-                            raw_text.into_bytes(),
-                            now_ns()?,
+                            raw_text.as_bytes(),
+                            received_at_ns,
+                            &stopped,
                         )
-                        .await?;
+                        .await
+                    {
+                        if config.max_events > 0 {
+                            accepted.fetch_sub(1, Ordering::AcqRel);
+                        }
+                        return Err(error.into());
+                    }
+                    failures = 0;
+                }
+                if !should_stop(&stopped, &accepted, config.max_events, expires) {
+                    failures = failures.saturating_add(1);
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "event": "qdl_native_session_disconnected",
+                            "runtime": "OKX",
+                            "service": format!("{:?}", service).to_ascii_uppercase(),
+                            "attempt": failures,
+                            "generation": generation,
+                        }))?
+                    );
+                    tokio::time::sleep(Duration::from_millis(
+                        backoff.delay_ms(failures, failures.min(10_000) as u16),
+                    ))
+                    .await;
                 }
             }
             Err(error) => {
@@ -596,27 +714,27 @@ async fn run_okx(
         })
         .cloned()
         .collect();
-    let public_task = tokio::spawn(run_okx_service(
-        OkxService::Public,
-        config.websocket_url.clone(),
-        public,
-        config.clone(),
-        accepted.clone(),
-        stopped.clone(),
-    ));
-    let business_task = tokio::spawn(run_okx_service(
-        OkxService::Business,
-        config
-            .business_websocket_url
-            .clone()
-            .ok_or("OKX business WebSocket URL is required")?,
-        business,
-        config,
-        accepted,
-        stopped,
-    ));
-    public_task.await??;
-    business_task.await??;
+    tokio::try_join!(
+        run_okx_service(
+            OkxService::Public,
+            config.websocket_url.clone(),
+            public,
+            config.clone(),
+            accepted.clone(),
+            stopped.clone(),
+        ),
+        run_okx_service(
+            OkxService::Business,
+            config
+                .business_websocket_url
+                .clone()
+                .ok_or("OKX business WebSocket URL is required")?,
+            business,
+            config,
+            accepted,
+            stopped,
+        ),
+    )?;
     Ok(())
 }
 
@@ -650,11 +768,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "production_legacy_writes": 0,
         }))?
     );
-    match config.runtime {
-        ProviderRuntime::Binance => {
-            run_binance(config.clone(), accepted.clone(), stopped.clone()).await?
+    let supervisor_backoff = BackoffPolicy {
+        initial_ms: 500,
+        maximum_ms: 30_000,
+        multiplier: 2,
+        jitter_bps: 2_000,
+    }
+    .validate()?;
+    let supervisor_deadline = deadline(config.max_runtime_seconds);
+    let mut supervisor_failures = 0_u32;
+    while !should_stop(&stopped, &accepted, config.max_events, supervisor_deadline) {
+        let accepted_before = accepted.load(Ordering::Acquire);
+        let result = match config.runtime {
+            ProviderRuntime::Binance => {
+                run_binance(config.clone(), accepted.clone(), stopped.clone()).await
+            }
+            ProviderRuntime::Okx => {
+                run_okx(config.clone(), accepted.clone(), stopped.clone()).await
+            }
+        };
+        match result {
+            Ok(()) => break,
+            Err(error) => {
+                if error
+                    .downcast_ref::<KafkaTransportError>()
+                    .is_some_and(|value| value.retry_class() == RetryClass::NonRetryable)
+                {
+                    return Err(error);
+                }
+                if should_stop(&stopped, &accepted, config.max_events, supervisor_deadline) {
+                    break;
+                }
+                if accepted.load(Ordering::Acquire) > accepted_before {
+                    supervisor_failures = 0;
+                }
+                supervisor_failures = supervisor_failures.saturating_add(1);
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "event": "qdl_native_runtime_retry",
+                        "runtime": format!("{:?}", config.runtime).to_ascii_uppercase(),
+                        "attempt": supervisor_failures,
+                        "error": error.to_string(),
+                    }))?
+                );
+                tokio::time::sleep(Duration::from_millis(
+                    supervisor_backoff
+                        .delay_ms(supervisor_failures, supervisor_failures.min(10_000) as u16),
+                ))
+                .await;
+            }
         }
-        ProviderRuntime::Okx => run_okx(config.clone(), accepted.clone(), stopped.clone()).await?,
     }
     println!(
         "{}",

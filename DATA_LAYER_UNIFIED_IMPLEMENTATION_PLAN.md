@@ -4276,6 +4276,21 @@ by implication in Phase B implementation.
   projector internal-only. Provider roles alone retain `stable_egress`. Targeted
   topology/deployment/edge verification again passed 22 tests with the one
   separately gated Redis integration skip.
+- `2026-08-19 PHASE B B5 ACQUISITION RELIABILITY DEFECT FIXED, RUNTIME
+  RETEST PENDING`: authenticated V2 smoke correctly returned `DATA_STALE` for
+  Binance USD-M after the Rust provider process had exited on a real WebSocket
+  `Connection reset by peer`. Native Binance/OKX sessions now reconnect with
+  capped exponential jittered backoff, reset failure streak only after durable
+  raw ACK, and a top-level supervisor restarts transient decode/subscription/
+  transport failures without weakening configuration or authority fail-closed
+  gates. OKX public/business futures are fail-fast joined so one dead channel
+  cannot be masked by the other. Every raw Kafka append retains identical
+  provider bytes, capture/event identity and receive time across retry; retryable
+  and capacity failures backpressure indefinitely until ACK or stop, while
+  fencing/configuration failures remain non-retryable. Bounded-test reservations
+  are released on non-retryable append failure. Rust fmt, warnings-as-errors
+  Clippy and all 51 workspace tests passed. A forced disconnect/reconnect smoke
+  on an immutable image is still required before this defect gate closes.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
