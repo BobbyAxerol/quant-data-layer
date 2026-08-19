@@ -5337,6 +5337,43 @@ and removes the superseded candidate/rollback artifacts after verification.
   accepted until an immutable image heals the authentic 16:53 gaps via provider
   history, a fresh cache rebuild reports zero open gaps, and strict SDK/Trading
   System acceptance passes.
+- `2026-08-19 PHASE B B18 RUNTIME HEAL EXPOSED CANONICAL DUPLICATE COLLISION`:
+  immutable image `2041f18` bootstrapped 2,000 real provider BAR rows with full
+  Kafka ACK, but the projector rejected repeated historical BARs because their
+  semantic `event_id`/`canonical_payload_hash` matched existing rows while
+  capture/session/timing provenance correctly differed. Generic SQLite collision
+  enforcement is therefore not weakened: the repair belongs in the stable
+  projector, which understands canonical semantics. It may classify only an
+  identical 32-byte canonical payload hash under the same event ID and partition
+  as a semantic duplicate; a changed market payload remains a hard collision.
+
+  The same repair must keep late historical BARs in the bounded query cache
+  without replacing a newer Redis/latest projection. Exact Kafka replay after a
+  crash still reapplies an existing record before checkpoint; a later semantic
+  duplicate is checkpointed without fan-out. Tests must prove changed semantics
+  fail closed, provenance-only duplicate recovery is idempotent, late BAR repair
+  closes history without latest regression, and full fresh replay remains
+  deterministic. Runtime quarantine inspection found 417 records, all old OKX
+  stale-generation rows and none for the missing Binance 16:53 bars; no fake or
+  provider-invalid row is being accepted.
+- `2026-08-19 PHASE B B18 SEMANTIC DUPLICATE AND LATE-BAR REPAIR UNIT-PASSED`:
+  the stable projector now keeps generic SQLite byte-collision fencing strict
+  while handling one narrower canonical case: the same event ID, partition and
+  independently recomputed 32-byte market-payload hash may be checkpointed as
+  an idempotent provenance-only duplicate without a second Redis/stream fan-out.
+  A changed payload, missing/invalid hash or changed partition remains a hard
+  `EventIdCollision`. Late historical BARs are durably admitted to the bounded
+  query history but are not projected over a newer latest BAR.
+
+  The focused stable-edge/deployment/history run executed 46 cases in the
+  immutable `2041f18` Python test image with network disabled: 45 passed and the
+  separately proven real-Redis integration case was the sole conditional skip.
+  Tests explicitly prove provenance-only idempotence, changed-semantics
+  rejection, late-history repair without latest regression, ACK retry,
+  incomplete-history fencing, Binance/OKX BAR parity and ordered checkpointing.
+  No runtime, provider, Kafka, Redis, V1 route or durable volume was mutated by
+  this unit gate. B.3 remains `IN_PROGRESS` until the committed image passes the
+  isolated atomic rebuild and strict real-provider consumer acceptance.
 - `2026-08-19 PHASE B ARTIFACT CLEANUP POLICY RECORDED`: Phase B ends at B.4;
   B17/B18 are repair slices inside B.3, not new subphases. Exact cleanup retains
   V1, active `e002da6`, active/rollback `cfc0246`, Kafka/Redis and all durable

@@ -5421,6 +5421,24 @@ ordered batch receives Kafka ACKs. Sixteen focused deployment/history tests
 passed, including multi-venue ACK failure/retry and incomplete-history fencing.
 Runtime healing and strict consumer acceptance remain required.
 
+Runtime healing with `2041f18` then exposed a second bounded defect: repeated
+historical BARs retain one semantic event ID/hash but carry new capture
+provenance, so generic byte-level spool collision fencing stopped the projector.
+The stable projector, not the generic spool, must recognize only equal 32-byte
+canonical payload hashes as semantic duplicates and must keep late historical
+repairs from regressing Redis/latest. Changed market semantics remain a hard
+collision.
+
+The bounded projector repair is now unit-passed. It recomputes and validates
+both canonical market-payload hashes, requires event ID and partition equality,
+checkpoints provenance-only duplicates without a second fan-out, preserves the
+generic spool collision policy and stores late BARs without replacing newer
+latest state. The focused stable-edge/deployment/history suite ran 46 cases in
+the immutable `2041f18` test image with network disabled: 45 passed and the one
+conditional Redis case, already proven separately, was skipped. No runtime was
+mutated. This is implementation evidence only; B.3 still requires a committed
+immutable image, fresh atomic cache rebuild and real-provider consumer gate.
+
 Remaining B.3 gate: fresh atomic Redis-plus-SQLite rebuild from canonical
 Kafka, zero gap/collision/quarantine, replica equality, signed SDK replay/live,
 fresh Trading System paper data and unchanged V1.

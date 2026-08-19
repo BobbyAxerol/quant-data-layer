@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -13,7 +15,12 @@ from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.envelope import validate_raw_envelope
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.stream import DurableStreamGateway
-from qdl.transport import DurableEvent, SQLiteDurableSpool, StoredEvent
+from qdl.transport import (
+    DurableEvent,
+    EventIdCollision,
+    SQLiteDurableSpool,
+    StoredEvent,
+)
 from qdl.transport.kafka_projector import KafkaProjectorRecord, ProjectorBroker
 
 
@@ -79,6 +86,9 @@ class _ReadyCanonical:
     raw_stream: str
     raw_event_id: bytes
     event: DurableEvent
+    existing: StoredEvent | None = None
+    semantic_duplicate: bool = False
+    project_latest: bool = True
 
 
 class StableProjectorEngine:
@@ -243,27 +253,60 @@ class StableProjectorEngine:
             ready = await self._ready_batch()
             if not ready:
                 return
-            stored_values = await self.sink.publish_many(
-                [item.event for item in ready]
+            fresh = tuple(item for item in ready if not item.semantic_duplicate)
+            fresh_stored = (
+                await self.sink.publish_many([item.event for item in fresh])
+                if fresh
+                else ()
+            )
+            stored_iterator = iter(fresh_stored)
+            resolved: list[tuple[_ReadyCanonical, StoredEvent]] = []
+            for item in ready:
+                stored = item.existing if item.semantic_duplicate else next(stored_iterator)
+                if stored is None:
+                    raise RuntimeError("stable semantic duplicate has no cache record")
+                resolved.append((item, stored))
+
+            projected = tuple(
+                (item, stored)
+                for item, stored in resolved
+                if item.project_latest and not item.semantic_duplicate
             )
             projections = [
                 self.projector.build(stored, item.raw_envelope)
-                for item, stored in zip(ready, stored_values, strict=True)
+                for item, stored in projected
             ]
-            applied = await asyncio.to_thread(self.target.apply_many, projections)
-            if len(applied) != len(ready):
-                raise RuntimeError("stable projection target returned an invalid result count")
+            applied = (
+                await asyncio.to_thread(self.target.apply_many, projections)
+                if projections
+                else ()
+            )
+            if len(applied) != len(projected):
+                raise RuntimeError(
+                    "stable projection target returned an invalid result count"
+                )
+            applied_by_event = {
+                item.record.event_id: was_applied
+                for (item, _stored), was_applied in zip(
+                    projected, applied, strict=True
+                )
+            }
             await asyncio.to_thread(
                 self._checkpoint_records, [item.record for item in ready]
             )
-            for item, was_applied in zip(ready, applied, strict=True):
-                if not was_applied:
+            for item in ready:
+                if item.semantic_duplicate or (
+                    item.record.event_id in applied_by_event
+                    and not applied_by_event[item.record.event_id]
+                ):
                     self._duplicate_projections += 1
                 self._canonical_committed += 1
                 queue = self._queues[item.partition]
                 current = queue.popleft()
                 if current.offset != item.record.offset:
-                    raise RuntimeError("stable canonical queue order changed during batch")
+                    raise RuntimeError(
+                        "stable canonical queue order changed during batch"
+                    )
                 self._pending_records -= 1
                 self._pending_bytes -= len(item.record.payload)
                 capture_id = bytes(item.envelope.raw_capture_id)
@@ -275,6 +318,62 @@ class StableProjectorEngine:
                 if not queue:
                     self._queues.pop(item.partition, None)
             self._update_canonical_backpressure()
+
+    @staticmethod
+    def _verified_payload_hash(
+        envelope: market_data_pb2.EventEnvelope,
+    ) -> bytes:
+        payload_name = envelope.WhichOneof("payload")
+        if not payload_name:
+            raise EventIdCollision("canonical duplicate has no market payload")
+        declared = bytes(envelope.canonical_payload_hash)
+        observed = hashlib.sha256(
+            getattr(envelope, payload_name).SerializeToString(deterministic=True)
+        ).digest()
+        if len(declared) != 32 or not hmac.compare_digest(declared, observed):
+            raise EventIdCollision(
+                "canonical duplicate payload hash is missing or invalid"
+            )
+        return declared
+
+    @classmethod
+    def _semantic_duplicate(
+        cls,
+        existing: StoredEvent,
+        record: KafkaProjectorRecord,
+        envelope: market_data_pb2.EventEnvelope,
+    ) -> bool:
+        if existing.event.payload == record.payload:
+            return False
+        existing_envelope = market_data_pb2.EventEnvelope.FromString(
+            existing.event.payload
+        )
+        existing_hash = cls._verified_payload_hash(existing_envelope)
+        candidate_hash = cls._verified_payload_hash(envelope)
+        if (
+            existing.cursor.partition_key != record.key
+            or bytes(existing_envelope.event_id) != record.event_id
+            or not hmac.compare_digest(existing_hash, candidate_hash)
+        ):
+            raise EventIdCollision(
+                "canonical event ID maps to different market semantics"
+            )
+        return True
+
+    def _latest_bar_close_ns(self, partition_key: str) -> int | None:
+        rows = self.spool.read_tail(
+            stream=self.catalog.canonical_stream,
+            partition_key=partition_key,
+            limit=10_000,
+        )
+        closes = []
+        for stored in rows:
+            envelope = market_data_pb2.EventEnvelope.FromString(
+                stored.event.payload
+            )
+            if envelope.WhichOneof("payload") == "bar":
+                closes.append(int(envelope.bar.close_time_ns))
+        return max(closes) if closes else None
 
     async def _ready_batch(self) -> tuple[_ReadyCanonical, ...]:
         candidates = []
@@ -288,17 +387,53 @@ class StableProjectorEngine:
                 ))
             if len(candidates) >= self.max_batch_records:
                 break
+
+        existing_by_id = await asyncio.to_thread(
+            self.spool.find_events,
+            stream=self.catalog.canonical_stream,
+            event_ids=tuple(record.event_id for _p, record, _e, _c in candidates),
+        )
+        semantic_duplicates = {
+            record.event_id: existing
+            for _partition, record, envelope, _capture_id in candidates
+            if (existing := existing_by_id.get(record.event_id)) is not None
+            and self._semantic_duplicate(existing, record, envelope)
+        }
         fallback_ids = tuple(
             capture_id
             for _partition, record, _envelope, capture_id in candidates
-            if record.raw_provider_envelope is None
+            if record.event_id not in semantic_duplicates
+            and record.raw_provider_envelope is None
         )
         raw_by_id = await asyncio.to_thread(self._find_raw_many, fallback_ids)
+        bar_high_watermarks: dict[str, int | None] = {}
         ready = []
         blocked_partitions = set()
         for partition, record, envelope, capture_id in candidates:
             if partition in blocked_partitions:
                 continue
+            existing = semantic_duplicates.get(record.event_id)
+            if existing is not None:
+                ready.append(_ReadyCanonical(
+                    partition=partition,
+                    record=record,
+                    envelope=envelope,
+                    raw_envelope=b"",
+                    raw_stream="semantic-duplicate",
+                    raw_event_id=capture_id,
+                    event=DurableEvent(
+                        stream=self.catalog.canonical_stream,
+                        partition_key=record.key,
+                        event_id=record.event_id,
+                        payload=record.payload,
+                        accepted_at_ns=record.accepted_at_ns,
+                    ),
+                    existing=existing,
+                    semantic_duplicate=True,
+                    project_latest=False,
+                ))
+                continue
+
             if record.raw_provider_envelope is not None:
                 raw_envelope = record.raw_provider_envelope
                 raw = raw_provider_pb2.RawProviderEnvelope.FromString(raw_envelope)
@@ -322,6 +457,19 @@ class StableProjectorEngine:
                 raw_envelope = stored_raw.event.payload
                 raw_stream = stored_raw.event.stream
                 raw_event_id = stored_raw.event.event_id
+
+            project_latest = True
+            if envelope.WhichOneof("payload") == "bar":
+                if record.key not in bar_high_watermarks:
+                    bar_high_watermarks[record.key] = await asyncio.to_thread(
+                        self._latest_bar_close_ns, record.key
+                    )
+                current = bar_high_watermarks[record.key]
+                close_ns = int(envelope.bar.close_time_ns)
+                project_latest = current is None or close_ns >= current
+                bar_high_watermarks[record.key] = (
+                    close_ns if current is None else max(current, close_ns)
+                )
             ready.append(_ReadyCanonical(
                 partition=partition,
                 record=record,
@@ -346,6 +494,7 @@ class StableProjectorEngine:
                         "kafka_offset": str(record.offset),
                     },
                 ),
+                project_latest=project_latest,
             ))
         return tuple(ready)
 

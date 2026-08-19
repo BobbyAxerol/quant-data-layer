@@ -26,6 +26,7 @@ from qdl.canonical.trade import (
     canonicalize_dnse_trade,
 )
 from qdl.common.v1 import common_pb2
+from qdl.marketdata.v2 import market_data_pb2
 from qdl.domain.instrument import (
     AssetClass,
     InstrumentIdentity,
@@ -911,6 +912,175 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(engine.stats.pending_canonical, 0)
         self.assertEqual(broker.checkpoints, [(canonical_topic, 0, 0)])
         self.assertEqual(len(target.publications), 2)
+
+    async def test_provenance_only_semantic_duplicate_is_checkpointed_without_fanout(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        raw_topic, canonical_topic, raw_record, first = _broker_records(
+            binding, raw, event
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        await engine.accept_many((raw_record, first))
+        publication_count = len(target.publications)
+
+        replayed = type(event)()
+        replayed.CopyFrom(event)
+        replayed.partition_sequence += 99
+        replay = KafkaProjectorRecord(
+            topic=canonical_topic,
+            partition=0,
+            offset=1,
+            key=first.key,
+            event_id=first.event_id,
+            payload=replayed.SerializeToString(deterministic=True),
+            accepted_at_ns=first.accepted_at_ns + 1,
+        )
+        await engine.accept(replay)
+
+        self.assertEqual(len(target.publications), publication_count)
+        self.assertEqual(engine.stats.canonical_committed, 2)
+        self.assertEqual(engine.stats.duplicate_projections, 1)
+        self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 1))
+
+    async def test_late_historical_bar_repairs_cache_without_latest_regression(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        fixture = json.loads(
+            (FIXTURE_PATH / "binance_usdm_rest_bar.json").read_text()
+        )
+
+        def pair(open_time_ms):
+            raw_payload = json.loads(json.dumps(fixture["raw"]))
+            raw_payload["row"][0] = open_time_ms
+            raw_payload["row"][6] = open_time_ms + 59_999
+            raw_bytes = json.dumps(
+                raw_payload, sort_keys=True, separators=(",", ":")
+            ).encode()
+            received_at_ns = (open_time_ms + 60_001) * 1_000_000
+            raw = capture_exact_frame(
+                provider=binding.provider,
+                venue=binding.instrument.identity.venue,
+                market=binding.instrument.identity.market,
+                product_type=binding.instrument.identity.product_type.value,
+                native_symbol=binding.instrument.native_symbol,
+                native_channel="rest-klines/1m",
+                subscription_id=binding.source_id,
+                source_session_id="phase-b-late-bar-session",
+                connection_generation=1,
+                lease_epoch=1,
+                authority_revision=self.catalog.authority_revision,
+                partition_plan_epoch=1,
+                received_at_ns=received_at_ns,
+                raw_frame_bytes=raw_bytes,
+                adapter_version=binding.adapter_version,
+                config_revision=1,
+                instrument_catalog_revision=self.catalog.catalog_revision,
+                correlation_id=f"phase-b-late-bar-{open_time_ms}",
+                test_provenance=True,
+            )
+            context = dict(fixture["context"])
+            context.update({
+                "instrument_uid": binding.instrument.instrument_uid,
+                "instrument_id": binding.instrument.instrument_id,
+                "instrument_revision": binding.instrument.metadata_revision,
+                "venue": binding.instrument.identity.venue,
+                "market": binding.instrument.identity.market,
+                "product_type": binding.instrument.identity.product_type.value,
+                "native_symbol": binding.instrument.native_symbol,
+                "provider": binding.provider,
+                "source_id": binding.source_id,
+                "source_role": binding.source_role,
+                "adapter_version": binding.adapter_version,
+                "normalizer_version": binding.normalizer_version,
+                "lease_epoch": 1,
+                "partition_sequence": 1,
+                "normalized_at_ns": received_at_ns + 1,
+                "published_at_ns": received_at_ns + 2,
+            })
+            event = canonicalize_binance_usdm_rest_bar(
+                raw_payload, bind_capture_context(TradeContext(**context), raw)
+            )
+            return raw, event
+
+        older_raw, older_event = pair(1786352340000)
+        later_raw, later_event = pair(1786352400000)
+        raw_topic, canonical_topic, later_raw_record, later_record = _broker_records(
+            binding, later_raw, later_event
+        )
+        _raw_topic, _canonical_topic, older_raw_record, older_record = _broker_records(
+            binding, older_raw, older_event, raw_offset=1, canonical_offset=1
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        await engine.accept_many((later_raw_record, later_record))
+        latest_before = dict(target.latest)
+
+        await engine.accept_many((older_raw_record, older_record))
+
+        self.assertEqual(target.latest, latest_before)
+        stored = self.spool.read_tail(
+            stream=self.catalog.canonical_stream,
+            partition_key=binding.partition_key,
+            limit=10,
+        )
+        self.assertEqual(len(stored), 2)
+        opens = sorted(
+            market_data_pb2.EventEnvelope.FromString(
+                item.event.payload
+            ).bar.open_time_ns
+            for item in stored
+        )
+        self.assertEqual(
+            opens,
+            [1786352340000 * 1_000_000, 1786352400000 * 1_000_000],
+        )
+        self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 1))
+
+    async def test_same_event_id_with_changed_market_semantics_fails_closed(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        raw_topic, canonical_topic, raw_record, first = _broker_records(
+            binding, raw, event
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        await engine.accept_many((raw_record, first))
+
+        changed = type(event)()
+        changed.CopyFrom(event)
+        changed.trade.aggressor_side = (
+            common_pb2.AGGRESSOR_SIDE_SELL
+            if event.trade.aggressor_side == common_pb2.AGGRESSOR_SIDE_BUY
+            else common_pb2.AGGRESSOR_SIDE_BUY
+        )
+        changed.canonical_payload_hash = hashlib.sha256(
+            changed.trade.SerializeToString(deterministic=True)
+        ).digest()
+        conflicting = KafkaProjectorRecord(
+            topic=canonical_topic,
+            partition=0,
+            offset=1,
+            key=first.key,
+            event_id=first.event_id,
+            payload=changed.SerializeToString(deterministic=True),
+            accepted_at_ns=first.accepted_at_ns + 1,
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "different market semantics"
+        ):
+            await engine.accept(conflicting)
+
+        self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 0))
+        self.assertEqual(engine.stats.canonical_committed, 1)
 
     async def test_checkpoint_failure_replays_idempotently_without_duplicate_publication(self):
         binding, raw, event = _stable_pair(
