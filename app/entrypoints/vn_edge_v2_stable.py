@@ -2,7 +2,7 @@
 
 import asyncio
 
-from qdl.runtime.stable_vn_edge import main
+from qdl.adapters.vn.stable_edge import main
 
 
 if __name__ == "__main__":

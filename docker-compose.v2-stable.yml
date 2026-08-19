@@ -383,6 +383,7 @@ services:
       QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_KAFKA_CERT_ROOT: /stable-certs/producer
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-binance-bars
+      QDL_STABLE_BAR_WARMUP_ROWS: "500"
     volumes:
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro

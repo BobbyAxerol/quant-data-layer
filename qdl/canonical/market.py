@@ -236,7 +236,9 @@ def canonicalize_okx_bar(
     if confirm not in {"0", "1"}:
         raise ValueError("OKX candle confirm must be 0 or 1")
     is_final = confirm == "1"
-    sequence = f"{open_time_ms}:{confirm}:{context.partition_sequence}"
+    # Final/provisional venue bars keep one identity across REST bootstrap,
+    # WebSocket delivery and process restart. Content conflicts then fail closed.
+    sequence = f"{open_time_ms}:{confirm}"
     envelope = _envelope(
         raw=raw,
         context=context,

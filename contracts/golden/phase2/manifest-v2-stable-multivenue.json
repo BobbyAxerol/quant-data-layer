@@ -61,10 +61,10 @@
       "sha256": "8edea437e146185583a8cd611a834b986dd2fdc88e9c60cd5ca67826b80f56d0"
     },
     {
-      "bytes": 538,
+      "bytes": 535,
       "fixture": "okx_bar.json",
       "golden": "okx-swap-bar.bin",
-      "sha256": "1a41527cfce48c59e2a73a071917811f392b9a760186add4798595b706443f78"
+      "sha256": "61326a8310fb7ccd6280da65b3487bfa282c7b6948674bfe2914189f36e897de"
     },
     {
       "bytes": 403,
@@ -79,10 +79,10 @@
       "sha256": "eff031027d2b8275dcb7fb839b3c6d76b0f3d00f17db95c22dd92c0813924ecd"
     },
     {
-      "bytes": 511,
+      "bytes": 508,
       "fixture": "okx_spot_bar.json",
       "golden": "okx-spot-bar.bin",
-      "sha256": "f4bd3f7936ed5b7d895d2ff0f2dbb7ed79ba55fae95aa29f6a5b2cc092c997e2"
+      "sha256": "462500a8e41514d3e3cd134b7e6f439e750effaa698e1df46013c9e1c1e039c8"
     },
     {
       "bytes": 585,

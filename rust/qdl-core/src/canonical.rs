@@ -541,10 +541,9 @@ fn canonicalize_okx_bar(fixture: &TradeFixture) -> Result<EventEnvelope, String>
         "1" => true,
         _ => return Err("OKX candle confirm must be 0 or 1".into()),
     };
-    let sequence = format!(
-        "{open_time_ms}:{confirm}:{}",
-        fixture.context.partition_sequence
-    );
+    // Keep one provider event identity across REST bootstrap, WebSocket delivery,
+    // and process restart. A same-identity content conflict must fail closed.
+    let sequence = format!("{open_time_ms}:{confirm}");
     let mut envelope = base_envelope(fixture, "bar", sequence, open_time_ms)?;
     envelope
         .quality_flags

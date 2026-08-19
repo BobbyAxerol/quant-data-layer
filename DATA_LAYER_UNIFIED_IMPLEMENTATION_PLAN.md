@@ -4788,7 +4788,54 @@ by implication in Phase B implementation.
   missing lineage, signed inline ingest, malformed lineage, legacy fallback,
   replay/idempotency and checkpoint ordering. Clean immutable real-provider
   lag/cache/I/O and recovery evidence remains mandatory.
-- `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
+- `2026-08-19 PHASE B B6 AUTHENTIC BAR WARMUP CLOSURE IN PROGRESS`: the clean
+  all-`2b38f95` candidate proved the private-lineage topology is sustainable:
+  projector lag converged from 1,112 to 62 while provider traffic continued,
+  SQLite contained canonical rows only, every partition stayed at or below
+  10,000 rows, and no quarantine/collision was observed. Authenticated Binance
+  and OKX TRADE snapshots returned the typed V2 contract and a mismatched
+  consumer identity failed closed. The same real-runtime test exposed a release
+  blocker: both registered alpha manifests require 500 final 1m BARs, while the
+  clean latest-only BAR edges returned `409 PARTIAL_RESULT`.
+
+  The approved repair remains inside the isolated Phase B topology. Add bounded
+  real-provider historical BAR bootstrap for Binance Spot/USD-M and OKX
+  Spot/SWAP, publish every native row through raw Kafka and the transactional
+  Rust core, and never write history directly into SQLite or Redis. Final BAR
+  identity must be idempotent across REST bootstrap, WebSocket delivery and
+  process restart; conflicting content for the same immutable provider bar must
+  fail closed. No synthetic/generated runtime market data is allowed. Required
+  gates are exact 500-row closed/contiguous coverage per crypto alpha manifest,
+  Python/Rust canonical-byte parity, duplicate/restart idempotency, malformed/
+  incomplete provider fail-closed behavior, bounded resource/lag evidence and
+  warmup -> signed cursor -> replay -> live through the released SDK. Rollback
+  stops/removes only `qdl_v2_stable_candidate`; V1 port 8100, current Redis and
+  current consumers remain untouched.
+- `2026-08-19 PHASE B B6 AUTHENTIC BAR WARMUP IMPLEMENTED AND UNIT-VERIFIED,
+  IMMUTABLE RUNTIME ACCEPTANCE PENDING`: Binance Spot/USD-M and OKX Spot/SWAP
+  now fetch a bounded 500-row final 1m history from the approved public REST
+  APIs before the live loop. Strict adapters reject partial coverage, malformed
+  native rows, provisional bars, time gaps and conflicting duplicate timestamps.
+  Every accepted row is wrapped with HTTP/provider provenance and enters raw
+  Kafka; the Python edge never writes SQLite or Redis directly. OKX final BAR
+  source/event identity no longer includes transport partition sequence, so the
+  same provider bar is idempotent across REST bootstrap, WebSocket delivery and
+  restart while a same-identity payload conflict remains fail-closed. The
+  provider-owning DNSE stable edge moved under `qdl.adapters.vn`; its old runtime
+  import remains a compatibility facade, restoring the static role boundary
+  without changing vendor behavior.
+
+  Targeted BAR/deployment/golden tests passed 17/17. The official 19-case
+  multi-venue golden generator/check passed; only the intended OKX Spot/SWAP BAR
+  bytes and manifest hashes changed. Full Python discovery passed 478 tests with
+  six explicit dependency/infrastructure skips. Full Rust fmt, workspace Clippy
+  with warnings denied and workspace tests passed. A bounded real-provider probe
+  loaded exactly 500 contiguous closed rows for Binance USD-M, Binance Spot, OKX
+  SWAP and OKX Spot over the same window, with test provenance false. No V1
+  service, current Redis namespace or consumer was mutated. A new all-one-SHA
+  immutable candidate must still prove the registered warmup -> cursor -> replay
+  -> live and recovery/resource gates before Phase B closes.
++- `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
 ### Rollback
