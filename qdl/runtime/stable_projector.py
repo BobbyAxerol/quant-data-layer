@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -74,7 +75,9 @@ class _ReadyCanonical:
     partition: tuple[str, int]
     record: KafkaProjectorRecord
     envelope: market_data_pb2.EventEnvelope
-    raw: StoredEvent
+    raw_envelope: bytes
+    raw_stream: str
+    raw_event_id: bytes
     event: DurableEvent
 
 
@@ -99,7 +102,6 @@ class StableProjectorEngine:
     ) -> None:
         if (
             not canonical_topic
-            or not raw_topics
             or canonical_topic in raw_topics
             or len(raw_topics) != len(set(raw_topics))
         ):
@@ -245,7 +247,7 @@ class StableProjectorEngine:
                 [item.event for item in ready]
             )
             projections = [
-                self.projector.build(stored, item.raw.event.payload)
+                self.projector.build(stored, item.raw_envelope)
                 for item, stored in zip(ready, stored_values, strict=True)
             ]
             applied = await asyncio.to_thread(self.target.apply_many, projections)
@@ -286,25 +288,47 @@ class StableProjectorEngine:
                 ))
             if len(candidates) >= self.max_batch_records:
                 break
-        raw_by_id = await asyncio.to_thread(
-            self._find_raw_many,
-            tuple(capture_id for _partition, _record, _envelope, capture_id in candidates),
+        fallback_ids = tuple(
+            capture_id
+            for _partition, record, _envelope, capture_id in candidates
+            if record.raw_provider_envelope is None
         )
+        raw_by_id = await asyncio.to_thread(self._find_raw_many, fallback_ids)
         ready = []
         blocked_partitions = set()
         for partition, record, envelope, capture_id in candidates:
             if partition in blocked_partitions:
                 continue
-            raw = raw_by_id.get(capture_id)
-            if raw is None:
-                self._waiting[capture_id].add(partition)
-                blocked_partitions.add(partition)
-                continue
+            if record.raw_provider_envelope is not None:
+                raw_envelope = record.raw_provider_envelope
+                raw = raw_provider_pb2.RawProviderEnvelope.FromString(raw_envelope)
+                validate_raw_envelope(raw)
+                if bytes(raw.capture_id) != capture_id:
+                    raise ValueError(
+                        "private Kafka raw lineage differs from canonical capture ID"
+                    )
+                raw_stream = "kafka-header:qdl-raw-provider-envelope"
+                raw_event_id = capture_id
+            else:
+                stored_raw = raw_by_id.get(capture_id)
+                if stored_raw is None:
+                    if not self.raw_topics:
+                        raise ValueError(
+                            "canonical record is missing private Kafka raw lineage"
+                        )
+                    self._waiting[capture_id].add(partition)
+                    blocked_partitions.add(partition)
+                    continue
+                raw_envelope = stored_raw.event.payload
+                raw_stream = stored_raw.event.stream
+                raw_event_id = stored_raw.event.event_id
             ready.append(_ReadyCanonical(
                 partition=partition,
                 record=record,
                 envelope=envelope,
-                raw=raw,
+                raw_envelope=raw_envelope,
+                raw_stream=raw_stream,
+                raw_event_id=raw_event_id,
                 event=DurableEvent(
                     stream=self.catalog.canonical_stream,
                     partition_key=record.key,
@@ -312,8 +336,11 @@ class StableProjectorEngine:
                     payload=record.payload,
                     accepted_at_ns=record.accepted_at_ns,
                     headers={
-                        "raw_stream": raw.event.stream,
-                        "raw_event_id": raw.event.event_id.hex(),
+                        "raw_stream": raw_stream,
+                        "raw_event_id": raw_event_id.hex(),
+                        "raw_provider_envelope": base64.b64encode(
+                            raw_envelope
+                        ).decode("ascii"),
                         "kafka_topic": record.topic,
                         "kafka_partition": str(record.partition),
                         "kafka_offset": str(record.offset),

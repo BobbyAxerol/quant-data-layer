@@ -21,6 +21,7 @@ use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use rdkafka::util::Timeout;
 
 const EVENT_ID_HEADER: &str = "qdl-event-id";
+const RAW_ENVELOPE_HEADER: &str = "qdl-raw-provider-envelope";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KafkaTlsConfig {
@@ -555,6 +556,24 @@ pub struct TransactionalKafkaInput {
 pub struct TransactionalKafkaOutput {
     pub record: DurableRecord,
     pub publication: PublicationContext,
+    pub raw_provider_envelope: Option<Vec<u8>>,
+}
+
+fn transactional_output_headers(
+    event_id: &[u8],
+    raw_provider_envelope: Option<&[u8]>,
+) -> OwnedHeaders {
+    let mut headers = OwnedHeaders::new().insert(Header {
+        key: EVENT_ID_HEADER,
+        value: Some(event_id),
+    });
+    if let Some(raw) = raw_provider_envelope {
+        headers = headers.insert(Header {
+            key: RAW_ENVELOPE_HEADER,
+            value: Some(raw),
+        });
+    }
+    headers
 }
 
 /// Kafka consume-transform-produce boundary. Output records and the next raw
@@ -707,16 +726,17 @@ impl TransactionalKafkaBridge {
         self.producer.begin_transaction()?;
         let transaction = async {
             let deliveries = outputs.iter().map(|output| async move {
+                let headers = transactional_output_headers(
+                    output.record.event_id.as_slice(),
+                    output.raw_provider_envelope.as_deref(),
+                );
                 let delivery = self
                     .producer
                     .send(
                         FutureRecord::to(&output.record.stream)
                             .key(output.record.partition_key.as_bytes())
                             .payload(output.record.payload.as_slice())
-                            .headers(OwnedHeaders::new().insert(Header {
-                                key: EVENT_ID_HEADER,
-                                value: Some(output.record.event_id.as_slice()),
-                            })),
+                            .headers(headers),
                         Timeout::After(self.request_timeout),
                     )
                     .await
@@ -860,12 +880,29 @@ impl KafkaEventSource {
 #[cfg(test)]
 mod tests {
     use super::{
-        KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, Phase92SinkTopics,
-        Phase9SinkTopics, TransactionalShadowTopics,
+        transactional_output_headers, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
+        Phase92SinkTopics, Phase9SinkTopics, TransactionalShadowTopics, EVENT_ID_HEADER,
+        RAW_ENVELOPE_HEADER,
     };
     use qdl_core::transport::RetryClass;
     use qdl_venue_core::authority::SinkTarget;
+    use rdkafka::message::Headers;
     use std::time::Duration;
+
+    #[test]
+    fn transactional_headers_preserve_private_raw_lineage() {
+        let event_id = [7_u8; 16];
+        let raw = b"raw-provider-envelope";
+        let headers = transactional_output_headers(&event_id, Some(raw));
+        let values = headers
+            .iter()
+            .map(|header| (header.key, header.value.unwrap_or_default().to_vec()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(values[EVENT_ID_HEADER], event_id);
+        assert_eq!(values[RAW_ENVELOPE_HEADER], raw);
+        let without_raw = transactional_output_headers(&event_id, None);
+        assert_eq!(without_raw.count(), 1);
+    }
 
     #[test]
     fn config_fails_closed_without_tls_files() {

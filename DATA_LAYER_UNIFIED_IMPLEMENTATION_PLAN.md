@@ -4737,6 +4737,57 @@ by implication in Phase B implementation.
   pinned dependency image, read-only source and no network. A new immutable
   image and clean authentic-provider lag/cache/I/O/restart/outage test still
   gate acceptance.
+- `2026-08-19 PHASE B B5 FIRST BOUNDED-CACHE RUNTIME RETEST FAILED,
+  TRANSPORT-LINEAGE REPAIR IN PROGRESS`: the clean all-`3d0ff9c` candidate
+  confirmed that batch lookup/checkpoint and partition windows prevent unbounded
+  cache growth, but they cannot make the prior topology sustainable. The
+  projector still consumed and fsync-persisted every raw frame solely to recover
+  raw bytes needed by the compatibility projection. After one minute, canonical
+  lag remained increasing (for example 65,351 records on hot canonical partition
+  0), projector CPU was about 78%, block writes were already about 1.47 GB and
+  three raw partitions were continuously trimming at 10,000 rows. This also
+  risks evicting lineage before a lagged canonical record arrives. The isolated
+  producer/core/projector roles were stopped; V1 remained unchanged.
+
+  The corrected internal boundary is additive and provider-neutral: the
+  transactional Rust core must copy the already authenticated
+  `RawProviderEnvelope` bytes into a private Kafka canonical-record header in
+  the same exactly-once transaction. The Python projector consumes only
+  read-committed canonical records, validates embedded capture ID/hash/provider/
+  session/authority against the canonical envelope, and passes those bytes only
+  to the internal HMAC compatibility projector. SQLite then stores canonical
+  replay/query cache rows only; Kafka raw/canonical remain the authorities.
+  Public Protobuf, REST/gRPC, event ID, partition key, freshness, Redis V1 shape
+  and venue semantics may not change. The prior split raw-topic join remains a
+  test/rolling-compatibility path but is not selected by stable `2.0.0`.
+  Mandatory gates are exact Rust transaction-header replay, missing/tampered
+  lineage fail-closed, no raw SQLite rows in stable runtime, V1 compatibility
+  golden parity, sustained provider lag convergence, bounded canonical cache,
+  process/broker/Redis recovery and zero quarantine/collision.
+- `2026-08-19 PHASE B B5 PRIVATE TRANSPORT LINEAGE UNIT-VERIFIED,
+  IMMUTABLE RUNTIME RETEST PENDING`: the Rust transactional canonical output
+  now carries the exact consumed `RawProviderEnvelope` in a private
+  `qdl-raw-provider-envelope` Kafka header in the same output/source-offset
+  transaction. The stable Python Kafka adapter selects only the read-committed
+  canonical topic, requires that header, validates capture ID and all raw
+  provenance again at the projector and signed-ingest boundary, and persists
+  only canonical events in the bounded SQLite cache. The previous raw-topic
+  join remains available only when explicitly configured for rolling/test
+  compatibility; missing inline lineage with canonical-only topology fails
+  closed.
+
+  The internal HMAC endpoint accepts the lineage field additively, maps malformed
+  protobuf to bounded 422, and never writes the private raw bytes into cache
+  headers or public payloads. Public Protobuf/OpenAPI/SDK/event identity and
+  exact Redis compatibility projection remain unchanged. Rust fmt, full
+  workspace Clippy with warnings denied and all 60 workspace tests passed,
+  including exact present/absent private-header assertions. Python compileall
+  passed; targeted tests passed 46 with one conditional Redis skip and the broad
+  V2/security/Phase 8/Phase B suite passed 104 with the same skip. Tests cover
+  canonical-only subscription, valid embedded lineage without raw cache rows,
+  missing lineage, signed inline ingest, malformed lineage, legacy fallback,
+  replay/idempotency and checkpoint ordering. Clean immutable real-provider
+  lag/cache/I/O and recovery evidence remains mandatory.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

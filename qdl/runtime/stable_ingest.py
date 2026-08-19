@@ -12,8 +12,11 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
+from google.protobuf.message import DecodeError
 
 from qdl.marketdata.v2 import market_data_pb2
+from qdl.provider.v1 import raw_provider_pb2
+from qdl.raw.envelope import validate_raw_envelope
 from qdl.runtime.lease import GatewayFenced
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.stream import DurableStreamGateway
@@ -83,26 +86,56 @@ def install_stable_canonical_ingest(
         references = []
         for value in values:
             try:
-                if not isinstance(value, dict) or set(value) != {
-                    "canonical", "raw_stream", "raw_event_id"
-                }:
+                required_fields = {"canonical", "raw_stream", "raw_event_id"}
+                allowed_fields = required_fields | {"raw_provider_envelope"}
+                if (
+                    not isinstance(value, dict)
+                    or not required_fields.issubset(value)
+                    or set(value) - allowed_fields
+                ):
                     raise ValueError("stable event reference fields are incomplete or unknown")
                 canonical = base64.b64decode(value["canonical"], validate=True)
                 raw_event_id = bytes.fromhex(str(value["raw_event_id"]))
                 raw_stream = str(value["raw_stream"])
+                inline_raw = (
+                    base64.b64decode(value["raw_provider_envelope"], validate=True)
+                    if "raw_provider_envelope" in value
+                    else None
+                )
                 envelope = market_data_pb2.EventEnvelope.FromString(canonical)
                 binding = catalog.binding_for_envelope(envelope)
                 if raw_event_id != bytes(envelope.raw_capture_id):
                     raise ValueError("stable canonical raw reference is unavailable")
+                if inline_raw is not None:
+                    raw = raw_provider_pb2.RawProviderEnvelope.FromString(inline_raw)
+                    validate_raw_envelope(raw)
+                    if (
+                        bytes(raw.capture_id) != raw_event_id
+                        or bytes(raw.raw_frame_sha256) != bytes(envelope.raw_payload_hash)
+                        or raw.provider != envelope.provider
+                        or raw.venue != envelope.venue
+                        or raw.market != envelope.market
+                        or raw.native_symbol != envelope.native_symbol
+                        or raw.source_session_id != envelope.source_session_id
+                        or raw.connection_generation != envelope.connection_generation
+                        or raw.authority_revision != envelope.authority_revision
+                    ):
+                        raise ValueError("private Kafka raw lineage validation failed")
                 references.append((
-                    binding, envelope, canonical, raw_stream, raw_event_id
+                    binding, envelope, canonical, raw_stream, raw_event_id, inline_raw
                 ))
-            except (ValueError, TypeError) as error:
+            except (ValueError, TypeError, DecodeError) as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
 
         raw_by_reference = {}
-        for raw_stream in sorted({item[3] for item in references}):
-            event_ids = [item[4] for item in references if item[3] == raw_stream]
+        for raw_stream in sorted({
+            item[3] for item in references if item[5] is None
+        }):
+            event_ids = [
+                item[4]
+                for item in references
+                if item[3] == raw_stream and item[5] is None
+            ]
             found = await asyncio.to_thread(
                 spool.find_events, stream=raw_stream, event_ids=event_ids
             )
@@ -110,8 +143,13 @@ def install_stable_canonical_ingest(
                 {(raw_stream, event_id): stored for event_id, stored in found.items()}
             )
         prepared = []
-        for binding, envelope, canonical, raw_stream, raw_event_id in references:
-            if (raw_stream, raw_event_id) not in raw_by_reference:
+        for (
+            binding, envelope, canonical, raw_stream, raw_event_id, inline_raw
+        ) in references:
+            if (
+                inline_raw is None
+                and (raw_stream, raw_event_id) not in raw_by_reference
+            ):
                 raise HTTPException(
                     status_code=422,
                     detail="stable canonical raw reference is unavailable",
@@ -207,11 +245,15 @@ class StableHttpCanonicalSink:
             raw_event_id = event.headers.get("raw_event_id")
             if not raw_stream or not raw_event_id:
                 raise ValueError("stable HTTP sink requires a durable raw reference")
-            encoded.append({
+            item = {
                 "canonical": base64.b64encode(event.payload).decode(),
                 "raw_stream": raw_stream,
                 "raw_event_id": raw_event_id,
-            })
+            }
+            inline_raw = event.headers.get("raw_provider_envelope")
+            if inline_raw:
+                item["raw_provider_envelope"] = inline_raw
+            encoded.append(item)
         body = json.dumps({
             "schema": _INGEST_SCHEMA,
             "batch_id": str(uuid.uuid4()),

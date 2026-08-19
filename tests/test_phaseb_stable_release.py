@@ -147,7 +147,7 @@ class StableRuntimeDependencyTests(unittest.TestCase):
                     bootstrap_servers="kafka1:9092",
                     client_id="stable-projector",
                     group_id="stable-projector-v1",
-                    raw_topics=("md.raw.stable.v1",),
+                    raw_topics=(),
                     canonical_topic="md.canonical.stable.v2",
                     ca_path=root / "ca.crt",
                     certificate_path=root / "client.crt",
@@ -156,6 +156,9 @@ class StableRuntimeDependencyTests(unittest.TestCase):
                 consumer_factory=FakeConsumer,
             )
             self.assertTrue(broker.ping(0.25))
+            self.assertEqual(
+                broker._consumer.topics, ("md.canonical.stable.v2",)
+            )
             self.assertFalse(broker._consumer.config["enable.auto.commit"])
             self.assertEqual(broker._consumer.config["isolation.level"], "read_committed")
             broker.close()

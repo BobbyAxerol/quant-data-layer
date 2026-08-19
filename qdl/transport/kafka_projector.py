@@ -14,6 +14,7 @@ except ImportError:  # Construction fails closed when the production dependency 
 
 
 _EVENT_ID_HEADER = "qdl-event-id"
+_RAW_ENVELOPE_HEADER = "qdl-raw-provider-envelope"
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +27,7 @@ class KafkaProjectorRecord:
     payload: bytes
     accepted_at_ns: int
     assignment_epoch: int = 1
+    raw_provider_envelope: bytes | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -37,6 +39,7 @@ class KafkaProjectorRecord:
             or not self.payload
             or self.accepted_at_ns <= 0
             or self.assignment_epoch < 1
+            or self.raw_provider_envelope == b""
         ):
             raise ValueError("Kafka projector record is invalid")
 
@@ -71,7 +74,7 @@ class KafkaProjectorConfig:
         if not all((
             self.bootstrap_servers.strip(), self.client_id.strip(), self.group_id.strip(),
             self.canonical_topic.strip(),
-        )) or not self.raw_topics:
+        )):
             raise ValueError("Kafka stable projector identity/topics are required")
         topics = (*self.raw_topics, self.canonical_topic)
         if any(not value.strip() for value in topics) or len(topics) != len(set(topics)):
@@ -217,6 +220,7 @@ class ConfluentProjectorBroker:
             raise KafkaException(message.error())
         headers = dict(message.headers() or ())
         event_id = headers.get(_EVENT_ID_HEADER)
+        raw_provider_envelope = headers.get(_RAW_ENVELOPE_HEADER)
         key = message.key()
         payload = message.value()
         timestamp_ms = message.timestamp()[1]
@@ -235,6 +239,11 @@ class ConfluentProjectorBroker:
             payload=bytes(payload),
             accepted_at_ns=max(1, int(timestamp_ms) * 1_000_000),
             assignment_epoch=self._assignment_epoch,
+            raw_provider_envelope=(
+                bytes(raw_provider_envelope)
+                if raw_provider_envelope is not None
+                else None
+            ),
         )
 
     def ping(self, timeout_seconds: float = 1.0) -> bool:

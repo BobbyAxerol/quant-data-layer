@@ -520,7 +520,7 @@ async def serve_stable_projector() -> None:
         bootstrap_servers=config.kafka_bootstrap_servers,
         client_id=config.kafka_client_id,
         group_id=config.consumer_group,
-        raw_topics=config.kafka_raw_topics,
+        raw_topics=(),  # Rust canonical records carry private raw lineage.
         canonical_topic=config.kafka_canonical_topic,
         ca_path=config.kafka_cert_root / "ca.crt",
         certificate_path=config.kafka_cert_root / "client.crt",
@@ -552,7 +552,7 @@ async def serve_stable_projector() -> None:
             spool=spool,
             catalog=catalog,
             canonical_topic=config.kafka_canonical_topic,
-            raw_topics=config.kafka_raw_topics,
+            raw_topics=(),  # Rust canonical records carry private raw lineage.
             sink=sink,
             projector=projector,
             target=target,

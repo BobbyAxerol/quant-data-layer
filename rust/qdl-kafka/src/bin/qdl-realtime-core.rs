@@ -175,6 +175,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
                         lease_epoch: raw.lease_epoch,
                         target: SinkTarget::ShadowCanonical,
                     },
+                    raw_provider_envelope: Some(input.record.payload.clone()),
                 });
             }
             for record in result.quarantines {
@@ -187,6 +188,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
                         lease_epoch: raw.lease_epoch,
                         target: SinkTarget::ShadowQuarantine,
                     },
+                    raw_provider_envelope: None,
                 });
             }
         }

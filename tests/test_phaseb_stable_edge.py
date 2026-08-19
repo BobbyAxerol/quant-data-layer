@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -615,6 +616,72 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("trade:price:binance_usdm:BTCUSDT", target.latest)
         self.assertEqual(len(target.publications), 2)
 
+    async def test_embedded_raw_lineage_projects_without_raw_cache_rows(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        raw_topic, canonical_topic, raw_record, canonical_record = _broker_records(
+            binding, raw, event
+        )
+        inline = KafkaProjectorRecord(
+            topic=canonical_record.topic,
+            partition=canonical_record.partition,
+            offset=canonical_record.offset,
+            key=canonical_record.key,
+            event_id=canonical_record.event_id,
+            payload=canonical_record.payload,
+            accepted_at_ns=canonical_record.accepted_at_ns,
+            raw_provider_envelope=raw_record.payload,
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        engine = StableProjectorEngine(
+            broker=broker,
+            spool=self.spool,
+            catalog=self.catalog,
+            canonical_topic=canonical_topic,
+            raw_topics=(),
+            sink=LocalStableCanonicalSink(self.gateway, self.spool),
+            projector=StableCompatibilityProjector(self.catalog),
+            target=target,
+            max_pending_records=10,
+            max_pending_bytes=1024 * 1024,
+        )
+        await engine.accept(inline)
+        self.assertEqual(engine.stats.raw_committed, 0)
+        self.assertEqual(engine.stats.canonical_committed, 1)
+        self.assertIsNone(
+            self.spool.find_event(stream=raw_topic, event_id=raw_record.event_id)
+        )
+        self.assertEqual(
+            broker.checkpoints, [(canonical_topic, 0, canonical_record.offset)]
+        )
+        self.assertIn("trade:price:BTCUSDT", target.latest)
+
+    async def test_missing_embedded_lineage_fails_closed_without_raw_subscription(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        _raw_topic, canonical_topic, _raw_record, canonical_record = _broker_records(
+            binding, raw, event
+        )
+        broker = _Broker()
+        engine = StableProjectorEngine(
+            broker=broker,
+            spool=self.spool,
+            catalog=self.catalog,
+            canonical_topic=canonical_topic,
+            raw_topics=(),
+            sink=LocalStableCanonicalSink(self.gateway, self.spool),
+            projector=StableCompatibilityProjector(self.catalog),
+            target=InMemoryStableProjectionTarget(),
+            max_pending_records=10,
+            max_pending_bytes=1024 * 1024,
+        )
+        with self.assertRaisesRegex(ValueError, "missing private Kafka raw lineage"):
+            await engine.accept(canonical_record)
+        self.assertEqual(broker.checkpoints, [])
+
     async def test_canonical_backpressure_pauses_before_hard_bound_and_resumes_after_raw(self):
         binding, raw, event = _stable_pair(
             self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
@@ -891,12 +958,32 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             headers={
                 "raw_stream": raw_topic,
                 "raw_event_id": raw_record.event_id.hex(),
+                "raw_provider_envelope": base64.b64encode(
+                    raw_record.payload
+                ).decode("ascii"),
             },
         )
         try:
             first = await sink.publish(durable)
             second = await sink.publish(durable)
             self.assertEqual(first.cursor, second.cursor)
+            tampered = DurableEvent(
+                stream=durable.stream,
+                partition_key=durable.partition_key,
+                event_id=durable.event_id,
+                payload=durable.payload,
+                accepted_at_ns=durable.accepted_at_ns,
+                headers={
+                    **durable.headers,
+                    "raw_provider_envelope": base64.b64encode(
+                        b"malformed-private-lineage"
+                    ).decode("ascii"),
+                },
+            )
+            with self.assertRaisesRegex(
+                RuntimeError, "no active stable stream gateway"
+            ):
+                await sink.publish(tampered)
             rejected = await client.post(
                 "/internal/v2/canonical/events", content=b"{}",
                 headers={"X-QDL-Stable-Signature": "sha256=bad"},
