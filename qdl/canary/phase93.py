@@ -661,6 +661,7 @@ class RollbackRehearsalEvidence:
 @dataclass(frozen=True, slots=True)
 class ClosureApproval:
     schema: str
+    approval_id: str
     closure_id: str
     decision: str
     slice_id: str
@@ -681,6 +682,7 @@ class ClosureApproval:
         if any(
             not _valid_uuid(value)
             for value in (
+                self.approval_id,
                 self.closure_id,
                 self.prerequisite_bundle_id,
                 self.hold_id,
@@ -811,12 +813,12 @@ class ProductionClosureAuthorizer:
         candidate: CandidateSlice,
         prerequisite_decision: Mapping[str, Any],
         expected_bundle_id: str,
-        primary_evidence: Mapping[str, Any],
-        hold_decision: PrimaryHoldDecision,
-        consumer_registry: ConsumerRegistrySnapshot,
-        authority_registry: AuthorityRegistrySnapshot,
-        rollback_evidence: RollbackRehearsalEvidence,
-        approval: ClosureApproval,
+        primary_evidence: Mapping[str, Any] | None,
+        hold_decision: PrimaryHoldDecision | None,
+        consumer_registry: ConsumerRegistrySnapshot | None,
+        authority_registry: AuthorityRegistrySnapshot | None,
+        rollback_evidence: RollbackRehearsalEvidence | None,
+        approval: ClosureApproval | None,
         now_ns: int,
     ) -> ClosureAuthorization:
         prerequisite = self._prerequisite_authorizer.authorize(
@@ -827,6 +829,16 @@ class ProductionClosureAuthorizer:
         )
         if not prerequisite.allowed:
             return ClosureAuthorization(False, prerequisite.reason, False, None)
+        if primary_evidence is None:
+            return ClosureAuthorization(False, "PRIMARY_EVIDENCE_MISSING", False, None)
+        if hold_decision is None:
+            return ClosureAuthorization(False, "PRIMARY_HOLD_MISSING", False, None)
+        if consumer_registry is None or authority_registry is None:
+            return ClosureAuthorization(False, "REGISTRY_SNAPSHOT_MISSING", False, None)
+        if rollback_evidence is None:
+            return ClosureAuthorization(False, "ROLLBACK_REHEARSAL_MISSING", False, None)
+        if approval is None:
+            return ClosureAuthorization(False, "CLOSURE_APPROVAL_MISSING", False, None)
         reason = self._validate_primary(candidate, expected_bundle_id, primary_evidence)
         if reason == "AUTHORIZED":
             reason = self._validate_hold(candidate, expected_bundle_id, hold_decision)
@@ -870,7 +882,7 @@ class ProductionClosureAuthorizer:
             authority_registry_digest=authority_registry.digest,
             rollback_rehearsal_id=rollback_evidence.rehearsal_id,
             rollback_rehearsal_digest=rollback_evidence.digest,
-            approval_id=approval.closure_id,
+            approval_id=approval.approval_id,
             approval_digest=approval.digest,
             operator=approval.operator,
             change_ticket=approval.change_ticket,

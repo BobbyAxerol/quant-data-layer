@@ -54,6 +54,7 @@ class Phase93MigrationContractTest(unittest.TestCase):
             "FOR UPDATE",
             "current_row.state <> 'RUST_PRIMARY'",
             "authority closure CAS mismatch",
+            "closure_sha256",
             "consumer registry snapshot is invalid",
             "authority registry snapshot is invalid",
             "rollback rehearsal is invalid",
@@ -67,6 +68,7 @@ class Phase93MigrationContractTest(unittest.TestCase):
     def test_expansions_are_independent_and_cannot_write(self):
         for token in (
             "INDEPENDENT_CERTIFICATION_REQUIRED",
+            "parent_closure_digest <> closure_row.closure_sha256",
             "NOT transitive_evidence_allowed",
             "NOT public_write_allowed",
             "NOT legacy_write_allowed",

@@ -336,6 +336,7 @@ CREATE TABLE IF NOT EXISTS qdl_closure_approvals (
 
 CREATE TABLE IF NOT EXISTS qdl_authority_closures (
     closure_id UUID PRIMARY KEY,
+    closure_sha256 TEXT NOT NULL CHECK (closure_sha256 ~ '^[0-9a-f]{64}$'),
     slice_id TEXT NOT NULL REFERENCES qdl_authority_slices(slice_id),
     candidate_digest TEXT NOT NULL CHECK (candidate_digest ~ '^[0-9a-f]{64}$'),
     prerequisite_bundle_id UUID NOT NULL,
@@ -371,6 +372,7 @@ CREATE TABLE IF NOT EXISTS qdl_authority_closures (
 
 CREATE OR REPLACE FUNCTION qdl_close_authority_window(
     p_closure_id UUID,
+    p_closure_sha256 TEXT,
     p_hold_decision_id UUID,
     p_consumer_registry_snapshot_id UUID,
     p_authority_registry_snapshot_id UUID,
@@ -502,8 +504,12 @@ BEGIN
         RAISE EXCEPTION 'Phase 9.3 closure approval is invalid or expired';
     END IF;
 
+    IF p_closure_sha256 !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'Phase 9.3 closure digest is invalid';
+    END IF;
+
     INSERT INTO qdl_authority_closures (
-        closure_id, slice_id, candidate_digest, prerequisite_bundle_id,
+        closure_id, closure_sha256, slice_id, candidate_digest, prerequisite_bundle_id,
         owner_id, authority_revision, lease_epoch, partition_plan_epoch,
         hold_decision_id, hold_decision_digest,
         consumer_registry_snapshot_id, consumer_registry_digest,
@@ -512,7 +518,8 @@ BEGIN
         approval_id, approval_digest, approved_by, change_ticket,
         approved_at, approval_expires_at, closed_at, production_authorized
     ) VALUES (
-        p_closure_id, current_row.slice_id, current_row.candidate_digest,
+        p_closure_id, p_closure_sha256, current_row.slice_id,
+        current_row.candidate_digest,
         current_row.prerequisite_bundle_id, current_row.owner_id,
         current_row.authority_revision, current_row.lease_epoch,
         current_row.partition_plan_epoch, decision_row.decision_id,
@@ -569,6 +576,7 @@ BEGIN
     IF NOT FOUND
        OR NEW.parent_slice_id <> closure_row.slice_id
        OR NEW.parent_candidate_digest <> closure_row.candidate_digest
+       OR NEW.parent_closure_digest <> closure_row.closure_sha256
        OR NOT closure_row.production_authorized THEN
         RAISE EXCEPTION 'Phase 9.3 expansion parent closure mismatch';
     END IF;
@@ -710,7 +718,7 @@ BEFORE UPDATE OR DELETE ON qdl_runtime_decommission_decisions
 FOR EACH ROW EXECUTE FUNCTION qdl_reject_phase93_registry_mutation();
 
 REVOKE EXECUTE ON FUNCTION qdl_close_authority_window(
-    UUID, UUID, UUID, UUID, UUID, UUID, TIMESTAMPTZ
+    UUID, TEXT, UUID, UUID, UUID, UUID, UUID, TIMESTAMPTZ
 ) FROM PUBLIC;
 
 COMMIT;

@@ -1,8 +1,10 @@
 {
   "all_expansion_types_registered_independently": true,
   "append_only_mutation_rejected": true,
+  "approval_and_closure_ids_distinct": true,
   "authority_state_after_closure": "RUST_PRIMARY:4:rust-primary:2:100",
   "closure_did_not_mutate_authority": true,
+  "closure_digest_bound_to_expansion": true,
   "closure_records": 1,
   "decision_records": 2,
   "decommission_records": 2,

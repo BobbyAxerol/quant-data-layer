@@ -195,6 +195,7 @@ class Phase93Fixtures:
         )
         approval = ClosureApproval(
             schema="qdl.rollback-window-closure-approval.v1",
+            approval_id=str(uuid.uuid4()),
             closure_id=str(uuid.uuid4()),
             decision="APPROVE",
             slice_id=hold.slice_id,

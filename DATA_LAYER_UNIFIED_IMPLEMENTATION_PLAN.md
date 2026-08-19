@@ -1,7 +1,7 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; Phase 9.1 is `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`; Phase 9.2 is `COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED` after isolated terminal-handoff, process-restart recovery, rollback and replicated-broker certification. Authority promotion remains blocked on explicit production infrastructure, real canary hold and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
-> **Working branch:** `feat/phase93-hold-close-expand`, stacked on the completed Phase 9.2 checkpoint and intended for PR into `dev`; no push, merge or authority cutover is implied by implementation progress.
+> **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; Phase 9.1 is `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`; Phase 9.2 is `COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED`; Phase 9.3 is `COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED` after isolated hold/closure/expansion governance certification. Authority promotion, production hold/closure and every expansion remain blocked on explicit production infrastructure, real canary/primary evidence and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
+> **Working branch:** `feat/phase93-hold-close-expand`, stacked on the completed Phase 9.2 checkpoint and intended for PR into `dev`; no push, merge or authority cutover is implied by control-plane completion.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
 > **Compatibility boundary:** Existing `/v1`, SDK v1, Redis keys and Redis Pub/Sub remain supported until a governed per-consumer sunset.
@@ -3332,7 +3332,7 @@ use a direct owner flag or uncoordinated Python restart.
 
 #### 9.3 Hold, Close And Expand Independently
 
-**Status:** `IN_PROGRESS / PRODUCTION_HOLD_BLOCKED`
+**Status:** `COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED`
 
 **Purpose:** Add the provider-neutral post-primary control plane that observes
 one exact `RUST_PRIMARY` slice, decides whether its rollback window may close,
@@ -3442,9 +3442,11 @@ transitive approval.
   creates append-only hold, registry, rollback, approval, closure, expansion and
   decommission records. Two holds, three observations, two decisions, one
   closure, five expansion types and two decommission decisions passed. Closure
-  left authority exactly `RUST_PRIMARY:4:rust-primary:2:100`; stale CAS, dirty
-  pass, incomplete gates and all tested mutations failed closed. Idempotent
-  replay and scoped container cleanup passed.
+  left authority exactly `RUST_PRIMARY:4:rust-primary:2:100`; approval and
+  closure UUIDs are distinct, the frozen closure digest binds every expansion,
+  and stale CAS, dirty pass, incomplete gates and all tested mutations failed
+  closed. Idempotent replay, stable-readiness startup and scoped container
+  cleanup passed.
 - `COMPLETE` isolated certification and operator tooling: parent Phase 9.2
   provenance remains 25,600 authentic events with zero semantic mismatch; the
   accelerated hold is explicitly `TEST_CONTROL_PLANE_FIXTURE` and has no
@@ -3456,8 +3458,12 @@ transitive approval.
 - `COMPLETE` import/runtime boundary: control-plane imports no longer eagerly
   load the alpha SDK. Existing `PaperAlphaCanary` and `sdk_requirement` exports
   remain API-compatible through lazy loading and passed container smoke.
-- `IN_PROGRESS`: full Python/Rust compatibility matrix, final migration rerun,
-  cleanup audit and phase closure.
+- `COMPLETE` final compatibility and cleanup gates: full Python is 415/415
+  with 5 intentional skips; Rust fmt/clippy pass and the full workspace is
+  40/40. Final migration and certification reruns pass, evidence checksums pass,
+  V1 health remains 200 with unchanged topology, production mutations are zero,
+  no Phase 9.3 container/network/volume remains and the temporary Rust builder
+  image was removed without global prune.
 - `OPEN EXTERNAL GATE`: Phase 9.0-C remains `NO_GO_EXTERNAL`; no real primary
   owner, production hold interval or operator closure approval exists.
 
@@ -3537,7 +3543,13 @@ Completing one Rust primary slice does not mark every venue/feed complete.
 
 ### Completed
 
-- Not started. User approval is required independently for each authority slice.
+- Phase 9.0-A/9.0-B runtime and isolated V2 beta closure, Phase 9.0-C strict
+  prerequisite control plane, Phase 9.1 isolated canary, Phase 9.2 isolated
+  bounded-primary protocol and Phase 9.3 hold/closure/expansion control plane
+  are implemented and certified at their explicitly non-production scopes.
+- No production authority slice, real hold closure, expansion or Python runtime
+  decommission is approved. Each requires independent operator approval and
+  production-scope evidence.
 
 ### Technical Debt / Decision Gate
 

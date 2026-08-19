@@ -152,7 +152,8 @@ def main() -> int:
         ]
     )
     try:
-        for _ in range(60):
+        consecutive_ready = 0
+        for _ in range(90):
             ready = run(
                 [
                     "docker",
@@ -166,11 +167,14 @@ def main() -> int:
                 ],
                 check=False,
             )
-            if ready.returncode == 0:
+            consecutive_ready = (
+                consecutive_ready + 1 if ready.returncode == 0 else 0
+            )
+            if consecutive_ready >= 3:
                 break
             time.sleep(1)
         else:
-            raise RuntimeError("Phase 9.3 PostgreSQL did not become ready")
+            raise RuntimeError("Phase 9.3 PostgreSQL did not become stably ready")
         apply_migrations()
 
         psql(
@@ -384,7 +388,7 @@ INSERT INTO qdl_closure_approvals (
   '{t(now - timedelta(minutes=1))}','{t(now + timedelta(hours=1))}'
 );
 SELECT (qdl_close_authority_window(
-  '98000000-0000-4000-8000-000000000001',
+  '98000000-0000-4000-8000-000000000001',repeat('1',64),
   '96000000-0000-4000-8000-000000000001',
   '97000000-0000-4000-8000-000000000001',
   '97000000-0000-4000-8000-000000000002',
@@ -560,7 +564,7 @@ SELECT qdl_transition_authority(
         expect_failure(
             f"""
 SELECT qdl_close_authority_window(
-  '98000000-0000-4000-8000-000000000009',
+  '98000000-0000-4000-8000-000000000009',repeat('9',64),
   '96000000-0000-4000-8000-000000000001',
   '97000000-0000-4000-8000-000000000001',
   '97000000-0000-4000-8000-000000000002',
@@ -610,6 +614,8 @@ SELECT qdl_close_authority_window(
                     "append_only_mutation_rejected": True,
                     "registry_mutation_rejected": True,
                     "closure_did_not_mutate_authority": True,
+                    "closure_digest_bound_to_expansion": True,
+                    "approval_and_closure_ids_distinct": True,
                     "stale_authority_closure_rejected": True,
                     "incomplete_expansion_gates_rejected": True,
                     "all_expansion_types_registered_independently": True,

@@ -5266,3 +5266,19 @@ Production completion later requires authentic sustained observations over the
 approved wall-clock duration, real consumer checkpoints, current authority and
 rollback evidence, independent infrastructure scope and explicit operator
 approval. No accelerated fixture or same-host rehearsal can satisfy that gate.
+
+
+**Implementation closure (2026-08-19):** Phase 9.3 control-plane implementation
+is certified as `COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED`. Typed
+hold evaluation, immutable registry snapshots, exact authority-locking closure,
+closure-digest-bound independent expansion and conservative decommission gates
+pass focused and full regression. PostgreSQL smoke proved that closure changed
+no authority field and that dirty/sparse/stale/mutable evidence fails closed.
+The final suites passed 415 Python tests with 5 intentional skips and 40 Rust
+tests with fmt/clippy clean. V1 remained healthy and unchanged; production
+mutations and residual Phase 9.3 resources are zero. Evidence is frozen in
+[`phase93-hold-close-expand-certification.json`](../upgrade/evidence/phase93-hold-close-expand-certification.json),
+the [human report](../upgrade/evidence/PHASE93_HOLD_CLOSE_EXPAND_REPORT.md), the
+[operator runbook](../docs/runbooks/phase93-hold-close-expand.md) and
+[`phase93-evidence.sha256`](../upgrade/evidence/phase93-evidence.sha256). This
+closure starts no production hold and grants no production authority.
