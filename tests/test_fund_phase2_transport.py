@@ -76,6 +76,7 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             consumer_ttl_seconds=10,
             replay_retention_seconds=10,
             maintenance_interval_seconds=1,
+            max_partition_records=overrides.get("max_partition_records", 0),
         )
         return SQLiteDurableSpool(config, clock_ns=self.clock)
 
@@ -112,6 +113,35 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             self.assertEqual([row.cursor.offset for row in latest], [4, 5])
             self.assertEqual(
                 [row.event.payload for row in latest], [b"event-4", b"event-5"]
+            )
+
+    def test_partition_window_is_bounded_and_old_cursor_expires(self):
+        with self.spool(max_records=10, max_partition_records=3) as spool:
+            spool.append_many([event(index) for index in range(1, 6)])
+            self.assertEqual(spool.stats().records, 3)
+            self.assertEqual(
+                set(spool.find_events(
+                    stream=event(1).stream,
+                    event_ids=[event(index).event_id for index in range(1, 6)],
+                )),
+                {event(index).event_id for index in range(3, 6)},
+            )
+            self.assertIsNone(
+                spool.find_event(stream=event(1).stream, event_id=event(1).event_id)
+            )
+            with self.assertRaises(CursorExpired):
+                spool.read(
+                    stream=event(1).stream,
+                    partition_key=event(1).partition_key,
+                    after=Cursor(event(1).stream, event(1).partition_key, 1),
+                )
+            retained = spool.read(
+                stream=event(1).stream,
+                partition_key=event(1).partition_key,
+                after=Cursor(event(1).stream, event(1).partition_key, 2),
+            )
+            self.assertEqual(
+                [row.cursor.offset for row in retained], [3, 4, 5]
             )
 
     def test_event_id_collision_fails_closed_without_partial_row(self):

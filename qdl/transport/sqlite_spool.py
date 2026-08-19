@@ -37,6 +37,7 @@ class SpoolConfig:
     consumer_ttl_seconds: int = 3600
     replay_retention_seconds: int = 24 * 3600
     maintenance_interval_seconds: int = 30
+    max_partition_records: int = 0
 
     def __post_init__(self) -> None:
         if self.max_records <= 0 or self.max_payload_bytes <= 0:
@@ -45,6 +46,8 @@ class SpoolConfig:
             raise ValueError("max_event_bytes must fit inside max_payload_bytes")
         if self.max_batch_events <= 0:
             raise ValueError("max_batch_events must be positive")
+        if self.max_partition_records < 0:
+            raise ValueError("max_partition_records cannot be negative")
         if self.max_storage_bytes <= self.max_event_bytes:
             raise ValueError("max_storage_bytes must exceed max_event_bytes")
         if min(
@@ -106,8 +109,8 @@ class SQLiteDurableSpool:
         self._connection.execute("PRAGMA synchronous=FULL")
         self._connection.execute("PRAGMA foreign_keys=ON")
         self._connection.execute("PRAGMA busy_timeout=10000")
-        self._connection.execute("PRAGMA wal_autocheckpoint=100")
-        self._connection.execute("PRAGMA journal_size_limit=16777216")
+        self._connection.execute("PRAGMA wal_autocheckpoint=1000")
+        self._connection.execute("PRAGMA journal_size_limit=67108864")
 
     def _migrate(self) -> None:
         self._connection.executescript(
@@ -308,6 +311,10 @@ class SQLiteDurableSpool:
                     """,
                     (added_records, added_payload_bytes),
                 )
+                if self.config.max_partition_records:
+                    self._trim_partition_windows_locked({
+                        (event.stream, event.partition_key) for event in events
+                    })
                 self._connection.execute("COMMIT")
                 return results
             except BaseException:
@@ -376,6 +383,30 @@ class SQLiteDurableSpool:
                 (stream, event_id),
             ).fetchone()
         return self._stored_event(row) if row is not None else None
+
+    def find_events(
+        self, *, stream: str, event_ids: list[bytes] | tuple[bytes, ...]
+    ) -> dict[bytes, StoredEvent]:
+        """Resolve one bounded immutable-event batch without per-event queries."""
+
+        values = tuple(dict.fromkeys(event_ids))
+        if not values:
+            return {}
+        if len(values) > 10_000:
+            raise ValueError("event lookup batch exceeds the bounded query window")
+        rows = []
+        with self._lock:
+            for start in range(0, len(values), 500):
+                chunk = values[start:start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows.extend(self._connection.execute(
+                    f"SELECT * FROM events WHERE stream = ? AND event_id IN ({placeholders})",
+                    (stream, *chunk),
+                ).fetchall())
+        return {
+            bytes(row["event_id"]): self._stored_event(row)
+            for row in rows
+        }
 
     def register_consumer(
         self,
@@ -696,6 +727,44 @@ class SQLiteDurableSpool:
             (cutoff, now_ns),
         )
         self._decrement_usage_locked(int(removed[0]), int(removed[1]))
+
+    def _trim_partition_windows_locked(
+        self, partitions: set[tuple[str, str]]
+    ) -> None:
+        """Keep the newest replay window; older cursors fail with CursorExpired."""
+
+        limit = self.config.max_partition_records
+        if limit <= 0:
+            return
+        for stream, partition_key in partitions:
+            threshold = self._connection.execute(
+                """
+                SELECT logical_offset FROM events
+                WHERE stream = ? AND partition_key = ?
+                ORDER BY logical_offset DESC LIMIT 1 OFFSET ?
+                """,
+                (stream, partition_key, limit - 1),
+            ).fetchone()
+            if threshold is None:
+                continue
+            removed = self._connection.execute(
+                """
+                SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0)
+                FROM events
+                WHERE stream = ? AND partition_key = ? AND logical_offset < ?
+                """,
+                (stream, partition_key, int(threshold[0])),
+            ).fetchone()
+            if int(removed[0]) == 0:
+                continue
+            self._connection.execute(
+                """
+                DELETE FROM events
+                WHERE stream = ? AND partition_key = ? AND logical_offset < ?
+                """,
+                (stream, partition_key, int(threshold[0])),
+            )
+            self._decrement_usage_locked(int(removed[0]), int(removed[1]))
 
     @staticmethod
     def _stored_event(row: sqlite3.Row) -> StoredEvent:

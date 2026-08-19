@@ -44,6 +44,9 @@ class KafkaProjectorRecord:
 class ProjectorBroker(Protocol):
     def poll(self, timeout_seconds: float) -> KafkaProjectorRecord | None: ...
     def checkpoint(self, record: KafkaProjectorRecord) -> None: ...
+    def checkpoint_many(
+        self, records: tuple[KafkaProjectorRecord, ...] | list[KafkaProjectorRecord]
+    ) -> None: ...
     def pause_canonical(self) -> None: ...
     def resume_canonical(self) -> None: ...
     def close(self) -> None: ...
@@ -244,16 +247,25 @@ class ConfluentProjectorBroker:
         return metadata is not None
 
     def checkpoint(self, record: KafkaProjectorRecord) -> None:
-        if record.assignment_epoch != self._assignment_epoch:
+        self.checkpoint_many((record,))
+
+    def checkpoint_many(
+        self, records: tuple[KafkaProjectorRecord, ...] | list[KafkaProjectorRecord]
+    ) -> None:
+        values = tuple(records)
+        if not values:
+            return
+        if any(record.assignment_epoch != self._assignment_epoch for record in values):
             raise RuntimeError("Kafka assignment changed before stable checkpoint")
         self._raise_commit_error()
-        key = (record.topic, record.partition)
-        next_offset = record.offset + 1
-        current = self._pending_offsets.get(key)
-        if current is not None and next_offset < current:
-            raise RuntimeError("Kafka stable projector checkpoint regressed")
-        self._pending_offsets[key] = max(current or 0, next_offset)
-        self._pending_checkpoint_calls += 1
+        for record in values:
+            key = (record.topic, record.partition)
+            next_offset = record.offset + 1
+            current = self._pending_offsets.get(key)
+            if current is not None and next_offset < current:
+                raise RuntimeError("Kafka stable projector checkpoint regressed")
+            self._pending_offsets[key] = max(current or 0, next_offset)
+        self._pending_checkpoint_calls += len(values)
         elapsed_ms = (time.monotonic() - self._last_checkpoint_flush) * 1000
         if (
             self._pending_checkpoint_calls >= self.config.checkpoint_batch_size

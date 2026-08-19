@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -79,7 +80,7 @@ def install_stable_canonical_ingest(
         except GatewayFenced as error:
             raise HTTPException(status_code=409, detail="stable gateway is not active") from error
 
-        prepared = []
+        references = []
         for value in values:
             try:
                 if not isinstance(value, dict) or set(value) != {
@@ -91,22 +92,41 @@ def install_stable_canonical_ingest(
                 raw_stream = str(value["raw_stream"])
                 envelope = market_data_pb2.EventEnvelope.FromString(canonical)
                 binding = catalog.binding_for_envelope(envelope)
-                raw = spool.find_event(stream=raw_stream, event_id=raw_event_id)
-                if raw is None or raw_event_id != bytes(envelope.raw_capture_id):
+                if raw_event_id != bytes(envelope.raw_capture_id):
                     raise ValueError("stable canonical raw reference is unavailable")
-                prepared.append((binding, envelope, DurableEvent(
-                    stream=catalog.canonical_stream,
-                    partition_key=binding.partition_key,
-                    event_id=bytes(envelope.event_id),
-                    payload=canonical,
-                    accepted_at_ns=max(envelope.received_at_ns, 1),
-                    headers={
-                        "raw_stream": raw_stream,
-                        "raw_event_id": raw_event_id.hex(),
-                    },
-                )))
+                references.append((
+                    binding, envelope, canonical, raw_stream, raw_event_id
+                ))
             except (ValueError, TypeError) as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
+
+        raw_by_reference = {}
+        for raw_stream in sorted({item[3] for item in references}):
+            event_ids = [item[4] for item in references if item[3] == raw_stream]
+            found = await asyncio.to_thread(
+                spool.find_events, stream=raw_stream, event_ids=event_ids
+            )
+            raw_by_reference.update(
+                {(raw_stream, event_id): stored for event_id, stored in found.items()}
+            )
+        prepared = []
+        for binding, envelope, canonical, raw_stream, raw_event_id in references:
+            if (raw_stream, raw_event_id) not in raw_by_reference:
+                raise HTTPException(
+                    status_code=422,
+                    detail="stable canonical raw reference is unavailable",
+                )
+            prepared.append((binding, envelope, DurableEvent(
+                stream=catalog.canonical_stream,
+                partition_key=binding.partition_key,
+                event_id=bytes(envelope.event_id),
+                payload=canonical,
+                accepted_at_ns=max(envelope.received_at_ns, 1),
+                headers={
+                    "raw_stream": raw_stream,
+                    "raw_event_id": raw_event_id.hex(),
+                },
+            )))
 
         try:
             stored_values = await gateway.publish_many(
@@ -114,13 +134,24 @@ def install_stable_canonical_ingest(
             )
         except GatewayFenced as error:
             raise HTTPException(status_code=409, detail="stable gateway was fenced") from error
+        duplicate_ids = [
+            event.event_id
+            for (_binding, _envelope, event), stored in zip(
+                prepared, stored_values, strict=True
+            )
+            if stored is None
+        ]
+        duplicates = await asyncio.to_thread(
+            spool.find_events,
+            stream=catalog.canonical_stream,
+            event_ids=duplicate_ids,
+        )
         results = []
         for (binding, envelope, event), stored in zip(
             prepared, stored_values, strict=True
         ):
             duplicate = stored is None
-            if stored is None:
-                stored = spool.find_event(stream=event.stream, event_id=event.event_id)
+            stored = stored or duplicates.get(event.event_id)
             if stored is None:
                 raise HTTPException(status_code=503, detail="stable cache ACK is unavailable")
             results.append({
@@ -210,13 +241,16 @@ class StableHttpCanonicalSink:
                     != [event.event_id.hex() for event in values]
                 ):
                     raise ValueError("stable ingest ACK contract is invalid")
+                stored_by_id = await asyncio.to_thread(
+                    self.spool.find_events,
+                    stream=values[0].stream,
+                    event_ids=[event.event_id for event in values],
+                )
                 stored_values = []
                 for event, acknowledgement in zip(
                     values, acknowledgements, strict=True
                 ):
-                    stored = self.spool.find_event(
-                        stream=event.stream, event_id=event.event_id
-                    )
+                    stored = stored_by_id.get(event.event_id)
                     if (
                         stored is None
                         or stored.cursor.offset != int(acknowledgement["offset"])

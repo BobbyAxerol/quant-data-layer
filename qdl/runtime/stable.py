@@ -277,6 +277,7 @@ def build_stable_spool(config: StableRuntimeConfig) -> SQLiteDurableSpool:
         min_free_disk_bytes=512 * 1024 * 1024,
         consumer_ttl_seconds=config.cursor_ttl_seconds,
         replay_retention_seconds=24 * 3600,
+        max_partition_records=10_000,
     ))
 
 
@@ -524,6 +525,8 @@ async def serve_stable_projector() -> None:
         ca_path=config.kafka_cert_root / "ca.crt",
         certificate_path=config.kafka_cert_root / "client.crt",
         key_path=config.kafka_cert_root / "client.key",
+        checkpoint_batch_size=512,
+        checkpoint_interval_ms=100,
     )
     redis_client = redis.Redis.from_url(config.redis_url)
     quota = RedisMinuteQuota.from_url(
@@ -555,6 +558,8 @@ async def serve_stable_projector() -> None:
             target=target,
             max_pending_records=config.max_pending_records,
             max_pending_bytes=config.max_pending_bytes,
+            max_batch_records=512,
+            batch_wait_seconds=0.01,
         )
 
     def on_broker(broker):

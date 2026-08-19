@@ -4680,6 +4680,63 @@ by implication in Phase B implementation.
   passed with one separately gated Redis skip. A clean immutable candidate must
   still prove restart generation advance, zero new quarantine, authentic Binance
   freshness beyond heartbeat, bounded lag and broker-outage recovery.
+- `2026-08-19 PHASE B B5 CLEAN 0C97E29 CANDIDATE CAPACITY DEFECT
+  IDENTIFIED, FIX IN PROGRESS`: both immutable images were rebuilt and verified
+  at revision `0c97e29`; a fresh RF3/minISR2 Kafka, dedicated Redis, stable
+  state and query cache were bootstrapped under the isolated
+  `qdl_v2_stable_candidate` project. Broker topic/ACL bootstrap passed and all
+  app roles used the same image revision. Authentic Binance/OKX traffic produced
+  zero quarantine/collision/startup errors, but authenticated real-consumer
+  readiness correctly failed closed because the single Python projector lag grew
+  monotonically. Within a few minutes its rebuildable SQLite cache reached
+  751,783 records / 392,154,317 payload bytes (486,651 raw plus 265,132
+  canonical) against the one-million-record hard bound, while projector I/O
+  reached about 5.18 GB and Kafka canonical/raw lag continued increasing.
+  Therefore process-up/healthy is explicitly rejected as acceptance and the
+  isolated acquisition/core/projector roles were stopped before capacity
+  exhaustion; V1 remained untouched.
+
+  Root cause is the compatibility path, not provider correctness or Rust
+  normalization: Kafka is already the replay authority, yet the Python
+  projector serially performs per-record raw lookup, post-ACK canonical lookup
+  and checkpoint calls around otherwise batched fsync/HTTP/Redis operations, and
+  the transitional cache retains every high-frequency raw and canonical event
+  for 24 hours despite a capacity that cannot hold that horizon. The bounded
+  repair may not sample, drop, fabricate or weaken Kafka durability. It must:
+  (1) add bounded batch lookup/checkpoint primitives and remove per-event SQLite
+  rereads/thread hops while preserving downstream-before-checkpoint ordering;
+  (2) make the SQLite cache explicitly replay-window bounded per partition, with
+  deterministic cursor-expiry/snapshot recovery while Kafka remains the durable
+  replay source; (3) preserve sufficient raw lineage for every uncheckpointed
+  canonical record and fail closed under overflow; and (4) prove sustained
+  real-provider lag convergence, bounded cache/disk/I/O, exact replay/cursor
+  behavior, zero quarantine/collision and broker/restart/Redis recovery before
+  Phase B can close. Public V1/V2 contracts, event identity, freshness policy and
+  authority remain unchanged.
+- `2026-08-19 PHASE B B5 BOUNDED PROJECTOR CACHE/HOT-PATH
+  UNIT-VERIFIED, IMMUTABLE RUNTIME RETEST PENDING`: the stable SQLite bridge now
+  supports a disabled-by-default per-partition replay window and the stable role
+  explicitly selects 10,000 records per partition, matching the public bounded
+  replay limit. Logical offsets remain monotonic; a cursor older than the retained
+  window deterministically raises `CursorExpired` and requires the existing
+  snapshot-and-replay recovery. Kafka remains the only replay authority. SQLite
+  keeps `synchronous=FULL` but checkpoints its WAL at 1,000 pages instead of
+  100 to reduce checkpoint write amplification without weakening transaction
+  durability.
+
+  The projector now resolves raw lineage and signed-ingest ACKs through bounded
+  batch queries, checkpoints each fully ACKed raw/canonical micro-batch in one
+  broker call, and uses a 512-record/10 ms hard micro-batch in the stable role.
+  Internal HMAC schema, canonical bytes, event IDs, per-partition ordering,
+  Redis atomic Lua projection and downstream-before-Kafka-checkpoint ordering
+  are unchanged. The generic spool default remains untrimmed, so existing V1
+  and non-stable callers do not inherit the new window implicitly. Targeted
+  transport/projector/release tests passed 44 tests with one separately gated
+  Redis integration skip. The broader V2 API/SDK, security, Phase 8 and Phase B
+  regression passed 102 tests with the same one conditional skip, using the
+  pinned dependency image, read-only source and no network. A new immutable
+  image and clean authentic-provider lag/cache/I/O/restart/outage test still
+  gate acceptance.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

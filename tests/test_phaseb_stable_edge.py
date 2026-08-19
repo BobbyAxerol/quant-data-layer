@@ -167,6 +167,7 @@ class _Broker:
         self.checkpoints = []
         self.fail_once_offset = fail_once_offset
         self.flow_control = []
+        self.checkpoint_batches = []
 
     def poll(self, timeout_seconds):
         del timeout_seconds
@@ -177,6 +178,12 @@ class _Broker:
             self.fail_once_offset = None
             raise RuntimeError("injected checkpoint failure")
         self.checkpoints.append((record.topic, record.partition, record.offset))
+
+    def checkpoint_many(self, records):
+        values = tuple(records)
+        self.checkpoint_batches.append(len(values))
+        for record in values:
+            self.checkpoint(record)
 
     def pause_canonical(self):
         self.flow_control.append("pause")
@@ -714,6 +721,7 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(append_calls, [2, 2])
         self.assertEqual(projection_calls, [2])
+        self.assertEqual(broker.checkpoint_batches, [2, 2])
         self.assertEqual(
             broker.checkpoints,
             [
