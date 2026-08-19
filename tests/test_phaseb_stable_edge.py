@@ -453,6 +453,88 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("trade:price:binance_usdm:BTCUSDT", target.latest)
         self.assertEqual(len(target.publications), 2)
 
+    async def test_projector_batches_durability_projection_and_checkpoints_in_order(self):
+        first_binding, first_raw, first_event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        second_binding, second_raw, second_event = _stable_pair(
+            self.catalog, "okx_bbo.json", "okx-swap-btcusdt-quote"
+        )
+        raw_topic, canonical_topic, raw_first, canonical_first = _broker_records(
+            first_binding, first_raw, first_event, raw_offset=0, canonical_offset=0
+        )
+        _, _, raw_second, canonical_second = _broker_records(
+            second_binding, second_raw, second_event, raw_offset=1, canonical_offset=1
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        append_calls = []
+        original_append_many = self.spool.append_many
+
+        def tracked_append_many(events):
+            append_calls.append(len(events))
+            return original_append_many(events)
+
+        projection_calls = []
+        original_apply_many = target.apply_many
+
+        def tracked_apply_many(records):
+            projection_calls.append(len(records))
+            return original_apply_many(records)
+
+        self.spool.append_many = tracked_append_many
+        target.apply_many = tracked_apply_many
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        await engine.accept_many(
+            (raw_first, raw_second, canonical_first, canonical_second)
+        )
+
+        self.assertEqual(append_calls, [2, 2])
+        self.assertEqual(projection_calls, [2])
+        self.assertEqual(
+            broker.checkpoints,
+            [
+                (raw_topic, 0, 0),
+                (raw_topic, 0, 1),
+                (canonical_topic, 0, 0),
+                (canonical_topic, 0, 1),
+            ],
+        )
+        self.assertEqual(engine.stats.raw_committed, 2)
+        self.assertEqual(engine.stats.canonical_committed, 2)
+        self.assertEqual(engine.stats.pending_canonical, 0)
+
+    async def test_batch_projection_failure_replays_without_premature_checkpoint(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        raw_topic, canonical_topic, raw_record, canonical_record = _broker_records(
+            binding, raw, event
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+
+        def fail_projection(_records):
+            raise RuntimeError("injected batch projection failure")
+
+        target.apply_many = fail_projection
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        with self.assertRaisesRegex(RuntimeError, "injected batch projection"):
+            await engine.accept_many((raw_record, canonical_record))
+        self.assertEqual(broker.checkpoints, [(raw_topic, 0, 0)])
+
+        recovered_broker = _Broker()
+        recovered_target = InMemoryStableProjectionTarget()
+        recovered = self.engine(
+            recovered_broker, recovered_target, raw_topic, canonical_topic
+        )
+        await recovered.accept(canonical_record)
+        self.assertEqual(
+            recovered_broker.checkpoints, [(canonical_topic, 0, 0)]
+        )
+        self.assertEqual(recovered.stats.canonical_committed, 1)
+        self.assertEqual(recovered.stats.pending_canonical, 0)
+
     async def test_cross_replica_raw_cache_wakes_waiting_canonical_on_idle_poll(self):
         binding, raw, event = _stable_pair(
             self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"

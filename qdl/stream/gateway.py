@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Protocol
 
 from qdl.replay import GapFreeHandoff
-from qdl.transport import CursorExpired, DurableEvent, EventSink, StoredEvent
+from qdl.transport import (
+    BatchEventSink,
+    CursorExpired,
+    DurableEvent,
+    EventSink,
+    StoredEvent,
+)
 
 
 class SlowConsumer(RuntimeError):
@@ -204,21 +211,51 @@ class DurableStreamGateway:
     async def publish(self, event: DurableEvent) -> StoredEvent | None:
         """Commit before delivery; duplicate durable events are not re-delivered."""
 
+        return (await self.publish_many((event,)))[0]
+
+    async def publish_many(
+        self, events: tuple[DurableEvent, ...] | list[DurableEvent]
+    ) -> tuple[StoredEvent | None, ...]:
+        """Durably append one bounded batch before ordered live fan-out."""
+
+        values = tuple(events)
+        if not values:
+            return ()
         lease_epoch = self.assert_active()
-        partition_lock = self._partition_lock(event.stream, event.partition_key)
-        async with partition_lock:
+        partitions = sorted({(event.stream, event.partition_key) for event in values})
+        async with AsyncExitStack() as stack:
+            for stream, partition_key in partitions:
+                await stack.enter_async_context(self._partition_lock(stream, partition_key))
             self.assert_active(lease_epoch)
-            result = await asyncio.to_thread(self._sink.append, event)
+            if isinstance(self._sink, BatchEventSink):
+                results = await asyncio.to_thread(self._sink.append_many, list(values))
+            else:
+                results = [
+                    await asyncio.to_thread(self._sink.append, event) for event in values
+                ]
             self.assert_active(lease_epoch)
-            if result.duplicate:
-                return None
-            stored = StoredEvent(event, result.cursor, result.committed_at_ns, result.payload_sha256)
+            if len(results) != len(values):
+                raise RuntimeError("durable batch sink returned an invalid result count")
+            stored_values = tuple(
+                None
+                if result.duplicate
+                else StoredEvent(
+                    event,
+                    result.cursor,
+                    result.committed_at_ns,
+                    result.payload_sha256,
+                )
+                for event, result in zip(values, results, strict=True)
+            )
             async with self._subscriptions_lock:
                 subscriptions = tuple(self._subscriptions.values())
-            for stream, partition_key, subscription in subscriptions:
-                if stream == event.stream and partition_key == event.partition_key:
-                    subscription.push(stored)
-            return stored
+            for event, stored in zip(values, stored_values, strict=True):
+                if stored is None:
+                    continue
+                for stream, partition_key, subscription in subscriptions:
+                    if stream == event.stream and partition_key == event.partition_key:
+                        subscription.push(stored)
+            return stored_values
 
     async def close(self, subscription_id: int) -> None:
         async with self._subscriptions_lock:

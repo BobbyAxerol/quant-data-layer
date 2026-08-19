@@ -4385,6 +4385,40 @@ by implication in Phase B implementation.
   Thirty deployment, stable-edge and release tests passed with one separately
   gated real-Redis integration skip. Real-provider quarantine/canonical deltas
   remain required after rebuilding the runtime bundle.
+- `2026-08-19 PHASE B B5 PROJECTOR DURABILITY THROUGHPUT DEFECT IDENTIFIED,
+  FIX IN PROGRESS`: the clean immutable `3dc58cf` candidate proves real Binance
+  and OKX snapshots with correct canonical provenance and zero quarantine, but
+  `stable-projector-v1` lag is not bounded under the subscribed real-provider
+  burst. Measurement shows the per-event path performs one fsync-backed raw
+  cache transaction, one fsync-backed canonical cache transaction through the
+  active stream gateway, one signed HTTP request and one Redis Lua projection
+  before checkpoint eligibility. Kafka remains the replay authority and SQLite
+  durability must not be weakened. The bounded fix therefore batches existing
+  domain operations rather than changing semantics: poll a small time/count
+  window, append raw and canonical records with `append_many`, preserve order
+  per partition, send one signed internal ingest batch, project atomically per
+  event, and coalesce only fully downstream-ACKed Kafka offsets. Any partial
+  sink/projection/checkpoint failure leaves the batch replayable and idempotent;
+  stale leases, lineage mismatch, collision, capacity and unknown schema still
+  fail closed. Unit ordering/failure/replay tests plus real-provider lag,
+  quarantine, resource and recovery gates are mandatory before closure.
+- `2026-08-19 PHASE B B5 PROJECTOR DURABLE MICRO-BATCH UNIT-VERIFIED,
+  RUNTIME RETEST PENDING`: the projector now polls at most 128 records over a
+  25 ms bounded window, persists raw records with one `append_many` transaction,
+  joins canonical records without changing per-partition order, sends one
+  signed internal ingest batch to the fenced active gateway, persists canonical
+  records with one fsync-backed transaction and pipelines the unchanged atomic
+  Redis Lua projection. Kafka checkpoints remain after the complete downstream
+  ACK chain. Assignment changes discard only uncheckpointed memory; collision,
+  stale lease, unknown lineage and capacity gates remain fail-closed. Existing
+  single-event methods delegate to the batch path, preserving callers. Focused
+  tests prove two raw plus two canonical records use exactly two durable writes,
+  one projection batch and ordered raw-before-canonical checkpoints; injected
+  batch projection failure produces no canonical checkpoint and succeeds on
+  idempotent replay. Thirty-two Phase B edge/deployment/release tests passed with
+  one separately gated real-Redis integration skip; Python compile and
+  `git diff --check` passed. Immutable-image real-provider lag/I/O, Redis,
+  failover and broker recovery evidence remains mandatory.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

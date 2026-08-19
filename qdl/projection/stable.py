@@ -69,6 +69,9 @@ class ProjectionFenced(RuntimeError):
 
 class StableProjectionTarget(Protocol):
     def apply(self, record: StableProjectionRecord) -> bool: ...
+    def apply_many(
+        self, records: tuple[StableProjectionRecord, ...] | list[StableProjectionRecord]
+    ) -> tuple[bool, ...]: ...
 
 
 class InMemoryStableProjectionTarget:
@@ -79,17 +82,28 @@ class InMemoryStableProjectionTarget:
         self.publications: list[tuple[str, bytes]] = []
 
     def apply(self, record: StableProjectionRecord) -> bool:
-        observed_epoch = self.lease_epochs.get(record.shard_id, 0)
-        if record.lease_epoch < observed_epoch:
-            raise ProjectionFenced("stable projection lease epoch is stale")
-        current = self.checkpoints.get(record.partition_key)
-        if current is not None and record.offset <= current[0]:
-            return False
-        self.lease_epochs[record.shard_id] = record.lease_epoch
-        self.latest.update({item.key: item.payload for item in record.items})
-        self.publications.extend(record.publications)
-        self.checkpoints[record.partition_key] = (record.offset, record.event_id_hex)
-        return True
+        return self.apply_many((record,))[0]
+
+    def apply_many(
+        self, records: tuple[StableProjectionRecord, ...] | list[StableProjectionRecord]
+    ) -> tuple[bool, ...]:
+        results = []
+        for record in records:
+            observed_epoch = self.lease_epochs.get(record.shard_id, 0)
+            if record.lease_epoch < observed_epoch:
+                raise ProjectionFenced("stable projection lease epoch is stale")
+            current = self.checkpoints.get(record.partition_key)
+            if current is not None and record.offset <= current[0]:
+                results.append(False)
+                continue
+            self.lease_epochs[record.shard_id] = record.lease_epoch
+            self.latest.update({item.key: item.payload for item in record.items})
+            self.publications.extend(record.publications)
+            self.checkpoints[record.partition_key] = (
+                record.offset, record.event_id_hex
+            )
+            results.append(True)
+        return tuple(results)
 
 
 _STABLE_APPLY_LUA = r"""
@@ -142,6 +156,30 @@ class RedisStableProjectionTarget:
             raise ValueError("stable Redis projection requires an isolated database")
 
     def apply(self, record: StableProjectionRecord) -> bool:
+        return self.apply_many((record,))[0]
+
+    def apply_many(
+        self, records: tuple[StableProjectionRecord, ...] | list[StableProjectionRecord]
+    ) -> tuple[bool, ...]:
+        values = tuple(records)
+        if not values:
+            return ()
+        commands = [self._command(record) for record in values]
+        pipeline = self._client.pipeline(transaction=False)
+        for keys, arguments in commands:
+            pipeline.eval(_STABLE_APPLY_LUA, len(keys), *keys, *arguments)
+        raw_results = pipeline.execute()
+        results = []
+        for result in raw_results:
+            value = int(result)
+            if value < 0:
+                raise ProjectionFenced("stable projection lease epoch is stale")
+            results.append(value > 0)
+        return tuple(results)
+
+    def _command(
+        self, record: StableProjectionRecord
+    ) -> tuple[list[str], list[str | bytes]]:
         for item in record.items:
             if not (
                 item.key.startswith(f"{self._namespace}:")
@@ -149,7 +187,9 @@ class RedisStableProjectionTarget:
             ):
                 raise ValueError("stable projection key escapes its allowlist")
         for channel, payload in record.publications:
-            if not payload or not any(pattern.fullmatch(channel) for pattern in _CHANNEL_PATTERNS):
+            if not payload or not any(
+                pattern.fullmatch(channel) for pattern in _CHANNEL_PATTERNS
+            ):
                 raise ValueError("stable compatibility channel escapes its allowlist")
         partition_digest = hashlib.sha256(record.partition_key.encode()).hexdigest()
         shard_digest = hashlib.sha256(record.shard_id.encode()).hexdigest()
@@ -169,12 +209,7 @@ class RedisStableProjectionTarget:
         arguments.append(str(len(record.publications)))
         for channel, payload in record.publications:
             arguments.extend((channel, payload))
-        result = int(self._client.eval(
-            _STABLE_APPLY_LUA, len(keys), *keys, *arguments
-        ))
-        if result < 0:
-            raise ProjectionFenced("stable projection lease epoch is stale")
-        return result > 0
+        return keys, arguments
 
 
 class StableCompatibilityProjector:

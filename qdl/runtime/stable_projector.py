@@ -17,6 +17,9 @@ from qdl.transport.kafka_projector import KafkaProjectorRecord, ProjectorBroker
 
 class StableCanonicalSink(Protocol):
     async def publish(self, event: DurableEvent) -> StoredEvent: ...
+    async def publish_many(
+        self, events: tuple[DurableEvent, ...] | list[DurableEvent]
+    ) -> tuple[StoredEvent, ...]: ...
 
 
 class LocalStableCanonicalSink:
@@ -27,15 +30,25 @@ class LocalStableCanonicalSink:
         self.spool = spool
 
     async def publish(self, event: DurableEvent) -> StoredEvent:
-        stored = await self.gateway.publish(event)
-        if stored is not None:
-            return stored
-        existing = await asyncio.to_thread(
-            self.spool.find_event, stream=event.stream, event_id=event.event_id
-        )
-        if existing is None:
-            raise RuntimeError("duplicate canonical ACK has no shared cache record")
-        return existing
+        return (await self.publish_many((event,)))[0]
+
+    async def publish_many(
+        self, events: tuple[DurableEvent, ...] | list[DurableEvent]
+    ) -> tuple[StoredEvent, ...]:
+        values = tuple(events)
+        stored_values = await self.gateway.publish_many(values)
+        resolved = []
+        for event, stored in zip(values, stored_values, strict=True):
+            if stored is None:
+                stored = await asyncio.to_thread(
+                    self.spool.find_event,
+                    stream=event.stream,
+                    event_id=event.event_id,
+                )
+            if stored is None:
+                raise RuntimeError("duplicate canonical ACK has no shared cache record")
+            resolved.append(stored)
+        return tuple(resolved)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +58,15 @@ class StableProjectorStats:
     duplicate_projections: int
     pending_canonical: int
     pending_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ReadyCanonical:
+    partition: tuple[str, int]
+    record: KafkaProjectorRecord
+    envelope: market_data_pb2.EventEnvelope
+    raw: StoredEvent
+    event: DurableEvent
 
 
 class StableProjectorEngine:
@@ -63,6 +85,8 @@ class StableProjectorEngine:
         target: StableProjectionTarget,
         max_pending_records: int = 10_000,
         max_pending_bytes: int = 256 * 1024 * 1024,
+        max_batch_records: int = 128,
+        batch_wait_seconds: float = 0.025,
     ) -> None:
         if (
             not canonical_topic
@@ -73,6 +97,8 @@ class StableProjectorEngine:
             raise ValueError("stable projector topics are invalid")
         if max_pending_records <= 0 or max_pending_bytes <= 0:
             raise ValueError("stable projector pending bounds must be positive")
+        if not 1 <= max_batch_records <= 1000 or not 0 < batch_wait_seconds <= 1:
+            raise ValueError("stable projector batch policy is invalid")
         self.broker = broker
         self.spool = spool
         self.catalog = catalog
@@ -83,6 +109,8 @@ class StableProjectorEngine:
         self.target = target
         self.max_pending_records = max_pending_records
         self.max_pending_bytes = max_pending_bytes
+        self.max_batch_records = max_batch_records
+        self.batch_wait_seconds = batch_wait_seconds
         self._queues: dict[tuple[str, int], deque[KafkaProjectorRecord]] = defaultdict(deque)
         self._waiting: dict[bytes, set[tuple[str, int]]] = defaultdict(set)
         self._assignment_epoch: int | None = None
@@ -93,27 +121,62 @@ class StableProjectorEngine:
         self._duplicate_projections = 0
 
     async def accept(self, record: KafkaProjectorRecord) -> None:
-        self._handle_assignment(record.assignment_epoch)
-        if record.topic in self.raw_topics:
-            capture_id = await self._store_raw(record)
-            await asyncio.to_thread(self.broker.checkpoint, record)
-            self._raw_committed += 1
-            for partition in tuple(self._waiting.pop(capture_id, ())):
-                await self._drain(partition)
+        await self.accept_many((record,))
+
+    async def accept_many(
+        self, records: tuple[KafkaProjectorRecord, ...] | list[KafkaProjectorRecord]
+    ) -> None:
+        values = tuple(records)
+        if not values:
             return
-        if record.topic != self.canonical_topic:
-            raise ValueError("stable projector received an unconfigured topic")
-        envelope = market_data_pb2.EventEnvelope.FromString(record.payload)
-        binding = self.catalog.binding_for_envelope(envelope)
-        if bytes(envelope.event_id) != record.event_id or binding.partition_key != record.key:
-            raise ValueError("Kafka canonical metadata differs from stable envelope")
-        partition = (record.topic, record.partition)
-        queue = self._queues[partition]
-        if queue and record.offset <= queue[-1].offset:
-            raise ValueError("Kafka canonical partition order regressed")
-        self._admit_pending(record)
-        queue.append(record)
-        await self._drain(partition)
+        start = 0
+        while start < len(values):
+            epoch = values[start].assignment_epoch
+            end = start + 1
+            while end < len(values) and values[end].assignment_epoch == epoch:
+                end += 1
+            await self._accept_assignment_batch(values[start:end], epoch)
+            start = end
+
+    async def _accept_assignment_batch(
+        self, records: tuple[KafkaProjectorRecord, ...], epoch: int
+    ) -> None:
+        self._handle_assignment(epoch)
+        raw_values: list[tuple[KafkaProjectorRecord, bytes, DurableEvent]] = []
+        canonical_values: list[KafkaProjectorRecord] = []
+        for record in records:
+            if record.topic in self.raw_topics:
+                capture_id, event = self._raw_event(record)
+                raw_values.append((record, capture_id, event))
+            elif record.topic == self.canonical_topic:
+                canonical_values.append(record)
+            else:
+                raise ValueError("stable projector received an unconfigured topic")
+
+        if raw_values:
+            await asyncio.to_thread(
+                self.spool.append_many, [item[2] for item in raw_values]
+            )
+            for record, _capture_id, _event in raw_values:
+                await asyncio.to_thread(self.broker.checkpoint, record)
+            self._raw_committed += len(raw_values)
+            await self._drain_ready()
+
+        for record in canonical_values:
+            envelope = market_data_pb2.EventEnvelope.FromString(record.payload)
+            binding = self.catalog.binding_for_envelope(envelope)
+            if (
+                bytes(envelope.event_id) != record.event_id
+                or binding.partition_key != record.key
+            ):
+                raise ValueError("Kafka canonical metadata differs from stable envelope")
+            partition = (record.topic, record.partition)
+            queue = self._queues[partition]
+            if queue and record.offset <= queue[-1].offset:
+                raise ValueError("Kafka canonical partition order regressed")
+            self._admit_pending(record)
+            queue.append(record)
+        await self._drain_ready()
 
     async def run_once(self, timeout_seconds: float = 1.0) -> bool:
         record = await asyncio.to_thread(self.broker.poll, timeout_seconds)
@@ -121,19 +184,28 @@ class StableProjectorEngine:
             # Another projector replica may have persisted the correlated raw
             # envelope into the shared cache. Retry bounded local partitions so
             # cross-replica raw/canonical ordering cannot stall indefinitely.
-            for partition in tuple(self._queues):
-                await self._drain(partition)
+            await self._drain_ready()
             return False
-        await self.accept(record)
+        records = [record]
+        deadline = asyncio.get_running_loop().time() + self.batch_wait_seconds
+        while len(records) < self.max_batch_records:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            item = await asyncio.to_thread(self.broker.poll, remaining)
+            if item is None:
+                break
+            records.append(item)
+        await self.accept_many(records)
         return True
 
-    async def _store_raw(self, record: KafkaProjectorRecord) -> bytes:
+    def _raw_event(self, record: KafkaProjectorRecord) -> tuple[bytes, DurableEvent]:
         raw = raw_provider_pb2.RawProviderEnvelope.FromString(record.payload)
         validate_raw_envelope(raw)
         capture_id = bytes(raw.capture_id)
         if capture_id != record.event_id:
             raise ValueError("Kafka raw event ID differs from capture ID")
-        event = DurableEvent(
+        return capture_id, DurableEvent(
             stream=record.topic,
             partition_key=record.key,
             event_id=capture_id,
@@ -145,48 +217,76 @@ class StableProjectorEngine:
                 "schema": f"{raw.raw_schema_name}/{raw.raw_schema_major}",
             },
         )
-        await asyncio.to_thread(self.spool.append, event)
-        return capture_id
 
-    async def _drain(self, partition: tuple[str, int]) -> None:
-        queue = self._queues[partition]
-        while queue:
-            record = queue[0]
-            envelope = market_data_pb2.EventEnvelope.FromString(record.payload)
-            raw = self._find_raw(bytes(envelope.raw_capture_id))
-            if raw is None:
-                self._waiting[bytes(envelope.raw_capture_id)].add(partition)
+    async def _drain_ready(self) -> None:
+        while True:
+            ready = self._ready_batch()
+            if not ready:
                 return
-            event = DurableEvent(
-                stream=self.catalog.canonical_stream,
-                partition_key=record.key,
-                event_id=record.event_id,
-                payload=record.payload,
-                accepted_at_ns=record.accepted_at_ns,
-                headers={
-                    "raw_stream": raw.event.stream,
-                    "raw_event_id": raw.event.event_id.hex(),
-                    "kafka_topic": record.topic,
-                    "kafka_partition": str(record.partition),
-                    "kafka_offset": str(record.offset),
-                },
+            stored_values = await self.sink.publish_many(
+                [item.event for item in ready]
             )
-            stored = await self.sink.publish(event)
-            projection = self.projector.build(stored, raw.event.payload)
-            applied = await asyncio.to_thread(self.target.apply, projection)
-            await asyncio.to_thread(self.broker.checkpoint, record)
-            if not applied:
-                self._duplicate_projections += 1
-            self._canonical_committed += 1
-            queue.popleft()
-            self._pending_records -= 1
-            self._pending_bytes -= len(record.payload)
-            waiting = self._waiting.get(bytes(envelope.raw_capture_id))
-            if waiting is not None:
-                waiting.discard(partition)
-                if not waiting:
-                    self._waiting.pop(bytes(envelope.raw_capture_id), None)
-        self._queues.pop(partition, None)
+            projections = [
+                self.projector.build(stored, item.raw.event.payload)
+                for item, stored in zip(ready, stored_values, strict=True)
+            ]
+            applied = await asyncio.to_thread(self.target.apply_many, projections)
+            if len(applied) != len(ready):
+                raise RuntimeError("stable projection target returned an invalid result count")
+            for item in ready:
+                await asyncio.to_thread(self.broker.checkpoint, item.record)
+            for item, was_applied in zip(ready, applied, strict=True):
+                if not was_applied:
+                    self._duplicate_projections += 1
+                self._canonical_committed += 1
+                queue = self._queues[item.partition]
+                current = queue.popleft()
+                if current.offset != item.record.offset:
+                    raise RuntimeError("stable canonical queue order changed during batch")
+                self._pending_records -= 1
+                self._pending_bytes -= len(item.record.payload)
+                capture_id = bytes(item.envelope.raw_capture_id)
+                waiting = self._waiting.get(capture_id)
+                if waiting is not None:
+                    waiting.discard(item.partition)
+                    if not waiting:
+                        self._waiting.pop(capture_id, None)
+                if not queue:
+                    self._queues.pop(item.partition, None)
+
+    def _ready_batch(self) -> tuple[_ReadyCanonical, ...]:
+        ready = []
+        for partition in sorted(self._queues):
+            queue = self._queues[partition]
+            for record in queue:
+                if len(ready) >= self.max_batch_records:
+                    return tuple(ready)
+                envelope = market_data_pb2.EventEnvelope.FromString(record.payload)
+                raw = self._find_raw(bytes(envelope.raw_capture_id))
+                if raw is None:
+                    self._waiting[bytes(envelope.raw_capture_id)].add(partition)
+                    break
+                ready.append(_ReadyCanonical(
+                    partition=partition,
+                    record=record,
+                    envelope=envelope,
+                    raw=raw,
+                    event=DurableEvent(
+                        stream=self.catalog.canonical_stream,
+                        partition_key=record.key,
+                        event_id=record.event_id,
+                        payload=record.payload,
+                        accepted_at_ns=record.accepted_at_ns,
+                        headers={
+                            "raw_stream": raw.event.stream,
+                            "raw_event_id": raw.event.event_id.hex(),
+                            "kafka_topic": record.topic,
+                            "kafka_partition": str(record.partition),
+                            "kafka_offset": str(record.offset),
+                        },
+                    ),
+                ))
+        return tuple(ready)
 
     def _find_raw(self, capture_id: bytes) -> StoredEvent | None:
         for stream in self.raw_topics:

@@ -3,6 +3,7 @@
 from qdl.transport.contracts import (
     AppendResult,
     BackpressureRequired,
+    BatchEventSink,
     CheckpointRegression,
     Cursor,
     CursorExpired,
@@ -22,6 +23,7 @@ from qdl.transport.sqlite_spool import SQLiteDurableSpool, SpoolConfig, SpoolSta
 __all__ = [
     "AppendResult",
     "BackpressureRequired",
+    "BatchEventSink",
     "CheckpointRegression",
     "Cursor",
     "CursorExpired",

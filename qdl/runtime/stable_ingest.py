@@ -108,12 +108,16 @@ def install_stable_canonical_ingest(
             except (ValueError, TypeError) as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
 
+        try:
+            stored_values = await gateway.publish_many(
+                [event for _binding, _envelope, event in prepared]
+            )
+        except GatewayFenced as error:
+            raise HTTPException(status_code=409, detail="stable gateway was fenced") from error
         results = []
-        for binding, envelope, event in prepared:
-            try:
-                stored = await gateway.publish(event)
-            except GatewayFenced as error:
-                raise HTTPException(status_code=409, detail="stable gateway was fenced") from error
+        for (binding, envelope, event), stored in zip(
+            prepared, stored_values, strict=True
+        ):
             duplicate = stored is None
             if stored is None:
                 stored = spool.find_event(stream=event.stream, event_id=event.event_id)
@@ -158,18 +162,29 @@ class StableHttpCanonicalSink:
             )
 
     async def publish(self, event: DurableEvent) -> StoredEvent:
-        raw_stream = event.headers.get("raw_stream")
-        raw_event_id = event.headers.get("raw_event_id")
-        if not raw_stream or not raw_event_id:
-            raise ValueError("stable HTTP sink requires a durable raw reference")
-        body = json.dumps({
-            "schema": _INGEST_SCHEMA,
-            "batch_id": str(uuid.uuid4()),
-            "events": [{
+        return (await self.publish_many((event,)))[0]
+
+    async def publish_many(
+        self, events: tuple[DurableEvent, ...] | list[DurableEvent]
+    ) -> tuple[StoredEvent, ...]:
+        values = tuple(events)
+        if not 1 <= len(values) <= 1000:
+            raise ValueError("stable HTTP sink batch must contain 1..1000 events")
+        encoded = []
+        for event in values:
+            raw_stream = event.headers.get("raw_stream")
+            raw_event_id = event.headers.get("raw_event_id")
+            if not raw_stream or not raw_event_id:
+                raise ValueError("stable HTTP sink requires a durable raw reference")
+            encoded.append({
                 "canonical": base64.b64encode(event.payload).decode(),
                 "raw_stream": raw_stream,
                 "raw_event_id": raw_event_id,
-            }],
+            })
+        body = json.dumps({
+            "schema": _INGEST_SCHEMA,
+            "batch_id": str(uuid.uuid4()),
+            "events": encoded,
         }, sort_keys=True, separators=(",", ":")).encode()
         last_error: BaseException | None = None
         assert self.client is not None
@@ -187,19 +202,33 @@ class StableHttpCanonicalSink:
                     continue
                 response.raise_for_status()
                 result = response.json()
+                acknowledgements = result.get("results", ())
                 if (
                     result.get("schema") != _RESULT_SCHEMA
-                    or len(result.get("results", ())) != 1
-                    or result["results"][0].get("event_id") != event.event_id.hex()
+                    or len(acknowledgements) != len(values)
+                    or [item.get("event_id") for item in acknowledgements]
+                    != [event.event_id.hex() for event in values]
                 ):
                     raise ValueError("stable ingest ACK contract is invalid")
-                stored = self.spool.find_event(stream=event.stream, event_id=event.event_id)
-                if stored is None or stored.cursor.offset != int(result["results"][0]["offset"]):
-                    raise ValueError("stable ingest ACK differs from shared cache")
-                return stored
+                stored_values = []
+                for event, acknowledgement in zip(
+                    values, acknowledgements, strict=True
+                ):
+                    stored = self.spool.find_event(
+                        stream=event.stream, event_id=event.event_id
+                    )
+                    if (
+                        stored is None
+                        or stored.cursor.offset != int(acknowledgement["offset"])
+                    ):
+                        raise ValueError("stable ingest ACK differs from shared cache")
+                    stored_values.append(stored)
+                return tuple(stored_values)
             except (httpx.HTTPError, ValueError, TypeError) as error:
                 last_error = error
-        raise RuntimeError("no active stable stream gateway accepted canonical data") from last_error
+        raise RuntimeError(
+            "no active stable stream gateway accepted canonical data"
+        ) from last_error
 
     async def close(self) -> None:
         if self._owns_client and self.client is not None:
