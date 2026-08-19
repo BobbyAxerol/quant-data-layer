@@ -411,6 +411,31 @@ class StableSpoolQueryBackend:
         raise ValueError("stable query backend supports only TRADE/QUOTE/BAR")
 
 
+class StableCatalogCursorScopeValidator:
+    """Bind public cursor scope to the exact stable catalog requirement."""
+
+    def __init__(self, catalog: StableSourceCatalog) -> None:
+        self.catalog = catalog
+
+    def validate(
+        self,
+        requirement: DataRequirement,
+        *,
+        stream: str,
+        partition_key: str,
+    ) -> None:
+        try:
+            binding = self.catalog.binding_for(requirement)
+        except KeyError as error:
+            raise ValueError(
+                "cursor requirement has no matching stable binding"
+            ) from error
+        if stream != binding.canonical_stream:
+            raise ValueError("cursor stream does not match the stable binding")
+        if partition_key != binding.partition_key:
+            raise ValueError("cursor partition does not match the stable binding")
+
+
 class StableConsumerCursorIssuer:
     def __init__(
         self,

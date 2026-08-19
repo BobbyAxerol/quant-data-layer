@@ -4995,6 +4995,44 @@ by implication in Phase B implementation.
   two-row warmup with an old non-executable context row and a fresh executable
   tail, plus stale-tail rejection. Public V2 schema and server routes are
   unchanged.
+- `2026-08-19 PHASE B B11 UNIFIED-STREAM CURSOR SCOPE DEFECT CONFIRMED,
+  FIX IN PROGRESS`: the authenticated stable SDK flow passed query/history
+  validation after B10, then gRPC subscribe failed closed with
+  `CURSOR_INVALID: cursor stream does not match the data requirement`. The
+  signed cursor is correct: stable topology intentionally uses one canonical
+  transport stream, `md.canonical.v2`, and carries instrument/feed/source scope
+  in the partition key. The generic gRPC service still hardcodes the earlier
+  beta convention `md.canonical.v2.<feed>`, so it rejects its own stable
+  snapshot cursor.
+
+  The bounded repair must not weaken cursor authorization or change any public
+  Protobuf/API/token. Introduce an injectable, transport-neutral cursor-scope
+  validator: the existing feed-scoped validator remains the default for beta
+  and existing tests, while stable runtime validates the exact canonical stream
+  and exact catalog binding partition for the requested instrument, feed,
+  interval and source policy. Wrong consumer, stream, instrument, feed, source
+  or policy must continue to fail closed. Required gates are targeted positive
+  and adversarial contract tests followed by the authentic registered
+  warmup -> signed cursor -> replay -> live flow. Rollback is code-only inside
+  the isolated candidate; V1 port 8100, current Redis and current consumers
+  remain unchanged.
+- `2026-08-19 PHASE B B11 CATALOG-AUTHORITATIVE CURSOR SCOPE UNIT-VERIFIED,
+  AUTHENTIC FLOW RETEST PENDING`: gRPC stream scope validation is now an
+  injectable transport-neutral contract. The default validator preserves the
+  existing feed-specific beta convention without changing its call sites. The
+  stable runtime explicitly installs a catalog-backed validator that resolves
+  the full requirement, including interval and source policy, then requires the
+  exact catalog canonical stream and instrument/feed/source partition. This
+  permits the intentional unified `md.canonical.v2` stream without accepting an
+  arbitrary same-prefix stream or partition. Public protobuf, signed cursor
+  format, SDK and replay gateway are unchanged.
+
+  The targeted Phase B edge and Phase 5 stream/SDK suites passed 39 tests with
+  one pre-existing dependency-gated skip. Positive unified-stream scope and
+  wrong stream, partition, feed and source-policy failures are covered; the
+  existing signed consumer/scope mismatch regression remains green. The final
+  immutable candidate still must pass the authenticated real-provider consumer
+  and recovery gates before Phase B can close.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

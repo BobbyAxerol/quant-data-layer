@@ -38,6 +38,7 @@ from qdl.runtime.stable_projector import (
     supervise_stable_projector,
 )
 from qdl.runtime.stable_source import (
+    StableCatalogCursorScopeValidator,
     StableGrpcSnapshotLoader,
     build_stable_query_stack,
 )
@@ -462,6 +463,7 @@ def create_stable_stream_runtime(
         snapshot_loader=StableGrpcSnapshotLoader(
             service=query_service, backend=backend, issuer=issuer
         ),
+        cursor_scope_validator=StableCatalogCursorScopeValidator(catalog),
     )
     grpc_server = create_grpc_server(
         grpc_service, identity_service=identity,

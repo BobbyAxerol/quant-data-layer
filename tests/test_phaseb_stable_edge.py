@@ -53,6 +53,7 @@ from qdl.runtime.stable_projector import (
     supervise_stable_projector,
 )
 from qdl.runtime.stable_source import (
+    StableCatalogCursorScopeValidator,
     StableConsumerCursorIssuer,
     StableSpoolQueryBackend,
 )
@@ -511,6 +512,55 @@ class StableQueryContractTests(unittest.TestCase):
                 stream=binding.canonical_stream,
                 partition_key=binding.partition_key,
                 limit=10,
+            )
+
+
+class StableCursorScopeValidatorTests(unittest.TestCase):
+    def setUp(self):
+        self.catalog = StableSourceCatalog.load(CATALOG_PATH)
+        self.binding = next(
+            item for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-trade"
+        )
+        self.requirement = _requirement(self.binding)
+        self.validator = StableCatalogCursorScopeValidator(self.catalog)
+
+    def test_unified_canonical_stream_matches_exact_catalog_binding(self):
+        self.validator.validate(
+            self.requirement,
+            stream=self.binding.canonical_stream,
+            partition_key=self.binding.partition_key,
+        )
+
+    def test_wrong_stream_partition_and_policy_fail_closed(self):
+        invalid_scopes = (
+            (f"{self.binding.canonical_stream}.trade", self.binding.partition_key),
+            (self.binding.canonical_stream, self.binding.partition_key + "-other"),
+            (
+                self.binding.canonical_stream,
+                self.binding.partition_key.replace("/trade/", "/quote/"),
+            ),
+        )
+        for stream, partition_key in invalid_scopes:
+            with self.subTest(stream=stream, partition_key=partition_key):
+                with self.assertRaisesRegex(ValueError, "stable binding"):
+                    self.validator.validate(
+                        self.requirement, stream=stream, partition_key=partition_key
+                    )
+
+        wrong_policy = DataRequirement(
+            instrument_uid=self.requirement.instrument_uid,
+            feed=self.requirement.feed,
+            interval=self.requirement.interval,
+            consumer_grade=self.requirement.consumer_grade,
+            source_policy_id="wrong-policy",
+            warmup_limit=self.requirement.warmup_limit,
+        )
+        with self.assertRaisesRegex(ValueError, "no matching stable binding"):
+            self.validator.validate(
+                wrong_policy,
+                stream=self.binding.canonical_stream,
+                partition_key=self.binding.partition_key,
             )
 
 
