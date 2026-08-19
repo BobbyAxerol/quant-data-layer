@@ -4447,6 +4447,38 @@ by implication in Phase B implementation.
   valid and 32 Phase B deployment/edge/release tests passed with one separately
   gated real-Redis integration skip. An immutable runtime must still prove lag
   convergence, exactly-once broker recovery and no quarantine/duplicates.
+- `2026-08-19 PHASE B B5 RUST CORE HOT-PATH DEFECT IDENTIFIED, FIX IN
+  PROGRESS`: partition-level evidence showed one hot ordered raw partition can
+  still miss the 2-3 second execution freshness policy. Code inspection found
+  an algorithmic defect: every raw event clones the complete global dedup set,
+  dedup eviction queue, ordering tracker and partition-sequence map solely to
+  roll back a multi-row provider frame. With a one-million-event dedup bound,
+  processing cost grows with history and eventually becomes quadratic. The fix
+  will stage only mutations for the current provider frame: scalar partition
+  sequence, per-partition ordering transition and new event IDs. Those stages
+  commit only after every row passes canonicalization/finality/ordering; a row
+  failure discards them and emits the same atomic quarantine. Existing global
+  dedup, bounded eviction, session reset, duplicate, monotonic/contiguous gap
+  and stale-generation semantics must remain byte/domain equivalent. Rust unit,
+  atomic multi-row rollback, parity, warnings-as-errors, benchmark and real hot-
+  partition freshness gates are required before closure.
+- `2026-08-19 PHASE B B5 RUST CORE STAGED HOT PATH UNIT/CAPACITY VERIFIED,
+  IMMUTABLE RUNTIME RETEST PENDING`: realtime-core no longer clones global
+  partition sequences, ordering partitions or the bounded dedup set/queue for
+  every provider event. It stages only current-frame partition sequences,
+  ordering transitions and new event IDs, then commits after every expanded row
+  passes; a failed row discards the stage and preserves atomic quarantine/replay
+  behavior. Two direct staged-ordering tests prove discarded state is invisible
+  and committed batches preserve duplicate/gap semantics. All 30 targeted
+  `qdl-venue-core`/`qdl-realtime-core` tests passed, including aggregated-frame
+  rollback, reconnect dedup, stale generation, sequence-gap, final-bar and
+  provider identity cases. The first unchanged 100,000-event/50,000 events/s
+  benchmark gate correctly failed at 6,177 events/s and exposed one residual
+  clone of the partition recent-ID set inside `stage()`. Removing that clone,
+  without lowering the gate, produced 100,000 canonical events, zero duplicate,
+  zero quarantine, 115,107 events/s, p50 6.19 microseconds and p99 18.921
+  microseconds. Targeted Clippy, full workspace tests and an immutable three-core
+  real-provider freshness/recovery run remain mandatory before this gate closes.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

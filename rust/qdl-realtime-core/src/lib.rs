@@ -10,7 +10,7 @@ use qdl_core::canonical::{canonicalize_trade, TradeContext, TradeFixture};
 use qdl_core::okx::expand_data_frame;
 use qdl_core::transport::DurableRecord;
 use qdl_provider_envelope::validate as validate_raw;
-use qdl_venue_core::ordering::{OrderingTracker, SequenceDecision, SequencePolicy};
+use qdl_venue_core::ordering::{OrderingStage, OrderingTracker, SequenceDecision, SequencePolicy};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -229,10 +229,10 @@ impl RealtimeCore {
         let payload: Value = serde_json::from_slice(&raw.raw_frame_bytes)
             .map_err(|error| CoreError::Decode(error.to_string()))?;
         let frames = expand_frames(&binding, payload).map_err(CoreError::Decode)?;
-        let saved_partition_sequences = self.partition_sequences.clone();
-        let saved_ordering = self.ordering.clone();
-        let saved_seen_ids = self.seen_ids.clone();
-        let saved_seen_order = self.seen_order.clone();
+        let mut staged_partition_sequences = BTreeMap::new();
+        let mut staged_ordering: BTreeMap<String, OrderingStage> = BTreeMap::new();
+        let mut staged_seen_ids = HashSet::new();
+        let mut staged_seen_order = Vec::new();
         let mut batch = ProcessBatch {
             canonical: Vec::with_capacity(frames.len()),
             quarantines: vec![],
@@ -245,11 +245,11 @@ impl RealtimeCore {
                 "{}/{}/{}",
                 binding.instrument_uid, provider_kind, binding.source_id
             );
-            let partition_sequence = self
-                .partition_sequences
+            let partition_sequence = staged_partition_sequences
                 .get(&partition_key)
+                .or_else(|| self.partition_sequences.get(&partition_key))
                 .copied()
-                .unwrap_or(0)
+                .unwrap_or(0_u64)
                 .saturating_add(1);
             let fixture = TradeFixture {
                 provider_kind,
@@ -310,7 +310,9 @@ impl RealtimeCore {
                     }
                 }
             }
-            if self.seen_ids.contains(&canonical.event_id) {
+            if self.seen_ids.contains(&canonical.event_id)
+                || staged_seen_ids.contains(&canonical.event_id)
+            {
                 batch.duplicates += 1;
                 continue;
             }
@@ -329,8 +331,11 @@ impl RealtimeCore {
                     }
                 }
             };
-            match self.ordering.observe_with_policy(
-                &partition_key,
+            let ordering_stage = staged_ordering
+                .entry(partition_key.clone())
+                .or_insert_with(|| self.ordering.stage(&partition_key));
+            match self.ordering.observe_staged(
+                ordering_stage,
                 &raw.source_session_id,
                 raw.connection_generation,
                 sequence,
@@ -364,9 +369,9 @@ impl RealtimeCore {
                 }
                 SequenceDecision::Accepted | SequenceDecision::SessionStarted => {}
             }
-            self.partition_sequences
-                .insert(partition_key, partition_sequence);
-            self.remember(canonical.event_id.clone());
+            staged_partition_sequences.insert(partition_key, partition_sequence);
+            staged_seen_ids.insert(canonical.event_id.clone());
+            staged_seen_order.push(canonical.event_id.clone());
             batch.canonical.push(canonical_record(
                 &self.config.canonical_stream,
                 canonical,
@@ -374,11 +379,14 @@ impl RealtimeCore {
             ));
         }
         if let Some((reason, summary)) = failure {
-            self.partition_sequences = saved_partition_sequences;
-            self.ordering = saved_ordering;
-            self.seen_ids = saved_seen_ids;
-            self.seen_order = saved_seen_order;
             return Ok(self.quarantine(&raw, reason, summary, normalized_at_ns));
+        }
+        self.partition_sequences.extend(staged_partition_sequences);
+        for stage in staged_ordering.into_values() {
+            self.ordering.commit_stage(stage);
+        }
+        for event_id in staged_seen_order {
+            self.remember(event_id);
         }
         Ok(batch)
     }
