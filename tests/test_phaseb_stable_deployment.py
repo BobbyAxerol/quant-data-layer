@@ -210,6 +210,16 @@ class StableComposeAndBundleTests(unittest.TestCase):
         self.assertNotIn("8100", raw)
         self.assertNotIn("redis_marketdata", raw)
         self.assertTrue(compose["networks"]["stable_internal"]["internal"])
+        self.assertFalse(compose["networks"]["stable_ingress"].get("internal", False))
+        for name in ("query_v2_1", "query_v2_2", "stream_v2_active", "stream_v2_passive"):
+            self.assertEqual(
+                set(services[name]["networks"]), {"stable_internal", "stable_ingress"}
+            )
+            self.assertTrue(
+                all(str(port).startswith("127.0.0.1:") for port in services[name]["ports"])
+            )
+        self.assertNotIn("ports", services["projector_v2"])
+        self.assertEqual(services["projector_v2"]["networks"], ["stable_internal"])
         self.assertEqual(
             compose["x-kafka-env"]["KAFKA_MIN_INSYNC_REPLICAS"], 2
         )

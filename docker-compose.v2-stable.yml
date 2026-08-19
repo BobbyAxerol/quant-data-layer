@@ -196,6 +196,7 @@ services:
   query_v2_1:
     <<: *python
     command: [uvicorn, app.entrypoints.query_v2_stable:app, --host, 0.0.0.0, --port, "8200", --no-access-log]
+    networks: [stable_internal, stable_ingress]
     ports: ["127.0.0.1:18201:8200"]
     environment:
       <<: *stable-env
@@ -210,6 +211,7 @@ services:
   query_v2_2:
     <<: *python
     command: [uvicorn, app.entrypoints.query_v2_stable:app, --host, 0.0.0.0, --port, "8200", --no-access-log]
+    networks: [stable_internal, stable_ingress]
     ports: ["127.0.0.1:18202:8200"]
     environment:
       <<: *stable-env
@@ -223,6 +225,7 @@ services:
   stream_v2_active:
     <<: *python
     command: [python, -m, app.entrypoints.stream_v2_stable]
+    networks: [stable_internal, stable_ingress]
     ports: ["127.0.0.1:18210:8200", "127.0.0.1:18220:8210"]
     environment:
       <<: *stable-env
@@ -236,6 +239,7 @@ services:
   stream_v2_passive:
     <<: *python
     command: [python, -m, app.entrypoints.stream_v2_stable]
+    networks: [stable_internal, stable_ingress]
     ports: ["127.0.0.1:18211:8200", "127.0.0.1:18221:8210"]
     environment:
       <<: *stable-env
@@ -249,7 +253,6 @@ services:
   projector_v2:
     <<: *python
     command: [python, -m, app.entrypoints.projector_v2_stable]
-    ports: ["127.0.0.1:18230:8230"]
     environment:
       <<: *stable-env
       QDL_STABLE_INSTANCE_ID: stable-projector-1
@@ -386,6 +389,7 @@ services:
 
 networks:
   stable_internal: {internal: true, labels: {qdl.scope: v2-stable-candidate}}
+  stable_ingress: {labels: {qdl.scope: v2-stable-candidate-ingress}}
   stable_egress: {labels: {qdl.scope: v2-stable-candidate-egress}}
 volumes:
   kafka1_data: {labels: {qdl.scope: v2-stable-candidate}}

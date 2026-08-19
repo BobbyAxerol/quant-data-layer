@@ -4267,6 +4267,15 @@ by implication in Phase B implementation.
   and 22/22 targeted Python deployment/edge tests passed with one separately
   gated disposable-Redis integration skip. Runtime retest requires images built
   from the next committed SHA.
+- `2026-08-19 PHASE B B5 INGRESS DEFECT CLOSED`: application readiness was
+  `READY` container-locally, but services attached only to Docker
+  `stable_internal`; Docker retained declared bindings without creating host
+  forwarding. The approved Phase 7 separation is restored: query and active/
+  passive stream roles join a dedicated `stable_ingress` bridge and publish only
+  on `127.0.0.1`; Kafka, Redis, Rust core and projector remain unexposed, with
+  projector internal-only. Provider roles alone retain `stable_egress`. Targeted
+  topology/deployment/edge verification again passed 22 tests with the one
+  separately gated Redis integration skip.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
