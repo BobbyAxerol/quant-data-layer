@@ -1,7 +1,7 @@
 # Quant Data Layer Unified Implementation Plan
 
 > **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; Phase 9.1 is `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`; Phase 9.2 is `COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED` after isolated terminal-handoff, process-restart recovery, rollback and replicated-broker certification. Authority promotion remains blocked on explicit production infrastructure, real canary hold and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
-> **Working branch:** `feat/phase92-bounded-rust-primary`, stacked on the completed Phase 9.1 checkpoint and intended for PR into `dev`; no push, merge or authority cutover is implied by implementation completion.
+> **Working branch:** `feat/phase93-hold-close-expand`, stacked on the completed Phase 9.2 checkpoint and intended for PR into `dev`; no push, merge or authority cutover is implied by implementation progress.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
 > **Compatibility boundary:** Existing `/v1`, SDK v1, Redis keys and Redis Pub/Sub remain supported until a governed per-consumer sunset.
@@ -3332,21 +3332,115 @@ use a direct owner flag or uncoordinated Python restart.
 
 #### 9.3 Hold, Close And Expand Independently
 
-- Keep the slice in an enhanced-observation hold period.
-- Close the rollback window only after all SLO, consumer and authority evidence
-  remains clean.
-- Update the consumer/authority registries and freeze the production report.
-- Decide independently whether to expand:
-  1. more partitions/instruments of the same TRADE capability;
-  2. BBO;
-  3. L2 snapshot/delta/checksum;
-  4. BAR lifecycle/revision;
-  5. another venue/market.
-- Repeat full capability/provider/chaos/capacity/rollback certification for each
-  expansion. Do not infer certification transitively.
-- Remove a replaced Python hot-path implementation only after zero ownership,
-  tested rollback posture and approved repository cleanup. Reusable adapter and
-  compatibility knowledge remain until explicit decommission.
+**Status:** `IN_PROGRESS / PRODUCTION_HOLD_BLOCKED`
+
+**Purpose:** Add the provider-neutral post-primary control plane that observes
+one exact `RUST_PRIMARY` slice, decides whether its rollback window may close,
+freezes consumer/authority evidence and creates independent expansion
+candidates. Phase 9.0-C remains `NO_GO_EXTERNAL` and Phase 9.2 is not production
+authoritative, so this phase implements and certifies the protocol only in
+isolated scope. It must not manufacture a production hold, close a real
+rollback window, mutate production authority or grant another feed/venue
+transitive approval.
+
+**Guide index:**
+
+- [Phase 9.3 hold/closure/expansion boundary](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#appendix-i--phase-93-hold-closure-and-independent-expansion)
+- [Authority state machine](#authority-state-machine)
+- [Formal rollback protocol](#formal-rollback-protocol)
+- [Verification matrix](#verification-matrix)
+- [Production acceptance checklist](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#41-production-acceptance-checklist)
+
+**Decision boundary and invariants:**
+
+- Hold/closure is a control-plane lifecycle around an existing exact authority
+  record. It does not add a new data-plane authority state and does not weaken
+  `RUST_PRIMARY`, `BLOCKED`, `ROLLBACK_PENDING` or `PYTHON_PRIMARY` fencing.
+- Every observation binds slice, candidate, owner, authority revision, lease,
+  partition-plan epoch and monotonically increasing time/watermark. A changed
+  identity ends the hold; evidence from another owner or epoch cannot be mixed.
+- Correctness breaches have zero tolerance: semantic mismatch, open gap,
+  duplicate external write, accepted stale writer, authority ambiguity, durable
+  ACK failure, projection divergence, consumer checkpoint regression or
+  unexplained source-quality failure blocks closure.
+- Capacity/freshness/lag thresholds are explicit policy. Observations are
+  append-only, ordered, bounded and sufficiently dense for the approved hold
+  duration. Missing intervals fail closed; they are not interpolated.
+- Closing the rollback window is an immutable registry decision, not deletion
+  of the Python rollback manifest. It requires a production-authorized primary,
+  a completed real hold, exact healthy consumer and authority registries, a
+  fresh rollback rehearsal, explicit operator/change-ticket approval and an
+  unchanged authority CAS identity at commit time.
+- Expansion never inherits authority or certification. More instruments,
+  `BBO`, `L2`, `BAR` and another venue/market each create a new candidate digest,
+  required capability matrix and independent Phase 6/9 certification set.
+- Runtime decommission requires zero ownership, zero active rollback dependency,
+  a closed governed window and explicit repository cleanup approval. Shared
+  contracts, adapters and compatibility knowledge are retained unless a
+  separate approved removal proves no consumer dependency.
+- With current external gates, the maximum valid result is
+  `COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED`. V1 and the Python
+  authority path remain unchanged.
+
+**Implementation tasks:**
+
+1. Add typed hold policy, observation, decision, registry snapshot, closure
+   approval and expansion manifest contracts. Validate strict schemas, identity,
+   time ordering, zero-tolerance correctness fields and bounded thresholds.
+2. Add a stateful hold evaluator with monotonic observation ordering, required
+   sample density, exact authority continuity and sticky fail-closed breach
+   behavior. Recovery requires a new hold identifier, never an in-place reset.
+3. Add a production closure authorizer that rejects the current Phase 9.0-C
+   `NO_GO_EXTERNAL`/Phase 9.2 rehearsal evidence and accepts only exact real
+   production primary, hold, consumer, authority, rollback and operator records.
+4. Add append-only PostgreSQL hold observations/decisions, authority closure and
+   expansion registries. A closure function must lock and recheck the exact
+   current authority record; it records closure only and never changes owner,
+   state, revision, lease or watermark.
+5. Add independent expansion planning for more instruments/partitions, `BBO`,
+   `L2`, `BAR` and another venue/market. Persist
+   `INDEPENDENT_CERTIFICATION_REQUIRED`, forbid transitive evidence and bind a
+   new candidate/partition-plan identity where applicable.
+6. Build disposable PostgreSQL migration smoke plus isolated control-plane
+   certification. Cover clean hold, sparse/out-of-order observations, every
+   zero-tolerance breach, threshold breach, stale authority CAS, registry
+   mismatch, duplicate closure, immutable evidence, all expansion classes and
+   decommission refusal.
+7. Freeze machine/human evidence, checksum and operator runbook. Record V1
+   health/topology before and after, production mutations as zero and remove
+   only Phase 9.3 disposable resources/images.
+
+**Verification and exit gate:**
+
+- Unit/contract tests cover valid and malformed hold observations, identity and
+  epoch drift, timestamp/watermark regression, missing density, correctness and
+  resource breaches, sticky blocking and deterministic decision digest.
+- Closure authorization tests prove current evidence is denied, complete
+  production-shaped test fixtures are accepted only in test scope, and every
+  missing/stale/mismatched registry, rollback or approval field fails closed.
+- PostgreSQL tests prove migration idempotency, append-only evidence, exact
+  authority row locking, stale CAS rejection, duplicate closure rejection and
+  zero authority-field mutation after closure.
+- Expansion tests prove no transitive certification, capability-specific gate
+  requirements, unique candidate identity and zero write authority.
+- Full Python/Rust compatibility suites pass. V1 health, API/SDK/Redis contracts,
+  running topology and authority ownership remain unchanged.
+- While external gates remain unavailable, production hold duration, production
+  closure and real expansion authority remain explicitly untested and blocked.
+
+**Implementation journal (2026-08-19):**
+
+- `IN_PROGRESS`: scope, invariants, test matrix and Appendix I are frozen before
+  code changes on `feat/phase93-hold-close-expand`, stacked on certified Phase
+  9.2.
+- `OPEN EXTERNAL GATE`: Phase 9.0-C remains `NO_GO_EXTERNAL`; no real primary
+  owner, production hold interval or operator closure approval exists.
+
+**Rollback:** Before production authority exists, remove only Phase 9.3 test
+schemas, fixtures, evidence runtime and images; retain append-only repository
+evidence. A future production closure cannot be reversed by deleting its row.
+An incident still uses the formal `BLOCKED -> ROLLBACK_PENDING ->
+PYTHON_PRIMARY` authority protocol and a new audit decision.
 
 ### Verification Matrix
 

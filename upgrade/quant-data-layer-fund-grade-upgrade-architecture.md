@@ -5135,3 +5135,134 @@ Adding an option venue must not require changing canonical core identities or re
 - source authority, quality state and entitlement/licensing metadata.
 
 An adapter declares unsupported capabilities explicitly. Phase 3 uses sanitized Deribit-style fixtures to prove the boundary; Phase 6 certifies architecture readiness. Real Deribit activation remains a separate adapter certification requiring official source semantics, credentials, licensing and capacity evidence.
+
+
+## Appendix I — Phase 9.3 hold, closure and independent expansion
+
+Phase 9.3 is a control-plane boundary after one exact slice has become a real
+`RUST_PRIMARY`. It does not introduce a new sink authority state. The data plane
+continues to use the Phase 9.2 owner/revision/lease/partition and watermark
+fences. Hold and closure records describe whether operators may reduce the
+rollback posture; they never grant writes by themselves.
+
+### Hold identity and observation contract
+
+A hold is immutable and binds:
+
+```text
+hold_id
+slice_id
+candidate_digest
+prerequisite_bundle_id
+owner_id
+authority_revision
+lease_epoch
+partition_plan_epoch
+started_at_ns
+required_until_ns
+policy_digest
+```
+
+Each observation repeats that identity and carries an increasing sequence,
+observation time, last durable watermark, correctness counters, source quality,
+consumer checkpoint state and bounded resource/lag metrics. The evaluator
+requires ordered observations across the whole approved interval and a maximum
+sample gap. It never fabricates a missing observation.
+
+The following values are zero tolerance:
+
+```text
+semantic_mismatches
+open_gaps
+duplicate_external_writes
+accepted_stale_writer_writes
+authority_ambiguities
+durable_ack_failures
+projection_mismatches
+consumer_checkpoint_regressions
+unexplained_quality_failures
+```
+
+Lag, freshness, queue, spool, CPU and RSS use explicit upper bounds. An owner,
+authority revision, lease, partition plan or candidate change invalidates the
+hold. A breach is sticky for that hold identifier; a later clean sample cannot
+rewrite history. Starting again requires a new hold and preserves the failed
+record.
+
+### Rollback-window closure
+
+A closure authorizer consumes six independently frozen inputs:
+
+1. fresh Phase 9.0-C production prerequisite `GO` bound to the candidate;
+2. production-authorized Phase 9.2 primary evidence for the exact owner/epochs;
+3. a passing real hold decision covering the minimum approved duration;
+4. complete consumer registry snapshot with healthy contiguous checkpoints;
+5. exact authority registry snapshot plus a fresh successful rollback rehearsal;
+6. explicit operator/change-ticket approval with bounded expiry.
+
+The database closure transaction locks the current authority row and rechecks
+state `RUST_PRIMARY`, owner, revision, lease, partition-plan epoch, candidate,
+bundle and hold identity. It inserts one immutable closure record. It must not
+update authority state, owner, revision, lease, watermark, public-write or
+legacy-write fields. A concurrent authority change makes the closure fail.
+
+Closing the window means normal rollback is no longer an unreviewed routine
+operation. It does not delete the Python manifest or make emergency recovery
+impossible. A later incident still fences Rust first and creates new immutable
+rollback authority/audit records.
+
+### Consumer and authority registry freeze
+
+The closure snapshot records only stable IDs, versions, digests, contiguous
+checkpoints and health decisions. It does not embed secrets, tokens or raw
+unbounded logs. Every affected critical consumer must be registered exactly
+once, acknowledge the current authority revision and expose no checkpoint
+regression or unresolved migration. Unknown or duplicate consumers fail closed.
+
+### Independent expansion manifests
+
+Expansion types are provider-neutral:
+
+| Expansion | Mandatory independent certification |
+|---|---|
+| `INSTRUMENT_PARTITION` | partition churn, source capacity, exact-frame parity, handoff and rollback |
+| `BBO` | quote identity, coalescing policy, freshness, ordering and reconnect |
+| `L2_BOOK` | snapshot/delta sequence, checksum, resync, lossless backpressure and capacity |
+| `BAR_LIFECYCLE` | final/revised/cancelled lineage, close-time semantics and replay |
+| `VENUE_MARKET` | adapter capability, instrument identity, provider semantics, entitlement and DR |
+
+Every manifest has a new `expansion_id`, candidate digest, scope digest,
+partition-plan epoch, required-gate set and status
+`INDEPENDENT_CERTIFICATION_REQUIRED`. It sets write authority false. Parent
+hold/closure evidence is provenance only and cannot satisfy child gates.
+Combining expansion classes in one manifest is forbidden so risk and rollback
+remain bounded.
+
+### Runtime decommission boundary
+
+A Python hot path may be nominated for removal only when it owns zero slices,
+is absent from every active rollback manifest and consumer dependency, all
+replacement windows are governed closed, and repository cleanup is explicitly
+approved. Shared canonical contracts, provider semantics, fixtures, migration
+knowledge and compatibility projectors are not removed merely because one hot
+path moved to Rust.
+
+### Current decision boundary and certification
+
+The current Phase 9.0-C result is `NO_GO_EXTERNAL`, and Phase 9.2 produced only
+isolated primary evidence. Therefore Phase 9.3 may certify contract validation,
+PostgreSQL transaction behavior, fail-closed closure denial, expansion
+independence, V1 invariants and exact cleanup. It may not claim a real hold,
+close a production rollback window, decommission Python or authorize an
+expansion.
+
+The maximum local result is:
+
+```text
+COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED
+```
+
+Production completion later requires authentic sustained observations over the
+approved wall-clock duration, real consumer checkpoints, current authority and
+rollback evidence, independent infrastructure scope and explicit operator
+approval. No accelerated fixture or same-host rehearsal can satisfy that gate.
