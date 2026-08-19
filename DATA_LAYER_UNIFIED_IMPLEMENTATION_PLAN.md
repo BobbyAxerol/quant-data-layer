@@ -4318,6 +4318,35 @@ by implication in Phase B implementation.
   real-Redis integration skip, including no premature checkpoint, coalesced
   offsets, rebalance replay and callback fail-closed. An immutable Python image
   plus real-provider lag-delta smoke remains required before closure.
+- `2026-08-19 PHASE B B5 TRANSACTIONAL CORE RECOVERY DEFECT IDENTIFIED, FIX
+  IN PROGRESS`: a deliberately isolated broker-loss gate exposed a second
+  recovery boundary after the projector throughput fix. RF3/minISR2 preserved
+  the topics and Rust acquisition continued appending raw provider bytes, but
+  the transactional core stopped advancing canonical/quarantine offsets after
+  its transaction coordinator connection was interrupted. Public V2 correctly
+  returned `DATA_STALE`; there was no fabricated freshness, data loss or V1
+  effect. The accidental Kafka1 exit code 137 was caused by running a separate
+  Java admin CLI inside the broker 512 MiB cgroup, not by broker steady-state
+  usage; all subsequent admin probes must use the isolated `stable_admin` role.
+  The bounded runtime fix must reconstruct the complete transactional bridge and
+  in-memory normalization state under the same authority/transactional identity
+  only for retryable Kafka transport errors, with capped jittered backoff and
+  explicit generation telemetry. Configuration, fencing, schema, decode and
+  domain errors remain non-retryable. Kafka exactly-once offsets then replay
+  only the uncommitted batch. A real one-broker loss/rejoin gate must prove raw,
+  canonical and projector offsets resume and authenticated snapshots return
+  `LIVE` before closure.
+- `2026-08-19 PHASE B B5 TRANSACTIONAL CORE SUPERVISOR UNIT-VERIFIED, RUNTIME
+  RETEST PENDING`: `qdl-realtime-core` now owns a generation supervisor around
+  the complete transactional bridge and normalization state. Retryable/capacity
+  Kafka errors rebuild the producer, consumer and core under the unchanged
+  authority record and transactional ID after capped jittered backoff; Kafka
+  transaction recovery resolves any indeterminate batch before the consumer
+  resumes from committed offsets. Non-retryable transport and all non-Kafka
+  domain/schema/decode failures still terminate. Generation is emitted in
+  bounded progress telemetry. The pinned Rust build, rustfmt, Clippy with all
+  warnings denied and the retry-class unit test passed. Immutable-image broker
+  loss/rejoin evidence remains the closure gate.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

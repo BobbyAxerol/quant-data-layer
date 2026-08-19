@@ -5,9 +5,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message;
 use qdl_contracts::qdl::provider::v1::RawProviderEnvelope;
+use qdl_core::backoff::BackoffPolicy;
+use qdl_core::transport::RetryClass;
 use qdl_kafka::{
-    KafkaTlsConfig, KafkaTransportConfig, TransactionalKafkaBridge, TransactionalKafkaOutput,
-    TransactionalShadowTopics,
+    KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, TransactionalKafkaBridge,
+    TransactionalKafkaOutput, TransactionalShadowTopics,
 };
 use qdl_realtime_core::{RealtimeCore, RealtimeCoreConfig};
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
@@ -76,20 +78,26 @@ fn kafka_config() -> Result<KafkaTransportConfig, String> {
     })
 }
 
-fn now_ns() -> Result<i64, Box<dyn std::error::Error>> {
+type RuntimeError = Box<dyn std::error::Error + Send + Sync>;
+
+fn now_ns() -> Result<i64, RuntimeError> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)?
         .as_nanos()
         .try_into()?)
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config_path = env::args()
-        .nth(1)
-        .ok_or("usage: qdl-realtime-core CONFIG.json")?;
-    let config: RuntimeConfig = serde_json::from_slice(&tokio::fs::read(config_path).await?)?;
-    config.validate()?;
+fn should_retry_transport(class: RetryClass) -> bool {
+    class != RetryClass::NonRetryable
+}
+
+fn retryable_runtime_error(error: &RuntimeError) -> bool {
+    error
+        .downcast_ref::<KafkaTransportError>()
+        .is_some_and(|value| should_retry_transport(value.retry_class()))
+}
+
+async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), RuntimeError> {
     let mut core = RealtimeCore::new(config.core.clone())?;
     let bridge = TransactionalKafkaBridge::new(
         &kafka_config()?,
@@ -106,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_string(&json!({
             "event": "qdl_realtime_core_started",
             "authority": "RUST_SHADOW",
+            "generation": generation,
             "bindings": config.core.bindings.len(),
             "batch_size": config.batch_size,
             "production_public_writes": 0,
@@ -185,6 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "{}",
                 serde_json::to_string(&json!({
                     "event": "qdl_realtime_core_progress",
+                    "generation": generation,
                     "processed": processed,
                     "canonical": canonical,
                     "quarantines": quarantines,
@@ -199,6 +209,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "{}",
         serde_json::to_string(&json!({
             "event": "qdl_realtime_core_stopped",
+            "generation": generation,
             "processed": processed,
             "canonical": canonical,
             "quarantines": quarantines,
@@ -208,4 +219,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }))?
     );
     Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), RuntimeError> {
+    let config_path = env::args()
+        .nth(1)
+        .ok_or("usage: qdl-realtime-core CONFIG.json")?;
+    let config: RuntimeConfig = serde_json::from_slice(&tokio::fs::read(config_path).await?)?;
+    config.validate()?;
+    let backoff = BackoffPolicy {
+        initial_ms: 500,
+        maximum_ms: 30_000,
+        multiplier: 2,
+        jitter_bps: 2_000,
+    }
+    .validate()?;
+    let mut generation = 0_u64;
+    let mut failures = 0_u32;
+    loop {
+        generation = generation.saturating_add(1);
+        match run_generation(&config, generation).await {
+            Ok(()) => return Ok(()),
+            Err(error) if retryable_runtime_error(&error) => {
+                failures = failures.saturating_add(1);
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "event": "qdl_realtime_core_retry",
+                        "generation": generation,
+                        "attempt": failures,
+                        "error": error.to_string(),
+                    }))?
+                );
+                tokio::time::sleep(Duration::from_millis(
+                    backoff.delay_ms(failures, failures.min(10_000) as u16),
+                ))
+                .await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_retries_only_retryable_or_capacity_transport_errors() {
+        assert!(should_retry_transport(RetryClass::Retryable));
+        assert!(should_retry_transport(RetryClass::Capacity));
+        assert!(!should_retry_transport(RetryClass::NonRetryable));
+    }
 }
