@@ -15,6 +15,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+const TRANSPORT_SEQUENCE_STRIDE: u64 = 1_000_000;
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CoreBinding {
@@ -199,9 +201,33 @@ impl RealtimeCore {
     pub fn process(
         &mut self,
         raw: RawProviderEnvelope,
-        normalized_at_ns: i64,
+        processing_at_ns: i64,
     ) -> Result<ProcessBatch, CoreError> {
+        self.process_internal(raw, processing_at_ns, None)
+    }
+
+    pub fn process_at_transport_offset(
+        &mut self,
+        raw: RawProviderEnvelope,
+        processing_at_ns: i64,
+        transport_offset: u64,
+    ) -> Result<ProcessBatch, CoreError> {
+        self.process_internal(raw, processing_at_ns, Some(transport_offset))
+    }
+
+    fn process_internal(
+        &mut self,
+        raw: RawProviderEnvelope,
+        processing_at_ns: i64,
+        transport_offset: Option<u64>,
+    ) -> Result<ProcessBatch, CoreError> {
+        if processing_at_ns <= 0 {
+            return Err(CoreError::Decode(
+                "processing_at_ns must be positive".into(),
+            ));
+        }
         validate_raw(&raw).map_err(|error| CoreError::RawEnvelope(error.to_string()))?;
+        let materialized_at_ns = raw.received_at_ns;
         if raw.test_provenance && !self.config.allow_test_provenance {
             return Err(CoreError::ProvenanceRejected);
         }
@@ -223,12 +249,17 @@ impl RealtimeCore {
                 &raw,
                 QuarantineReason::UnknownInstrument,
                 "instrument catalog revision mismatch",
-                normalized_at_ns,
+                materialized_at_ns,
             ));
         }
         let payload: Value = serde_json::from_slice(&raw.raw_frame_bytes)
             .map_err(|error| CoreError::Decode(error.to_string()))?;
         let frames = expand_frames(&binding, payload).map_err(CoreError::Decode)?;
+        if transport_offset.is_some() && frames.len() as u64 >= TRANSPORT_SEQUENCE_STRIDE {
+            return Err(CoreError::Configuration(
+                "expanded provider frame exceeds transport sequence stride".into(),
+            ));
+        }
         let mut staged_partition_sequences = BTreeMap::new();
         let mut staged_ordering: BTreeMap<String, OrderingStage> = BTreeMap::new();
         let mut staged_seen_ids = HashSet::new();
@@ -240,17 +271,28 @@ impl RealtimeCore {
             filtered: 0,
         };
         let mut failure: Option<(QuarantineReason, &'static str)> = None;
-        for (provider_kind, frame) in frames {
+        for (row_index, (provider_kind, frame)) in frames.into_iter().enumerate() {
             let partition_key = format!(
                 "{}/{}/{}",
                 binding.instrument_uid, provider_kind, binding.source_id
             );
-            let partition_sequence = staged_partition_sequences
-                .get(&partition_key)
-                .or_else(|| self.partition_sequences.get(&partition_key))
-                .copied()
-                .unwrap_or(0_u64)
-                .saturating_add(1);
+            let partition_sequence = if let Some(offset) = transport_offset {
+                offset
+                    .checked_mul(TRANSPORT_SEQUENCE_STRIDE)
+                    .and_then(|base| base.checked_add(row_index as u64 + 1))
+                    .ok_or_else(|| {
+                        CoreError::Configuration(
+                            "transport-derived partition sequence overflow".into(),
+                        )
+                    })?
+            } else {
+                staged_partition_sequences
+                    .get(&partition_key)
+                    .or_else(|| self.partition_sequences.get(&partition_key))
+                    .copied()
+                    .unwrap_or(0_u64)
+                    .saturating_add(1)
+            };
             let fixture = TradeFixture {
                 provider_kind,
                 context: TradeContext {
@@ -265,8 +307,8 @@ impl RealtimeCore {
                     source_id: binding.source_id.clone(),
                     lease_epoch: raw.lease_epoch,
                     received_at_ns: raw.received_at_ns,
-                    normalized_at_ns,
-                    published_at_ns: normalized_at_ns,
+                    normalized_at_ns: materialized_at_ns,
+                    published_at_ns: materialized_at_ns,
                     partition_sequence,
                     normalizer_version: binding.normalizer_version.clone(),
                     adapter_version: raw.adapter_version.clone(),
@@ -375,11 +417,11 @@ impl RealtimeCore {
             batch.canonical.push(canonical_record(
                 &self.config.canonical_stream,
                 canonical,
-                normalized_at_ns,
+                materialized_at_ns,
             ));
         }
         if let Some((reason, summary)) = failure {
-            return Ok(self.quarantine(&raw, reason, summary, normalized_at_ns));
+            return Ok(self.quarantine(&raw, reason, summary, materialized_at_ns));
         }
         self.partition_sequences.extend(staged_partition_sequences);
         for stage in staged_ordering.into_values() {
@@ -621,6 +663,111 @@ mod tests {
         let repeated = core.process(raw(&binding, frame, 2), 11).unwrap();
         assert_eq!(repeated.canonical.len(), 0);
         assert_eq!(repeated.duplicates, 1);
+    }
+
+    #[test]
+    fn transport_replay_is_byte_deterministic_across_fresh_cores() {
+        let binding = binding((
+            "BINANCE_DIRECT",
+            "BINANCE",
+            "USDM",
+            "PERPETUAL",
+            "BTCUSDT",
+            "trade",
+            "binance_usdm_trade",
+            "PRIMARY",
+            SequencePolicy::Monotonic,
+        ));
+        let frame = br#"{"s":"BTCUSDT","t":10,"p":"60000.1","q":"0.01","T":3,"m":false}"#;
+        let captured = raw(&binding, frame, 1);
+        let mut first_core = core(binding.clone(), true);
+        let first = first_core
+            .process_at_transport_offset(captured.clone(), 10, 42)
+            .unwrap();
+        let mut recovered_core = core(binding, true);
+        let replay = recovered_core
+            .process_at_transport_offset(captured.clone(), 999, 42)
+            .unwrap();
+
+        assert_eq!(first, replay);
+        let envelope = EventEnvelope::decode(first.canonical[0].payload.as_slice()).unwrap();
+        assert_eq!(envelope.received_at_ns, captured.received_at_ns);
+        assert_eq!(envelope.normalized_at_ns, captured.received_at_ns);
+        assert_eq!(envelope.published_at_ns, captured.received_at_ns);
+        assert_eq!(envelope.partition_sequence, 42_000_001);
+        assert_eq!(first.canonical[0].accepted_at_ns, captured.received_at_ns);
+    }
+
+    #[test]
+    fn transport_offset_keeps_restart_and_expanded_row_sequences_monotonic() {
+        let binding = binding((
+            "OKX_DIRECT",
+            "OKX",
+            "SWAP",
+            "PERPETUAL",
+            "BTC-USDT-SWAP",
+            "trades",
+            "okx_trade",
+            "PRIMARY",
+            SequencePolicy::Monotonic,
+        ));
+        let first_frame = br#"{"arg":{"channel":"trades","instId":"BTC-USDT-SWAP"},"data":[{"instId":"BTC-USDT-SWAP","tradeId":"1","px":"1","sz":"2","side":"buy","ts":"3"},{"instId":"BTC-USDT-SWAP","tradeId":"2","px":"2","sz":"2","side":"buy","ts":"4"}]}"#;
+        let next_frame = br#"{"arg":{"channel":"trades","instId":"BTC-USDT-SWAP"},"data":[{"instId":"BTC-USDT-SWAP","tradeId":"3","px":"3","sz":"2","side":"buy","ts":"5"}]}"#;
+        let mut first_core = core(binding.clone(), true);
+        let first = first_core
+            .process_at_transport_offset(raw(&binding, first_frame, 1), 10, 42)
+            .unwrap();
+        let first_sequences: Vec<u64> = first
+            .canonical
+            .iter()
+            .map(|record| {
+                EventEnvelope::decode(record.payload.as_slice())
+                    .unwrap()
+                    .partition_sequence
+            })
+            .collect();
+        assert_eq!(first_sequences, vec![42_000_001, 42_000_002]);
+
+        let mut restarted_core = core(binding.clone(), true);
+        let next = restarted_core
+            .process_at_transport_offset(raw(&binding, next_frame, 1), 999, 43)
+            .unwrap();
+        let next_envelope = EventEnvelope::decode(next.canonical[0].payload.as_slice()).unwrap();
+        assert_eq!(next_envelope.partition_sequence, 43_000_001);
+        assert!(next_envelope.partition_sequence > first_sequences[1]);
+
+        let mut overflow_core = core(binding.clone(), true);
+        let overflow =
+            overflow_core.process_at_transport_offset(raw(&binding, next_frame, 1), 1, u64::MAX);
+        assert!(matches!(overflow, Err(CoreError::Configuration(_))));
+    }
+
+    #[test]
+    fn quarantine_replay_is_deterministic_across_processing_clocks() {
+        let binding = binding((
+            "BINANCE_DIRECT",
+            "BINANCE",
+            "USDM",
+            "PERPETUAL",
+            "BTCUSDT",
+            "trade",
+            "binance_usdm_trade",
+            "PRIMARY",
+            SequencePolicy::Monotonic,
+        ));
+        let frame = br#"{"s":"BTCUSDT","t":10,"p":"1","q":"1","T":3,"m":false}"#;
+        let mut captured = raw(&binding, frame, 1);
+        captured.instrument_catalog_revision += 1;
+        let mut first_core = core(binding.clone(), true);
+        let first = first_core
+            .process_at_transport_offset(captured.clone(), 10, 7)
+            .unwrap();
+        let mut recovered_core = core(binding, true);
+        let replay = recovered_core
+            .process_at_transport_offset(captured, 999, 7)
+            .unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(first.quarantines.len(), 1);
     }
 
     #[test]

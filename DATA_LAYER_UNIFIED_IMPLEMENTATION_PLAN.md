@@ -4592,6 +4592,41 @@ by implication in Phase B implementation.
   was mounted read-only, network was disabled and no V1/runtime state changed.
   A fresh immutable image and repeated real two-broker recovery gate still block
   candidate certification.
+- `2026-08-19 PHASE B B5 CANONICAL REPLAY DETERMINISM DEFECT IDENTIFIED`:
+  the immutable `9afc21b` projector applied backpressure, reached previously
+  committed canonical replay and correctly stopped on `EventIdCollision` rather
+  than overwrite immutable data. A separately authorized read-only diagnostic
+  group scanned the isolated canonical log without joining/rebalancing the
+  projector. It found repeated records with the same raw capture, native source
+  sequence, business payload, partition key and event ID, but a different
+  `normalized_at_ns` generated from the Rust process wall clock. Thus a retry of
+  identical raw bytes was not byte-deterministic. The runtime core also rebuilt
+  partition sequence from process-local zero, which would regress continuity
+  when a process resumes from a committed Kafka offset. The fix must materialize
+  immutable normalized/published/accepted timestamps from the durable raw
+  capture time; processing latency remains operational telemetry. Runtime
+  `partition_sequence` must derive monotonically and deterministically from the
+  raw Kafka transport offset plus bounded expanded-row index under the existing
+  partition-plan epoch. Exact replay across fresh core instances, mid-log restart
+  continuity, multi-row ordering, overflow, quarantine and transactional tests
+  plus a clean isolated candidate are mandatory. Event identity, collision
+  detection, public contracts and V1 remain unchanged.
+- `2026-08-19 PHASE B B5 CANONICAL REPLAY DETERMINISM UNIT/CAPACITY
+  VERIFIED, CLEAN RUNTIME RETEST PENDING`: Rust canonical and quarantine output
+  timestamps are now materialized from the immutable raw receive boundary;
+  wall-clock processing latency remains runtime telemetry and cannot alter event
+  bytes. The Kafka runtime derives `partition_sequence` from raw transport offset
+  with a fixed one-million-row stride and checked overflow, preserving monotonic
+  order across fresh processes and bounded expanded frames without changing the
+  public event-ID contract. Tests prove identical raw/offset input yields exact
+  bytes across fresh cores despite different processing clocks; quarantine is
+  likewise deterministic; a mid-log restart advances sequence; two rows retain
+  order; and offset overflow fails closed. Rust fmt and full workspace tests
+  passed 57 tests; warnings-as-errors Clippy passed. The unchanged release gate
+  processed 100,000 canonical events with zero duplicate/quarantine at 127,732
+  events/s, p50 5.7 microseconds and p99 15.2 microseconds against the 50,000/s
+  minimum. No V1/current-Redis state changed. A clean immutable all-one-revision
+  candidate, duplicate-log scan and repeated recovery gates remain mandatory.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

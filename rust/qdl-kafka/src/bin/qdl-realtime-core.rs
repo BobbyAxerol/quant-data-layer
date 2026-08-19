@@ -156,7 +156,11 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
             if raw.authority_revision != config.authority.revision {
                 return Err("raw authority revision does not match runtime authority".into());
             }
-            let result = core.process(raw.clone(), normalized_at_ns)?;
+            let result = core.process_at_transport_offset(
+                raw.clone(),
+                normalized_at_ns,
+                input.cursor.offset,
+            )?;
             canonical += result.canonical.len() as u64;
             quarantines += result.quarantines.len() as u64;
             duplicates += result.duplicates as u64;
