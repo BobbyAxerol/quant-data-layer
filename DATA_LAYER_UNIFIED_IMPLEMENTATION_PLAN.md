@@ -4167,6 +4167,31 @@ by implication in Phase B implementation.
   failure/replay, Redis loss/rebuild, source alias isolation, HMAC rejection,
   duplicate HTTP ingest and stale-writer fencing. No test used provider data as
   generated production evidence and no live V1 process/state was mutated.
+- `2026-08-19 PHASE B SLICE B3 STARTED`: freeze the real-consumer migration
+  registry and public package metadata for `2.0.0`. The bounded slice covers
+  monitoring, one Binance paper alpha, one OKX paper alpha, one VN paper alpha
+  and the Trading System paper adapter. Every manifest must resolve only
+  catalogued instrument/feed pairs, use SDK major 2, retain an explicit V1
+  rollback contract and remain `SHADOW` with `cutover_authorized=false`.
+  Package, SDK and generated OpenAPI versions must agree exactly; V1 OpenAPI,
+  SDK and Redis compatibility goldens must remain byte/semantic compatible.
+  This slice does not deploy a runtime, migrate a consumer, change authority,
+  restart port `8100` or write any current Redis namespace.
+- `2026-08-19 PHASE B SLICE B3 COMPLETE`: added a strict migration-plan
+  loader and five governed paper manifests for monitoring, Binance alpha, OKX
+  alpha, VN alpha and Trading System. Every data requirement resolves to the
+  deterministic stable catalog; only Trading System may declare
+  `PAPER_ONLY` execution dependency and all other consumers remain
+  `FORBIDDEN`. Unknown fields, unknown instrument/feed bindings, active
+  routes, weak rollback policy and implicit cutover fail closed. Package,
+  `qdl_sdk` and generated OpenAPI metadata now agree on `2.0.0`.
+- `2026-08-19 PHASE B SLICE B3 VERIFICATION`: 26 isolated contract,
+  consumer-state, stable-edge and V1/V2 golden tests passed; one real-Redis
+  integration case was intentionally skipped in this network-disabled suite
+  because the same Lua/TTL/PubSub/fencing path passed against disposable Redis
+  in Slice B2. The source was mounted read-only with a tmpfs log path. No V1
+  service, authority, consumer route, Redis state or provider connection was
+  changed, and no disposable file/container remained.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

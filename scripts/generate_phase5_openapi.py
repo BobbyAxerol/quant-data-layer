@@ -9,7 +9,9 @@ from qdl.api_v2 import create_v2_app
 
 def build_openapi() -> dict:
     # OpenAPI generation is pure and never invokes the injected query service.
-    return create_v2_app(None).openapi()  # type: ignore[arg-type]
+    return create_v2_app(
+        None, contract_version="2.0.0", authority="INTERNAL_STABLE"
+    ).openapi()  # type: ignore[arg-type]
 
 
 def main() -> None:
