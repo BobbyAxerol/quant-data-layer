@@ -4291,6 +4291,33 @@ by implication in Phase B implementation.
   are released on non-retryable append failure. Rust fmt, warnings-as-errors
   Clippy and all 51 workspace tests passed. A forced disconnect/reconnect smoke
   on an immutable image is still required before this defect gate closes.
+- `2026-08-19 PHASE B B5 PROJECTOR THROUGHPUT DEFECT IDENTIFIED, FIX IN
+  PROGRESS`: the immutable `5f32238` candidate keeps all four native providers,
+  the transactional Rust core and the Python projector alive, and both raw and
+  canonical Kafka offsets advance from real provider traffic. Authenticated
+  Binance USD-M V2 snapshot nevertheless fails closed as `DATA_STALE` because
+  `stable-projector-v1` accumulates thousands of records of lag. The root cause
+  is one synchronous Kafka commit round-trip after every individually durable
+  raw and canonical ACK. The correctness invariant remains unchanged: no Kafka
+  offset may be eligible for commit before local raw durability or complete
+  canonical stream/cache/Redis projection. The bounded fix is confined to the
+  Confluent adapter: coalesce only already-ACKed offsets per topic-partition,
+  submit asynchronous commits at a bounded count/time interval, surface commit
+  callback errors fail-closed, discard uncommitted batches on rebalance for
+  idempotent replay, and synchronously flush on orderly close. Unit failure
+  gates and a real-provider lag-delta retest are required before this slice can
+  close. V1, current Redis, public contracts and authority remain untouched.
+- `2026-08-19 PHASE B B5 PROJECTOR CHECKPOINT FIX UNIT-VERIFIED, RUNTIME
+  RETEST PENDING`: the Confluent adapter now batches at most 128 downstream-ACKed
+  offsets or 100 milliseconds per topic-partition. Async callback failures stop
+  subsequent poll/checkpoint operations, assignment changes discard only the
+  uncommitted local batch for idempotent broker replay, and orderly close uses a
+  synchronous final flush. The engine still calls `checkpoint` only after raw
+  spool durability or complete canonical stream/cache/Redis projection. Thirty
+  deployment, stable-edge and release tests passed with one separately gated
+  real-Redis integration skip, including no premature checkpoint, coalesced
+  offsets, rebalance replay and callback fail-closed. An immutable Python image
+  plus real-provider lag-delta smoke remains required before closure.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

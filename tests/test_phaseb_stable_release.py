@@ -5,6 +5,7 @@ import json
 import tempfile
 import tomllib
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -13,7 +14,11 @@ import qdl_sdk
 from qdl.consumer.stable import StableConsumerMigrationPlan
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.security import RedisMinuteQuota
-from qdl.transport.kafka_projector import ConfluentProjectorBroker, KafkaProjectorConfig
+from qdl.transport.kafka_projector import (
+    ConfluentProjectorBroker,
+    KafkaProjectorConfig,
+    KafkaProjectorRecord,
+)
 from scripts.generate_phase5_openapi import build_openapi
 
 
@@ -155,6 +160,87 @@ class StableRuntimeDependencyTests(unittest.TestCase):
             self.assertEqual(broker._consumer.config["isolation.level"], "read_committed")
             broker.close()
             self.assertFalse(broker.ping())
+
+    def test_projector_coalesces_only_acked_offsets_and_replays_on_rebalance(self):
+        class FakeConsumer:
+            def __init__(self, config, *, commit_error=False):
+                self.config = config
+                self.commit_error = commit_error
+                self.commits = []
+                self.closed = False
+
+            def subscribe(self, topics, **callbacks):
+                self.topics = tuple(topics)
+                self.callbacks = callbacks
+
+            def poll(self, _timeout):
+                return None
+
+            def list_topics(self, *, timeout):
+                del timeout
+                return {"cluster": "stable"}
+
+            def commit(self, *, offsets, asynchronous):
+                self.commits.append((tuple(offsets), asynchronous))
+                if asynchronous and self.commit_error:
+                    self.config["on_commit"](RuntimeError("commit failed"), offsets)
+                return None if asynchronous else offsets
+
+            def close(self):
+                self.closed = True
+
+        def record(offset, *, partition=0, epoch=1):
+            return KafkaProjectorRecord(
+                topic="md.raw.stable.v1",
+                partition=partition,
+                offset=offset,
+                key="BINANCE/USDM/BTCUSDT/trade",
+                event_id=bytes([offset + 1]) * 16,
+                payload=b"raw",
+                accepted_at_ns=offset + 1,
+                assignment_epoch=epoch,
+            )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-phaseb-kafka-") as directory:
+            root = Path(directory)
+            for name in ("ca.crt", "client.crt", "client.key"):
+                (root / name).write_text("test-only", encoding="ascii")
+            config = KafkaProjectorConfig(
+                bootstrap_servers="kafka1:9092",
+                client_id="stable-projector",
+                group_id="stable-projector-v1",
+                raw_topics=("md.raw.stable.v1",),
+                canonical_topic="md.canonical.v2",
+                ca_path=root / "ca.crt",
+                certificate_path=root / "client.crt",
+                key_path=root / "client.key",
+                checkpoint_batch_size=2,
+                checkpoint_interval_ms=5_000,
+            )
+            broker = ConfluentProjectorBroker(config, consumer_factory=FakeConsumer)
+            broker.checkpoint(record(0))
+            self.assertEqual(broker._consumer.commits, [])
+            broker.checkpoint(record(1))
+            offsets, asynchronous = broker._consumer.commits[0]
+            self.assertTrue(asynchronous)
+            self.assertEqual([(item.partition, item.offset) for item in offsets], [(0, 2)])
+
+            broker.checkpoint(record(0, partition=1))
+            broker._consumer.callbacks["on_revoke"](broker._consumer, [])
+            self.assertEqual(broker._pending_offsets, {})
+            broker.close()
+            self.assertEqual(len(broker._consumer.commits), 1)
+
+            failed = ConfluentProjectorBroker(
+                replace(config, checkpoint_batch_size=1),
+                consumer_factory=lambda values: FakeConsumer(values, commit_error=True),
+            )
+            failed.checkpoint(record(0))
+            with self.assertRaisesRegex(RuntimeError, "asynchronous stable checkpoint"):
+                failed.poll(0.1)
+            with self.assertRaisesRegex(RuntimeError, "asynchronous stable checkpoint"):
+                failed.close()
+            self.assertTrue(failed._consumer.closed)
 
 
 class StableReleaseVersionContractTests(unittest.TestCase):
