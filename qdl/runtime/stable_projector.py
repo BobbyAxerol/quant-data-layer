@@ -115,6 +115,14 @@ class StableProjectorEngine:
         self.max_pending_bytes = max_pending_bytes
         self.max_batch_records = max_batch_records
         self.batch_wait_seconds = batch_wait_seconds
+        poll_headroom = min(max_batch_records, max(1, max_pending_records // 4))
+        self._canonical_pause_high_records = max(
+            1, max_pending_records - poll_headroom
+        )
+        self._canonical_resume_low_records = self._canonical_pause_high_records // 2
+        self._canonical_pause_high_bytes = max(1, max_pending_bytes * 3 // 4)
+        self._canonical_resume_low_bytes = self._canonical_pause_high_bytes // 2
+        self._canonical_paused = False
         self._queues: dict[tuple[str, int], deque[KafkaProjectorRecord]] = defaultdict(deque)
         self._waiting: dict[bytes, set[tuple[str, int]]] = defaultdict(set)
         self._assignment_epoch: int | None = None
@@ -257,6 +265,7 @@ class StableProjectorEngine:
                         self._waiting.pop(capture_id, None)
                 if not queue:
                     self._queues.pop(item.partition, None)
+            self._update_canonical_backpressure()
 
     def _ready_batch(self) -> tuple[_ReadyCanonical, ...]:
         ready = []
@@ -307,6 +316,25 @@ class StableProjectorEngine:
             raise RuntimeError("stable projector canonical-before-raw buffer exhausted")
         self._pending_records += 1
         self._pending_bytes += len(record.payload)
+        self._update_canonical_backpressure()
+
+    def _update_canonical_backpressure(self) -> None:
+        if (
+            not self._canonical_paused
+            and (
+                self._pending_records >= self._canonical_pause_high_records
+                or self._pending_bytes >= self._canonical_pause_high_bytes
+            )
+        ):
+            self.broker.pause_canonical()
+            self._canonical_paused = True
+        elif (
+            self._canonical_paused
+            and self._pending_records <= self._canonical_resume_low_records
+            and self._pending_bytes <= self._canonical_resume_low_bytes
+        ):
+            self.broker.resume_canonical()
+            self._canonical_paused = False
 
     def _handle_assignment(self, epoch: int) -> None:
         if self._assignment_epoch is None:
@@ -316,6 +344,9 @@ class StableProjectorEngine:
             return
         # Uncheckpointed broker records are discarded locally and replayed by
         # the new assignment. Durable cache/projection duplicates are idempotent.
+        if self._canonical_paused:
+            self.broker.resume_canonical()
+            self._canonical_paused = False
         self._queues.clear()
         self._waiting.clear()
         self._pending_records = 0

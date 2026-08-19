@@ -168,6 +168,8 @@ class StableRuntimeDependencyTests(unittest.TestCase):
                 self.commit_error = commit_error
                 self.commits = []
                 self.closed = False
+                self.pause_calls = []
+                self.resume_calls = []
 
             def subscribe(self, topics, **callbacks):
                 self.topics = tuple(topics)
@@ -175,6 +177,25 @@ class StableRuntimeDependencyTests(unittest.TestCase):
 
             def poll(self, _timeout):
                 return None
+
+            def assignment(self):
+                class Partition:
+                    def __init__(self, topic, partition):
+                        self.topic = topic
+                        self.partition = partition
+
+                return [
+                    Partition("md.raw.stable.v1", 0),
+                    Partition("md.canonical.v2", 0),
+                ]
+
+            def pause(self, partitions):
+                self.paused = tuple((item.topic, item.partition) for item in partitions)
+                self.pause_calls.append(self.paused)
+
+            def resume(self, partitions):
+                self.resumed = tuple((item.topic, item.partition) for item in partitions)
+                self.resume_calls.append(self.resumed)
 
             def list_topics(self, *, timeout):
                 del timeout
@@ -218,6 +239,10 @@ class StableRuntimeDependencyTests(unittest.TestCase):
                 checkpoint_interval_ms=5_000,
             )
             broker = ConfluentProjectorBroker(config, consumer_factory=FakeConsumer)
+            broker.pause_canonical()
+            self.assertEqual(broker._consumer.paused, (("md.canonical.v2", 0),))
+            broker.resume_canonical()
+            self.assertEqual(broker._consumer.resumed, (("md.canonical.v2", 0),))
             broker.checkpoint(record(0))
             self.assertEqual(broker._consumer.commits, [])
             broker.checkpoint(record(1))
@@ -230,6 +255,22 @@ class StableRuntimeDependencyTests(unittest.TestCase):
             self.assertEqual(broker._pending_offsets, {})
             broker.close()
             self.assertEqual(len(broker._consumer.commits), 1)
+
+            flow_broker = ConfluentProjectorBroker(
+                config, consumer_factory=FakeConsumer
+            )
+            flow_broker.pause_canonical()
+            flow_broker._consumer.callbacks["on_revoke"](
+                flow_broker._consumer, []
+            )
+            flow_broker.poll(0.1)
+            self.assertEqual(len(flow_broker._consumer.pause_calls), 2)
+            self.assertEqual(
+                set(flow_broker._consumer.pause_calls),
+                {(("md.canonical.v2", 0),)},
+            )
+            flow_broker.resume_canonical()
+            flow_broker.close()
 
             failed = ConfluentProjectorBroker(
                 replace(config, checkpoint_batch_size=1),

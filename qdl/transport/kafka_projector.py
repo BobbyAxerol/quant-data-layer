@@ -44,6 +44,8 @@ class KafkaProjectorRecord:
 class ProjectorBroker(Protocol):
     def poll(self, timeout_seconds: float) -> KafkaProjectorRecord | None: ...
     def checkpoint(self, record: KafkaProjectorRecord) -> None: ...
+    def pause_canonical(self) -> None: ...
+    def resume_canonical(self) -> None: ...
     def close(self) -> None: ...
 
 
@@ -97,6 +99,8 @@ class ConfluentProjectorBroker:
         self._pending_checkpoint_calls = 0
         self._last_checkpoint_flush = time.monotonic()
         self._commit_error: BaseException | None = None
+        self._canonical_pause_requested = False
+        self._canonical_pause_applied = False
         self._consumer = factory({
             "bootstrap.servers": config.bootstrap_servers,
             "client.id": config.client_id,
@@ -135,6 +139,40 @@ class ConfluentProjectorBroker:
         self._pending_offsets.clear()
         self._pending_checkpoint_calls = 0
         self._last_checkpoint_flush = time.monotonic()
+        self._canonical_pause_applied = False
+
+    def _canonical_assignments(self):
+        assignment = getattr(self._consumer, "assignment", None)
+        if assignment is None:
+            raise RuntimeError("Kafka consumer does not expose assignment flow control")
+        return [
+            item for item in assignment()
+            if getattr(item, "topic", None) == self.config.canonical_topic
+        ]
+
+    def _apply_canonical_flow_control(self) -> None:
+        partitions = self._canonical_assignments()
+        if not partitions:
+            self._canonical_pause_applied = False
+            return
+        if self._canonical_pause_requested and not self._canonical_pause_applied:
+            self._consumer.pause(partitions)
+            self._canonical_pause_applied = True
+        elif not self._canonical_pause_requested and self._canonical_pause_applied:
+            self._consumer.resume(partitions)
+            self._canonical_pause_applied = False
+
+    def pause_canonical(self) -> None:
+        if self._closed:
+            raise RuntimeError("Kafka stable projector consumer is closed")
+        self._canonical_pause_requested = True
+        self._apply_canonical_flow_control()
+
+    def resume_canonical(self) -> None:
+        if self._closed:
+            raise RuntimeError("Kafka stable projector consumer is closed")
+        self._canonical_pause_requested = False
+        self._apply_canonical_flow_control()
 
     def _flush_checkpoints(self, *, asynchronous: bool) -> None:
         if not self._pending_offsets:
@@ -160,11 +198,16 @@ class ConfluentProjectorBroker:
         if timeout_seconds <= 0:
             raise ValueError("Kafka poll timeout must be positive")
         self._raise_commit_error()
+        self._apply_canonical_flow_control()
         elapsed_ms = (time.monotonic() - self._last_checkpoint_flush) * 1000
         if self._pending_offsets and elapsed_ms >= self.config.checkpoint_interval_ms:
             self._flush_checkpoints(asynchronous=True)
         message = self._consumer.poll(timeout_seconds)
         self._raise_commit_error()
+        # Assignment callbacks run inside poll. Apply an already-requested pause
+        # immediately after a new assignment; the engine keeps one poll-batch of
+        # headroom for the record that may have triggered the callback.
+        self._apply_canonical_flow_control()
         if message is None:
             return None
         if message.error():

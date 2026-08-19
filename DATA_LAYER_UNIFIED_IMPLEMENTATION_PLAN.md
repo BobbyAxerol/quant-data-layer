@@ -4561,6 +4561,37 @@ by implication in Phase B implementation.
   passed 28 tests with one separately gated real-Redis skip, including injected
   async-checkpoint failure, poisoned close, exact one-backoff retry and successful
   second generation. The real two-broker recovery test must now be repeated.
+- `2026-08-19 PHASE B B5 TWO-BROKER RECOVERY PARTIAL PASS, JOIN
+  BACKPRESSURE DEFECT IDENTIFIED`: after Kafka1/Kafka2 returned healthy, the same
+  projector process (`restart=0`) resumed the durable spool from 101,585 to
+  104,614 records in five seconds with zero quarantine. This proves the new
+  supervisor reconnects autonomously. However, independent Kafka raw/canonical
+  topic scheduling let the canonical backlog outrun its correlated raw backlog;
+  the 10,000-record in-memory join bound then failed closed and repeatedly
+  recreated the consumer generation. No canonical record was checkpointed
+  before raw durability and no bad public data escaped, but repeated rebalances
+  leave lag unbounded and are not acceptable for stable release. The bounded
+  fix is Kafka-native high/low-water backpressure: pause only assigned canonical
+  partitions before the hard join limit, continue consuming and durably ACKing
+  raw partitions, drain correlated canonical records in partition order, then
+  resume canonical partitions below the low watermark. Increasing the RAM bound,
+  checkpointing canonical early or weakening lineage validation is forbidden.
+  Unit pause/resume, assignment, overflow, ordering and replay tests plus the
+  same real two-broker recovery/lag/quarantine gate are mandatory.
+- `2026-08-19 PHASE B B5 PROJECTOR JOIN BACKPRESSURE UNIT-VERIFIED,
+  IMMUTABLE OUTAGE RETEST PENDING`: the Confluent adapter now pauses/resumes only
+  assigned canonical partitions and reapplies requested flow control after an
+  assignment epoch changes. The engine reserves one bounded poll batch before
+  its hard record limit, also applies byte high/low watermarks, continues raw
+  durability/checkpoint progress while canonical is paused, and resumes only
+  after both pending records and bytes drain below low water. The original hard
+  record/byte fence remains active if a broker violates pause. Thirty targeted
+  projector tests passed with one separately gated Redis integration skip; the
+  broader stable edge/release/deployment, V2 multi-venue contract and Phase 8.3
+  release regression passed 50 tests with the same one conditional skip. Source
+  was mounted read-only, network was disabled and no V1/runtime state changed.
+  A fresh immutable image and repeated real two-broker recovery gate still block
+  candidate certification.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

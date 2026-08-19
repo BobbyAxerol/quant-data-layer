@@ -166,6 +166,7 @@ class _Broker:
     def __init__(self, *, fail_once_offset=None):
         self.checkpoints = []
         self.fail_once_offset = fail_once_offset
+        self.flow_control = []
 
     def poll(self, timeout_seconds):
         del timeout_seconds
@@ -176,6 +177,12 @@ class _Broker:
             self.fail_once_offset = None
             raise RuntimeError("injected checkpoint failure")
         self.checkpoints.append((record.topic, record.partition, record.offset))
+
+    def pause_canonical(self):
+        self.flow_control.append("pause")
+
+    def resume_canonical(self):
+        self.flow_control.append("resume")
 
     def close(self):
         return None
@@ -600,6 +607,74 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("trade:price:BTCUSDT", target.latest)
         self.assertIn("trade:price:binance_usdm:BTCUSDT", target.latest)
         self.assertEqual(len(target.publications), 2)
+
+    async def test_canonical_backpressure_pauses_before_hard_bound_and_resumes_after_raw(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        raw_topic, canonical_topic, raw_record, canonical_record = _broker_records(
+            binding, raw, event
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        waiting = tuple(
+            KafkaProjectorRecord(
+                topic=canonical_record.topic,
+                partition=canonical_record.partition,
+                offset=offset,
+                key=canonical_record.key,
+                event_id=canonical_record.event_id,
+                payload=canonical_record.payload,
+                accepted_at_ns=canonical_record.accepted_at_ns + offset,
+            )
+            for offset in range(8)
+        )
+
+        await engine.accept_many(waiting)
+        self.assertEqual(engine.stats.pending_canonical, 8)
+        self.assertEqual(broker.flow_control, ["pause"])
+        self.assertEqual(broker.checkpoints, [])
+
+        await engine.accept(raw_record)
+        self.assertEqual(engine.stats.pending_canonical, 0)
+        self.assertEqual(broker.flow_control, ["pause", "resume"])
+        self.assertEqual(
+            broker.checkpoints,
+            [(raw_topic, 0, 0)]
+            + [(canonical_topic, 0, offset) for offset in range(8)],
+        )
+
+    async def test_canonical_backpressure_keeps_hard_bound_when_pause_is_violated(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        raw_topic, canonical_topic, _raw_record, canonical_record = _broker_records(
+            binding, raw, event
+        )
+        broker = _Broker()
+        engine = self.engine(
+            broker, InMemoryStableProjectionTarget(), raw_topic, canonical_topic
+        )
+        records = tuple(
+            KafkaProjectorRecord(
+                topic=canonical_record.topic,
+                partition=canonical_record.partition,
+                offset=offset,
+                key=canonical_record.key,
+                event_id=canonical_record.event_id,
+                payload=canonical_record.payload,
+                accepted_at_ns=canonical_record.accepted_at_ns + offset,
+            )
+            for offset in range(11)
+        )
+
+        await engine.accept_many(records[:10])
+        with self.assertRaisesRegex(RuntimeError, "buffer exhausted"):
+            await engine.accept(records[10])
+        self.assertEqual(engine.stats.pending_canonical, 10)
+        self.assertEqual(broker.flow_control, ["pause"])
+        self.assertEqual(broker.checkpoints, [])
 
     async def test_projector_batches_durability_projection_and_checkpoints_in_order(self):
         first_binding, first_raw, first_event = _stable_pair(
