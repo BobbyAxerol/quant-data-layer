@@ -36,6 +36,7 @@ from qdl.domain.decimal import CanonicalDecimal
 from qdl.query import ConsumerGrade, DataRequirement, FeedType
 from qdl.projection.stable import (
     InMemoryStableProjectionTarget,
+    ProjectionCacheMismatch,
     ProjectionFenced,
     RedisStableProjectionTarget,
     StableCompatibilityProjector,
@@ -1153,6 +1154,9 @@ class StableRedisProjectionIntegrationTests(unittest.TestCase):
             target = RedisStableProjectionTarget(
                 client, namespace=self.namespace, dedicated_database=True
             )
+            cache_id = "12" * 16
+            target.bind_cache(cache_id, initialize_if_missing=True)
+            self.assertTrue(target.cache_is_bound())
             self.assertTrue(target.apply(record))
             self.assertGreater(client.ttl(current), 0)
             self.assertEqual(client.ttl(last), -1)
@@ -1172,6 +1176,28 @@ class StableRedisProjectionIntegrationTests(unittest.TestCase):
             )
             with self.assertRaises(ProjectionFenced):
                 target.apply(fenced)
+
+            mismatched = RedisStableProjectionTarget(
+                client, namespace=self.namespace, dedicated_database=True
+            )
+            with self.assertRaises(ProjectionCacheMismatch):
+                mismatched.bind_cache("34" * 16, initialize_if_missing=False)
+
+            client.delete(target.cache_identity_key)
+            self.assertFalse(target.cache_is_bound())
+            changed = StableProjectionRecord(
+                partition_key=record.partition_key,
+                offset=3,
+                event_id_hex="cd" * 16,
+                shard_id=record.shard_id,
+                lease_epoch=2,
+                items=record.items,
+                publications=record.publications,
+            )
+            with self.assertRaises(ProjectionCacheMismatch):
+                target.apply(changed)
+            with self.assertRaises(ProjectionCacheMismatch):
+                target.bind_cache(cache_id, initialize_if_missing=False)
         finally:
             pubsub.close()
             scoped = [current, last, *client.scan_iter(match=f"{self.namespace}:*")]

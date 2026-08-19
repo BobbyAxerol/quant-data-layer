@@ -4054,6 +4054,27 @@ by implication in Phase B implementation.
 - production cutover remains blocked until the operator approves exact services,
   ports, volumes, credentials and rollback.
 
+### Phase B Subphase Control Board
+
+Phase B is executed as five independently reviewable subphases. A defect found
+inside one subphase is recorded as a bounded repair slice under that subphase;
+it does not silently open a new architecture scope. No later subphase may be
+declared complete while an earlier required gate remains open.
+
+| Subphase | Scope and exit gate | Current status | Frozen evidence/conclusion |
+|---|---|---|---|
+| `B.0 Contract And Stable Edge` | Catalog identity, V2 query/stream/projector contracts, consumer manifests, isolated topology and V1 compatibility | `COMPLETE` | B1-B4: 6, 32, 26 and 34 targeted tests passed; the one conditional Redis case was run separately against disposable Redis and passed. Public V1 and production runtime were unchanged. |
+| `B.1 Runtime Correctness And Capacity` | Authentic acquisition, Rust canonical core, bounded projector/cache, final BAR lifecycle, lossless-vs-latest delivery and resource convergence | `COMPLETE` | B5-B8: final full Python discovery passed 478 tests with 6 explicit skips; Rust fmt/Clippy/workspace passed. A clean candidate loaded 2,000 authentic closed BARs, converged core/projector lag to 50/29, retained canonical-only bounded cache, zero quarantine and bounded Redis/app memory. Intermediate failed candidates are diagnostic evidence, not accepted releases. |
+| `B.2 Controlled Consumer Acceptance` | Registered Binance, OKX, VN, Trading System and monitoring warmup -> signed cursor -> replay -> live, including session/freshness semantics | `PARTIAL_EXTERNAL` | B9-B12: crypto alpha, monitoring and Trading System paper consumers passed on immutable `df88de0`; 500 rows per crypto binding, replica-equal results and 129-779 ms live freshness. DNSE remains blocked by official REST TCP/443 egress and cannot be replaced with synthetic or lineage-incomplete V1 data. |
+| `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `IN_PROGRESS` | B13 and B14 passed: resume offset 2,271 -> 2,272, no gRPC finalizer error, two-broker fail-closed/restore with ISR 1,2,3, zero OOM and fresh Trading System quote. B15 failed with an old-event sequence gap; B16 cache-generation fencing is unit-implemented and has 41 passing tests plus 1 explicit Redis-integration skip. Real Redis and fresh full-replay acceptance are still required. |
+| `B.4 Release Certification And Cleanup` | Full Python/Rust/Buf/OpenAPI/security/capacity suites, immutable one-SHA images, compact evidence, docs/runbook, exact candidate cleanup and V1 invariant | `NOT_STARTED` | Starts only after B.3 passes. It does not authorize production cutover or consumer authority migration. |
+
+Every subphase closure records: approved boundary, invariant, exact commands and
+pass/fail/skip counts, real-provider or test provenance, resource/latency data,
+runtime mutations, cleanup, V1 impact, commit SHA, remaining external gate and
+one explicit conclusion (`PASS`, `FAIL`, `PARTIAL_EXTERNAL` or `NOT_STARTED`).
+A health endpoint or process-up result alone cannot close a subphase.
+
 ### Implementation Journal
 
 - `2026-08-19 PLAN COMPLETE`: the original two-phase scope was frozen on
@@ -5123,6 +5144,88 @@ by implication in Phase B implementation.
   passed and 16 stable deployment/release contract tests passed, including exact
   resource assertions. A rolling 3/3 broker recreation and repeated two-broker
   outage/restore still gate runtime acceptance.
+- `2026-08-19 PHASE B B14 TWO-BROKER OUTAGE/RECOVERY GATE PASSED`: all three
+  candidate brokers were rolling-recreated with preserved independent volumes
+  and the new 768 MiB bound. The repeated loss of Kafka1 and Kafka2 left Kafka3
+  running without OOM; native OKX/Binance publishers emitted retryable delivery
+  timeouts and no success ACK under minISR failure. After restoring the two
+  brokers, all six raw partitions reported ISR `1,2,3`, all brokers remained
+  `OOMKilled=false`, and durable raw offsets advanced from
+  `[27775,3876,26500,0,30715,14959]` to
+  `[33157,4851,29594,0,34752,16487]`. Rust generations recovered, all workers
+  resumed progress with quarantine zero, and a strict Trading System QUOTE
+  snapshot/live handoff returned `LIVE`, execution eligible and 239 ms fresh.
+  B14 is closed.
+- `2026-08-19 PHASE B B15 REDIS REBUILD CERTIFICATION IN PROGRESS`: Redis is a
+  rebuildable stable projection and lease dependency, while Kafka plus canonical
+  SQLite remain durable authorities. Before recreating only the isolated stable
+  Redis, stop the projector and both stream processes so an ephemeral lease epoch
+  reset cannot overlap a locally unexpired old owner. Reset only the inactive
+  `stable-projector-v1` canonical Kafka group to earliest, restart one active plus
+  one standby stream, then restart the projector and require idempotent replay,
+  repopulated bounded Redis keys, query readiness, signed cursor replay/live, no
+  collision/quarantine and unchanged V1. Production promotion still requires a
+  governed external HA lease store or the same all-owner fencing runbook; this
+  local rebuild does not claim an independent failure domain.
+- `2026-08-19 PHASE B B16 PROJECTION CACHE GENERATION DEFECT CONFIRMED, REPAIR
+  APPROVED`: the B15 rehearsal rebuilt Redis while retaining a bounded SQLite
+  cache whose oldest event rows had already been trimmed. Resetting the Kafka
+  projector group to earliest therefore reintroduced older canonical event IDs
+  after their SQLite dedup rows had expired; the cache assigned new logical
+  offsets and correctly failed strict BAR continuity with
+  `OPEN_SEQUENCE_GAP`. Kafka/canonical records were not lost and V1 was not
+  touched, but B15 is not accepted.
+
+  Redis latest state and the SQLite query/stream spool are now one rebuildable
+  **projection cache unit** behind Kafka authority. Persist a random cache
+  identity in SQLite, bind the dedicated Redis namespace atomically to that
+  identity, and verify the binding in every Redis projection transaction.
+  Missing or mismatched identity with a non-empty spool fails closed before
+  consuming Kafka; a Redis flush during operation also fences the next write.
+  Do not retain an unbounded event-ID tombstone table merely to make a bounded
+  cache mimic the durable log. Recovery stops projector, query and every stream
+  lease owner, recreates only isolated stable Redis plus SQLite cache files,
+  resets only `stable-projector-v1` to earliest, then starts stream, projector
+  and query in that order. Existing signed cursors expire by design and clients
+  must perform a fresh warmup/handoff.
+
+  Acceptance requires unit/real-Redis tests for stable identity across restart,
+  mismatch/missing/flush fencing and atomic empty-cache initialization; a full
+  canonical replay into a fresh bounded cache; zero gap/collision/quarantine;
+  replica-equal query results; SDK replay/live; fresh Trading System paper
+  data; and unchanged V1. Rollback removes only the isolated candidate and
+  restores the previous immutable image; no production authority or consumer
+  route changes are authorized.
+- `2026-08-19 PHASE B B16 CACHE-GENERATION FENCING TARGETED TEST PASSED,
+  REAL-REDIS/REPLAY GATE PENDING`: the SQLite spool now persists one random
+  128-bit lowercase-hex cache identity across process restart and generates a
+  new identity only when the cache file is rebuilt. The stable Redis target
+  atomically binds its isolated namespace to that identity; every projection
+  Lua transaction verifies the binding, so a missing/mismatched identity or a
+  Redis flush fences writes rather than creating a partial latest-state view.
+  Projector startup permits first binding only when the spool is empty and
+  readiness exposes a hashed cache identity, never the raw identifier.
+
+  `python -m unittest -v tests.test_fund_phase2_transport
+  tests.test_phaseb_stable_edge` ran inside immutable Python image
+  `qdl-v2-python:2.0.0-cfc0246` with read-only source, no network and bounded
+  tmpfs: 42 cases ran, 41 passed and only the explicitly environment-gated
+  real-Redis integration case skipped. Python compile and `git diff --check`
+  passed. An interrupted attempt created only disposable network
+  `qdl-phaseb-cache-test`; it was verified and removed before continuing.
+  B16 remains `IN_PROGRESS` until the named real-Redis test and fresh atomic
+  Kafka replay acceptance pass.
+- `2026-08-19 PHASE B B16 REAL-REDIS GENERATION GATE PASSED`: a named
+  disposable Redis 7.2 instance with persistence disabled, 16 MiB no-eviction
+  bound and isolated Docker network passed the previously skipped integration
+  test in 0.210 seconds. The test proved first atomic bind, TTL/non-TTL latest
+  writes, one Pub/Sub publication, duplicate suppression, stale lease fencing,
+  conflicting cache-ID rejection, live identity loss detection and projection
+  rejection after deleting the identity key. Combined with the preceding
+  network-disabled run, the B16 targeted gate is 42/42 passed with zero skips.
+  Container and network were removed immediately; no candidate, V1 or current
+  Redis state was addressed. B16 code is ready for a coherent commit, while
+  B.3 still requires the fresh full Kafka -> cache-unit replay runtime gate.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

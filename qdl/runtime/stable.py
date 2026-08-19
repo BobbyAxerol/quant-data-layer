@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -545,6 +546,12 @@ async def serve_stable_projector() -> None:
         namespace=config.redis_prefix.rstrip(":"),
         dedicated_database=True,
     )
+    spool_stats = await asyncio.to_thread(spool.stats)
+    await asyncio.to_thread(
+        target.bind_cache,
+        spool.cache_id,
+        initialize_if_missing=spool_stats.records == 0,
+    )
     active_broker: list[ConfluentProjectorBroker | None] = [None]
 
     def broker_factory():
@@ -587,6 +594,20 @@ async def serve_stable_projector() -> None:
             detail="read_committed/manual-checkpoint consumer reachable",
         )
 
+    async def projection_cache_probe() -> ComponentReadiness:
+        bound = await asyncio.to_thread(target.cache_is_bound)
+        if not bound:
+            return ComponentReadiness(
+                "projection_cache_generation",
+                ComponentState.NOT_READY,
+                detail="Redis/SQLite projection cache identity is missing or mismatched",
+                checked_at_ns=time.time_ns(),
+            )
+        return _ready(
+            "projection_cache_generation",
+            detail=f"cache_id_sha256={hashlib.sha256(spool.cache_id.encode()).hexdigest()}",
+        )
+
     readiness = stable_readiness(
         config,
         manifests,
@@ -594,6 +615,7 @@ async def serve_stable_projector() -> None:
         quota=quota,
         extra_probes=(
             CallableReadinessProbe("kafka_read_committed", kafka_probe),
+            CallableReadinessProbe("projection_cache_generation", projection_cache_probe),
             CallableReadinessProbe("instrument_catalog", lambda: _ready(
                 "instrument_catalog",
                 detail=f"bindings={len(catalog.bindings)}",

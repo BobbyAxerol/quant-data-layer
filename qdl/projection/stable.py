@@ -67,6 +67,10 @@ class ProjectionFenced(RuntimeError):
     """Projection lease epoch is older than the committed Redis writer epoch."""
 
 
+class ProjectionCacheMismatch(RuntimeError):
+    """Redis and SQLite do not belong to the same rebuildable cache unit."""
+
+
 class StableProjectionTarget(Protocol):
     def apply(self, record: StableProjectionRecord) -> bool: ...
     def apply_many(
@@ -106,7 +110,27 @@ class InMemoryStableProjectionTarget:
         return tuple(results)
 
 
+_STABLE_CACHE_BIND_LUA = r"""
+local current = redis.call('GET', KEYS[1])
+if current then
+  if current == ARGV[1] then
+    return 1
+  end
+  return -1
+end
+if ARGV[2] ~= '1' then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1])
+return 1
+"""
+
+
 _STABLE_APPLY_LUA = r"""
+local cache_id = redis.call('GET', KEYS[3])
+if not cache_id or cache_id ~= ARGV[4] then
+  return -2
+end
 local current_epoch = redis.call('GET', KEYS[2])
 if current_epoch and tonumber(current_epoch) > tonumber(ARGV[3]) then
   return -1
@@ -118,17 +142,17 @@ if current then
     return 0
   end
 end
-local item_count = tonumber(ARGV[4])
+local item_count = tonumber(ARGV[5])
 for index = 1, item_count do
-  local argument = 5 + ((index - 1) * 2)
+  local argument = 6 + ((index - 1) * 2)
   local ttl = tonumber(ARGV[argument + 1])
   if ttl > 0 then
-    redis.call('SETEX', KEYS[index + 2], ttl, ARGV[argument])
+    redis.call('SETEX', KEYS[index + 3], ttl, ARGV[argument])
   else
-    redis.call('SET', KEYS[index + 2], ARGV[argument])
+    redis.call('SET', KEYS[index + 3], ARGV[argument])
   end
 end
-local channel_count_index = 5 + (item_count * 2)
+local channel_count_index = 6 + (item_count * 2)
 local channel_count = tonumber(ARGV[channel_count_index])
 for index = 1, channel_count do
   local argument = channel_count_index + 1 + ((index - 1) * 2)
@@ -152,8 +176,43 @@ class RedisStableProjectionTarget:
     ) -> None:
         self._client = client
         self._namespace = namespace.rstrip(":")
+        self._cache_id: str | None = None
         if not self._namespace or not dedicated_database:
             raise ValueError("stable Redis projection requires an isolated database")
+
+    @property
+    def cache_identity_key(self) -> str:
+        return f"{self._namespace}:projection-cache-id"
+
+    def bind_cache(self, cache_id: str, *, initialize_if_missing: bool) -> None:
+        if len(cache_id) != 32 or any(
+            character not in "0123456789abcdef" for character in cache_id
+        ):
+            raise ValueError("stable projection cache identity is invalid")
+        result = int(self._client.eval(
+            _STABLE_CACHE_BIND_LUA,
+            1,
+            self.cache_identity_key,
+            cache_id,
+            "1" if initialize_if_missing else "0",
+        ))
+        if result < 0:
+            raise ProjectionCacheMismatch(
+                "stable Redis and SQLite projection cache identities differ"
+            )
+        if result == 0:
+            raise ProjectionCacheMismatch(
+                "stable Redis cache identity is missing for a non-empty spool"
+            )
+        self._cache_id = cache_id
+
+    def cache_is_bound(self) -> bool:
+        if self._cache_id is None:
+            return False
+        value = self._client.get(self.cache_identity_key)
+        if isinstance(value, bytes):
+            value = value.decode("ascii")
+        return value == self._cache_id
 
     def apply(self, record: StableProjectionRecord) -> bool:
         return self.apply_many((record,))[0]
@@ -164,6 +223,8 @@ class RedisStableProjectionTarget:
         values = tuple(records)
         if not values:
             return ()
+        if self._cache_id is None:
+            raise ProjectionCacheMismatch("stable projection cache is not bound")
         commands = [self._command(record) for record in values]
         pipeline = self._client.pipeline(transaction=False)
         for keys, arguments in commands:
@@ -172,6 +233,10 @@ class RedisStableProjectionTarget:
         results = []
         for result in raw_results:
             value = int(result)
+            if value == -2:
+                raise ProjectionCacheMismatch(
+                    "stable projection cache identity changed during operation"
+                )
             if value < 0:
                 raise ProjectionFenced("stable projection lease epoch is stale")
             results.append(value > 0)
@@ -196,12 +261,14 @@ class RedisStableProjectionTarget:
         keys = [
             f"{self._namespace}:checkpoint:{partition_digest}",
             f"{self._namespace}:lease-epoch:{shard_digest}",
+            self.cache_identity_key,
             *(item.key for item in record.items),
         ]
         arguments: list[str | bytes] = [
             f"{record.offset:020d}",
             record.event_id_hex,
             str(record.lease_epoch),
+            self._cache_id or "",
             str(len(record.items)),
         ]
         for item in record.items:

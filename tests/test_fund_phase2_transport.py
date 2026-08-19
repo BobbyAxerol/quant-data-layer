@@ -96,6 +96,17 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             self.assertEqual([row.event.payload for row in rows], [b"event-1"])
             self.assertEqual(rows[0].payload_sha256, first.payload_sha256)
 
+    def test_cache_identity_survives_restart_and_changes_after_atomic_rebuild(self):
+        with self.spool() as spool:
+            first_cache_id = spool.cache_id
+            spool.append(event(1))
+        with self.spool() as recovered:
+            self.assertEqual(recovered.cache_id, first_cache_id)
+        self.path.unlink()
+        with self.spool() as rebuilt:
+            self.assertNotEqual(rebuilt.cache_id, first_cache_id)
+            self.assertEqual(rebuilt.stats().records, 0)
+
     def test_tail_returns_newest_window_without_changing_replay_order(self):
         with self.spool(max_records=10) as spool:
             spool.append_many([event(index) for index in range(1, 6)])

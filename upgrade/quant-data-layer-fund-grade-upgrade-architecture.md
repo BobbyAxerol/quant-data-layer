@@ -5282,3 +5282,113 @@ the [human report](../upgrade/evidence/PHASE93_HOLD_CLOSE_EXPAND_REPORT.md), the
 [operator runbook](../docs/runbooks/phase93-hold-close-expand.md) and
 [`phase93-evidence.sha256`](../upgrade/evidence/phase93-evidence.sha256). This
 closure starts no production hold and grants no production authority.
+
+## Appendix J — Phase B stable release execution ledger
+
+This appendix is the detailed execution index for Phase B in
+`DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`. It does not replace the immutable
+journal there. The plan owns status and exact chronological evidence; this
+guide owns the bounded work packages, decision rules and closure gates.
+
+### J.1 Subphase rule
+
+Phase B is split into `B.0` through `B.4`. Work on a discovered defect remains
+inside the active subphase as a numbered repair slice. The agent must stop after
+each coherent test gate, write the result to both this ledger and the main plan,
+and commit that tested slice before continuing. A failed runtime candidate is
+recorded as diagnostic evidence and cannot be cited as release acceptance.
+
+Each entry records the exact source/image SHA, tests actually run, pass/fail/skip
+counts, provider/test provenance, correctness conclusion, resource evidence,
+runtime impact, cleanup and remaining gate. Generated market data is permitted
+only in explicit unit/failure/capacity tests. Real-provider or durably captured
+provider bytes are mandatory for shadow/stable runtime claims.
+
+### J.2 B.0 — Contract and stable edge (`COMPLETE`)
+
+Scope: deterministic catalog identity, canonical V2 query/stream/projector
+contracts, stable consumer manifests, isolated topology and exact V1
+compatibility. B1-B4 passed targeted suites of 6, 32, 26 and 34 tests. The
+conditional Redis case was executed separately against named disposable Redis
+and passed Lua TTL, Pub/Sub, idempotency and fencing. No V1 process, route,
+authority or current Redis namespace changed.
+
+Conclusion: stable outer contracts and isolation boundary are accepted.
+
+### J.3 B.1 — Runtime correctness and capacity (`COMPLETE`)
+
+Scope: authentic provider acquisition, Rust canonicalization, final/revised BAR
+lifecycle, deterministic replay, lossless versus latest-state delivery, bounded
+SQLite/Redis state, Kafka lag and query latency. B5-B8 found and closed
+deployment, provider-control, replay determinism, generation persistence,
+projector batching/backpressure and hot-partition capacity defects.
+
+Final accepted evidence includes 478 Python tests with 6 explicit conditional
+skips, clean Rust fmt/Clippy/workspace gates, 100,000-event Rust benchmarks
+above the 50,000 events/s floor, exactly 2,000 authentic final closed crypto
+BARs, core/projector lag of 50/29 at the observation point, canonical-only
+SQLite with every partition at or below 10,000 records, zero quarantine and
+bounded Redis/app memory. The 100-request execution QUOTE sample measured p50
+2.94 ms, p95 3.74 ms and p99 32.44 ms after the query-tail repair.
+
+Conclusion: the isolated runtime data path and measured capacity gate are
+accepted; intermediate overloaded candidates are not release artifacts.
+
+### J.4 B.2 — Controlled consumer acceptance (`PARTIAL_EXTERNAL`)
+
+Scope: governed manifests for Binance alpha, OKX alpha, VN alpha, monitoring
+and Trading System paper, each using warmup -> signed cursor -> replay -> live.
+Targeted repairs passed 31 multi-venue/session tests, 85 broader tests with one
+infrastructure skip, 14 OKX close-boundary tests, 22 SDK warmup tests and 39
+cursor/stream tests with one dependency skip.
+
+Immutable `df88de0` accepted Binance and OKX alpha flows with 500 authentic
+rows per binding, replica-equal watermarks, live monitoring and Trading System
+TRADE/QUOTE snapshots at 129-779 ms freshness. DNSE is not accepted on this
+host because official REST TCP/443 is unreachable. Authenticated WebSocket
+reachability or legacy Parquet without exact `DNSE_DIRECT` lineage cannot
+substitute for the missing real history gate.
+
+Conclusion: crypto and paper adapter consumers pass; VN remains an explicit
+external egress/provider gate and must fail closed.
+
+### J.5 B.3 — Durability and recovery (`IN_PROGRESS`)
+
+B13 passed exact active/passive handoff: the SDK ACKed offset 2,271 under epoch
+1 and resumed durable replay at offset 2,272 under epoch 2 before `LIVE`, with
+no gRPC ContextVar/finalizer error. Its focused suites passed 51 tests with one
+dependency skip. B14 passed two-broker minISR failure and recovery: no false
+ACK, no broker OOM at the corrected 768 MiB bound, all raw partitions restored
+ISR `1,2,3`, offsets advanced, quarantine remained zero and Trading System
+QUOTE returned execution-eligible at 239 ms freshness.
+
+B15 failed because a Redis-only earliest replay retained a trimmed SQLite cache
+and reintroduced old event IDs at new logical offsets, producing
+`OPEN_SEQUENCE_GAP`. The accepted B16 repair treats Redis plus SQLite as one
+rebuildable projection cache unit and fences them with a persistent cache
+identity. Current source has passed 41 targeted tests with one explicit
+real-Redis integration skip; this is unit-implemented, not runtime-accepted.
+
+The real-Redis generation gate then ran separately against a named Redis 7.2
+container with persistence disabled and a 16 MiB no-eviction bound. It passed
+atomic first bind, exact-ID reuse, conflicting-ID rejection, TTL/latest writes,
+single Pub/Sub publication, duplicate suppression, stale-lease fencing and
+write rejection after live identity deletion in 0.210 seconds. Together with
+the network-disabled run, B16 targeted evidence is 42/42 passed with zero
+skips. The disposable Redis container and network were removed.
+
+Remaining B.3 gate: fresh atomic Redis-plus-SQLite rebuild from canonical
+Kafka, zero gap/collision/quarantine, replica equality, signed SDK replay/live,
+fresh Trading System paper data and unchanged V1.
+
+### J.6 B.4 — Release certification and cleanup (`NOT_STARTED`)
+
+Start only after B.3 is `PASS`. Run full Python discovery, Rust fmt/workspace
+Clippy/tests, Buf/OpenAPI/package/security/capacity/compatibility gates; build
+Python and Rust images from one final commit SHA; freeze compact evidence and
+runbooks; remove only exact candidate containers, networks, volumes, bundles
+and obsolete candidate images; verify V1 port 8100 and topology unchanged.
+
+Conclusion boundary: B.4 may declare `2.0.0 Internal Stable` artifacts ready
+for operator review. It does not authorize production authority, route cutover
+or consumer migration.

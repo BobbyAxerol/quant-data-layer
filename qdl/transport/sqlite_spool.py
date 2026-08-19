@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -174,8 +175,32 @@ class SQLiteDurableSpool:
                 singleton, event_records, payload_bytes, last_maintenance_ns
             )
             SELECT 1, COUNT(*), COALESCE(SUM(LENGTH(payload)), 0), 0 FROM events;
+
+            CREATE TABLE IF NOT EXISTS cache_identity (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                cache_id TEXT NOT NULL,
+                created_at_ns INTEGER NOT NULL
+            );
             """
         )
+        self._connection.execute(
+            """
+            INSERT OR IGNORE INTO cache_identity(singleton, cache_id, created_at_ns)
+            VALUES (1, ?, ?)
+            """,
+            (uuid.uuid4().hex, self._clock_ns()),
+        )
+
+    @property
+    def cache_id(self) -> str:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT cache_id FROM cache_identity WHERE singleton = 1"
+            ).fetchone()
+        value = str(row["cache_id"]) if row is not None else ""
+        if len(value) != 32 or any(char not in "0123456789abcdef" for char in value):
+            raise PayloadCorruption("spool cache identity is invalid")
+        return value
 
     def append(self, event: DurableEvent) -> AppendResult:
         return self.append_many([event])[0]
