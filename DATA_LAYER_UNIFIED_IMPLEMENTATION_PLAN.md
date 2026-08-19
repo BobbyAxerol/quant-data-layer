@@ -4963,6 +4963,15 @@ by implication in Phase B implementation.
   units/provenance, closed-session no-REST behavior, server/SDK policy and
   execution blocking. The next gate is a clean immutable all-one-SHA candidate
   with real Binance/OKX/DNSE consumer and recovery evidence.
+- `2026-08-19 PHASE B B9 OKX PROVISIONAL-CLOSE RETRY CLOSED`: the first
+  immutable `0228036` runtime attempt showed OKX could still report the just-ended
+  candle as provisional at boundary `+1s`; the outer cycle recovered at `+3.5s`
+  and ACKed all four crypto BARs, but emitted a misleading ERROR. The OKX adapter
+  now retries this provider transition internally at bounded 0.5/1/2-second
+  delays (four attempts maximum) and raises only after exhaustion. No candle is
+  accepted before `confirm=1`, and event identity remains native-time based.
+  Fourteen focused BAR/deployment tests passed, including provisional recovery
+  and exhaustion. A final immutable image/runtime replay remains required.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

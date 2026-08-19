@@ -14,6 +14,7 @@ from qdl.adapters.binance.bar_edge import (
 from qdl.adapters.okx.bar_edge import (
     OkxBarRawBinding,
     fetch_closed_bar_history_raw_envelopes as fetch_okx_history,
+    fetch_latest_closed_bar_raw_envelope as fetch_okx_latest,
 )
 from qdl.adapters.okx.history import (
     HistoryCoverage,
@@ -179,6 +180,35 @@ class BarHistoryAdapterTests(unittest.TestCase):
                 now_ms=240_000,
                 history_client=Partial(),
             ))
+
+    def test_okx_latest_closed_bar_retries_provisional_provider_state(self):
+        sentinel = object()
+        sleeps = []
+
+        async def no_wait(delay):
+            sleeps.append(delay)
+
+        with patch(
+            "qdl.adapters.okx.bar_edge.fetch_closed_bar_history_raw_envelopes",
+            new_callable=AsyncMock,
+            side_effect=(RuntimeError("provisional"), (sentinel,)),
+        ) as fetch:
+            result = asyncio.run(fetch_okx_latest(
+                _okx_binding(), attempts=2, sleep=no_wait
+            ))
+        self.assertIs(result, sentinel)
+        self.assertEqual(fetch.await_count, 2)
+        self.assertEqual(sleeps, [0.5])
+
+        with patch(
+            "qdl.adapters.okx.bar_edge.fetch_closed_bar_history_raw_envelopes",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("still provisional"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "exhausted attempts=2"):
+                asyncio.run(fetch_okx_latest(
+                    _okx_binding(), attempts=2, sleep=no_wait
+                ))
 
     def test_okx_final_bar_event_identity_is_transport_and_restart_independent(self):
         fixture = json.loads(

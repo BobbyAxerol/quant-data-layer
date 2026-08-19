@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import dataclass
@@ -157,15 +158,31 @@ async def fetch_latest_closed_bar_raw_envelope(
     *,
     now_ms: int | None = None,
     history_client: OkxHistoricalClient | None = None,
+    attempts: int = 4,
+    sleep=asyncio.sleep,
     test_provenance: bool = False,
 ) -> raw_provider_pb2.RawProviderEnvelope:
-    values = await fetch_closed_bar_history_raw_envelopes(
-        binding,
-        limit=1,
-        now_ms=now_ms,
-        history_client=history_client,
-        test_provenance=test_provenance,
-    )
-    if len(values) != 1:
-        raise RuntimeError("OKX latest-closed BAR lookup returned invalid cardinality")
-    return values[0]
+    if not 1 <= attempts <= 8:
+        raise ValueError("OKX latest-closed BAR attempts must be between 1 and 8")
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            values = await fetch_closed_bar_history_raw_envelopes(
+                binding,
+                limit=1,
+                now_ms=now_ms,
+                history_client=history_client,
+                test_provenance=test_provenance,
+            )
+            if len(values) != 1:
+                raise RuntimeError(
+                    "OKX latest-closed BAR lookup returned invalid cardinality"
+                )
+            return values[0]
+        except Exception as error:
+            last_error = error
+            if attempt + 1 < attempts:
+                await sleep(min(0.5 * (2 ** attempt), 2.0))
+    raise RuntimeError(
+        f"OKX latest-closed BAR lookup exhausted attempts={attempts}"
+    ) from last_error
