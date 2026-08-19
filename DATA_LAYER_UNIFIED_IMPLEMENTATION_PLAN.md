@@ -5033,6 +5033,33 @@ by implication in Phase B implementation.
   existing signed consumer/scope mismatch regression remains green. The final
   immutable candidate still must pass the authenticated real-provider consumer
   and recovery gates before Phase B can close.
+- `2026-08-19 PHASE B B12 IMMUTABLE CRYPTO CONSUMER ACCEPTANCE PASSED,
+  RECOVERY CERTIFICATION IN PROGRESS`: immutable Python and Rust images were
+  built from `df88de0` with OCI revision/version labels and pinned into a fresh
+  secret bundle; the manifest records image SHA-256 IDs and no secret values. A
+  clean isolated RF3/minISR2 Kafka topology with mTLS/ACLs started four native
+  Binance USD-M/Spot and OKX SWAP/Spot ingestors, three Rust core workers, one
+  Python projector, two query replicas and one active plus one fenced standby
+  stream role. The real-provider BAR edge ACKed exactly 500 contiguous final 1m
+  rows for each of four crypto bindings, 2,000 total, through raw Kafka/Rust.
+
+  Authenticated registered consumers then passed without source mounts or test
+  data. Binance and OKX alpha manifests each returned 500 rows with `FULL`
+  coverage and completed signed cursor `REPLAYING -> LIVE` handoff to the next
+  correct TRADE event. Both query replicas returned identical canonical 500-row
+  data and watermark. Monitoring received live Binance and OKX TRADE. The
+  Trading System paper manifest received live TRADE and QUOTE for both venues;
+  all four snapshots were `LIVE`, execution eligible and measured 129-779 ms
+  fresh against their strict limits. No V1/current Redis/consumer was changed.
+
+  VN cannot be certified on this host yet: the official DNSE WebSocket endpoint
+  is reachable and authenticated in the prior bounded attempt, but the official
+  `openapi.dnse.com.vn` REST history endpoint is not reachable at TCP 443 from
+  this new host. Existing V1 Parquet lacks the exact raw provider lineage needed
+  to claim `DNSE_DIRECT`, so it is deliberately not relabeled or injected. This
+  is an external provider/egress gate, not permission to fabricate runtime data.
+  Phase B still requires restart/failover, two-broker outage, Redis rebuild,
+  full regression/release evidence and exact candidate cleanup.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
