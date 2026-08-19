@@ -5388,7 +5388,24 @@ cache unavailable and rerunnable from Kafka; no partial cache may report ready.
 Six command-policy tests passed for authorization, exact scope, lag parsing,
 wrong-project rejection and abort-before-mutation. Combined B16/B17 targeted
 execution ran 48 tests with 47 passes and one real-Redis conditional skip; that
-same Redis case passed separately, so no known targeted test remains unrun.
+same Redis case passed separately.
+
+The first authentic replay converged from about 448,000 to 32 records but
+timed out because two exact-zero samples cannot be guaranteed while producers
+remain live. It failed closed with query replicas stopped. The corrected gate
+uses three consecutive samples `<=250` across exactly six canonical partitions,
+then projector identity readiness and strict downstream freshness/gap checks.
+Acquisition remains live and no operator-configurable relaxation is allowed.
+
+The corrected guarded rebuild then passed with all six partitions, three
+consecutive samples inside the fixed 250-record live-lag bound, observed bound
+232 and final lag 63. Redis was rebuilt to 47 keys and readers were started only
+after projector identity readiness. A strict authenticated consumer warmup
+immediately afterward still failed closed on an unresolved BAR sequence gap.
+Because this was a fresh cache built from canonical Kafka, B.3 now treats the
+gap as a canonical/provider-bootstrap or revision-ordering defect rather than a
+stale-cache artifact. The repair must identify the exact real-data
+discontinuity; synthetic bars and relaxed gap policy are prohibited.
 
 Remaining B.3 gate: fresh atomic Redis-plus-SQLite rebuild from canonical
 Kafka, zero gap/collision/quarantine, replica equality, signed SDK replay/live,
@@ -5405,3 +5422,21 @@ and obsolete candidate images; verify V1 port 8100 and topology unchanged.
 Conclusion boundary: B.4 may declare `2.0.0 Internal Stable` artifacts ready
 for operator review. It does not authorize production authority, route cutover
 or consumer migration.
+
+Artifact hygiene is incremental, not deferred wholesale to B.4. Every tested
+repair removes its named disposable containers/networks and unreferenced QDL
+image tags. Keep only running V1, the active candidate and one named rollback
+generation. Clean BuildKit only by the Data Layer builder/cache scope; never use
+a broad host-wide prune on a shared server. Record exact objects and reclaimed
+bytes in this ledger. B.4 replaces the surviving mixed candidate images with
+one final SHA and performs the final bounded cleanup.
+
+The first incremental cleanup removed exactly two disposable Phase B builder
+containers and 47 obsolete unreferenced QDL image tags while retaining V1,
+`e002da6`, `cfc0246`, Kafka/Redis and all volumes. It then pruned only BuildKit
+records matching `description~=qdl` and older than one hour. Image/cache cleanup
+reduced root filesystem use from 91 GiB to 47 GiB; BuildKit cache fell from
+50.2 GB to 6.484 GB. No broad Docker prune or runtime/data-volume mutation
+occurred. Post-cleanup B16/B17 regression ran 49 cases: 48 passed and
+the separately proven real-Redis conditional case was the sole skip; compile
+and diff checks passed.

@@ -10,6 +10,8 @@ from scripts.rebuild_v2_stable_projection_cache import (
     CACHE_FILES,
     CANONICAL_TOPIC,
     CONFIRM_TOKEN,
+    EXPECTED_CANONICAL_PARTITIONS,
+    MAX_ACCEPTED_LAG,
     PROJECT_NAME,
     PROJECTOR_GROUP,
     QUERY_SERVICES,
@@ -18,6 +20,7 @@ from scripts.rebuild_v2_stable_projection_cache import (
     _validate_project,
     compose_command,
     execute_rebuild,
+    lag_sample_acceptable,
     parse_canonical_lag,
     rebuild_plan,
     require_authorization,
@@ -33,6 +36,14 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         self.assertEqual(plan["delete_files"], list(CACHE_FILES))
         self.assertEqual(plan["reset_group"], PROJECTOR_GROUP)
         self.assertEqual(plan["reset_topic"], CANONICAL_TOPIC)
+        self.assertEqual(
+            plan["lag_gate"]["expected_partitions"],
+            EXPECTED_CANONICAL_PARTITIONS,
+        )
+        self.assertEqual(
+            plan["lag_gate"]["max_total_records"],
+            MAX_ACCEPTED_LAG,
+        )
         self.assertEqual(
             plan["start_order"],
             [list(STREAM_SERVICES), ["projector_v2"], list(QUERY_SERVICES)],
@@ -64,6 +75,23 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
         self.assertEqual(parse_canonical_lag(output), (2, 2))
         with self.assertRaisesRegex(RuntimeError, "no partitions"):
             parse_canonical_lag("GROUP TOPIC PARTITION")
+
+    def test_lag_gate_requires_all_partitions_and_fixed_bound(self):
+        self.assertTrue(
+            lag_sample_acceptable(
+                MAX_ACCEPTED_LAG, EXPECTED_CANONICAL_PARTITIONS
+            )
+        )
+        self.assertFalse(
+            lag_sample_acceptable(
+                MAX_ACCEPTED_LAG + 1, EXPECTED_CANONICAL_PARTITIONS
+            )
+        )
+        self.assertFalse(
+            lag_sample_acceptable(
+                0, EXPECTED_CANONICAL_PARTITIONS - 1
+            )
+        )
 
     def test_wrong_compose_project_fails_before_mutation(self):
         with tempfile.TemporaryDirectory() as directory:

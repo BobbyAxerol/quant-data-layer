@@ -18,6 +18,9 @@ CANONICAL_TOPIC = "md.canonical.v2"
 PROJECTOR_GROUP = "stable-projector-v1"
 KAFKA_BOOTSTRAP = "kafka1:9092,kafka2:9092,kafka3:9092"
 KAFKA_ADMIN_CONFIG = "/etc/kafka/secrets/admin.properties"
+EXPECTED_CANONICAL_PARTITIONS = 6
+MAX_ACCEPTED_LAG = 250
+REQUIRED_BOUNDED_LAG_SAMPLES = 3
 STOP_SERVICES = (
     "projector_v2",
     "query_v2_1",
@@ -60,6 +63,11 @@ def rebuild_plan(env_file: Path) -> dict[str, object]:
         "flush_service": "stable_redis",
         "reset_group": PROJECTOR_GROUP,
         "reset_topic": CANONICAL_TOPIC,
+        "lag_gate": {
+            "expected_partitions": EXPECTED_CANONICAL_PARTITIONS,
+            "max_total_records": MAX_ACCEPTED_LAG,
+            "consecutive_samples": REQUIRED_BOUNDED_LAG_SAMPLES,
+        },
         "start_order": [
             list(STREAM_SERVICES),
             ["projector_v2"],
@@ -188,10 +196,18 @@ def _wait_projector_ready(env_file: Path, deadline: float) -> None:
     raise TimeoutError("stable projector did not become ready")
 
 
-def _wait_zero_lag(env_file: Path, deadline: float) -> dict[str, int]:
+def lag_sample_acceptable(total_lag: int, partitions: int) -> bool:
+    return (
+        partitions == EXPECTED_CANONICAL_PARTITIONS
+        and 0 <= total_lag <= MAX_ACCEPTED_LAG
+    )
+
+
+def _wait_bounded_lag(env_file: Path, deadline: float) -> dict[str, int]:
     last_lag: int | None = None
     partitions = 0
-    consecutive_zero = 0
+    consecutive = 0
+    observed_bound = 0
     while time.monotonic() < deadline:
         output = _kafka_group(
             env_file,
@@ -200,15 +216,24 @@ def _wait_zero_lag(env_file: Path, deadline: float) -> dict[str, int]:
             "--describe",
         )
         last_lag, partitions = parse_canonical_lag(output)
-        if last_lag == 0:
-            consecutive_zero += 1
-            if consecutive_zero >= 2:
-                return {"lag": 0, "partitions": partitions}
+        if lag_sample_acceptable(last_lag, partitions):
+            consecutive += 1
+            observed_bound = max(observed_bound, last_lag)
+            if consecutive >= REQUIRED_BOUNDED_LAG_SAMPLES:
+                return {
+                    "lag": last_lag,
+                    "partitions": partitions,
+                    "observed_bound": observed_bound,
+                    "configured_bound": MAX_ACCEPTED_LAG,
+                    "consecutive_samples": consecutive,
+                }
         else:
-            consecutive_zero = 0
+            consecutive = 0
+            observed_bound = 0
         time.sleep(2)
     raise TimeoutError(
-        f"stable projector did not reach zero lag; last_lag={last_lag}"
+        "stable projector did not enter its bounded live-lag window; "
+        f"last_lag={last_lag} partitions={partitions}"
     )
 
 
@@ -272,7 +297,7 @@ def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, obje
     _wait_http("http://127.0.0.1:18211/health/live", deadline)
 
     _compose(env_file, "up", "-d", "projector_v2")
-    lag = _wait_zero_lag(env_file, deadline)
+    lag = _wait_bounded_lag(env_file, deadline)
     _wait_projector_ready(env_file, deadline)
 
     _compose(env_file, "up", "-d", *QUERY_SERVICES)

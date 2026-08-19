@@ -4066,7 +4066,7 @@ declared complete while an earlier required gate remains open.
 | `B.0 Contract And Stable Edge` | Catalog identity, V2 query/stream/projector contracts, consumer manifests, isolated topology and V1 compatibility | `COMPLETE` | B1-B4: 6, 32, 26 and 34 targeted tests passed; the one conditional Redis case was run separately against disposable Redis and passed. Public V1 and production runtime were unchanged. |
 | `B.1 Runtime Correctness And Capacity` | Authentic acquisition, Rust canonical core, bounded projector/cache, final BAR lifecycle, lossless-vs-latest delivery and resource convergence | `COMPLETE` | B5-B8: final full Python discovery passed 478 tests with 6 explicit skips; Rust fmt/Clippy/workspace passed. A clean candidate loaded 2,000 authentic closed BARs, converged core/projector lag to 50/29, retained canonical-only bounded cache, zero quarantine and bounded Redis/app memory. Intermediate failed candidates are diagnostic evidence, not accepted releases. |
 | `B.2 Controlled Consumer Acceptance` | Registered Binance, OKX, VN, Trading System and monitoring warmup -> signed cursor -> replay -> live, including session/freshness semantics | `PARTIAL_EXTERNAL` | B9-B12: crypto alpha, monitoring and Trading System paper consumers passed on immutable `df88de0`; 500 rows per crypto binding, replica-equal results and 129-779 ms live freshness. DNSE remains blocked by official REST TCP/443 egress and cannot be replaced with synthetic or lineage-incomplete V1 data. |
-| `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `IN_PROGRESS` | B13 and B14 passed: resume offset 2,271 -> 2,272, no gRPC finalizer error, two-broker fail-closed/restore with ISR 1,2,3, zero OOM and fresh Trading System quote. B15 failed with an old-event sequence gap; B16 cache-generation fencing is unit-implemented and has 41 passing tests plus 1 explicit Redis-integration skip. Real Redis and fresh full-replay acceptance are still required. |
+| `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `IN_PROGRESS` | B13-B17 recovery mechanics pass, including 42/42 cache-generation tests and a fresh atomic replay that reached three bounded-lag samples across all six partitions before readers started. Strict authenticated acceptance then found a real open BAR sequence gap in the freshly rebuilt cache and failed closed before execution exposure. B.3 remains open until that data-path defect is diagnosed and corrected without fabricating data. |
 | `B.4 Release Certification And Cleanup` | Full Python/Rust/Buf/OpenAPI/security/capacity suites, immutable one-SHA images, compact evidence, docs/runbook, exact candidate cleanup and V1 invariant | `NOT_STARTED` | Starts only after B.3 passes. It does not authorize production cutover or consumer authority migration. |
 
 Every subphase closure records: approved boundary, invariant, exact commands and
@@ -4074,6 +4074,15 @@ pass/fail/skip counts, real-provider or test provenance, resource/latency data,
 runtime mutations, cleanup, V1 impact, commit SHA, remaining external gate and
 one explicit conclusion (`PASS`, `FAIL`, `PARTIAL_EXTERNAL` or `NOT_STARTED`).
 A health endpoint or process-up result alone cannot close a subphase.
+
+**Phase B artifact hygiene:** after each coherent tested slice, remove its
+disposable containers/networks and exact unreferenced image tags. Retain only
+the running V1 artifacts, the active isolated candidate and one explicitly
+named rollback generation. Build cache is cleaned at subphase boundaries using
+the Data Layer builder/cache scope; broad host-wide prune is forbidden because
+other repositories share this host. Every cleanup records the exact removed
+objects and reclaimed bytes. B.4 performs the final one-SHA image replacement
+and removes the superseded candidate/rollback artifacts after verification.
 
 ### Implementation Journal
 
@@ -5258,6 +5267,60 @@ A health endpoint or process-up result alone cannot close a subphase.
   the network-disabled invocation. Python compile and diff checks remain clean.
   No runtime was mutated by these tests. B17 now needs a new immutable Python
   image and one execution against the isolated cfc0246 candidate state.
+- `2026-08-19 PHASE B B17 FIRST RUNTIME REHEARSAL FAILED CLOSED AT AN
+  OVER-STRICT LAG GATE`: the guarded command stopped all five cache users,
+  recreated only SQLite cache files plus isolated Redis, reset only the
+  canonical projector group and replayed the authentic Kafka log with image
+  `e002da6`. Lag converged from about 448,000 to 32 records within the
+  900-second bound, but continuous live provider input prevented two exact-zero
+  samples. The command raised `TimeoutError` and left both query replicas
+  stopped; no partial cache was served and V1 remained unchanged.
+
+  Exact zero is not a valid steady-state requirement for an actively written
+  topic. The bounded correction requires three consecutive samples at or below
+  250 total records across exactly six canonical partitions, then projector
+  cache-generation readiness. Query starts only afterward, and strict
+  warmup/gap/freshness plus SDK/Trading-System checks remain the authoritative
+  data acceptance. Increasing the bound at runtime, stopping acquisition to
+  manufacture zero, or weakening freshness/gap policy is forbidden.
+- `2026-08-19 PHASE B B17 CORRECTED ATOMIC REBUILD PASSED`: the same guarded
+  command completed against `qdl_v2_stable_candidate` after the fixed bounded
+  live-lag policy was applied. It observed all six canonical partitions, three
+  consecutive samples at or below the immutable 250-record bound, a maximum
+  accepted sample of 232 and final observed lag of 63. It rebuilt the isolated
+  Redis namespace to 47 keys, started stream -> projector -> query in the
+  declared order, and did not address V1, Kafka data, Rust acquisition/core or
+  production consumers.
+- `2026-08-19 PHASE B B18 STRICT CONSUMER ACCEPTANCE FAILED CLOSED ON A REAL
+  BAR GAP`: immediately after the fresh Redis-plus-SQLite rebuild, the
+  authenticated SDK warmup for the registered Binance/OKX BAR consumers raised
+  `required feed has an unresolved sequence gap`. This proves the earlier
+  retained-cache hypothesis was incomplete: the gap is reproducible from the
+  canonical Kafka log into a new cache. The acceptance stopped before Trading
+  System execution data was exposed. B.3 remains `IN_PROGRESS`; the next
+  bounded repair must identify the exact venue/partition/open-time discontinuity
+  and fix provider bootstrap/canonical ordering or revision handling from real
+  data. Synthetic gap filling and policy relaxation are forbidden.
+- `2026-08-19 PHASE B ARTIFACT CLEANUP POLICY RECORDED`: Phase B ends at B.4;
+  B17/B18 are repair slices inside B.3, not new subphases. Exact cleanup retains
+  V1, active `e002da6`, active/rollback `cfc0246`, Kafka/Redis and all durable
+  volumes. Obsolete unreferenced QDL image tags and the two named test-builder
+  containers are removed after reference validation; shared host-wide prune is
+  forbidden. Final BuildKit cleanup is scoped to Data Layer build records and
+  recorded with before/after bytes.
+- `2026-08-19 PHASE B INCREMENTAL ARTIFACT CLEANUP PASSED`: reference-aware
+  cleanup removed exactly two disposable test-builder containers and 47 obsolete
+  unreferenced QDL image tags. It retained `data-layer:v0.1.0`, Python candidate
+  `2.0.0-e002da6`, Python/Rust runtime rollback `2.0.0-cfc0246`, every running
+  Kafka/Redis image and all 17 volumes. Image cleanup reduced root filesystem
+  use from 91 GiB to 73 GiB. BuildKit cleanup was limited to records matching
+  `description~=qdl` and older than one hour; cache fell from 50.2 GB to 6.484
+  GB and root filesystem use fell again to 47 GiB. Total host space recovered
+  was about 44 GiB. No host-wide prune ran, candidate/V1 containers remained
+  running and no data volume was deleted. Post-cleanup B16/B17 regression
+  ran 49 tests in the immutable `e002da6` Python image with network disabled:
+  48 passed and the separately proven real-Redis conditional case was the sole
+  skip; Python compile and `git diff --check` passed.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
