@@ -14,6 +14,7 @@ pub enum AuthorityMode {
 pub enum SinkTarget {
     ShadowRaw,
     ShadowCanonical,
+    ShadowQuarantine,
     CanaryCanonical,
     PrimaryCanonical,
     PublicV2,
@@ -134,11 +135,14 @@ impl AuthorityFence {
         let allowed = match current.mode {
             AuthorityMode::RustShadow => matches!(
                 context.target,
-                SinkTarget::ShadowRaw | SinkTarget::ShadowCanonical
+                SinkTarget::ShadowRaw | SinkTarget::ShadowCanonical | SinkTarget::ShadowQuarantine
             ),
             AuthorityMode::RustCanary => matches!(
                 context.target,
-                SinkTarget::ShadowRaw | SinkTarget::ShadowCanonical | SinkTarget::CanaryCanonical
+                SinkTarget::ShadowRaw
+                    | SinkTarget::ShadowCanonical
+                    | SinkTarget::ShadowQuarantine
+                    | SinkTarget::CanaryCanonical
             ),
         };
         if !allowed {
@@ -335,7 +339,7 @@ impl Phase9AuthorityFence {
         let target_allowed = match current.state {
             Phase9AuthorityState::RustShadow => matches!(
                 context.target,
-                SinkTarget::ShadowRaw | SinkTarget::ShadowCanonical
+                SinkTarget::ShadowRaw | SinkTarget::ShadowCanonical | SinkTarget::ShadowQuarantine
             ),
             Phase9AuthorityState::RustCanary => {
                 let approved_at = current.approved_at_ns.expect("validated canary approval");

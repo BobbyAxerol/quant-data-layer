@@ -1,5 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SequencePolicy {
+    None,
+    Monotonic,
+    Contiguous,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SequenceDecision {
     Accepted,
@@ -40,6 +50,25 @@ impl OrderingTracker {
         sequence: u64,
         event_id: Vec<u8>,
     ) -> SequenceDecision {
+        self.observe_with_policy(
+            partition_key,
+            session_id,
+            generation,
+            sequence,
+            event_id,
+            SequencePolicy::Contiguous,
+        )
+    }
+
+    pub fn observe_with_policy(
+        &mut self,
+        partition_key: &str,
+        session_id: &str,
+        generation: u64,
+        sequence: u64,
+        event_id: Vec<u8>,
+        policy: SequencePolicy,
+    ) -> SequenceDecision {
         let state = self.partitions.entry(partition_key.into()).or_default();
         if generation < state.generation {
             return SequenceDecision::StaleSession;
@@ -55,12 +84,15 @@ impl OrderingTracker {
         if state.recent_event_ids.contains(&event_id) {
             return SequenceDecision::Duplicate;
         }
-        let decision = match state.last_sequence {
-            Some(last) if sequence <= last => SequenceDecision::OutOfOrder,
-            Some(last) if sequence > last.saturating_add(1) => SequenceDecision::Gap {
-                expected: last.saturating_add(1),
-                actual: sequence,
-            },
+        let decision = match (policy, state.last_sequence) {
+            (SequencePolicy::None, _) => SequenceDecision::Accepted,
+            (_, Some(last)) if sequence <= last => SequenceDecision::OutOfOrder,
+            (SequencePolicy::Contiguous, Some(last)) if sequence > last.saturating_add(1) => {
+                SequenceDecision::Gap {
+                    expected: last.saturating_add(1),
+                    actual: sequence,
+                }
+            }
             _ => SequenceDecision::Accepted,
         };
         if matches!(decision, SequenceDecision::Accepted) {
@@ -78,7 +110,7 @@ impl OrderingTracker {
 
 #[cfg(test)]
 mod tests {
-    use super::{OrderingTracker, SequenceDecision};
+    use super::{OrderingTracker, SequenceDecision, SequencePolicy};
 
     #[test]
     fn duplicate_gap_out_of_order_and_session_reset_are_distinct() {
@@ -113,6 +145,26 @@ mod tests {
         assert_eq!(
             tracker.observe("btc", "s1", 1, 14, vec![6]),
             SequenceDecision::StaleSession
+        );
+    }
+    #[test]
+    fn monotonic_allows_native_leaps_but_contiguous_detects_them() {
+        let mut monotonic = OrderingTracker::new(8);
+        assert_eq!(
+            monotonic
+                .observe_with_policy("trade", "s1", 1, 10, vec![1], SequencePolicy::Monotonic,),
+            SequenceDecision::SessionStarted
+        );
+        assert_eq!(
+            monotonic
+                .observe_with_policy("trade", "s1", 1, 15, vec![2], SequencePolicy::Monotonic,),
+            SequenceDecision::Accepted
+        );
+        let mut none = OrderingTracker::new(8);
+        none.observe_with_policy("bar", "s1", 1, 60, vec![1], SequencePolicy::None);
+        assert_eq!(
+            none.observe_with_policy("bar", "s1", 1, 1, vec![2], SequencePolicy::None),
+            SequenceDecision::Accepted
         );
     }
 }

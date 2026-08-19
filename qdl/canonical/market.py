@@ -94,10 +94,20 @@ def canonicalize_binance_usdm_bbo(
 ) -> market_data_pb2.EventEnvelope:
     _verify_symbol(raw, context)
     sequence = str(_required(raw, "u"))
+    provider_time = raw.get("T") or raw.get("E")
     envelope = _envelope(
-        raw=raw, context=context, feed="quote", source_sequence=sequence,
-        source_event_time_ms=int(raw.get("T") or _required(raw, "E")),
+        raw=raw,
+        context=context,
+        feed="quote",
+        source_sequence=sequence,
+        source_event_time_ms=(
+            int(provider_time)
+            if provider_time is not None
+            else context.received_at_ns // 1_000_000
+        ),
     )
+    if provider_time is None:
+        envelope.quality_flags.append(common_pb2.QUALITY_FLAG_SOURCE_TIME_MISSING)
     envelope.quote.CopyFrom(market_data_pb2.Quote(
         bid_price=_decimal(_required(raw, "b")),
         bid_quantity=_decimal(_required(raw, "B")),
@@ -274,6 +284,14 @@ def canonicalize_binance_usdm_rest_bar(
     row = raw.get("row")
     if not isinstance(row, list) or len(row) < 11:
         raise ValueError("Binance REST kline requires the unmodified native row")
+    origin_name = str(raw.get("bar_origin") or "BACKFILLED").upper()
+    origins = {
+        "VENUE_NATIVE": common_pb2.BAR_ORIGIN_VENUE_NATIVE,
+        "BACKFILLED": common_pb2.BAR_ORIGIN_BACKFILLED,
+        "RECONCILED": common_pb2.BAR_ORIGIN_RECONCILED,
+    }
+    if origin_name not in origins:
+        raise ValueError("Binance REST bar origin is invalid")
     sequence = f"{row[0]}:{row[6]}"
     envelope = _envelope(
         raw=raw,
@@ -293,7 +311,7 @@ def canonicalize_binance_usdm_rest_bar(
         trade_count=int(row[8]),
         is_final=True,
         revision=0,
-        origin=common_pb2.BAR_ORIGIN_BACKFILLED,
+        origin=origins[origin_name],
         lifecycle=market_data_pb2.BAR_LIFECYCLE_FINAL,
     )
     _attach_bar_volumes(
@@ -303,7 +321,8 @@ def canonicalize_binance_usdm_rest_bar(
         base=row[5],
         quote=row[7],
     )
-    envelope.quality_flags.append(common_pb2.QUALITY_FLAG_BACKFILLED)
+    if origin_name == "BACKFILLED":
+        envelope.quality_flags.append(common_pb2.QUALITY_FLAG_BACKFILLED)
     envelope.bar.CopyFrom(bar)
     _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))
     return envelope

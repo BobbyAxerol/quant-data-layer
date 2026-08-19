@@ -48,7 +48,7 @@ issue_certificate() {
 for broker in kafka1 kafka2 kafka3; do
   issue_certificate "${broker}" "${broker}"
 done
-for client in phase8-admin phase8-producer phase8-consumer phase8-unauthorized; do
+for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized; do
   issue_certificate "${client}" "${client}"
 done
 
@@ -107,6 +107,7 @@ find "${OUTPUT_DIR}" -type f -exec chmod 0644 {} +
 find "${OUTPUT_DIR}" -maxdepth 1 -name '*.key' \
   ! -name 'phase8-producer.key' \
   ! -name 'phase8-consumer.key' \
+  ! -name 'phase8-core.key' \
   -delete
 rm -f "${OUTPUT_DIR}"/*.csr "${OUTPUT_DIR}"/*.ext "${OUTPUT_DIR}"/*.srl
 

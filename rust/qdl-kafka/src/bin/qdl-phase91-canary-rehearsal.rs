@@ -163,6 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Phase9SinkTopics {
             shadow_raw: shadow_raw_topic.clone(),
             shadow_canonical: shadow_topic.clone(),
+            shadow_quarantine: format!("{shadow_topic}.quarantine"),
             canary_canonical: canary_topic.clone(),
         },
     )?;

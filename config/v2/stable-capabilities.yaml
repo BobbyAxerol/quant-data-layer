@@ -10,45 +10,53 @@ capabilities:
   - venue: BINANCE
     market: USDM
     product_type: PERPETUAL
-    acquisition_adapter: qdl-rust-binance-json
+    acquisition_adapter: qdl-capability-routed-binance-edge
+    feed_adapters:
+      TRADE: qdl-rust-binance-json
+      BBO: qdl-rust-binance-json
+      BAR: qdl-python-binance-rest-latest-closed
     canonical_core: qdl-rust-realtime-core
     feeds: [TRADE, BBO, BAR]
-    certification: SHADOW_EXACT_PARITY
+    certification: BOUNDED_REAL_PROVIDER_SHADOW
   - venue: BINANCE
     market: SPOT
     product_type: SPOT
-    acquisition_adapter: qdl-rust-binance-json
+    acquisition_adapter: qdl-capability-routed-binance-edge
+    feed_adapters:
+      TRADE: qdl-rust-binance-json
+      BBO: qdl-rust-binance-json
+      BAR: qdl-python-binance-rest-latest-closed
     canonical_core: qdl-rust-realtime-core
     feeds: [TRADE, BBO, BAR]
-    certification: FIXTURE_EXACT_PARITY
+    certification: BOUNDED_REAL_PROVIDER_SHADOW
   - venue: OKX
     market: SWAP
     product_type: PERPETUAL
     acquisition_adapter: qdl-rust-okx-json
     canonical_core: qdl-rust-realtime-core
     feeds: [TRADE, BBO, BAR]
-    certification: BOUNDED_AUTHENTIC_SHADOW
+    certification: BOUNDED_REAL_PROVIDER_SHADOW
   - venue: OKX
     market: SPOT
     product_type: SPOT
     acquisition_adapter: qdl-rust-okx-json
     canonical_core: qdl-rust-realtime-core
     feeds: [TRADE, BBO, BAR]
-    certification: FIXTURE_EXACT_PARITY
+    certification: BOUNDED_REAL_PROVIDER_SHADOW
   - venue: HNX
     market: VN_DERIVATIVES
     product_type: FUTURE
     acquisition_adapter: qdl-python-dnse-vendor-edge
     canonical_core: qdl-rust-realtime-core
     feeds: [TRADE, BAR]
-    certification: BOUNDED_AUTHENTIC_CAPTURE_CONFORMANCE
+    certification: PROVIDER_DERIVED_DURABLE_REPLAY
   - venue: HOSE
     market: EQUITIES
     product_type: COMMON_STOCK
     acquisition_adapter: qdl-python-dnse-vnstock-policy-edge
     canonical_core: qdl-rust-realtime-core
     feeds: [TRADE, BAR]
-    certification: BOUNDED_AUTHENTIC_CAPTURE_CONFORMANCE
+    certification: PROVIDER_DERIVED_DURABLE_REPLAY
 capability_gates:
   CRYPTO_L2:
     stable: false

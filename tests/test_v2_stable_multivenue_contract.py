@@ -40,6 +40,9 @@ def canonicalizer(name: str):
         return canonicalize_dnse_trade
     if "bbo" in name:
         return canonicalize_binance_usdm_bbo if name.startswith("binance") else canonicalize_okx_bbo
+    if "rest_bar" in name:
+        from qdl.canonical.market import canonicalize_binance_usdm_rest_bar
+        return canonicalize_binance_usdm_rest_bar
     return canonicalize_dnse_bar if name.startswith(("dnse", "vnstock")) else (
         canonicalize_binance_usdm_bar if name.startswith("binance") else canonicalize_okx_bar
     )
@@ -61,10 +64,10 @@ def expected_unit(fixture_name: str) -> int:
 
 
 class StableMultivenueCanonicalContractTests(unittest.TestCase):
-    def test_all_seventeen_python_events_match_frozen_bytes(self):
+    def test_all_nineteen_python_events_match_frozen_bytes(self):
         manifest = json.loads(MANIFEST.read_text())
         self.assertEqual(manifest["schema"], "qdl.v2.stable-multivenue-golden.v1")
-        self.assertEqual(len(manifest["cases"]), 17)
+        self.assertEqual(len(manifest["cases"]), 19)
         for case in manifest["cases"]:
             with self.subTest(fixture=case["fixture"]):
                 event = load_event(case["fixture"])
@@ -88,6 +91,17 @@ class StableMultivenueCanonicalContractTests(unittest.TestCase):
                     self.assertEqual(event.bar.volume_unit, expected)
                 else:
                     self.fail(f"unexpected Phase A payload: {payload}")
+
+    def test_spot_bbo_missing_provider_time_is_explicit(self):
+        event = load_event("binance_spot_bbo.json")
+        self.assertIn(
+            common_pb2.QUALITY_FLAG_SOURCE_TIME_MISSING,
+            event.quality_flags,
+        )
+        self.assertEqual(
+            event.source_event_time_ns,
+            event.received_at_ns // 1_000_000 * 1_000_000,
+        )
 
     def test_volume_components_preserve_venue_semantics(self):
         swap = load_event("okx_bar.json").bar

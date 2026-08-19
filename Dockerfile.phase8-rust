@@ -16,6 +16,8 @@ RUN cargo build --release --locked \
     --bin qdl-phase91-canary-rehearsal \
     --bin qdl-phase92-primary-rehearsal \
     --bin qdl-binance-shadow \
+    --bin qdl-native-raw-ingestor \
+    --bin qdl-realtime-core \
     --bin qdl-parity-replay \
     --bin qdl-venue-core-certify
 
@@ -36,6 +38,8 @@ COPY --from=builder /src/target/release/qdl-authority-rehearsal /usr/local/bin/q
 COPY --from=builder /src/target/release/qdl-phase91-canary-rehearsal /usr/local/bin/qdl-phase91-canary-rehearsal
 COPY --from=builder /src/target/release/qdl-phase92-primary-rehearsal /usr/local/bin/qdl-phase92-primary-rehearsal
 COPY --from=builder /src/target/release/qdl-binance-shadow /usr/local/bin/qdl-binance-shadow
+COPY --from=builder /src/target/release/qdl-native-raw-ingestor /usr/local/bin/qdl-native-raw-ingestor
+COPY --from=builder /src/target/release/qdl-realtime-core /usr/local/bin/qdl-realtime-core
 COPY --from=builder /src/target/release/qdl-parity-replay /usr/local/bin/qdl-parity-replay
 COPY --from=builder /src/target/release/qdl-venue-core-certify /usr/local/bin/qdl-venue-core-certify
 USER 10001:10001

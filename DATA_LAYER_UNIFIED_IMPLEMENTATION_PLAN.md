@@ -3827,7 +3827,7 @@ The Phase 7-9 program achieves its target when:
 
 ## 19. V2 Stable Rust Core And Binance/OKX/VN Equal-Source Closure
 
-**Status:** `APPROVED / PHASE A IN_PROGRESS (BINANCE/OKX/VN) / RUNTIME CUTOVER NOT AUTHORIZED`
+**Status:** `PHASE A COMPLETE / ISOLATED CERTIFIED / PHASE B NOT STARTED / RUNTIME CUTOVER NOT AUTHORIZED`
 
 ### Purpose
 
@@ -4022,8 +4022,36 @@ contract change.
   fixtures match exact Python/Rust golden bytes; 56 cross-phase Python tests,
   9 frozen-contract tests and the full 43-test Rust workspace passed with
   Clippy warnings denied. V1 runtime/topology was not changed.
-- `PHASE A IN_PROGRESS`: next integrate the provider-neutral continuous Rust
-  core with fenced Kafka durable publication and first-class acquisition edges.
+- `2026-08-19 PHASE A SLICE A2 COMPLETE`: added the provider-neutral
+  `qdl-realtime-core`, native Rust Binance/OKX raw ingestion, Python DNSE/vnstock
+  and Binance REST BAR raw edges, fenced Kafka raw publication, atomic Kafka
+  consume-transform-produce transactions and separate canonical/quarantine
+  topics. Rust is now the only canonical realtime semantics core; Python is the
+  external/vendor-acquisition edge.
+- `2026-08-19 PROVIDER DEFECT CLOSED`: Binance Kline WebSocket produced zero
+  frames through legacy combined, official public combined and official public
+  raw probes, matching the running V1 zero-message telemetry. Binance BAR now
+  uses the existing low-rate REST history boundary to fetch the latest closed
+  native row, then passes through Rust. It is never fabricated or silently
+  relabeled. Binance Spot BBO missing provider time uses receive time with an
+  explicit `SOURCE_TIME_MISSING` flag.
+- `2026-08-19 PHASE A FINAL EVIDENCE`: real-provider certification committed 26
+  raw -> 26 canonical records with zero quarantine across Binance USDM/Spot,
+  OKX SWAP/Spot and VN equity/derivative products. Transactional certification
+  committed under one Kafka replica loss, suppressed one duplicate and routed
+  one intentional sequence gap to quarantine with exact read-committed counts.
+  The release core processed 100,000 events at approximately 154,139 events/s
+  with p99 about 10.8 microseconds and zero loss/duplicate/quarantine. Full
+  Python regression passed 433 tests with 5 conditional skips; Rust fmt/Clippy
+  and all 50 tests passed, including atomic rollback for partially invalid
+  multi-row provider frames; Buf format/lint/breaking and code generation passed.
+  Every disposable container/network/volume/image was removed; final scoped
+  cleanup also removed 2.8 GiB of Cargo target artifacts and the 2.91 GB
+  `qdl-v2-rust-builder:test` image. V1 health/topology remained unchanged. See
+  [Phase A report](upgrade/evidence/PHASE_A_RUST_MULTIVENUE_CORE_REPORT.md).
+- `PHASE A COMPLETE / PHASE B NOT STARTED`: no in-scope Phase A defect remains.
+  Stable projector/query/stream deployment, consumer migration and authority
+  cutover remain Phase B and require a separate exact-topology approval.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

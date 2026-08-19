@@ -123,6 +123,7 @@ pub fn canonicalize_trade(fixture: &TradeFixture) -> Result<EventEnvelope, Strin
         }
         "binance_usdm_bbo" | "binance_spot_bbo" => canonicalize_binance_bbo(fixture),
         "binance_usdm_bar" | "binance_spot_bar" => canonicalize_binance_bar(fixture),
+        "binance_usdm_rest_bar" | "binance_spot_rest_bar" => canonicalize_binance_rest_bar(fixture),
         "okx_trade" => canonicalize_okx(fixture),
         "okx_bbo" => canonicalize_okx_bbo(fixture),
         "okx_bar" => canonicalize_okx_bar(fixture),
@@ -274,13 +275,22 @@ fn verify_binance_symbol(fixture: &TradeFixture) -> Result<(), String> {
 fn canonicalize_binance_bbo(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
     verify_binance_symbol(fixture)?;
     let sequence = text(&fixture.raw, "u")?;
-    let source_time = fixture
+    let provider_time = fixture
         .raw
         .get("T")
         .and_then(Value::as_i64)
-        .or_else(|| fixture.raw.get("E").and_then(Value::as_i64))
-        .ok_or_else(|| "required provider timestamp is missing".to_owned())?;
-    let mut envelope = base_envelope(fixture, "quote", sequence, source_time)?;
+        .or_else(|| fixture.raw.get("E").and_then(Value::as_i64));
+    let mut envelope = base_envelope(
+        fixture,
+        "quote",
+        sequence,
+        provider_time.unwrap_or(fixture.context.received_at_ns / 1_000_000),
+    )?;
+    if provider_time.is_none() {
+        envelope
+            .quality_flags
+            .push(QualityFlag::SourceTimeMissing as i32);
+    }
     envelope.payload = Some(event_envelope::Payload::Quote(Quote {
         bid_price: Some(parse_decimal(&text(&fixture.raw, "b")?)?),
         bid_quantity: Some(parse_decimal(&text(&fixture.raw, "B")?)?),
@@ -338,6 +348,70 @@ fn canonicalize_binance_bar(fixture: &TradeFixture) -> Result<EventEnvelope, Str
             .transpose()?
             .map(|value| parse_decimal(&value))
             .transpose()?,
+        contract_volume: None,
+    }));
+    set_payload_hash(&mut envelope)?;
+    Ok(envelope)
+}
+
+fn canonicalize_binance_rest_bar(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
+    if text(&fixture.raw, "symbol")?.to_uppercase() != fixture.context.native_symbol.to_uppercase()
+    {
+        return Err("provider symbol does not match resolved instrument".into());
+    }
+    let row = fixture
+        .raw
+        .get("row")
+        .and_then(Value::as_array)
+        .filter(|row| row.len() >= 11)
+        .ok_or_else(|| "Binance REST kline requires the unmodified native row".to_owned())?;
+    let origin_name = fixture
+        .raw
+        .get("bar_origin")
+        .and_then(Value::as_str)
+        .unwrap_or("BACKFILLED")
+        .to_ascii_uppercase();
+    let origin = match origin_name.as_str() {
+        "VENUE_NATIVE" => BarOrigin::VenueNative,
+        "BACKFILLED" => BarOrigin::Backfilled,
+        "RECONCILED" => BarOrigin::Reconciled,
+        _ => return Err("Binance REST bar origin is invalid".into()),
+    };
+    let open_time_ms = scalar_text(&row[0])?
+        .parse::<i64>()
+        .map_err(|_| "Binance REST open time is invalid".to_owned())?;
+    let close_time_ms = scalar_text(&row[6])?
+        .parse::<i64>()
+        .map_err(|_| "Binance REST close time is invalid".to_owned())?;
+    let mut envelope = base_envelope(
+        fixture,
+        "bar",
+        format!("{open_time_ms}:{close_time_ms}"),
+        close_time_ms,
+    )?;
+    if origin == BarOrigin::Backfilled {
+        envelope.quality_flags.push(QualityFlag::Backfilled as i32);
+    }
+    envelope.payload = Some(event_envelope::Payload::Bar(Bar {
+        interval: text(&fixture.raw, "interval")?,
+        open_time_ns: open_time_ms * 1_000_000,
+        close_time_ns: close_time_ms * 1_000_000,
+        open: Some(parse_decimal(&scalar_text(&row[1])?)?),
+        high: Some(parse_decimal(&scalar_text(&row[2])?)?),
+        low: Some(parse_decimal(&scalar_text(&row[3])?)?),
+        close: Some(parse_decimal(&scalar_text(&row[4])?)?),
+        volume: Some(parse_decimal(&scalar_text(&row[5])?)?),
+        trade_count: scalar_text(&row[8])?
+            .parse::<u64>()
+            .map_err(|_| "Binance REST trade count is invalid".to_owned())?,
+        is_final: true,
+        revision: 0,
+        origin: origin as i32,
+        lifecycle: BarLifecycle::Final as i32,
+        supersedes_event_id: None,
+        volume_unit: quantity_unit(&fixture.context)? as i32,
+        base_volume: Some(parse_decimal(&scalar_text(&row[5])?)?),
+        quote_volume: Some(parse_decimal(&scalar_text(&row[7])?)?),
         contract_volume: None,
     }));
     set_payload_hash(&mut envelope)?;
@@ -756,9 +830,11 @@ mod tests {
             ("binance_usdm_trade.json", "binance-usdm-trade.bin"),
             ("binance_usdm_bbo.json", "binance-usdm-bbo.bin"),
             ("binance_usdm_bar.json", "binance-usdm-bar.bin"),
+            ("binance_usdm_rest_bar.json", "binance-usdm-rest-bar.bin"),
             ("binance_spot_trade.json", "binance-spot-trade.bin"),
             ("binance_spot_bbo.json", "binance-spot-bbo.bin"),
             ("binance_spot_bar.json", "binance-spot-bar.bin"),
+            ("binance_spot_rest_bar.json", "binance-spot-rest-bar.bin"),
             ("okx_trade.json", "okx-swap-trade.bin"),
             ("okx_bbo.json", "okx-swap-bbo.bin"),
             ("okx_bar.json", "okx-swap-bar.bin"),

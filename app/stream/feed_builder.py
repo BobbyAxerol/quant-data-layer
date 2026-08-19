@@ -40,7 +40,7 @@ def build_urls(symbols_by_source: Dict[str, List[str]], interval: str = "1m", ba
             continue
 
         if source in {"binance_futures", "binance_futures_kline"}:
-            base = "wss://fstream.binance.com/stream?streams="
+            base = "wss://fstream.binance.com/public/stream?streams="
             lower_syms = [s.lower() for s in clean]
             src_urls = []
             for i in range(0, len(lower_syms), batch_size):
@@ -60,7 +60,7 @@ def build_urls(symbols_by_source: Dict[str, List[str]], interval: str = "1m", ba
             urls[source] = src_urls
 
         elif source == "binance_futures_trade":
-            base = "wss://fstream.binance.com/stream?streams="
+            base = "wss://fstream.binance.com/public/stream?streams="
             lower_syms = [s.lower() for s in clean]
             src_urls = []
             for i in range(0, len(lower_syms), batch_size):

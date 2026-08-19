@@ -15,7 +15,8 @@ use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::error::KafkaError;
 use rdkafka::message::{Header, Headers, Message, OwnedHeaders};
-use rdkafka::producer::{FutureProducer, FutureRecord};
+use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
+use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use rdkafka::util::Timeout;
 
 const EVENT_ID_HEADER: &str = "qdl-event-id";
@@ -187,6 +188,7 @@ impl FencedKafkaSink {
 pub struct Phase9SinkTopics {
     pub shadow_raw: String,
     pub shadow_canonical: String,
+    pub shadow_quarantine: String,
     pub canary_canonical: String,
 }
 
@@ -195,6 +197,7 @@ impl Phase9SinkTopics {
         let topics = [
             self.shadow_raw.as_str(),
             self.shadow_canonical.as_str(),
+            self.shadow_quarantine.as_str(),
             self.canary_canonical.as_str(),
         ];
         if topics.iter().any(|topic| topic.trim().is_empty()) {
@@ -202,7 +205,8 @@ impl Phase9SinkTopics {
                 "Phase 9 sink topics must not be empty".into(),
             ));
         }
-        if topics[0] == topics[1] || topics[0] == topics[2] || topics[1] == topics[2] {
+        let unique: std::collections::HashSet<&str> = topics.into_iter().collect();
+        if unique.len() != 4 {
             return Err(KafkaTransportError::Configuration(
                 "Phase 9 sink topics must be isolated and unique".into(),
             ));
@@ -215,6 +219,7 @@ impl Phase9SinkTopics {
         match target {
             SinkTarget::ShadowRaw => stream == self.shadow_raw,
             SinkTarget::ShadowCanonical => stream == self.shadow_canonical,
+            SinkTarget::ShadowQuarantine => stream == self.shadow_quarantine,
             SinkTarget::CanaryCanonical => stream == self.canary_canonical,
             SinkTarget::PrimaryCanonical | SinkTarget::PublicV2 | SinkTarget::LegacyV1 => false,
         }
@@ -308,9 +313,10 @@ impl Phase92SinkTopics {
             SinkTarget::PrimaryCanonical => stream == self.primary_canonical,
             SinkTarget::PublicV2 => stream == self.public_v2,
             SinkTarget::LegacyV1 => stream == self.legacy_v1,
-            SinkTarget::ShadowRaw | SinkTarget::ShadowCanonical | SinkTarget::CanaryCanonical => {
-                false
-            }
+            SinkTarget::ShadowRaw
+            | SinkTarget::ShadowCanonical
+            | SinkTarget::ShadowQuarantine
+            | SinkTarget::CanaryCanonical => false,
         }
     }
 }
@@ -462,6 +468,285 @@ impl KafkaDurableSink {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransactionalShadowTopics {
+    pub raw_inputs: Vec<String>,
+    pub canonical: String,
+    pub quarantine: String,
+}
+
+impl TransactionalShadowTopics {
+    pub fn validate(&self) -> Result<(), KafkaTransportError> {
+        if self.raw_inputs.is_empty()
+            || self.raw_inputs.iter().any(|topic| topic.trim().is_empty())
+            || self.canonical.trim().is_empty()
+            || self.quarantine.trim().is_empty()
+        {
+            return Err(KafkaTransportError::Configuration(
+                "transactional shadow topics must not be empty".into(),
+            ));
+        }
+        let mut unique = std::collections::HashSet::new();
+        for topic in self
+            .raw_inputs
+            .iter()
+            .chain([&self.canonical, &self.quarantine])
+        {
+            if !unique.insert(topic.as_str()) {
+                return Err(KafkaTransportError::Configuration(
+                    "transactional shadow topics must be isolated".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn permits(&self, target: SinkTarget, stream: &str) -> bool {
+        match target {
+            SinkTarget::ShadowCanonical => stream == self.canonical,
+            SinkTarget::ShadowQuarantine => stream == self.quarantine,
+            SinkTarget::ShadowRaw
+            | SinkTarget::CanaryCanonical
+            | SinkTarget::PrimaryCanonical
+            | SinkTarget::PublicV2
+            | SinkTarget::LegacyV1 => false,
+        }
+    }
+}
+
+pub struct TransactionalKafkaInput {
+    pub record: DurableRecord,
+    pub cursor: Cursor,
+}
+
+pub struct TransactionalKafkaOutput {
+    pub record: DurableRecord,
+    pub publication: PublicationContext,
+}
+
+/// Kafka consume-transform-produce boundary. Output records and the next raw
+/// consumer offset commit atomically, so a process crash cannot acknowledge raw
+/// input without its canonical/quarantine result or duplicate committed output.
+pub struct TransactionalKafkaBridge {
+    producer: FutureProducer,
+    consumer: StreamConsumer,
+    fence: tokio::sync::Mutex<AuthorityFence>,
+    topics: TransactionalShadowTopics,
+    request_timeout: Duration,
+}
+
+impl TransactionalKafkaBridge {
+    pub fn new(
+        config: &KafkaTransportConfig,
+        topics: TransactionalShadowTopics,
+        transactional_id: &str,
+    ) -> Result<Self, KafkaTransportError> {
+        topics.validate()?;
+        if transactional_id.trim().is_empty() {
+            return Err(KafkaTransportError::Configuration(
+                "transactional.id must not be empty".into(),
+            ));
+        }
+        let mut consumer_config = config.client_config()?;
+        consumer_config
+            .set("group.id", &config.group_id)
+            .set("enable.auto.commit", "false")
+            .set("enable.auto.offset.store", "false")
+            .set("auto.offset.reset", "earliest")
+            .set("isolation.level", "read_committed");
+        let consumer: StreamConsumer = consumer_config.create()?;
+        let raw_topics: Vec<&str> = topics.raw_inputs.iter().map(String::as_str).collect();
+        consumer.subscribe(&raw_topics)?;
+
+        let mut producer_config = config.client_config()?;
+        producer_config
+            .set("transactional.id", transactional_id)
+            .set("enable.idempotence", "true")
+            .set("acks", "all")
+            .set("max.in.flight.requests.per.connection", "5")
+            .set("retries", "2147483647")
+            .set("compression.type", "zstd")
+            .set(
+                "transaction.timeout.ms",
+                config.request_timeout.as_millis().to_string(),
+            )
+            .set(
+                "delivery.timeout.ms",
+                config.request_timeout.as_millis().to_string(),
+            );
+        let producer: FutureProducer = producer_config.create()?;
+        producer.init_transactions(Timeout::After(config.request_timeout))?;
+        Ok(Self {
+            producer,
+            consumer,
+            fence: tokio::sync::Mutex::new(AuthorityFence::default()),
+            topics,
+            request_timeout: config.request_timeout,
+        })
+    }
+
+    pub async fn apply_authority(
+        &self,
+        record: AuthorityRecord,
+    ) -> Result<(), KafkaTransportError> {
+        self.fence
+            .lock()
+            .await
+            .apply(record)
+            .map_err(KafkaTransportError::Fencing)
+    }
+
+    pub async fn next(&self) -> Result<TransactionalKafkaInput, KafkaTransportError> {
+        let message = self.consumer.recv().await?;
+        let payload = message
+            .payload()
+            .ok_or(KafkaTransportError::MissingField("payload"))?
+            .to_vec();
+        let key = message
+            .key()
+            .ok_or(KafkaTransportError::MissingField("partition_key"))?;
+        let partition_key = std::str::from_utf8(key)
+            .map_err(|_| KafkaTransportError::InvalidUtf8("partition_key"))?
+            .to_owned();
+        let event_id = message
+            .headers()
+            .and_then(|headers| {
+                headers
+                    .iter()
+                    .find(|header| header.key == EVENT_ID_HEADER)
+                    .and_then(|header| header.value.map(ToOwned::to_owned))
+            })
+            .ok_or(KafkaTransportError::MissingField("event_id header"))?;
+        let offset = u64::try_from(message.offset())
+            .map_err(|_| KafkaTransportError::InvalidOffset(message.offset()))?;
+        let cursor = Cursor {
+            stream: message.topic().to_owned(),
+            transport_partition: message.partition(),
+            partition_key: partition_key.clone(),
+            offset,
+        };
+        let accepted_at_ns = message.timestamp().to_millis().unwrap_or_default() * 1_000_000;
+        Ok(TransactionalKafkaInput {
+            record: DurableRecord {
+                stream: message.topic().to_owned(),
+                partition_key,
+                event_id,
+                payload,
+                accepted_at_ns,
+            },
+            cursor,
+        })
+    }
+
+    pub async fn commit(
+        &self,
+        inputs: &[TransactionalKafkaInput],
+        outputs: &[TransactionalKafkaOutput],
+    ) -> Result<Vec<AppendResult>, KafkaTransportError> {
+        if inputs.is_empty() {
+            return Err(KafkaTransportError::Configuration(
+                "transaction input batch must not be empty".into(),
+            ));
+        }
+        if inputs
+            .iter()
+            .any(|input| !self.topics.raw_inputs.contains(&input.cursor.stream))
+        {
+            return Err(KafkaTransportError::Fencing(
+                "transaction input is outside configured raw topics".into(),
+            ));
+        }
+        let mut fence = self.fence.lock().await;
+        for output in outputs {
+            if !self
+                .topics
+                .permits(output.publication.target, &output.record.stream)
+            {
+                return Err(KafkaTransportError::Fencing(
+                    "transaction output target does not match shadow topic".into(),
+                ));
+            }
+            fence
+                .permits(&output.publication)
+                .map_err(KafkaTransportError::Fencing)?;
+        }
+
+        self.producer.begin_transaction()?;
+        let transaction = async {
+            let mut accepted = Vec::with_capacity(outputs.len());
+            for output in outputs {
+                let delivery = self
+                    .producer
+                    .send(
+                        FutureRecord::to(&output.record.stream)
+                            .key(output.record.partition_key.as_bytes())
+                            .payload(output.record.payload.as_slice())
+                            .headers(OwnedHeaders::new().insert(Header {
+                                key: EVENT_ID_HEADER,
+                                value: Some(output.record.event_id.as_slice()),
+                            })),
+                        Timeout::After(self.request_timeout),
+                    )
+                    .await
+                    .map_err(|(error, _)| KafkaTransportError::Delivery(error))?;
+                let offset = u64::try_from(delivery.offset)
+                    .map_err(|_| KafkaTransportError::InvalidOffset(delivery.offset))?;
+                accepted.push(AppendResult {
+                    cursor: Cursor {
+                        stream: output.record.stream.clone(),
+                        transport_partition: delivery.partition,
+                        partition_key: output.record.partition_key.clone(),
+                        offset,
+                    },
+                    duplicate: false,
+                });
+            }
+            let mut next_offsets: std::collections::BTreeMap<(String, i32), i64> =
+                std::collections::BTreeMap::new();
+            for input in inputs {
+                let next_offset = input
+                    .cursor
+                    .offset
+                    .checked_add(1)
+                    .and_then(|value| i64::try_from(value).ok())
+                    .ok_or(KafkaTransportError::InvalidOffset(i64::MAX))?;
+                next_offsets
+                    .entry((
+                        input.cursor.stream.clone(),
+                        input.cursor.transport_partition,
+                    ))
+                    .and_modify(|current| *current = (*current).max(next_offset))
+                    .or_insert(next_offset);
+            }
+            let mut offsets = TopicPartitionList::new();
+            for ((topic, partition), offset) in next_offsets {
+                offsets.add_partition_offset(&topic, partition, Offset::Offset(offset))?;
+            }
+            let group = self.consumer.group_metadata().ok_or_else(|| {
+                KafkaTransportError::Configuration("consumer group metadata is unavailable".into())
+            })?;
+            self.producer.send_offsets_to_transaction(
+                &offsets,
+                &group,
+                Timeout::After(self.request_timeout),
+            )?;
+            self.producer
+                .commit_transaction(Timeout::After(self.request_timeout))?;
+            Ok::<_, KafkaTransportError>(accepted)
+        }
+        .await;
+        match transaction {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                self.producer
+                    .abort_transaction(Timeout::After(self.request_timeout))
+                    .map_err(KafkaTransportError::Kafka)?;
+                Err(error)
+            }
+        }
+    }
+}
+
 pub struct KafkaEventSource {
     consumer: StreamConsumer,
 }
@@ -543,7 +828,7 @@ impl KafkaEventSource {
 mod tests {
     use super::{
         KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, Phase92SinkTopics,
-        Phase9SinkTopics,
+        Phase9SinkTopics, TransactionalShadowTopics,
     };
     use qdl_core::transport::RetryClass;
     use qdl_venue_core::authority::SinkTarget;
@@ -573,6 +858,7 @@ mod tests {
         let topics = Phase9SinkTopics {
             shadow_raw: "qdl.phase8.phase91.shadow.raw".into(),
             shadow_canonical: "qdl.phase8.phase91.shadow.canonical".into(),
+            shadow_quarantine: "qdl.phase8.phase91.shadow.quarantine".into(),
             canary_canonical: "qdl.phase8.phase91.canary.canonical".into(),
         };
         topics.validate().unwrap();
@@ -586,6 +872,7 @@ mod tests {
         let duplicate = Phase9SinkTopics {
             shadow_raw: "same".into(),
             shadow_canonical: "same".into(),
+            shadow_quarantine: "quarantine".into(),
             canary_canonical: "other".into(),
         };
         assert!(duplicate.validate().is_err());
@@ -609,6 +896,25 @@ mod tests {
             primary_canonical: "same".into(),
             public_v2: "same".into(),
             legacy_v1: "other".into(),
+        };
+        assert!(duplicate.validate().is_err());
+    }
+
+    #[test]
+    fn transactional_shadow_topics_are_isolated_and_target_bound() {
+        let topics = TransactionalShadowTopics {
+            raw_inputs: vec!["qdl.raw.binance".into(), "qdl.raw.okx".into()],
+            canonical: "qdl.canonical.v2".into(),
+            quarantine: "qdl.quarantine.v1".into(),
+        };
+        topics.validate().unwrap();
+        assert!(topics.permits(SinkTarget::ShadowCanonical, &topics.canonical));
+        assert!(topics.permits(SinkTarget::ShadowQuarantine, &topics.quarantine));
+        assert!(!topics.permits(SinkTarget::PublicV2, &topics.canonical));
+        let duplicate = TransactionalShadowTopics {
+            raw_inputs: vec!["same".into()],
+            canonical: "same".into(),
+            quarantine: "other".into(),
         };
         assert!(duplicate.validate().is_err());
     }

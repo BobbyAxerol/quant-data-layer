@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::canonical::{canonical_bytes, TradeContext, TradeFixture};
 
-pub const WS_COMBINED_BASE: &str = "wss://fstream.binance.com/stream?streams=";
+pub const WS_COMBINED_BASE: &str = "wss://fstream.binance.com/public/stream?streams=";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ShadowConfig {
