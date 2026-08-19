@@ -402,6 +402,10 @@ class StableComposeAndBundleTests(unittest.TestCase):
         self.assertEqual(
             compose["x-kafka-env"]["KAFKA_DEFAULT_REPLICATION_FACTOR"], 3
         )
+        self.assertEqual(compose["x-kafka"]["mem_limit"], "768m")
+        self.assertEqual(
+            compose["x-kafka-env"]["KAFKA_HEAP_OPTS"], "-Xms256m -Xmx256m"
+        )
         kafka_tmpfs = compose["x-kafka"]["tmpfs"]
         self.assertEqual(kafka_tmpfs, ["/tmp:rw,nosuid,nodev,exec,size=32m"])
         self.assertNotIn("noexec", kafka_tmpfs[0])

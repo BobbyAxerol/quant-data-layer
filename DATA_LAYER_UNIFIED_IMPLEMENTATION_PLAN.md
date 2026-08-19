@@ -5091,6 +5091,38 @@ by implication in Phase B implementation.
   edge suites passed 51 tests with one pre-existing dependency-gated skip. A new
   immutable Python image and stable-owner checkpoint resume retest remain
   mandatory before B13 closes.
+- `2026-08-19 PHASE B B13 IMMUTABLE FAILOVER GATE PASSED`: a clean all-`cfc0246`
+  candidate repeated the owner transition with readiness gating. The SDK ACKed
+  offset 2,271 on epoch-1 owner `stable-stream-active`; after that exact owner
+  stopped, `stable-stream-passive` acquired epoch 2 and the SDK resumed from the
+  persisted signed checkpoint at exactly offset 2,272. The event was supplied by
+  durable replay before the `LIVE` control, as required for a gap-free handoff.
+  No cross-context finalizer, unhandled task, cursor or authorization error was
+  emitted. B13 is closed.
+- `2026-08-19 PHASE B B14 KAFKA RECOVERY CAPACITY DEFECT CONFIRMED, FIX IN
+  PROGRESS`: the two-broker outage correctly failed closed: native producers
+  emitted `MessageTimedOut` retry events and no successful ACK, while Rust core
+  workers restarted their generations after broker transport failure. During
+  quorum restoration, however, Kafka3 was cgroup OOM-killed at its 512 MiB hard
+  limit (exit 137, `OOMKilled=true`) while reloading coordinator/transaction
+  metadata. Host memory remained healthy with about 9 GiB available, proving the
+  failure is an undersized broker cgroup rather than host exhaustion.
+
+  Raise only the stable candidate broker limit to 768 MiB while retaining a 256
+  MiB JVM heap, pinned image, bounded CPU and separate volumes. Add a deployment
+  regression for the measured headroom, roll the three candidate brokers one at
+  a time, and repeat two-broker loss/restore. Acceptance requires all 3/3 healthy,
+  no OOM, no false ACK, automatic producer/core/projector recovery, increasing
+  durable offsets and fresh query/stream service. This does not change V1 or the
+  older Phase 8 rehearsal compose contract.
+- `2026-08-19 PHASE B B14 KAFKA RECOVERY HEADROOM UNIT-VERIFIED, RUNTIME
+  RETEST PENDING`: `docker-compose.v2-stable.yml` now bounds each broker at 768
+  MiB while keeping `-Xms256m -Xmx256m`, 0.75 CPU, pinned image, RF3/minISR2 and
+  independent state unchanged. This supplies measured coordinator/native-buffer
+  recovery headroom rather than increasing the Java workload. Compose validation
+  passed and 16 stable deployment/release contract tests passed, including exact
+  resource assertions. A rolling 3/3 broker recreation and repeated two-broker
+  outage/restore still gate runtime acceptance.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

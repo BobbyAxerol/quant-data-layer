@@ -49,7 +49,9 @@ x-kafka: &kafka
     timeout: 5s
     retries: 36
     start_period: 20s
-  mem_limit: 512m
+  # Coordinator recovery exceeded 512 MiB despite a 256 MiB JVM heap. Keep
+  # native/direct-buffer headroom bounded without enlarging the Java heap.
+  mem_limit: 768m
   cpus: 0.75
 
 x-stable-env: &stable-env
