@@ -5226,6 +5226,38 @@ A health endpoint or process-up result alone cannot close a subphase.
   Container and network were removed immediately; no candidate, V1 or current
   Redis state was addressed. B16 code is ready for a coherent commit, while
   B.3 still requires the fresh full Kafka -> cache-unit replay runtime gate.
+- `2026-08-19 PHASE B B17 ATOMIC CACHE-UNIT REBUILD STARTED`: add one guarded
+  operator command for the exact isolated stable project. It must stop the
+  projector, both query replicas and every stream lease owner; delete only the
+  three SQLite cache files in `stable_state`; flush only `stable_redis`; reset
+  only consumer group `stable-projector-v1` on `md.canonical.v2` to earliest;
+  start stream owners, then projector; wait for zero bounded lag and bound
+  cache identity; finally start query replicas. Kafka brokers/topics/raw data,
+  Rust core/acquisition, TLS, manifests and V1 remain untouched.
+
+  The command defaults to plan-only and requires both an explicit apply flag
+  and exact confirmation token. A failure leaves readers/projector stopped or
+  NOT_READY and is safely rerunnable from Kafka; it never rolls forward a
+  partial cache as healthy. Tests must cover the destructive guard, exact
+  service/file/topic/group allowlist, lag parsing and fail-closed command
+  failure before the command is used on `qdl_v2_stable_candidate`.
+- `2026-08-19 PHASE B B17 GUARDED REBUILD COMMAND UNIT-VERIFIED, RUNTIME
+  REHEARSAL PENDING`: `scripts/rebuild_v2_stable_projection_cache.py` is
+  plan-only by default and requires exact token
+  `REBUILD_QDL_V2_STABLE_PROJECTION_CACHE` for apply. Its constants pin the
+  stable Compose manifest/project, five cache users, three SQLite files,
+  `stable_redis`, `stable-projector-v1` and `md.canonical.v2`; callers cannot
+  inject an arbitrary service, volume, topic or consumer group. It starts
+  stream -> projector -> query, requires two consecutive zero-lag samples,
+  projector/query readiness and non-empty rebuilt Redis.
+
+  Six command-policy tests passed for exact allowlists, confirmation, canonical
+  lag parsing, wrong-project rejection and abort-before-delete/flush while a
+  cache user remains running. The combined B16/B17 targeted suite ran 48
+  cases: 47 passed and only the separately passed real-Redis case skipped in
+  the network-disabled invocation. Python compile and diff checks remain clean.
+  No runtime was mutated by these tests. B17 now needs a new immutable Python
+  image and one execution against the isolated cfc0246 candidate state.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

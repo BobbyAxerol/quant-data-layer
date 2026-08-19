@@ -5377,6 +5377,19 @@ write rejection after live identity deletion in 0.210 seconds. Together with
 the network-disabled run, B16 targeted evidence is 42/42 passed with zero
 skips. The disposable Redis container and network were removed.
 
+`B17` now provides `scripts/rebuild_v2_stable_projection_cache.py`, plan-only
+by default and apply-gated by the exact confirmation token. Its allowlist stops
+only projector/query/stream roles, deletes only `canonical-cache.sqlite3` plus
+its WAL/SHM sidecars, flushes only `stable_redis`, resets only
+`stable-projector-v1` on `md.canonical.v2`, and starts stream -> projector ->
+query after two zero-lag samples and readiness gates. Any failure leaves the
+cache unavailable and rerunnable from Kafka; no partial cache may report ready.
+
+Six command-policy tests passed for authorization, exact scope, lag parsing,
+wrong-project rejection and abort-before-mutation. Combined B16/B17 targeted
+execution ran 48 tests with 47 passes and one real-Redis conditional skip; that
+same Redis case passed separately, so no known targeted test remains unrun.
+
 Remaining B.3 gate: fresh atomic Redis-plus-SQLite rebuild from canonical
 Kafka, zero gap/collision/quarantine, replica equality, signed SDK replay/live,
 fresh Trading System paper data and unchanged V1.
