@@ -4525,6 +4525,42 @@ by implication in Phase B implementation.
   regression. The public API, freshness thresholds, gap policy and replay reads
   were not changed. Immutable post-10k p95/p99 and strict snapshot evidence still
   gates acceptance.
+- `2026-08-19 PHASE B B5 POST-10K QUERY LATENCY VERIFIED, CLEAN
+  CANDIDATE/RECOVERY GATES PENDING`: two isolated query replicas were rolling-
+  recreated with immutable `d08c424` while preserving the `f120173` test spool
+  and credentials solely to measure the >10,000-record boundary. After a brief
+  real-provider catch-up interval correctly failed closed because the source
+  timestamp was about 16 seconds old, the feed recovered without mutation. One
+  hundred consecutive Binance execution QUOTE requests then passed the unchanged
+  2-second policy: p50 2.94 ms, p95 3.74 ms, p99 32.44 ms, max 89.8 ms and 4.31
+  ms average, versus 813 ms average before feed-aware bounds. This mixed rolling
+  rehearsal is not final certification; a clean all-`d08c424` candidate and
+  broker/provider/Redis/process recovery gates remain mandatory.
+- `2026-08-19 PHASE B B5 TWO-BROKER FAIL-CLOSED PASSED, PROJECTOR
+  RECOVERY DEFECT IDENTIFIED`: with one isolated RF3 broker stopped, the durable
+  spool advanced from 5,063 to 12,423 events and quarantine stayed zero. With two
+  brokers stopped under minISR=2, queued work drained and the spool then remained
+  exactly constant at 27,403 for five seconds, proving no false acceptance. After
+  both brokers returned healthy, Rust producers/cores remained alive but the
+  Python projector did not recover because an asynchronous checkpoint error
+  terminated its process and Compose intentionally had `restart: no`. The fix is
+  a bounded in-process projector supervisor: recreate the poisoned Kafka consumer,
+  keep readiness NOT_READY while disconnected, retain the durable spool/Redis
+  target, replay only uncheckpointed Kafka records through idempotent sinks, and
+  use capped exponential backoff. Closing a poisoned generation must be logged but
+  must not mask the original error or prevent a new generation. Unit retry/close
+  tests and the same real two-broker outage/recovery gate are mandatory.
+- `2026-08-19 PHASE B B5 PROJECTOR SUPERVISOR UNIT-VERIFIED, REAL
+  OUTAGE RETEST PENDING`: the stable projector now recreates a failed Kafka
+  consumer/engine generation in process with capped 250 ms-to-5 s exponential
+  backoff. Readiness reports Kafka NOT_READY while no generation is active. Shared
+  durable spool, HTTP sink and Redis target survive generation replacement, so
+  only uncheckpointed broker records replay through existing idempotency gates. A
+  poisoned generation close is bounded/logged and cannot mask the original fault
+  or prevent recovery; cancellation still propagates. Stable edge/release suites
+  passed 28 tests with one separately gated real-Redis skip, including injected
+  async-checkpoint failure, poisoned close, exact one-backoff retry and successful
+  second generation. The real two-broker recovery test must now be repeated.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

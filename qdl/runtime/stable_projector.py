@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Awaitable, Callable, Protocol
 
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.projection.stable import StableCompatibilityProjector, StableProjectionTarget
@@ -13,6 +14,9 @@ from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.stream import DurableStreamGateway
 from qdl.transport import DurableEvent, SQLiteDurableSpool, StoredEvent
 from qdl.transport.kafka_projector import KafkaProjectorRecord, ProjectorBroker
+
+
+logger = logging.getLogger(__name__)
 
 
 class StableCanonicalSink(Protocol):
@@ -327,3 +331,55 @@ class StableProjectorEngine:
             pending_canonical=self._pending_records,
             pending_bytes=self._pending_bytes,
         )
+
+
+async def supervise_stable_projector(
+    *,
+    broker_factory: Callable[[], tuple[ProjectorBroker, StableProjectorEngine]],
+    should_stop: Callable[[], bool],
+    on_broker: Callable[[ProjectorBroker | None], None],
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    retry_initial_seconds: float = 0.25,
+    retry_max_seconds: float = 5.0,
+) -> None:
+    """Recreate poisoned Kafka generations without weakening ACK ordering."""
+
+    if (
+        retry_initial_seconds <= 0
+        or retry_max_seconds < retry_initial_seconds
+    ):
+        raise ValueError("stable projector retry policy is invalid")
+    failures = 0
+    while not should_stop():
+        broker = None
+        try:
+            broker, engine = broker_factory()
+            on_broker(broker)
+            while not should_stop():
+                if await engine.run_once(timeout_seconds=1.0):
+                    failures = 0
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - supervisor boundary
+            failures += 1
+            logger.warning(
+                "stable projector generation failed; reconnecting attempt=%s error=%s",
+                failures,
+                error,
+            )
+        finally:
+            on_broker(None)
+            if broker is not None:
+                try:
+                    await asyncio.to_thread(broker.close)
+                except Exception as error:  # noqa: BLE001 - poisoned generation cleanup
+                    logger.warning(
+                        "stable projector generation close failed during recovery error=%s",
+                        error,
+                    )
+        if not should_stop():
+            delay = min(
+                retry_max_seconds,
+                retry_initial_seconds * (2 ** min(max(failures - 1, 0), 8)),
+            )
+            await sleep(delay)

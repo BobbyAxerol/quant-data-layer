@@ -46,7 +46,11 @@ from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable import StableRuntimeConfig
 from qdl.runtime.stable_ingest import StableHttpCanonicalSink, install_stable_canonical_ingest
-from qdl.runtime.stable_projector import LocalStableCanonicalSink, StableProjectorEngine
+from qdl.runtime.stable_projector import (
+    LocalStableCanonicalSink,
+    StableProjectorEngine,
+    supervise_stable_projector,
+)
 from qdl.runtime.stable_source import (
     StableConsumerCursorIssuer,
     StableSpoolQueryBackend,
@@ -525,6 +529,54 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             projector=StableCompatibilityProjector(self.catalog), target=target,
             max_pending_records=10, max_pending_bytes=1024 * 1024,
         )
+
+    async def test_supervisor_recreates_poisoned_generation_with_bounded_backoff(self):
+        stopped = [False]
+        sleeps = []
+        active = []
+        brokers = []
+        generations = ["fail", "recover"]
+
+        class Broker:
+            def __init__(self, fail_close):
+                self.fail_close = fail_close
+                self.closed = 0
+
+            def close(self):
+                self.closed += 1
+                if self.fail_close:
+                    raise RuntimeError("injected poisoned close")
+
+        class Engine:
+            def __init__(self, outcome):
+                self.outcome = outcome
+
+            async def run_once(self, timeout_seconds):
+                self.assert_timeout = timeout_seconds
+                if self.outcome == "fail":
+                    raise RuntimeError("injected asynchronous checkpoint failure")
+                stopped[0] = True
+                return True
+
+        def factory():
+            outcome = generations.pop(0)
+            broker = Broker(outcome == "fail")
+            brokers.append(broker)
+            return broker, Engine(outcome)
+
+        async def sleep(delay):
+            sleeps.append(delay)
+
+        await supervise_stable_projector(
+            broker_factory=factory,
+            should_stop=lambda: stopped[0],
+            on_broker=active.append,
+            sleep=sleep,
+        )
+        self.assertEqual(len(brokers), 2)
+        self.assertEqual([broker.closed for broker in brokers], [1, 1])
+        self.assertEqual(sleeps, [0.25])
+        self.assertEqual(active, [brokers[0], None, brokers[1], None])
 
     async def test_canonical_before_raw_waits_and_checkpoints_after_all_downstreams(self):
         binding, raw, event = _stable_pair(

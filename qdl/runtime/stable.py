@@ -33,7 +33,10 @@ from qdl.runtime.stable_ingest import (
     StableHttpCanonicalSink,
     install_stable_canonical_ingest,
 )
-from qdl.runtime.stable_projector import StableProjectorEngine
+from qdl.runtime.stable_projector import (
+    StableProjectorEngine,
+    supervise_stable_projector,
+)
 from qdl.runtime.stable_source import (
     StableGrpcSnapshotLoader,
     build_stable_query_stack,
@@ -512,7 +515,7 @@ async def serve_stable_projector() -> None:
     assert config.kafka_bootstrap_servers is not None
     assert config.kafka_client_id is not None
     assert config.kafka_canonical_topic is not None
-    broker = ConfluentProjectorBroker(KafkaProjectorConfig(
+    broker_config = KafkaProjectorConfig(
         bootstrap_servers=config.kafka_bootstrap_servers,
         client_id=config.kafka_client_id,
         group_id=config.consumer_group,
@@ -521,7 +524,7 @@ async def serve_stable_projector() -> None:
         ca_path=config.kafka_cert_root / "ca.crt",
         certificate_path=config.kafka_cert_root / "client.crt",
         key_path=config.kafka_cert_root / "client.key",
-    ))
+    )
     redis_client = redis.Redis.from_url(config.redis_url)
     quota = RedisMinuteQuota.from_url(
         config.redis_url, prefix=f"{config.redis_prefix}:projector"
@@ -529,23 +532,42 @@ async def serve_stable_projector() -> None:
     sink = StableHttpCanonicalSink(
         config.stream_ingest_urls, config.internal_ingest_secret, spool
     )
-    engine = StableProjectorEngine(
-        broker=broker, spool=spool, catalog=catalog,
-        canonical_topic=config.kafka_canonical_topic,
-        raw_topics=config.kafka_raw_topics, sink=sink,
-        projector=StableCompatibilityProjector(
-            catalog, namespace=config.redis_prefix.rstrip(":")
-        ),
-        target=RedisStableProjectionTarget(
-            redis_client, namespace=config.redis_prefix.rstrip(":"),
-            dedicated_database=True,
-        ),
-        max_pending_records=config.max_pending_records,
-        max_pending_bytes=config.max_pending_bytes,
+    projector = StableCompatibilityProjector(
+        catalog, namespace=config.redis_prefix.rstrip(":")
     )
+    target = RedisStableProjectionTarget(
+        redis_client,
+        namespace=config.redis_prefix.rstrip(":"),
+        dedicated_database=True,
+    )
+    active_broker: list[ConfluentProjectorBroker | None] = [None]
+
+    def broker_factory():
+        broker = ConfluentProjectorBroker(broker_config)
+        return broker, StableProjectorEngine(
+            broker=broker,
+            spool=spool,
+            catalog=catalog,
+            canonical_topic=config.kafka_canonical_topic,
+            raw_topics=config.kafka_raw_topics,
+            sink=sink,
+            projector=projector,
+            target=target,
+            max_pending_records=config.max_pending_records,
+            max_pending_bytes=config.max_pending_bytes,
+        )
+
+    def on_broker(broker):
+        active_broker[0] = broker
 
     async def kafka_probe() -> ComponentReadiness:
-        available = await asyncio.to_thread(broker.ping, 1.0)
+        broker = active_broker[0]
+        try:
+            available = broker is not None and await asyncio.to_thread(
+                broker.ping, 1.0
+            )
+        except Exception:  # noqa: BLE001 - readiness must degrade, not crash
+            available = False
         if not available:
             return ComponentReadiness(
                 "kafka_read_committed",
@@ -589,15 +611,17 @@ async def serve_stable_projector() -> None:
     ))
     health_task = asyncio.create_task(server.serve())
     try:
-        while not health_task.done():
-            await engine.run_once(timeout_seconds=1.0)
+        await supervise_stable_projector(
+            broker_factory=broker_factory,
+            should_stop=health_task.done,
+            on_broker=on_broker,
+        )
         await health_task
     finally:
         server.should_exit = True
         if not health_task.done():
             await health_task
         await sink.close()
-        await asyncio.to_thread(broker.close)
         await asyncio.to_thread(redis_client.close)
         await asyncio.to_thread(quota.close)
         await asyncio.to_thread(spool.close)
