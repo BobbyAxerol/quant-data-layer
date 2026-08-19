@@ -117,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut canonical = 0_u64;
     let mut quarantines = 0_u64;
     let mut duplicates = 0_u64;
+    let mut filtered = 0_u64;
     let mut batches = 0_u64;
     'service: loop {
         if config.max_events > 0 && processed >= config.max_events {
@@ -150,6 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             canonical += result.canonical.len() as u64;
             quarantines += result.quarantines.len() as u64;
             duplicates += result.duplicates as u64;
+            filtered += result.filtered as u64;
             for record in result.canonical {
                 outputs.push(TransactionalKafkaOutput {
                     record,
@@ -187,6 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "canonical": canonical,
                     "quarantines": quarantines,
                     "duplicates": duplicates,
+                    "filtered": filtered,
                     "batches": batches,
                 }))?
             );
@@ -200,6 +203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "canonical": canonical,
             "quarantines": quarantines,
             "duplicates": duplicates,
+            "filtered": filtered,
             "batches": batches,
         }))?
     );

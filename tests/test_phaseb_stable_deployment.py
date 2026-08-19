@@ -68,6 +68,14 @@ class StableDeploymentContractTests(unittest.TestCase):
             {item["source_id"] for item in bindings},
             {item.source_id for item in self.catalog.bindings},
         )
+        finality_by_source = {
+            item.source_id: item.require_final_bar for item in self.catalog.bindings
+        }
+        self.assertEqual(
+            {item["source_id"]: item["require_final_bar"] for item in bindings},
+            finality_by_source,
+        )
+        self.assertEqual(sum(finality_by_source.values()), 6)
         self.assertFalse(core["authority"]["public_write_allowed"])
         self.assertFalse(core["authority"]["legacy_write_allowed"])
         self.assertFalse(core["core"]["allow_test_provenance"])

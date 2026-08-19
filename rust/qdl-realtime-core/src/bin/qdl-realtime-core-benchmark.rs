@@ -44,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         source_id: "benchmark-binance-trade".into(),
         source_role: "PRIMARY".into(),
         normalizer_version: "qdl-rust-core/2.0.0".into(),
+        require_final_bar: false,
         sequence_policy: SequencePolicy::Monotonic,
     };
     let mut core = RealtimeCore::new(RealtimeCoreConfig {

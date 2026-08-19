@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt::{Display, Formatter};
 
 use prost::Message;
-use qdl_contracts::qdl::marketdata::v2::{event_envelope, EventEnvelope};
+use qdl_contracts::qdl::marketdata::v2::{event_envelope, BarLifecycle, EventEnvelope};
 use qdl_contracts::qdl::provider::v1::{QuarantineReason, QuarantineRecord, RawProviderEnvelope};
 use qdl_core::canonical::{canonicalize_trade, TradeContext, TradeFixture};
 use qdl_core::okx::expand_data_frame;
@@ -32,6 +32,8 @@ pub struct CoreBinding {
     pub source_id: String,
     pub source_role: String,
     pub normalizer_version: String,
+    #[serde(default)]
+    pub require_final_bar: bool,
     pub sequence_policy: SequencePolicy,
 }
 
@@ -148,6 +150,7 @@ pub struct ProcessBatch {
     pub canonical: Vec<DurableRecord>,
     pub quarantines: Vec<DurableRecord>,
     pub duplicates: usize,
+    pub filtered: usize,
 }
 
 pub struct RealtimeCore {
@@ -234,6 +237,7 @@ impl RealtimeCore {
             canonical: Vec::with_capacity(frames.len()),
             quarantines: vec![],
             duplicates: 0,
+            filtered: 0,
         };
         let mut failure: Option<(QuarantineReason, &'static str)> = None;
         for (provider_kind, frame) in frames {
@@ -285,6 +289,27 @@ impl RealtimeCore {
                     break;
                 }
             };
+            if binding.require_final_bar {
+                match canonical.payload.as_ref() {
+                    Some(event_envelope::Payload::Bar(bar))
+                        if bar.is_final
+                            && matches!(
+                                BarLifecycle::try_from(bar.lifecycle),
+                                Ok(BarLifecycle::Final | BarLifecycle::Revised)
+                            ) => {}
+                    Some(event_envelope::Payload::Bar(_)) => {
+                        batch.filtered += 1;
+                        continue;
+                    }
+                    _ => {
+                        failure = Some((
+                            QuarantineReason::SemanticInvalid,
+                            "final BAR policy applied to a non-BAR payload",
+                        ));
+                        break;
+                    }
+                }
+            }
             if self.seen_ids.contains(&canonical.event_id) {
                 batch.duplicates += 1;
                 continue;
@@ -399,6 +424,7 @@ impl RealtimeCore {
                 accepted_at_ns: now_ns,
             }],
             duplicates: 0,
+            filtered: 0,
         }
     }
 }
@@ -519,6 +545,7 @@ mod tests {
             source_id: format!("source-{provider}-{channel}"),
             source_role: source_role.into(),
             normalizer_version: "qdl-rust-core/2.0.0".into(),
+            require_final_bar: provider_kind.ends_with("_bar"),
             sequence_policy: policy,
         }
     }
@@ -586,6 +613,43 @@ mod tests {
         let repeated = core.process(raw(&binding, frame, 2), 11).unwrap();
         assert_eq!(repeated.canonical.len(), 0);
         assert_eq!(repeated.duplicates, 1);
+    }
+
+    #[test]
+    fn final_only_okx_bar_filters_provisional_and_publishes_confirmed() {
+        let binding = binding((
+            "OKX_DIRECT",
+            "OKX",
+            "SWAP",
+            "PERPETUAL",
+            "BTC-USDT-SWAP",
+            "candle1m",
+            "okx_bar",
+            "PRIMARY",
+            SequencePolicy::None,
+        ));
+        assert!(binding.require_final_bar);
+        let frame = |confirm: u8| {
+            format!(
+                r#"{{"arg":{{"channel":"candle1m","instId":"BTC-USDT-SWAP"}},"data":[["1786352340000","61200.00","61240.00","61190.00","61234.10","12.500","12.500","765200.00","{confirm}"]]}}"#
+            )
+            .into_bytes()
+        };
+        let mut core = core(binding.clone(), true);
+        let provisional = core.process(raw(&binding, &frame(0), 1), 10).unwrap();
+        assert!(provisional.canonical.is_empty());
+        assert!(provisional.quarantines.is_empty());
+        assert_eq!(provisional.filtered, 1);
+
+        let final_bar = core.process(raw(&binding, &frame(1), 1), 11).unwrap();
+        assert_eq!(final_bar.canonical.len(), 1);
+        assert!(final_bar.quarantines.is_empty());
+        assert_eq!(final_bar.filtered, 0);
+        let envelope = EventEnvelope::decode(final_bar.canonical[0].payload.as_slice()).unwrap();
+        let event_envelope::Payload::Bar(bar) = envelope.payload.unwrap() else {
+            panic!("OKX final candle must be BAR")
+        };
+        assert!(bar.is_final);
     }
 
     #[test]

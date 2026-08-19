@@ -4254,6 +4254,19 @@ by implication in Phase B implementation.
   hosts. Targeted deployment/edge verification passed 22 tests with one
   separately gated disposable-Redis integration skip. A new immutable candidate
   must be built from the committed fix SHA before runtime certification resumes.
+- `2026-08-19 PHASE B B5 FINAL-BAR DOMAIN DEFECT CLOSED`: real OKX
+  `candle1m` traffic carries both provisional `confirm=0` and closed `confirm=1`
+  rows. The catalog already required final bars, but this policy was not included
+  in the generated Rust binding, so provisional canonical output reached and
+  correctly failed the Python projector gate. `require_final_bar` is now carried
+  catalog-to-core; Rust transactionally consumes raw provisional updates, counts
+  them as `filtered`, publishes no canonical/public event and does not mislabel
+  expected venue lifecycle as quarantine. Only final/revised BARs proceed; a
+  final-only policy attached to a non-BAR payload remains quarantined. Rust fmt
+  and warnings-as-errors Clippy passed, the full Rust workspace passed 51 tests,
+  and 22/22 targeted Python deployment/edge tests passed with one separately
+  gated disposable-Redis integration skip. Runtime retest requires images built
+  from the next committed SHA.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

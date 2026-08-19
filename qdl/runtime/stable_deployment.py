@@ -185,6 +185,7 @@ class StableAcquisitionPlan:
                 "source_id": source.source_id,
                 "source_role": source.source_role,
                 "normalizer_version": source.normalizer_version,
+                "require_final_bar": source.require_final_bar,
                 "sequence_policy": acquisition.sequence_policy,
             })
         return {
