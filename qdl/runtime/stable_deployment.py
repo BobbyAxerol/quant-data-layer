@@ -15,6 +15,8 @@ from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 
 _MODES = frozenset({"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
 _SEQUENCE_POLICIES = frozenset({"NONE", "MONOTONIC", "CONTIGUOUS"})
+STABLE_TOPIC_PARTITIONS = 6
+STABLE_CORE_WORKER_COUNT = 3
 _PROVIDER_KINDS = {
     ("BINANCE", "TRADE"): frozenset({"binance_usdm_trade", "binance_spot_trade"}),
     ("BINANCE", "QUOTE"): frozenset({"binance_usdm_bbo", "binance_spot_bbo"}),
@@ -163,8 +165,11 @@ class StableAcquisitionPlan:
         catalog: StableSourceCatalog,
         authority: Mapping[str, Any],
         max_events: int = 0,
+        worker_index: int = 1,
     ) -> dict[str, Any]:
         self._validate_authority(authority)
+        if not 1 <= worker_index <= STABLE_CORE_WORKER_COUNT:
+            raise ValueError("stable core worker index is outside the topology bound")
         source_by_id = {item.binding_id: item for item in catalog.bindings}
         acquisitions = {item.binding_id: item for item in self.bindings}
         bindings = []
@@ -200,8 +205,8 @@ class StableAcquisitionPlan:
             },
             "raw_topics": [self.raw_topic],
             "authority": dict(authority),
-            "shard_id": "qdl-v2-stable-core-001",
-            "transactional_id": "qdl-v2-stable-core-001",
+            "shard_id": f"qdl-v2-stable-core-{worker_index:03d}",
+            "transactional_id": f"qdl-v2-stable-core-{worker_index:03d}",
             "batch_size": 256,
             "batch_wait_ms": 25,
             "max_events": max_events,
@@ -314,7 +319,15 @@ def write_stable_runtime_bundle(
     destination.mkdir(parents=True, exist_ok=True)
     payloads = {
         "authority.json": dict(authority),
-        "core.json": acquisition.core_config(catalog=catalog, authority=authority),
+        **{
+            "core.json" if worker_index == 1 else f"core-{worker_index:03d}.json":
+                acquisition.core_config(
+                    catalog=catalog,
+                    authority=authority,
+                    worker_index=worker_index,
+                )
+            for worker_index in range(1, STABLE_CORE_WORKER_COUNT + 1)
+        },
         **{
             f"ingestor-{name}.json": payload
             for name, payload in acquisition.native_ingestor_configs(

@@ -284,9 +284,41 @@ services:
     environment:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
-      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core-001
       QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
     volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core.json:/runtime/core.json:ro"]
+    depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+
+  rust_core_2:
+    <<: *rust
+    entrypoint: [/usr/local/bin/qdl-realtime-core]
+    command: [/runtime/core-002.json]
+    environment:
+      <<: *rust-env
+      QDL_KAFKA_CERT_ROOT: /stable-certs/core
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core-002
+      QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
+    volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core-002.json:/runtime/core-002.json:ro"]
+    depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+
+  rust_core_3:
+    <<: *rust
+    entrypoint: [/usr/local/bin/qdl-realtime-core]
+    command: [/runtime/core-003.json]
+    environment:
+      <<: *rust-env
+      QDL_KAFKA_CERT_ROOT: /stable-certs/core
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core-003
+      QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
+    volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core-003.json:/runtime/core-003.json:ro"]
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       kafka1: {condition: service_healthy}

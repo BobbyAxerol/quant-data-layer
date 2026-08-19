@@ -17,6 +17,7 @@ from qdl.runtime.stable_catalog import StableSourceCatalog
 from scripts.phaseb_prepare_stable_candidate import prepare_candidate
 
 from qdl.runtime.stable_deployment import (
+    STABLE_CORE_WORKER_COUNT,
     StableAcquisitionPlan,
     stable_authority_record,
     write_stable_runtime_bundle,
@@ -92,6 +93,33 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertFalse(core["authority"]["legacy_write_allowed"])
         self.assertFalse(core["core"]["allow_test_provenance"])
         self.assertEqual(core["raw_topics"], ["md.raw.stable.v1"])
+        workers = [
+            self.acquisition.core_config(
+                catalog=self.catalog,
+                authority=self.authority,
+                worker_index=index,
+            )
+            for index in range(1, STABLE_CORE_WORKER_COUNT + 1)
+        ]
+        self.assertEqual(
+            {item["transactional_id"] for item in workers},
+            {"qdl-v2-stable-core-001", "qdl-v2-stable-core-002", "qdl-v2-stable-core-003"},
+        )
+        self.assertEqual(
+            {item["shard_id"] for item in workers},
+            {item["transactional_id"] for item in workers},
+        )
+        self.assertEqual({item["raw_topics"][0] for item in workers}, {"md.raw.stable.v1"})
+        self.assertEqual({json.dumps(item["authority"], sort_keys=True) for item in workers}, {
+            json.dumps(self.authority, sort_keys=True)
+        })
+        for invalid_index in (0, STABLE_CORE_WORKER_COUNT + 1):
+            with self.assertRaisesRegex(ValueError, "worker index"):
+                self.acquisition.core_config(
+                    catalog=self.catalog,
+                    authority=self.authority,
+                    worker_index=invalid_index,
+                )
 
         with tempfile.TemporaryDirectory(prefix="qdl-phaseb-bundle-") as directory:
             first = write_stable_runtime_bundle(
@@ -112,6 +140,8 @@ class StableDeploymentContractTests(unittest.TestCase):
                 {
                     "authority.json",
                     "core.json",
+                    "core-002.json",
+                    "core-003.json",
                     "ingestor-binance-spot.json",
                     "ingestor-binance-usdm.json",
                     "ingestor-okx-spot.json",
@@ -120,6 +150,14 @@ class StableDeploymentContractTests(unittest.TestCase):
             )
             persisted = json.loads((Path(directory) / "core.json").read_text())
             self.assertEqual(persisted, core)
+            persisted_workers = [
+                json.loads((Path(directory) / name).read_text())
+                for name in ("core.json", "core-002.json", "core-003.json")
+            ]
+            self.assertEqual(
+                len({item["transactional_id"] for item in persisted_workers}),
+                STABLE_CORE_WORKER_COUNT,
+            )
 
     def test_binance_bar_edge_publishes_each_closed_bar_once(self):
         class Publisher:
@@ -267,10 +305,35 @@ class StableComposeAndBundleTests(unittest.TestCase):
             set(services["ingestor_okx_swap"]["networks"]),
             {"stable_internal", "stable_egress"},
         )
-        self.assertEqual(
-            services["rust_core"]["entrypoint"],
-            ["/usr/local/bin/qdl-realtime-core"],
+        core_names = ("rust_core", "rust_core_2", "rust_core_3")
+        self.assertLessEqual(
+            len(core_names), compose["x-kafka-env"]["KAFKA_NUM_PARTITIONS"]
         )
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_KAFKA_CLIENT_ID"]
+                for name in core_names
+            },
+            {
+                "qdl-v2-stable-core-001",
+                "qdl-v2-stable-core-002",
+                "qdl-v2-stable-core-003",
+            },
+        )
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_KAFKA_GROUP_ID"]
+                for name in core_names
+            },
+            {"qdl-v2-stable-core-v1"},
+        )
+        for name in core_names:
+            with self.subTest(service=name):
+                self.assertEqual(
+                    services[name]["entrypoint"],
+                    ["/usr/local/bin/qdl-realtime-core"],
+                )
+                self.assertIn("stable_tls:/stable-certs:ro", services[name]["volumes"])
 
     def test_candidate_bundle_uses_image_ids_and_never_records_secret_values(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phaseb-cert-") as cert_directory:
@@ -303,7 +366,8 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 )
                 public_manifest = (output / "candidate-manifest.json").read_text()
                 self.assertNotIn("QDL_STABLE_INTERNAL_INGEST_SECRET", public_manifest)
-                self.assertTrue((output / "runtime/core.json").is_file())
+                for name in ("core.json", "core-002.json", "core-003.json"):
+                    self.assertTrue((output / f"runtime/{name}").is_file())
                 self.assertTrue((output / "identities/projector/client.key").is_file())
 
 

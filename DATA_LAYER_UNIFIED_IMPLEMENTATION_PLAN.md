@@ -4419,6 +4419,34 @@ by implication in Phase B implementation.
   one separately gated real-Redis integration skip; Python compile and
   `git diff --check` passed. Immutable-image real-provider lag/I/O, Redis,
   failover and broker recovery evidence remains mandatory.
+- `2026-08-19 PHASE B B5 RUST CORE CAPACITY DEFECT IDENTIFIED, FIX IN
+  PROGRESS`: after projector batching, real raw ingress measured about 392
+  events/second while one ordered transactional core sustained about 150
+  events/second. Its final batches were near the 256-event bound and the process
+  saturated one CPU; raising its cgroup from 0.75 to 1.5 CPUs did not remove lag,
+  proving a single-loop topology bottleneck rather than insufficient host
+  headroom. Increasing batch size enough to hide the gap would add seconds of
+  market-data latency and is rejected. The stable topology will instead run
+  three explicit Rust core workers over the six Kafka partitions. Workers share
+  only the consumer group and authority, while each has a deterministic client,
+  shard and transactional ID so Kafka preserves one owner per partition and
+  exactly-once output/source-offset transactions without fencing peers. Runtime
+  bundle and Compose tests must reject duplicate identities or a worker count
+  exceeding topic partitions. Real traffic must show bounded/decreasing total
+  group lag, zero quarantine and no duplicate canonical/public writes before
+  this gate closes.
+- `2026-08-19 PHASE B B5 THREE-CORE TOPOLOGY UNIT-VERIFIED, RUNTIME RETEST
+  PENDING`: the stable bundle now emits three explicit core configs over six
+  Kafka partitions. Worker `001` preserves `core.json`; workers `002/003` use
+  dedicated files. All share `qdl-v2-stable-core-v1` but have unique static
+  client, shard and transactional IDs, the same pinned authority and identical
+  provider-neutral normalization bindings. Compose defines three non-root,
+  read-only, bounded Rust services without public ports. Contract tests reject
+  worker indices outside the topology and verify identity uniqueness, common
+  group/authority and worker-count-to-partition bounds. The rendered Compose is
+  valid and 32 Phase B deployment/edge/release tests passed with one separately
+  gated real-Redis integration skip. An immutable runtime must still prove lag
+  convergence, exactly-once broker recovery and no quarantine/duplicates.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
