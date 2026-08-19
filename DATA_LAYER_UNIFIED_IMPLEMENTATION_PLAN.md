@@ -4066,7 +4066,7 @@ declared complete while an earlier required gate remains open.
 | `B.0 Contract And Stable Edge` | Catalog identity, V2 query/stream/projector contracts, consumer manifests, isolated topology and V1 compatibility | `COMPLETE` | B1-B4: 6, 32, 26 and 34 targeted tests passed; the one conditional Redis case was run separately against disposable Redis and passed. Public V1 and production runtime were unchanged. |
 | `B.1 Runtime Correctness And Capacity` | Authentic acquisition, Rust canonical core, bounded projector/cache, final BAR lifecycle, lossless-vs-latest delivery and resource convergence | `COMPLETE` | B5-B8: final full Python discovery passed 478 tests with 6 explicit skips; Rust fmt/Clippy/workspace passed. A clean candidate loaded 2,000 authentic closed BARs, converged core/projector lag to 50/29, retained canonical-only bounded cache, zero quarantine and bounded Redis/app memory. Intermediate failed candidates are diagnostic evidence, not accepted releases. |
 | `B.2 Controlled Consumer Acceptance` | Registered Binance, OKX, VN, Trading System and monitoring warmup -> signed cursor -> replay -> live, including session/freshness semantics | `PARTIAL_EXTERNAL` | B9-B12: crypto alpha, monitoring and Trading System paper consumers passed on immutable `df88de0`; 500 rows per crypto binding, replica-equal results and 129-779 ms live freshness. DNSE remains blocked by official REST TCP/443 egress and cannot be replaced with synthetic or lineage-incomplete V1 data. |
-| `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `IN_PROGRESS` | B13-B17 recovery mechanics pass, including 42/42 cache-generation tests and a fresh atomic replay that reached three bounded-lag samples across all six partitions before readers started. Strict authenticated acceptance then found a real open BAR sequence gap in the freshly rebuilt cache and failed closed before execution exposure. B.3 remains open until that data-path defect is diagnosed and corrected without fabricating data. |
+| `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `IN_PROGRESS` | B13-B19 recovery mechanics and bounded BAR repairs pass unit/real-captured-data gates. The retained isolated Kafka log contains early-final Binance rows with materially changed OHLCV and is correctly rejected; Python readers remain stopped. B.3 requires an explicitly approved clean candidate-log rehearsal before strict consumer acceptance. |
 | `B.4 Release Certification And Cleanup` | Full Python/Rust/Buf/OpenAPI/security/capacity suites, immutable one-SHA images, compact evidence, docs/runbook, exact candidate cleanup and V1 invariant | `NOT_STARTED` | Starts only after B.3 passes. It does not authorize production cutover or consumer authority migration. |
 
 Every subphase closure records: approved boundary, invariant, exact commands and
@@ -5416,6 +5416,28 @@ and removes the superseded candidate/rollback artifacts after verification.
   required because the retained Kafka test log contains previously captured
   materially wrong early-final Binance rows and must not be accepted by policy
   relaxation.
+- `2026-08-19 PHASE B B19 REAL-CAPTURE CLASSIFIER GATE PASSED, RUNTIME
+  REMAINS FAIL-CLOSED`: immutable image `c61fa39` classified two retained Kafka
+  records against the read-only SQLite cache exactly as required: the OKX
+  REST/WS BAR with equivalent numeric Decimals returned `same_market_semantics=true`;
+  the Binance BAR with changed close/volume/trade count returned `false`. The
+  diagnostic used the authorized projector identity with manual assignment and
+  no offset commit. It validates the classifier against durable provider bytes,
+  not generated market data.
+
+  The old isolated Kafka log is not releasable evidence because it already
+  contains early-final Binance values from the superseded +1-second edge. No
+  policy was weakened to ingest them. Python candidate roles were consolidated
+  onto immutable image ID `b0560895...` and left stopped; Kafka/Rust/Redis and
+  all volumes were retained for audit. V1 health on port 8100 remained OK.
+- `2026-08-19 PHASE B B19 INCREMENTAL ARTIFACT CLEANUP PASSED`: after exact
+  container-reference checks, cleanup removed only unreferenced Python tags
+  `e002da6`, `2041f18` and `8851166`. It then removed four QDL BuildKit records
+  older than one hour (608.7 MB). Image storage fell from 11.1 GB to 9.278 GB;
+  build-cache storage fell from 9.097 GB to 8.488 GB, for about 2.43 GB total
+  recovery. The retained artifacts are V1, active candidate `c61fa39`, one
+  Python/Rust rollback `cfc0246`, Kafka/Redis and all 17 volumes. No broad prune,
+  volume deletion, topic reset or production mutation occurred.
 - `2026-08-19 PHASE B ARTIFACT CLEANUP POLICY RECORDED`: Phase B ends at B.4;
   B17/B18 are repair slices inside B.3, not new subphases. Exact cleanup retains
   V1, active `e002da6`, active/rollback `cfc0246`, Kafka/Redis and all durable

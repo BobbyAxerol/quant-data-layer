@@ -5461,9 +5461,22 @@ the separately proven Redis conditional case was the sole skip. Runtime remains
 fail-closed because the retained isolated Kafka log contains early-final Binance
 rows with materially wrong values; relaxing changed-value policy is forbidden.
 
-Remaining B.3 gate: fresh atomic Redis-plus-SQLite rebuild from canonical
-Kafka, zero gap/collision/quarantine, replica equality, signed SDK replay/live,
-fresh Trading System paper data and unchanged V1.
+Immutable `c61fa39` then passed a read-only durable-provider classifier gate:
+OKX equivalent numeric Decimal/origin variants were semantic duplicates while a
+Binance row with materially changed close/volume/trade count remained a hard
+conflict. No Kafka offset was committed. The invalid retained candidate log was
+not relaxed or rewritten; all Python roles were consolidated onto `c61fa39` and
+left stopped while Kafka/Rust/Redis volumes were retained for audit.
+
+Incremental cleanup removed only three zero-reference Python tags (`e002da6`,
+`2041f18`, `8851166`) plus four QDL BuildKit records older than one hour. Image
+storage fell 11.1 -> 9.278 GB and build cache 9.097 -> 8.488 GB, about 2.43 GB
+recovered. V1, `c61fa39`, rollback `cfc0246`, Kafka/Redis and all volumes remain.
+
+Remaining B.3 gate: an explicitly approved clean isolated Kafka candidate,
+fresh atomic Redis-plus-SQLite rebuild, zero gap/collision/quarantine, replica
+equality, signed SDK replay/live, fresh Trading System paper data and unchanged
+V1.
 
 ### J.6 B.4 — Release certification and cleanup (`NOT_STARTED`)
 
