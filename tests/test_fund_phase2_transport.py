@@ -95,6 +95,25 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             self.assertEqual([row.event.payload for row in rows], [b"event-1"])
             self.assertEqual(rows[0].payload_sha256, first.payload_sha256)
 
+    def test_tail_returns_newest_window_without_changing_replay_order(self):
+        with self.spool(max_records=10) as spool:
+            spool.append_many([event(index) for index in range(1, 6)])
+            replay = spool.read(
+                stream=event(1).stream,
+                partition_key=event(1).partition_key,
+                limit=2,
+            )
+            latest = spool.read_tail(
+                stream=event(1).stream,
+                partition_key=event(1).partition_key,
+                limit=2,
+            )
+            self.assertEqual([row.cursor.offset for row in replay], [1, 2])
+            self.assertEqual([row.cursor.offset for row in latest], [4, 5])
+            self.assertEqual(
+                [row.event.payload for row in latest], [b"event-4", b"event-5"]
+            )
+
     def test_event_id_collision_fails_closed_without_partial_row(self):
         with self.spool() as spool:
             spool.append(event(1))

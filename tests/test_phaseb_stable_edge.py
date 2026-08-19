@@ -332,6 +332,62 @@ class StableQueryContractTests(unittest.TestCase):
                 self.assertEqual(item.quality.state, expected_state)
                 self.assertEqual(item.quality.execution_eligible, expected_state == "LIVE")
 
+    def test_latest_uses_newest_tail_after_partition_exceeds_query_window(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-trade"
+        )
+        template = _stable_event(
+            self.catalog, "binance_usdm_trade.json", binding.binding_id
+        )
+        base_time = template.source_event_time_ns
+        tail_path = Path(self.temp.name) / "stable-tail.sqlite3"
+        with SQLiteDurableSpool(SpoolConfig(
+            path=tail_path,
+            max_records=10_010,
+            max_payload_bytes=32 * 1024 * 1024,
+            max_storage_bytes=48 * 1024 * 1024,
+            min_free_disk_bytes=0,
+        )) as spool:
+            pending = []
+            for index in range(10_001):
+                event = type(template)()
+                event.CopyFrom(template)
+                event.event_id = hashlib.sha256(
+                    f"phase-b-tail-{index}".encode()
+                ).digest()[:16]
+                event.source_sequence = str(index + 1)
+                event.partition_sequence = index + 1
+                event.source_event_time_ns = base_time + index * 1_000_000
+                event.received_at_ns = event.source_event_time_ns + 1
+                event.normalized_at_ns = event.source_event_time_ns + 2
+                event.published_at_ns = event.source_event_time_ns + 3
+                pending.append(DurableEvent(
+                    stream=self.catalog.canonical_stream,
+                    partition_key=binding.partition_key,
+                    event_id=bytes(event.event_id),
+                    payload=event.SerializeToString(deterministic=True),
+                    accepted_at_ns=event.received_at_ns,
+                    headers={"schema": "qdl.marketdata.trade/2"},
+                ))
+                if len(pending) == 1000:
+                    spool.append_many(pending)
+                    pending = []
+            spool.append_many(pending)
+            expected_time = base_time + 10_000 * 1_000_000
+            backend = StableSpoolQueryBackend(
+                spool,
+                self.catalog,
+                schema_digest="f" * 64,
+                clock_ns=lambda: expected_time + 1_000_000,
+            )
+            latest = backend.latest(_requirement(binding))
+            self.assertIsNotNone(latest)
+            self.assertEqual(latest.observed_at_ns, expected_time)
+            self.assertEqual(latest.watermark_offset, 10_001)
+            self.assertEqual(latest.quality.state, "LIVE")
+
     def test_crypto_gap_blocks_but_vn_sparse_minutes_are_not_fabricated(self):
         crypto = next(x for x in self.catalog.bindings if x.binding_id == "binance-usdm-btcusdt-bar-1m")
         first = _stable_event(self.catalog, "binance_usdm_rest_bar.json", crypto.binding_id)

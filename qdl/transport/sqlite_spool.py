@@ -347,6 +347,28 @@ class SQLiteDurableSpool:
             ).fetchall()
         return [self._stored_event(row) for row in rows]
 
+    def read_tail(
+        self,
+        *,
+        stream: str,
+        partition_key: str,
+        limit: int = 100,
+    ) -> list[StoredEvent]:
+        """Return the newest bounded partition window in logical order."""
+
+        if limit <= 0 or limit > 10_000:
+            raise ValueError("limit must be between 1 and 10000")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM events
+                WHERE stream = ? AND partition_key = ?
+                ORDER BY logical_offset DESC LIMIT ?
+                """,
+                (stream, partition_key, limit),
+            ).fetchall()
+        return [self._stored_event(row) for row in reversed(rows)]
+
     def find_event(self, *, stream: str, event_id: bytes) -> StoredEvent | None:
         with self._lock:
             row = self._connection.execute(

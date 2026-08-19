@@ -4479,6 +4479,31 @@ by implication in Phase B implementation.
   zero quarantine, 115,107 events/s, p50 6.19 microseconds and p99 18.921
   microseconds. Targeted Clippy, full workspace tests and an immutable three-core
   real-provider freshness/recovery run remain mandatory before this gate closes.
+- `2026-08-19 PHASE B B5 STABLE QUERY TAIL DEFECT IDENTIFIED, FIX IN
+  PROGRESS`: the clean `c177bb0` three-core candidate drained core lag to 11
+  records and projector lag to 57 records with zero quarantine, and authenticated
+  Binance/OKX monitoring, alpha trade/bar and OKX execution snapshots passed.
+  Binance execution QUOTE nevertheless failed strict 2-second freshness 20/20.
+  Its Redis canonical envelope was current (receive age about 148 ms), while the
+  query backend reported about 230 seconds stale. The shared spool held more than
+  36,000 events for that partition; `StableSpoolQueryBackend` called the replay
+  API `read(limit=10000)`, whose intentionally ascending semantics return the
+  oldest retained page, then treated the page tail as latest. The additive fix
+  must introduce an ordered `read_tail` primitive for latest-state/query use and
+  leave cursor/replay `read` semantics untouched. Transport ordering, tail bound,
+  stable query beyond 10,000 records, strict authenticated freshness and replay
+  regression tests are mandatory before runtime recovery certification resumes.
+- `2026-08-19 PHASE B B5 STABLE QUERY TAIL UNIT-VERIFIED, IMMUTABLE
+  RUNTIME RETEST PENDING`: `SQLiteDurableSpool.read_tail` is an additive bounded
+  latest-window primitive that selects newest offsets efficiently and returns
+  them in ascending logical order. Existing `read(after=...)` replay/cursor
+  semantics are unchanged. Stable latest/history/status/gap views now use the
+  tail window. Regression tests prove replay limit two still returns offsets
+  1-2 while tail limit two returns 4-5, and a real SQLite partition with 10,001
+  canonical trade records returns offset 10,001 as LIVE instead of the end of
+  the oldest page. The two transport/stable-edge suites passed 32 tests with one
+  separately gated real-Redis skip. The immutable candidate must still prove the
+  Binance execution QUOTE 2-second policy, lag, replay and failure recovery.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

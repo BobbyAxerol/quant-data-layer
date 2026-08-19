@@ -150,7 +150,7 @@ class StableSpoolQueryBackend:
     def open_gaps(self) -> tuple[GapRecord, ...]:
         gaps = []
         for binding in self.catalog.bindings:
-            records = tuple(self.spool.read(
+            records = tuple(self.spool.read_tail(
                 stream=binding.canonical_stream,
                 partition_key=binding.partition_key,
                 limit=10_000,
@@ -165,7 +165,7 @@ class StableSpoolQueryBackend:
 
     def _records(self, requirement: DataRequirement) -> tuple[StoredEvent, ...]:
         binding = self.catalog.binding_for(requirement)
-        rows = self.spool.read(
+        rows = self.spool.read_tail(
             stream=binding.canonical_stream,
             partition_key=binding.partition_key,
             limit=10_000,
