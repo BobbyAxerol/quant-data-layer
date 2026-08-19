@@ -38,10 +38,11 @@ x-kafka-env: &kafka-env
 x-kafka: &kafka
   image: apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9
   restart: "no"
-  read_only: true
   security_opt: [no-new-privileges:true]
   networks: [stable_internal]
-  tmpfs: [/tmp:rw,nosuid,nodev,noexec,size=32m]
+  # Kafka Zstd JNI loads a native library from java.io.tmpdir.
+  # Keep this broker tmpfs bounded and non-suid/non-device, but executable.
+  tmpfs: ["/tmp:rw,nosuid,nodev,exec,size=32m"]
   healthcheck:
     test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/9092'"]
     interval: 5s
@@ -90,7 +91,7 @@ x-python: &python
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
   networks: [stable_internal]
-  tmpfs: [/tmp:rw,nosuid,nodev,noexec,size=64m]
+  tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=64m"]
   volumes: [stable_state:/var/lib/qdl-stable]
   environment: {<<: *stable-env}
   mem_limit: 512m
@@ -104,13 +105,13 @@ x-rust: &rust
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
   networks: [stable_internal]
-  tmpfs: [/tmp:rw,nosuid,nodev,noexec,size=32m]
+  tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=32m"]
   mem_limit: 256m
   cpus: 0.75
 
 x-rust-env: &rust-env
   QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
-  QDL_KAFKA_CERT_ROOT: /certs
+  QDL_KAFKA_CERT_ROOT: /stable-certs/producer
   QDL_KAFKA_REQUEST_TIMEOUT_SECONDS: "30"
 
 services:
@@ -134,11 +135,12 @@ services:
     image: redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8
     command: [redis-server, --appendonly, "no", --save, "", --maxmemory, 128mb, --maxmemory-policy, noeviction]
     restart: "no"
+    user: "999:1000"
     read_only: true
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     networks: [stable_internal]
-    tmpfs: [/data:rw,nosuid,nodev,noexec,size=160m]
+    tmpfs: ["/data:rw,nosuid,nodev,noexec,uid=999,gid=1000,mode=0700,size=160m"]
     healthcheck: {test: [CMD, redis-cli, ping], interval: 2s, timeout: 2s, retries: 30}
     mem_limit: 160m
     cpus: 0.25
@@ -165,6 +167,32 @@ services:
     networks: [stable_internal]
     volumes: [stable_state:/var/lib/qdl-stable]
 
+  stable_tls_init:
+    image: ${QDL_STABLE_PYTHON_IMAGE:?set immutable QDL_STABLE_PYTHON_IMAGE}
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - >-
+        install -d -o 10001 -g 10001 -m 0750
+        /stable-certs/producer /stable-certs/core /stable-certs/projector &&
+        cp /source/producer/* /stable-certs/producer/ &&
+        cp /source/core/* /stable-certs/core/ &&
+        cp /source/projector/* /stable-certs/projector/ &&
+        chown -R 10001:10001 /stable-certs &&
+        find /stable-certs -type f -exec chmod 0440 {} +
+    restart: "no"
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    networks: [stable_internal]
+    volumes:
+      - ${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/source/producer:ro
+      - ${QDL_STABLE_CORE_CERT_DIR:?set QDL_STABLE_CORE_CERT_DIR}:/source/core:ro
+      - ${QDL_STABLE_PROJECTOR_CERT_DIR:?set QDL_STABLE_PROJECTOR_CERT_DIR}:/source/projector:ro
+      - stable_tls:/stable-certs
+
   query_v2_1:
     <<: *python
     command: [uvicorn, app.entrypoints.query_v2_stable:app, --host, 0.0.0.0, --port, "8200", --no-access-log]
@@ -176,7 +204,7 @@ services:
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-1-audit.jsonl
-    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}}
+    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
     healthcheck: {test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/health/ready', timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 
   query_v2_2:
@@ -190,7 +218,7 @@ services:
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-2-audit.jsonl
-    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}}
+    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
 
   stream_v2_active:
     <<: *python
@@ -203,7 +231,7 @@ services:
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-stream-active-audit.jsonl
-    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}}
+    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
 
   stream_v2_passive:
     <<: *python
@@ -216,7 +244,7 @@ services:
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-stream-passive-audit.jsonl
-    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}}
+    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
 
   projector_v2:
     <<: *python
@@ -233,10 +261,11 @@ services:
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-1
       QDL_STABLE_KAFKA_RAW_TOPICS: md.raw.stable.v1
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
-      QDL_STABLE_KAFKA_CERT_ROOT: /certs
+      QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["http://stream_v2_active:8200","http://stream_v2_passive:8200"]'
-    volumes: [stable_state:/var/lib/qdl-stable, "${QDL_STABLE_PROJECTOR_CERT_DIR:?set QDL_STABLE_PROJECTOR_CERT_DIR}:/certs:ro"]
+    volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
     depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
       kafka1: {condition: service_healthy}
       kafka2: {condition: service_healthy}
@@ -249,9 +278,14 @@ services:
     <<: *rust
     entrypoint: [/usr/local/bin/qdl-realtime-core]
     command: [/runtime/core.json]
-    environment: {<<: *rust-env, QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core, QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1}
-    volumes: ["${QDL_STABLE_CORE_CERT_DIR:?set QDL_STABLE_CORE_CERT_DIR}:/certs:ro", "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core.json:/runtime/core.json:ro"]
+    environment:
+      <<: *rust-env
+      QDL_KAFKA_CERT_ROOT: /stable-certs/core
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core
+      QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
+    volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core.json:/runtime/core.json:ro"]
     depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
       kafka1: {condition: service_healthy}
       kafka2: {condition: service_healthy}
       kafka3: {condition: service_healthy}
@@ -261,29 +295,45 @@ services:
     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
     command: [/runtime/config.json]
     networks: [stable_internal, stable_egress]
-    environment: {<<: *rust-env, QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer, QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer}
-    volumes: ["${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro", "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-binance-usdm.json:/runtime/config.json:ro"]
+    environment:
+      <<: *rust-env
+      QDL_KAFKA_CERT_ROOT: /stable-certs/producer
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer
+      QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer
+    volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-binance-usdm.json:/runtime/config.json:ro"]
   ingestor_binance_spot:
     <<: *rust
     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
     command: [/runtime/config.json]
     networks: [stable_internal, stable_egress]
-    environment: {<<: *rust-env, QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer, QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer}
-    volumes: ["${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro", "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-binance-spot.json:/runtime/config.json:ro"]
+    environment:
+      <<: *rust-env
+      QDL_KAFKA_CERT_ROOT: /stable-certs/producer
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer
+      QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer
+    volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-binance-spot.json:/runtime/config.json:ro"]
   ingestor_okx_swap:
     <<: *rust
     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
     command: [/runtime/config.json]
     networks: [stable_internal, stable_egress]
-    environment: {<<: *rust-env, QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer, QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer}
-    volumes: ["${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro", "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-okx-swap.json:/runtime/config.json:ro"]
+    environment:
+      <<: *rust-env
+      QDL_KAFKA_CERT_ROOT: /stable-certs/producer
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer
+      QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer
+    volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-okx-swap.json:/runtime/config.json:ro"]
   ingestor_okx_spot:
     <<: *rust
     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
     command: [/runtime/config.json]
     networks: [stable_internal, stable_egress]
-    environment: {<<: *rust-env, QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer, QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer}
-    volumes: ["${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro", "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-okx-spot.json:/runtime/config.json:ro"]
+    environment:
+      <<: *rust-env
+      QDL_KAFKA_CERT_ROOT: /stable-certs/producer
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer
+      QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer
+    volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-okx-spot.json:/runtime/config.json:ro"]
 
   binance_bar_edge:
     <<: *python
@@ -296,12 +346,13 @@ services:
       QDL_STABLE_ACQUISITION_BINDINGS: /app/config/v2/stable-acquisition-bindings.yaml
       QDL_STABLE_RUNTIME_DIR: /runtime
       QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
-      QDL_KAFKA_CERT_ROOT: /certs
+      QDL_KAFKA_CERT_ROOT: /stable-certs/producer
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-binance-bars
     volumes:
-      - ${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro
+      - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
       kafka1: {condition: service_healthy}
       kafka2: {condition: service_healthy}
       kafka3: {condition: service_healthy}
@@ -319,15 +370,16 @@ services:
       QDL_STABLE_RUNTIME_DIR: /runtime
       QDL_STABLE_DNSE_QUEUE_CAPACITY: "5000"
       QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
-      QDL_KAFKA_CERT_ROOT: /certs
+      QDL_KAFKA_CERT_ROOT: /stable-certs/producer
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-vn
       DNSE_API_KEY: ${DNSE_API_KEY:-}
       DNSE_API_SECRET_KEY: ${DNSE_API_SECRET_KEY:-}
       DNSE_WS_BASE: ${DNSE_WS_BASE:-wss://ws-openapi.dnse.com.vn}
     volumes:
-      - ${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro
+      - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
       kafka1: {condition: service_healthy}
       kafka2: {condition: service_healthy}
       kafka3: {condition: service_healthy}
@@ -340,3 +392,4 @@ volumes:
   kafka2_data: {labels: {qdl.scope: v2-stable-candidate}}
   kafka3_data: {labels: {qdl.scope: v2-stable-candidate}}
   stable_state: {labels: {qdl.scope: v2-stable-candidate}}
+  stable_tls: {labels: {qdl.scope: v2-stable-candidate-secrets}}

@@ -4229,6 +4229,31 @@ by implication in Phase B implementation.
   bundle hashes, no secret disclosure, closed-BAR dedup, zero-volume VN BAR,
   queue-pressure fencing, cross-replica wake-up and rejection of primary/public
   authority. No runtime was deployed and no disposable resource remained.
+- `2026-08-19 PHASE B SLICE B5 STARTED`: certify the committed `467bbf3`
+  candidate with immutable Python/Rust image IDs on the migrated 8-core host.
+  The isolated run must exercise RF3/minISR2 broker policy, transactional Rust
+  raw-to-canonical processing, Python projector/cache/dedicated Redis, active/
+  passive stream handoff, both query replicas and all five SHADOW manifests.
+  Real-provider records or replay of Phase A durable provider captures are
+  mandatory for market-data evidence; generated fixtures are restricted to
+  failure/capacity injection. Broker loss, Redis rebuild, process restart,
+  cursor recovery and rollback cleanup must leave V1 topology/health unchanged.
+  Any runtime defect is fixed and retested before release evidence; cutover
+  remains explicitly unauthorized.
+- `2026-08-19 PHASE B B5 RUNTIME DEFECT SLICE VERIFIED`: the first isolated
+  immutable-candidate boot exposed three fail-closed deployment defects before
+  any V1 or current-Redis write. Kafka brokers mounted `/tmp` with `noexec`, so
+  Zstd JNI could not load and raw producers received opaque `UNKNOWN` delivery
+  failures; only Kafka now receives a bounded `exec,nosuid,nodev` tmpfs. The
+  projector still mounted its old host identity path while its contract pointed
+  at the role-scoped `stable_tls` volume; all runtime identities now use the
+  root-copied, UID/GID `10001`, mode `0440`, read-only role volume. Finally, the
+  internal sink allowlist knew the retired single `stream_v2` name but not the
+  fixed active/passive roles; it now admits exactly `stream_v2_active` and
+  `stream_v2_passive` while continuing to reject HTTPS, redirects and external
+  hosts. Targeted deployment/edge verification passed 22 tests with one
+  separately gated disposable-Redis integration skip. A new immutable candidate
+  must be built from the committed fix SHA before runtime certification resumes.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

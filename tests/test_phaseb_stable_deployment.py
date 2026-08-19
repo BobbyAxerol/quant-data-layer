@@ -208,6 +208,11 @@ class StableComposeAndBundleTests(unittest.TestCase):
         self.assertEqual(
             compose["x-kafka-env"]["KAFKA_DEFAULT_REPLICATION_FACTOR"], 3
         )
+        kafka_tmpfs = compose["x-kafka"]["tmpfs"]
+        self.assertEqual(kafka_tmpfs, ["/tmp:rw,nosuid,nodev,exec,size=32m"])
+        self.assertNotIn("noexec", kafka_tmpfs[0])
+        self.assertIn("stable_tls:/stable-certs:ro", services["projector_v2"]["volumes"])
+        self.assertNotIn("/certs:ro", " ".join(services["projector_v2"]["volumes"]))
         for name in (
             "query_v2_1", "query_v2_2", "stream_v2_active",
             "stream_v2_passive", "projector_v2",
@@ -244,10 +249,17 @@ class StableComposeAndBundleTests(unittest.TestCase):
                         python_image="qdl-python:test",
                         cert_dir=certs,
                         output_dir=output,
+                        host_cert_dir=Path("/host/qdl/certs"),
+                        host_output_dir=Path("/host/qdl/candidate"),
                     )
                 self.assertFalse(manifest["cutover_authorized"])
                 self.assertFalse(manifest["secret_values_recorded"])
                 self.assertEqual((output / "stable.env").stat().st_mode & 0o777, 0o600)
+                env_text = (output / "stable.env").read_text()
+                self.assertIn("QDL_STABLE_CERT_DIR=/host/qdl/certs", env_text)
+                self.assertIn(
+                    "QDL_STABLE_RUNTIME_DIR=/host/qdl/candidate/runtime", env_text
+                )
                 public_manifest = (output / "candidate-manifest.json").read_text()
                 self.assertNotIn("QDL_STABLE_INTERNAL_INGEST_SECRET", public_manifest)
                 self.assertTrue((output / "runtime/core.json").is_file())

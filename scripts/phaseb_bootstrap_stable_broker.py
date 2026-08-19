@@ -35,7 +35,7 @@ def compose(env_file: Path, *arguments: str) -> subprocess.CompletedProcess[str]
 def kafka(env_file: Path, executable: str, *arguments: str) -> str:
     result = compose(
         env_file,
-        "run", "--rm", "--no-deps", "--entrypoint", executable,
+        "run", "--rm", "--no-deps", "--entrypoint", f"/opt/kafka/bin/{executable}",
         "stable_admin",
         "--bootstrap-server", BOOTSTRAP,
         "--command-config", ADMIN_CONFIG,

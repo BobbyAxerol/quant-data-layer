@@ -7,7 +7,11 @@ import json
 import secrets
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
@@ -15,9 +19,6 @@ from qdl.runtime.stable_deployment import (
     stable_authority_record,
     write_stable_runtime_bundle,
 )
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def image_id(reference: str) -> str:
@@ -55,6 +56,10 @@ def prepare_candidate(
     python_image: str,
     cert_dir: Path,
     output_dir: Path,
+    rust_image_id: str | None = None,
+    python_image_id: str | None = None,
+    host_cert_dir: Path | None = None,
+    host_output_dir: Path | None = None,
 ) -> dict[str, object]:
     if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError("stable candidate output directory must be empty")
@@ -62,8 +67,11 @@ def prepare_candidate(
     runtime_dir = output_dir / "runtime"
     identities_dir = output_dir / "identities"
     identities_dir.mkdir()
-    rust_digest = image_id(rust_image)
-    python_digest = image_id(python_image)
+    rust_digest = rust_image_id or image_id(rust_image)
+    python_digest = python_image_id or image_id(python_image)
+    for value in (rust_digest, python_digest):
+        if not value.startswith("sha256:") or len(value) != 71:
+            raise ValueError("stable candidate image ID must be SHA-256")
     catalog = StableSourceCatalog.load(
         ROOT / "config/v2/stable-source-bindings.yaml"
     )
@@ -95,6 +103,8 @@ def prepare_candidate(
     ingest_secret = secrets.token_urlsafe(48)
     cursor_secret = secrets.token_urlsafe(48)
     jwt_secret = secrets.token_urlsafe(48)
+    compose_cert_dir = (host_cert_dir or cert_dir).resolve()
+    compose_output_dir = (host_output_dir or output_dir).resolve()
     values = {
         "QDL_STABLE_SCHEMA_DIGEST": schema_digest,
         "QDL_STABLE_INTERNAL_INGEST_SECRET": ingest_secret,
@@ -106,11 +116,15 @@ def prepare_candidate(
         ),
         "QDL_STABLE_PYTHON_IMAGE": python_digest,
         "QDL_STABLE_RUST_IMAGE": rust_digest,
-        "QDL_STABLE_CERT_DIR": str(cert_dir.resolve()),
-        "QDL_STABLE_PROJECTOR_CERT_DIR": str((identities_dir / "projector").resolve()),
-        "QDL_STABLE_CORE_CERT_DIR": str((identities_dir / "core").resolve()),
-        "QDL_STABLE_PRODUCER_CERT_DIR": str((identities_dir / "producer").resolve()),
-        "QDL_STABLE_RUNTIME_DIR": str(runtime_dir.resolve()),
+        "QDL_STABLE_CERT_DIR": str(compose_cert_dir),
+        "QDL_STABLE_PROJECTOR_CERT_DIR": str(
+            compose_output_dir / "identities/projector"
+        ),
+        "QDL_STABLE_CORE_CERT_DIR": str(compose_output_dir / "identities/core"),
+        "QDL_STABLE_PRODUCER_CERT_DIR": str(
+            compose_output_dir / "identities/producer"
+        ),
+        "QDL_STABLE_RUNTIME_DIR": str(compose_output_dir / "runtime"),
     }
     env_path = output_dir / "stable.env"
     env_path.write_text(
@@ -148,12 +162,20 @@ def main() -> int:
     parser.add_argument("--python-image", required=True)
     parser.add_argument("--cert-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--rust-image-id")
+    parser.add_argument("--python-image-id")
+    parser.add_argument("--host-cert-dir", type=Path)
+    parser.add_argument("--host-output-dir", type=Path)
     args = parser.parse_args()
     manifest = prepare_candidate(
         rust_image=args.rust_image,
         python_image=args.python_image,
         cert_dir=args.cert_dir,
         output_dir=args.output_dir,
+        rust_image_id=args.rust_image_id,
+        python_image_id=args.python_image_id,
+        host_cert_dir=args.host_cert_dir,
+        host_output_dir=args.host_output_dir,
     )
     print(json.dumps({
         "status": "PASS",

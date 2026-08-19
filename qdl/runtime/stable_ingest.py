@@ -34,9 +34,13 @@ def _internal_url(value: str) -> bool:
     try:
         return ipaddress.ip_address(parsed.hostname).is_loopback
     except ValueError:
-        return parsed.hostname in {"localhost", "stream_v2", "qdl-stable-stream"} or (
-            parsed.hostname.endswith(".internal")
-        )
+        return parsed.hostname in {
+            "localhost",
+            "stream_v2",
+            "stream_v2_active",
+            "stream_v2_passive",
+            "qdl-stable-stream",
+        } or parsed.hostname.endswith(".internal")
 
 
 def install_stable_canonical_ingest(

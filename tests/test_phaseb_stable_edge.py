@@ -632,6 +632,23 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             "QDL_STABLE_CURSOR_ACTIVE_KEY_ID": "stable-k1",
         }
 
+    def test_projector_sink_accepts_only_declared_internal_stream_roles(self):
+        secret = b"phase-b-stable-ingest-secret-32b"
+        client = object()
+        sink = StableHttpCanonicalSink(
+            ("http://stream_v2_active:8200", "http://stream_v2_passive:8200"),
+            secret, object(), client=client,
+        )
+        self.assertIs(sink.client, client)
+        with self.assertRaisesRegex(ValueError, "configuration is invalid"):
+            StableHttpCanonicalSink(
+                ("https://stream_v2_active:8200",), secret, object(), client=client
+            )
+        with self.assertRaisesRegex(ValueError, "configuration is invalid"):
+            StableHttpCanonicalSink(
+                ("http://external.example:8200",), secret, object(), client=client
+            )
+
     def test_query_role_is_isolated_and_projector_dependencies_fail_closed(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
