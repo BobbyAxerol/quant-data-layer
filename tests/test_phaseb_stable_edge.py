@@ -332,6 +332,46 @@ class StableQueryContractTests(unittest.TestCase):
                 self.assertEqual(item.quality.state, expected_state)
                 self.assertEqual(item.quality.execution_eligible, expected_state == "LIVE")
 
+    def test_query_reads_are_bounded_by_feed_and_requested_history(self):
+        trade = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-trade"
+        )
+        bar = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        trade_event = _stable_event(
+            self.catalog, "binance_usdm_trade.json", trade.binding_id
+        )
+        bar_event = _stable_event(
+            self.catalog, "binance_usdm_rest_bar.json", bar.binding_id
+        )
+        _append(self.spool, self.catalog, trade_event)
+        _append(self.spool, self.catalog, bar_event)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="e" * 64,
+            clock_ns=lambda: max(
+                trade_event.source_event_time_ns, bar_event.bar.close_time_ns
+            ) + 1_000_000,
+        )
+        observed_limits = []
+        read_tail = self.spool.read_tail
+
+        def tracked_read_tail(**kwargs):
+            observed_limits.append(kwargs["limit"])
+            return read_tail(**kwargs)
+
+        self.spool.read_tail = tracked_read_tail
+        self.assertIsNotNone(backend.latest(_requirement(trade)))
+        self.assertIsNotNone(backend.history(_requirement(trade, warmup=1)))
+        self.assertIsNotNone(backend.latest(_requirement(bar)))
+        self.assertEqual(observed_limits, [1, 1, 10_000])
+
     def test_latest_uses_newest_tail_after_partition_exceeds_query_window(self):
         binding = next(
             item

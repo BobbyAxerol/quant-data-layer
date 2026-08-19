@@ -4504,6 +4504,27 @@ by implication in Phase B implementation.
   the oldest page. The two transport/stable-edge suites passed 32 tests with one
   separately gated real-Redis skip. The immutable candidate must still prove the
   Binance execution QUOTE 2-second policy, lag, replay and failure recovery.
+- `2026-08-19 PHASE B B5 QUERY TAIL CORRECTNESS PASSED, READ
+  AMPLIFICATION FIX IN PROGRESS`: on the immutable `f120173` candidate, the
+  Binance USDM quote canonical partition exceeded 10,000 records and strict
+  2-second authenticated execution snapshots passed 20/20, proving newest-tail
+  correctness. But latest/status latency remained 729-1,115 ms (813 ms average)
+  because every request decoded the full 10,000-row tail. Feed-aware bounds will
+  read one event for TRADE/QUOTE latest/status, retain the bounded BAR continuity
+  window needed for missing-candle detection, and read only the requested history
+  window for warmup/replay snapshot creation. Public contracts, durability, gap
+  policy and replay cursor semantics remain unchanged. Unit call-bound tests and
+  immutable post-10k latency/freshness evidence are required.
+- `2026-08-19 PHASE B B5 QUERY READ AMPLIFICATION UNIT-VERIFIED,
+  IMMUTABLE LATENCY RETEST PENDING`: stable latest/status now reads one newest
+  event for TRADE/QUOTE; BAR latest retains the 10,000-event continuity window,
+  and history/snapshot reads exactly the requested warmup bound. A call-bound
+  test locks limits `1, 1, 10000` for trade latest, one-row history and bar latest
+  respectively. The transport/stable-edge suites now pass 33 tests with one
+  separately gated real-Redis skip, including the 10,001-record newest-tail
+  regression. The public API, freshness thresholds, gap policy and replay reads
+  were not changed. Immutable post-10k p95/p99 and strict snapshot evidence still
+  gates acceptance.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

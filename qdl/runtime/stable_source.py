@@ -112,15 +112,17 @@ class StableSpoolQueryBackend:
         self._clock_ns = clock_ns
 
     def latest(self, requirement: DataRequirement) -> MarketDataItem | None:
-        records = self._records(requirement)
+        records = self._records(
+            requirement, limit=10_000 if requirement.feed is FeedType.BAR else 1
+        )
         items = self._items(requirement, records)
         return items[-1] if items else None
 
     def history(self, requirement: DataRequirement) -> HistoryResult | None:
-        all_records = self._records(requirement)
+        requested = requirement.warmup_limit or 1
+        all_records = self._records(requirement, limit=requested)
         if not all_records:
             return None
-        requested = requirement.warmup_limit or 1
         binding = self.catalog.binding_for(requirement)
         gap_open = bool(self._gaps(binding, all_records))
         records = all_records[-requested:]
@@ -159,16 +161,17 @@ class StableSpoolQueryBackend:
         return tuple(sorted(gaps, key=lambda item: (item.detected_at_ns, item.gap_id)))
 
     def stored_events(self, requirement: DataRequirement) -> tuple[StoredEvent, ...]:
-        records = self._records(requirement)
         requested = requirement.warmup_limit or 1
-        return records[-requested:]
+        return self._records(requirement, limit=requested)
 
-    def _records(self, requirement: DataRequirement) -> tuple[StoredEvent, ...]:
+    def _records(
+        self, requirement: DataRequirement, *, limit: int
+    ) -> tuple[StoredEvent, ...]:
         binding = self.catalog.binding_for(requirement)
         rows = self.spool.read_tail(
             stream=binding.canonical_stream,
             partition_key=binding.partition_key,
-            limit=10_000,
+            limit=limit,
         )
         selected = []
         for row in rows:
