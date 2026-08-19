@@ -453,6 +453,34 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("trade:price:binance_usdm:BTCUSDT", target.latest)
         self.assertEqual(len(target.publications), 2)
 
+    async def test_cross_replica_raw_cache_wakes_waiting_canonical_on_idle_poll(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        raw_topic, canonical_topic, raw_record, canonical_record = _broker_records(
+            binding, raw, event
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        await engine.accept(canonical_record)
+        self.assertEqual(engine.stats.pending_canonical, 1)
+
+        # Simulate another projector replica durably storing/checkpointing raw.
+        self.spool.append(DurableEvent(
+            stream=raw_topic,
+            partition_key=raw_record.key,
+            event_id=raw_record.event_id,
+            payload=raw_record.payload,
+            accepted_at_ns=raw_record.accepted_at_ns,
+            headers={"kafka_partition": "1", "kafka_offset": "7"},
+        ))
+        processed = await engine.run_once(timeout_seconds=0.01)
+        self.assertFalse(processed)
+        self.assertEqual(engine.stats.pending_canonical, 0)
+        self.assertEqual(broker.checkpoints, [(canonical_topic, 0, 0)])
+        self.assertEqual(len(target.publications), 2)
+
     async def test_checkpoint_failure_replays_idempotently_without_duplicate_publication(self):
         binding, raw, event = _stable_pair(
             self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"

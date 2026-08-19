@@ -4192,6 +4192,43 @@ by implication in Phase B implementation.
   in Slice B2. The source was mounted read-only with a tmpfs log path. No V1
   service, authority, consumer route, Redis state or provider connection was
   changed, and no disposable file/container remained.
+- `2026-08-19 PHASE B SLICE B4 STARTED`: build the isolated stable deployment
+  manifest and immutable runtime configuration around the committed B1-B3
+  contracts. Broker topology reuses the certified RF3/minISR2 mTLS/ACL
+  substrate; Rust native acquisition and transactional canonical core consume
+  deterministic stable catalog identities; Python query, active/passive stream
+  and projector remain provider-free outer roles. Native channel mapping is a
+  separate, strictly validated acquisition contract and cannot redefine
+  instrument identity or canonical semantics. All names, ports, topics,
+  credentials, volumes, Redis prefixes and consumer groups are isolated.
+  Readiness must expose Kafka, dedicated Redis, cache, lease, catalog and
+  manifest dependencies. Deployment/certification may create only disposable
+  `qdl_v2_stable_candidate` resources; current V1 port `8100`, Redis and
+  consumers remain outside the topology and production cutover is not approved.
+- `2026-08-19 PHASE B SLICE B4 COMPLETE`: added the self-contained isolated
+  stable topology, deterministic acquisition-to-core deployment contract,
+  immutable image-ID candidate bundle generator and idempotent RF3/minISR2
+  TLS/ACL broker bootstrap. Sixteen catalog bindings map one-to-one across
+  Rust-native Binance/OKX, Python latest-closed Binance BAR and Python DNSE
+  SDK/REST acquisition; only Rust creates canonical semantics. Python roles are
+  non-root/read-only/bounded, state volume ownership has an isolated preflight,
+  query has two replicas, stream is active/passive, projector health is
+  dependency-derived and V1/current Redis names are absent.
+- `2026-08-19 PHASE B B4 DEFECTS CLOSED`: stable Redis quota namespaces were
+  incorrectly rejected by the beta-only prefix guard and are now admitted only
+  under explicit `qdl:stable:v2:` isolation. Multi-replica projector recovery
+  could also stall when one replica persisted raw while another held canonical;
+  bounded idle polling now rechecks the shared cache without advancing Kafka
+  before downstream ACK. DNSE acquisition never evicts queue entries: pressure
+  or Kafka ACK failure fences the source for supervised recovery.
+- `2026-08-19 PHASE B SLICE B4 VERIFICATION`: 34 isolated acquisition,
+  identity, authority, topology, failure, V1/V2 edge and release contract tests
+  passed with one separately-certified Redis integration skip. Docker Compose
+  rendered successfully with required secrets supplied only as disposable
+  validation values. Tests covered one-to-one source mapping, deterministic
+  bundle hashes, no secret disclosure, closed-BAR dedup, zero-volume VN BAR,
+  queue-pressure fencing, cross-replica wake-up and rejection of primary/public
+  authority. No runtime was deployed and no disposable resource remained.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

@@ -12,6 +12,8 @@ import yaml
 import qdl_sdk
 from qdl.consumer.stable import StableConsumerMigrationPlan
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.security import RedisMinuteQuota
+from qdl.transport.kafka_projector import ConfluentProjectorBroker, KafkaProjectorConfig
 from scripts.generate_phase5_openapi import build_openapi
 
 
@@ -106,6 +108,53 @@ class StableConsumerMigrationContractTests(unittest.TestCase):
             {value for key, value in policies.items() if key != "trading-system.paper.stable"},
             {"FORBIDDEN"},
         )
+
+
+class StableRuntimeDependencyTests(unittest.TestCase):
+    def test_stable_quota_namespace_is_isolated_and_current_namespace_is_rejected(self):
+        quota = RedisMinuteQuota(object(), prefix="qdl:stable:v2:paper:phaseb")
+        self.assertEqual(quota.prefix, "qdl:stable:v2:paper:phaseb")
+        with self.assertRaisesRegex(ValueError, "dedicated beta or stable"):
+            RedisMinuteQuota(object(), prefix="qdl:v2:current")
+
+    def test_projector_kafka_readiness_uses_bounded_metadata_probe(self):
+        class FakeConsumer:
+            def __init__(self, config):
+                self.config = config
+                self.closed = False
+
+            def subscribe(self, topics, **_callbacks):
+                self.topics = tuple(topics)
+
+            def list_topics(self, *, timeout):
+                self.timeout = timeout
+                return {"cluster": "stable"}
+
+            def close(self):
+                self.closed = True
+
+        with tempfile.TemporaryDirectory(prefix="qdl-phaseb-kafka-") as directory:
+            root = Path(directory)
+            for name in ("ca.crt", "client.crt", "client.key"):
+                (root / name).write_text("test-only", encoding="ascii")
+            broker = ConfluentProjectorBroker(
+                KafkaProjectorConfig(
+                    bootstrap_servers="kafka1:9092",
+                    client_id="stable-projector",
+                    group_id="stable-projector-v1",
+                    raw_topics=("md.raw.stable.v1",),
+                    canonical_topic="md.canonical.stable.v2",
+                    ca_path=root / "ca.crt",
+                    certificate_path=root / "client.crt",
+                    key_path=root / "client.key",
+                ),
+                consumer_factory=FakeConsumer,
+            )
+            self.assertTrue(broker.ping(0.25))
+            self.assertFalse(broker._consumer.config["enable.auto.commit"])
+            self.assertEqual(broker._consumer.config["isolation.level"], "read_committed")
+            broker.close()
+            self.assertFalse(broker.ping())
 
 
 class StableReleaseVersionContractTests(unittest.TestCase):

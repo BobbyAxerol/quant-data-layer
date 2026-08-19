@@ -143,6 +143,14 @@ class ConfluentProjectorBroker:
             assignment_epoch=self._assignment_epoch,
         )
 
+    def ping(self, timeout_seconds: float = 1.0) -> bool:
+        if self._closed:
+            return False
+        if timeout_seconds <= 0:
+            raise ValueError("Kafka metadata timeout must be positive")
+        metadata = self._consumer.list_topics(timeout=timeout_seconds)
+        return metadata is not None
+
     def checkpoint(self, record: KafkaProjectorRecord) -> None:
         if record.assignment_epoch != self._assignment_epoch:
             raise RuntimeError("Kafka assignment changed before stable checkpoint")

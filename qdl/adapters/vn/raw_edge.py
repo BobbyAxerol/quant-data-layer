@@ -107,3 +107,67 @@ def build_dnse_trade_raw_envelope(
         capture_boundary=raw_provider_pb2.CAPTURE_BOUNDARY_SDK_DELIVERY,
         test_provenance=test_provenance,
     )
+
+
+def build_dnse_bar_raw_envelope(
+    row: Mapping[str, Any],
+    binding: VnRawBinding,
+    *,
+    received_at_ns: int,
+    interval: str = "1m",
+    test_provenance: bool = False,
+) -> raw_provider_pb2.RawProviderEnvelope:
+    if interval != "1m":
+        raise ValueError("stable DNSE BAR edge currently supports native 1m only")
+    try:
+        open_time_ms = int(row["t"]) * 1000
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("DNSE BAR timestamp is invalid") from error
+    if open_time_ms <= 0:
+        raise ValueError("DNSE BAR timestamp must be positive")
+    values = {}
+    for field in ("o", "h", "l", "c"):
+        values[field] = _decimal_text(row.get(field), field)
+    try:
+        volume = Decimal(str(row.get("v")))
+    except (InvalidOperation, ValueError, TypeError) as error:
+        raise ValueError("DNSE BAR volume is invalid") from error
+    if not volume.is_finite() or volume < 0:
+        raise ValueError("DNSE BAR volume must be non-negative")
+    raw = {
+        "symbol": binding.native_symbol.upper(),
+        "interval": interval,
+        "open_time_ms": open_time_ms,
+        "close_time_ms": open_time_ms + 59_999,
+        **values,
+        "v": format(volume, "f"),
+        "is_final": True,
+        "revision": 0,
+        "trade_count_available": False,
+    }
+    raw_bytes = json.dumps(
+        raw, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode()
+    return capture_exact_frame(
+        provider="DNSE_DIRECT",
+        venue=binding.venue,
+        market=binding.market,
+        product_type=binding.product_type,
+        native_symbol=binding.native_symbol,
+        native_channel="ohlcv/1m",
+        subscription_id=binding.subscription_id,
+        source_session_id=binding.source_session_id,
+        connection_generation=binding.connection_generation,
+        lease_epoch=binding.lease_epoch,
+        authority_revision=binding.authority_revision,
+        partition_plan_epoch=binding.partition_plan_epoch,
+        received_at_ns=received_at_ns,
+        raw_frame_bytes=raw_bytes,
+        adapter_version=binding.adapter_version,
+        config_revision=binding.config_revision,
+        instrument_catalog_revision=binding.instrument_catalog_revision,
+        correlation_id=f"dnse:{binding.native_symbol}:1m:{open_time_ms}",
+        transport_protocol=raw_provider_pb2.TRANSPORT_PROTOCOL_HTTP,
+        capture_boundary=raw_provider_pb2.CAPTURE_BOUNDARY_POST_DECOMPRESSION,
+        test_provenance=test_provenance,
+    )

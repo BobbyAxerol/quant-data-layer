@@ -1,0 +1,342 @@
+name: qdl_v2_stable_candidate
+
+x-kafka-env: &kafka-env
+  CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+  KAFKA_PROCESS_ROLES: broker,controller
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_INTER_BROKER_LISTENER_NAME: SSL
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:SSL,SSL:SSL
+  KAFKA_LISTENERS: CONTROLLER://:9093,SSL://:9092
+  KAFKA_SSL_CLIENT_AUTH: required
+  KAFKA_SSL_TRUSTSTORE_FILENAME: truststore.jks
+  KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore.password
+  KAFKA_SSL_KEY_CREDENTIALS: key.password
+  KAFKA_SSL_KEYSTORE_CREDENTIALS: store.password
+  KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+  KAFKA_SSL_TRUSTSTORE_TYPE: JKS
+  KAFKA_SSL_ENABLED_PROTOCOLS: TLSv1.3,TLSv1.2
+  KAFKA_SSL_PROTOCOL: TLSv1.3
+  KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: HTTPS
+  KAFKA_SSL_PRINCIPAL_MAPPING_RULES: RULE:^CN=([^,]+).*$$/$$1/,DEFAULT
+  KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+  KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+  KAFKA_SUPER_USERS: User:phase8-admin;User:kafka1;User:kafka2;User:kafka3
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
+  KAFKA_NUM_PARTITIONS: 6
+  KAFKA_LOG_RETENTION_MS: 86400000
+  KAFKA_LOG_SEGMENT_BYTES: 16777216
+  KAFKA_LOG_DIRS: /var/lib/kafka/data
+  KAFKA_HEAP_OPTS: -Xms256m -Xmx256m
+
+x-kafka: &kafka
+  image: apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9
+  restart: "no"
+  read_only: true
+  security_opt: [no-new-privileges:true]
+  networks: [stable_internal]
+  tmpfs: [/tmp:rw,nosuid,nodev,noexec,size=32m]
+  healthcheck:
+    test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/9092'"]
+    interval: 5s
+    timeout: 5s
+    retries: 36
+    start_period: 20s
+  mem_limit: 512m
+  cpus: 0.75
+
+x-stable-env: &stable-env
+  QDL_ENVIRONMENT: paper
+  QDL_CONFIG_REVISION: phase-b-stable-1
+  QDL_STABLE_AUTHORITY_MODE: RUST_SHADOW
+  QDL_STABLE_AUTHORITY_REVISION: "1"
+  QDL_STABLE_SCHEMA_DIGEST: ${QDL_STABLE_SCHEMA_DIGEST:?set QDL_STABLE_SCHEMA_DIGEST}
+  QDL_STABLE_STATE_DIR: /var/lib/qdl-stable/runtime
+  QDL_STABLE_DURABLE_STATE_DIR: /var/lib/qdl-stable/shared
+  QDL_STABLE_SOURCE_BINDINGS: /app/config/v2/stable-source-bindings.yaml
+  QDL_STABLE_CONSUMER_MANIFESTS: /app/consumers/stable/monitoring-multivenue.yaml:/app/consumers/stable/alpha-binance-paper.yaml:/app/consumers/stable/alpha-okx-paper.yaml:/app/consumers/stable/alpha-vn-paper.yaml:/app/consumers/stable/trading-system-paper.yaml
+  QDL_STABLE_INTERNAL_INGEST_SECRET: ${QDL_STABLE_INTERNAL_INGEST_SECRET:?set QDL_STABLE_INTERNAL_INGEST_SECRET}
+  QDL_STABLE_REDIS_URL: redis://stable_redis:6379/0
+  QDL_STABLE_REDIS_PREFIX: qdl:stable:v2:paper:candidate
+  QDL_STABLE_CURSOR_KEYS_JSON: ${QDL_STABLE_CURSOR_KEYS_JSON:?set QDL_STABLE_CURSOR_KEYS_JSON}
+  QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
+  QDL_STABLE_CURSOR_TTL_SECONDS: "3600"
+  QDL_STABLE_MAX_REQUEST_BYTES: "1048576"
+  QDL_STABLE_MAX_CONCURRENT_REQUESTS: "200"
+  QDL_STABLE_MAX_CONCURRENT_RPCS: "200"
+  QDL_STABLE_MAX_STREAMS: "1000"
+  QDL_STABLE_MAX_BUFFER_EVENTS: "2000"
+  QDL_STABLE_MAX_REPLAY_EVENTS: "5000"
+  QDL_STABLE_LEASE_SHARD_ID: stable-stream-v2
+  QDL_STABLE_LEASE_TTL_SECONDS: "15"
+  QDL_STABLE_LEASE_RENEW_SECONDS: "5"
+  QDL_DATA_JWT_KEYS_JSON: ${QDL_STABLE_JWT_KEYS_JSON:?set QDL_STABLE_JWT_KEYS_JSON}
+  QDL_DATA_JWT_ISSUER: https://identity.qdl.stable.internal
+  QDL_DATA_JWT_AUDIENCE: qdl-v2-stable
+  QDL_DATA_JWT_ALGORITHMS: HS256
+  QDL_DATA_JWT_MAX_LIFETIME_SECONDS: "900"
+
+x-python: &python
+  image: ${QDL_STABLE_PYTHON_IMAGE:?set immutable QDL_STABLE_PYTHON_IMAGE}
+  user: "10001:10001"
+  restart: "no"
+  read_only: true
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  networks: [stable_internal]
+  tmpfs: [/tmp:rw,nosuid,nodev,noexec,size=64m]
+  volumes: [stable_state:/var/lib/qdl-stable]
+  environment: {<<: *stable-env}
+  mem_limit: 512m
+  cpus: 0.75
+
+x-rust: &rust
+  image: ${QDL_STABLE_RUST_IMAGE:?set immutable QDL_STABLE_RUST_IMAGE}
+  user: "10001:10001"
+  restart: "no"
+  read_only: true
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  networks: [stable_internal]
+  tmpfs: [/tmp:rw,nosuid,nodev,noexec,size=32m]
+  mem_limit: 256m
+  cpus: 0.75
+
+x-rust-env: &rust-env
+  QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+  QDL_KAFKA_CERT_ROOT: /certs
+  QDL_KAFKA_REQUEST_TIMEOUT_SECONDS: "30"
+
+services:
+  kafka1:
+    <<: *kafka
+    hostname: kafka1
+    environment: {<<: *kafka-env, KAFKA_NODE_ID: 1, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka1:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka1.keystore.p12}
+    volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka1_data:/var/lib/kafka/data]
+  kafka2:
+    <<: *kafka
+    hostname: kafka2
+    environment: {<<: *kafka-env, KAFKA_NODE_ID: 2, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka2:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka2.keystore.p12}
+    volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka2_data:/var/lib/kafka/data]
+  kafka3:
+    <<: *kafka
+    hostname: kafka3
+    environment: {<<: *kafka-env, KAFKA_NODE_ID: 3, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka3:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka3.keystore.p12}
+    volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka3_data:/var/lib/kafka/data]
+
+  stable_redis:
+    image: redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8
+    command: [redis-server, --appendonly, "no", --save, "", --maxmemory, 128mb, --maxmemory-policy, noeviction]
+    restart: "no"
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [stable_internal]
+    tmpfs: [/data:rw,nosuid,nodev,noexec,size=160m]
+    healthcheck: {test: [CMD, redis-cli, ping], interval: 2s, timeout: 2s, retries: 30}
+    mem_limit: 160m
+    cpus: 0.25
+
+  stable_admin:
+    image: apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9
+    profiles: [stable-admin]
+    entrypoint: [/bin/true]
+    restart: "no"
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    networks: [stable_internal]
+    volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro"]
+
+  stable_state_init:
+    image: ${QDL_STABLE_PYTHON_IMAGE:?set immutable QDL_STABLE_PYTHON_IMAGE}
+    user: "0:0"
+    command: [sh, -c, "install -d -o 10001 -g 10001 -m 0750 /var/lib/qdl-stable/runtime /var/lib/qdl-stable/shared"]
+    restart: "no"
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    networks: [stable_internal]
+    volumes: [stable_state:/var/lib/qdl-stable]
+
+  query_v2_1:
+    <<: *python
+    command: [uvicorn, app.entrypoints.query_v2_stable:app, --host, 0.0.0.0, --port, "8200", --no-access-log]
+    ports: ["127.0.0.1:18201:8200"]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-query-1
+      QDL_STABLE_CONSUMER_GROUP: stable-query-1
+      QDL_STABLE_HTTP_PORT: "8200"
+      QDL_STABLE_GRPC_PORT: "8210"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-1-audit.jsonl
+    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}}
+    healthcheck: {test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/health/ready', timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
+
+  query_v2_2:
+    <<: *python
+    command: [uvicorn, app.entrypoints.query_v2_stable:app, --host, 0.0.0.0, --port, "8200", --no-access-log]
+    ports: ["127.0.0.1:18202:8200"]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-query-2
+      QDL_STABLE_CONSUMER_GROUP: stable-query-2
+      QDL_STABLE_HTTP_PORT: "8200"
+      QDL_STABLE_GRPC_PORT: "8210"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-2-audit.jsonl
+    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}}
+
+  stream_v2_active:
+    <<: *python
+    command: [python, -m, app.entrypoints.stream_v2_stable]
+    ports: ["127.0.0.1:18210:8200", "127.0.0.1:18220:8210"]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-stream-active
+      QDL_STABLE_CONSUMER_GROUP: stable-stream-active
+      QDL_STABLE_HTTP_PORT: "8200"
+      QDL_STABLE_GRPC_PORT: "8210"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-stream-active-audit.jsonl
+    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}}
+
+  stream_v2_passive:
+    <<: *python
+    command: [python, -m, app.entrypoints.stream_v2_stable]
+    ports: ["127.0.0.1:18211:8200", "127.0.0.1:18221:8210"]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-stream-passive
+      QDL_STABLE_CONSUMER_GROUP: stable-stream-passive
+      QDL_STABLE_HTTP_PORT: "8200"
+      QDL_STABLE_GRPC_PORT: "8210"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-stream-passive-audit.jsonl
+    depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}}
+
+  projector_v2:
+    <<: *python
+    command: [python, -m, app.entrypoints.projector_v2_stable]
+    ports: ["127.0.0.1:18230:8230"]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-projector-1
+      QDL_STABLE_CONSUMER_GROUP: stable-projector-v1
+      QDL_STABLE_HTTP_PORT: "8230"
+      QDL_STABLE_GRPC_PORT: "8231"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-1-audit.jsonl
+      QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-1
+      QDL_STABLE_KAFKA_RAW_TOPICS: md.raw.stable.v1
+      QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
+      QDL_STABLE_KAFKA_CERT_ROOT: /certs
+      QDL_STABLE_STREAM_INGEST_URLS_JSON: '["http://stream_v2_active:8200","http://stream_v2_passive:8200"]'
+    volumes: [stable_state:/var/lib/qdl-stable, "${QDL_STABLE_PROJECTOR_CERT_DIR:?set QDL_STABLE_PROJECTOR_CERT_DIR}:/certs:ro"]
+    depends_on:
+      stable_state_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+      stable_redis: {condition: service_healthy}
+      stream_v2_active: {condition: service_started}
+      stream_v2_passive: {condition: service_started}
+
+  rust_core:
+    <<: *rust
+    entrypoint: [/usr/local/bin/qdl-realtime-core]
+    command: [/runtime/core.json]
+    environment: {<<: *rust-env, QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core, QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1}
+    volumes: ["${QDL_STABLE_CORE_CERT_DIR:?set QDL_STABLE_CORE_CERT_DIR}:/certs:ro", "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core.json:/runtime/core.json:ro"]
+    depends_on:
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+
+  ingestor_binance_usdm:
+    <<: *rust
+    entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
+    command: [/runtime/config.json]
+    networks: [stable_internal, stable_egress]
+    environment: {<<: *rust-env, QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer, QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer}
+    volumes: ["${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro", "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-binance-usdm.json:/runtime/config.json:ro"]
+  ingestor_binance_spot:
+    <<: *rust
+    entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
+    command: [/runtime/config.json]
+    networks: [stable_internal, stable_egress]
+    environment: {<<: *rust-env, QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer, QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer}
+    volumes: ["${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro", "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-binance-spot.json:/runtime/config.json:ro"]
+  ingestor_okx_swap:
+    <<: *rust
+    entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
+    command: [/runtime/config.json]
+    networks: [stable_internal, stable_egress]
+    environment: {<<: *rust-env, QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer, QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer}
+    volumes: ["${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro", "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-okx-swap.json:/runtime/config.json:ro"]
+  ingestor_okx_spot:
+    <<: *rust
+    entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
+    command: [/runtime/config.json]
+    networks: [stable_internal, stable_egress]
+    environment: {<<: *rust-env, QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer, QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer}
+    volumes: ["${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro", "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/ingestor-okx-spot.json:/runtime/config.json:ro"]
+
+  binance_bar_edge:
+    <<: *python
+    command: [python, -m, app.entrypoints.binance_bar_v2_stable]
+    networks: [stable_internal, stable_egress]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-binance-bar-edge
+      QDL_STABLE_CONSUMER_GROUP: stable-binance-bar-edge
+      QDL_STABLE_ACQUISITION_BINDINGS: /app/config/v2/stable-acquisition-bindings.yaml
+      QDL_STABLE_RUNTIME_DIR: /runtime
+      QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KAFKA_CERT_ROOT: /certs
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-binance-bars
+    volumes:
+      - ${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    depends_on:
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+
+  vn_edge_v2:
+    <<: *python
+    profiles: [stable-vn]
+    command: [python, -m, app.entrypoints.vn_edge_v2_stable]
+    networks: [stable_internal, stable_egress]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-vn-edge
+      QDL_STABLE_CONSUMER_GROUP: stable-vn-edge
+      QDL_STABLE_ACQUISITION_BINDINGS: /app/config/v2/stable-acquisition-bindings.yaml
+      QDL_STABLE_RUNTIME_DIR: /runtime
+      QDL_STABLE_DNSE_QUEUE_CAPACITY: "5000"
+      QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KAFKA_CERT_ROOT: /certs
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-vn
+      DNSE_API_KEY: ${DNSE_API_KEY:-}
+      DNSE_API_SECRET_KEY: ${DNSE_API_SECRET_KEY:-}
+      DNSE_WS_BASE: ${DNSE_WS_BASE:-wss://ws-openapi.dnse.com.vn}
+    volumes:
+      - ${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    depends_on:
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+
+networks:
+  stable_internal: {internal: true, labels: {qdl.scope: v2-stable-candidate}}
+  stable_egress: {labels: {qdl.scope: v2-stable-candidate-egress}}
+volumes:
+  kafka1_data: {labels: {qdl.scope: v2-stable-candidate}}
+  kafka2_data: {labels: {qdl.scope: v2-stable-candidate}}
+  kafka3_data: {labels: {qdl.scope: v2-stable-candidate}}
+  stable_state: {labels: {qdl.scope: v2-stable-candidate}}

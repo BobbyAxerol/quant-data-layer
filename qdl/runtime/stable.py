@@ -505,6 +505,7 @@ async def serve_stable_stream() -> None:
 async def serve_stable_projector() -> None:
     config = StableRuntimeConfig.from_environment("projector_v2")
     config.state_dir.mkdir(parents=True, exist_ok=True)
+    manifests = load_stable_manifests(config)
     spool = build_stable_spool(config)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
     assert config.kafka_cert_root is not None
@@ -522,6 +523,9 @@ async def serve_stable_projector() -> None:
         key_path=config.kafka_cert_root / "client.key",
     ))
     redis_client = redis.Redis.from_url(config.redis_url)
+    quota = RedisMinuteQuota.from_url(
+        config.redis_url, prefix=f"{config.redis_prefix}:projector"
+    )
     sink = StableHttpCanonicalSink(
         config.stream_ingest_urls, config.internal_ingest_secret, spool
     )
@@ -539,11 +543,61 @@ async def serve_stable_projector() -> None:
         max_pending_records=config.max_pending_records,
         max_pending_bytes=config.max_pending_bytes,
     )
+
+    async def kafka_probe() -> ComponentReadiness:
+        available = await asyncio.to_thread(broker.ping, 1.0)
+        if not available:
+            return ComponentReadiness(
+                "kafka_read_committed",
+                ComponentState.NOT_READY,
+                detail="stable Kafka metadata unavailable",
+                checked_at_ns=time.time_ns(),
+            )
+        return _ready(
+            "kafka_read_committed",
+            detail="read_committed/manual-checkpoint consumer reachable",
+        )
+
+    readiness = stable_readiness(
+        config,
+        manifests,
+        spool,
+        quota=quota,
+        extra_probes=(
+            CallableReadinessProbe("kafka_read_committed", kafka_probe),
+            CallableReadinessProbe("instrument_catalog", lambda: _ready(
+                "instrument_catalog",
+                detail=f"bindings={len(catalog.bindings)}",
+                revision=str(catalog.catalog_revision),
+            )),
+        ),
+    )
+    app = FastAPI(
+        title="Quant Data Layer V2 Stable Projector Health",
+        version="2.0.0",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    install_stable_health(app, readiness, config.public_manifest())
+    server = uvicorn.Server(uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=config.http_port,
+        log_level="info",
+        access_log=False,
+    ))
+    health_task = asyncio.create_task(server.serve())
     try:
-        while True:
+        while not health_task.done():
             await engine.run_once(timeout_seconds=1.0)
+        await health_task
     finally:
+        server.should_exit = True
+        if not health_task.done():
+            await health_task
         await sink.close()
         await asyncio.to_thread(broker.close)
         await asyncio.to_thread(redis_client.close)
+        await asyncio.to_thread(quota.close)
         await asyncio.to_thread(spool.close)

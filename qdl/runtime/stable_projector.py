@@ -118,6 +118,11 @@ class StableProjectorEngine:
     async def run_once(self, timeout_seconds: float = 1.0) -> bool:
         record = await asyncio.to_thread(self.broker.poll, timeout_seconds)
         if record is None:
+            # Another projector replica may have persisted the correlated raw
+            # envelope into the shared cache. Retry bounded local partitions so
+            # cross-replica raw/canonical ordering cannot stall indefinitely.
+            for partition in tuple(self._queues):
+                await self._drain(partition)
             return False
         await self.accept(record)
         return True

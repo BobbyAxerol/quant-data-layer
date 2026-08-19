@@ -120,8 +120,10 @@ class RedisMinuteQuota:
 
     def __init__(self, redis: Redis, *, prefix: str) -> None:
         normalized = prefix.strip(": ")
-        if not normalized.startswith("qdl:beta:v2:"):
-            raise ValueError("shared quota requires a dedicated beta Redis prefix")
+        if not normalized.startswith(("qdl:beta:v2:", "qdl:stable:v2:")):
+            raise ValueError(
+                "shared quota requires a dedicated beta or stable Redis prefix"
+            )
         self.redis = redis
         self.prefix = normalized
 

@@ -1,0 +1,330 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping
+from urllib.parse import urlsplit
+
+import yaml
+
+from qdl.query import FeedType
+from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
+
+
+_MODES = frozenset({"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
+_SEQUENCE_POLICIES = frozenset({"NONE", "MONOTONIC", "CONTIGUOUS"})
+_PROVIDER_KINDS = {
+    ("BINANCE", "TRADE"): frozenset({"binance_usdm_trade", "binance_spot_trade"}),
+    ("BINANCE", "QUOTE"): frozenset({"binance_usdm_bbo", "binance_spot_bbo"}),
+    ("BINANCE", "BAR"): frozenset({"binance_usdm_rest_bar", "binance_spot_rest_bar"}),
+    ("OKX", "TRADE"): frozenset({"okx_trade"}),
+    ("OKX", "QUOTE"): frozenset({"okx_bbo"}),
+    ("OKX", "BAR"): frozenset({"okx_bar"}),
+    ("HNX", "TRADE"): frozenset({"dnse_trade"}),
+    ("HNX", "BAR"): frozenset({"dnse_bar"}),
+    ("HOSE", "TRADE"): frozenset({"dnse_trade"}),
+    ("HOSE", "BAR"): frozenset({"dnse_bar"}),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class StableAcquisitionBinding:
+    binding_id: str
+    mode: str
+    runtime: str
+    provider_kind: str
+    native_channel: str
+    sequence_policy: str
+    websocket_url: str | None
+    business_websocket_url: str | None
+
+    def validate(self, source: StableSourceBinding) -> None:
+        if (
+            not self.binding_id
+            or self.mode not in _MODES
+            or not self.runtime
+            or not self.provider_kind
+            or not self.native_channel
+            or self.sequence_policy not in _SEQUENCE_POLICIES
+        ):
+            raise ValueError("stable acquisition binding is incomplete or unsupported")
+        allowed = _PROVIDER_KINDS.get(
+            (source.instrument.identity.venue, source.feed.value), frozenset()
+        )
+        if self.provider_kind not in allowed:
+            raise ValueError("stable acquisition provider kind differs from catalog feed")
+        if self.mode == "RUST_NATIVE":
+            if self.runtime not in {"BINANCE", "OKX"}:
+                raise ValueError("Rust native acquisition supports Binance/OKX only")
+            if self.runtime != source.instrument.identity.venue:
+                raise ValueError("Rust runtime differs from stable venue")
+            self._require_wss(self.websocket_url)
+            if self.runtime == "OKX":
+                self._require_wss(self.business_websocket_url)
+        elif self.mode == "PYTHON_REST":
+            if source.feed is not FeedType.BAR or self.websocket_url is not None:
+                raise ValueError("Python REST acquisition is reserved for BAR without WebSocket")
+        elif (
+            source.instrument.identity.venue not in {"HNX", "HOSE"}
+            or self.runtime != "DNSE"
+            or self.websocket_url is not None
+        ):
+            raise ValueError("Python vendor SDK acquisition is reserved for VN sources")
+
+    @staticmethod
+    def _require_wss(value: str | None) -> None:
+        parsed = urlsplit(value or "")
+        if parsed.scheme != "wss" or not parsed.hostname:
+            raise ValueError("stable native WebSocket URL must use wss")
+
+
+@dataclass(frozen=True, slots=True)
+class StableAcquisitionPlan:
+    schema: str
+    revision: int
+    raw_topic: str
+    canonical_topic: str
+    quarantine_topic: str
+    bindings: tuple[StableAcquisitionBinding, ...]
+
+    def __post_init__(self) -> None:
+        if self.schema != "qdl.v2.stable-acquisition-bindings.v1" or self.revision < 1:
+            raise ValueError("unsupported stable acquisition schema/revision")
+        topics = (self.raw_topic, self.canonical_topic, self.quarantine_topic)
+        if any(not value for value in topics) or len(set(topics)) != 3:
+            raise ValueError("stable acquisition topics must be non-empty and unique")
+        identities = [item.binding_id for item in self.bindings]
+        if not identities or len(identities) != len(set(identities)):
+            raise ValueError("stable acquisition binding IDs must be non-empty and unique")
+
+    @classmethod
+    def load(
+        cls, path: str | Path, *, catalog: StableSourceCatalog
+    ) -> "StableAcquisitionPlan":
+        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or set(payload) != {
+            "schema", "revision", "topics", "bindings",
+        }:
+            raise ValueError("stable acquisition plan fields are incomplete or unknown")
+        topics = payload["topics"]
+        values = payload["bindings"]
+        if not isinstance(topics, dict) or set(topics) != {
+            "raw", "canonical", "quarantine",
+        }:
+            raise ValueError("stable acquisition topics are incomplete or unknown")
+        if not isinstance(values, list) or not 1 <= len(values) <= 100_000:
+            raise ValueError("stable acquisition requires 1..100000 bindings")
+        bindings = []
+        for value in values:
+            if not isinstance(value, dict) or set(value) != {
+                "binding_id", "mode", "runtime", "provider_kind", "native_channel",
+                "sequence_policy", "websocket_url", "business_websocket_url",
+            }:
+                raise ValueError("stable acquisition binding fields are incomplete or unknown")
+            bindings.append(StableAcquisitionBinding(
+                binding_id=str(value["binding_id"]),
+                mode=str(value["mode"]).upper(),
+                runtime=str(value["runtime"]).upper(),
+                provider_kind=str(value["provider_kind"]),
+                native_channel=str(value["native_channel"]),
+                sequence_policy=str(value["sequence_policy"]).upper(),
+                websocket_url=(
+                    str(value["websocket_url"]) if value["websocket_url"] is not None else None
+                ),
+                business_websocket_url=(
+                    str(value["business_websocket_url"])
+                    if value["business_websocket_url"] is not None else None
+                ),
+            ))
+        result = cls(
+            schema=str(payload["schema"]),
+            revision=int(payload["revision"]),
+            raw_topic=str(topics["raw"]),
+            canonical_topic=str(topics["canonical"]),
+            quarantine_topic=str(topics["quarantine"]),
+            bindings=tuple(bindings),
+        )
+        source_by_id = {item.binding_id: item for item in catalog.bindings}
+        if set(source_by_id) != {item.binding_id for item in result.bindings}:
+            raise ValueError("stable acquisition and source catalog binding sets differ")
+        for item in result.bindings:
+            item.validate(source_by_id[item.binding_id])
+        if result.canonical_topic != catalog.canonical_stream:
+            raise ValueError("stable acquisition canonical topic differs from catalog")
+        return result
+
+    def core_config(
+        self,
+        *,
+        catalog: StableSourceCatalog,
+        authority: Mapping[str, Any],
+        max_events: int = 0,
+    ) -> dict[str, Any]:
+        self._validate_authority(authority)
+        source_by_id = {item.binding_id: item for item in catalog.bindings}
+        acquisitions = {item.binding_id: item for item in self.bindings}
+        bindings = []
+        for binding_id in sorted(source_by_id):
+            source = source_by_id[binding_id]
+            acquisition = acquisitions[binding_id]
+            identity = source.instrument.identity
+            bindings.append({
+                "provider": source.provider,
+                "venue": identity.venue,
+                "market": identity.market,
+                "product_type": identity.product_type.value,
+                "native_symbol": source.instrument.native_symbol,
+                "native_channel": acquisition.native_channel,
+                "provider_kind": acquisition.provider_kind,
+                "instrument_uid": source.instrument.instrument_uid,
+                "instrument_id": source.instrument.instrument_id,
+                "instrument_revision": source.instrument.metadata_revision,
+                "instrument_catalog_revision": catalog.catalog_revision,
+                "source_id": source.source_id,
+                "source_role": source.source_role,
+                "normalizer_version": source.normalizer_version,
+                "sequence_policy": acquisition.sequence_policy,
+            })
+        return {
+            "core": {
+                "canonical_stream": self.canonical_topic,
+                "quarantine_stream": self.quarantine_topic,
+                "allow_test_provenance": False,
+                "dedup_capacity": 1_000_000,
+                "bindings": bindings,
+            },
+            "raw_topics": [self.raw_topic],
+            "authority": dict(authority),
+            "shard_id": "qdl-v2-stable-core-001",
+            "transactional_id": "qdl-v2-stable-core-001",
+            "batch_size": 256,
+            "batch_wait_ms": 25,
+            "max_events": max_events,
+            "metrics_every_batches": 100,
+        }
+
+    def native_ingestor_configs(
+        self,
+        *,
+        catalog: StableSourceCatalog,
+        authority: Mapping[str, Any],
+        max_events: int = 0,
+        max_runtime_seconds: int = 0,
+    ) -> dict[str, dict[str, Any]]:
+        self._validate_authority(authority)
+        source_by_id = {item.binding_id: item for item in catalog.bindings}
+        grouped: dict[tuple[str, str], list[StableAcquisitionBinding]] = {}
+        for acquisition in self.bindings:
+            if acquisition.mode == "RUST_NATIVE":
+                source = source_by_id[acquisition.binding_id]
+                grouped.setdefault(
+                    (acquisition.runtime, source.instrument.identity.market), []
+                ).append(acquisition)
+        result = {}
+        for (runtime, market), values in sorted(grouped.items()):
+            first = values[0]
+            bindings = []
+            for acquisition in sorted(values, key=lambda item: item.binding_id):
+                source = source_by_id[acquisition.binding_id]
+                identity = source.instrument.identity
+                bindings.append({
+                    "provider": source.provider,
+                    "venue": identity.venue,
+                    "market": identity.market,
+                    "product_type": identity.product_type.value,
+                    "native_symbol": source.instrument.native_symbol,
+                    "native_channel": acquisition.native_channel,
+                    "subscription_id": source.source_id,
+                    "adapter_version": source.adapter_version,
+                    "instrument_catalog_revision": catalog.catalog_revision,
+                })
+            key = f"{runtime.lower()}-{market.lower()}"
+            result[key] = {
+                "runtime": runtime,
+                "websocket_url": first.websocket_url,
+                "business_websocket_url": first.business_websocket_url,
+                "raw_stream": self.raw_topic,
+                "shard_id": f"qdl-v2-stable-{key}",
+                "lease_epoch": 1,
+                "partition_plan_epoch": 1,
+                "config_revision": self.revision,
+                "heartbeat_seconds": 15,
+                "max_events": max_events,
+                "max_runtime_seconds": max_runtime_seconds,
+                "metrics_every_events": 1000,
+                "authority": dict(authority),
+                "bindings": bindings,
+            }
+        return result
+
+    @staticmethod
+    def _validate_authority(authority: Mapping[str, Any]) -> None:
+        digest = str(authority.get("candidate_image_digest", ""))
+        if (
+            authority.get("mode") != "RUST_SHADOW"
+            or authority.get("public_write_allowed") is not False
+            or authority.get("legacy_write_allowed") is not False
+            or not digest.startswith("sha256:")
+            or len(digest) != 71
+        ):
+            raise ValueError("stable authority is not an isolated Rust shadow record")
+
+
+def stable_authority_record(
+    *,
+    rust_image_digest: str,
+    capability_manifest: Path,
+    contract: Path,
+    partition_plan: bytes,
+    effective_at_ns: int,
+) -> dict[str, Any]:
+    digest = rust_image_digest.removeprefix("sha256:")
+    if len(digest) != 64 or any(value not in "0123456789abcdef" for value in digest):
+        raise ValueError("stable Rust image digest must be SHA-256")
+    if effective_at_ns <= 0:
+        raise ValueError("stable authority effective time must be positive")
+    return {
+        "schema": "qdl.authority-record.v1",
+        "slice_id": "qdl-v2-stable-multivenue-shadow",
+        "revision": 1,
+        "mode": "RUST_SHADOW",
+        "candidate_image_digest": f"sha256:{digest}",
+        "capability_manifest_digest": hashlib.sha256(capability_manifest.read_bytes()).hexdigest(),
+        "contract_digest": hashlib.sha256(contract.read_bytes()).hexdigest(),
+        "partition_plan_digest": hashlib.sha256(partition_plan).hexdigest(),
+        "public_write_allowed": False,
+        "legacy_write_allowed": False,
+        "approved_by": "phase-b-isolated-stable-candidate",
+        "effective_at_ns": effective_at_ns,
+    }
+
+
+def write_stable_runtime_bundle(
+    destination: Path,
+    *,
+    catalog: StableSourceCatalog,
+    acquisition: StableAcquisitionPlan,
+    authority: Mapping[str, Any],
+) -> dict[str, str]:
+    destination.mkdir(parents=True, exist_ok=True)
+    payloads = {
+        "authority.json": dict(authority),
+        "core.json": acquisition.core_config(catalog=catalog, authority=authority),
+        **{
+            f"ingestor-{name}.json": payload
+            for name, payload in acquisition.native_ingestor_configs(
+                catalog=catalog, authority=authority
+            ).items()
+        },
+    }
+    digests = {}
+    for name, payload in sorted(payloads.items()):
+        encoded = (
+            json.dumps(payload, indent=2, sort_keys=True, separators=(",", ": ")) + "\n"
+        ).encode()
+        path = destination / name
+        path.write_bytes(encoded)
+        digests[name] = hashlib.sha256(encoded).hexdigest()
+    return digests
