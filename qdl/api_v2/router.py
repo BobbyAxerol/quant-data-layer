@@ -697,8 +697,14 @@ def create_v2_app(
     readiness_service=None,
     request_bounds: RequestBounds | None = None,
     cursor_issuer=None,
+    contract_version: str = "2.0.0-shadow",
+    authority: str = "SHADOW",
 ) -> FastAPI:
-    app = FastAPI(title="Quant Data Layer V2", version="2.0.0-shadow")
+    if not contract_version.startswith("2.0.0") or authority not in {
+        "SHADOW", "INTERNAL_STABLE", "PRIMARY"
+    }:
+        raise ValueError("V2 app contract version/authority is invalid")
+    app = FastAPI(title="Quant Data Layer V2", version=contract_version)
     app.state.v2_query_service = service
     app.state.v2_identity_service = identity_service
     app.state.v2_runtime_readiness = readiness_service or FailClosedReadiness()
@@ -707,7 +713,8 @@ def create_v2_app(
         "role": "api_v2",
         "owns_live_ingestion": False,
         "owns_venue_connections": False,
-        "authority": "SHADOW",
+        "authority": authority,
+        "contract_version": contract_version,
     }
     app.include_router(router)
     if request_bounds is not None:

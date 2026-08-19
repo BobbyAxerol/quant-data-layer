@@ -129,6 +129,7 @@ bindings:
     stale_after_ms: 15000
     require_final_bar: false
     continuous_calendar: true
+  v1_compatibility: BINANCE_TRADE_MARKET_AND_GENERIC
 - binding_id: binance-usdm-btcusdt-quote
   instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
   feed: QUOTE
@@ -145,6 +146,7 @@ bindings:
     stale_after_ms: 5000
     require_final_bar: false
     continuous_calendar: true
+  v1_compatibility: NONE
 - binding_id: binance-usdm-btcusdt-bar-1m
   instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
   feed: BAR
@@ -161,6 +163,7 @@ bindings:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
 - binding_id: binance-spot-btcusdt-trade
   instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
   feed: TRADE
@@ -177,6 +180,7 @@ bindings:
     stale_after_ms: 15000
     require_final_bar: false
     continuous_calendar: true
+  v1_compatibility: BINANCE_TRADE_MARKET_ONLY
 - binding_id: binance-spot-btcusdt-quote
   instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
   feed: QUOTE
@@ -193,6 +197,7 @@ bindings:
     stale_after_ms: 5000
     require_final_bar: false
     continuous_calendar: true
+  v1_compatibility: NONE
 - binding_id: binance-spot-btcusdt-bar-1m
   instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
   feed: BAR
@@ -209,6 +214,7 @@ bindings:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: true
+  v1_compatibility: NONE
 - binding_id: okx-swap-btcusdt-trade
   instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
   feed: TRADE
@@ -225,6 +231,7 @@ bindings:
     stale_after_ms: 15000
     require_final_bar: false
     continuous_calendar: true
+  v1_compatibility: NONE
 - binding_id: okx-swap-btcusdt-quote
   instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
   feed: QUOTE
@@ -241,6 +248,7 @@ bindings:
     stale_after_ms: 5000
     require_final_bar: false
     continuous_calendar: true
+  v1_compatibility: NONE
 - binding_id: okx-swap-btcusdt-bar-1m
   instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
   feed: BAR
@@ -257,6 +265,7 @@ bindings:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: true
+  v1_compatibility: NONE
 - binding_id: okx-spot-btcusdt-trade
   instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
   feed: TRADE
@@ -273,6 +282,7 @@ bindings:
     stale_after_ms: 15000
     require_final_bar: false
     continuous_calendar: true
+  v1_compatibility: NONE
 - binding_id: okx-spot-btcusdt-quote
   instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
   feed: QUOTE
@@ -289,6 +299,7 @@ bindings:
     stale_after_ms: 5000
     require_final_bar: false
     continuous_calendar: true
+  v1_compatibility: NONE
 - binding_id: okx-spot-btcusdt-bar-1m
   instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
   feed: BAR
@@ -305,6 +316,7 @@ bindings:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: true
+  v1_compatibility: NONE
 - binding_id: dnse-vn30f1m-trade
   instrument_uid: d0ac3d4c-2374-5690-8af5-b970448f91d3
   feed: TRADE
@@ -321,6 +333,7 @@ bindings:
     stale_after_ms: 15000
     require_final_bar: false
     continuous_calendar: false
+  v1_compatibility: VN_TRADE_GENERIC
 - binding_id: dnse-vn30f1m-bar-1m
   instrument_uid: d0ac3d4c-2374-5690-8af5-b970448f91d3
   feed: BAR
@@ -337,6 +350,7 @@ bindings:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: false
+  v1_compatibility: NONE
 - binding_id: dnse-fpt-trade
   instrument_uid: 6f025ab7-c0b4-5e08-866d-34ce62aef52f
   feed: TRADE
@@ -353,6 +367,7 @@ bindings:
     stale_after_ms: 15000
     require_final_bar: false
     continuous_calendar: false
+  v1_compatibility: VN_TRADE_GENERIC
 - binding_id: dnse-fpt-bar-1m
   instrument_uid: 6f025ab7-c0b4-5e08-866d-34ce62aef52f
   feed: BAR
@@ -369,3 +384,4 @@ bindings:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: false
+  v1_compatibility: NONE

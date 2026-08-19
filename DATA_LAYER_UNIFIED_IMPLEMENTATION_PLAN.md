@@ -4142,6 +4142,31 @@ by implication in Phase B implementation.
   state across all retained cache rows. No runtime container, Redis namespace,
   consumer or production data was changed; the disposable test container was
   removed by `--rm`.
+- `2026-08-19 PHASE B SLICE B2 COMPLETE`: implemented the Kafka-authoritative
+  Python stable edge around the Rust core. The read-committed consumer disables
+  auto commit/store; the projector durably stores raw envelopes, holds bounded
+  canonical-before-raw records per broker partition, commits canonical data to
+  the active fenced stream gateway/shared cache, atomically projects dedicated
+  Redis latest/V1 compatibility state and Pub/Sub, and only then advances the
+  Kafka checkpoint. Assignment changes discard only local uncheckpointed queues
+  for broker replay. Stale projection epochs raise a hard fence rather than
+  masquerading as an idempotent duplicate.
+- `2026-08-19 PHASE B COMPATIBILITY DECISION`: V1 Redis aliases are an explicit
+  per-binding policy. Binance USD-M owns the generic `BTCUSDT` trade/bar aliases;
+  Binance Spot gets market-qualified trade aliases only, so the stable candidate
+  cannot recreate the former mixed-writer race. OKX has no fabricated V1 Redis
+  alias and migrates through V2. DNSE TRADE may project the frozen `vn:quote:*`
+  compatibility shape only in the dedicated stable Redis; canonical semantics
+  remain TRADE. Current production Redis is never addressed.
+- `2026-08-19 PHASE B SLICE B2 VERIFICATION`: 32 isolated tests passed with one
+  conditional Redis test skipped in the network-disabled run, covering B1/B2,
+  V2 API compatibility and beta-runtime regression. A separately named,
+  disposable Redis 7.2 container passed the real Lua/TTL/PubSub/idempotency/
+  fencing test; exact test keys were removed, then the container and network
+  were deleted. Failure injection passed canonical-before-raw, Kafka checkpoint
+  failure/replay, Redis loss/rebuild, source alias isolation, HMAC rejection,
+  duplicate HTTP ingest and stale-writer fencing. No test used provider data as
+  generated production evidence and no live V1 process/state was mutated.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

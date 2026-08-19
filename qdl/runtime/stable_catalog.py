@@ -45,6 +45,7 @@ class StableSourceBinding:
     stale_after_ms: int
     require_final_bar: bool
     continuous_calendar: bool
+    v1_compatibility: str
     canonical_stream: str
 
     def __post_init__(self) -> None:
@@ -70,6 +71,20 @@ class StableSourceBinding:
             raise ValueError("require_final_bar is valid only for BAR")
         if self.stale_after_ms <= 0:
             raise ValueError("stable source freshness bound must be positive")
+        policies = {
+            "NONE",
+            "BINANCE_TRADE_MARKET_AND_GENERIC",
+            "BINANCE_TRADE_MARKET_ONLY",
+            "BINANCE_BAR_GENERIC",
+            "VN_TRADE_GENERIC",
+        }
+        if self.v1_compatibility not in policies:
+            raise ValueError("stable V1 compatibility policy is invalid")
+        if self.v1_compatibility != "NONE" and (
+            ("TRADE" in self.v1_compatibility and self.feed is not FeedType.TRADE)
+            or ("BAR" in self.v1_compatibility and self.feed is not FeedType.BAR)
+        ):
+            raise ValueError("stable V1 compatibility policy differs from feed")
 
     @property
     def partition_key(self) -> str:
@@ -207,6 +222,7 @@ class StableSourceCatalog:
     ) -> StableSourceBinding:
         if not isinstance(raw, dict) or set(raw) != {
             "binding_id", "instrument_uid", "feed", "interval", "source", "quality",
+            "v1_compatibility",
         }:
             raise ValueError("stable source binding fields are incomplete or unknown")
         source = raw["source"]
@@ -241,6 +257,7 @@ class StableSourceCatalog:
             stale_after_ms=int(quality["stale_after_ms"]),
             require_final_bar=bool(quality["require_final_bar"]),
             continuous_calendar=bool(quality["continuous_calendar"]),
+            v1_compatibility=str(raw["v1_compatibility"]).upper(),
             canonical_stream=canonical_stream,
         )
 
