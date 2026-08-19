@@ -68,6 +68,18 @@ class StableDeploymentContractTests(unittest.TestCase):
             value.startswith("/var/lib/qdl-stable/runtime/generations/")
             for value in generation_paths
         ))
+        self.assertEqual(
+            {item["latest_state_flush_ms"] for item in native.values()}, {50}
+        )
+        delivery_by_feed = {
+            binding["feed"]: binding["delivery_class"]
+            for item in native.values()
+            for binding in item["bindings"]
+        }
+        self.assertEqual(
+            delivery_by_feed,
+            {"TRADE": "LOSSLESS", "QUOTE": "LATEST_STATE", "BAR": "LOSSLESS"},
+        )
         okx_bbo = {
             item.binding_id: item.sequence_policy
             for item in self.acquisition.bindings

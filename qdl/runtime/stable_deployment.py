@@ -247,6 +247,12 @@ class StableAcquisitionPlan:
                     "subscription_id": source.source_id,
                     "adapter_version": source.adapter_version,
                     "instrument_catalog_revision": catalog.catalog_revision,
+                    "feed": source.feed.value,
+                    "delivery_class": (
+                        "LATEST_STATE"
+                        if source.feed is FeedType.QUOTE
+                        else "LOSSLESS"
+                    ),
                 })
             key = f"{runtime.lower()}-{market.lower()}"
             result[key] = {
@@ -266,6 +272,7 @@ class StableAcquisitionPlan:
                     f"/var/lib/qdl-stable/runtime/generations/{key}"
                 ),
                 "max_inflight_publishes": 512,
+                "latest_state_flush_ms": 50,
                 "authority": dict(authority),
                 "bindings": bindings,
             }

@@ -4849,6 +4849,49 @@ by implication in Phase B implementation.
   four processes start cleanly before consumer/recovery certification continues.
   Rollback remains removal of only project `qdl_v2_stable_candidate`; V1 is
   unchanged.
+- `2026-08-19 PHASE B B8 LATEST-STATE CAPACITY DEFECT CONFIRMED, FIX IN
+  PROGRESS`: after B7, all four native ingestors started cleanly from immutable
+  `6a9a19e` images and authentic 500-row BAR bootstrap again completed for all
+  four crypto bindings. Under current provider traffic the single Python
+  projector backlog nevertheless grew from about 35.8k to 244.6k records in
+  60 seconds. Raising its quota from 0.75 to 2 CPUs still grew backlog by about
+  63k/minute, and three projector replicas still could not drain the hottest
+  ordered partition. A read-committed one-record tail inspection identified
+  partition 0 as Binance USD-M `bookTicker`, receiving roughly 3.0-3.5k BBO
+  updates/second. Trade/final-BAR partitions were not the dominant source.
+
+  CPU scaling and batch-boundary canonical coalescing are rejected: one cannot
+  parallelize a single ordered key, while transaction-batch coalescing would
+  make replay output depend on non-deterministic batch boundaries. The bounded
+  repair follows the approved lifecycle policy: acquisition bindings declare
+  `LOSSLESS` or `LATEST_STATE`; only `LATEST_STATE` BBO frames may replace the
+  same pending key inside a fixed bounded flush window before raw Kafka ACK.
+  The last authentic provider frame in each window is durably published with
+  unchanged bytes/provenance, a pending value is flushed on timer and orderly
+  disconnect, and coalescing counters are explicit. TRADE, final/revised BAR,
+  book and quality/authority transitions remain lossless and backpressured.
+  Rust unit/replay/ordering/failure tests plus clean real-provider lag,
+  freshness, resource and recovery evidence gate closure. The overloaded
+  isolated candidate and its volumes were removed before disk bounds; V1 was
+  not touched.
+- `2026-08-19 PHASE B B8 LIFECYCLE-AWARE ACQUISITION COALESCING
+  UNIT-VERIFIED, IMMUTABLE RUNTIME RETEST PENDING`: generated native acquisition
+  configs now carry provider-neutral `feed` and `delivery_class` fields plus a
+  bounded 50 ms latest-state flush window. Rust rejects every mismatched policy:
+  only QUOTE may be `LATEST_STATE`, while TRADE and BAR must be `LOSSLESS`.
+  Binance and OKX keep at most one pending authentic raw frame per quote binding,
+  replace it only before Kafka acceptance, flush the last frame on the bounded
+  timer and orderly session exit, retain the existing ACK/retry/backpressure
+  path, and expose accepted/coalesced counts. Lossless frames bypass this buffer.
+
+  Eleven targeted Python deployment/history tests passed. The pinned Rust
+  release build completed; four native-ingestor tests passed, targeted Clippy
+  passed with warnings denied, and rustfmt is clean. Unit evidence covers policy
+  mismatch rejection, last-frame byte/timestamp retention and durable generation
+  behavior. A new one-SHA candidate must still prove authentic quote freshness,
+  trade losslessness, decreasing/near-zero core and projector lag, bounded
+  cache/resource use, restart/failover and no quarantine/collision before B8 or
+  Phase B can close.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

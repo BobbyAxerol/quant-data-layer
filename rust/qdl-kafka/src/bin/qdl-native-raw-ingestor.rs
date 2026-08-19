@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::future::Future;
@@ -27,6 +27,7 @@ use qdl_kafka::{
     FencedKafkaSink, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, PendingKafkaAppend,
 };
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
+use qdl_venue_core::backpressure::DeliveryClass;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -38,6 +39,14 @@ use tokio_tungstenite::tungstenite::Message;
 enum ProviderRuntime {
     Binance,
     Okx,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum RawFeed {
+    Trade,
+    Quote,
+    Bar,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -52,6 +61,8 @@ struct RawBinding {
     subscription_id: String,
     adapter_version: String,
     instrument_catalog_revision: u64,
+    feed: RawFeed,
+    delivery_class: DeliveryClass,
 }
 
 impl RawBinding {
@@ -76,6 +87,13 @@ impl RawBinding {
         }
         if self.instrument_catalog_revision == 0 {
             return Err("instrument catalog revision must be positive".into());
+        }
+        if !matches!(
+            (self.feed, self.delivery_class),
+            (RawFeed::Quote, DeliveryClass::LatestState)
+                | (RawFeed::Trade | RawFeed::Bar, DeliveryClass::Lossless)
+        ) {
+            return Err("raw binding feed/delivery class is invalid".into());
         }
         match runtime {
             ProviderRuntime::Binance
@@ -110,6 +128,7 @@ struct IngestorConfig {
     metrics_every_events: u64,
     generation_state_path: String,
     max_inflight_publishes: usize,
+    latest_state_flush_ms: u64,
     authority: AuthorityRecord,
     bindings: Vec<RawBinding>,
 }
@@ -130,6 +149,8 @@ impl IngestorConfig {
             || self.metrics_every_events == 0
             || self.max_inflight_publishes == 0
             || self.max_inflight_publishes > 4_096
+            || self.latest_state_flush_ms == 0
+            || self.latest_state_flush_ms > 1_000
             || self.bindings.is_empty()
         {
             return Err("native raw ingestor config is invalid or not RUST_SHADOW".into());
@@ -435,6 +456,152 @@ fn raw_publish_future(delivery: PendingKafkaAppend) -> RawPublishFuture {
     Box::pin(async move { delivery.wait().await.map(|_| ()) })
 }
 
+#[derive(Clone, Debug)]
+struct PendingRawFrame {
+    binding: RawBinding,
+    session_id: String,
+    generation: u64,
+    raw_frame: Vec<u8>,
+    received_at_ns: i64,
+}
+
+#[derive(Default)]
+struct LatestStateBuffer {
+    frames: BTreeMap<String, PendingRawFrame>,
+}
+
+impl LatestStateBuffer {
+    fn push(&mut self, frame: PendingRawFrame) -> bool {
+        debug_assert_eq!(frame.binding.delivery_class, DeliveryClass::LatestState);
+        self.frames.insert(frame.binding.key(), frame).is_some()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    fn drain(&mut self) -> Vec<PendingRawFrame> {
+        std::mem::take(&mut self.frames).into_values().collect()
+    }
+}
+
+async fn enqueue_binance_frame(
+    frame: PendingRawFrame,
+    publisher: &RawPublisher,
+    inflight: &mut FuturesUnordered<RawPublishFuture>,
+    accepted: &AtomicU64,
+    max_events: u64,
+    max_inflight: usize,
+    stopped: &AtomicBool,
+) -> Result<bool, KafkaTransportError> {
+    while inflight.len() >= max_inflight {
+        match inflight.next().await {
+            Some(result) => result?,
+            None => {
+                return Err(KafkaTransportError::Configuration(
+                    "Binance publish window became inconsistent".into(),
+                ))
+            }
+        }
+    }
+    if !reserve(accepted, max_events).await {
+        return Ok(false);
+    }
+    let delivery = publisher
+        .enqueue_with_retry(
+            &frame.binding,
+            &frame.session_id,
+            frame.generation,
+            &frame.raw_frame,
+            frame.received_at_ns,
+            stopped,
+        )
+        .await;
+    match delivery {
+        Ok(delivery) => {
+            inflight.push(raw_publish_future(delivery));
+            Ok(true)
+        }
+        Err(error) => {
+            if max_events > 0 {
+                accepted.fetch_sub(1, Ordering::AcqRel);
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn flush_binance_latest(
+    buffer: &mut LatestStateBuffer,
+    publisher: &RawPublisher,
+    inflight: &mut FuturesUnordered<RawPublishFuture>,
+    accepted: &AtomicU64,
+    max_events: u64,
+    max_inflight: usize,
+    stopped: &AtomicBool,
+) -> Result<bool, KafkaTransportError> {
+    for frame in buffer.drain() {
+        if !enqueue_binance_frame(
+            frame,
+            publisher,
+            inflight,
+            accepted,
+            max_events,
+            max_inflight,
+            stopped,
+        )
+        .await?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+async fn publish_serial_frame(
+    frame: PendingRawFrame,
+    publisher: &RawPublisher,
+    accepted: &AtomicU64,
+    max_events: u64,
+    stopped: &AtomicBool,
+) -> Result<bool, KafkaTransportError> {
+    if !reserve(accepted, max_events).await {
+        return Ok(false);
+    }
+    if let Err(error) = publisher
+        .publish_with_retry(
+            &frame.binding,
+            &frame.session_id,
+            frame.generation,
+            &frame.raw_frame,
+            frame.received_at_ns,
+            stopped,
+        )
+        .await
+    {
+        if max_events > 0 {
+            accepted.fetch_sub(1, Ordering::AcqRel);
+        }
+        return Err(error);
+    }
+    Ok(true)
+}
+
+async fn flush_latest_serial(
+    buffer: &mut LatestStateBuffer,
+    publisher: &RawPublisher,
+    accepted: &AtomicU64,
+    max_events: u64,
+    stopped: &AtomicBool,
+) -> Result<bool, KafkaTransportError> {
+    for frame in buffer.drain() {
+        if !publish_serial_frame(frame, publisher, accepted, max_events, stopped).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn deadline(seconds: u64) -> Option<tokio::time::Instant> {
     (seconds > 0).then(|| tokio::time::Instant::now() + Duration::from_secs(seconds))
 }
@@ -452,6 +619,7 @@ fn should_stop(
 
 async fn reserve(accepted: &AtomicU64, max_events: u64) -> bool {
     if max_events == 0 {
+        accepted.fetch_add(1, Ordering::AcqRel);
         return true;
     }
     loop {
@@ -472,6 +640,7 @@ async fn reserve(accepted: &AtomicU64, max_events: u64) -> bool {
 async fn run_binance(
     config: Arc<IngestorConfig>,
     accepted: Arc<AtomicU64>,
+    coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let bindings: HashMap<String, RawBinding> = config
@@ -506,6 +675,11 @@ async fn run_binance(
                     now_ns()?
                 );
                 let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
+                let mut latest = LatestStateBuffer::default();
+                let mut latest_tick =
+                    tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
+                latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                latest_tick.tick().await;
                 let mut disconnected = false;
                 let mut publish_error = None;
                 while !should_stop(&stopped, &accepted, config.max_events, expires) {
@@ -524,6 +698,21 @@ async fn run_binance(
                     }
                     let message = tokio::select! {
                         biased;
+                        _ = latest_tick.tick(), if !latest.is_empty() => {
+                            if !flush_binance_latest(
+                                &mut latest,
+                                &publisher,
+                                &mut inflight,
+                                &accepted,
+                                config.max_events,
+                                config.max_inflight_publishes,
+                                &stopped,
+                            ).await? {
+                                break;
+                            }
+                            failures = 0;
+                            continue;
+                        }
                         message = socket.next() => message,
                         completed = inflight.next(), if !inflight.is_empty() => {
                             match completed {
@@ -585,21 +774,47 @@ async fn run_binance(
                         .get(&frame.stream)
                         .ok_or("Binance frame has no approved binding")?
                         .clone();
-                    if !reserve(&accepted, config.max_events).await {
+                    let frame = PendingRawFrame {
+                        binding,
+                        session_id: session_id.clone(),
+                        generation,
+                        raw_frame: raw_text.into_bytes(),
+                        received_at_ns: now_ns()?,
+                    };
+                    if frame.binding.delivery_class == DeliveryClass::LatestState {
+                        if latest.push(frame) {
+                            coalesced_latest.fetch_add(1, Ordering::AcqRel);
+                        }
+                        continue;
+                    }
+                    if !enqueue_binance_frame(
+                        frame,
+                        &publisher,
+                        &mut inflight,
+                        &accepted,
+                        config.max_events,
+                        config.max_inflight_publishes,
+                        &stopped,
+                    )
+                    .await?
+                    {
                         break;
                     }
-                    let received_at_ns = now_ns()?;
-                    let delivery = publisher
-                        .enqueue_with_retry(
-                            &binding,
-                            &session_id,
-                            generation,
-                            raw_text.as_bytes(),
-                            received_at_ns,
-                            &stopped,
-                        )
-                        .await?;
-                    inflight.push(raw_publish_future(delivery));
+                }
+                if publish_error.is_none() {
+                    if let Err(error) = flush_binance_latest(
+                        &mut latest,
+                        &publisher,
+                        &mut inflight,
+                        &accepted,
+                        config.max_events,
+                        config.max_inflight_publishes,
+                        &stopped,
+                    )
+                    .await
+                    {
+                        publish_error = Some(error);
+                    }
                 }
                 while let Some(result) = inflight.next().await {
                     match result {
@@ -655,6 +870,7 @@ async fn run_okx_service(
     bindings: Vec<RawBinding>,
     config: Arc<IngestorConfig>,
     accepted: Arc<AtomicU64>,
+    coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if bindings.is_empty() {
@@ -728,13 +944,37 @@ async fn run_okx_service(
                     },
                     now_ns()?
                 );
+                let mut latest = LatestStateBuffer::default();
+                let mut latest_tick =
+                    tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
+                latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                latest_tick.tick().await;
                 while !should_stop(&stopped, &accepted, config.max_events, expires) {
-                    let message = match tokio::time::timeout(
+                    let read = tokio::time::timeout(
                         Duration::from_secs(config.heartbeat_seconds),
                         reader.next(),
-                    )
-                    .await
-                    {
+                    );
+                    tokio::pin!(read);
+                    let outcome = tokio::select! {
+                        result = &mut read => Some(result),
+                        _ = latest_tick.tick(), if !latest.is_empty() => None,
+                    };
+                    if outcome.is_none() {
+                        if !flush_latest_serial(
+                            &mut latest,
+                            &publisher,
+                            &accepted,
+                            config.max_events,
+                            &stopped,
+                        )
+                        .await?
+                        {
+                            break;
+                        }
+                        failures = 0;
+                        continue;
+                    }
+                    let message = match outcome.expect("OKX read outcome is present") {
                         Ok(Some(Ok(message))) => message,
                         Ok(Some(Err(_))) | Ok(None) => break,
                         Err(_) => {
@@ -780,29 +1020,41 @@ async fn run_okx_service(
                     let binding = binding_map
                         .get(&format!("{channel}|{instrument}"))
                         .ok_or("OKX frame has no approved binding")?;
-                    if !reserve(&accepted, config.max_events).await {
+                    let frame = PendingRawFrame {
+                        binding: binding.clone(),
+                        session_id: session_id.clone(),
+                        generation,
+                        raw_frame: raw_text.into_bytes(),
+                        received_at_ns: now_ns()?,
+                    };
+                    if frame.binding.delivery_class == DeliveryClass::LatestState {
+                        if latest.push(frame) {
+                            coalesced_latest.fetch_add(1, Ordering::AcqRel);
+                        }
+                        continue;
+                    }
+                    if !publish_serial_frame(
+                        frame,
+                        &publisher,
+                        &accepted,
+                        config.max_events,
+                        &stopped,
+                    )
+                    .await?
+                    {
                         stopped.store(true, Ordering::Release);
                         break;
                     }
-                    let received_at_ns = now_ns()?;
-                    if let Err(error) = publisher
-                        .publish_with_retry(
-                            binding,
-                            &session_id,
-                            generation,
-                            raw_text.as_bytes(),
-                            received_at_ns,
-                            &stopped,
-                        )
-                        .await
-                    {
-                        if config.max_events > 0 {
-                            accepted.fetch_sub(1, Ordering::AcqRel);
-                        }
-                        return Err(error.into());
-                    }
                     failures = 0;
                 }
+                flush_latest_serial(
+                    &mut latest,
+                    &publisher,
+                    &accepted,
+                    config.max_events,
+                    &stopped,
+                )
+                .await?;
                 if !should_stop(&stopped, &accepted, config.max_events, expires) {
                     failures = failures.saturating_add(1);
                     eprintln!(
@@ -846,6 +1098,7 @@ async fn run_okx_service(
 async fn run_okx(
     config: Arc<IngestorConfig>,
     accepted: Arc<AtomicU64>,
+    coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let public = config
@@ -881,6 +1134,7 @@ async fn run_okx(
             public,
             config.clone(),
             accepted.clone(),
+            coalesced_latest.clone(),
             stopped.clone(),
         ),
         run_okx_service(
@@ -892,6 +1146,7 @@ async fn run_okx(
             business,
             config,
             accepted,
+            coalesced_latest,
             stopped,
         ),
     )?;
@@ -910,6 +1165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     config.validate()?;
     let config = Arc::new(config);
     let accepted = Arc::new(AtomicU64::new(0));
+    let coalesced_latest = Arc::new(AtomicU64::new(0));
     let stopped = Arc::new(AtomicBool::new(false));
     let stop_signal = stopped.clone();
     tokio::spawn(async move {
@@ -924,6 +1180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "runtime": format!("{:?}", config.runtime).to_ascii_uppercase(),
             "authority": "RUST_SHADOW",
             "bindings": config.bindings.len(),
+            "latest_state_flush_ms": config.latest_state_flush_ms,
             "production_public_writes": 0,
             "production_legacy_writes": 0,
         }))?
@@ -941,10 +1198,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let accepted_before = accepted.load(Ordering::Acquire);
         let result = match config.runtime {
             ProviderRuntime::Binance => {
-                run_binance(config.clone(), accepted.clone(), stopped.clone()).await
+                run_binance(
+                    config.clone(),
+                    accepted.clone(),
+                    coalesced_latest.clone(),
+                    stopped.clone(),
+                )
+                .await
             }
             ProviderRuntime::Okx => {
-                run_okx(config.clone(), accepted.clone(), stopped.clone()).await
+                run_okx(
+                    config.clone(),
+                    accepted.clone(),
+                    coalesced_latest.clone(),
+                    stopped.clone(),
+                )
+                .await
             }
         };
         match result {
@@ -985,6 +1254,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         serde_json::to_string(&json!({
             "event": "qdl_native_raw_ingestor_stopped",
             "accepted_raw_frames": accepted.load(Ordering::Acquire),
+            "coalesced_latest_state_frames": coalesced_latest.load(Ordering::Acquire),
         }))?
     );
     Ok(())
@@ -992,7 +1262,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 #[cfg(test)]
 mod tests {
-    use super::next_connection_generation;
+    use super::{
+        next_connection_generation, DeliveryClass, LatestStateBuffer, PendingRawFrame,
+        ProviderRuntime, RawBinding, RawFeed,
+    };
     use std::fs;
     use std::path::PathBuf;
 
@@ -1005,6 +1278,68 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
+    }
+
+    fn binding(feed: RawFeed, delivery_class: DeliveryClass) -> RawBinding {
+        RawBinding {
+            provider: "BINANCE_DIRECT".into(),
+            venue: "BINANCE".into(),
+            market: "USDM".into(),
+            product_type: "PERPETUAL".into(),
+            native_symbol: "BTCUSDT".into(),
+            native_channel: match feed {
+                RawFeed::Trade => "btcusdt@trade",
+                RawFeed::Quote => "btcusdt@bookTicker",
+                RawFeed::Bar => "candle1m",
+            }
+            .into(),
+            subscription_id: "test-source".into(),
+            adapter_version: "test/2.0.0".into(),
+            instrument_catalog_revision: 1,
+            feed,
+            delivery_class,
+        }
+    }
+
+    #[test]
+    fn feed_delivery_contract_allows_only_latest_quote_and_lossless_trade_bar() {
+        assert!(binding(RawFeed::Quote, DeliveryClass::LatestState)
+            .validate(ProviderRuntime::Binance)
+            .is_ok());
+        assert!(binding(RawFeed::Trade, DeliveryClass::Lossless)
+            .validate(ProviderRuntime::Binance)
+            .is_ok());
+        assert!(binding(RawFeed::Bar, DeliveryClass::Lossless)
+            .validate(ProviderRuntime::Binance)
+            .is_ok());
+        assert!(binding(RawFeed::Trade, DeliveryClass::LatestState)
+            .validate(ProviderRuntime::Binance)
+            .is_err());
+        assert!(binding(RawFeed::Quote, DeliveryClass::Lossless)
+            .validate(ProviderRuntime::Binance)
+            .is_err());
+    }
+
+    #[test]
+    fn latest_state_buffer_keeps_last_authentic_frame_per_binding() {
+        let mut buffer = LatestStateBuffer::default();
+        let first = PendingRawFrame {
+            binding: binding(RawFeed::Quote, DeliveryClass::LatestState),
+            session_id: "session-1".into(),
+            generation: 1,
+            raw_frame: br#"{"u":1}"#.to_vec(),
+            received_at_ns: 10,
+        };
+        let mut last = first.clone();
+        last.raw_frame = br#"{"u":2}"#.to_vec();
+        last.received_at_ns = 20;
+        assert!(!buffer.push(first));
+        assert!(buffer.push(last));
+        let values = buffer.drain();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].raw_frame, br#"{"u":2}"#);
+        assert_eq!(values[0].received_at_ns, 20);
+        assert!(buffer.is_empty());
     }
 
     #[test]

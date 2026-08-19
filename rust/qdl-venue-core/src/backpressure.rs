@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, VecDeque};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+use serde::Deserialize;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DeliveryClass {
     Lossless,
     LatestState,
