@@ -4,6 +4,7 @@ use std::fmt::{Display, Formatter};
 use std::path::Path;
 use std::time::Duration;
 
+use futures_util::future::try_join_all;
 use qdl_core::transport::{AppendResult, Cursor, DurableRecord, RetryClass};
 use qdl_venue_core::authority::{
     AuthorityFence, AuthorityRecord, Phase92AcceptedHandoff, Phase92AuthorityFence,
@@ -673,8 +674,7 @@ impl TransactionalKafkaBridge {
 
         self.producer.begin_transaction()?;
         let transaction = async {
-            let mut accepted = Vec::with_capacity(outputs.len());
-            for output in outputs {
+            let deliveries = outputs.iter().map(|output| async move {
                 let delivery = self
                     .producer
                     .send(
@@ -691,7 +691,7 @@ impl TransactionalKafkaBridge {
                     .map_err(|(error, _)| KafkaTransportError::Delivery(error))?;
                 let offset = u64::try_from(delivery.offset)
                     .map_err(|_| KafkaTransportError::InvalidOffset(delivery.offset))?;
-                accepted.push(AppendResult {
+                Ok::<_, KafkaTransportError>(AppendResult {
                     cursor: Cursor {
                         stream: output.record.stream.clone(),
                         transport_partition: delivery.partition,
@@ -699,8 +699,9 @@ impl TransactionalKafkaBridge {
                         offset,
                     },
                     duplicate: false,
-                });
-            }
+                })
+            });
+            let accepted = try_join_all(deliveries).await?;
             let mut next_offsets: std::collections::BTreeMap<(String, i32), i64> =
                 std::collections::BTreeMap::new();
             for input in inputs {

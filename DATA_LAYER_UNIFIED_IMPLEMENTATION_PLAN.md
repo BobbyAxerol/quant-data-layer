@@ -4347,6 +4347,25 @@ by implication in Phase B implementation.
   bounded progress telemetry. The pinned Rust build, rustfmt, Clippy with all
   warnings denied and the retry-class unit test passed. Immutable-image broker
   loss/rejoin evidence remains the closure gate.
+- `2026-08-19 PHASE B B5 TRANSACTION OUTPUT THROUGHPUT DEFECT IDENTIFIED, FIX
+  IN PROGRESS`: after transaction-state recovery, the shared core resumed from
+  the committed watermark but could not catch live raw traffic. Measurement
+  showed the cause inside the transaction boundary: a batch of up to 256
+  canonical/quarantine outputs was delivered with one awaited Kafka network
+  future at a time. The fix retains the same bounded batch, idempotent producer,
+  per-partition order, output validation, atomic offset commit and all-or-nothing
+  abort, but enqueues the batch delivery futures concurrently before awaiting
+  them. No new dependency or public behavior is introduced. Atomic rollback,
+  ordering, duplicate and real-provider lag-delta gates must pass before close.
+- `2026-08-19 PHASE B B5 CONCURRENT TRANSACTION DELIVERY UNIT-VERIFIED,
+  RUNTIME RETEST PENDING`: the Rust bridge now polls all bounded delivery futures
+  for one transaction concurrently, while Kafka idempotence and max in-flight
+  preserve partition ordering and the existing transaction still atomically
+  commits output plus source offsets or aborts the whole batch. Pinned release
+  compile, rustfmt, all-target Clippy with warnings denied and all six qdl-kafka
+  tests passed. No dependency, topic, schema or authority changed. A new
+  immutable image must prove catch-up under real provider traffic and repeat
+  broker-loss recovery before this gate closes.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
