@@ -55,6 +55,8 @@ class StableAcquisitionBinding:
         )
         if self.provider_kind not in allowed:
             raise ValueError("stable acquisition provider kind differs from catalog feed")
+        if self.provider_kind == "okx_bbo" and self.sequence_policy != "NONE":
+            raise ValueError("OKX bbo-tbt is replace-only and cannot require sequence continuity")
         if self.mode == "RUST_NATIVE":
             if self.runtime not in {"BINANCE", "OKX"}:
                 raise ValueError("Rust native acquisition supports Binance/OKX only")

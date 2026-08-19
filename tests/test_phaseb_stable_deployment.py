@@ -56,6 +56,18 @@ class StableDeploymentContractTests(unittest.TestCase):
         )
         self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 10)
         self.assertTrue(all(item["authority"]["mode"] == "RUST_SHADOW" for item in native.values()))
+        okx_bbo = {
+            item.binding_id: item.sequence_policy
+            for item in self.acquisition.bindings
+            if item.provider_kind == "okx_bbo"
+        }
+        self.assertEqual(
+            okx_bbo,
+            {
+                "okx-spot-btcusdt-quote": "NONE",
+                "okx-swap-btcusdt-quote": "NONE",
+            },
+        )
 
     def test_core_bundle_uses_stable_identity_lineage_and_never_enables_public_writes(self):
         core = self.acquisition.core_config(
@@ -193,6 +205,17 @@ class StableDeploymentContractTests(unittest.TestCase):
             wrong["bindings"][0]["provider_kind"] = "okx_trade"
             path.write_text(yaml.safe_dump(wrong, sort_keys=False), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "provider kind differs"):
+                StableAcquisitionPlan.load(path, catalog=self.catalog)
+
+            contiguous_bbo = copy.deepcopy(payload)
+            for item in contiguous_bbo["bindings"]:
+                if item["provider_kind"] == "okx_bbo":
+                    item["sequence_policy"] = "CONTIGUOUS"
+                    break
+            path.write_text(
+                yaml.safe_dump(contiguous_bbo, sort_keys=False), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "replace-only"):
                 StableAcquisitionPlan.load(path, catalog=self.catalog)
 
         primary = copy.deepcopy(self.authority)

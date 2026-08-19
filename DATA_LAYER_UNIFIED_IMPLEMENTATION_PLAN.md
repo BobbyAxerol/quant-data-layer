@@ -4366,6 +4366,25 @@ by implication in Phase B implementation.
   tests passed. No dependency, topic, schema or authority changed. A new
   immutable image must prove catch-up under real provider traffic and repeat
   broker-loss recovery before this gate closes.
+- `2026-08-19 PHASE B B5 OKX BBO DOMAIN DEFECT IDENTIFIED, FIX IN PROGRESS`:
+  bounded quarantine inspection found repeated `SEQUENCE_GAP` only on OKX
+  `bbo-tbt`. The approved OKX V5 guide defines this channel as a replace-only
+  best-bid/offer snapshot and explicitly forbids requiring `prevSeqId`; strict
+  continuity belongs to incremental book channels. Stable acquisition had
+  incorrectly assigned `CONTIGUOUS`, effectively requiring `seqId + 1` and
+  creating false gaps. Both OKX SWAP and Spot BBO bindings will use provider-
+  neutral partition/receive ordering (`NONE`) while retaining native `seqId` in
+  canonical provenance and deterministic event identity. Incremental book
+  policies and generic contiguous-order tests remain strict. Real OKX BBO must
+  then show canonical output without sequence-gap quarantine.
+- `2026-08-19 PHASE B B5 OKX BBO POLICY UNIT-VERIFIED, RUNTIME RETEST
+  PENDING`: both stable OKX SWAP/Spot `bbo-tbt` bindings now use replace-only
+  partition ordering, and acquisition validation rejects any future attempt to
+  attach `MONOTONIC` or `CONTIGUOUS` native-sequence policy to `okx_bbo`.
+  Generic contiguous-order behavior remains unchanged for incremental channels.
+  Thirty deployment, stable-edge and release tests passed with one separately
+  gated real-Redis integration skip. Real-provider quarantine/canonical deltas
+  remain required after rebuilding the runtime bundle.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
