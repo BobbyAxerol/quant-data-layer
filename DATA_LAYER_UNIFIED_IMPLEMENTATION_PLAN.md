@@ -4972,6 +4972,29 @@ by implication in Phase B implementation.
   accepted before `confirm=1`, and event identity remains native-time based.
   Fourteen focused BAR/deployment tests passed, including provisional recovery
   and exhaustion. A final immutable image/runtime replay remains required.
+- `2026-08-19 PHASE B B10 WARMUP FRESHNESS DEFECT CONFIRMED, FIX IN
+  PROGRESS`: real registered alpha warmup still failed `DATA_STALE` even though
+  Binance and OKX latest closed BARs were aligned and only 43 seconds old. The
+  SDK was applying realtime freshness/state and execution eligibility to every
+  row in a 500-row historical warmup. Historical context is necessarily older
+  than the realtime freshness threshold, so this made any non-trivial warmup
+  impossible. The correction keeps identity, source policy, coverage,
+  completeness, ordering and BAR finality checks on every row, but evaluates
+  stale/gap/realtime execution eligibility only on the tail watermark row. A
+  stale or non-authoritative tail must still fail closed. Public schema and
+  server query semantics remain unchanged; targeted SDK tests and the authentic
+  warmup -> cursor -> replay -> live flow gate closure.
+- `2026-08-19 PHASE B B10 SDK WARMUP QUALITY REPAIR UNIT-VERIFIED,
+  AUTHENTIC FLOW RETEST PENDING`: SDK warmup validation now checks instrument,
+  feed, interval, source policy, completeness, history gap and final BAR semantics
+  for every row, while applying wall-clock freshness/state and execution
+  eligibility only to the tail watermark. A gap anywhere in the requested history
+  still blocks. A stale, unavailable or non-authoritative tail still blocks. This
+  preserves strict execution safety without rejecting valid historical context.
+  Twenty-two SDK/API/end-to-end tests passed, including an execution-grade
+  two-row warmup with an old non-executable context row and a fresh executable
+  tail, plus stale-tail rejection. Public V2 schema and server routes are
+  unchanged.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

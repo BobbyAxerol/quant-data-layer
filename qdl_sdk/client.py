@@ -65,7 +65,8 @@ def _validate_query_payload(
             raise ContinuityError("PARTIAL_RESULT", "warmup count does not match returned rows")
         if requirement.require_full_coverage and response.coverage != "FULL":
             raise ContinuityError("PARTIAL_RESULT", "warmup response is not full coverage")
-    for row in rows:
+    for index, row in enumerate(rows):
+        is_tail = index == len(rows) - 1
         if row.instrument_uid != requirement.instrument_uid:
             raise ContinuityError("CONFLICT", "query response instrument does not match requirement")
         if row.feed.value != requirement.feed.value:
@@ -80,7 +81,8 @@ def _validate_query_payload(
         state = quality.state.upper()
         freshness_ms = quality.freshness_ms
         if (
-            state != "MARKET_CLOSED"
+            is_tail
+            and state != "MARKET_CLOSED"
             and requirement.max_freshness_ms is not None
             and freshness_ms > requirement.max_freshness_ms
             and requirement.stale_policy.value in {"BLOCK", "PAUSE"}
@@ -88,11 +90,17 @@ def _validate_query_payload(
             raise ContinuityError("DATA_STALE", "query response exceeds freshness policy")
         if quality.gap_open and requirement.gap_policy.value in {"BLOCK", "PAUSE"}:
             raise ContinuityError("OPEN_SEQUENCE_GAP", "query response has an open gap")
-        if state in {"STALE", "OFFLINE", "UNAVAILABLE"} and requirement.stale_policy.value in {
+        if is_tail and state in {
+            "STALE", "OFFLINE", "UNAVAILABLE"
+        } and requirement.stale_policy.value in {
             "BLOCK", "PAUSE",
         }:
             raise ContinuityError("DATA_STALE", f"query response quality state is {state}")
-        if requirement.consumer_grade is Grade.EXECUTION and not quality.execution_eligible:
+        if (
+            is_tail
+            and requirement.consumer_grade is Grade.EXECUTION
+            and not quality.execution_eligible
+        ):
             raise ContinuityError(
                 "SOURCE_NON_AUTHORITATIVE",
                 "execution-grade response is not execution eligible",

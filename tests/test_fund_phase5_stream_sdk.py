@@ -580,6 +580,39 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             ["snapshot-token", "snapshot-token", "token-1"],
         )
 
+    async def test_warmup_applies_realtime_quality_only_to_tail_watermark(self):
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.EXECUTION,
+            "execution_binance_v1", interval="1m", warmup_limit=2,
+            max_freshness_ms=500,
+        )
+        query = FakeQueryTransport("snapshot-token")
+        original = query.warmup
+
+        async def historical_context(*args, **kwargs):
+            payload = await original(*args, **kwargs)
+            old = {**payload["data"][0]}
+            old["quality"] = {
+                **payload["data"][0]["quality"],
+                "state": "STALE",
+                "freshness_ms": 86_400_000,
+                "execution_eligible": False,
+            }
+            payload["count"] = 2
+            payload["data"] = [old, payload["data"][0]]
+            return payload
+
+        query.warmup = historical_context
+        client = AsyncDataLayerClient(
+            query_transport=query,
+            stream_transport=ScriptedStreamTransport(()),
+            consumer_id="trading-system-shadow",
+        )
+        response = await client.warmup(requirement)
+        self.assertEqual(response.count, 2)
+        self.assertEqual(response.data[0].quality.state, "STALE")
+        self.assertTrue(response.data[-1].quality.execution_eligible)
+
     async def test_sdk_rejects_semantically_invalid_success_response(self):
         requirement = DataRequirement(
             self.record.instrument_uid, Feed.BAR, Grade.EXECUTION,
