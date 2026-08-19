@@ -325,6 +325,20 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertIn(
                     "stable_state:/var/lib/qdl-stable", services[name]["volumes"]
                 )
+                self.assertEqual(
+                    services[name]["depends_on"],
+                    {
+                        "stable_tls_init": {
+                            "condition": "service_completed_successfully"
+                        },
+                        "stable_state_init": {
+                            "condition": "service_completed_successfully"
+                        },
+                        "kafka1": {"condition": "service_healthy"},
+                        "kafka2": {"condition": "service_healthy"},
+                        "kafka3": {"condition": "service_healthy"},
+                    },
+                )
         core_names = ("rust_core", "rust_core_2", "rust_core_3")
         self.assertLessEqual(
             len(core_names), compose["x-kafka-env"]["KAFKA_NUM_PARTITIONS"]

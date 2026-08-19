@@ -4835,7 +4835,21 @@ by implication in Phase B implementation.
   service, current Redis namespace or consumer was mutated. A new all-one-SHA
   immutable candidate must still prove the registered warmup -> cursor -> replay
   -> live and recovery/resource gates before Phase B closes.
-+- `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
+- `2026-08-19 PHASE B B7 NATIVE INGESTOR STARTUP-ORDER DEFECT CLOSED,
+  IMMUTABLE REHEARSAL PENDING`: the fresh all-`ad4338d` isolated candidate
+  bootstrapped exactly 500 contiguous final provider BARs for Binance USD-M,
+  Binance Spot, OKX SWAP and OKX Spot (2,000 raw records total). Runtime
+  inspection then found that the Spot native ingestors raced `stable_tls_init`
+  and exited before `/stable-certs/producer/ca.crt` existed; USD-M/SWAP happened
+  to win the same race. The compose contract now requires completed TLS and
+  state initialization plus healthy Kafka1/Kafka2/Kafka3 for all four native
+  ingestors. Compose validation passed and all seven stable deployment contract
+  tests passed, including exact dependency regression assertions for every
+  native ingestor. The next all-one-SHA immutable candidate must demonstrate all
+  four processes start cleanly before consumer/recovery certification continues.
+  Rollback remains removal of only project `qdl_v2_stable_candidate`; V1 is
+  unchanged.
+- `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
 ### Rollback
