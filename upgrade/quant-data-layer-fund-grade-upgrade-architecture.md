@@ -5407,6 +5407,20 @@ gap as a canonical/provider-bootstrap or revision-ordering defect rather than a
 stale-cache artifact. The repair must identify the exact real-data
 discontinuity; synthetic bars and relaxed gap policy are prohibited.
 
+Bounded B18 diagnosis then proved the exact discontinuity: Binance Spot and
+USD-M both lacked 16:53 UTC after a four-record Kafka ACK failure at 16:54; OKX
+remained continuous. The edge advanced `_last_open_ms` before ACK and only read
+the latest closed bar on retry. The repair keeps the watermark ACK-authoritative
+and performs bounded, continuity-validated provider-history catch-up whenever
+more than one interval is pending. It must fail closed on incomplete history and
+must not synthesize a candle.
+
+The B18 implementation keeps a per-cycle provider observation boundary and a
+1,000-row hard catch-up bound. It advances each binding only after the complete
+ordered batch receives Kafka ACKs. Sixteen focused deployment/history tests
+passed, including multi-venue ACK failure/retry and incomplete-history fencing.
+Runtime healing and strict consumer acceptance remain required.
+
 Remaining B.3 gate: fresh atomic Redis-plus-SQLite rebuild from canonical
 Kafka, zero gap/collision/quarantine, replica equality, signed SDK replay/live,
 fresh Trading System paper data and unchanged V1.

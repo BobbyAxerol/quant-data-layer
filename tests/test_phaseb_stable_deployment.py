@@ -7,7 +7,7 @@ import tempfile
 import time
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
 import yaml
@@ -227,6 +227,142 @@ class StableDeploymentContractTests(unittest.TestCase):
             self.assertEqual(edge.run_cycle(), 4)
             self.assertEqual(edge.run_cycle(), 0)
         self.assertEqual([len(batch) for batch in publisher.batches], [4])
+
+    def test_bar_edge_retries_complete_catchup_after_kafka_ack_failure(self):
+        class Publisher:
+            def __init__(self):
+                self.calls = 0
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.calls += 1
+                self.batches.append(batch)
+                if self.calls == 1:
+                    raise RuntimeError("injected Kafka ACK failure")
+                return tuple(range(len(batch)))
+
+        class Envelope:
+            def __init__(self, venue, open_time_ms):
+                payload = (
+                    {"row": [
+                        open_time_ms, "1", "1", "1", "1", "1",
+                        open_time_ms + 59_999,
+                    ]}
+                    if venue == "BINANCE"
+                    else {"data": [[
+                        str(open_time_ms), "1", "1", "1", "1",
+                        "1", "1", "1", "1",
+                    ]]}
+                )
+                self.raw_frame_bytes = json.dumps(payload).encode()
+
+        publisher = Publisher()
+        edge = StableBinanceBarEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=self.authority,
+            publisher=publisher,
+            clock=lambda: 240.0,
+        )
+        binding_ids = [
+            source.binding_id
+            for source, _acquisition in edge.bindings + edge.okx_bindings
+        ]
+        edge._last_open_ms.update({binding_id: 60_000 for binding_id in binding_ids})
+        binance_history = (
+            Envelope("BINANCE", 120_000),
+            Envelope("BINANCE", 180_000),
+        )
+        okx_history = (
+            Envelope("OKX", 120_000),
+            Envelope("OKX", 180_000),
+        )
+        with patch(
+            "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
+            side_effect=[Envelope("BINANCE", 180_000)] * 4,
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_okx_latest",
+            new_callable=AsyncMock,
+            side_effect=[Envelope("OKX", 180_000)] * 4,
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_binance_history",
+            side_effect=[binance_history] * 4,
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_okx_history",
+            new_callable=AsyncMock,
+            side_effect=[okx_history] * 4,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected Kafka ACK failure"):
+                edge.run_cycle()
+            self.assertEqual(
+                edge._last_open_ms,
+                {binding_id: 60_000 for binding_id in binding_ids},
+            )
+            self.assertEqual(edge.run_cycle(), 8)
+
+        self.assertEqual([len(batch) for batch in publisher.batches], [8, 8])
+        self.assertEqual(
+            edge._last_open_ms,
+            {binding_id: 180_000 for binding_id in binding_ids},
+        )
+
+    def test_bar_edge_rejects_incomplete_catchup_without_advancing_watermark(self):
+        class Publisher:
+            def __init__(self):
+                self.calls = 0
+
+            def publish_many(self, _values):
+                self.calls += 1
+                return ()
+
+        class Envelope:
+            def __init__(self, venue, open_time_ms):
+                payload = (
+                    {"row": [
+                        open_time_ms, "1", "1", "1", "1", "1",
+                        open_time_ms + 59_999,
+                    ]}
+                    if venue == "BINANCE"
+                    else {"data": [[
+                        str(open_time_ms), "1", "1", "1", "1",
+                        "1", "1", "1", "1",
+                    ]]}
+                )
+                self.raw_frame_bytes = json.dumps(payload).encode()
+
+        publisher = Publisher()
+        edge = StableBinanceBarEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=self.authority,
+            publisher=publisher,
+            clock=lambda: 240.0,
+        )
+        binding_ids = [
+            source.binding_id
+            for source, _acquisition in edge.bindings + edge.okx_bindings
+        ]
+        edge._last_open_ms.update({binding_id: 60_000 for binding_id in binding_ids})
+        with patch(
+            "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
+            side_effect=[Envelope("BINANCE", 180_000)] * 2,
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_okx_latest",
+            new_callable=AsyncMock,
+            side_effect=[Envelope("OKX", 180_000)] * 2,
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_binance_history",
+            return_value=(Envelope("BINANCE", 180_000),),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not contiguous"):
+                edge.run_cycle()
+
+        self.assertEqual(publisher.calls, 0)
+        self.assertEqual(
+            edge._last_open_ms,
+            {binding_id: 60_000 for binding_id in binding_ids},
+        )
 
     def test_dnse_edge_fences_on_queue_pressure_and_bar_keeps_exact_units(self):
         class Publisher:

@@ -5301,6 +5301,42 @@ and removes the superseded candidate/rollback artifacts after verification.
   bounded repair must identify the exact venue/partition/open-time discontinuity
   and fix provider bootstrap/canonical ordering or revision handling from real
   data. Synthetic gap filling and policy relaxation are forbidden.
+- `2026-08-19 PHASE B B18 ROOT CAUSE CONFIRMED FROM REAL PROVIDER DATA`:
+  read-only inspection of all four continuous BAR partitions found exactly one
+  discontinuity in each Binance Spot/USD-M partition: `16:52 -> 16:54 UTC`; both
+  OKX partitions were continuous. At 16:54 the BAR edge fetched four closed
+  provider bars but Kafka durable ACK failed. `run_cycle()` advanced its
+  in-memory `_last_open_ms` before receiving the ACK and, on recovery, requested
+  only the newest closed bar. It therefore skipped the unacknowledged Binance
+  16:53 bar permanently. No explicit provider gap flag, duplicate open time or
+  generated row was present.
+
+  The approved B18 repair is provider-neutral BAR catch-up inside the existing
+  edge: derive the missing interval count from the last ACKed open time, fetch a
+  bounded closed-history window when more than one bar is pending, verify exact
+  continuity/finality, publish the complete ordered batch, and advance each
+  watermark only after every Kafka ACK. Publish failure must preserve the old
+  watermark so the next cycle retries the same range. Tests must cover one-bar
+  fast path, multi-bar catch-up, publish failure/retry, incomplete provider
+  history fail-closed and Binance/OKX parity. Then rebuild the isolated cache
+  and rerun strict authenticated consumer acceptance.
+- `2026-08-19 PHASE B B18 ACK-AUTHORITATIVE BAR CATCH-UP IMPLEMENTED AND
+  UNIT-VERIFIED`: the shared Binance/OKX BAR edge now freezes one observation
+  boundary per cycle, uses the one-bar latest path normally, and fetches up to
+  1,000 real closed provider bars only when the last ACKed watermark proves a
+  backlog. It validates exact interval boundaries and complete ordered coverage,
+  publishes the whole batch, and advances per-binding watermarks only after all
+  Kafka acknowledgements. Provider incompleteness, non-integral boundaries,
+  excessive backlog and partial/failed ACKs fail closed without watermark
+  mutation.
+
+  Focused deployment/history tests ran 16/16 passing with network disabled. New
+  cases prove an eight-row Binance/OKX catch-up is retried identically after an
+  injected Kafka ACK failure, and incomplete history reaches neither publisher
+  nor watermark. Python compile and diff checks passed. B18 is not runtime-
+  accepted until an immutable image heals the authentic 16:53 gaps via provider
+  history, a fresh cache rebuild reports zero open gaps, and strict SDK/Trading
+  System acceptance passes.
 - `2026-08-19 PHASE B ARTIFACT CLEANUP POLICY RECORDED`: Phase B ends at B.4;
   B17/B18 are repair slices inside B.3, not new subphases. Exact cleanup retains
   V1, active `e002da6`, active/rollback `cfc0246`, Kafka/Redis and all durable

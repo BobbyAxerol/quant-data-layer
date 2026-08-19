@@ -31,6 +31,21 @@ from qdl.transport.kafka_raw import KafkaRawPublisher, KafkaRawPublisherConfig
 logger = logging.getLogger(__name__)
 
 
+def _bar_interval_ms(interval: str) -> int:
+    units = {
+        "s": 1_000,
+        "m": 60_000,
+        "h": 3_600_000,
+        "d": 86_400_000,
+    }
+    if not interval or interval[-1] not in units:
+        raise ValueError("stable BAR interval is unsupported")
+    count = int(interval[:-1])
+    if count <= 0:
+        raise ValueError("stable BAR interval must be positive")
+    return count * units[interval[-1]]
+
+
 class StableBinanceBarEdge:
     """Bounded real-provider BAR bootstrap plus Binance closed-bar polling.
 
@@ -47,15 +62,19 @@ class StableBinanceBarEdge:
         authority: dict,
         publisher: KafkaRawPublisher,
         warmup_rows: int = 500,
+        max_catchup_rows: int = 1000,
         clock=time.time,
     ) -> None:
         if not 1 <= warmup_rows <= 1000:
             raise ValueError("stable BAR warmup rows must be between 1 and 1000")
+        if not 1 <= max_catchup_rows <= 1000:
+            raise ValueError("stable BAR catch-up rows must be between 1 and 1000")
         self.catalog = catalog
         self.acquisition = acquisition
         self.authority = authority
         self.publisher = publisher
         self.warmup_rows = warmup_rows
+        self.max_catchup_rows = max_catchup_rows
         self.clock = clock
         run_id = uuid.uuid4()
         self.binance_session_id = f"qdl-v2-stable-binance-rest-{run_id}"
@@ -204,43 +223,121 @@ class StableBinanceBarEdge:
         )
         return published
 
-    def run_cycle(self) -> int:
-        pending = []
-        for source, _acquisition in self.bindings:
-            envelope = fetch_latest_closed_bar_raw_envelope(
+    @staticmethod
+    def _open_time_ms(
+        acquisition: StableAcquisitionBinding,
+        envelope,
+    ) -> int:
+        payload = json.loads(envelope.raw_frame_bytes)
+        if acquisition.runtime == "BINANCE":
+            return int(payload["row"][0])
+        if acquisition.runtime == "OKX":
+            return int(payload["data"][0][0])
+        raise ValueError("stable crypto BAR runtime is unsupported")
+
+    def _pending_for_binding(
+        self,
+        source: StableSourceBinding,
+        acquisition: StableAcquisitionBinding,
+        latest,
+        *,
+        observed_ms: int,
+    ) -> tuple[tuple[object, int], ...]:
+        latest_open_ms = self._open_time_ms(acquisition, latest)
+        previous_open_ms = self._last_open_ms.get(source.binding_id)
+        if previous_open_ms is None:
+            return ((latest, latest_open_ms),)
+        if latest_open_ms <= previous_open_ms:
+            return ()
+
+        interval_ms = _bar_interval_ms(source.interval or "")
+        elapsed_ms = latest_open_ms - previous_open_ms
+        if elapsed_ms % interval_ms:
+            raise RuntimeError(
+                f"stable BAR provider boundary mismatch binding={source.binding_id} "
+                f"previous={previous_open_ms} latest={latest_open_ms}"
+            )
+        pending_rows = elapsed_ms // interval_ms
+        if pending_rows > self.max_catchup_rows:
+            raise RuntimeError(
+                f"stable BAR catch-up exceeds bound binding={source.binding_id} "
+                f"required={pending_rows} max={self.max_catchup_rows}"
+            )
+        if pending_rows == 1:
+            values = (latest,)
+        elif acquisition.runtime == "BINANCE":
+            values = fetch_binance_history(
                 self._binance_binding(source),
+                limit=pending_rows,
+                now_ms=observed_ms,
                 attempts=4,
                 test_provenance=False,
             )
-            payload = json.loads(envelope.raw_frame_bytes)
-            pending.append((source, envelope, int(payload["row"][0])))
+        else:
+            values = asyncio.run(fetch_okx_history(
+                self._okx_binding(source),
+                limit=pending_rows,
+                now_ms=observed_ms,
+                test_provenance=False,
+            ))
+
+        opens = tuple(self._open_time_ms(acquisition, item) for item in values)
+        expected = tuple(
+            range(previous_open_ms + interval_ms, latest_open_ms + 1, interval_ms)
+        )
+        if opens != expected:
+            raise RuntimeError(
+                f"stable BAR catch-up is not contiguous binding={source.binding_id} "
+                f"expected_rows={len(expected)} observed_rows={len(opens)}"
+            )
+        return tuple(zip(values, opens, strict=True))
+
+    def run_cycle(self) -> int:
         observed_ms = int(self.clock() * 1000)
-        for source, _acquisition in self.okx_bindings:
+        latest = []
+        for source, acquisition in self.bindings:
+            envelope = fetch_latest_closed_bar_raw_envelope(
+                self._binance_binding(source),
+                now_ms=observed_ms,
+                attempts=4,
+                test_provenance=False,
+            )
+            latest.append((source, acquisition, envelope))
+        for source, acquisition in self.okx_bindings:
             envelope = asyncio.run(fetch_okx_latest(
                 self._okx_binding(source),
                 now_ms=observed_ms,
                 test_provenance=False,
             ))
-            payload = json.loads(envelope.raw_frame_bytes)
-            pending.append((source, envelope, int(payload["data"][0][0])))
+            latest.append((source, acquisition, envelope))
 
-        envelopes = []
-        binding_ids = []
-        for source, envelope, open_time_ms in pending:
-            if open_time_ms <= self._last_open_ms.get(source.binding_id, -1):
-                continue
-            self._last_open_ms[source.binding_id] = open_time_ms
-            envelopes.append(envelope)
-            binding_ids.append(source.binding_id)
-        if not envelopes:
+        pending = []
+        for source, acquisition, envelope in latest:
+            pending.extend(
+                (source, item, open_time_ms)
+                for item, open_time_ms in self._pending_for_binding(
+                    source, acquisition, envelope, observed_ms=observed_ms
+                )
+            )
+        if not pending:
             return 0
-        acknowledgements = self.publisher.publish_many(envelopes)
-        if len(acknowledgements) != len(envelopes):
+
+        acknowledgements = self.publisher.publish_many(
+            item for _source, item, _open_time_ms in pending
+        )
+        if len(acknowledgements) != len(pending):
             raise RuntimeError("stable latest-closed BAR cycle missed a Kafka ACK")
+
+        acknowledged_opens: dict[str, int] = {}
+        for source, _item, open_time_ms in pending:
+            acknowledged_opens[source.binding_id] = max(
+                open_time_ms, acknowledged_opens.get(source.binding_id, -1)
+            )
+        self._last_open_ms.update(acknowledged_opens)
         logger.info(
-            "stable multi-venue latest-closed BAR ACK count=%s bindings=%s",
+            "stable multi-venue closed BAR ACK count=%s bindings=%s",
             len(acknowledgements),
-            ",".join(binding_ids),
+            ",".join(sorted(acknowledged_opens)),
         )
         return len(acknowledgements)
 
@@ -290,6 +387,9 @@ def build_from_environment() -> StableBinanceBarEdge:
         authority=authority,
         publisher=publisher,
         warmup_rows=int(os.environ.get("QDL_STABLE_BAR_WARMUP_ROWS", "500")),
+        max_catchup_rows=int(
+            os.environ.get("QDL_STABLE_BAR_MAX_CATCHUP_ROWS", "1000")
+        ),
     )
 
 
