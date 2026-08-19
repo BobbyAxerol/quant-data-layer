@@ -3,10 +3,9 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import replace
-from datetime import time as wall_time
 
 from qdl.common.v1 import common_pb2
-from qdl.domain.calendar import MarketSession, TradingCalendar
+from qdl.domain.calendar import trading_calendar_for_id
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.quantity import quantity_unit_name
 from qdl.marketdata.v2 import market_data_pb2
@@ -68,20 +67,6 @@ def _interval_ns(interval: str) -> int:
     if count <= 0:
         raise ValueError("stable BAR interval must be positive")
     return count * units[interval[-1]]
-
-
-def _vn_calendar(calendar_id: str) -> TradingCalendar:
-    if not calendar_id.startswith("VN_"):
-        raise ValueError(f"unknown non-continuous calendar: {calendar_id}")
-    return TradingCalendar(
-        calendar_id=calendar_id,
-        timezone_name="Asia/Ho_Chi_Minh",
-        weekly_sessions=(
-            MarketSession(wall_time(9, 0), wall_time(11, 30), "MORNING"),
-            MarketSession(wall_time(13, 0), wall_time(14, 30), "AFTERNOON"),
-            MarketSession(wall_time(14, 45), wall_time(14, 46), "ATC_CLOSE"),
-        ),
-    )
 
 
 def _quality_flag_names(envelope: market_data_pb2.EventEnvelope) -> tuple[str, ...]:
@@ -222,7 +207,7 @@ class StableSpoolQueryBackend:
         gap_open = gap_open or explicit_gap
         market_closed = False
         if not binding.continuous_calendar:
-            market_closed = not _vn_calendar(
+            market_closed = not trading_calendar_for_id(
                 binding.instrument.session_calendar_id
             ).is_open_ns(self._clock_ns())
         stale = freshness_ms > binding.stale_after_ms

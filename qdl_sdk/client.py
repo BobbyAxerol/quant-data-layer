@@ -80,7 +80,8 @@ def _validate_query_payload(
         state = quality.state.upper()
         freshness_ms = quality.freshness_ms
         if (
-            requirement.max_freshness_ms is not None
+            state != "MARKET_CLOSED"
+            and requirement.max_freshness_ms is not None
             and freshness_ms > requirement.max_freshness_ms
             and requirement.stale_policy.value in {"BLOCK", "PAUSE"}
         ):

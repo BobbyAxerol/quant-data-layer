@@ -607,6 +607,44 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
+    async def test_market_closed_is_readable_for_alpha_but_execution_fails_closed(self):
+        alpha = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA,
+            "alpha_binance_v1", interval="1m", warmup_limit=1,
+            max_freshness_ms=500,
+        )
+        query = FakeQueryTransport(self.token)
+        original = query.warmup
+
+        async def market_closed(*args, **kwargs):
+            payload = await original(*args, **kwargs)
+            payload["data"][0]["quality"].update({
+                "state": "MARKET_CLOSED",
+                "freshness_ms": 86_400_000,
+                "execution_eligible": False,
+                "flags": ["MARKET_CLOSED"],
+            })
+            return payload
+
+        query.warmup = market_closed
+        alpha_client = AsyncDataLayerClient(
+            query_transport=query,
+            stream_transport=ScriptedStreamTransport(()),
+            consumer_id="alpha-shadow",
+        )
+        response = await alpha_client.warmup(alpha)
+        self.assertEqual(response.data[0].quality.state, "MARKET_CLOSED")
+        self.assertFalse(response.data[0].quality.execution_eligible)
+
+        execution = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.EXECUTION,
+            "alpha_binance_v1", interval="1m", warmup_limit=1,
+            max_freshness_ms=500,
+        )
+        with self.assertRaises(DataLayerError) as raised:
+            await alpha_client.warmup(execution)
+        self.assertEqual(raised.exception.code, "SOURCE_NON_AUTHORITATIVE")
+
     async def test_public_query_wrappers_preserve_all_requirement_policies(self):
         requirement = DataRequirement(
             self.record.instrument_uid,

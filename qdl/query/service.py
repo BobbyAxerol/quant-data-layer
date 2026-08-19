@@ -9,6 +9,7 @@ from qdl.query.contracts import (
     BarRevisionPolicy,
     CanonicalErrorCode,
     CoverageStatus,
+    ConsumerGrade,
     DataRequirement,
     FeedType,
     QueryProblem,
@@ -295,12 +296,21 @@ class V2QueryService:
         problem = evaluate_requirement(
             requirement,
             entitled=entitlement.allowed,
-            available=quality.state not in {"OFFLINE", "UNAVAILABLE"},
+            available=(
+                quality.state not in {"OFFLINE", "UNAVAILABLE"}
+                and not (
+                    requirement.consumer_grade is ConsumerGrade.EXECUTION
+                    and quality.state == "MARKET_CLOSED"
+                )
+            ),
             fresh=(
-                quality.state not in {"STALE", "OFFLINE"}
-                and (
-                    requirement.max_freshness_ms is None
-                    or quality.freshness_ms <= requirement.max_freshness_ms
+                quality.state == "MARKET_CLOSED"
+                or (
+                    quality.state not in {"STALE", "OFFLINE"}
+                    and (
+                        requirement.max_freshness_ms is None
+                        or quality.freshness_ms <= requirement.max_freshness_ms
+                    )
                 )
             ),
             authoritative=(

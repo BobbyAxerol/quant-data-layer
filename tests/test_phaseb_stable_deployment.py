@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 from pathlib import Path
 
@@ -193,10 +195,13 @@ class StableDeploymentContractTests(unittest.TestCase):
                 return tuple(range(len(batch)))
 
         class Envelope:
-            def __init__(self, open_time_ms):
-                self.raw_frame_bytes = json.dumps(
+            def __init__(self, venue, open_time_ms):
+                payload = (
                     {"row": [open_time_ms, "1", "1", "1", "1", "1", open_time_ms + 59999]}
-                ).encode()
+                    if venue == "BINANCE"
+                    else {"data": [[str(open_time_ms), "1", "1", "1", "1", "1", "1", "1", "1"]]}
+                )
+                self.raw_frame_bytes = json.dumps(payload).encode()
 
         publisher = Publisher()
         edge = StableBinanceBarEdge(
@@ -208,11 +213,20 @@ class StableDeploymentContractTests(unittest.TestCase):
         )
         with patch(
             "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
-            side_effect=(Envelope(60_000), Envelope(60_000), Envelope(60_000), Envelope(60_000)),
+            side_effect=(
+                Envelope("BINANCE", 60_000), Envelope("BINANCE", 60_000),
+                Envelope("BINANCE", 60_000), Envelope("BINANCE", 60_000),
+            ),
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_okx_latest",
+            side_effect=(
+                Envelope("OKX", 60_000), Envelope("OKX", 60_000),
+                Envelope("OKX", 60_000), Envelope("OKX", 60_000),
+            ),
         ):
-            self.assertEqual(edge.run_cycle(), 2)
+            self.assertEqual(edge.run_cycle(), 4)
             self.assertEqual(edge.run_cycle(), 0)
-        self.assertEqual([len(batch) for batch in publisher.batches], [2])
+        self.assertEqual([len(batch) for batch in publisher.batches], [4])
 
     def test_dnse_edge_fences_on_queue_pressure_and_bar_keeps_exact_units(self):
         class Publisher:
@@ -251,6 +265,84 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertEqual(payload["v"], "0")
         self.assertTrue(payload["is_final"])
         self.assertFalse(envelope.test_provenance)
+
+    def test_dnse_history_bootstrap_retries_validates_and_publishes_once(self):
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return tuple(range(len(batch)))
+
+        rows = [
+            {"t": value, "o": "100", "h": "101", "l": "99", "c": "100.5", "v": "10"}
+            for value in (100, 160, 220)
+        ]
+        calls = []
+        sleeps = []
+
+        def fetcher(symbol, resolution, start, end):
+            calls.append((symbol, resolution, start, end))
+            if len(calls) == 1:
+                raise TimeoutError("injected transient DNSE timeout")
+            return rows
+
+        publisher = Publisher()
+        edge = StableDnseVendorEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=self.authority,
+            publisher=publisher,
+            warmup_rows=2,
+            history_lookback_days=1,
+            history_attempts=2,
+            history_fetcher=fetcher,
+            clock=lambda: 400.0,
+            sleep=sleeps.append,
+        )
+        self.assertEqual(edge.bootstrap_history(), 4)
+        self.assertEqual(edge.bootstrap_history(), 0)
+        self.assertEqual([len(batch) for batch in publisher.batches], [2, 2])
+        self.assertEqual(sleeps, [1])
+        self.assertEqual(set(edge._last_bar_open_ms), {"FPT", "VN30F1M"})
+        self.assertTrue(all(
+            not item.test_provenance
+            for batch in publisher.batches
+            for item in batch
+        ))
+
+    def test_dnse_history_conflict_partial_and_closed_session_fail_safe(self):
+        base = {"t": 100, "o": "100", "h": "101", "l": "99", "c": "100", "v": "1"}
+        conflict = {**base, "c": "101"}
+        edge = StableDnseVendorEdge(
+            catalog=self.catalog, acquisition=self.acquisition, authority=self.authority,
+            publisher=object(), warmup_rows=2, history_attempts=1,
+            history_fetcher=lambda *_args: [base, conflict],
+            clock=lambda: 400.0, sleep=lambda _delay: None,
+        )
+        with self.assertRaisesRegex(RuntimeError, "bootstrap exhausted"):
+            edge._closed_history("VN30F1M")
+
+        partial = StableDnseVendorEdge(
+            catalog=self.catalog, acquisition=self.acquisition, authority=self.authority,
+            publisher=object(), warmup_rows=2, history_attempts=1,
+            history_fetcher=lambda *_args: [base],
+            clock=lambda: 400.0, sleep=lambda _delay: None,
+        )
+        with self.assertRaisesRegex(RuntimeError, "bootstrap exhausted"):
+            partial._closed_history("VN30F1M")
+
+        closed_source = edge.bar_sources["VN30F1M"]
+        # 2026-08-22 is Saturday in Asia/Ho_Chi_Minh.
+        closed = datetime(2026, 8, 22, 3, tzinfo=timezone.utc).timestamp()
+        edge.clock = lambda: closed
+        self.assertFalse(edge._market_open(closed_source))
+        edge.history_fetcher = lambda *_args: (_ for _ in ()).throw(
+            AssertionError("closed session must not call DNSE REST")
+        )
+        self.assertEqual(asyncio.run(edge.poll_bars_once()), 0)
 
     def test_missing_binding_wrong_provider_kind_and_primary_authority_fail_closed(self):
         payload = yaml.safe_load(ACQUISITION_PATH.read_text(encoding="utf-8"))

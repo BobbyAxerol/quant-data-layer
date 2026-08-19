@@ -18,6 +18,7 @@ from qdl.adapters.binance import (
 from qdl.adapters.okx.bar_edge import (
     OkxBarRawBinding,
     fetch_closed_bar_history_raw_envelopes as fetch_okx_history,
+    fetch_latest_closed_bar_raw_envelope as fetch_okx_latest,
 )
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.runtime.stable_deployment import (
@@ -204,7 +205,7 @@ class StableBinanceBarEdge:
         return published
 
     def run_cycle(self) -> int:
-        envelopes = []
+        pending = []
         for source, _acquisition in self.bindings:
             envelope = fetch_latest_closed_bar_raw_envelope(
                 self._binance_binding(source),
@@ -212,18 +213,34 @@ class StableBinanceBarEdge:
                 test_provenance=False,
             )
             payload = json.loads(envelope.raw_frame_bytes)
-            open_time_ms = int(payload["row"][0])
+            pending.append((source, envelope, int(payload["row"][0])))
+        observed_ms = int(self.clock() * 1000)
+        for source, _acquisition in self.okx_bindings:
+            envelope = asyncio.run(fetch_okx_latest(
+                self._okx_binding(source),
+                now_ms=observed_ms,
+                test_provenance=False,
+            ))
+            payload = json.loads(envelope.raw_frame_bytes)
+            pending.append((source, envelope, int(payload["data"][0][0])))
+
+        envelopes = []
+        binding_ids = []
+        for source, envelope, open_time_ms in pending:
             if open_time_ms <= self._last_open_ms.get(source.binding_id, -1):
                 continue
             self._last_open_ms[source.binding_id] = open_time_ms
             envelopes.append(envelope)
+            binding_ids.append(source.binding_id)
         if not envelopes:
             return 0
         acknowledgements = self.publisher.publish_many(envelopes)
+        if len(acknowledgements) != len(envelopes):
+            raise RuntimeError("stable latest-closed BAR cycle missed a Kafka ACK")
         logger.info(
-            "stable Binance latest-closed BAR ACK count=%s bindings=%s",
+            "stable multi-venue latest-closed BAR ACK count=%s bindings=%s",
             len(acknowledgements),
-            ",".join(source.binding_id for source, _ in self.bindings),
+            ",".join(binding_ids),
         )
         return len(acknowledgements)
 

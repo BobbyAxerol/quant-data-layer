@@ -4892,6 +4892,77 @@ by implication in Phase B implementation.
   trade losslessness, decreasing/near-zero core and projector lag, bounded
   cache/resource use, restart/failover and no quarantine/collision before B8 or
   Phase B can close.
+- `2026-08-19 PHASE B B8 IMMUTABLE REAL-PROVIDER CAPACITY GATE PASSED,
+  CONSUMER/RECOVERY CERTIFICATION IN PROGRESS`: a clean all-`0a25407` candidate
+  started all four Binance USD-M/Spot and OKX SWAP/Spot native ingestors only
+  after TLS/state initialization and healthy RF3/minISR2 brokers. The bounded
+  REST bootstrap published exactly 500 contiguous closed 1m provider bars per
+  binding (2,000 total, `test_provenance=false`) through raw Kafka and the Rust
+  core. Under continuing authentic provider traffic, Rust-core lag was 50
+  records and projector lag was 29 records at the bounded observation point;
+  the prior projector growth reversed and an earlier 60-second sample decreased
+  from 265 to 84. SQLite contained only `md.canonical.v2`, zero quarantine rows,
+  76,795 records, and no partition exceeded the configured 10,000-record replay
+  window. Query cache utilization was about 6.9%; all query dependencies were
+  READY; exactly one stream gateway held epoch-1 lease while its peer reported
+  STANDBY. The isolated Redis used about 3.3 MiB and app-role memory remained
+  bounded; no application warning/error was observed in the sampled startup and
+  runtime window.
+
+  Current V1 remained container `0e0eb56c78ba`, image `8f2a5a3f1ff9`, Up and
+  HTTP 200 on port 8100. No current Redis namespace, V1 consumer or authority was
+  changed. B8 code/capacity is accepted, but Phase B is not closed: authenticated
+  Binance/OKX/VN/Trading-System consumer flows, active/passive restart,
+  generation restart, broker outage, Redis rebuild, full regression/release
+  checks, compact evidence and exact candidate cleanup remain mandatory. DNSE
+  testing must use the configured real provider credentials/session and fail
+  closed if 500-bar coverage is unavailable; generated VN data is forbidden.
+- `2026-08-19 PHASE B B9 CONSUMER ACCEPTANCE DEFECTS CONFIRMED, FIX IN
+  PROGRESS`: authenticated SDK acceptance correctly failed closed with
+  `DATA_STALE`. Bounded inspection proved Binance BARs continued to append every
+  minute, but OKX Spot/SWAP BARs stopped at the one-time bootstrap because the
+  stable BAR cycle polled only Binance bindings. The real DNSE WebSocket
+  authenticated and subscribed successfully with configured credentials, while
+  its REST BAR poll timed out; the VN edge also has no 500-row historical
+  bootstrap and therefore cannot satisfy its registered alpha manifest after a
+  clean start. Finally, both query service and SDK compare wall-clock freshness
+  before honoring `MARKET_CLOSED`, contradicting the approved rule that a closed
+  session is neither stale nor offline.
+
+  The in-scope repair is bounded and contract-preserving: poll the latest closed
+  OKX BAR through the existing strict history adapter; bootstrap exactly 500
+  authentic closed DNSE 1m rows through raw Kafka/Rust with bounded retry and
+  duplicate/conflict validation; centralize VN session-calendar lookup and skip
+  live BAR polling while the session is closed; treat `MARKET_CLOSED` as
+  available historical state for ALPHA/RESEARCH while preserving
+  `execution_eligible=false` and execution-grade SDK fail-closed behavior. Tests
+  must cover incomplete/conflicting history, retry exhaustion, session closure,
+  OKX append, server/SDK policy and the real registered consumer flow. No public
+  schema, V1 route, current Redis or authority mode may change.
+- `2026-08-19 PHASE B B9 MULTI-VENUE BAR/SESSION REPAIR IMPLEMENTED AND
+  UNIT-VERIFIED, IMMUTABLE RUNTIME RETEST PENDING`: the stable crypto BAR cycle
+  now appends the latest strictly closed native BAR for Binance USD-M/Spot and
+  OKX SWAP/Spot through one lossless raw-Kafka batch; OKX uses its existing
+  strict V5 history adapter with `limit=1`, and all Kafka ACKs are cardinality
+  checked. DNSE now bootstraps exactly 500 closed provider 1m rows per configured
+  FPT/VN30F1M binding over a bounded 30-day lookback, retries at most four times,
+  deduplicates identical native timestamps, rejects conflicting duplicates or
+  partial coverage, and publishes only authentic rows through raw Kafka/Rust.
+  Live DNSE BAR polling is retry-bounded, ACK-checked and skipped outside the
+  governed calendar session.
+
+  The VN calendar moved to a shared domain resolver keyed by canonical
+  `session_calendar_id`. Query and SDK semantics now preserve the approved rule:
+  `MARKET_CLOSED` history is readable by ALPHA/RESEARCH despite wall-clock age,
+  while execution-grade access fails closed as `DATA_NOT_READY` and no item is
+  execution eligible. Public schema, route and event identity are unchanged.
+  Targeted tests passed 31/31; the broader stable projector/query/SDK/security/
+  release regression passed 85/85 with one explicit infrastructure-gated skip;
+  compose validation including `stable-vn` passed. Test cases include OKX live
+  append/idempotence, DNSE transient retry, partial/conflicting history, exact
+  units/provenance, closed-session no-REST behavior, server/SDK policy and
+  execution blocking. The next gate is a clean immutable all-one-SHA candidate
+  with real Binance/OKX/DNSE consumer and recovery evidence.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 

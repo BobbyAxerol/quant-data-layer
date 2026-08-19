@@ -151,3 +151,21 @@ async def fetch_closed_bar_history_raw_envelopes(
             test_provenance=test_provenance,
         ))
     return tuple(envelopes)
+
+async def fetch_latest_closed_bar_raw_envelope(
+    binding: OkxBarRawBinding,
+    *,
+    now_ms: int | None = None,
+    history_client: OkxHistoricalClient | None = None,
+    test_provenance: bool = False,
+) -> raw_provider_pb2.RawProviderEnvelope:
+    values = await fetch_closed_bar_history_raw_envelopes(
+        binding,
+        limit=1,
+        now_ms=now_ms,
+        history_client=history_client,
+        test_provenance=test_provenance,
+    )
+    if len(values) != 1:
+        raise RuntimeError("OKX latest-closed BAR lookup returned invalid cardinality")
+    return values[0]

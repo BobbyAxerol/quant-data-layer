@@ -429,6 +429,9 @@ services:
       QDL_STABLE_ACQUISITION_BINDINGS: /app/config/v2/stable-acquisition-bindings.yaml
       QDL_STABLE_RUNTIME_DIR: /runtime
       QDL_STABLE_DNSE_QUEUE_CAPACITY: "5000"
+      QDL_STABLE_VN_WARMUP_ROWS: "500"
+      QDL_STABLE_VN_HISTORY_LOOKBACK_DAYS: "30"
+      QDL_STABLE_VN_HISTORY_ATTEMPTS: "4"
       QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_KAFKA_CERT_ROOT: /stable-certs/producer
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-vn
