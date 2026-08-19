@@ -1,9 +1,3 @@
-from qdl.canary.consumer import (
-    CanaryRunResult,
-    DeterministicPaperSignalState,
-    PaperAlphaCanary,
-    sdk_requirement,
-)
 from qdl.canary.phase92 import (
     AcceptedHandoff,
     HandoffDirection,
@@ -83,3 +77,21 @@ __all__ = [
     "ProductionCanaryAuthorizer",
     "sdk_requirement",
 ]
+
+
+_CONSUMER_EXPORTS = {
+    "CanaryRunResult",
+    "DeterministicPaperSignalState",
+    "PaperAlphaCanary",
+    "sdk_requirement",
+}
+
+
+def __getattr__(name: str):
+    if name not in _CONSUMER_EXPORTS:
+        raise AttributeError(name)
+    from qdl.canary import consumer
+
+    value = getattr(consumer, name)
+    globals()[name] = value
+    return value

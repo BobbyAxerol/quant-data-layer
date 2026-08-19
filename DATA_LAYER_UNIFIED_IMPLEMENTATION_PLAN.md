@@ -3445,8 +3445,19 @@ transitive approval.
   left authority exactly `RUST_PRIMARY:4:rust-primary:2:100`; stale CAS, dirty
   pass, incomplete gates and all tested mutations failed closed. Idempotent
   replay and scoped container cleanup passed.
-- `IN_PROGRESS`: isolated certification, operator runbook, full compatibility
-  matrix, evidence freeze and final cleanup.
+- `COMPLETE` isolated certification and operator tooling: parent Phase 9.2
+  provenance remains 25,600 authentic events with zero semantic mismatch; the
+  accelerated hold is explicitly `TEST_CONTROL_PLANE_FIXTURE` and has no
+  production authority. Current no-go is rejected, five expansion manifests
+  remain independently uncertified/write-disabled, Python decommission with a
+  rollback dependency is denied, and production mutations remain zero. V1
+  health stayed 200/200 with unchanged topology. Focused Phase 9.3 tests pass
+  20/20 and evidence checksums pass.
+- `COMPLETE` import/runtime boundary: control-plane imports no longer eagerly
+  load the alpha SDK. Existing `PaperAlphaCanary` and `sdk_requirement` exports
+  remain API-compatible through lazy loading and passed container smoke.
+- `IN_PROGRESS`: full Python/Rust compatibility matrix, final migration rerun,
+  cleanup audit and phase closure.
 - `OPEN EXTERNAL GATE`: Phase 9.0-C remains `NO_GO_EXTERNAL`; no real primary
   owner, production hold interval or operator closure approval exists.
 

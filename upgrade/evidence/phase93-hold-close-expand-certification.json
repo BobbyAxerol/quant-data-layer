@@ -1,0 +1,110 @@
+{
+  "candidate_digest": "72eb1500e19a7e738373c85442c6fc42331cebd15aba86a8b746f62c2fedc037",
+  "cleanup": {
+    "production_rows_created": 0,
+    "resources_remaining": 0
+  },
+  "control_plane_fixture": {
+    "accelerated_time_is_production_evidence": false,
+    "current_no_go_rejection": "PREREQUISITE_DECISION_NOT_GO",
+    "decommission_reason": "RUNTIME_STILL_REQUIRED_FOR_ROLLBACK",
+    "expansion_manifest_count": 5,
+    "expansions": [
+      {
+        "digest": "c863b01298c50500e6d9a38ea9dacd91b3a7e9b342fca93c2fe5d739488050e4",
+        "required_gate_count": 7,
+        "status": "INDEPENDENT_CERTIFICATION_REQUIRED",
+        "transitive_evidence_allowed": false,
+        "type": "INSTRUMENT_PARTITION",
+        "write_authority": false
+      },
+      {
+        "digest": "78a8fd443205403c37aa40ca9f4177d68ffd2bc1c990a5359ff2a84a2874d1d8",
+        "required_gate_count": 9,
+        "status": "INDEPENDENT_CERTIFICATION_REQUIRED",
+        "transitive_evidence_allowed": false,
+        "type": "BBO",
+        "write_authority": false
+      },
+      {
+        "digest": "ebfb8a110a0546dea22b0102846562827dab44535b22c50e18d56ea65b292816",
+        "required_gate_count": 9,
+        "status": "INDEPENDENT_CERTIFICATION_REQUIRED",
+        "transitive_evidence_allowed": false,
+        "type": "L2_BOOK",
+        "write_authority": false
+      },
+      {
+        "digest": "48af83060bd9f309417287a6200563f72e03149902b6aa70b92ee9d6f39906cc",
+        "required_gate_count": 8,
+        "status": "INDEPENDENT_CERTIFICATION_REQUIRED",
+        "transitive_evidence_allowed": false,
+        "type": "BAR_LIFECYCLE",
+        "write_authority": false
+      },
+      {
+        "digest": "3f8a6009087772996acd32a40be52a366486c8a976d7fadc48c20312b7edd3ed",
+        "required_gate_count": 10,
+        "status": "INDEPENDENT_CERTIFICATION_REQUIRED",
+        "transitive_evidence_allowed": false,
+        "type": "VENUE_MARKET",
+        "write_authority": false
+      }
+    ],
+    "local_phase92_production_eligible": false,
+    "provenance": "TEST_CONTROL_PLANE_FIXTURE",
+    "test_hold_production_authorized": false,
+    "test_hold_status": "PASSED"
+  },
+  "issued_at_ns": 1787102469088595363,
+  "migration": {
+    "all_expansion_types_registered_independently": true,
+    "append_only_mutation_rejected": true,
+    "authority_state_after_closure": "RUST_PRIMARY:4:rust-primary:2:100",
+    "closure_did_not_mutate_authority": true,
+    "closure_records": 1,
+    "decision_records": 2,
+    "decommission_records": 2,
+    "dirty_hold_pass_rejected": true,
+    "expansion_records": 5,
+    "final_test_state_after_stale_cas_setup": "BLOCKED:5:rust-primary:2:130",
+    "hold_records": 2,
+    "idempotent_migration": true,
+    "incomplete_expansion_gates_rejected": true,
+    "observation_records": 3,
+    "out_of_order_observation_rejected": true,
+    "production_mutations": 0,
+    "registry_mutation_rejected": true,
+    "schema": "qdl.phase93.hold-close-migration.v1",
+    "stale_authority_closure_rejected": true,
+    "status": "PASS"
+  },
+  "parent_phase92": {
+    "authentic_events": 25600,
+    "production_authorized": false,
+    "semantic_mismatches": 0,
+    "sha256": "2acf8616d9134dea52eea0ccaebcc7f783efa29a86d85aad627f97dbbee3cfe6",
+    "status": "COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED"
+  },
+  "prerequisite_decision": "NO_GO_EXTERNAL",
+  "production_authorized": false,
+  "production_expansions_authorized": 0,
+  "production_hold_started": false,
+  "production_mutations": 0,
+  "production_rollback_window_closed": false,
+  "python_decommission_authorized": false,
+  "schema": "qdl.phase93.hold-close-expand-certification.v1",
+  "slice_id": "production/binance/usdm/perpetual/trade/plan-1/btcusdt",
+  "status": "COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED",
+  "technical_debt": [
+    "Phase 9.0-C production infrastructure remains NO_GO_EXTERNAL",
+    "real production primary and sustained hold observations do not exist",
+    "real consumer checkpoints and operator closure approval do not exist",
+    "every expansion remains independently uncertified"
+  ],
+  "v1": {
+    "health_after": 200,
+    "health_before": 200,
+    "topology_unchanged": true
+  }
+}
