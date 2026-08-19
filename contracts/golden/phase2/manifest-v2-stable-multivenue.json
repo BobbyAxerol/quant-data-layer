@@ -1,0 +1,108 @@
+{
+  "cases": [
+    {
+      "bytes": 439,
+      "fixture": "binance_usdm_trade.json",
+      "golden": "binance-usdm-trade.bin",
+      "sha256": "85b6260dfcd725e64a9c25573d77daf3d6e49aef064720276f327f66f688a8fc"
+    },
+    {
+      "bytes": 434,
+      "fixture": "binance_usdm_bbo.json",
+      "golden": "binance-usdm-bbo.bin",
+      "sha256": "13c774bb5e1f0c22bf8d729c29de055817e4785bfe23c070a2dcfea404b85ce5"
+    },
+    {
+      "bytes": 528,
+      "fixture": "binance_usdm_bar.json",
+      "golden": "binance-usdm-bar.bin",
+      "sha256": "f187fa907e721e0993b1c3ff2ff4ea8f04afe63b3d018f9a59ff916ad075c56a"
+    },
+    {
+      "bytes": 428,
+      "fixture": "binance_spot_trade.json",
+      "golden": "binance-spot-trade.bin",
+      "sha256": "0ac78a07ad29aedbd43960be26159a4c308fae17d6becccaba52e4d14f505bf8"
+    },
+    {
+      "bytes": 424,
+      "fixture": "binance_spot_bbo.json",
+      "golden": "binance-spot-bbo.bin",
+      "sha256": "655879474adde2208d94ba551d2071ff7b4b913a7eadf93770f0317dab0087f3"
+    },
+    {
+      "bytes": 518,
+      "fixture": "binance_spot_bar.json",
+      "golden": "binance-spot-bar.bin",
+      "sha256": "ea67bc0fd11e1140aa5d0b0f3f86b26f4fa3e3464136fc792614016990ff7322"
+    },
+    {
+      "bytes": 413,
+      "fixture": "okx_trade.json",
+      "golden": "okx-swap-trade.bin",
+      "sha256": "824f114905498c82ad5dd2424e4af3a23ffe004e8a16a7f1efaecd65739cfef7"
+    },
+    {
+      "bytes": 409,
+      "fixture": "okx_bbo.json",
+      "golden": "okx-swap-bbo.bin",
+      "sha256": "8edea437e146185583a8cd611a834b986dd2fdc88e9c60cd5ca67826b80f56d0"
+    },
+    {
+      "bytes": 538,
+      "fixture": "okx_bar.json",
+      "golden": "okx-swap-bar.bin",
+      "sha256": "1a41527cfce48c59e2a73a071917811f392b9a760186add4798595b706443f78"
+    },
+    {
+      "bytes": 403,
+      "fixture": "okx_spot_trade.json",
+      "golden": "okx-spot-trade.bin",
+      "sha256": "15b0b4ae7dcbdfecc2071611b0bc46ff2cbd24c869dcd21c28d7b68cc155c500"
+    },
+    {
+      "bytes": 399,
+      "fixture": "okx_spot_bbo.json",
+      "golden": "okx-spot-bbo.bin",
+      "sha256": "eff031027d2b8275dcb7fb839b3c6d76b0f3d00f17db95c22dd92c0813924ecd"
+    },
+    {
+      "bytes": 511,
+      "fixture": "okx_spot_bar.json",
+      "golden": "okx-spot-bar.bin",
+      "sha256": "f4bd3f7936ed5b7d895d2ff0f2dbb7ed79ba55fae95aa29f6a5b2cc092c997e2"
+    },
+    {
+      "bytes": 585,
+      "fixture": "dnse_derivative_trade.json",
+      "golden": "dnse-derivative-trade.bin",
+      "sha256": "b06ee637943c5fe7f2c99e9900b3d9ba6befce71f380d8754ea1753be8c2e771"
+    },
+    {
+      "bytes": 606,
+      "fixture": "dnse_derivative_bar.json",
+      "golden": "dnse-derivative-bar.bin",
+      "sha256": "5ca9f400f37c9fd110c9adb7337c2401d288b67705f8c5eec5d8e82b252c079f"
+    },
+    {
+      "bytes": 567,
+      "fixture": "dnse_equity_trade.json",
+      "golden": "dnse-equity-trade.bin",
+      "sha256": "2a0048d79a171b7c0524d488162aff925b2a5b3b027b22383bf2047fb6f917a3"
+    },
+    {
+      "bytes": 583,
+      "fixture": "dnse_equity_bar.json",
+      "golden": "dnse-equity-bar.bin",
+      "sha256": "4b6dd6d8667169ed19884f65766f19b8edaa3dc78f821a44d29111801dc3d413"
+    },
+    {
+      "bytes": 574,
+      "fixture": "vnstock_equity_bar.json",
+      "golden": "vnstock-equity-bar.bin",
+      "sha256": "a62151439dd7b2203f44927a998a739a20dc93bfe7d60a7d9dbfba4ee284580f"
+    }
+  ],
+  "provenance": "DETERMINISTIC_PROVIDER_FIXTURE",
+  "schema": "qdl.v2.stable-multivenue-golden.v1"
+}

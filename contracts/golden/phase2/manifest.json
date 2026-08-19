@@ -4,14 +4,14 @@
     {
       "fixture": "binance_usdm_trade.json",
       "golden": "binance-usdm-trade.bin",
-      "bytes": 435,
-      "sha256": "67942fef883171e1507371a6590c73145dab13aafa5399cc852453352e74b34c"
+      "bytes": 439,
+      "sha256": "85b6260dfcd725e64a9c25573d77daf3d6e49aef064720276f327f66f688a8fc"
     },
     {
       "fixture": "okx_trade.json",
       "golden": "okx-swap-trade.bin",
-      "bytes": 409,
-      "sha256": "edcdde102151b0e213fa19ecf25ae0181b2843f7a0ed60a3858d045f158f0b21"
+      "bytes": 413,
+      "sha256": "824f114905498c82ad5dd2424e4af3a23ffe004e8a16a7f1efaecd65739cfef7"
     }
   ]
 }

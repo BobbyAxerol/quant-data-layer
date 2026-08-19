@@ -33,7 +33,8 @@ class Phase90BBridgeParityTest(unittest.TestCase):
                 "close_time_ns": row[6] * 1_000_000,
                 "open": decimal(row[1]), "high": decimal(row[2]),
                 "low": decimal(row[3]), "close": decimal(row[4]),
-                "volume": decimal(row[5]), "trade_count": row[8],
+                "volume": decimal(row[5]), "volume_unit": "BASE_ASSET",
+                "trade_count": row[8],
                 "lifecycle": "FINAL",
             },
             "source": {

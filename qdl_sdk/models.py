@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from qdl.api_v2.models import MarketDataView, SnapshotResponse, WarmupResponse
+from qdl.api_v2.models import (
+    MarketDataView,
+    QuantityUnit,
+    SnapshotResponse,
+    TradeIdentityKind,
+    WarmupResponse,
+)
 from qdl.query.v2 import query_pb2
 
 

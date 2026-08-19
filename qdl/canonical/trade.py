@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from qdl.common.v1 import common_pb2
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.event_id import deterministic_event_id
+from qdl.domain.quantity import quantity_unit_proto
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.transport.contracts import DurableEvent, partition_key
 
@@ -38,6 +39,11 @@ class TradeContext:
     partition_plan_epoch: int = 0
     raw_capture_id: bytes = b""
     raw_frame_sha256: bytes = b""
+    source_role: str = "PRIMARY"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "raw_capture_id", bytes(self.raw_capture_id))
+        object.__setattr__(self, "raw_frame_sha256", bytes(self.raw_frame_sha256))
 
 
 def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
@@ -73,6 +79,13 @@ def _required_bool(raw: Mapping[str, Any], field: str) -> bool:
     return value
 
 
+def source_role_proto(value: str) -> int:
+    normalized = value.strip().upper()
+    if normalized not in {"PRIMARY", "SECONDARY", "REFERENCE", "BACKFILL"}:
+        raise ValueError("canonical source role is invalid")
+    return getattr(common_pb2, f"SOURCE_ROLE_{normalized}")
+
+
 def _set_canonical_payload_hash(
     envelope: market_data_pb2.EventEnvelope, *, enabled: bool
 ) -> None:
@@ -102,6 +115,7 @@ def _trade_envelope(
     side: int,
     source_event_time_ms: int,
     is_buyer_maker: bool,
+    identity_kind: int = market_data_pb2.TRADE_IDENTITY_KIND_NATIVE,
 ) -> market_data_pb2.EventEnvelope:
     _validate_shadow_context(context)
     raw_bytes = canonical_json_bytes(raw)
@@ -130,7 +144,7 @@ def _trade_envelope(
         native_symbol=context.native_symbol,
         provider=context.provider,
         source_id=context.source_id,
-        source_role=common_pb2.SOURCE_ROLE_PRIMARY,
+        source_role=source_role_proto(context.source_role),
         lease_epoch=context.lease_epoch,
         source_event_time_ns=source_event_time_ms * 1_000_000,
         received_at_ns=context.received_at_ns,
@@ -155,6 +169,12 @@ def _trade_envelope(
             aggressor_side=side,
             is_block_trade=False,
             is_buyer_maker=is_buyer_maker,
+            quantity_unit=quantity_unit_proto(
+                venue=context.venue,
+                market=context.market,
+                product_type=context.product_type,
+            ),
+            identity_kind=identity_kind,
         ),
     )
     _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))
@@ -208,6 +228,35 @@ def canonicalize_okx_trade(
         source_event_time_ms=int(_required(raw, "ts")),
         is_buyer_maker=False,
     )
+
+
+def canonicalize_dnse_trade(
+    raw: Mapping[str, Any], context: TradeContext
+) -> market_data_pb2.EventEnvelope:
+    symbol = str(_required(raw, "symbol")).upper()
+    if symbol != context.native_symbol.upper():
+        raise ValueError("provider symbol does not match resolved instrument")
+    if len(context.raw_capture_id) != 16:
+        raise ValueError("DNSE trade identity requires an exact raw capture id")
+    source_time_ms = context.received_at_ns // 1_000_000
+    envelope = _trade_envelope(
+        raw=raw,
+        context=context,
+        native_trade_id=f"derived:{context.raw_capture_id.hex()}",
+        price=_required(raw, "price"),
+        quantity=_required(raw, "quantity"),
+        side=common_pb2.AGGRESSOR_SIDE_UNSPECIFIED,
+        source_event_time_ms=source_time_ms,
+        is_buyer_maker=False,
+        identity_kind=market_data_pb2.TRADE_IDENTITY_KIND_DERIVED_RAW_CAPTURE,
+    )
+    envelope.quality_flags.extend(
+        (
+            common_pb2.QUALITY_FLAG_SOURCE_TIME_MISSING,
+            common_pb2.QUALITY_FLAG_FIELD_MISSING,
+        )
+    )
+    return envelope
 
 
 def canonical_event(

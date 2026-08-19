@@ -111,6 +111,7 @@ class Phase5ApiTests(unittest.TestCase):
                     "low": str(59_999 + index),
                     "close": str(60_000 + index),
                     "volume": "12.5",
+                    "volume_unit": "BASE_ASSET",
                     "trade_count": 10,
                     "origin": "VENUE_NATIVE",
                     "is_final": True,

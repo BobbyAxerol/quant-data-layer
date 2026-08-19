@@ -1,0 +1,35 @@
+{
+  "context": {
+    "adapter_version": "binance-json/1.0.0",
+    "config_revision": 9,
+    "correlation_id": "phase-a-binance_spot_trade",
+    "instrument_id": "BINANCE.SPOT.SPOT.BTC-USDT",
+    "instrument_revision": 7,
+    "instrument_uid": "26edfffd-6824-5e75-a620-5a122b3e1086",
+    "lease_epoch": 42,
+    "market": "SPOT",
+    "native_symbol": "BTCUSDT",
+    "normalized_at_ns": 1786352400123500000,
+    "normalizer_version": "qdl-normalizer/2.0.0",
+    "partition_sequence": 1234,
+    "product_type": "SPOT",
+    "provider": "BINANCE_DIRECT",
+    "published_at_ns": 1786352400123700000,
+    "received_at_ns": 1786352400123456000,
+    "source_id": "binance-spot-trade-001",
+    "venue": "BINANCE"
+  },
+  "provider_kind": "binance_spot_trade",
+  "raw": {
+    "E": 1786352400124,
+    "T": 1786352400123,
+    "X": "MARKET",
+    "a": 9876543210123456789,
+    "e": "aggTrade",
+    "m": false,
+    "p": "61234.10",
+    "q": "0.125",
+    "s": "BTCUSDT",
+    "st": 1786352400122
+  }
+}

@@ -56,6 +56,8 @@ def build_trade_envelope():
             price=decimal(6_123_410, 2, "61234.10"),
             quantity=decimal(125, 3, "0.125"),
             aggressor_side=common_pb2.AGGRESSOR_SIDE_BUY,
+            quantity_unit=common_pb2.QUANTITY_UNIT_BASE_ASSET,
+            identity_kind=market_data_pb2.TRADE_IDENTITY_KIND_NATIVE,
         ),
     )
 

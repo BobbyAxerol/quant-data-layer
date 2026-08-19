@@ -14,6 +14,10 @@ pub struct Trade {
     pub is_block_trade: bool,
     #[prost(bool, tag="6")]
     pub is_buyer_maker: bool,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="7")]
+    pub quantity_unit: i32,
+    #[prost(enumeration="TradeIdentityKind", tag="8")]
+    pub identity_kind: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Quote {
@@ -27,6 +31,8 @@ pub struct Quote {
     pub ask_quantity: ::core::option::Option<super::super::common::v1::DecimalValue>,
     #[prost(uint32, tag="5")]
     pub level: u32,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="6")]
+    pub quantity_unit: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Bar {
@@ -58,6 +64,14 @@ pub struct Bar {
     pub lifecycle: i32,
     #[prost(bytes="vec", optional, tag="14")]
     pub supersedes_event_id: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="15")]
+    pub volume_unit: i32,
+    #[prost(message, optional, tag="16")]
+    pub base_volume: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, optional, tag="17")]
+    pub quote_volume: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, optional, tag="18")]
+    pub contract_volume: ::core::option::Option<super::super::common::v1::DecimalValue>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BookLevel {
@@ -69,6 +83,8 @@ pub struct BookLevel {
     pub quantity: ::core::option::Option<super::super::common::v1::DecimalValue>,
     #[prost(uint32, tag="4")]
     pub order_count: u32,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="5")]
+    pub quantity_unit: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OrderBookSnapshot {
@@ -111,6 +127,8 @@ pub struct OpenInterest {
     pub quantity: ::core::option::Option<super::super::common::v1::DecimalValue>,
     #[prost(message, optional, tag="2")]
     pub notional: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="3")]
+    pub quantity_unit: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MarkIndexPrice {
@@ -133,6 +151,10 @@ pub struct Ticker {
     pub low_24h: ::core::option::Option<super::super::common::v1::DecimalValue>,
     #[prost(message, optional, tag="6")]
     pub volume_24h: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="7")]
+    pub last_quantity_unit: i32,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="8")]
+    pub volume_24h_unit: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EventEnvelope {
@@ -231,6 +253,35 @@ pub mod event_envelope {
         FeedState(super::super::super::quality::v1::FeedStateEvent),
         #[prost(message, tag="50")]
         QualityEvent(super::super::super::quality::v1::DataQualityEvent),
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum TradeIdentityKind {
+    Unspecified = 0,
+    Native = 1,
+    DerivedRawCapture = 2,
+}
+impl TradeIdentityKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "TRADE_IDENTITY_KIND_UNSPECIFIED",
+            Self::Native => "TRADE_IDENTITY_KIND_NATIVE",
+            Self::DerivedRawCapture => "TRADE_IDENTITY_KIND_DERIVED_RAW_CAPTURE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TRADE_IDENTITY_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "TRADE_IDENTITY_KIND_NATIVE" => Some(Self::Native),
+            "TRADE_IDENTITY_KIND_DERIVED_RAW_CAPTURE" => Some(Self::DerivedRawCapture),
+            _ => None,
+        }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]

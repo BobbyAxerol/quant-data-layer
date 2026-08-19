@@ -3825,9 +3825,9 @@ The Phase 7-9 program achieves its target when:
     and evidence gates without redesigning the core.
 
 
-## 19. V2 Stable Rust Core And Binance/OKX Equal-Source Closure
+## 19. V2 Stable Rust Core And Binance/OKX/VN Equal-Source Closure
 
-**Status:** `APPROVED / PHASE A IN_PROGRESS / RUNTIME CUTOVER NOT AUTHORIZED`
+**Status:** `APPROVED / PHASE A IN_PROGRESS (BINANCE/OKX/VN) / RUNTIME CUTOVER NOT AUTHORIZED`
 
 ### Purpose
 
@@ -3836,8 +3836,9 @@ program:
 
 1. make Rust the authoritative realtime data core while Python remains the
    stable REST/gRPC/SDK/history/control and compatibility edge;
-2. make OKX a first-class source equal to Binance instead of a reference or
-   fallback source.
+2. make Binance, OKX and VN markets first-class sources under the same domain,
+   quality, durability and authority rules instead of treating OKX/VN as
+   reference-only or second-class paths.
 
 Stable V2 consumer contracts are independent from implementation language.
 Alphas and Trading System must use the same V2 API/SDK while individual
@@ -3846,7 +3847,10 @@ consumer rewrite.
 
 ### Frozen Product Scope
 
-The equal-source GA baseline is:
+The equal-source GA baseline is capability-equivalent rather than falsely
+feed-identical. A venue is first-class when every feed it actually exposes uses
+the same identity, exact-decimal/unit, lineage, quality, durability, recovery,
+authority and consumer-readiness gates:
 
 | Venue/product | TRADE | BBO | BAR | L2 |
 |---|---:|---:|---:|---:|
@@ -3855,26 +3859,43 @@ The equal-source GA baseline is:
 | OKX SWAP perpetual | required | required | required | capability-gated |
 | OKX Spot | required | required | required | capability-gated |
 
+| VN venue/product | TRADE | QUOTE | BAR | Provider edge | Rust core |
+|---|---:|---:|---:|---|---|
+| VN derivatives (DNSE primary) | required | capability-gated | required | Python/vendor SDK | required |
+| VN equities (DNSE/vnstock policy) | required | capability-gated | required | Python/vendor SDK | required |
+
+`capability-gated` is not an optional quality class: the
+capability registry records the provider's real product/feed support and each
+advertised feed passes the same strict gates. The platform does not fabricate
+crypto-style BBO or book semantics for a VN provider/feed that has not exposed
+and certified them. DNSE and vnstock remain separate providers with immutable provenance and
+audited source switching; `MARKET_CLOSED` is not stale or offline.
+
 L2 remains in the common canonical model and Rust state machine, but is not
-advertised stable for either venue until both Binance snapshot+delta and OKX
-snapshot+`seqId/prevSeqId` resync pass the same production gate. OKX SBE,
+advertised stable for either crypto venue until both Binance snapshot+delta and
+OKX snapshot+`seqId/prevSeqId` resync pass the same production gate. OKX SBE,
 VIP-only 10 ms books and Deribit options remain independent capabilities.
 
 ### Non-Negotiable Invariants
 
-- Rust owns realtime transport, native JSON decoding, exact canonicalization,
-  source session/generation, ordering, deduplication, gap detection,
-  backpressure, deterministic event identity and durable publication.
+- Rust owns the common realtime core: raw-envelope validation, exact
+  canonicalization, quantity-unit enforcement, source session/generation,
+  ordering, deduplication, gap detection, backpressure, deterministic event
+  identity, quality transitions and durable publication. Rust also owns native
+  realtime transport/decoding for high-volume Binance and OKX feeds.
 - Python owns V2 REST/gRPC and SDK facades, historical/warmup orchestration,
   consumer manifests, workload identity, readiness, observability/control,
-  compatibility projection and low-rate Python-only provider adapters.
-- Python may not reimplement Binance/OKX realtime domain decisions after Rust
+  compatibility projection and low-rate/vendor-SDK acquisition adapters. A
+  Python DNSE/vnstock edge may emit only authenticated versioned raw provider
+  envelopes; it may not bypass the Rust canonical/quality/durable core.
+- Python may not reimplement Binance/OKX/VN realtime domain decisions after
   promotion. It may validate/project canonical events and provide a bounded
   rollback adapter.
 - Kafka-compatible durable records are the handoff between Rust and Python.
   Redis remains latest-state/compatibility projection, not lossless authority.
-- Binance and OKX use identical canonical feed/quality/authority contracts.
-  Provider-native channel names never leak into alpha strategy code.
+- Binance, OKX and VN use one canonical identity/quantity-unit/quality/authority
+  contract and one durable publication boundary. Provider-native channel names
+  and provider-specific missing-value conventions never leak into alpha code.
 - V1 remains available during migration. No running producer, Redis namespace,
   alpha or Trading System adapter changes before isolated parity and an explicit
   cutover approval naming the blast radius.
@@ -3882,37 +3903,52 @@ VIP-only 10 ms books and Deribit options remain independent capabilities.
   bar lifecycle, error and cursor semantics. Internal source promotion cannot
   change that contract.
 
-### Phase A - Unified Rust Realtime Core And OKX Parity
+### Phase A - Unified Rust Realtime Core And Binance/OKX/VN Parity
 
-**Goal:** Deliver one Rust realtime core with equivalent Binance and OKX
-`TRADE/BBO/BAR` capabilities and a durable canonical output contract.
+**Goal:** Deliver one Rust realtime core with first-class Binance, OKX and VN
+sources, capability-truthful feeds and a durable canonical output contract.
 
 **Implementation:**
 
 1. Add provider-neutral Rust subscription/session contracts and dedicated
    Binance/OKX JSON adapters behind the existing canonical envelope.
-2. Implement OKX public `trades`, `bbo-tbt` and business candle
-   channels, strict ACK correlation, public/business socket separation,
-   less-than-30-second ping/pong, 480 control requests/hour guard, maintenance
-   notice reconnect and bounded jittered backoff.
+2. Implement OKX public `trades`, `bbo-tbt` and business candle channels,
+   strict ACK correlation, public/business socket separation, less-than-30-
+   second ping/pong, 480 control requests/hour guard, maintenance-notice
+   reconnect and bounded jittered backoff.
 3. Implement OKX trade aggregation identity, BBO replace-only semantics and
    candle `confirm=0/1` lifecycle with exact decimals/timestamps.
-4. Keep L2 sequencing in the shared core but fail capability activation unless
+4. Add canonical quantity-unit semantics before the V2 stable freeze. Preserve
+   venue-native raw quantity plus explicit unit; BAR distinguishes base, quote
+   and contract volume where supplied. Never map OKX derivative contracts,
+   Binance base quantity or VN shares/contracts into an ambiguous unitless
+   field. Unknown/missing unit fails closed at execution-grade boundaries.
+5. Route DNSE/vnstock authenticated raw envelopes through the same Rust
+   canonical/quality/durable core. Preserve VN timezone/calendar, sparse/no-
+   trade semantics, derivative multiplier/unit, market-closed state and provider
+   switch provenance. No synthetic bar or zero-default repair is permitted.
+6. Keep L2 sequencing in the shared core but fail capability activation unless
    snapshot/delta continuity and entitlement are certified.
-5. Publish raw/canonical records through the existing TLS/ACL,
+7. Publish raw/canonical records through the existing TLS/ACL,
    idempotent-ACK Kafka client under authority fencing. Final sink and projector
    advance watermarks only after durable ACK.
-6. Add Python/Rust golden parity for Binance and OKX TRADE/BBO/BAR, malformed
-   frames, duplicate/out-of-order input, reconnect, stale generation, queue
+8. Add Python/Rust golden parity for Binance and OKX TRADE/BBO/BAR and VN
+   TRADE/BAR plus capability-gated QUOTE, including units, session/calendar
+   state, malformed and missing
+   fields, duplicate/out-of-order input, reconnect, stale generation, queue
    saturation and broker interruption.
-7. Run bounded authentic Binance and OKX WebSocket smoke with production writes
-   zero; freeze counts, hashes, latency and resource evidence.
+9. Run bounded authentic Binance/OKX WebSocket and DNSE/VN-provider smoke with
+   production writes zero; freeze provenance, counts, hashes, latency and
+   resource evidence. Market closure is tested separately and never replaced by
+   generated provider data.
 
 **Exit gate:**
 
 - zero correctness-critical Python/Rust mismatch;
 - no unexplained loss, duplicate or gap;
-- equivalent supported capability matrix for Binance and OKX;
+- capability-truthful first-class matrices for Binance, OKX and VN;
+- every canonical quantity has an unambiguous unit and native lineage;
+- VN calendar/session/provider-fallback semantics pass strict tests;
 - Rust fmt/clippy/workspace and full Python compatibility pass;
 - no V1 runtime change and all disposable resources removed.
 
@@ -3927,27 +3963,28 @@ contract change.
 1. Replace beta/shadow product labels with stable `2.0.0` labels while
    retaining authority state as runtime metadata.
 2. Add a canonical V2 deployment manifest containing Rust Binance/OKX ingestion,
-   durable broker, Python projector/query/stream roles, dedicated Redis and
-   immutable volumes/images.
+   Python DNSE/vnstock acquisition edges, the shared Rust core, durable broker,
+   Python projector/query/stream roles, dedicated Redis and immutable
+   volumes/images.
 3. Add the Python durable-broker-to-query/projector adapter. SQLite remains only
    a bounded query cache; Kafka is the replay authority.
-4. Package `qdl_sdk` V2 with a durable checkpoint adapter and V1 facade.
-   Update the service access guide to V2-first with a supported-capability
-   matrix.
-5. Register and test at least one real alpha per Binance/OKX, Trading System
-   market-data adapter and monitoring consumer. Paper consumers move one
-   manifest at a time and retain V1 rollback.
+4. Package `qdl_sdk` V2 with a durable checkpoint adapter and V1 facade. Update
+   the service access guide to V2-first with a capability-truthful matrix.
+5. Register and test at least one real alpha per Binance, OKX and VN, the
+   Trading System market-data adapter and monitoring consumer. Paper consumers
+   move one manifest at a time and retain V1 rollback.
 6. Certify warmup, snapshot, stream, reconnect, replay, cursor restore,
-   freshness/gap blocking, Redis rebuild, process/broker restart and bounded
-   load on the new server.
-7. Build immutable `2.0.0` artifacts and release evidence. Runtime cutover
-   is a separate operator action after exact topology/rollback approval.
+   freshness/gap/session blocking, Redis rebuild, process/broker restart and
+   bounded load on the new server.
+7. Build immutable `2.0.0` artifacts and release evidence. Runtime cutover is a
+   separate operator action after exact topology/rollback approval.
 
 **Exit gate:**
 
 - V2 API/SDK contract and generated artifacts are frozen and CI-green;
-- Binance and OKX real consumer cycles pass with no direct venue connection;
-- Rust is the selected realtime core for approved slices; Python is outer edge;
+- Binance, OKX and VN real consumer cycles pass with no direct venue connection;
+- Rust is the selected canonical realtime core for approved slices and Python
+  remains the outer/vendor-acquisition edge;
 - V1 rollback remains tested;
 - V2 runtime health/readiness is dependency-derived and host-visible;
 - production cutover remains blocked until the operator approves exact services,
@@ -3955,16 +3992,40 @@ contract change.
 
 ### Implementation Journal
 
-- `2026-08-19 PLAN COMPLETE`: the two-phase scope is frozen on
+- `2026-08-19 PLAN COMPLETE`: the original two-phase scope was frozen on
   `feat/v2-stable-rust-binance-okx`. Official OKX V5 docs were rechecked:
   public/business sockets are separate, connections with no subscription/data
   over 30 seconds need ping/pong/reconnect, control requests are bounded to 480
-  per connection/hour, `trades-all` is atomic, `bbo-tbt` is
-  replace-only, and stateful books rely on `seqId/prevSeqId`.
-- `PHASE A IN_PROGRESS`: inspect and extend the existing Rust canonical,
-  session, supervisor, Kafka fence and Python OKX parity oracle.
-- `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing
-  container; no restart, authority mutation or consumer migration has occurred.
+  per connection/hour, `trades-all` is atomic, `bbo-tbt` is replace-only, and
+  stateful books rely on `seqId/prevSeqId`.
+- `2026-08-19 SCOPE REFINEMENT APPROVED`: Phase A includes Binance, OKX and VN
+  as equal first-class sources. High-volume crypto transport is native Rust;
+  DNSE/vnstock may remain Python acquisition edges but must publish authenticated
+  raw envelopes into the same Rust canonical/quality/durable core. Feed support
+  is capability-truthful, not fabricated for visual symmetry.
+- `2026-08-19 DOMAIN CORRECTION`: the current DNSE runtime subscribes native
+  trades even though its legacy Redis channel is named `stream:vn:*` and often
+  described as a quote. V2 records these as TRADE. DNSE/vnstock QUOTE is a
+  separate capability and cannot be advertised until a real bid/ask feed is
+  certified; legacy naming does not define the canonical domain.
+- `2026-08-19 PHASE A SLICE A1 COMPLETE`: froze additive quantity-unit and
+  trade-identity semantics before V2 stable release. TRADE/QUOTE/BAR/BOOK/OI/
+  TICKER quantities now carry explicit base/quote/contract/share units; BAR can
+  preserve native, base, quote and contract volume simultaneously. DNSE trades
+  without native IDs use `DERIVED_RAW_CAPTURE`, unknown aggressor side and
+  explicit missing-field/source-time quality flags. Canonical source role is no
+  longer hardcoded primary, so vnstock secondary provenance remains visible.
+- `2026-08-19 SLICE A1 EVIDENCE`: Buf format/lint and breaking checks passed
+  against both Phase 1 and Phase 7 beta baselines. The OpenAPI semantic diff
+  passed with 10 operations, 42 schemas and zero hard break. Seventeen
+  Binance-USD-M/Spot, OKX-SWAP/Spot, DNSE-derivative/equity and vnstock-equity
+  fixtures match exact Python/Rust golden bytes; 56 cross-phase Python tests,
+  9 frozen-contract tests and the full 43-test Rust workspace passed with
+  Clippy warnings denied. V1 runtime/topology was not changed.
+- `PHASE A IN_PROGRESS`: next integrate the provider-neutral continuous Rust
+  core with fenced Kafka durable publication and first-class acquisition edges.
+- `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
+  no restart, authority mutation or consumer migration has occurred.
 
 ### Rollback
 

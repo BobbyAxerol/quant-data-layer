@@ -5,6 +5,12 @@ package qdl.marketdata.v2;
 import "qdl/common/v1/common.proto";
 import "qdl/quality/v1/quality.proto";
 
+enum TradeIdentityKind {
+  TRADE_IDENTITY_KIND_UNSPECIFIED = 0;
+  TRADE_IDENTITY_KIND_NATIVE = 1;
+  TRADE_IDENTITY_KIND_DERIVED_RAW_CAPTURE = 2;
+}
+
 enum BarLifecycle {
   BAR_LIFECYCLE_UNSPECIFIED = 0;
   BAR_LIFECYCLE_IN_PROGRESS = 1;
@@ -20,6 +26,8 @@ message Trade {
   qdl.common.v1.AggressorSide aggressor_side = 4;
   bool is_block_trade = 5;
   bool is_buyer_maker = 6;
+  qdl.common.v1.QuantityUnit quantity_unit = 7;
+  TradeIdentityKind identity_kind = 8;
 }
 
 message Quote {
@@ -28,6 +36,7 @@ message Quote {
   qdl.common.v1.DecimalValue ask_price = 3;
   qdl.common.v1.DecimalValue ask_quantity = 4;
   uint32 level = 5;
+  qdl.common.v1.QuantityUnit quantity_unit = 6;
 }
 
 message Bar {
@@ -45,6 +54,10 @@ message Bar {
   qdl.common.v1.BarOrigin origin = 12;
   BarLifecycle lifecycle = 13;
   optional bytes supersedes_event_id = 14;
+  qdl.common.v1.QuantityUnit volume_unit = 15;
+  optional qdl.common.v1.DecimalValue base_volume = 16;
+  optional qdl.common.v1.DecimalValue quote_volume = 17;
+  optional qdl.common.v1.DecimalValue contract_volume = 18;
 }
 
 message BookLevel {
@@ -52,6 +65,7 @@ message BookLevel {
   qdl.common.v1.DecimalValue price = 2;
   qdl.common.v1.DecimalValue quantity = 3;
   uint32 order_count = 4;
+  qdl.common.v1.QuantityUnit quantity_unit = 5;
 }
 
 message OrderBookSnapshot {
@@ -79,6 +93,7 @@ message FundingRate {
 message OpenInterest {
   qdl.common.v1.DecimalValue quantity = 1;
   optional qdl.common.v1.DecimalValue notional = 2;
+  qdl.common.v1.QuantityUnit quantity_unit = 3;
 }
 
 message MarkIndexPrice {
@@ -93,6 +108,8 @@ message Ticker {
   optional qdl.common.v1.DecimalValue high_24h = 4;
   optional qdl.common.v1.DecimalValue low_24h = 5;
   optional qdl.common.v1.DecimalValue volume_24h = 6;
+  qdl.common.v1.QuantityUnit last_quantity_unit = 7;
+  qdl.common.v1.QuantityUnit volume_24h_unit = 8;
 }
 
 message EventEnvelope {

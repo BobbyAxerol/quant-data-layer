@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -60,6 +61,18 @@ class DecimalValue(ClosedModel):
     source_text: str = Field(min_length=1, max_length=128)
 
 
+class TradeIdentityKind(StrEnum):
+    NATIVE = "NATIVE"
+    DERIVED_RAW_CAPTURE = "DERIVED_RAW_CAPTURE"
+
+
+class QuantityUnit(StrEnum):
+    BASE_ASSET = "BASE_ASSET"
+    QUOTE_ASSET = "QUOTE_ASSET"
+    CONTRACT = "CONTRACT"
+    SHARE = "SHARE"
+
+
 class SourceView(ClosedModel):
     venue: str = Field(min_length=1, max_length=40)
     provider: str = Field(min_length=1, max_length=80)
@@ -99,7 +112,9 @@ class TradePayload(ClosedModel):
     native_trade_id: str = Field(min_length=1, max_length=200)
     price: DecimalValue
     quantity: DecimalValue
-    aggressor_side: Literal["BUY", "SELL"]
+    quantity_unit: QuantityUnit
+    aggressor_side: Literal["BUY", "SELL", "UNKNOWN"]
+    identity_kind: TradeIdentityKind
     is_block_trade: bool = False
     is_buyer_maker: bool = False
 
@@ -110,6 +125,7 @@ class QuotePayload(ClosedModel):
     bid_quantity: DecimalValue
     ask_price: DecimalValue
     ask_quantity: DecimalValue
+    quantity_unit: QuantityUnit
     level: int = Field(default=1, ge=1)
 
 
@@ -123,6 +139,10 @@ class BarPayload(ClosedModel):
     low: DecimalValue
     close: DecimalValue
     volume: DecimalValue
+    volume_unit: QuantityUnit
+    base_volume: DecimalValue | None = None
+    quote_volume: DecimalValue | None = None
+    contract_volume: DecimalValue | None = None
     trade_count: int = Field(default=0, ge=0)
     lifecycle: BarLifecycle
     revision: int = Field(ge=0)
@@ -144,6 +164,7 @@ class BookLevel(ClosedModel):
     side: Literal["BID", "ASK"]
     price: DecimalValue
     quantity: DecimalValue
+    quantity_unit: QuantityUnit
     order_count: int = Field(default=0, ge=0)
 
 
@@ -175,6 +196,7 @@ class FundingRatePayload(ClosedModel):
 class OpenInterestPayload(ClosedModel):
     feed: Literal[FeedType.OPEN_INTEREST] = FeedType.OPEN_INTEREST
     quantity: DecimalValue
+    quantity_unit: QuantityUnit
     notional: DecimalValue | None = None
 
 
@@ -192,6 +214,16 @@ class TickerPayload(ClosedModel):
     high_24h: DecimalValue | None = None
     low_24h: DecimalValue | None = None
     volume_24h: DecimalValue | None = None
+    last_quantity_unit: QuantityUnit | None = None
+    volume_24h_unit: QuantityUnit | None = None
+
+    @model_validator(mode="after")
+    def quantity_units_match_optional_values(self):
+        if (self.last_quantity is None) != (self.last_quantity_unit is None):
+            raise ValueError("ticker last quantity and unit must be present together")
+        if (self.volume_24h is None) != (self.volume_24h_unit is None):
+            raise ValueError("ticker 24h volume and unit must be present together")
+        return self
 
 
 MarketPayload = Annotated[

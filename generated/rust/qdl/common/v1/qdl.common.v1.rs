@@ -21,6 +21,44 @@ pub mod decimal_value {
         MantissaText(::prost::alloc::string::String),
     }
 }
+/// QuantityUnit makes native quantity semantics explicit across spot,
+/// derivatives and equity markets. Asset symbols and contract multipliers are
+/// resolved from the versioned Instrument referenced by instrument_uid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum QuantityUnit {
+    Unspecified = 0,
+    BaseAsset = 1,
+    QuoteAsset = 2,
+    Contract = 3,
+    Share = 4,
+}
+impl QuantityUnit {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "QUANTITY_UNIT_UNSPECIFIED",
+            Self::BaseAsset => "QUANTITY_UNIT_BASE_ASSET",
+            Self::QuoteAsset => "QUANTITY_UNIT_QUOTE_ASSET",
+            Self::Contract => "QUANTITY_UNIT_CONTRACT",
+            Self::Share => "QUANTITY_UNIT_SHARE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "QUANTITY_UNIT_UNSPECIFIED" => Some(Self::Unspecified),
+            "QUANTITY_UNIT_BASE_ASSET" => Some(Self::BaseAsset),
+            "QUANTITY_UNIT_QUOTE_ASSET" => Some(Self::QuoteAsset),
+            "QUANTITY_UNIT_CONTRACT" => Some(Self::Contract),
+            "QUANTITY_UNIT_SHARE" => Some(Self::Share),
+            _ => None,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum SourceRole {

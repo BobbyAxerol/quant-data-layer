@@ -120,6 +120,7 @@ class Phase7Fixture:
                 "low": "59900.30",
                 "close": "60050.40",
                 "volume": "12.500",
+                "volume_unit": "BASE_ASSET",
                 "trade_count": 42,
                 "origin": "VENUE_NATIVE",
                 "is_final": True,
@@ -218,20 +219,26 @@ class Phase7RestAndContractTests(unittest.TestCase):
 
     def test_every_public_feed_has_a_closed_discriminated_payload(self):
         decimal = {"coefficient": "1", "scale": 0, "source_text": "1"}
-        level = {"side": "BID", "price": decimal, "quantity": decimal}
+        level = {
+            "side": "BID", "price": decimal, "quantity": decimal,
+            "quantity_unit": "BASE_ASSET",
+        }
         payloads = {
             "TRADE": {
                 "native_trade_id": "trade-1", "price": decimal,
-                "quantity": decimal, "aggressor_side": "BUY",
+                "quantity": decimal, "quantity_unit": "BASE_ASSET",
+                "aggressor_side": "BUY", "identity_kind": "NATIVE",
             },
             "QUOTE": {
                 "bid_price": decimal, "bid_quantity": decimal,
                 "ask_price": decimal, "ask_quantity": decimal,
+                "quantity_unit": "BASE_ASSET",
             },
             "BAR": {
                 "interval": "1m", "open_time_ns": 1, "close_time_ns": 2,
                 "open": decimal, "high": decimal, "low": decimal,
-                "close": decimal, "volume": decimal, "lifecycle": "FINAL",
+                "close": decimal, "volume": decimal, "volume_unit": "BASE_ASSET",
+                "lifecycle": "FINAL",
                 "revision": 0, "origin": "VENUE_NATIVE",
             },
             "BOOK_SNAPSHOT": {
@@ -242,9 +249,15 @@ class Phase7RestAndContractTests(unittest.TestCase):
                 "snapshot_sequence": "0", "updates": [level],
             },
             "FUNDING_RATE": {"rate": decimal, "funding_time_ns": 1},
-            "OPEN_INTEREST": {"quantity": decimal, "notional": decimal},
+            "OPEN_INTEREST": {
+                "quantity": decimal, "quantity_unit": "CONTRACT",
+                "notional": decimal,
+            },
             "MARK_INDEX_PRICE": {"mark_price": decimal, "index_price": decimal},
-            "TICKER": {"last_price": decimal, "volume_24h": decimal},
+            "TICKER": {
+                "last_price": decimal, "volume_24h": decimal,
+                "volume_24h_unit": "BASE_ASSET",
+            },
         }
         base = {
             "instrument_uid": self.fixture.record.instrument_uid,
