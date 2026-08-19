@@ -217,16 +217,24 @@ class StableDeploymentContractTests(unittest.TestCase):
                 Envelope("BINANCE", 60_000), Envelope("BINANCE", 60_000),
                 Envelope("BINANCE", 60_000), Envelope("BINANCE", 60_000),
             ),
-        ), patch(
+        ) as binance_latest, patch(
             "qdl.runtime.stable_bar_edge.fetch_okx_latest",
             side_effect=(
                 Envelope("OKX", 60_000), Envelope("OKX", 60_000),
                 Envelope("OKX", 60_000), Envelope("OKX", 60_000),
             ),
-        ):
+        ) as okx_latest:
             self.assertEqual(edge.run_cycle(), 4)
             self.assertEqual(edge.run_cycle(), 0)
         self.assertEqual([len(batch) for batch in publisher.batches], [4])
+        self.assertEqual(
+            {call.kwargs["now_ms"] for call in binance_latest.call_args_list},
+            {118_000},
+        )
+        self.assertEqual(
+            {call.kwargs["now_ms"] for call in okx_latest.call_args_list},
+            {118_000},
+        )
 
     def test_bar_edge_retries_complete_catchup_after_kafka_ack_failure(self):
         class Publisher:

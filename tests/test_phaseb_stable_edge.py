@@ -945,6 +945,91 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(engine.stats.duplicate_projections, 1)
         self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 1))
 
+    async def test_bar_decimal_spelling_and_origin_are_semantic_duplicates(self):
+        binding, raw, event = _stable_pair(
+            self.catalog,
+            "binance_usdm_rest_bar.json",
+            "binance-usdm-btcusdt-bar-1m",
+        )
+        raw_topic, canonical_topic, raw_record, first = _broker_records(
+            binding, raw, event
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        await engine.accept_many((raw_record, first))
+        publication_count = len(target.publications)
+
+        replayed = type(event)()
+        replayed.CopyFrom(event)
+        replayed.bar.low.mantissa *= 10
+        replayed.bar.low.scale += 1
+        replayed.bar.low.source_text += "0"
+        replayed.bar.origin = (
+            common_pb2.BAR_ORIGIN_BACKFILLED
+            if event.bar.origin != common_pb2.BAR_ORIGIN_BACKFILLED
+            else common_pb2.BAR_ORIGIN_VENUE_NATIVE
+        )
+        replayed.canonical_payload_hash = hashlib.sha256(
+            replayed.bar.SerializeToString(deterministic=True)
+        ).digest()
+        duplicate = KafkaProjectorRecord(
+            topic=canonical_topic,
+            partition=0,
+            offset=1,
+            key=first.key,
+            event_id=first.event_id,
+            payload=replayed.SerializeToString(deterministic=True),
+            accepted_at_ns=first.accepted_at_ns + 1,
+        )
+        await engine.accept(duplicate)
+
+        self.assertEqual(len(target.publications), publication_count)
+        self.assertEqual(engine.stats.duplicate_projections, 1)
+        self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 1))
+
+    async def test_bar_numeric_change_remains_a_hard_collision(self):
+        binding, raw, event = _stable_pair(
+            self.catalog,
+            "binance_usdm_rest_bar.json",
+            "binance-usdm-btcusdt-bar-1m",
+        )
+        raw_topic, canonical_topic, raw_record, first = _broker_records(
+            binding, raw, event
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        await engine.accept_many((raw_record, first))
+
+        changed = type(event)()
+        changed.CopyFrom(event)
+        changed.bar.close.mantissa += 1
+        changed.bar.close.source_text = str(
+            CanonicalDecimal(
+                changed.bar.close.mantissa,
+                changed.bar.close.scale,
+                changed.bar.close.source_text,
+            ).as_decimal()
+        )
+        changed.canonical_payload_hash = hashlib.sha256(
+            changed.bar.SerializeToString(deterministic=True)
+        ).digest()
+        conflicting = KafkaProjectorRecord(
+            topic=canonical_topic,
+            partition=0,
+            offset=1,
+            key=first.key,
+            event_id=first.event_id,
+            payload=changed.SerializeToString(deterministic=True),
+            accepted_at_ns=first.accepted_at_ns + 1,
+        )
+        with self.assertRaisesRegex(RuntimeError, "different market semantics"):
+            await engine.accept(conflicting)
+
+        self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 0))
+        self.assertEqual(engine.stats.canonical_committed, 1)
+
     async def test_late_historical_bar_repairs_cache_without_latest_regression(self):
         binding = next(
             item

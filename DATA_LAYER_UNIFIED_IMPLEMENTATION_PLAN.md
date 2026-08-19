@@ -5374,6 +5374,48 @@ and removes the superseded candidate/rollback artifacts after verification.
   No runtime, provider, Kafka, Redis, V1 route or durable volume was mutated by
   this unit gate. B.3 remains `IN_PROGRESS` until the committed image passes the
   isolated atomic rebuild and strict real-provider consumer acceptance.
+- `2026-08-19 PHASE B B18 RUNTIME RETEST FAILED CLOSED AND B19 BOUNDED
+  REPAIR STARTED`: immutable projector image `8851166` correctly passed the
+  provenance-only duplicates but the guarded earliest replay exceeded its
+  900-second operator timeout at 733,158 records of lag and then exposed real
+  changed-semantics BAR collisions. Query replicas remained stopped, projector
+  was stopped after diagnosis, V1 port 8100 remained healthy and no consumer
+  received candidate data.
+
+  Read-only Kafka/SQLite inspection at the frozen offsets found two distinct
+  causes. OKX REST/WS BARs were numerically identical but differed only in exact
+  decimal spelling/scale and acquisition origin; byte/hash equality is therefore
+  stricter than market-semantic equality. Binance REST BARs differed in actual
+  close, volume, quote volume and trade count: the earlier `VENUE_NATIVE` row was
+  observed too close to the minute boundary and a later settled backfill changed
+  it. The next bounded B19 repair may normalize only BAR decimal values and
+  acquisition origin for semantic duplicate comparison; every non-BAR payload,
+  identity, timestamp, interval, lifecycle, unit and actual numeric value remains
+  strict. The provider edge also gains an aligned close-settlement grace so it
+  never labels a just-closed mutable row as accepted final data. Changed numeric
+  BARs continue to fail closed; no revision is fabricated in the projector.
+  Unit/parity tests precede any new runtime image. Existing isolated Kafka/data
+  volumes are retained pending an explicit clean-candidate decision.
+- `2026-08-19 PHASE B B19 BAR SEMANTICS AND SETTLEMENT UNIT-PASSED`:
+  the projector now validates each exact Decimal audit spelling against its
+  coefficient/scale, compares BAR numbers with exact `Decimal` arithmetic and
+  ignores only acquisition origin plus equivalent trailing-zero spelling for
+  duplicate classification. Interval, times, OHLCV/base/quote/contract values,
+  trade count, finality, revision, lifecycle, supersession and quantity unit
+  remain strict; all non-BAR feeds still require equal canonical payload hashes.
+  The generic durable spool remains byte-immutable.
+
+  The shared real-provider BAR edge now uses an explicit two-second settlement
+  grace for bootstrap and latest/catch-up observation and aligns its minute loop
+  to that delay. The value is frozen in the isolated compose and bounded to
+  1-10 seconds. The stable edge/deployment/history suite ran 48 network-disabled
+  cases: 47 passed and the separately proven real-Redis conditional case was
+  the sole skip. New cases prove trailing-zero/origin equivalence, changed BAR
+  numeric rejection and equal settled observation for Binance/OKX. No runtime
+  was restarted by this gate. A clean isolated runtime data-log decision remains
+  required because the retained Kafka test log contains previously captured
+  materially wrong early-final Binance rows and must not be accepted by policy
+  relaxation.
 - `2026-08-19 PHASE B ARTIFACT CLEANUP POLICY RECORDED`: Phase B ends at B.4;
   B17/B18 are repair slices inside B.3, not new subphases. Exact cleanup retains
   V1, active `e002da6`, active/rollback `cfc0246`, Kafka/Redis and all durable

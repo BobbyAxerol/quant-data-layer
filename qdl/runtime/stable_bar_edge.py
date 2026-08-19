@@ -63,18 +63,22 @@ class StableBinanceBarEdge:
         publisher: KafkaRawPublisher,
         warmup_rows: int = 500,
         max_catchup_rows: int = 1000,
+        settlement_delay_seconds: float = 2.0,
         clock=time.time,
     ) -> None:
         if not 1 <= warmup_rows <= 1000:
             raise ValueError("stable BAR warmup rows must be between 1 and 1000")
         if not 1 <= max_catchup_rows <= 1000:
             raise ValueError("stable BAR catch-up rows must be between 1 and 1000")
+        if not 1.0 <= settlement_delay_seconds <= 10.0:
+            raise ValueError("stable BAR settlement delay must be between 1 and 10 seconds")
         self.catalog = catalog
         self.acquisition = acquisition
         self.authority = authority
         self.publisher = publisher
         self.warmup_rows = warmup_rows
         self.max_catchup_rows = max_catchup_rows
+        self.settlement_delay_seconds = settlement_delay_seconds
         self.clock = clock
         run_id = uuid.uuid4()
         self.binance_session_id = f"qdl-v2-stable-binance-rest-{run_id}"
@@ -187,10 +191,15 @@ class StableBinanceBarEdge:
         )
         return len(acknowledgements)
 
+    def _settled_observed_ms(self) -> int:
+        return int(
+            self.clock() * 1000 - self.settlement_delay_seconds * 1000
+        )
+
     def bootstrap_history(self) -> int:
         if self._history_bootstrapped:
             return 0
-        observed_ms = int(self.clock() * 1000)
+        observed_ms = self._settled_observed_ms()
         published = 0
         for source, acquisition in self.bindings:
             published += self._publish_history(
@@ -293,7 +302,7 @@ class StableBinanceBarEdge:
         return tuple(zip(values, opens, strict=True))
 
     def run_cycle(self) -> int:
-        observed_ms = int(self.clock() * 1000)
+        observed_ms = self._settled_observed_ms()
         latest = []
         for source, acquisition in self.bindings:
             envelope = fetch_latest_closed_bar_raw_envelope(
@@ -344,6 +353,13 @@ class StableBinanceBarEdge:
     def run_forever(self) -> None:
         failures = 0
         while not self._stopped.is_set():
+            now = self.clock()
+            ready_at = (
+                (int(now) // 60) * 60 + self.settlement_delay_seconds
+            )
+            if not self._history_bootstrapped and now < ready_at:
+                self._stopped.wait(max(0.01, ready_at - now))
+                continue
             try:
                 self.bootstrap_history()
                 self.run_cycle()
@@ -354,7 +370,9 @@ class StableBinanceBarEdge:
                     "stable crypto BAR cycle failed consecutive_failures=%s", failures
                 )
             now = self.clock()
-            next_boundary = (int(now) // 60 + 1) * 60 + 1
+            next_boundary = (
+                (int(now) // 60 + 1) * 60 + self.settlement_delay_seconds
+            )
             delay = max(0.25, next_boundary - now)
             if failures:
                 delay = min(delay, min(2 ** min(failures, 6), 30))
@@ -389,6 +407,9 @@ def build_from_environment() -> StableBinanceBarEdge:
         warmup_rows=int(os.environ.get("QDL_STABLE_BAR_WARMUP_ROWS", "500")),
         max_catchup_rows=int(
             os.environ.get("QDL_STABLE_BAR_MAX_CATCHUP_ROWS", "1000")
+        ),
+        settlement_delay_seconds=float(
+            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS", "2")
         ),
     )
 

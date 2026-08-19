@@ -7,6 +7,7 @@ import hmac
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Awaitable, Callable, Protocol
 
 from qdl.marketdata.v2 import market_data_pb2
@@ -336,6 +337,83 @@ class StableProjectorEngine:
             )
         return declared
 
+    @staticmethod
+    def _decimal_semantic(value) -> Decimal:
+        coefficient_name = value.WhichOneof("coefficient")
+        if coefficient_name == "mantissa":
+            coefficient = int(value.mantissa)
+        elif coefficient_name == "mantissa_text":
+            try:
+                coefficient = int(value.mantissa_text)
+            except ValueError as error:
+                raise EventIdCollision(
+                    "canonical decimal coefficient is invalid"
+                ) from error
+        else:
+            raise EventIdCollision("canonical decimal coefficient is missing")
+        try:
+            observed = Decimal(coefficient).scaleb(-int(value.scale))
+            declared = Decimal(value.source_text)
+        except (InvalidOperation, ValueError) as error:
+            raise EventIdCollision("canonical decimal text is invalid") from error
+        if not declared.is_finite() or declared != observed:
+            raise EventIdCollision(
+                "canonical decimal audit text differs from its exact value"
+            )
+        return observed
+
+    @classmethod
+    def _bar_semantics(cls, bar: market_data_pb2.Bar) -> tuple:
+        def optional_decimal(field: str):
+            return (
+                cls._decimal_semantic(getattr(bar, field))
+                if bar.HasField(field)
+                else None
+            )
+
+        return (
+            bar.interval,
+            int(bar.open_time_ns),
+            int(bar.close_time_ns),
+            cls._decimal_semantic(bar.open),
+            cls._decimal_semantic(bar.high),
+            cls._decimal_semantic(bar.low),
+            cls._decimal_semantic(bar.close),
+            cls._decimal_semantic(bar.volume),
+            int(bar.trade_count),
+            bool(bar.is_final),
+            int(bar.revision),
+            int(bar.lifecycle),
+            (
+                bytes(bar.supersedes_event_id)
+                if bar.HasField("supersedes_event_id")
+                else None
+            ),
+            int(bar.volume_unit),
+            optional_decimal("base_volume"),
+            optional_decimal("quote_volume"),
+            optional_decimal("contract_volume"),
+        )
+
+    @classmethod
+    def _same_market_semantics(
+        cls,
+        existing: market_data_pb2.EventEnvelope,
+        candidate: market_data_pb2.EventEnvelope,
+    ) -> bool:
+        existing_name = existing.WhichOneof("payload")
+        candidate_name = candidate.WhichOneof("payload")
+        if existing_name != candidate_name:
+            return False
+        existing_hash = cls._verified_payload_hash(existing)
+        candidate_hash = cls._verified_payload_hash(candidate)
+        if existing_name == "bar":
+            # Decimal spelling and acquisition origin are audit provenance, not
+            # a different OHLCV observation. Every actual BAR value remains
+            # strict and is compared above exact Decimal arithmetic.
+            return cls._bar_semantics(existing.bar) == cls._bar_semantics(candidate.bar)
+        return hmac.compare_digest(existing_hash, candidate_hash)
+
     @classmethod
     def _semantic_duplicate(
         cls,
@@ -348,12 +426,10 @@ class StableProjectorEngine:
         existing_envelope = market_data_pb2.EventEnvelope.FromString(
             existing.event.payload
         )
-        existing_hash = cls._verified_payload_hash(existing_envelope)
-        candidate_hash = cls._verified_payload_hash(envelope)
         if (
             existing.cursor.partition_key != record.key
             or bytes(existing_envelope.event_id) != record.event_id
-            or not hmac.compare_digest(existing_hash, candidate_hash)
+            or not cls._same_market_semantics(existing_envelope, envelope)
         ):
             raise EventIdCollision(
                 "canonical event ID maps to different market semantics"

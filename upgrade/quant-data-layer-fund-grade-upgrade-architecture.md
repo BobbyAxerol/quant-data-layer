@@ -5439,6 +5439,28 @@ conditional Redis case, already proven separately, was skipped. No runtime was
 mutated. This is implementation evidence only; B.3 still requires a committed
 immutable image, fresh atomic cache rebuild and real-provider consumer gate.
 
+A committed `8851166` runtime replay remained fail-closed. It exceeded the
+900-second operator deadline with 733,158 records of lag and then exposed actual
+BAR conflicts. Read-only inspection proved that OKX REST/WS rows had equal
+numeric values but different exact decimal spelling and acquisition origin,
+whereas early Binance rows had materially different close/volume/trade counts
+from the later settled backfill. B19 therefore narrows semantic equality only
+for BAR decimal normalization and origin provenance, keeps non-BAR/hash and all
+actual BAR values strict, and adds aligned provider close-settlement grace.
+Changed numeric bars remain rejected; the projector must not invent revisions.
+The candidate remains unavailable and its volumes are retained until a clean
+runtime rehearsal is explicitly authorized.
+
+B19 is unit-passed. BAR duplicate comparison now uses exact numeric Decimal
+semantics while validating the preserved venue spelling, ignores only acquisition
+origin and equivalent trailing zeros, and leaves every non-BAR payload plus all
+actual BAR values strict. The generic spool remains byte-immutable. Binance and
+OKX closed-history/latest observation now share an explicit two-second settlement
+grace aligned to the poll boundary. The focused suite ran 48 cases: 47 passed and
+the separately proven Redis conditional case was the sole skip. Runtime remains
+fail-closed because the retained isolated Kafka log contains early-final Binance
+rows with materially wrong values; relaxing changed-value policy is forbidden.
+
 Remaining B.3 gate: fresh atomic Redis-plus-SQLite rebuild from canonical
 Kafka, zero gap/collision/quarantine, replica equality, signed SDK replay/live,
 fresh Trading System paper data and unchanged V1.
