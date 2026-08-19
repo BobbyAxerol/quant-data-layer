@@ -401,6 +401,47 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             await transport.close()
             await server.stop(grace=0)
 
+    async def test_grpc_stream_close_has_no_cross_context_finalizer_error(self):
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, self.token),
+        )
+        server = create_grpc_server(service, identity_service=self.identity)
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}",
+            allow_insecure_loopback=True,
+            credential_provider=self.credential,
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA,
+            "alpha_binance_v1", interval="1m", warmup_limit=1,
+        )
+        loop = asyncio.get_running_loop()
+        previous_handler = loop.get_exception_handler()
+        unhandled = []
+        loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+        events = transport.subscribe(
+            requirement, consumer_id="alpha-shadow", cursor_token=self.token,
+            max_buffer_events=1,
+        ).__aiter__()
+        try:
+            self.assertEqual((await events.__anext__()).code, "REPLAYING")
+            await events.aclose()
+            await asyncio.sleep(0.05)
+            self.assertFalse(
+                [
+                    item for item in unhandled
+                    if "different Context" in str(item.get("exception", ""))
+                ]
+            )
+        finally:
+            loop.set_exception_handler(previous_handler)
+            await transport.close()
+            await server.stop(grace=0)
+
     async def test_real_grpc_sdk_handoff_ack_restart_and_bar_revisions(self):
         registry = InstrumentRegistry()
         registry.register(self.record, [])

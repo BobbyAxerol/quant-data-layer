@@ -5060,6 +5060,37 @@ by implication in Phase B implementation.
   is an external provider/egress gate, not permission to fabricate runtime data.
   Phase B still requires restart/failover, two-broker outage, Redis rebuild,
   full regression/release evidence and exact candidate cleanup.
+- `2026-08-19 PHASE B B13 RECOVERY DEFECT CONFIRMED, FIX IN PROGRESS`:
+  restarting only the Binance USD-M native ingestor advanced its persisted
+  connection generation from 1 to 2 while all other sources remained at 1; the
+  three Rust workers continued processing with zero quarantine, so generation
+  restart/fencing behavior passed. Active/passive testing then stopped the exact
+  lease owner. The standby acquired epoch 2 and its readiness changed from 503
+  `STANDBY` to 200 `READY`, but the first resume attempt overlapped takeover and
+  received retryable `GATEWAY_FENCED`; the continuity gate must be rerun after a
+  stable owner is observed.
+
+  Bounded logs also exposed a real interceptor defect whenever an SDK stream is
+  closed: the unary-stream wrapper keeps a `ContextVar` token across `yield`, so
+  async-generator finalization may reset that token from a different context and
+  emit `Task exception was never retrieved`. The repair must scope authorization
+  around each awaited iterator step and explicit iterator close, never across a
+  yielded response. Authentication/authorization semantics, public gRPC schema
+  and cursor behavior cannot change. Tests must prove clean client cancellation
+  with no unhandled loop exception, retain all authorization failures, then rerun
+  checkpoint -> owner stop -> epoch takeover -> contiguous replay/live. V1 and
+  all non-candidate state remain untouched.
+- `2026-08-19 PHASE B B13 STREAM FINALIZER REPAIR UNIT-VERIFIED, FAILOVER
+  RETEST PENDING`: the gRPC authorization interceptor now establishes and resets
+  request identity around each awaited source-iterator step. It holds no
+  `ContextVar` token across a yielded response, and explicit iterator close is
+  also authorized/reset within one context. Authentication, entitlement, quota,
+  cursor and protobuf behavior are unchanged. A new real-gRPC cancellation test
+  captures the event-loop exception channel and proves client `aclose()` emits no
+  cross-context finalizer error. Phase 5 stream/SDK, Phase 7 security and Phase B
+  edge suites passed 51 tests with one pre-existing dependency-gated skip. A new
+  immutable Python image and stable-owner checkpoint resume retest remain
+  mandatory before B13 closes.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
