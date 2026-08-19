@@ -40,7 +40,10 @@ ENV PATH=/opt/venv/bin:$PATH
 
 WORKDIR /app
 
-RUN groupadd --gid ${QDL_GID} qdl && \
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --gid ${QDL_GID} qdl && \
     useradd --uid ${QDL_UID} --gid ${QDL_GID} --create-home \
       --home-dir /home/qdl --shell /usr/sbin/nologin qdl && \
     install -d -o qdl -g qdl -m 0750 /home/qdl/.cache/matplotlib

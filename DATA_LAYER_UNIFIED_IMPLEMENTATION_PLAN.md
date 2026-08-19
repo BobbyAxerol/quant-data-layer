@@ -3472,6 +3472,14 @@ transitive approval.
   CI-image unit command passes 415/415 with 5 intentional skips and the failing
   migration gate passes 3/3 consecutive runs. All disposable Compose/PostgreSQL
   resources were removed; no schema, authority or running service changed.
+- `COMPLETE` post-closure security hotfix (2026-08-19): PR #7 run
+  `32211508679` passed unit, migration, Redis, Rust artifact and performance
+  gates, then Trivy rejected nine Debian util-linux packages for fixed HIGH
+  `CVE-2026-53615`. The runtime stage now applies repository security upgrades,
+  installing `2.41.5-0+deb13u1` instead of vulnerable `2.41-5`. A pinned Trivy
+  0.74.0 tar scan reports 0 HIGH/0 CRITICAL and the rebuilt exact CI image still
+  passes 415/415 unit tests with 5 intentional skips. No CVE was ignored or
+  allowlisted.
 - `OPEN EXTERNAL GATE`: Phase 9.0-C remains `NO_GO_EXTERNAL`; no real primary
   owner, production hold interval or operator closure approval exists.
 
