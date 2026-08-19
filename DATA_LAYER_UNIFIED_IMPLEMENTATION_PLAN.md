@@ -3430,9 +3430,23 @@ transitive approval.
 
 **Implementation journal (2026-08-19):**
 
-- `IN_PROGRESS`: scope, invariants, test matrix and Appendix I are frozen before
-  code changes on `feat/phase93-hold-close-expand`, stacked on certified Phase
-  9.2.
+- `COMPLETE` plan boundary: scope, invariants, test matrix and Appendix I were
+  frozen before code changes on `feat/phase93-hold-close-expand`, stacked on
+  certified Phase 9.2.
+- `COMPLETE` typed control contracts: strict hold policy/identity/observation/
+  decision, frozen consumer and authority snapshots, rollback rehearsal,
+  operator closure approval, independent expansion manifests and decommission
+  assessment are implemented. Focused domain and migration-contract tests pass
+  16/16, including every correctness/resource breach and current no-go denial.
+- `COMPLETE` additive persistence and actual PostgreSQL smoke: migration `0008`
+  creates append-only hold, registry, rollback, approval, closure, expansion and
+  decommission records. Two holds, three observations, two decisions, one
+  closure, five expansion types and two decommission decisions passed. Closure
+  left authority exactly `RUST_PRIMARY:4:rust-primary:2:100`; stale CAS, dirty
+  pass, incomplete gates and all tested mutations failed closed. Idempotent
+  replay and scoped container cleanup passed.
+- `IN_PROGRESS`: isolated certification, operator runbook, full compatibility
+  matrix, evidence freeze and final cleanup.
 - `OPEN EXTERNAL GATE`: Phase 9.0-C remains `NO_GO_EXTERNAL`; no real primary
   owner, production hold interval or operator closure approval exists.
 

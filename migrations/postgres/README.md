@@ -25,3 +25,13 @@ state/revision/owner/lease/partition expectations, binds release provenance,
 requires a terminal watermark and approval hold window, and cannot enter Rust
 canary or primary without a non-expired `GO` bundle bound to the candidate digest.
 The migration is dark: it neither seeds an approval nor changes V1 authority.
+
+
+Phase 9.3 adds `0008_phase93_hold_close_expand.sql`. It stores immutable
+primary-hold observations/decisions, frozen consumer and authority registry
+snapshots, rollback rehearsal and operator approval evidence, one governed
+rollback-window closure record and independently uncertified expansion
+manifests. The closure function locks and rechecks the exact `RUST_PRIMARY`
+authority row but never updates authority ownership, revision, lease or
+watermark. Expansion rows are write-disabled and cannot inherit parent
+certification.
