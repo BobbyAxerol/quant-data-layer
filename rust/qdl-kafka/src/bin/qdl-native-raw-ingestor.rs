@@ -390,9 +390,9 @@ async fn run_binance(
                     config.market_name(),
                     now_ns()?
                 );
-                let (_, mut reader) = socket.split();
+                let mut socket = socket;
                 while !should_stop(&stopped, &accepted, config.max_events, expires) {
-                    let message = match reader.next().await {
+                    let message = match socket.next().await {
                         Some(Ok(message)) => message,
                         Some(Err(error)) => {
                             failures = failures.saturating_add(1);
@@ -431,6 +431,10 @@ async fn run_binance(
                             break;
                         }
                     };
+                    if let Message::Ping(payload) = message {
+                        socket.send(Message::Pong(payload)).await?;
+                        continue;
+                    }
                     if !message.is_text() {
                         continue;
                     }

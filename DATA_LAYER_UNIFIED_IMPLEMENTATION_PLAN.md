@@ -4627,6 +4627,29 @@ by implication in Phase B implementation.
   events/s, p50 5.7 microseconds and p99 15.2 microseconds against the 50,000/s
   minimum. No V1/current-Redis state changed. A clean immutable all-one-revision
   candidate, duplicate-log scan and repeated recovery gates remain mandatory.
+- `2026-08-19 PHASE B B5 REAL-CONSUMER GATE DEFECT IDENTIFIED`: authenticated
+  reads through both isolated query replicas proved OKX SWAP TRADE/QUOTE and
+  Binance/OKX final BAR projections, but Binance USD-M TRADE/QUOTE correctly
+  failed closed as `DATA_STALE`. A bounded provider probe proved both documented
+  Binance combined-stream paths were delivering authentic frames on this host.
+  The Rust Binance session had split the socket and discarded its write half,
+  so it could not explicitly answer provider WebSocket `PING` control frames;
+  repeated protocol resets eventually made the projected feed stale. The
+  approved in-scope repair is to keep the session full duplex, answer `PING`
+  with matching `PONG`, preserve bounded reconnect/backoff, then rebuild the
+  immutable candidate and repeat authenticated manifest, reconnect, lag,
+  replay and resource gates. V1 and current Redis remain untouched.
+- `2026-08-19 PHASE B B5 BINANCE CONTROL-FRAME REPAIR UNIT-VERIFIED,
+  REAL-PROVIDER HOLD PENDING`: the native Binance loop now retains the full-duplex
+  socket and replies to every provider `PING` with the matching `PONG`; data-frame
+  parsing, authority fencing, durable ACK, bounded exponential backoff and event
+  identity are unchanged. The current source passed Rust format, workspace
+  Clippy with warnings denied and all 57 workspace tests. The first test run
+  failed only because the builder image intentionally omitted repository golden
+  fixtures; after copying the exact `contracts/` and `tests/` fixture trees into
+  the disposable test container, the unchanged source passed. A newly labeled
+  immutable image must now remain fresh beyond the Binance heartbeat boundary
+  and pass both-replica manifest smoke before this defect is closed.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
