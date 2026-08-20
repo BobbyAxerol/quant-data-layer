@@ -222,6 +222,59 @@ class StableAcquisitionPlan:
             "metrics_every_batches": 100,
         }
 
+    def production_core_config(
+        self,
+        *,
+        catalog: StableSourceCatalog,
+        raw_authority: Mapping[str, Any],
+        worker_index: int,
+        partition_plan_epoch: int = 1,
+    ) -> dict[str, Any]:
+        self._validate_authority(raw_authority)
+        if partition_plan_epoch < 1:
+            raise ValueError("production partition plan epoch must be positive")
+        shadow = self.core_config(
+            catalog=catalog,
+            authority=raw_authority,
+            worker_index=worker_index,
+        )
+        slices = []
+        for source in sorted(catalog.bindings, key=lambda value: value.binding_id):
+            identity = source.instrument.identity
+            native = source.instrument.native_symbol.lower()
+            slice_id = (
+                f"production/{identity.venue.lower()}/{identity.market.lower()}/"
+                f"{identity.product_type.value.lower()}/{source.feed.value.lower()}/"
+                f"plan-{partition_plan_epoch}/{native}"
+            )
+            slices.append({
+                "subscription_id": source.source_id,
+                "slice_id": slice_id,
+                "shard_id": source.binding_id,
+                "raw_authority_revision": int(raw_authority["revision"]),
+                "raw_lease_epoch": 1,
+                "raw_partition_plan_epoch": partition_plan_epoch,
+            })
+        return {
+            "core": shadow["core"],
+            "topics": {
+                "raw_inputs": [self.raw_topic],
+                "authority_control": "qdl.authority.v1",
+                "target_checkpoints": "qdl.target-checkpoint.v1",
+                "canary_canonical": "md.canary.canonical.v2",
+                "primary_canonical": self.canonical_topic,
+                "public_v2": "md.projector.public.v2",
+                "legacy_v1": "md.projector.legacy.v1",
+                "quarantine": self.quarantine_topic,
+            },
+            "slices": slices,
+            "transactional_id": f"qdl-v2-production-core-{worker_index:03d}",
+            "batch_size": 128,
+            "batch_wait_ms": 10,
+            "max_events": 0,
+            "metrics_every_batches": 100,
+        }
+
     def native_ingestor_configs(
         self,
         *,
@@ -298,6 +351,48 @@ class StableAcquisitionPlan:
             or len(digest) != 71
         ):
             raise ValueError("stable authority is not an isolated Rust shadow record")
+
+
+def write_production_core_bundle(
+    destination: Path,
+    *,
+    catalog: StableSourceCatalog,
+    acquisition: StableAcquisitionPlan,
+    raw_authority: Mapping[str, Any],
+    partition_plan_epoch: int = 1,
+) -> dict[str, str]:
+    destination.mkdir(parents=True, exist_ok=True)
+    payloads = {
+        f"production-core-{worker_index:03d}.json":
+            acquisition.production_core_config(
+                catalog=catalog,
+                raw_authority=raw_authority,
+                worker_index=worker_index,
+                partition_plan_epoch=partition_plan_epoch,
+            )
+        for worker_index in range(1, STABLE_CORE_WORKER_COUNT + 1)
+    }
+    digests = {}
+    for name, payload in sorted(payloads.items()):
+        encoded = (
+            json.dumps(payload, indent=2, sort_keys=True, separators=(",", ": ")) + "\n"
+        ).encode()
+        path = destination / name
+        path.write_bytes(encoded)
+        digests[name] = hashlib.sha256(encoded).hexdigest()
+    manifest = {
+        "schema": "qdl.v2.production-core-bundle.v1",
+        "partition_plan_epoch": partition_plan_epoch,
+        "worker_count": STABLE_CORE_WORKER_COUNT,
+        "files": digests,
+    }
+    encoded_manifest = (
+        json.dumps(manifest, indent=2, sort_keys=True, separators=(",", ": ")) + "\n"
+    ).encode()
+    manifest_path = destination / "production-core-manifest.json"
+    manifest_path.write_bytes(encoded_manifest)
+    digests[manifest_path.name] = hashlib.sha256(encoded_manifest).hexdigest()
+    return digests
 
 
 def stable_authority_record(

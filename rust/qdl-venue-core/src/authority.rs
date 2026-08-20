@@ -738,7 +738,7 @@ pub struct Phase92PublicationContext {
     pub target: SinkTarget,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Phase92AuthorityFence {
     current: Option<Phase92AuthorityRecord>,
     committed_watermarks: HashMap<(String, SinkTarget), u64>,
@@ -891,26 +891,26 @@ impl Phase92AuthorityFence {
         &mut self,
         context: &Phase92PublicationContext,
     ) -> Result<(), String> {
-        if !self.recovery_required {
-            return Err("Phase 9.2 watermark restore is only permitted during recovery".into());
-        }
         let current = self
             .current
             .as_ref()
             .ok_or_else(|| "Phase 9.2 authority record is not loaded".to_owned())?;
-        if !matches!(
+        let restoring_canary = current.state == Phase92AuthorityState::RustCanary
+            && context.target == SinkTarget::CanaryCanonical;
+        let restoring_primary = matches!(
             current.state,
             Phase92AuthorityState::RustPrimary | Phase92AuthorityState::PythonPrimary
-        ) || context.slice_id != current.slice_id
+        ) && matches!(
+            context.target,
+            SinkTarget::PrimaryCanonical | SinkTarget::PublicV2 | SinkTarget::LegacyV1
+        );
+        if !(restoring_canary || (self.recovery_required && restoring_primary))
+            || context.slice_id != current.slice_id
             || context.owner_id != current.owner_id
             || context.authority_revision != current.authority_revision
             || context.lease_epoch != current.lease_epoch
             || context.partition_plan_epoch != current.partition_plan_epoch
             || context.shard_id.trim().is_empty()
-            || !matches!(
-                context.target,
-                SinkTarget::PrimaryCanonical | SinkTarget::PublicV2 | SinkTarget::LegacyV1
-            )
             || context.source_watermark < current.start_watermark
         {
             return Err("Phase 9.2 recovered watermark identity is invalid".into());
@@ -1010,6 +1010,22 @@ impl Phase92AuthorityFence {
         self.committed_watermarks
             .insert(key, context.source_watermark);
         Ok(())
+    }
+
+    pub fn next_watermark(&self, shard_id: &str, target: SinkTarget) -> Result<u64, String> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or_else(|| "Phase 9.2 authority record is not loaded".to_owned())?;
+        if shard_id.trim().is_empty() {
+            return Err("Phase 9.2 shard identity is empty".into());
+        }
+        self.committed_watermarks
+            .get(&(shard_id.to_owned(), target))
+            .copied()
+            .unwrap_or(current.start_watermark)
+            .checked_add(1)
+            .ok_or_else(|| "Phase 9.2 watermark overflow".to_owned())
     }
 
     pub fn current(&self) -> Option<&Phase92AuthorityRecord> {

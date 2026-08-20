@@ -11,6 +11,7 @@ from qdl.runtime.production_catalog import (
     ProductionDemandManifest,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_deployment import StableAcquisitionPlan
 
 
 BINANCE = {
@@ -155,6 +156,36 @@ class ProductionCatalogTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(Path(paths["provenance"]).read_text())["binding_count"], 2
             )
+            acquisition = StableAcquisitionPlan.load(
+                paths["acquisition_plan"], catalog=catalog
+            )
+            raw_authority = {
+                "schema": "qdl.authority-record.v1",
+                "slice_id": "qdl-v2-production-acquisition",
+                "revision": 11,
+                "mode": "RUST_SHADOW",
+                "candidate_image_digest": "sha256:" + "1" * 64,
+                "capability_manifest_digest": "2" * 64,
+                "contract_digest": "3" * 64,
+                "partition_plan_digest": "4" * 64,
+                "public_write_allowed": False,
+                "legacy_write_allowed": False,
+                "approved_by": "production-catalog-test",
+                "effective_at_ns": 1,
+            }
+            runtime = acquisition.production_core_config(
+                catalog=catalog,
+                raw_authority=raw_authority,
+                worker_index=1,
+            )
+            self.assertEqual(len(runtime["slices"]), 2)
+            self.assertEqual(
+                {item["subscription_id"] for item in runtime["slices"]},
+                {item.source_id for item in catalog.bindings},
+            )
+            self.assertEqual(runtime["topics"]["primary_canonical"], "md.canonical.v2")
+            self.assertEqual(runtime["topics"]["authority_control"], "qdl.authority.v1")
+            self.assertEqual(runtime["batch_size"], 128)
 
     def test_conflicts_missing_metadata_and_uncertified_interval_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:

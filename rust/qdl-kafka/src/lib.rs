@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod phase92_runtime;
+
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 use std::time::Duration;

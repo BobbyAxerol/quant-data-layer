@@ -5952,6 +5952,40 @@ catalog or SDK wiring cannot be deferred as operational debt.
 
 **C.0 implementation journal:**
 
+- `2026-08-20 C.0 LONG-RUNNING PRIMARY BRIDGE ACTIVE`: implement the
+  production consume-transform-produce boundary as a separate Rust runtime,
+  leaving the certified shadow binary and V1 runtime unchanged. Every accepted
+  raw offset must transactionally commit its canonical/quarantine decision,
+  per-target projection progress and compacted target checkpoint. Startup must
+  reconstruct the latest compacted authority event and all applicable target
+  watermarks before any write; fresh accepted handoff may bootstrap exactly at
+  terminal W, and every normal/restart path resumes at W+1. Authority updates
+  race under the same fence held through transaction ACK. Missing, partial,
+  stale or conflicting recovery state fails closed. Tests must cover valid,
+  filtered, duplicate and quarantine decisions, crash/restart, compacted replay,
+  active authority change and rollback. This slice cannot change port 8100,
+  production routes, topics, consumers or authority.
+- `2026-08-20 C.0 LONG-RUNNING PRIMARY BRIDGE CODE PASS`: added a separate
+  multi-slice `qdl-production-core` binary and Phase 9.2 transactional bridge.
+  Authority is reconstructed per slice from the compacted control topic; raw
+  acquisition revision/lease is explicitly bound but separate from final
+  publication authority. Logical per-slice watermarks are independent of Kafka
+  partition offsets. Every raw decision commits its source offset, zero or more
+  canonical/quarantine records, progress for each permitted target and compacted
+  target checkpoints in one Kafka transaction. Filtered, duplicate and
+  quarantine decisions still advance projection progress without fabricating
+  market data. Expanded provider rows are hashed as one ordered checkpoint
+  payload set. Restart requires complete current-owner checkpoints, except the
+  first accepted W handoff may bootstrap exactly at terminal W; partial recovery
+  fails closed. Authority watcher updates share the transaction fence, so
+  BLOCKED/rollback cannot race a durable output ACK. Added deterministic
+  production-core configs generated from the approved provider metadata catalog,
+  plus immutable image packaging. Production catalog/runtime and outbox tests
+  passed 7/7; the complete Rust workspace passed 70/70 with strict Clippy and
+  formatting. No broker integration, image deployment, provider call, V1 route,
+  port 8100, production topic/database or consumer was mutated. RF3 transaction,
+  restart and rollback evidence remains mandatory in isolated C.1 before this
+  code can be called runtime-certified.
 - `2026-08-20 RELEASE/CUTOVER PREPARATION RECORDED`: corrected the malformed
   `RUNTIME UNCHANGED` journal line and added the production cutover boundary
   plus `docs/runbooks/v2-production-rust-authority-cutover.md`. Read-only
