@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from typing import Annotated, Any, Literal
+
+try:  # Python 3.11+; the released SDK contract supports Python 3.10.
+    from enum import StrEnum
+except ImportError:  # pragma: no cover - exercised by the Python 3.10 artifact gate.
+    class StrEnum(str, Enum):
+        def __str__(self) -> str:
+            return self.value
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 

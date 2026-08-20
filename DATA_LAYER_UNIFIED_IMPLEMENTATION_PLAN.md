@@ -5965,6 +5965,18 @@ catalog or SDK wiring cannot be deferred as operational debt.
   filtered, duplicate and quarantine decisions, crash/restart, compacted replay,
   active authority change and rollback. This slice cannot change port 8100,
   production routes, topics, consumers or authority.
+- `2026-08-20 C.0 SDK PYTHON 3.10 BLOCKER PASS`: Trading System consumer
+  acceptance imported the prior immutable SDK wheel under its declared minimum
+  Python 3.10 runtime and found `enum.StrEnum` was Python 3.11-only. The fix is
+  owned by `qdl_sdk.models`, not patched in the consumer: Python 3.11+ uses the
+  standard enum and Python 3.10 uses an equivalent `str, Enum` compatibility
+  type. Added a dedicated CI job that builds and imports the standalone wheel
+  on Python 3.10 outside the source tree. Two release builds were byte-identical
+  at SHA-256 `3ea8f7e8b58f6c5ea1b2aa66ee94157f949d4cf6a71d708cb7508ed3b0abc600`;
+  an actual Python 3.10 wheel import passed and 17/17 SDK release/stream tests
+  passed on the Data Layer Python 3.12 runtime. Trading System updated its
+  vendor manifest/lock to that exact digest. V1 runtime, providers, authority,
+  Redis/PostgreSQL and consumer routes were unchanged.
 - `2026-08-20 C.0 LONG-RUNNING PRIMARY BRIDGE CODE PASS`: added a separate
   multi-slice `qdl-production-core` binary and Phase 9.2 transactional bridge.
   Authority is reconstructed per slice from the compacted control topic; raw
