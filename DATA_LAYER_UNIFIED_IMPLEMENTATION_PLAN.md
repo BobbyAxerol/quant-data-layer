@@ -5671,6 +5671,19 @@ and removes the superseded candidate/rollback artifacts after verification.
   Redis, volume, V1 route or provider state was mutated by this test slice.
   Full Python/Rust regression, immutable same-SHA artifacts and clean isolated
   real-provider restart acceptance remain.
+- `2026-08-20 PHASE B.4 REPAIR FULL SOURCE GATE PASSED`: two initial full
+  Python invocations reached 497 tests but four import modules could not open
+  `/app/logs/app.log` because the child tmpfs was root-owned; no domain
+  assertion failed. With the same source and a bounded log tmpfs owned by
+  non-root UID/GID 10001, full discovery ran 506 tests: 500 passed and six
+  explicit conditional/infrastructure cases skipped. Rust format, locked
+  workspace Clippy with warnings denied and all 62 workspace tests passed in
+  the exact builder with network disabled. Compose rendering and
+  `git diff --check` also passed. Test-injected timeout, queue-fence,
+  checkpoint and stale-source logs were expected assertions. No candidate/V1
+  process or durable state was mutated. Freeze a final journal commit, build
+  both images from that one SHA, rescan and run isolated real-provider restart
+  acceptance next.
 - `2026-08-19 PHASE B ARTIFACT CLEANUP POLICY RECORDED`: Phase B ends at B.4;
   B17/B18 are repair slices inside B.3, not new subphases. Exact cleanup retains
   V1, active `e002da6`, active/rollback `cfc0246`, Kafka/Redis and all durable

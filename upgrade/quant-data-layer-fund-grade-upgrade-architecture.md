@@ -5628,6 +5628,14 @@ modules ran 65 cases with 64 passes and one separately proven real-Redis skip.
 No runtime or durable service was changed. Full regression, new same-SHA images
 and clean real-provider restart acceptance remain.
 
+The repair full-source gate passed. Two initial Python harness attempts used a
+root-owned child log tmpfs and stopped four imports without a domain failure;
+the corrected non-root tmpfs run passed 500 of 506 tests with six explicit
+conditional skips. Rust fmt, locked Clippy and all 62 workspace tests passed;
+compose and diff validation were clean. Runtime remained untouched. Final
+same-SHA artifacts, scans and isolated authentic-provider restart acceptance
+remain.
+
 Start only after B.3 is `PASS`. Run full Python discovery, Rust fmt/workspace
 Clippy/tests, Buf/OpenAPI/package/security/capacity/compatibility gates; build
 Python and Rust images from one final commit SHA; freeze compact evidence and
