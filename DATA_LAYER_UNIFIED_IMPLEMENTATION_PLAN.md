@@ -6438,6 +6438,21 @@ freshness/session/contract checks and the source-switch audit is durable.
   System remained unchanged. Commit and one final same-SHA image rebuild are
   required before PR/cutover.
 
+
+- `2026-08-20 C.2/C.3 FINAL RELEASE ARTIFACT PASS`: topology commit
+  `be35aa7389a37b31c21cc2689c25873dcfc7e73d` produced Python image
+  `sha256:89e359ecc731d68db7a1814885023e1ff9f0aea793e668b6298109eb463ff91c`
+  and Rust image
+  `sha256:ab57e015da2fb96ef6e4b2180676e0a41b2cc45b64080e820d6a8f29cdab180a`.
+  Machine-read OCI labels exactly match the Git SHA and version `2.0.0`; users
+  remain `qdl:qdl` and `10001:10001`. The final bundle manifest digest is
+  `6a3edff0fdaa690b1fc1237f5678bf8463355bbdc51afb59a018f3e629840425`,
+  binds `executor_network`, twelve Binance/OKX promotion bindings, zero DNSE,
+  `RUST_SHADOW` and `cutover_authorized=false`; complete authority Compose
+  rendering passes. One mistyped preflight revision image was detected by label
+  comparison and is explicitly not a release artifact or deployed runtime.
+  This is the only V2 pair eligible for the merge/cutover packet.
+
 Promote all approved Binance and OKX feed slices in one maintenance window, but
 execute the CAS internally one slice at a time so a failure is isolated. One
 operator packet may list the complete slice set, image IDs, old/new owners,
