@@ -6452,6 +6452,9 @@ freshness/session/contract checks and the source-switch audit is durable.
   rendering passes. One mistyped preflight revision image was detected by label
   comparison and is explicitly not a release artifact or deployed runtime.
   This is the only V2 pair eligible for the merge/cutover packet.
+  Scoped cleanup then removed the superseded `3d3af1c` pair, the mistyped
+  Python tag and disposable netfix/test bundles. No broad prune, active
+  candidate image, final bundle, V1 image or Docker volume was removed.
 
 Promote all approved Binance and OKX feed slices in one maintenance window, but
 execute the CAS internally one slice at a time so a failure is isolated. One
