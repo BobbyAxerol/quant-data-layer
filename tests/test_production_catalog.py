@@ -11,7 +11,10 @@ from qdl.runtime.production_catalog import (
     ProductionDemandManifest,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
-from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from qdl.runtime.stable_deployment import (
+    AuthorityPromotionScope,
+    StableAcquisitionPlan,
+)
 
 
 BINANCE = {
@@ -173,9 +176,15 @@ class ProductionCatalogTests(unittest.TestCase):
                 "approved_by": "production-catalog-test",
                 "effective_at_ns": 1,
             }
+            promotion_scope = AuthorityPromotionScope(
+                schema="qdl.v2.authority-promotion-scope.v1",
+                revision=1,
+                binding_ids=tuple(item.binding_id for item in catalog.bindings),
+            )
             runtime = acquisition.production_core_config(
                 catalog=catalog,
                 raw_authority=raw_authority,
+                promotion_scope=promotion_scope,
                 worker_index=1,
             )
             self.assertEqual(len(runtime["slices"]), 2)

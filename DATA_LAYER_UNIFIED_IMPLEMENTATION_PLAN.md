@@ -6339,6 +6339,58 @@ freshness/session/contract checks and the source-switch audit is durable.
   slice pins both stages to the same official digest; focused contract tests
   passed 14/14, changed-file Ruff and diff checks passed.
 
+- `2026-08-20 C.3 FINAL IMMUTABLE ARTIFACT GATE PASS`: commit
+  `5823d642027b7446aa72160aa2ec53c28fdd88f1` produced Python image
+  `sha256:1758b35646293eca717d269681b867fc485db896a70889bab53df47d8d87345f`
+  and Rust image
+  `sha256:1eda689c30484157092cc276a1487d36174acd1a97a353ed792642a6d5512211`.
+  Both images expose OCI version `2.0.0` and the exact full revision; Python
+  runs as `qdl:qdl`, Rust as UID/GID `10001:10001`. A network-none Python
+  image smoke imported the API and source-owned `qdl_sdk==2.0.0`; the Rust
+  image contains `qdl-production-core`, which failed closed with its usage
+  error when started without a config. A fresh private bundle generated from
+  those exact image IDs reported 12 runtime files, `RUST_SHADOW`,
+  `cutover_authorized=false` and no secret values in its public manifest.
+  Its manifest SHA-256 is
+  `a9d2835e86c0f6b2be7f90f7671d2f3d8dc9462da324703658991da774b4b1cb`;
+  Compose rendered successfully with both `stable-authority` and
+  `stable-authority-primary` profiles. No container, authority row, consumer
+  route, V1 service, provider ownership or persistent volume changed. The
+  next permitted operation is topology/packet preflight; a production CAS and
+  Trading System restart still require the exact packet approval below.
+
+
+- `2026-08-20 C.3 PROMOTION-SCOPE BLOCKER FOUND; ARTIFACT REVOKED`: packet
+  preflight inspected the generated production-core configs and found all four
+  DNSE bindings present alongside the twelve approved Binance/OKX bindings.
+  This violates the explicit initial-cutover boundary that DNSE remains V1-only
+  and would make a production worker require DNSE authority/checkpoints even
+  when the `stable-vn` profile is disabled. The two image IDs above are valid
+  build evidence but are revoked as cutover artifacts. Fix the generator with
+  one strict, versioned, explicit authority-promotion binding manifest; filter
+  both canonical bindings and runtime slices from that manifest, reject empty,
+  duplicate or unknown bindings, and record its digest in the bundle. Add a
+  regression proving initial authority contains exactly twelve Binance/OKX
+  bindings and zero HNX/HOSE/DNSE binding. Re-run focused/full gates and rebuild
+  one new immutable image pair before topology deployment. V1 and the running
+  isolated shadow stack remain unchanged while this source-only repair runs.
+
+
+- `2026-08-20 C.3 PROMOTION-SCOPE REPAIR PASS`: added strict manifest
+  `qdl.v2.authority-promotion-scope.v1`; production-core generation now filters
+  both canonical bindings and authority slices from its explicit binding IDs,
+  rejects empty/duplicate/unknown scope and records revision/digest/count in
+  the public bundle. The initial manifest selects exactly twelve Binance/OKX
+  trade/quote/final-1m-bar bindings and no DNSE/HNX/HOSE binding. Targeted
+  contract/bundle/authority tests passed 22/22; full Python passed 543 with six
+  environment skips; full Rust passed 70/70 with fmt and strict Clippy; isolated
+  changed-file Ruff passed. All three generated production workers contain
+  12 slices, venues `BINANCE,OKX`, zero DNSE subscriptions and common scope
+  digest `06178202d7ec592c19c41a36c919a13a74971c3e39ed8e67ce9b5de3a978fcd2`.
+  Compose authority profiles render successfully. Tests used network-none
+  source mounts and disposable tmpfs/tooling; V1, the running isolated shadow,
+  Trading System routes, authority state and persistent volumes were unchanged.
+
 Promote all approved Binance and OKX feed slices in one maintenance window, but
 execute the CAS internally one slice at a time so a failure is isolated. One
 operator packet may list the complete slice set, image IDs, old/new owners,

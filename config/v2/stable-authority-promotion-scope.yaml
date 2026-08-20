@@ -1,0 +1,15 @@
+schema: qdl.v2.authority-promotion-scope.v1
+revision: 1
+binding_ids:
+  - binance-spot-btcusdt-bar-1m
+  - binance-spot-btcusdt-quote
+  - binance-spot-btcusdt-trade
+  - binance-usdm-btcusdt-bar-1m
+  - binance-usdm-btcusdt-quote
+  - binance-usdm-btcusdt-trade
+  - okx-spot-btcusdt-bar-1m
+  - okx-spot-btcusdt-quote
+  - okx-spot-btcusdt-trade
+  - okx-swap-btcusdt-bar-1m
+  - okx-swap-btcusdt-quote
+  - okx-swap-btcusdt-trade

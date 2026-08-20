@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
+    AuthorityPromotionScope,
     StableAcquisitionPlan,
     stable_authority_record,
     write_production_core_bundle,
@@ -93,6 +94,10 @@ def prepare_candidate(
     )
     acquisition_path = ROOT / "config/v2/stable-acquisition-bindings.yaml"
     acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
+    promotion_scope = AuthorityPromotionScope.load(
+        ROOT / "config/v2/stable-authority-promotion-scope.yaml",
+        catalog=catalog,
+    )
     authority = stable_authority_record(
         rust_image_digest=rust_digest,
         capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
@@ -110,6 +115,7 @@ def prepare_candidate(
         runtime_dir,
         catalog=catalog,
         acquisition=acquisition,
+        promotion_scope=promotion_scope,
         raw_authority=authority,
         partition_plan_epoch=1,
     ))
@@ -208,6 +214,9 @@ def prepare_candidate(
         "runtime_digests": bundle_digests,
         "catalog_revision": catalog.catalog_revision,
         "acquisition_revision": acquisition.revision,
+        "authority_promotion_scope_revision": promotion_scope.revision,
+        "authority_promotion_scope_digest": promotion_scope.digest(),
+        "authority_promotion_binding_count": len(promotion_scope.binding_ids),
         "consumer_count": 5,
         "workload_mtls": True,
         "workload_identity_count": 4,

@@ -32,6 +32,59 @@ _PROVIDER_KINDS = {
 
 
 @dataclass(frozen=True, slots=True)
+class AuthorityPromotionScope:
+    schema: str
+    revision: int
+    binding_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            self.schema != "qdl.v2.authority-promotion-scope.v1"
+            or self.revision < 1
+            or not self.binding_ids
+            or any(not value.strip() for value in self.binding_ids)
+            or len(self.binding_ids) != len(set(self.binding_ids))
+        ):
+            raise ValueError("authority promotion scope is invalid")
+
+    @classmethod
+    def load(
+        cls, path: str | Path, *, catalog: StableSourceCatalog
+    ) -> "AuthorityPromotionScope":
+        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or set(payload) != {
+            "schema", "revision", "binding_ids",
+        }:
+            raise ValueError("authority promotion scope fields are incomplete or unknown")
+        values = payload["binding_ids"]
+        if not isinstance(values, list) or not values:
+            raise ValueError("authority promotion scope requires binding IDs")
+        result = cls(
+            schema=str(payload["schema"]),
+            revision=int(payload["revision"]),
+            binding_ids=tuple(str(value) for value in values),
+        )
+        catalog_ids = {item.binding_id for item in catalog.bindings}
+        unknown = set(result.binding_ids) - catalog_ids
+        if unknown:
+            raise ValueError(
+                "authority promotion scope contains unknown bindings: "
+                + ",".join(sorted(unknown))
+            )
+        return result
+
+    def digest(self) -> str:
+        payload = {
+            "schema": self.schema,
+            "revision": self.revision,
+            "binding_ids": list(self.binding_ids),
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class StableAcquisitionBinding:
     binding_id: str
     mode: str
@@ -175,14 +228,18 @@ class StableAcquisitionPlan:
         authority: Mapping[str, Any],
         max_events: int = 0,
         worker_index: int = 1,
+        binding_ids: frozenset[str] | None = None,
     ) -> dict[str, Any]:
         self._validate_authority(authority)
         if not 1 <= worker_index <= STABLE_CORE_WORKER_COUNT:
             raise ValueError("stable core worker index is outside the topology bound")
         source_by_id = {item.binding_id: item for item in catalog.bindings}
         acquisitions = {item.binding_id: item for item in self.bindings}
+        selected_ids = frozenset(source_by_id) if binding_ids is None else binding_ids
+        if not selected_ids or not selected_ids.issubset(source_by_id):
+            raise ValueError("stable core binding selection is empty or unknown")
         bindings = []
-        for binding_id in sorted(source_by_id):
+        for binding_id in sorted(selected_ids):
             source = source_by_id[binding_id]
             acquisition = acquisitions[binding_id]
             identity = source.instrument.identity
@@ -227,19 +284,26 @@ class StableAcquisitionPlan:
         *,
         catalog: StableSourceCatalog,
         raw_authority: Mapping[str, Any],
+        promotion_scope: AuthorityPromotionScope,
         worker_index: int,
         partition_plan_epoch: int = 1,
     ) -> dict[str, Any]:
         self._validate_authority(raw_authority)
         if partition_plan_epoch < 1:
             raise ValueError("production partition plan epoch must be positive")
+        selected_ids = frozenset(promotion_scope.binding_ids)
         shadow = self.core_config(
             catalog=catalog,
             authority=raw_authority,
             worker_index=worker_index,
+            binding_ids=selected_ids,
         )
+        source_by_id = {item.binding_id: item for item in catalog.bindings}
         slices = []
-        for source in sorted(catalog.bindings, key=lambda value: value.binding_id):
+        for source in sorted(
+            (source_by_id[binding_id] for binding_id in selected_ids),
+            key=lambda value: value.binding_id,
+        ):
             identity = source.instrument.identity
             native = source.instrument.native_symbol.lower()
             slice_id = (
@@ -358,6 +422,7 @@ def write_production_core_bundle(
     *,
     catalog: StableSourceCatalog,
     acquisition: StableAcquisitionPlan,
+    promotion_scope: AuthorityPromotionScope,
     raw_authority: Mapping[str, Any],
     partition_plan_epoch: int = 1,
 ) -> dict[str, str]:
@@ -367,6 +432,7 @@ def write_production_core_bundle(
             acquisition.production_core_config(
                 catalog=catalog,
                 raw_authority=raw_authority,
+                promotion_scope=promotion_scope,
                 worker_index=worker_index,
                 partition_plan_epoch=partition_plan_epoch,
             )
@@ -384,6 +450,9 @@ def write_production_core_bundle(
         "schema": "qdl.v2.production-core-bundle.v1",
         "partition_plan_epoch": partition_plan_epoch,
         "worker_count": STABLE_CORE_WORKER_COUNT,
+        "promotion_scope_revision": promotion_scope.revision,
+        "promotion_scope_digest": promotion_scope.digest(),
+        "promotion_binding_count": len(promotion_scope.binding_ids),
         "files": digests,
     }
     encoded_manifest = (

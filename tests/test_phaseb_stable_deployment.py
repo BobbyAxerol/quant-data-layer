@@ -19,6 +19,7 @@ from scripts.phaseb_prepare_stable_candidate import prepare_candidate
 
 from qdl.runtime.stable_deployment import (
     STABLE_CORE_WORKER_COUNT,
+    AuthorityPromotionScope,
     StableAcquisitionPlan,
     stable_authority_record,
     write_stable_runtime_bundle,
@@ -28,6 +29,7 @@ from qdl.runtime.stable_deployment import (
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 ACQUISITION_PATH = ROOT / "config/v2/stable-acquisition-bindings.yaml"
+PROMOTION_SCOPE_PATH = ROOT / "config/v2/stable-authority-promotion-scope.yaml"
 
 
 class StableDeploymentContractTests(unittest.TestCase):
@@ -36,6 +38,9 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.acquisition = StableAcquisitionPlan.load(
             ACQUISITION_PATH, catalog=self.catalog
         )
+        self.promotion_scope = AuthorityPromotionScope.load(
+            PROMOTION_SCOPE_PATH, catalog=self.catalog
+        )
         self.authority = stable_authority_record(
             rust_image_digest="a" * 64,
             capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
@@ -43,6 +48,53 @@ class StableDeploymentContractTests(unittest.TestCase):
             partition_plan=ACQUISITION_PATH.read_bytes(),
             effective_at_ns=time.time_ns(),
         )
+
+    def test_initial_authority_scope_is_explicit_and_excludes_dnse(self):
+        expected = {
+            item.binding_id
+            for item in self.catalog.bindings
+            if item.instrument.identity.venue in {"BINANCE", "OKX"}
+        }
+        self.assertEqual(set(self.promotion_scope.binding_ids), expected)
+        self.assertEqual(len(expected), 12)
+        runtime = self.acquisition.production_core_config(
+            catalog=self.catalog,
+            raw_authority=self.authority,
+            promotion_scope=self.promotion_scope,
+            worker_index=1,
+        )
+        self.assertEqual(len(runtime["slices"]), 12)
+        self.assertEqual(
+            {item["subscription_id"] for item in runtime["slices"]},
+            {
+                item.source_id
+                for item in self.catalog.bindings
+                if item.binding_id in expected
+            },
+        )
+        self.assertEqual(
+            {item["venue"] for item in runtime["core"]["bindings"]},
+            {"BINANCE", "OKX"},
+        )
+
+    def test_authority_scope_rejects_unknown_and_duplicate_bindings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "scope.yaml"
+            path.write_text(
+                "schema: qdl.v2.authority-promotion-scope.v1\n"
+                "revision: 1\nbinding_ids: [missing-binding]\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "unknown bindings"):
+                AuthorityPromotionScope.load(path, catalog=self.catalog)
+            path.write_text(
+                "schema: qdl.v2.authority-promotion-scope.v1\n"
+                "revision: 1\nbinding_ids: [binance-usdm-btcusdt-trade, "
+                "binance-usdm-btcusdt-trade]\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "scope is invalid"):
+                AuthorityPromotionScope.load(path, catalog=self.catalog)
 
     def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
         self.assertEqual(len(self.catalog.bindings), 16)
@@ -905,6 +957,16 @@ class StableComposeAndBundleTests(unittest.TestCase):
                     )
                 self.assertFalse(manifest["cutover_authorized"])
                 self.assertFalse(manifest["secret_values_recorded"])
+                self.assertEqual(manifest["authority_promotion_binding_count"], 12)
+                self.assertEqual(len(manifest["authority_promotion_scope_digest"]), 64)
+                production = json.loads(
+                    (output / "runtime/production-core-001.json").read_text()
+                )
+                self.assertEqual(len(production["slices"]), 12)
+                self.assertEqual(
+                    {item["venue"] for item in production["core"]["bindings"]},
+                    {"BINANCE", "OKX"},
+                )
                 self.assertEqual((output / "stable.env").stat().st_mode & 0o777, 0o600)
                 env_text = (output / "stable.env").read_text()
                 self.assertIn("QDL_STABLE_CERT_DIR=/host/qdl/certs", env_text)
