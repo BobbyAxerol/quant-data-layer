@@ -4067,7 +4067,7 @@ declared complete while an earlier required gate remains open.
 | `B.1 Runtime Correctness And Capacity` | Authentic acquisition, Rust canonical core, bounded projector/cache, final BAR lifecycle, lossless-vs-latest delivery and resource convergence | `COMPLETE` | B5-B8: final full Python discovery passed 478 tests with 6 explicit skips; Rust fmt/Clippy/workspace passed. A clean candidate loaded 2,000 authentic closed BARs, converged core/projector lag to 50/29, retained canonical-only bounded cache, zero quarantine and bounded Redis/app memory. Intermediate failed candidates are diagnostic evidence, not accepted releases. |
 | `B.2 Controlled Consumer Acceptance` | Registered Binance, OKX, VN, Trading System and monitoring warmup -> signed cursor -> replay -> live, including session/freshness semantics | `PARTIAL_EXTERNAL` | B9-B12: crypto alpha, monitoring and Trading System paper consumers passed on immutable `df88de0`; 500 rows per crypto binding, replica-equal results and 129-779 ms live freshness. DNSE remains blocked by official REST TCP/443 egress and cannot be replaced with synthetic or lineage-incomplete V1 data. |
 | `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `COMPLETE` | B13-B19 plus the approved clean-log closure passed. Fresh RF3/minISR2 Kafka accepted real Binance/OKX data; atomic cache rebuild converged at lag 19 with observed bound 46; 12 retained partitions had zero gaps/duplicates/quarantine; signed SDK consumers reached `REPLAYING -> LIVE`; Trading System paper snapshots were fresh/execution-eligible; V1 was unchanged. Conclusion: `PASS`. |
-| `B.4 Release Certification And Cleanup` | Full Python/Rust/Buf/OpenAPI/security/capacity suites, immutable one-SHA images, compact evidence, docs/runbook, exact candidate cleanup and V1 invariant | `NOT_STARTED` | Starts only after B.3 passes. It does not authorize production cutover or consumer authority migration. |
+| `B.4 Release Certification And Cleanup` | Full Python/Rust/Buf/OpenAPI/security/capacity suites, immutable one-SHA images, compact evidence, docs/runbook, exact candidate cleanup and V1 invariant | `IN_PROGRESS` | Source SHA `5054e1e` is provisionally frozen for full certification. No production cutover or consumer authority migration is authorized. |
 
 Every subphase closure records: approved boundary, invariant, exact commands and
 pass/fail/skip counts, real-provider or test provenance, resource/latency data,
@@ -5518,6 +5518,105 @@ and removes the superseded candidate/rollback artifacts after verification.
   mutated provider/Kafka/Redis data or exposed candidate output to production.
   B.3 conclusion is `PASS`/`COMPLETE`. B.4 remains `NOT_STARTED`; no
   production cutover or consumer authority migration is authorized.
+- `2026-08-20 PHASE B.4 RELEASE CERTIFICATION STARTED`: B.3 is complete and
+  the operator approved B.4 only. Commit `5054e1e` is the provisional common
+  source SHA. Required gates are full Python discovery; Rust format, locked
+  workspace Clippy and tests; Buf format/lint/two-baseline breaking/generation;
+  OpenAPI semantic compatibility; package/release/security/capacity suites;
+  immutable Python and Rust images carrying the same source SHA; isolated
+  candidate rolling recreation; compact evidence; exact unreferenced
+  image/cache cleanup; and unchanged V1 health/OpenAPI/topology.
+
+  Rollback is to stop only recreated candidate roles and restore pinned
+  `c61fa39` Python plus `cfc0246` Rust images against preserved candidate
+  Kafka/state/TLS. Public V1, provider data, production Redis/Parquet, routes and
+  consumer authority are immutable. A failed gate leaves B.4 in progress and
+  cannot be relabeled as technical debt. Push, merge, release publication and
+  production cutover remain outside scope.
+- `2026-08-20 PHASE B.4 PYTHON CERTIFICATION PASSED`: immutable
+  `c61fa39` dependencies with source bind at `5054e1e` ran full unittest
+  discovery in a network-disabled, read-only, cap-dropped container bounded to
+  768 MiB, 1.5 CPU and 256 PIDs. It executed 503 tests: 497 passed and six
+  explicit conditional/infrastructure cases skipped. Failure-path ERROR and
+  CRITICAL logs were injected assertions and their tests passed. No candidate,
+  V1, provider, Kafka, Redis or volume state was addressed. Rust and contract
+  gates remain pending; B.4 stays `IN_PROGRESS`.
+- `2026-08-20 PHASE B.4 RUST PACKAGING DEFECT FOUND, BOUNDED FIX STARTED`:
+  the exact-SHA Rust builder compiled all release binaries, but full locked
+  workspace tests failed at compile time because `Dockerfile.phase8-rust`
+  copied Rust sources/generated bindings without the immutable
+  `contracts/golden` and `tests/fixtures/phase2` oracle files referenced by
+  Rust tests. No runtime or domain assertion failed, and no candidate was
+  recreated. The in-scope fix copies only those two bounded test inputs into
+  the builder stage and adds release-packaging assertions. Runtime stage,
+  binaries, contracts and provider behavior remain unchanged. Rust fmt/Clippy/
+  tests must be rerun from a rebuilt builder before this gate can pass.
+- `2026-08-20 PHASE B.4 RUST CERTIFICATION PASSED`: the rebuilt bounded
+  builder included only the two missing immutable oracle directories.
+  `cargo fmt --all -- --check`, locked workspace Clippy with
+  `-D warnings`, and the full workspace test gate passed under no-network,
+  cap-dropped, no-new-privileges execution bounded to 3 CPU, 3 GiB and 512
+  PIDs. All 62 Rust tests passed with zero failures/skips, covering exact
+  Python/Rust golden bytes, Binance/OKX provider parsing, quantity/decimal
+  identity, generation fencing, replay/dedup/gap/quarantine, final BAR
+  semantics, Kafka TLS/transaction headers, authority handoff/rollback,
+  backpressure classes and VN source semantics. The targeted Python packaging
+  regression also passed 6/6 and `git diff --check` was clean. No candidate
+  or V1 runtime was mutated. Contract/security/package/capacity gates remain.
+- `2026-08-20 PHASE B.4 CONTRACT CERTIFICATION PASSED`: Buf 1.50.0
+  format, lint, breaking checks against both frozen Phase 1 and Phase 7
+  baselines, and generation all passed; regenerated Python/Rust artifacts had
+  zero Git diff. Seven generated-contract/golden tests passed in a read-only,
+  no-network Python container. OpenAPI semantic comparison against `dev`
+  reported `PASS_PRE_BETA_FREEZE`, 10 operations, 42 schemas and zero removed
+  operation/response/schema/enum or security/required-parameter change.
+  Candidate/V1 runtime and durable state were not addressed. Security,
+  package, capacity and final one-SHA image gates remain.
+- `2026-08-20 PHASE B.4 CAPACITY DIAGNOSTIC RECORDED`: the approved
+  Phase 2 durability gate passed at 3,042 append events/s, p99 14.4 ms,
+  22,688 replay events/s and 6.03x disk amplification; the eight-replica V2
+  API gate passed at 706 requests/s and p99 181 ms with zero venue connection.
+  A separate exploratory Phase 6 run requested 10,000 normal / 40,000 burst
+  events/s while cgroup-limited to 2 CPU and failed closed at 5,656 events/s.
+  Those rates are not the script's approved 500/1,500 certification defaults,
+  so this is retained as non-release diagnostic evidence rather than a code
+  defect or a lowered threshold. The approved bounded profile and final Rust
+  release benchmark must still pass. No runtime/data was mutated.
+- `2026-08-20 PHASE B.4 RUST SUPPLY-CHAIN POLICY DEFECT FOUND`:
+  checksum-verified cargo-deny 0.20.2 fetched the current RustSec database and
+  reported advisories, bans and sources clean, but license validation failed
+  because the Rust builder did not copy the repository's existing `deny.toml`.
+  Cargo-deny inside that artifact therefore used its default deny-all license
+  policy and rejected normal MIT/Apache/BSD dependencies; host CI still had
+  the tracked policy. The bounded repair copies the reviewed policy into the
+  builder, makes its Linux target/advisory/license/source boundaries explicit,
+  and adds release regression assertions. No dependency, runtime or market
+  semantics change.
+- `2026-08-20 PHASE B.4 CAPACITY AND SECURITY GATES PASSED`: the
+  approved 80-partition Phase 6 profile passed two normal windows at
+  503.62/503.70 events/s and burst at 1,503.07 events/s, p99.9 128.055 ms,
+  zero queue rejection/replay mismatch and negative measured memory growth.
+  The reviewed `deny.toml` targets Linux production, has no advisory/license
+  exception, denies wildcard dependencies and unknown registry/Git sources,
+  and permits only the encountered permissive licenses. Checksum-pinned
+  cargo-deny 0.20.2 passed advisories, bans, licenses and sources; duplicate
+  transitive versions remained non-blocking graph warnings. Pip-audit reported
+  no known Python vulnerability. Pinned Trivy 0.73.0 source/config scanning,
+  excluding only runtime data/logs and compiled target artifacts, found zero
+  HIGH/CRITICAL misconfiguration and zero secret across 15 analyzed targets.
+  Seven release-policy/package tests passed and `git diff --check` remained
+  clean. Final full regression, one-SHA images, image scans and candidate
+  recreation remain.
+- `2026-08-20 PHASE B.4 FINAL SOURCE REGRESSION PASSED`: an initial
+  read-only rerun omitted the required `/app/logs` tmpfs and stopped four
+  import modules at `RotatingFileHandler`; 495 other tests ran and no domain
+  assertion failed. With the documented non-root writable log tmpfs restored,
+  full network-disabled/read-only discovery passed 504 tests: 498 passed and
+  six explicit conditional/infrastructure cases skipped. Test-injected timeout,
+  stale-source, queue-fence and recovery logs remained expected assertions.
+  This closes source-level regression after the Docker packaging and supply-
+  chain policy repairs. The next gate is freezing the source commit and building
+  both immutable images from that exact SHA.
 - `2026-08-19 PHASE B ARTIFACT CLEANUP POLICY RECORDED`: Phase B ends at B.4;
   B17/B18 are repair slices inside B.3, not new subphases. Exact cleanup retains
   V1, active `e002da6`, active/rollback `cfc0246`, Kafka/Redis and all durable

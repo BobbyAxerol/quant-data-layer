@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import tomllib
 import unittest
 
 import yaml
@@ -101,6 +102,26 @@ class Phase83CandidateContractTests(unittest.TestCase):
         ):
             self.assertIn(f"/usr/local/bin/{binary}", dockerfile)
         self.assertIn('io.qdl.authority.default="RUST_SHADOW"', dockerfile)
+        self.assertIn("COPY deny.toml ./deny.toml", dockerfile)
+        self.assertIn(
+            "COPY contracts/golden ./contracts/golden",
+            dockerfile,
+        )
+        self.assertIn(
+            "COPY tests/fixtures/phase2 ./tests/fixtures/phase2",
+            dockerfile,
+        )
+
+    def test_rust_supply_chain_policy_is_explicit_and_fail_closed(self):
+        policy = tomllib.loads((ROOT / "deny.toml").read_text())
+        self.assertEqual(policy["advisories"]["ignore"], [])
+        self.assertEqual(policy["bans"]["wildcards"], "deny")
+        self.assertEqual(policy["sources"]["unknown-registry"], "deny")
+        self.assertEqual(policy["sources"]["unknown-git"], "deny")
+        self.assertEqual(policy["sources"]["allow-git"], [])
+        self.assertIn("MIT", policy["licenses"]["allow"])
+        self.assertIn("Apache-2.0", policy["licenses"]["allow"])
+        self.assertEqual(policy["licenses"]["exceptions"], [])
 
     def test_sbom_includes_authority_transport_dependencies(self):
         packages = build_spdx(ROOT, release="phase8-test")["packages"]

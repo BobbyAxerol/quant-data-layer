@@ -5521,7 +5521,75 @@ proven real-Redis conditional case skipped under network-disabled execution.
 Conclusion: B.3 is `PASS`/`COMPLETE`; B.4 remains `NOT_STARTED`, and no
 production authority or consumer cutover is implied.
 
-### J.6 B.4 — Release certification and cleanup (`NOT_STARTED`)
+### J.6 B.4 — Release certification and cleanup (`IN_PROGRESS`)
+
+
+B.4 started on 2026-08-20 with provisional common source SHA `5054e1e`.
+Certification is correctness-first: full Python, Rust, Buf/OpenAPI,
+security/package/capacity/compatibility gates must pass before either final
+image is built. Both images then use that same source SHA and only the isolated
+candidate may be recreated. Rollback pins `c61fa39` Python and `cfc0246` Rust
+against preserved candidate Kafka/state/TLS. V1 and production authority are
+immutable; release publication, push/merge and cutover are not authorized.
+
+
+The full Python certification gate passed 503 tests with 497 passes and six
+explicit conditional skips under network-disabled, read-only, cap-dropped
+execution. Source was `5054e1e` with dependencies from the immutable Python
+candidate. No runtime or durable state was mutated. Rust and contract gates are
+still pending, so B.4 remains `IN_PROGRESS`.
+
+The first Rust gate found a builder-packaging defect before any runtime change:
+release binaries compiled, but test compilation could not see immutable
+`contracts/golden` and `tests/fixtures/phase2` inputs because the builder did
+not copy them. The bounded repair adds only those test oracle paths plus a
+packaging regression assertion, then rebuilds and reruns fmt/Clippy/tests.
+Runtime-stage contents and market-data semantics remain unchanged.
+
+The bounded repair is accepted. The rebuilt no-network/cap-dropped builder
+passed Rust format, locked workspace Clippy with warnings denied and all 62
+workspace tests with zero failures/skips. The six release-packaging regression
+tests also passed. This covers exact Python/Rust golden bytes, multi-venue
+provider semantics, deterministic replay, ordering/gap/quarantine, authority
+handoff and rollback, Kafka security bindings, delivery classes and VN source
+identity. No runtime was recreated; contract/security/package/capacity gates
+remain open.
+
+The contract gate is also accepted: Buf 1.50.0 format/lint, two frozen-baseline
+breaking checks and generation passed with no generated-code drift; seven
+Python golden-contract tests passed. OpenAPI comparison against `dev` retained
+10 operations and 42 schemas with zero hard break or security/required-parameter
+change. Runtime remained untouched. Security/package/capacity and final
+one-SHA artifact gates remain open.
+
+Capacity diagnostics passed the approved Phase 2 persistence/replay and Phase 5
+eight-replica API gates. An exploratory 10,000/40,000 events/s Python sustained
+profile under 2 CPU failed closed at 5,656 events/s; these are above the
+approved Phase 6 default 500/1,500 targets, so the result is diagnostic only and
+does not lower any gate. The approved profile and final Rust release benchmark
+remain mandatory.
+
+Cargo-deny then exposed a release-policy defect: advisories/bans/sources were
+clean, but the Rust builder omitted the repository's tracked `deny.toml`, so its
+containerized audit fell back to default deny-all and rejected every normal
+permissive dependency. Host CI retained the policy. B.4 must copy and harden
+that least-permissive license/source/advisory policy, add a packaging
+regression check and rerun the checksum-pinned scanner.
+
+The repair is accepted. The explicit Linux policy has no advisory/license
+exception, denies wildcard and unknown registry/Git sources, and allows only
+the permissive licenses in the locked graph. Cargo-deny passed advisories,
+bans, licenses and sources. Pip-audit found no known Python vulnerability;
+Trivy found zero HIGH/CRITICAL source misconfiguration and zero secret. The
+approved 80-partition Phase 6 profile also passed at 503.62/503.70 normal and
+1,503.07 burst events/s with no queue reject, replay mismatch or memory growth.
+Final full regression, one-SHA image/image-scan and candidate gates remain.
+
+The final source rerun first exposed only a harness omission: read-only
+execution lacked the required non-root `/app/logs` tmpfs. The corrected
+unchanged-source run passed all 504 tests with six explicit skips. Source-level
+certification is closed; freeze/commit, same-SHA images, image scans and
+isolated candidate recreation remain.
 
 Start only after B.3 is `PASS`. Run full Python discovery, Rust fmt/workspace
 Clippy/tests, Buf/OpenAPI/package/security/capacity/compatibility gates; build

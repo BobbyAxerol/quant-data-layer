@@ -8,8 +8,12 @@ RUN apt-get update \
 RUN rustup component add rustfmt clippy
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+COPY deny.toml ./deny.toml
 COPY rust ./rust
 COPY generated/rust ./generated/rust
+# Rust unit/parity tests compile against immutable provider and contract oracles.
+COPY contracts/golden ./contracts/golden
+COPY tests/fixtures/phase2 ./tests/fixtures/phase2
 RUN cargo build --release --locked \
     --bin qdl-kafka-smoke \
     --bin qdl-authority-rehearsal \
