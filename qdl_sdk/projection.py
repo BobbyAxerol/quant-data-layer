@@ -317,6 +317,15 @@ def market_data_view_from_stream(
         and freshness_ms > requirement.max_freshness_ms
     )
     state = "GAPPED" if gap_open else "STALE" if stale else "LIVE"
+    if gap_open and requirement.gap_policy.value in {"BLOCK", "PAUSE"}:
+        raise ContinuityError(
+            "OPEN_SEQUENCE_GAP", "stream event violates the requested gap policy"
+        )
+    if stale and requirement.stale_policy.value in {"BLOCK", "PAUSE"}:
+        raise ContinuityError(
+            "DATA_STALE", "stream event violates the requested freshness policy"
+        )
+
     authoritative = (
         template.source.authoritative
         and template.source.source_role == "PRIMARY"

@@ -6098,6 +6098,10 @@ catalog or SDK wiring cannot be deferred as operational debt.
   durable audit and per-slice rollback remain mandatory. V1 stays hot on port
   `8100`; DNSE stays V1-only. Fast-track planning commit: `e8167d4`.
 
+- `2026-08-20 C.0 SDK ALPHA STREAM POLICY CLOSURE STARTED`: downstream shared-runtime tests exposed a contract asymmetry: query validation enforces typed stale/gap policies for every consumer grade, while the stream projector currently blocks stale/gapped events only for `EXECUTION`. The source-owned SDK will enforce `stale_policy` and `gap_policy` identically for `ALPHA` and `EXECUTION`, retain the additional execution-eligibility gate for `EXECUTION`, and add explicit ALPHA stale/gap regression tests. A new deterministic wheel supersedes prior candidate digests only after Python 3.10 import, SDK release/stream tests, lint and byte-identical build pass. Consumers must update to that one digest; no downstream copy of projection logic is permitted. V1/runtime/provider/authority routes remain unchanged.
+
+- `2026-08-20 C.0 SDK ALPHA STREAM POLICY CLOSURE PASS`: the stream projector now applies typed `gap_policy` and `stale_policy` to ALPHA and EXECUTION consumers consistently; execution grade retains its additional authority/eligibility check. Added explicit ALPHA gap/stale regressions. SDK source projection/release/stream tests passed 21/21 on Python 3.12; the built wheel imported and passed 4/4 projection tests on the released Python 3.10 consumer runtime. Two independent builds were byte-identical at SHA-256 `3e1ce5e43d55ac4c04baf5b69354513f32090bd2e7060f1f4e659323470a27d0`; isolated Ruff lint and `git diff --check` passed. The repository legacy Poetry version syntax prevents modern Ruff from loading the root config and its existing files are not Ruff-format clean, so no unrelated format churn was introduced. No runtime/provider/authority route was touched.
+
 #### C.1 Isolated Stable V2 Deployment
 
 Deploy the immutable pair under project `qdl_v2_stable_candidate`, loopback

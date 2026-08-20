@@ -298,6 +298,34 @@ class SdkStreamProjectionTests(unittest.TestCase):
             )
         self.assertEqual(stale.exception.code, "DATA_STALE")
 
+    def test_gap_and_stale_alpha_events_obey_typed_policies(self):
+        requirement = DataRequirement(
+            instrument_uid="uid-1",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=1000,
+        )
+        gapped = envelope(Feed.TRADE)
+        gapped.quality_flags.append(common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE)
+        with self.assertRaises(ContinuityError) as gap:
+            market_data_view_from_stream(
+                StreamEvent(11, "signed", gapped),
+                template=template(Feed.TRADE),
+                requirement=requirement,
+                now_ns=NOW + 1,
+            )
+        self.assertEqual(gap.exception.code, "OPEN_SEQUENCE_GAP")
+
+        with self.assertRaises(ContinuityError) as stale:
+            market_data_view_from_stream(
+                StreamEvent(11, "signed", envelope(Feed.TRADE)),
+                template=template(Feed.TRADE),
+                requirement=requirement,
+                now_ns=NOW + 2_000_000_000,
+            )
+        self.assertEqual(stale.exception.code, "DATA_STALE")
+
     def test_source_transition_and_revision_regression_require_snapshot(self):
         changed = envelope(Feed.TRADE)
         changed.source_id = "source-2"
