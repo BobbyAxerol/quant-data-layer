@@ -56,7 +56,7 @@ issue_certificate stable-trading-system-jwt stable-trading-system-jwt
 openssl pkey -in "${OUTPUT_DIR}/stable-trading-system-jwt.key" -pubout \
   -out "${OUTPUT_DIR}/stable-trading-system-jwt.public.pem" >/dev/null 2>&1
 issue_certificate stable-query query_v2_1 "DNS:query_v2_1,DNS:query_v2_2,DNS:qdl-v2-query"
-issue_certificate stable-stream stream_v2_active "DNS:stream_v2_active,DNS:stream_v2_passive,DNS:qdl-v2-stream"
+issue_certificate stable-stream stream_v2_active "DNS:stream_v2_active,DNS:stream_v2_passive,DNS:qdl-v2-stream,DNS:qdl-v2-stream-a,DNS:qdl-v2-stream-b"
 
 printf '%s\n' "${PASSWORD}" >"${OUTPUT_DIR}/key.password"
 printf '%s\n' "${PASSWORD}" >"${OUTPUT_DIR}/store.password"

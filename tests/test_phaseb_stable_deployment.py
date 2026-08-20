@@ -49,6 +49,18 @@ class StableDeploymentContractTests(unittest.TestCase):
             effective_at_ns=time.time_ns(),
         )
 
+    def test_tls_generator_covers_all_published_ingress_aliases(self):
+        script = (ROOT / "scripts/phase80_generate_tls.sh").read_text(
+            encoding="utf-8"
+        )
+        for alias in (
+            "qdl-v2-query",
+            "qdl-v2-stream-a",
+            "qdl-v2-stream-b",
+        ):
+            with self.subTest(alias=alias):
+                self.assertIn(f"DNS:{alias}", script)
+
     def test_initial_authority_scope_is_explicit_and_excludes_dnse(self):
         expected = {
             item.binding_id

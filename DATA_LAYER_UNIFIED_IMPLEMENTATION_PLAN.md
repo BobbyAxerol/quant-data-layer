@@ -6585,6 +6585,27 @@ untouched.
   independently of trade density while keeping recovery bounded. Exact warmup,
   source authority and cursor continuity gates remain unchanged.
 
+**2026-08-20 container-network TLS finding: `BLOCKED BEFORE CONSUMER CUTOVER`:**
+
+- Host-port mTLS/JWT acceptance passed for Binance and OKX, but the same SDK
+  call over `executor_network` rejected gRPC hostname verification. Compose uses
+  `qdl-v2-stream-a` and `qdl-v2-stream-b`; the generated stream certificate
+  covered only `stream_v2_active`, `stream_v2_passive` and `qdl-v2-stream`.
+- Add both published aliases to the certificate SAN contract, test the generator,
+  regenerate a private bundle and rotate the isolated V2 stack atomically. REST
+  query alias remains valid. Trading System stays V1 until container-network
+  query/stream acceptance passes with the exact production endpoint names.
+
+**2026-08-20 ingress SAN closure: `PASS / CERT ROTATION PENDING`:**
+
+- Stable stream certificate generation now covers `qdl-v2-stream-a` and
+  `qdl-v2-stream-b` in addition to internal role names and localhost. Query SAN
+  contract is unchanged.
+- TLS/deployment contract tests passed 21/21, including published-alias
+  regression, common workload identity, RS256 rotation and duplicate-target
+  fail-closed behavior. No runtime or secret changed during tests.
+
+
 **2026-08-20 sparse-feed recovery closure: `PASS / RUNTIME REBUILD PENDING`:**
 
 - Recovery now derives a UTC broker timestamp exactly 15 minutes behind apply
