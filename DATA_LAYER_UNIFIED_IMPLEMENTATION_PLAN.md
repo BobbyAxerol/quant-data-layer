@@ -5958,7 +5958,7 @@ authority wiring cannot be deferred as operational debt.
   preapproved Binance/OKX maintenance window. This reduces operations, not
   correctness: persistent authority CAS/outbox, sink fencing, W/W+1 handoff,
   durable audit and per-slice rollback remain mandatory. V1 stays hot on port
-  `8100`; DNSE stays V1-only.
+  `8100`; DNSE stays V1-only. Fast-track planning commit: `e8167d4`.
 
 #### C.1 Isolated Stable V2 Deployment
 
