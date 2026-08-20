@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from qdl.adapters.vn import VnRawBinding, build_dnse_trade_raw_envelope
+from qdl.adapters.vn import (
+    VnRawBinding,
+    build_dnse_bar_raw_envelope,
+    build_dnse_trade_raw_envelope,
+)
 from qdl.canonical.trade import TradeContext, canonicalize_dnse_trade
 from qdl.common.v1 import common_pb2
 from qdl.raw.capture import bind_capture_context
@@ -114,6 +118,31 @@ class VnRawEdgeTests(unittest.TestCase):
         self.assertEqual(event.trade.quantity_unit, common_pb2.QUANTITY_UNIT_CONTRACT)
         self.assertEqual(event.trade.aggressor_side, common_pb2.AGGRESSOR_SIDE_UNSPECIFIED)
         self.assertTrue(event.trade.native_trade_id.startswith("derived:"))
+
+    def test_rest_and_websocket_closed_bar_share_core_binding_with_honest_transport(self):
+        row = {
+            "t": 1_786_352_340,
+            "o": "1820.7",
+            "h": "1821.2",
+            "l": "1820.2",
+            "c": "1820.9",
+            "v": "0",
+        }
+        rest = build_dnse_bar_raw_envelope(
+            row, self.binding(), received_at_ns=1_786_352_400_000_000_000
+        )
+        websocket = build_dnse_bar_raw_envelope(
+            row,
+            self.binding(),
+            received_at_ns=1_786_352_400_000_000_001,
+            acquisition_origin="WEBSOCKET_CLOSED",
+        )
+        validate_raw_envelope(rest)
+        validate_raw_envelope(websocket)
+        self.assertEqual(rest.native_channel, websocket.native_channel)
+        self.assertEqual(rest.raw_frame_bytes, websocket.raw_frame_bytes)
+        self.assertNotEqual(rest.transport_protocol, websocket.transport_protocol)
+        self.assertNotEqual(rest.capture_boundary, websocket.capture_boundary)
 
     def test_invalid_or_incomplete_dnse_delivery_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "symbol"):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -8,18 +9,18 @@ import queue
 import threading
 import time
 import uuid
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 from app.config import DNSE_API_KEY, DNSE_API_SECRET_KEY, DNSE_WS_BASE
-from app.database.dnse_fallback import _fetch_ohlc_raw
+from app.providers.dnse import fetch_dnse_ohlc_raw
 from app.stream.dnse_ws import TradingClient
 from qdl.adapters.vn import (
     VnRawBinding,
     build_dnse_bar_raw_envelope,
     build_dnse_trade_raw_envelope,
 )
-from qdl.domain.calendar import trading_calendar_for_id
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl.transport.kafka_raw import KafkaRawPublisher, KafkaRawPublisherConfig
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class StableDnseVendorEdge:
-    """DNSE SDK/REST acquisition with durable ACK and zero silent queue drops."""
+    """DNSE vendor acquisition with lossless Kafka ACK and atomic BAR recovery."""
 
     def __init__(
         self,
@@ -41,8 +42,9 @@ class StableDnseVendorEdge:
         queue_capacity: int = 5000,
         warmup_rows: int = 500,
         history_lookback_days: int = 30,
-        history_attempts: int = 4,
-        history_fetcher=_fetch_ohlc_raw,
+        history_attempts: int = 1,
+        history_fetcher=fetch_dnse_ohlc_raw,
+        state_path: str | Path | None = None,
         clock=time.time,
         sleep=time.sleep,
     ) -> None:
@@ -68,9 +70,12 @@ class StableDnseVendorEdge:
         self.history_lookback_days = history_lookback_days
         self.history_attempts = history_attempts
         self.history_fetcher = history_fetcher
+        self.state_path = Path(state_path) if state_path is not None else None
         self.clock = clock
         self.sleep = sleep
-        self.session_id = f"qdl-v2-stable-dnse-{uuid.uuid4()}"
+        self.session_id = (
+            f"qdl-v2-stable-dnse-r{int(authority['revision'])}-{uuid.uuid4()}"
+        )
         source_by_id = {item.binding_id: item for item in catalog.bindings}
         selected = tuple(
             source_by_id[item.binding_id]
@@ -89,14 +94,24 @@ class StableDnseVendorEdge:
         }
         if set(self.trade_sources) != set(self.bar_sources) or not self.trade_sources:
             raise ValueError("stable DNSE trade/BAR symbols are inconsistent")
-        self._queue: queue.Queue[tuple[dict[str, Any], int]] = queue.Queue(
+        if any(source.interval != "1m" for source in self.bar_sources.values()):
+            raise ValueError("stable DNSE edge requires native final 1m BAR bindings")
+
+        self._queue: queue.Queue[tuple[str, dict[str, Any], int]] = queue.Queue(
             maxsize=queue_capacity
         )
         self._fatal = threading.Event()
         self._stopped = threading.Event()
-        self._last_bar_open_ms: dict[str, int] = {}
+        self._state_lock = threading.Lock()
+        self._last_bar: dict[str, tuple[int, str]] = {}
+        self._observed_bar: dict[str, tuple[int, str]] = {}
         self._history_bootstrapped = False
         self._worker: threading.Thread | None = None
+        self._restore_state()
+
+    @property
+    def _bar_binding_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(source.binding_id for source in self.bar_sources.values()))
 
     def _binding(self, source) -> VnRawBinding:
         identity = source.instrument.identity
@@ -117,15 +132,158 @@ class StableDnseVendorEdge:
         )
 
     @staticmethod
-    def _row_identity(row: dict[str, Any]) -> tuple[int, str]:
+    def _decimal_identity(value: Any, field: str, *, allow_zero: bool) -> str:
+        if value is None or isinstance(value, bool):
+            raise ValueError(f"DNSE BAR {field} is missing")
+        try:
+            parsed = Decimal(str(value))
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError(f"DNSE BAR {field} is invalid") from error
+        if not parsed.is_finite() or parsed < 0 or (not allow_zero and parsed == 0):
+            raise ValueError(f"DNSE BAR {field} is outside domain")
+        return format(parsed.normalize(), "f")
+
+    @classmethod
+    def _row_identity(cls, row: dict[str, Any]) -> tuple[int, str]:
         try:
             open_time = int(row["t"])
-            payload = {key: row[key] for key in ("t", "o", "h", "l", "c", "v")}
         except (KeyError, TypeError, ValueError) as error:
-            raise ValueError("DNSE historical BAR row is malformed") from error
-        return open_time, json.dumps(
+            raise ValueError("DNSE BAR timestamp is malformed") from error
+        if open_time <= 0 or open_time % 60:
+            raise ValueError("DNSE BAR timestamp is not aligned to native 1m")
+        prices = {
+            key: cls._decimal_identity(row.get(key), key, allow_zero=False)
+            for key in ("o", "h", "l", "c")
+        }
+        decimals = {key: Decimal(value) for key, value in prices.items()}
+        if (
+            decimals["h"] < max(decimals["o"], decimals["c"], decimals["l"])
+            or decimals["l"] > min(decimals["o"], decimals["c"], decimals["h"])
+        ):
+            raise ValueError("DNSE BAR price invariants failed")
+        payload = {
+            "t": open_time,
+            **prices,
+            "v": cls._decimal_identity(row.get("v"), "v", allow_zero=True),
+        }
+        encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
         )
+        return open_time, hashlib.sha256(encoded.encode("ascii")).hexdigest()
+
+    def _state_payload(self) -> dict[str, Any]:
+        return {
+            "schema": "qdl.stable-dnse-edge-state.v1",
+            "slice_id": str(self.authority.get("slice_id", "")),
+            "authority_revision": int(self.authority["revision"]),
+            "catalog_revision": int(self.catalog.catalog_revision),
+            "acquisition_revision": int(self.acquisition.revision),
+            "binding_ids": list(self._bar_binding_ids),
+            "last_bar": {
+                binding_id: {
+                    "open_time_ms": value[0],
+                    "payload_sha256": value[1],
+                }
+                for binding_id, value in sorted(self._last_bar.items())
+            },
+        }
+
+    def _restore_state(self) -> None:
+        if self.state_path is None or not self.state_path.exists():
+            return
+        try:
+            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise RuntimeError("stable DNSE checkpoint is unreadable") from error
+        if not isinstance(payload, dict) or set(payload) != {
+            "schema",
+            "slice_id",
+            "authority_revision",
+            "catalog_revision",
+            "acquisition_revision",
+            "binding_ids",
+            "last_bar",
+        }:
+            raise RuntimeError("stable DNSE checkpoint fields are invalid")
+        expected = self._state_payload()
+        for field in (
+            "schema",
+            "slice_id",
+            "authority_revision",
+            "catalog_revision",
+            "acquisition_revision",
+            "binding_ids",
+        ):
+            if payload[field] != expected[field]:
+                raise RuntimeError(
+                    f"stable DNSE checkpoint {field} differs from runtime authority"
+                )
+        values = payload["last_bar"]
+        if not isinstance(values, dict) or set(values) != set(self._bar_binding_ids):
+            raise RuntimeError("stable DNSE checkpoint is partial")
+        restored: dict[str, tuple[int, str]] = {}
+        for binding_id, item in values.items():
+            if not isinstance(item, dict) or set(item) != {
+                "open_time_ms", "payload_sha256"
+            }:
+                raise RuntimeError("stable DNSE checkpoint watermark is invalid")
+            open_time_ms = item["open_time_ms"]
+            digest = item["payload_sha256"]
+            if (
+                isinstance(open_time_ms, bool)
+                or not isinstance(open_time_ms, int)
+                or open_time_ms <= 0
+                or open_time_ms % 60_000
+                or not isinstance(digest, str)
+                or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+            ):
+                raise RuntimeError("stable DNSE checkpoint watermark is invalid")
+            restored[binding_id] = open_time_ms, digest
+        self._last_bar = restored
+        self._observed_bar = dict(restored)
+        self._history_bootstrapped = True
+        logger.info("stable DNSE checkpoint restored bindings=%s", len(restored))
+
+    def _persist_state(self) -> None:
+        if self.state_path is None:
+            return
+        parent = self.state_path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        temporary = parent / f".{self.state_path.name}.{os.getpid()}.tmp"
+        encoded = (
+            json.dumps(
+                self._state_payload(),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+            + "\n"
+        ).encode("ascii")
+        descriptor = None
+        try:
+            descriptor = os.open(
+                temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+            )
+            pending = memoryview(encoded)
+            while pending:
+                written = os.write(descriptor, pending)
+                if written <= 0:
+                    raise OSError("stable DNSE checkpoint write made no progress")
+                pending = pending[written:]
+            os.fsync(descriptor)
+            os.close(descriptor)
+            descriptor = None
+            os.replace(temporary, self.state_path)
+            directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            temporary.unlink(missing_ok=True)
 
     def _closed_history(self, symbol: str) -> tuple[dict[str, Any], ...]:
         now_s = int(self.clock())
@@ -165,64 +323,125 @@ class StableDnseVendorEdge:
     def bootstrap_history(self) -> int:
         if self._history_bootstrapped:
             return 0
-        published = 0
+        pending: list[tuple[str, dict[str, Any], Any]] = []
         for symbol, source in sorted(self.bar_sources.items()):
-            rows = self._closed_history(symbol)
-            received_at_ns = int(self.clock() * 1_000_000_000)
-            envelopes = tuple(
-                build_dnse_bar_raw_envelope(
-                    row,
-                    self._binding(source),
-                    received_at_ns=received_at_ns + index,
-                    test_provenance=False,
-                )
-                for index, row in enumerate(rows)
+            for row in self._closed_history(symbol):
+                pending.append((symbol, row, source))
+        received_at_ns = int(self.clock() * 1_000_000_000)
+        envelopes = tuple(
+            build_dnse_bar_raw_envelope(
+                row,
+                self._binding(source),
+                received_at_ns=received_at_ns + index,
+                acquisition_origin="REST_HISTORY",
+                test_provenance=False,
             )
-            acknowledgements = self.publisher.publish_many(envelopes)
-            if len(acknowledgements) != len(envelopes):
-                raise RuntimeError("stable DNSE BAR bootstrap missed a Kafka ACK")
-            self._last_bar_open_ms[symbol] = int(rows[-1]["t"]) * 1000
-            published += len(acknowledgements)
-            logger.info(
-                "stable real-provider DNSE BAR bootstrap ACK symbol=%s rows=%s "
-                "first_open_s=%s last_open_s=%s",
-                symbol,
-                len(rows),
-                rows[0]["t"],
-                rows[-1]["t"],
-            )
-        self._history_bootstrapped = True
-        return published
-
-    def _market_open(self, source) -> bool:
-        calendar = trading_calendar_for_id(
-            source.instrument.session_calendar_id
+            for index, (_symbol, row, source) in enumerate(pending)
         )
-        return calendar.is_open_ns(int(self.clock() * 1_000_000_000))
+        acknowledgements = self.publisher.publish_many(envelopes)
+        if len(acknowledgements) != len(envelopes):
+            raise RuntimeError("stable DNSE BAR bootstrap missed a Kafka ACK")
+        last_bar: dict[str, tuple[int, str]] = {}
+        for _symbol, row, source in pending:
+            open_time, digest = self._row_identity(row)
+            last_bar[source.binding_id] = open_time * 1000, digest
+        if set(last_bar) != set(self._bar_binding_ids):
+            raise RuntimeError("stable DNSE BAR bootstrap did not cover every binding")
+        with self._state_lock:
+            self._last_bar = last_bar
+            self._observed_bar = dict(last_bar)
+            self._persist_state()
+            self._history_bootstrapped = True
+        logger.info(
+            "stable real-provider DNSE BAR bootstrap ACK bindings=%s rows=%s",
+            len(last_bar),
+            len(envelopes),
+        )
+        return len(acknowledgements)
 
-    def on_trade(self, trade) -> None:
-        symbol = str(getattr(trade, "symbol", "") or "").upper()
-        if symbol not in self.trade_sources or self._fatal.is_set():
-            return
-        delivery = {
-            "symbol": symbol,
-            "price": getattr(trade, "price", None),
-            "quantity": getattr(trade, "quantity", None),
-            "market_id": getattr(trade, "marketId", ""),
-            "board_id": getattr(trade, "boardId", ""),
-            "trading_session_id": getattr(trade, "tradingSessionId", ""),
-            "total_volume_traded": getattr(trade, "totalVolumeTraded", None),
-        }
+    def _enqueue(self, kind: str, delivery: dict[str, Any], received_at_ns: int) -> None:
         try:
-            self._queue.put_nowait((delivery, time.time_ns()))
+            self._queue.put_nowait((kind, delivery, received_at_ns))
         except queue.Full:
-            # Silent loss is forbidden. Fence this source and let supervision
-            # restart from a fresh provider session after operator inspection.
             self._fatal.set()
             logger.critical(
                 "stable DNSE queue exhausted; source fenced capacity=%s",
                 self._queue.maxsize,
             )
+
+    def on_trade(self, trade) -> None:
+        symbol = str(getattr(trade, "symbol", "") or "").upper()
+        if symbol not in self.trade_sources or self._fatal.is_set():
+            return
+        self._enqueue(
+            "TRADE",
+            {
+                "symbol": symbol,
+                "price": getattr(trade, "price", None),
+                "quantity": getattr(trade, "quantity", None),
+                "market_id": getattr(trade, "marketId", ""),
+                "board_id": getattr(trade, "boardId", ""),
+                "trading_session_id": getattr(trade, "tradingSessionId", ""),
+                "total_volume_traded": getattr(trade, "totalVolumeTraded", None),
+            },
+            int(self.clock() * 1_000_000_000),
+        )
+
+    @staticmethod
+    def _provider_seconds(value: Any) -> int:
+        if isinstance(value, bool):
+            raise ValueError("DNSE closed BAR timestamp is invalid")
+        try:
+            timestamp = int(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("DNSE closed BAR timestamp is invalid") from error
+        if timestamp >= 1_000_000_000_000:
+            if timestamp % 1000:
+                raise ValueError("DNSE closed BAR millisecond timestamp loses precision")
+            timestamp //= 1000
+        if timestamp <= 0:
+            raise ValueError("DNSE closed BAR timestamp is invalid")
+        return timestamp
+
+    def on_ohlc_closed(self, ohlc) -> None:
+        symbol = str(getattr(ohlc, "symbol", "") or "").upper()
+        if symbol not in self.bar_sources or self._fatal.is_set():
+            return
+        try:
+            resolution = str(getattr(ohlc, "resolution", "") or "")
+            if resolution != "1":
+                raise ValueError("DNSE closed BAR resolution differs from 1m binding")
+            row = {
+                "t": self._provider_seconds(getattr(ohlc, "time", None)),
+                "o": getattr(ohlc, "open", None),
+                "h": getattr(ohlc, "high", None),
+                "l": getattr(ohlc, "low", None),
+                "c": getattr(ohlc, "close", None),
+                "v": getattr(ohlc, "volume", None),
+            }
+            open_time, digest = self._row_identity(row)
+            if open_time + 60 > int(self.clock()) + 2:
+                raise ValueError("DNSE closed BAR is not closed at receipt time")
+            source = self.bar_sources[symbol]
+            with self._state_lock:
+                previous = self._observed_bar.get(source.binding_id)
+                if previous is not None and open_time * 1000 < previous[0]:
+                    return
+                if previous is not None and open_time * 1000 == previous[0]:
+                    if digest != previous[1]:
+                        raise RuntimeError(
+                            f"DNSE closed BAR conflict symbol={symbol} open={open_time}"
+                        )
+                    return
+                self._observed_bar[source.binding_id] = open_time * 1000, digest
+            self._enqueue(
+                "BAR",
+                {"symbol": symbol, "row": row, "digest": digest},
+                int(self.clock() * 1_000_000_000),
+            )
+        except Exception:
+            self._fatal.set()
+            logger.exception("stable DNSE closed BAR invalid; source fenced symbol=%s", symbol)
 
     def _publish_worker(self) -> None:
         while not self._fatal.is_set() and (
@@ -239,78 +458,47 @@ class StableDnseVendorEdge:
                 except queue.Empty:
                     break
             try:
-                envelopes = tuple(
-                    build_dnse_trade_raw_envelope(
-                        delivery,
-                        self._binding(self.trade_sources[str(delivery["symbol"]).upper()]),
-                        received_at_ns=received_at_ns,
-                        test_provenance=False,
-                    )
-                    for delivery, received_at_ns in batch
-                )
-                self.publisher.publish_many(envelopes)
+                envelopes = []
+                bar_updates: dict[str, tuple[int, str]] = {}
+                for kind, delivery, received_at_ns in batch:
+                    symbol = str(delivery["symbol"]).upper()
+                    if kind == "TRADE":
+                        envelopes.append(build_dnse_trade_raw_envelope(
+                            delivery,
+                            self._binding(self.trade_sources[symbol]),
+                            received_at_ns=received_at_ns,
+                            test_provenance=False,
+                        ))
+                    elif kind == "BAR":
+                        source = self.bar_sources[symbol]
+                        row = delivery["row"]
+                        envelopes.append(build_dnse_bar_raw_envelope(
+                            row,
+                            self._binding(source),
+                            received_at_ns=received_at_ns,
+                            acquisition_origin="WEBSOCKET_CLOSED",
+                            test_provenance=False,
+                        ))
+                        bar_updates[source.binding_id] = (
+                            int(row["t"]) * 1000,
+                            str(delivery["digest"]),
+                        )
+                    else:
+                        raise RuntimeError("stable DNSE queue event kind is invalid")
+                acknowledgements = self.publisher.publish_many(tuple(envelopes))
+                if len(acknowledgements) != len(envelopes):
+                    raise RuntimeError("stable DNSE raw batch missed a Kafka ACK")
+                if bar_updates:
+                    with self._state_lock:
+                        self._last_bar.update(bar_updates)
+                        if set(self._last_bar) == set(self._bar_binding_ids):
+                            self._persist_state()
             except Exception:
                 self._fatal.set()
                 logger.exception("stable DNSE durable raw ACK failed; source fenced")
-                return
-
-    def _poll_provider_rows(
-        self, symbol: str, from_s: int, to_s: int
-    ) -> list[dict[str, Any]]:
-        last_error: Exception | None = None
-        for attempt in range(self.history_attempts):
-            try:
-                return list(self.history_fetcher(symbol, "1", from_s, to_s))
-            except Exception as error:
-                last_error = error
-                if attempt + 1 < self.history_attempts:
-                    self.sleep(min(2 ** attempt, 8))
-        raise RuntimeError(
-            f"DNSE live BAR poll exhausted symbol={symbol} "
-            f"attempts={self.history_attempts}"
-        ) from last_error
-
-    async def poll_bars_once(self) -> int:
-        now = int(self.clock())
-        published = 0
-        for symbol, source in self.bar_sources.items():
-            if not self._market_open(source):
-                continue
-            try:
-                rows = await asyncio.to_thread(
-                    self._poll_provider_rows, symbol, now - 300, now
-                )
-                closed = [
-                    row for row in rows
-                    if int(row["t"]) * 1000 + 59_999 < now * 1000
-                ]
-                if not closed:
-                    continue
-                row = max(closed, key=lambda item: int(item["t"]))
-                open_time_ms = int(row["t"]) * 1000
-                if open_time_ms <= self._last_bar_open_ms.get(symbol, -1):
-                    continue
-                envelope = build_dnse_bar_raw_envelope(
-                    row,
-                    self._binding(source),
-                    received_at_ns=int(self.clock() * 1_000_000_000),
-                    test_provenance=False,
-                )
-                acknowledgements = await self.publisher.publish_many_async((envelope,))
-                if len(acknowledgements) != 1:
-                    raise RuntimeError("stable DNSE live BAR poll missed Kafka ACK")
-                self._last_bar_open_ms[symbol] = open_time_ms
-                published += 1
-            except Exception:
-                logger.exception("stable DNSE BAR poll failed symbol=%s", symbol)
-        return published
-
-    async def _poll_bars(self) -> None:
-        while not self._stopped.is_set() and not self._fatal.is_set():
-            await self.poll_bars_once()
-            now = int(self.clock())
-            delay = max(1.0, (now // 60 + 1) * 60 + 1 - self.clock())
-            await asyncio.sleep(delay)
+            finally:
+                for _item in batch:
+                    self._queue.task_done()
 
     async def run(self) -> None:
         if not DNSE_API_KEY or not DNSE_API_SECRET_KEY:
@@ -330,16 +518,28 @@ class StableDnseVendorEdge:
             auto_reconnect=True,
             max_retries=10,
             heartbeat_interval=25.0,
+            dispatch_queue_capacity=max(100, self._queue.maxsize // 6),
         )
         await client.connect()
         symbols = sorted(self.trade_sources)
         await client.subscribe_trades(
-            symbols=symbols, on_trade=self.on_trade, encoding="msgpack", board_id="G1"
+            symbols=symbols,
+            on_trade=self.on_trade,
+            encoding="msgpack",
+            board_id="G1",
         )
         await client.subscribe_trades(
-            symbols=symbols, on_trade=self.on_trade, encoding="msgpack", board_id="G3"
+            symbols=symbols,
+            on_trade=self.on_trade,
+            encoding="msgpack",
+            board_id="G3",
         )
-        bar_task = asyncio.create_task(self._poll_bars())
+        await client.subscribe_ohlc_closed(
+            symbols=symbols,
+            resolution="1",
+            on_ohlc=self.on_ohlc_closed,
+            encoding="msgpack",
+        )
         try:
             while not self._stopped.is_set() and not self._fatal.is_set():
                 if not client.is_healthy:
@@ -349,8 +549,6 @@ class StableDnseVendorEdge:
                 raise RuntimeError("stable DNSE source fenced after loss/ACK failure")
         finally:
             self._stopped.set()
-            bar_task.cancel()
-            await asyncio.gather(bar_task, return_exceptions=True)
             await client.disconnect()
             if self._worker is not None:
                 await asyncio.to_thread(self._worker.join, 2.0)
@@ -387,7 +585,11 @@ def build_from_environment() -> StableDnseVendorEdge:
         history_lookback_days=int(
             os.environ.get("QDL_STABLE_VN_HISTORY_LOOKBACK_DAYS", "30")
         ),
-        history_attempts=int(os.environ.get("QDL_STABLE_VN_HISTORY_ATTEMPTS", "4")),
+        history_attempts=int(os.environ.get("QDL_STABLE_VN_HISTORY_ATTEMPTS", "1")),
+        state_path=os.environ.get(
+            "QDL_STABLE_DNSE_STATE_PATH",
+            "/var/lib/qdl-stable/runtime/stable-dnse-edge.json",
+        ),
     )
 
 

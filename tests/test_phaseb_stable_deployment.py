@@ -48,7 +48,7 @@ class StableDeploymentContractTests(unittest.TestCase):
     def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
         self.assertEqual(len(self.catalog.bindings), 16)
         self.assertEqual(len(self.acquisition.bindings), 16)
-        self.assertEqual(self.acquisition.revision, 2)
+        self.assertEqual(self.acquisition.revision, 3)
         modes = {item.mode for item in self.acquisition.bindings}
         self.assertEqual(modes, {"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
         native = self.acquisition.native_ingestor_configs(
@@ -412,19 +412,100 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertEqual(edge._queue.qsize(), 1)
 
         source = edge.bar_sources["VN30F1M"]
+        row = {"t": 1_786_352_340, "o": "1820.7", "h": "1821.2",
+               "l": "1820.2", "c": "1820.7", "v": "0"}
         envelope = build_dnse_bar_raw_envelope(
-            {"t": 1_786_352_340, "o": "1820.7", "h": "1821.2",
-             "l": "1820.2", "c": "1820.7", "v": "0"},
+            row,
             edge._binding(source),
             received_at_ns=1_786_352_400_000_000_000,
+        )
+        websocket_envelope = build_dnse_bar_raw_envelope(
+            row,
+            edge._binding(source),
+            received_at_ns=1_786_352_400_000_000_001,
+            acquisition_origin="WEBSOCKET_CLOSED",
         )
         payload = json.loads(envelope.raw_frame_bytes)
         self.assertEqual(payload["interval"], "1m")
         self.assertEqual(payload["v"], "0")
         self.assertTrue(payload["is_final"])
+        self.assertEqual(envelope.native_channel, websocket_envelope.native_channel)
+        self.assertNotEqual(
+            envelope.transport_protocol, websocket_envelope.transport_protocol
+        )
+        self.assertNotEqual(
+            envelope.capture_boundary, websocket_envelope.capture_boundary
+        )
         self.assertFalse(envelope.test_provenance)
 
-    def test_dnse_history_bootstrap_retries_validates_and_publishes_once(self):
+    def test_dnse_history_bootstrap_retries_checkpoints_and_restores(self):
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+                self.fail = False
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return () if self.fail else tuple(range(len(batch)))
+
+        rows = [
+            {"t": value, "o": "100", "h": "101", "l": "99", "c": "100.5", "v": "10"}
+            for value in (120, 180, 240)
+        ]
+        calls = []
+        sleeps = []
+
+        def fetcher(symbol, resolution, start, end):
+            calls.append((symbol, resolution, start, end))
+            if len(calls) == 1:
+                raise TimeoutError("injected transient DNSE timeout")
+            return rows
+
+        with tempfile.TemporaryDirectory(prefix="qdl-dnse-state-") as directory:
+            state_path = Path(directory) / "dnse.json"
+            publisher = Publisher()
+            edge = StableDnseVendorEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=publisher,
+                warmup_rows=2,
+                history_lookback_days=1,
+                history_attempts=2,
+                history_fetcher=fetcher,
+                state_path=state_path,
+                clock=lambda: 400.0,
+                sleep=sleeps.append,
+            )
+            self.assertEqual(edge.bootstrap_history(), 4)
+            self.assertEqual(edge.bootstrap_history(), 0)
+            self.assertEqual([len(batch) for batch in publisher.batches], [4])
+            self.assertEqual(sleeps, [1])
+            self.assertEqual(set(edge._last_bar), set(edge._bar_binding_ids))
+            self.assertEqual(state_path.stat().st_mode & 0o777, 0o600)
+            self.assertTrue(all(
+                not item.test_provenance
+                for batch in publisher.batches
+                for item in batch
+            ))
+
+            restored = StableDnseVendorEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=publisher,
+                warmup_rows=2,
+                history_fetcher=lambda *_args: (_ for _ in ()).throw(
+                    AssertionError("matching checkpoint must avoid REST bootstrap")
+                ),
+                state_path=state_path,
+                clock=lambda: 400.0,
+            )
+            self.assertEqual(restored.bootstrap_history(), 0)
+            self.assertEqual(restored._last_bar, edge._last_bar)
+
+    def test_dnse_closed_bar_uses_websocket_and_ack_advances_checkpoint(self):
         class Publisher:
             def __init__(self):
                 self.batches = []
@@ -436,43 +517,101 @@ class StableDeploymentContractTests(unittest.TestCase):
 
         rows = [
             {"t": value, "o": "100", "h": "101", "l": "99", "c": "100.5", "v": "10"}
-            for value in (100, 160, 220)
+            for value in (120, 180, 240)
         ]
+        with tempfile.TemporaryDirectory(prefix="qdl-dnse-state-") as directory:
+            state_path = Path(directory) / "dnse.json"
+            publisher = Publisher()
+            edge = StableDnseVendorEdge(
+                catalog=self.catalog, acquisition=self.acquisition,
+                authority=self.authority, publisher=publisher, warmup_rows=2,
+                history_attempts=1, history_fetcher=lambda *_args: rows,
+                state_path=state_path, clock=lambda: 400.0,
+            )
+            edge.bootstrap_history()
+            edge.history_fetcher = lambda *_args: (_ for _ in ()).throw(
+                AssertionError("live closed BAR must not poll REST")
+            )
+            bar = type("Ohlc", (), {
+                "symbol": "VN30F1M", "resolution": "1", "time": 300,
+                "open": "100", "high": "102", "low": "99", "close": "101",
+                "volume": "12",
+            })()
+            edge.on_ohlc_closed(bar)
+            edge._stopped.set()
+            edge._publish_worker()
+            self.assertFalse(edge._fatal.is_set())
+            self.assertEqual([len(batch) for batch in publisher.batches], [4, 1])
+            live = publisher.batches[-1][0]
+            self.assertEqual(live.native_channel, "ohlcv/1m")
+            self.assertNotEqual(
+                live.transport_protocol, publisher.batches[0][0].transport_protocol
+            )
+            binding_id = edge.bar_sources["VN30F1M"].binding_id
+            self.assertEqual(edge._last_bar[binding_id][0], 300_000)
+            restored = StableDnseVendorEdge(
+                catalog=self.catalog, acquisition=self.acquisition,
+                authority=self.authority, publisher=publisher,
+                state_path=state_path, clock=lambda: 400.0,
+            )
+            self.assertEqual(restored._last_bar[binding_id][0], 300_000)
+            restored.on_ohlc_closed(bar)
+            self.assertTrue(restored._queue.empty())
+
+    def test_dnse_run_subscribes_native_closed_bar_without_live_rest_polling(self):
         calls = []
-        sleeps = []
 
-        def fetcher(symbol, resolution, start, end):
-            calls.append((symbol, resolution, start, end))
-            if len(calls) == 1:
-                raise TimeoutError("injected transient DNSE timeout")
-            return rows
+        class Publisher:
+            def publish_many(self, values):
+                batch = tuple(values)
+                return tuple(range(len(batch)))
 
-        publisher = Publisher()
+            def close(self):
+                calls.append(("close",))
+
+        class Client:
+            is_healthy = True
+
+            def __init__(self, **kwargs):
+                calls.append((
+                    "init", kwargs["base_url"], kwargs["dispatch_queue_capacity"]
+                ))
+
+            async def connect(self):
+                calls.append(("connect",))
+
+            async def subscribe_trades(self, **kwargs):
+                calls.append(("trade", kwargs["board_id"], tuple(kwargs["symbols"])))
+
+            async def subscribe_ohlc_closed(self, **kwargs):
+                calls.append(("bar", kwargs["resolution"], tuple(kwargs["symbols"])))
+                edge.stop()
+
+            async def disconnect(self):
+                calls.append(("disconnect",))
+
         edge = StableDnseVendorEdge(
-            catalog=self.catalog,
-            acquisition=self.acquisition,
-            authority=self.authority,
-            publisher=publisher,
-            warmup_rows=2,
-            history_lookback_days=1,
-            history_attempts=2,
-            history_fetcher=fetcher,
-            clock=lambda: 400.0,
-            sleep=sleeps.append,
+            catalog=self.catalog, acquisition=self.acquisition,
+            authority=self.authority, publisher=Publisher(),
+            history_fetcher=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("restored runtime must not call REST")
+            ),
         )
-        self.assertEqual(edge.bootstrap_history(), 4)
-        self.assertEqual(edge.bootstrap_history(), 0)
-        self.assertEqual([len(batch) for batch in publisher.batches], [2, 2])
-        self.assertEqual(sleeps, [1])
-        self.assertEqual(set(edge._last_bar_open_ms), {"FPT", "VN30F1M"})
-        self.assertTrue(all(
-            not item.test_provenance
-            for batch in publisher.batches
-            for item in batch
-        ))
+        edge._history_bootstrapped = True
+        with patch("qdl.adapters.vn.stable_edge.DNSE_API_KEY", "key"), patch(
+            "qdl.adapters.vn.stable_edge.DNSE_API_SECRET_KEY", "secret"
+        ), patch("qdl.adapters.vn.stable_edge.TradingClient", Client):
+            asyncio.run(edge.run())
+        self.assertIn(
+            ("init", "wss://ws-openapi.dnse.com.vn", 833), calls
+        )
+        self.assertIn(("trade", "G1", ("FPT", "VN30F1M")), calls)
+        self.assertIn(("trade", "G3", ("FPT", "VN30F1M")), calls)
+        self.assertIn(("bar", "1", ("FPT", "VN30F1M")), calls)
+        self.assertEqual(calls[-2:], [("disconnect",), ("close",)])
 
-    def test_dnse_history_conflict_partial_and_closed_session_fail_safe(self):
-        base = {"t": 100, "o": "100", "h": "101", "l": "99", "c": "100", "v": "1"}
+    def test_dnse_history_conflict_partial_checkpoint_and_ack_failure_fail_closed(self):
+        base = {"t": 120, "o": "100", "h": "101", "l": "99", "c": "100", "v": "1"}
         conflict = {**base, "c": "101"}
         edge = StableDnseVendorEdge(
             catalog=self.catalog, acquisition=self.acquisition, authority=self.authority,
@@ -492,15 +631,37 @@ class StableDeploymentContractTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "bootstrap exhausted"):
             partial._closed_history("VN30F1M")
 
-        closed_source = edge.bar_sources["VN30F1M"]
-        # 2026-08-22 is Saturday in Asia/Ho_Chi_Minh.
-        closed = datetime(2026, 8, 22, 3, tzinfo=timezone.utc).timestamp()
-        edge.clock = lambda: closed
-        self.assertFalse(edge._market_open(closed_source))
-        edge.history_fetcher = lambda *_args: (_ for _ in ()).throw(
-            AssertionError("closed session must not call DNSE REST")
+        with tempfile.TemporaryDirectory(prefix="qdl-dnse-state-") as directory:
+            state_path = Path(directory) / "dnse.json"
+            state_path.write_text(json.dumps({
+                "schema": "qdl.stable-dnse-edge-state.v1",
+                "slice_id": self.authority["slice_id"],
+                "authority_revision": self.authority["revision"],
+                "catalog_revision": self.catalog.catalog_revision,
+                "acquisition_revision": self.acquisition.revision,
+                "binding_ids": list(edge._bar_binding_ids),
+                "last_bar": {},
+            }))
+            with self.assertRaisesRegex(RuntimeError, "partial"):
+                StableDnseVendorEdge(
+                    catalog=self.catalog, acquisition=self.acquisition,
+                    authority=self.authority, publisher=object(), state_path=state_path,
+                )
+
+        class MissingAckPublisher:
+            def publish_many(self, values):
+                tuple(values)
+                return ()
+
+        no_ack = StableDnseVendorEdge(
+            catalog=self.catalog, acquisition=self.acquisition,
+            authority=self.authority, publisher=MissingAckPublisher(),
+            warmup_rows=1, history_attempts=1,
+            history_fetcher=lambda *_args: [base], clock=lambda: 400.0,
         )
-        self.assertEqual(asyncio.run(edge.poll_bars_once()), 0)
+        with self.assertRaisesRegex(RuntimeError, "missed a Kafka ACK"):
+            no_ack.bootstrap_history()
+        self.assertEqual(no_ack._last_bar, {})
 
     def test_missing_binding_wrong_provider_kind_and_primary_authority_fail_closed(self):
         payload = yaml.safe_load(ACQUISITION_PATH.read_text(encoding="utf-8"))

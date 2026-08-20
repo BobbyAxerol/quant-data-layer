@@ -78,6 +78,7 @@ class TradingClient:
             max_retries: int = 10,
             heartbeat_interval: float = 25.0,
             timeout: float = 60.0,
+            dispatch_queue_capacity: int = 0,
     ):
         """
         Initialize trading client.
@@ -100,6 +101,9 @@ class TradingClient:
         self.max_retries = max_retries
         self.heartbeat_interval = heartbeat_interval
         self.timeout = timeout
+        if dispatch_queue_capacity < 0 or dispatch_queue_capacity > 100_000:
+            raise ValueError("dispatch_queue_capacity must be between 0 and 100000")
+        self.dispatch_queue_capacity = dispatch_queue_capacity
 
         # Internal state
         self._connection: Optional[WebSocketConnection] = None
@@ -162,7 +166,10 @@ class TradingClient:
         self._last_pong_time = time.time()
 
         # Init 1 queue per worker slot
-        self._dispatch_queues = [asyncio.Queue() for _ in range(self._num_workers)]
+        self._dispatch_queues = [
+            asyncio.Queue(maxsize=self.dispatch_queue_capacity)
+            for _ in range(self._num_workers)
+        ]
 
         # Start dispatch workers (1 per slot, same symbol → same worker → ordered)
         self._dispatch_worker_tasks = [

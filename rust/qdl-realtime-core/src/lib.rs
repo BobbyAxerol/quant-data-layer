@@ -909,6 +909,45 @@ mod tests {
     }
 
     #[test]
+    fn dnse_rest_and_closed_bar_callback_are_one_deterministic_bar() {
+        let binding = binding((
+            "DNSE_DIRECT",
+            "HNX",
+            "VN_DERIVATIVES",
+            "FUTURE",
+            "VN30F1M",
+            "ohlcv/1m",
+            "dnse_bar",
+            "PRIMARY",
+            SequencePolicy::None,
+        ));
+        let frame = br#"{"symbol":"VN30F1M","interval":"1m","open_time_ms":1786352340000,"close_time_ms":1786352399999,"o":"1820.7","h":"1821.2","l":"1820.2","c":"1820.9","v":"12","is_final":true,"trade_count_available":false,"revision":0}"#;
+        let mut rest = raw(&binding, frame, 1);
+        rest.transport_protocol = TransportProtocol::Http as i32;
+        rest.capture_boundary = CaptureBoundary::PostDecompression as i32;
+        let mut core = core(binding.clone(), true);
+        let first = core.process(rest, 10).unwrap();
+        assert_eq!(first.canonical.len(), 1);
+        let event = EventEnvelope::decode(first.canonical[0].payload.as_slice()).unwrap();
+        let event_envelope::Payload::Bar(bar) = event.payload.unwrap() else {
+            panic!("DNSE canonical payload must be bar")
+        };
+        assert_eq!(bar.volume_unit, QuantityUnit::Contract as i32);
+        assert_eq!(
+            bar.lifecycle,
+            qdl_contracts::qdl::marketdata::v2::BarLifecycle::Final as i32
+        );
+
+        let mut websocket = raw(&binding, frame, 2);
+        websocket.transport_protocol = TransportProtocol::SdkCallback as i32;
+        websocket.capture_boundary = CaptureBoundary::SdkDelivery as i32;
+        let repeated = core.process(websocket, 11).unwrap();
+        assert!(repeated.canonical.is_empty());
+        assert_eq!(repeated.duplicates, 1);
+        assert!(repeated.quarantines.is_empty());
+    }
+
+    #[test]
     fn aggregated_provider_frame_is_atomic_on_row_failure() {
         let binding = binding((
             "OKX_DIRECT",

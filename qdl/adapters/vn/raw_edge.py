@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.capture import capture_exact_frame
@@ -115,10 +115,13 @@ def build_dnse_bar_raw_envelope(
     *,
     received_at_ns: int,
     interval: str = "1m",
+    acquisition_origin: Literal["REST_HISTORY", "WEBSOCKET_CLOSED"] = "REST_HISTORY",
     test_provenance: bool = False,
 ) -> raw_provider_pb2.RawProviderEnvelope:
     if interval != "1m":
         raise ValueError("stable DNSE BAR edge currently supports native 1m only")
+    if acquisition_origin not in {"REST_HISTORY", "WEBSOCKET_CLOSED"}:
+        raise ValueError("stable DNSE BAR acquisition origin is invalid")
     try:
         open_time_ms = int(row["t"]) * 1000
     except (KeyError, TypeError, ValueError) as error:
@@ -154,6 +157,8 @@ def build_dnse_bar_raw_envelope(
         market=binding.market,
         product_type=binding.product_type,
         native_symbol=binding.native_symbol,
+        # One provider BAR product binding enters Rust; transport/capture fields
+        # retain whether the frame came from REST history or the closed-BAR SDK.
         native_channel="ohlcv/1m",
         subscription_id=binding.subscription_id,
         source_session_id=binding.source_session_id,
@@ -167,7 +172,15 @@ def build_dnse_bar_raw_envelope(
         config_revision=binding.config_revision,
         instrument_catalog_revision=binding.instrument_catalog_revision,
         correlation_id=f"dnse:{binding.native_symbol}:1m:{open_time_ms}",
-        transport_protocol=raw_provider_pb2.TRANSPORT_PROTOCOL_HTTP,
-        capture_boundary=raw_provider_pb2.CAPTURE_BOUNDARY_POST_DECOMPRESSION,
+        transport_protocol=(
+            raw_provider_pb2.TRANSPORT_PROTOCOL_SDK_CALLBACK
+            if acquisition_origin == "WEBSOCKET_CLOSED"
+            else raw_provider_pb2.TRANSPORT_PROTOCOL_HTTP
+        ),
+        capture_boundary=(
+            raw_provider_pb2.CAPTURE_BOUNDARY_SDK_DELIVERY
+            if acquisition_origin == "WEBSOCKET_CLOSED"
+            else raw_provider_pb2.CAPTURE_BOUNDARY_POST_DECOMPRESSION
+        ),
         test_provenance=test_provenance,
     )

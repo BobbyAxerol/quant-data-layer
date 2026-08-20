@@ -437,17 +437,27 @@ services:
       QDL_STABLE_DNSE_QUEUE_CAPACITY: "5000"
       QDL_STABLE_VN_WARMUP_ROWS: "500"
       QDL_STABLE_VN_HISTORY_LOOKBACK_DAYS: "30"
-      QDL_STABLE_VN_HISTORY_ATTEMPTS: "4"
+      QDL_STABLE_VN_HISTORY_ATTEMPTS: "1"
+      QDL_STABLE_DNSE_STATE_PATH: /var/lib/qdl-stable/runtime/stable-dnse-edge.json
       QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_KAFKA_CERT_ROOT: /stable-certs/producer
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-vn
       DNSE_API_KEY: ${DNSE_API_KEY:-}
       DNSE_API_SECRET_KEY: ${DNSE_API_SECRET_KEY:-}
+      DNSE_API_VERSION: ${DNSE_API_VERSION:-2026-07-23}
+      DNSE_REST_BASE: ${DNSE_REST_BASE:-https://openapi.dnse.com.vn}
+      DNSE_REST_USE_ENV_PROXY: ${DNSE_REST_USE_ENV_PROXY:-false}
+      DNSE_REST_CONNECT_TIMEOUT_SECONDS: ${DNSE_REST_CONNECT_TIMEOUT_SECONDS:-5}
+      DNSE_REST_READ_TIMEOUT_SECONDS: ${DNSE_REST_READ_TIMEOUT_SECONDS:-30}
+      DNSE_REST_ATTEMPTS: ${DNSE_REST_ATTEMPTS:-4}
+      DNSE_REST_MAX_BACKOFF_SECONDS: ${DNSE_REST_MAX_BACKOFF_SECONDS:-30}
       DNSE_WS_BASE: ${DNSE_WS_BASE:-wss://ws-openapi.dnse.com.vn}
     volumes:
+      - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     depends_on:
+      stable_state_init: {condition: service_completed_successfully}
       stable_tls_init: {condition: service_completed_successfully}
       kafka1: {condition: service_healthy}
       kafka2: {condition: service_healthy}

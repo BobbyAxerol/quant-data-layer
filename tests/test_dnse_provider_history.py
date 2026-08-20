@@ -4,6 +4,9 @@ import threading
 import unittest
 from unittest.mock import patch
 
+from app.database import dnse_fallback
+from app.openapi_sdk.python.websocket_marketdata.trading_websocket.client import TradingClient
+
 import requests
 
 from app.providers.dnse.history import (
@@ -171,6 +174,40 @@ class DnseHistoryClientTests(unittest.TestCase):
         self.assertTrue(all(not worker.is_alive() for worker in workers))
         self.assertEqual(len(limiter._hourly), 20)
         self.assertEqual(len(limiter._daily), 20)
+
+    def test_legacy_chunk_boundaries_are_contiguous_and_failure_is_not_partial(self):
+        calls = []
+
+        def fetcher(symbol, resolution, start, end):
+            calls.append((symbol, resolution, start, end))
+            return []
+
+        with patch.object(dnse_fallback, "DNSE_API_KEY", "k"), patch.object(
+            dnse_fallback, "DNSE_API_SECRET_KEY", "s"
+        ), patch.object(dnse_fallback, "_fetch_ohlc_raw", side_effect=fetcher):
+            frame = dnse_fallback.fetch_dnse_ohlcv_direct(
+                "FPT", "2026-01-01", "2026-01-10", chunk_days=7, max_retries=1
+            )
+        self.assertTrue(frame.empty)
+        self.assertEqual(calls[0][3], calls[1][2])
+
+        with patch.object(dnse_fallback, "DNSE_API_KEY", "k"), patch.object(
+            dnse_fallback, "DNSE_API_SECRET_KEY", "s"
+        ), patch.object(
+            dnse_fallback, "_fetch_ohlc_raw", side_effect=TimeoutError("injected")
+        ):
+            with self.assertRaises(TimeoutError):
+                dnse_fallback.fetch_dnse_ohlcv_direct(
+                    "FPT", "2026-01-01", "2026-01-01", max_retries=1
+                )
+
+    def test_vendor_dispatch_queue_is_bounded_only_when_opted_in(self):
+        bounded = TradingClient("k", "s", dispatch_queue_capacity=77)
+        legacy = TradingClient("k", "s")
+        self.assertEqual(bounded.dispatch_queue_capacity, 77)
+        self.assertEqual(legacy.dispatch_queue_capacity, 0)
+        with self.assertRaisesRegex(ValueError, "dispatch_queue_capacity"):
+            TradingClient("k", "s", dispatch_queue_capacity=-1)
 
     def test_environment_version_and_proxy_are_explicit(self):
         with patch.dict(

@@ -15,6 +15,9 @@ from app.providers.dnse import fetch_dnse_ohlc_raw
 
 logger = logging.getLogger(__name__)
 
+# Compatibility export used by the V1 preload/materialization policy.
+DERIVATIVE_SYMBOLS = {"VN30F1M", "VN30F2M", "VN30F1Q", "VN30F2Q"}
+
 
 def _to_unix(date_str: str) -> int:
     value = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -75,8 +78,8 @@ def fetch_dnse_ohlcv_direct(
                         current_start.date(),
                         current_end.date(),
                     )
-                else:
-                    time.sleep(2 ** attempt + random.uniform(0, 0.25))
+                    raise
+                time.sleep(2 ** attempt + random.uniform(0, 0.25))
         # current_end is already the next exclusive boundary. Do not skip a day.
         current_start = current_end
 

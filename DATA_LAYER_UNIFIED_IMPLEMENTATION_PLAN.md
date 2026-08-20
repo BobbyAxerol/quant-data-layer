@@ -4065,11 +4065,11 @@ declared complete while an earlier required gate remains open.
 |---|---|---|---|
 | `B.0 Contract And Stable Edge` | Catalog identity, V2 query/stream/projector contracts, consumer manifests, isolated topology and V1 compatibility | `COMPLETE` | B1-B4: 6, 32, 26 and 34 targeted tests passed; the one conditional Redis case was run separately against disposable Redis and passed. Public V1 and production runtime were unchanged. |
 | `B.1 Runtime Correctness And Capacity` | Authentic acquisition, Rust canonical core, bounded projector/cache, final BAR lifecycle, lossless-vs-latest delivery and resource convergence | `COMPLETE` | B5-B8: final full Python discovery passed 478 tests with 6 explicit skips; Rust fmt/Clippy/workspace passed. A clean candidate loaded 2,000 authentic closed BARs, converged core/projector lag to 50/29, retained canonical-only bounded cache, zero quarantine and bounded Redis/app memory. Intermediate failed candidates are diagnostic evidence, not accepted releases. |
-| `B.2 Controlled Consumer Acceptance` | Registered Binance, OKX, VN, Trading System and monitoring warmup -> signed cursor -> replay -> live, including session/freshness semantics | `PARTIAL_EXTERNAL` | B9-B12: crypto alpha, monitoring and Trading System paper consumers passed on immutable `df88de0`; 500 rows per crypto binding, replica-equal results and 129-779 ms live freshness. DNSE remains blocked by official REST TCP/443 egress and cannot be replaced with synthetic or lineage-incomplete V1 data. |
+| `B.2 Controlled Consumer Acceptance` | Registered Binance, OKX, VN, Trading System and monitoring warmup -> signed cursor -> replay -> live, including session/freshness semantics | `PARTIAL_EXTERNAL` | B9-B12: crypto alpha, monitoring and Trading System paper consumers passed on immutable `df88de0`; 500 rows per crypto binding, replica-equal results and 129-779 ms live freshness. B.2-D now passes local contract/recovery closure, but DNSE production bootstrap remains blocked by official REST TCP/443 egress and the current host credential is rejected by WebSocket authentication. Synthetic or lineage-incomplete V1 data is not accepted as a substitute. |
 | `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `COMPLETE` | B13-B19 plus the approved clean-log closure passed. Fresh RF3/minISR2 Kafka accepted real Binance/OKX data; atomic cache rebuild converged at lag 19 with observed bound 46; 12 retained partitions had zero gaps/duplicates/quarantine; signed SDK consumers reached `REPLAYING -> LIVE`; Trading System paper snapshots were fresh/execution-eligible; V1 was unchanged. Conclusion: `PASS`. |
 | `B.4 Release Certification And Cleanup` | Full Python/Rust/Buf/OpenAPI/security/capacity suites, immutable one-SHA images, compact evidence, docs/runbook, exact candidate cleanup and V1 invariant | `COMPLETE` | Final code SHA `2412572` produced the non-root Python/Rust image pair; full source, contract, security, capacity, real-provider restart and signed consumer gates passed. Exact candidate resources were removed and V1 stayed unchanged. Conclusion: `PASS`; Phase B overall remains `PARTIAL_EXTERNAL` only for the pre-existing DNSE provider gate. |
 
-#### B.2-D DNSE Production Provider Closure (`IN_PROGRESS`)
+#### B.2-D DNSE Production Provider Closure (`PASS_LOCAL_EXTERNAL_GATE`)
 
 **Goal:** close the remaining Vietnam-market provider gap without weakening the
 first-class Binance/OKX/VN contract. DNSE remains a Python vendor acquisition
@@ -4078,7 +4078,8 @@ shared Rust canonical, quality and durable-publication core.
 
 **Approved references:** the provider-neutral rules in
 `upgrade/quant-data-layer-fund-grade-upgrade-architecture.md` sections 4, 14.4,
-Phase A item 5 and Phase B; plus the operator-supplied local DNSE OpenAPI SDK
+Phase A item 5 and Phase B, with operator procedure in
+`docs/runbooks/dnse-production-provider-edge.md`; plus the operator-supplied local DNSE OpenAPI SDK
 snapshot under `dnse_provider/`. The snapshot is protocol reference only: it has
 no discovered redistribution license and contains credential-bearing examples,
 so no source, secret or generated artifact from that directory may be committed.
@@ -4135,6 +4136,49 @@ so no source, secret or generated artifact from that directory may be committed.
   no longer skips one day between exclusive boundaries. Eight isolated,
   network-disabled unit cases passed. No service, provider, Redis, Kafka or V1
   runtime was contacted or changed.
+- `2026-08-20 DNSE DURABLE CLOSED-BAR SLICE PASSED LOCALLY`: the stable VN edge
+  now uses REST only for cold history and native authenticated
+  `ohlc_closed.1` for live final 1m bars. TRADE and BAR share one bounded
+  lossless queue; queue pressure, malformed/future/wrong-resolution BARs and
+  missing durable ACK fence the source. A complete binding-wide watermark is
+  persisted by fsync plus atomic rename only after all Kafka acknowledgements,
+  and is bound to slice, authority, catalog and acquisition revisions. Matching
+  state skips repeated bootstrap; corrupt, partial or mismatched state fails
+  closed. REST and WebSocket captures keep distinct transport provenance while
+  resolving to one canonical BAR binding and semantic identity in Rust.
+- Compatibility remained explicit: the public V1 fallback signature and
+  derivative-symbol export were preserved, its historical chunks are now
+  contiguous and it raises rather than returning partial rows after terminal
+  failure. Vendor SDK dispatch queues remain unbounded by default for V1; only
+  the isolated V2 edge opts into bounded backpressure. Catalog/acquisition/
+  capability revisions and adapter version were advanced together, and the
+  compose topology mounts the existing stable-state volume without changing
+  public authority.
+- Verification on the exact source passed 513 Python tests with 6 declared
+  skips; focused DNSE suites passed 28/28, the broader compatibility slice
+  passed 78 with one conditional skip, and Rust fmt, Clippy `-D warnings` and
+  the full workspace passed 63 tests with zero failures/skips. The new Rust
+  oracle proves REST history and a repeated native closed-BAR callback produce
+  one deterministic canonical final BAR. Final compose rendering passed with
+  isolated dummy secrets and no container start. One attempted targeted rerun
+  in the immutable runtime image stopped before test collection because release
+  images deliberately exclude pytest; it performed no provider or data write.
+- Authentic read-only preflight remains externally blocked. At
+  `2026-08-20T05:25:35Z`, direct official REST TCP/443 timed out after 5.002
+  seconds before TLS. WebSocket TCP/TLS succeeded, but the current host key was
+  rejected as invalid before subscription. The local official SDK snapshot and
+  tracked SDK use the same HMAC authentication protocol, so no insecure or
+  synthetic workaround was introduced. V1 remained running and unchanged,
+  reporting `MARKET_CLOSED`, a previously authenticated healthy session and
+  zero queue drops; restarting it before credential rotation is unsafe.
+- Cleanup removed the disposable Rust test image and temporary pytest data.
+  Release/rollback images, V1, production data, Redis/Kafka and volumes were
+  retained. Shared BuildKit cache was not broadly pruned because the host is
+  shared; exact disposable runtime artifacts are gone. Conclusion:
+  `PASS_LOCAL_EXTERNAL_GATE`, not DNSE production-authoritative. Promotion
+  requires a valid dedicated key plus official REST reachability, or an
+  operator-approved isolated egress edge, followed by the bounded 500-row,
+  closed-BAR, restart/checkpoint and signed-consumer gates in the runbook.
 
 **Rollback:** revert only this bounded provider/edge commit and use the retained
 `2.0.0-2412572` artifacts. Existing V1 remains the authority throughout. The

@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-capability-matrix.v2
-revision: 2
+revision: 3
 public_contract_version: 2.0.0
 realtime_core_target: RUST
 python_role: OUTER_AND_VENDOR_ACQUISITION_EDGE
@@ -46,14 +46,14 @@ capabilities:
   - venue: HNX
     market: VN_DERIVATIVES
     product_type: FUTURE
-    acquisition_adapter: qdl-python-dnse-vendor-edge
+    acquisition_adapter: qdl-python-dnse-vendor-edge@2.0.1
     canonical_core: qdl-rust-realtime-core
     feeds: [TRADE, BAR]
     certification: PROVIDER_DERIVED_DURABLE_REPLAY
   - venue: HOSE
     market: EQUITIES
     product_type: COMMON_STOCK
-    acquisition_adapter: qdl-python-dnse-vnstock-policy-edge
+    acquisition_adapter: qdl-python-dnse-vnstock-policy-edge@2.0.1
     canonical_core: qdl-rust-realtime-core
     feeds: [TRADE, BAR]
     certification: PROVIDER_DERIVED_DURABLE_REPLAY

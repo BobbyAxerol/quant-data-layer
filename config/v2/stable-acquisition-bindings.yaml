@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-acquisition-bindings.v1
-revision: 2
+revision: 3
 topics:
   raw: md.raw.stable.v1
   canonical: md.canonical.v2

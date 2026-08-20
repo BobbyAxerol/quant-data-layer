@@ -1,6 +1,6 @@
 schema: qdl.v2.stable-source-bindings.v1
 canonical_stream: md.canonical.v2
-catalog_revision: 1
+catalog_revision: 2
 source_policy_revision: 1
 authority_revision: 1
 instruments:
@@ -327,7 +327,7 @@ bindings:
     source_role: PRIMARY
     source_policy_id: vn_primary_v2
     authoritative: true
-    adapter_version: dnse-openapi/2.0.0
+    adapter_version: dnse-openapi/2.0.1
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 15000
@@ -344,7 +344,7 @@ bindings:
     source_role: PRIMARY
     source_policy_id: vn_primary_v2
     authoritative: true
-    adapter_version: dnse-openapi/2.0.0
+    adapter_version: dnse-openapi/2.0.1
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 180000
@@ -361,7 +361,7 @@ bindings:
     source_role: PRIMARY
     source_policy_id: vn_primary_v2
     authoritative: true
-    adapter_version: dnse-openapi/2.0.0
+    adapter_version: dnse-openapi/2.0.1
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 15000
@@ -378,7 +378,7 @@ bindings:
     source_role: PRIMARY
     source_policy_id: vn_primary_v2
     authoritative: true
-    adapter_version: dnse-openapi/2.0.0
+    adapter_version: dnse-openapi/2.0.1
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 180000

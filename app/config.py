@@ -8,6 +8,10 @@ DNSE_API_KEY = os.getenv("DNSE_API_KEY", "")
 DNSE_API_SECRET_KEY = os.getenv("DNSE_API_SECRET_KEY", "")
 DNSE_REST_BASE = os.getenv("DNSE_REST_BASE", "https://openapi.dnse.com.vn")
 DNSE_WS_BASE = os.getenv("DNSE_WS_BASE", "wss://ws-openapi.dnse.com.vn")
+DNSE_API_VERSION = os.getenv("DNSE_API_VERSION", "2026-07-23")
+DNSE_REST_USE_ENV_PROXY = os.getenv(
+    "DNSE_REST_USE_ENV_PROXY", "false"
+).lower() in {"1", "true", "yes", "on"}
 
 # ── vnstock ─────────────────────────────────────
 VNSTOCK_API_KEY = os.getenv("VNSTOCK_API_KEY", "")
