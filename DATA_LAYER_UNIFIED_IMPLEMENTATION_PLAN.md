@@ -6391,6 +6391,22 @@ freshness/session/contract checks and the source-switch audit is durable.
   source mounts and disposable tmpfs/tooling; V1, the running isolated shadow,
   Trading System routes, authority state and persistent volumes were unchanged.
 
+
+- `2026-08-20 C.3 REBUILT RELEASE PAIR PASS`: tested repair commit
+  `3d3af1c530e1dd52b402294e0bb677eb334a15a2` produced Python image
+  `sha256:e61c7cb1372071daeb3f9753e616b073b514998845abc61ab168b2cb63617e90`
+  and Rust image
+  `sha256:676de79940ed83cc45a8c1490055c8fa69ddc5bcb032af4ab6a4851d25e921b6`.
+  Both carry exact revision/version labels and retain non-root users. Image-level
+  network-none smoke imported `qdl_sdk==2.0.0`; `qdl-production-core` remained
+  fail-closed without config. The fresh bundle binds those exact IDs, reports
+  `RUST_SHADOW`, `cutover_authorized=false`, scope digest
+  `06178202d7ec592c19c41a36c919a13a74971c3e39ed8e67ce9b5de3a978fcd2`
+  and twelve approved bindings; authority Compose profiles render cleanly.
+  This pair supersedes the revoked `5823d642` pair. No running container or
+  authority/consumer route changed. Merge/immutable deployment and the exact
+  operator packet remain the only gates before bounded runtime promotion.
+
 Promote all approved Binance and OKX feed slices in one maintenance window, but
 execute the CAS internally one slice at a time so a failure is isolated. One
 operator packet may list the complete slice set, image IDs, old/new owners,
