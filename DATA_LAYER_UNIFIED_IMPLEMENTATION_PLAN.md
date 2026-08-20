@@ -5950,7 +5950,7 @@ authority wiring cannot be deferred as operational debt.
   route change, topic/Redis write, volume deletion, push or merge occurred.
   C.0 remains `IN_PROGRESS` until the current PR is CI-green and merged to
   `dev`; production authority wiring starts only on the new branch named in
-  this phase.
+  this phase. Preparation commit: `130da39`.
 
 #### C.1 Isolated Stable V2 Deployment
 
