@@ -5926,12 +5926,29 @@ without mutating V1.
    The CLI prints identities/revisions/watermarks/digests only, never secrets.
 7. Build one immutable Python/Rust image pair from the merged SHA, generate
    SBOM/provenance, and retain exactly one tested V1 rollback generation.
+8. Publish `qdl_sdk==2.0.0` as a standalone immutable wheel with checksum,
+   SBOM and generated-contract digest. Trading System and execution-alpha base
+   images pin the same artifact; neither repository copies Data Layer service
+   internals or maintains an independent V2 schema parser.
+9. Replace the bounded BTC-only certification catalog with a deterministic
+   production catalog/binding generator driven by approved venue metadata and
+   consumer manifests. Instrument UIDs remain stable across restart/rebuild;
+   arbitrary alpha symbols are resolved through `/v2/instruments`, never by
+   hardcoded UUIDs in consumers. Only demanded/approved Binance and OKX feeds
+   are acquired; disabled symbols fail readiness rather than creating data.
+10. Freeze two versioned consumer classes: Trading System
+    `EXECUTION` grade and shared alpha runtime `ALPHA` grade. The execution
+    client requires authoritative/fresh/gap-free snapshots. Alpha warmup uses
+    final BAR snapshot/cursor/replay and the same SDK, while strategy/order
+    source remains untouched. V1 fallback is explicit and source-switch audited.
 
 **C.0 gates:** migration idempotency, transactional outbox replay, compacted
 authority recovery, stale-writer rejection, restart recovery, exact Python/Rust
-parity, public V1 contract compatibility, full source/Clippy/security tests and
-zero production mutation. Conclusion must be either `PASS` or `FAIL`; missing
-authority wiring cannot be deferred as operational debt.
+parity, deterministic multi-symbol catalog generation, SDK wheel reproducibility
+and checksum verification, Trading System/alpha consumer contract tests, public
+V1 compatibility, full source/Clippy/security tests and zero production
+mutation. Conclusion must be either `PASS` or `FAIL`; missing authority,
+catalog or SDK wiring cannot be deferred as operational debt.
 
 **C.0 implementation journal:**
 
@@ -5951,6 +5968,18 @@ authority wiring cannot be deferred as operational debt.
   C.0 remains `IN_PROGRESS` until the current PR is CI-green and merged to
   `dev`; production authority wiring starts only on the new branch named in
   this phase. Preparation commit: `130da39`.
+- `2026-08-20 CROSS-REPOSITORY V2 CONSUMER AUDIT RECORDED`: remote `dev`
+  merged the certified V2 branch at `468c951`; authority work continues on
+  `feat/v2-production-authority-cutover` from that merge, with the later
+  fast-track plan cherry-picked as `9e35b34` and `df94a51`. Trading System
+  currently has a V1 REST/Redis bridge and its `alpha_sdk` is primarily an
+  execution client; execution-alpha warmup/stream calls live in the shared
+  `alpha_runtime.orchestration.DataLayerGateway`. Therefore V2 is introduced
+  as one versioned `qdl_sdk` artifact used by both consumers. No strategy file,
+  signal rule or order endpoint is migrated for this data-plane change.
+  The audit also found the stable catalog is certification-bounded to BTC/VN
+  examples, so deterministic production symbol/catalog generation is a
+  mandatory C.0 gate before alpha consumers can be called V2-ready.
 - `2026-08-20 OPERATOR CUTOVER SIMPLIFICATION RECORDED`: the operator reports
   all alpha consumers are stopped and Trading System is the sole active
   consumer. Phase C therefore removes staged alpha/monitoring migrations and
