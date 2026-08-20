@@ -48,6 +48,7 @@ class StableDeploymentContractTests(unittest.TestCase):
     def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
         self.assertEqual(len(self.catalog.bindings), 16)
         self.assertEqual(len(self.acquisition.bindings), 16)
+        self.assertEqual(self.acquisition.revision, 2)
         modes = {item.mode for item in self.acquisition.bindings}
         self.assertEqual(modes, {"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
         native = self.acquisition.native_ingestor_configs(
@@ -57,8 +58,21 @@ class StableDeploymentContractTests(unittest.TestCase):
             set(native),
             {"binance-usdm", "binance-spot", "okx-swap", "okx-spot"},
         )
-        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 10)
+        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 8)
         self.assertTrue(all(item["authority"]["mode"] == "RUST_SHADOW" for item in native.values()))
+        self.assertEqual(
+            {
+                item.binding_id
+                for item in self.acquisition.bindings
+                if item.mode == "PYTHON_REST"
+            },
+            {
+                "binance-usdm-btcusdt-bar-1m",
+                "binance-spot-btcusdt-bar-1m",
+                "okx-swap-btcusdt-bar-1m",
+                "okx-spot-btcusdt-bar-1m",
+            },
+        )
         self.assertEqual(
             {item["max_inflight_publishes"] for item in native.values()}, {512}
         )
@@ -80,7 +94,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         }
         self.assertEqual(
             delivery_by_feed,
-            {"TRADE": "LOSSLESS", "QUOTE": "LATEST_STATE", "BAR": "LOSSLESS"},
+            {"TRADE": "LOSSLESS", "QUOTE": "LATEST_STATE"},
         )
         okx_bbo = {
             item.binding_id: item.sequence_policy
@@ -229,11 +243,11 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertEqual([len(batch) for batch in publisher.batches], [4])
         self.assertEqual(
             {call.kwargs["now_ms"] for call in binance_latest.call_args_list},
-            {118_000},
+            {110_000},
         )
         self.assertEqual(
             {call.kwargs["now_ms"] for call in okx_latest.call_args_list},
-            {118_000},
+            {110_000},
         )
 
     def test_bar_edge_retries_complete_catchup_after_kafka_ack_failure(self):
@@ -555,6 +569,20 @@ class StableComposeAndBundleTests(unittest.TestCase):
         self.assertNotIn("noexec", kafka_tmpfs[0])
         self.assertIn("stable_tls:/stable-certs:ro", services["projector_v2"]["volumes"])
         self.assertNotIn("/certs:ro", " ".join(services["projector_v2"]["volumes"]))
+        bar_edge = services["binance_bar_edge"]
+        self.assertEqual(
+            bar_edge["environment"]["QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS"],
+            "10",
+        )
+        self.assertEqual(
+            bar_edge["environment"]["QDL_STABLE_BAR_STATE_PATH"],
+            "/var/lib/qdl-stable/runtime/stable-crypto-bar-edge.json",
+        )
+        self.assertIn("stable_state:/var/lib/qdl-stable", bar_edge["volumes"])
+        self.assertEqual(
+            bar_edge["depends_on"]["stable_state_init"],
+            {"condition": "service_completed_successfully"},
+        )
         for name in (
             "query_v2_1", "query_v2_2", "stream_v2_active",
             "stream_v2_passive", "projector_v2",

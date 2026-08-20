@@ -5617,6 +5617,60 @@ and removes the superseded candidate/rollback artifacts after verification.
   This closes source-level regression after the Docker packaging and supply-
   chain policy repairs. The next gate is freezing the source commit and building
   both immutable images from that exact SHA.
+- `2026-08-20 PHASE B.4 IMMUTABLE ARTIFACT GATE PASSED`: source
+  commit `ea84a21be71572674cc5b160788d8edd0f870738` produced Python image
+  `sha256:00ffbd5b...` and Rust image `sha256:b464f342...`; both carry
+  exact OCI revision/version and run non-root. Trivy found zero
+  HIGH/CRITICAL vulnerability and zero embedded secret in either image.
+  Final-SHA Rust processed 100,000 events at 129,256 events/s, p99 12.906
+  microseconds, zero duplicate and zero quarantine against the 50,000/s gate.
+  The final builder contained its policy and cargo-deny again passed all four
+  checks.
+- `2026-08-20 PHASE B.4 CANDIDATE ROLLING GATE FAILED CLOSED`: only 13
+  isolated application roles were recreated one at a time with `--no-deps`;
+  Kafka, Redis, TLS/state volumes and V1 were preserved. Both query replicas
+  became READY and exactly one stream peer was READY while the other was
+  STANDBY, but the projector then repeatedly rejected
+  `canonical event ID maps to different market semantics`. Two Rust workers
+  reported 497 quarantines after restart. This violates the zero-collision/
+  zero-quarantine release invariant even though V1 remained `ok`. B.4 stays
+  `IN_PROGRESS`; candidate readers/workers must be stopped fail-closed,
+  durable evidence inspected and the root cause fixed or the pinned
+  `c61fa39`/`cfc0246` rollback restored before any acceptance claim.
+- `2026-08-20 PHASE B.4 REAL-PROVIDER ROOT CAUSE AND REPAIR BOUNDARY`:
+  read-only Kafka/projector inspection decoded 994 committed quarantine records
+  as OKX `candle1m` `STALE_GENERATION`; the REST BAR edge reused generation
+  1 while the native WebSocket owner had advanced the same canonical partition.
+  At the projector checkpoint, repeated Binance REST warmup also reused an
+  immutable revision-0 event ID for materially changed close/volume/trade-count
+  values. The projector and Rust fencing behaved correctly and remain strict.
+  The bounded repair makes closed 1m BAR acquisition single-owner REST for both
+  Binance and OKX while Rust remains the sole canonical core, persists an
+  authority/catalog-bound last-ACKed BAR watermark atomically in
+  `stable_state`, skips overlapping bootstrap after restart, and uses the
+  approved 10-second settlement ceiling. Corrupt/mismatched state, incomplete
+  history, changed immutable BAR semantics, partial Kafka ACK and stale
+  authority all continue to fail closed. Public V1/V2 contracts, event identity,
+  query semantics, V1 port 8100 and production authority do not change. Gates:
+  restart/corrupt-state/ACK-loss tests, native subscription manifest proof,
+  Python/Rust full regression, then a clean isolated real-provider rehearsal
+  with zero gap/collision/quarantine and restart continuity.
+- `2026-08-20 PHASE B.4 BAR OWNERSHIP/CHECKPOINT REPAIR UNIT-PASSED`:
+  acquisition manifest revision 2 assigns all four Binance/OKX final 1m BAR
+  bindings to the single Python REST edge; the Rust native ingestors retain
+  eight lossless/latest-state TRADE/QUOTE bindings and Rust remains the only
+  canonical core. The edge now persists each last fully Kafka-ACKed open time
+  by atomic write/fsync/rename in isolated `stable_state`, restores only an
+  exact slice/authority/catalog/acquisition match, resumes partial bootstrap,
+  rejects corrupt/future watermarks and never advances on partial ACK. Compose
+  mounts the state volume, waits for its initializer and uses the bounded
+  10-second settlement ceiling. Public APIs/event IDs/projector fencing are
+  unchanged. Syntax and compose validation passed; 18 targeted tests passed,
+  then all five Phase B modules ran 65 cases: 64 passed and the separately
+  proven real-Redis integration case was the sole skip. No app role, Kafka,
+  Redis, volume, V1 route or provider state was mutated by this test slice.
+  Full Python/Rust regression, immutable same-SHA artifacts and clean isolated
+  real-provider restart acceptance remain.
 - `2026-08-19 PHASE B ARTIFACT CLEANUP POLICY RECORDED`: Phase B ends at B.4;
   B17/B18 are repair slices inside B.3, not new subphases. Exact cleanup retains
   V1, active `e002da6`, active/rollback `cfc0246`, Kafka/Redis and all durable

@@ -5591,6 +5591,43 @@ unchanged-source run passed all 504 tests with six explicit skips. Source-level
 certification is closed; freeze/commit, same-SHA images, image scans and
 isolated candidate recreation remain.
 
+The one-SHA artifact gate passed at source `ea84a21`: both non-root images
+carried the exact revision, had zero HIGH/CRITICAL vulnerability/embedded
+secret, and the final Rust core processed 100,000 events at 129,256 events/s
+with p99 12.906 microseconds and zero duplicate/quarantine.
+
+The first isolated rolling recreation failed closed. All 13 app roles moved to
+the new images without touching infra or V1, but the projector detected an
+event-ID/market-semantics collision and two Rust workers reported 497
+quarantines. Query/stream readiness alone is rejected as acceptance. Stop
+candidate app roles, preserve durable evidence and either repair the root cause
+or restore the pinned rollback before B.4 can close.
+
+Read-only durable diagnosis narrowed the failure to two acquisition-lifecycle
+defects, not weakened projector/core checks. Exactly 994 committed quarantine
+records are OKX `candle1m` `STALE_GENERATION`: stateless REST used generation
+1 after the WebSocket owner advanced the same BAR partition. Repeated Binance
+REST bootstrap also emitted the same revision-0 BAR identity with materially
+different close/volume/trade-count values. The bounded B.4 repair assigns one
+REST owner to final 1m BAR for both Binance and OKX while retaining Rust as the
+only canonical core; persists an atomic authority/catalog-bound last-ACKed
+watermark in `stable_state`; skips overlap on restart; and uses the approved
+10-second settlement ceiling. Corrupt or mismatched state, partial ACK,
+incomplete history and changed immutable BAR semantics remain fail-closed.
+V1/V2 public contracts, event identity and production authority are unchanged.
+Restart/state-corruption/ACK-loss tests, native manifest proof, full regression
+and a clean real-provider zero-gap/collision/quarantine rehearsal gate closure.
+
+The bounded repair is unit-accepted at acquisition revision 2. All four final
+Binance/OKX 1m BAR bindings have one REST owner; native Rust ingestors retain
+eight TRADE/QUOTE bindings and Rust remains the canonical core. Atomic
+ACK-authoritative checkpoint restore is strict to slice/authority/catalog/
+acquisition identity, compose mounts initialized isolated state, and runtime
+settlement is 10 seconds. Eighteen targeted tests passed; the five Phase B
+modules ran 65 cases with 64 passes and one separately proven real-Redis skip.
+No runtime or durable service was changed. Full regression, new same-SHA images
+and clean real-provider restart acceptance remain.
+
 Start only after B.3 is `PASS`. Run full Python discovery, Rust fmt/workspace
 Clippy/tests, Buf/OpenAPI/package/security/capacity/compatibility gates; build
 Python and Rust images from one final commit SHA; freeze compact evidence and

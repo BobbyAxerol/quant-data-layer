@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -283,6 +284,122 @@ class StableBarBootstrapTests(unittest.TestCase):
         self.assertEqual([len(item) for item in publisher.batches], [2, 2, 2, 2])
         self.assertEqual(len(edge._last_open_ms), 4)
         self.assertTrue(edge._history_bootstrapped)
+
+    def test_durable_ack_watermark_skips_overlapping_restart_bootstrap(self):
+        class Envelope:
+            def __init__(self, venue: str, open_time: int):
+                payload = (
+                    {"row": _binance_row(open_time)}
+                    if venue == "BINANCE"
+                    else {"data": [[str(open_time), "1", "1", "1", "1", "1", "1", "1", "1"]]}
+                )
+                self.raw_frame_bytes = json.dumps(payload).encode()
+
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return tuple(range(len(batch)))
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-bar-state-") as directory:
+            state_path = Path(directory) / "bar-edge.json"
+            first_publisher = Publisher()
+            first = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=first_publisher,
+                warmup_rows=2,
+                state_path=state_path,
+                clock=lambda: 180.0,
+            )
+            with patch(
+                "qdl.runtime.stable_bar_edge.fetch_binance_history",
+                return_value=(
+                    Envelope("BINANCE", 60_000),
+                    Envelope("BINANCE", 120_000),
+                ),
+            ), patch(
+                "qdl.runtime.stable_bar_edge.fetch_okx_history",
+                new_callable=AsyncMock,
+                return_value=(
+                    Envelope("OKX", 60_000),
+                    Envelope("OKX", 120_000),
+                ),
+            ):
+                self.assertEqual(first.bootstrap_history(), 8)
+
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v1")
+            self.assertEqual(set(persisted["last_open_ms"]), set(first._binding_ids))
+            self.assertEqual(set(persisted["last_open_ms"].values()), {120_000})
+
+            restarted = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=Publisher(),
+                warmup_rows=2,
+                state_path=state_path,
+                clock=lambda: 180.0,
+            )
+            self.assertTrue(restarted._history_bootstrapped)
+            self.assertEqual(restarted._last_open_ms, first._last_open_ms)
+            self.assertEqual(restarted.binance_session_id, first.binance_session_id)
+            with patch(
+                "qdl.runtime.stable_bar_edge.fetch_binance_history",
+                side_effect=AssertionError("restart must not overlap bootstrap"),
+            ), patch(
+                "qdl.runtime.stable_bar_edge.fetch_okx_history",
+                new_callable=AsyncMock,
+                side_effect=AssertionError("restart must not overlap bootstrap"),
+            ):
+                self.assertEqual(restarted.bootstrap_history(), 0)
+
+    def test_checkpoint_corruption_and_partial_ack_fail_closed(self):
+        class Envelope:
+            def __init__(self, open_time: int):
+                self.raw_frame_bytes = json.dumps(
+                    {"row": _binance_row(open_time)}
+                ).encode()
+
+        class MissingAckPublisher:
+            def publish_many(self, _values):
+                return ()
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-bar-state-") as directory:
+            state_path = Path(directory) / "bar-edge.json"
+            state_path.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "fields are invalid"):
+                StableBinanceBarEdge(
+                    catalog=self.catalog,
+                    acquisition=self.acquisition,
+                    authority=self.authority,
+                    publisher=MissingAckPublisher(),
+                    state_path=state_path,
+                )
+
+            state_path.unlink()
+            edge = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=MissingAckPublisher(),
+                warmup_rows=1,
+                state_path=state_path,
+                clock=lambda: 180.0,
+            )
+            with patch(
+                "qdl.runtime.stable_bar_edge.fetch_binance_history",
+                return_value=(Envelope(120_000),),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "every Kafka ACK"):
+                    edge.bootstrap_history()
+            self.assertFalse(state_path.exists())
+            self.assertEqual(edge._last_open_ms, {})
 
 
 if __name__ == "__main__":

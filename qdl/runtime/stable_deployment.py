@@ -68,8 +68,17 @@ class StableAcquisitionBinding:
             if self.runtime == "OKX":
                 self._require_wss(self.business_websocket_url)
         elif self.mode == "PYTHON_REST":
-            if source.feed is not FeedType.BAR or self.websocket_url is not None:
-                raise ValueError("Python REST acquisition is reserved for BAR without WebSocket")
+            if (
+                source.feed is not FeedType.BAR
+                or self.runtime not in {"BINANCE", "OKX"}
+                or self.runtime != source.instrument.identity.venue
+                or self.websocket_url is not None
+                or self.business_websocket_url is not None
+            ):
+                raise ValueError(
+                    "Python REST acquisition is reserved for venue-owned BAR "
+                    "without WebSocket"
+                )
         elif (
             source.instrument.identity.venue not in {"HNX", "HOSE"}
             or self.runtime != "DNSE"

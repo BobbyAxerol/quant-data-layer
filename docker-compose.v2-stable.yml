@@ -410,11 +410,14 @@ services:
       QDL_KAFKA_CERT_ROOT: /stable-certs/producer
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-binance-bars
       QDL_STABLE_BAR_WARMUP_ROWS: "500"
-      QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS: "2"
+      QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS: "10"
+      QDL_STABLE_BAR_STATE_PATH: /var/lib/qdl-stable/runtime/stable-crypto-bar-edge.json
     volumes:
+      - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     depends_on:
+      stable_state_init: {condition: service_completed_successfully}
       stable_tls_init: {condition: service_completed_successfully}
       kafka1: {condition: service_healthy}
       kafka2: {condition: service_healthy}

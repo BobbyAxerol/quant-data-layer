@@ -7,7 +7,6 @@ import os
 import signal
 import threading
 import time
-import uuid
 from pathlib import Path
 
 from qdl.adapters.binance import (
@@ -63,7 +62,8 @@ class StableBinanceBarEdge:
         publisher: KafkaRawPublisher,
         warmup_rows: int = 500,
         max_catchup_rows: int = 1000,
-        settlement_delay_seconds: float = 2.0,
+        settlement_delay_seconds: float = 10.0,
+        state_path: str | Path | None = None,
         clock=time.time,
     ) -> None:
         if not 1 <= warmup_rows <= 1000:
@@ -79,10 +79,13 @@ class StableBinanceBarEdge:
         self.warmup_rows = warmup_rows
         self.max_catchup_rows = max_catchup_rows
         self.settlement_delay_seconds = settlement_delay_seconds
+        self.state_path = Path(state_path) if state_path is not None else None
         self.clock = clock
-        run_id = uuid.uuid4()
-        self.binance_session_id = f"qdl-v2-stable-binance-rest-{run_id}"
-        self.okx_session_id = f"qdl-v2-stable-okx-rest-{run_id}"
+        authority_revision = int(authority.get("revision", 0))
+        self.binance_session_id = (
+            f"qdl-v2-stable-binance-rest-r{authority_revision}"
+        )
+        self.okx_session_id = f"qdl-v2-stable-okx-rest-r{authority_revision}"
         self._last_open_ms: dict[str, int] = {}
         self._history_bootstrapped = False
         self._stopped = threading.Event()
@@ -100,7 +103,11 @@ class StableBinanceBarEdge:
         self.okx_bindings = tuple(
             pair
             for pair in pairs
-            if pair[1].runtime == "OKX" and pair[0].feed.value == "BAR"
+            if (
+                pair[1].mode == "PYTHON_REST"
+                and pair[1].runtime == "OKX"
+                and pair[0].feed.value == "BAR"
+            )
         )
         if len(self.bindings) != 2 or len(self.okx_bindings) != 2:
             raise ValueError(
@@ -112,6 +119,117 @@ class StableBinanceBarEdge:
             or authority.get("legacy_write_allowed") is not False
         ):
             raise ValueError("stable crypto BAR edge requires shadow authority")
+        self._restore_state()
+
+    @property
+    def _binding_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(
+            source.binding_id
+            for source, _acquisition in self.bindings + self.okx_bindings
+        ))
+
+    def _state_payload(self) -> dict:
+        return {
+            "schema": "qdl.stable-bar-edge-state.v1",
+            "slice_id": str(self.authority.get("slice_id", "")),
+            "authority_revision": int(self.authority["revision"]),
+            "catalog_revision": int(self.catalog.catalog_revision),
+            "acquisition_revision": int(self.acquisition.revision),
+            "binding_ids": list(self._binding_ids),
+            "last_open_ms": {
+                key: self._last_open_ms[key] for key in sorted(self._last_open_ms)
+            },
+        }
+
+    def _restore_state(self) -> None:
+        if self.state_path is None or not self.state_path.exists():
+            return
+        try:
+            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise RuntimeError("stable BAR checkpoint is unreadable") from error
+        if not isinstance(payload, dict) or set(payload) != {
+            "schema", "slice_id", "authority_revision", "catalog_revision",
+            "acquisition_revision", "binding_ids", "last_open_ms",
+        }:
+            raise RuntimeError("stable BAR checkpoint fields are invalid")
+        expected = self._state_payload()
+        for field in (
+            "schema", "slice_id", "authority_revision", "catalog_revision",
+            "acquisition_revision", "binding_ids",
+        ):
+            if payload[field] != expected[field]:
+                raise RuntimeError(
+                    f"stable BAR checkpoint {field} differs from runtime authority"
+                )
+        last_open_ms = payload["last_open_ms"]
+        if not isinstance(last_open_ms, dict) or not set(last_open_ms).issubset(
+            self._binding_ids
+        ):
+            raise RuntimeError("stable BAR checkpoint binding watermarks are invalid")
+        restored: dict[str, int] = {}
+        sources = {
+            source.binding_id: source
+            for source, _acquisition in self.bindings + self.okx_bindings
+        }
+        for binding_id, value in last_open_ms.items():
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+                or value % _bar_interval_ms(sources[binding_id].interval or "")
+            ):
+                raise RuntimeError("stable BAR checkpoint watermark is invalid")
+            restored[binding_id] = value
+        self._last_open_ms = restored
+        self._history_bootstrapped = set(restored) == set(self._binding_ids)
+        logger.info(
+            "stable BAR checkpoint restored bindings=%s complete=%s",
+            len(restored),
+            self._history_bootstrapped,
+        )
+
+    def _persist_state(self) -> None:
+        if self.state_path is None:
+            return
+        parent = self.state_path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        temporary = parent / f".{self.state_path.name}.{os.getpid()}.tmp"
+        encoded = (
+            json.dumps(
+                self._state_payload(),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+            + "\n"
+        ).encode("ascii")
+        descriptor = None
+        try:
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600,
+            )
+            pending = memoryview(encoded)
+            while pending:
+                written = os.write(descriptor, pending)
+                if written <= 0:
+                    raise OSError("stable BAR checkpoint write made no progress")
+                pending = pending[written:]
+            os.fsync(descriptor)
+            os.close(descriptor)
+            descriptor = None
+            os.replace(temporary, self.state_path)
+            directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            temporary.unlink(missing_ok=True)
 
     def _binance_binding(
         self,
@@ -180,6 +298,7 @@ class StableBinanceBarEdge:
             for payload in payloads
         ]
         self._last_open_ms[source.binding_id] = max(opens)
+        self._persist_state()
         logger.info(
             "stable real-provider BAR bootstrap ACK binding=%s venue=%s rows=%s "
             "first_open_ms=%s last_open_ms=%s",
@@ -202,6 +321,8 @@ class StableBinanceBarEdge:
         observed_ms = self._settled_observed_ms()
         published = 0
         for source, acquisition in self.bindings:
+            if source.binding_id in self._last_open_ms:
+                continue
             published += self._publish_history(
                 source,
                 acquisition,
@@ -214,6 +335,8 @@ class StableBinanceBarEdge:
                 ),
             )
         for source, acquisition in self.okx_bindings:
+            if source.binding_id in self._last_open_ms:
+                continue
             published += self._publish_history(
                 source,
                 acquisition,
@@ -224,7 +347,11 @@ class StableBinanceBarEdge:
                     test_provenance=False,
                 )),
             )
-        self._history_bootstrapped = True
+        self._history_bootstrapped = (
+            set(self._last_open_ms) == set(self._binding_ids)
+        )
+        if not self._history_bootstrapped:
+            raise RuntimeError("stable BAR bootstrap did not checkpoint every binding")
         logger.info(
             "stable multi-venue BAR bootstrap complete bindings=%s rows=%s",
             len(self.bindings) + len(self.okx_bindings),
@@ -256,7 +383,13 @@ class StableBinanceBarEdge:
         previous_open_ms = self._last_open_ms.get(source.binding_id)
         if previous_open_ms is None:
             return ((latest, latest_open_ms),)
-        if latest_open_ms <= previous_open_ms:
+        if latest_open_ms < previous_open_ms:
+            raise RuntimeError(
+                f"stable BAR provider latest precedes durable watermark "
+                f"binding={source.binding_id} previous={previous_open_ms} "
+                f"latest={latest_open_ms}"
+            )
+        if latest_open_ms == previous_open_ms:
             return ()
 
         interval_ms = _bar_interval_ms(source.interval or "")
@@ -343,6 +476,7 @@ class StableBinanceBarEdge:
                 open_time_ms, acknowledged_opens.get(source.binding_id, -1)
             )
         self._last_open_ms.update(acknowledged_opens)
+        self._persist_state()
         logger.info(
             "stable multi-venue closed BAR ACK count=%s bindings=%s",
             len(acknowledgements),
@@ -409,7 +543,19 @@ def build_from_environment() -> StableBinanceBarEdge:
             os.environ.get("QDL_STABLE_BAR_MAX_CATCHUP_ROWS", "1000")
         ),
         settlement_delay_seconds=float(
-            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS", "2")
+            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS", "10")
+        ),
+        state_path=os.environ.get(
+            "QDL_STABLE_BAR_STATE_PATH",
+            str(
+                Path(
+                    os.environ.get(
+                        "QDL_STABLE_STATE_DIR",
+                        "/var/lib/qdl-stable/runtime",
+                    )
+                )
+                / "stable-crypto-bar-edge.json"
+            ),
         ),
     )
 
