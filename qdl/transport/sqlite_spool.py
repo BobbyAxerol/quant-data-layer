@@ -98,18 +98,30 @@ class SQLiteDurableSpool:
         self._lock = threading.RLock()
         config.path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(
-            str(config.path), timeout=10.0, isolation_level=None, check_same_thread=False
+            str(config.path), timeout=30.0, isolation_level=None, check_same_thread=False
         )
         self._connection.row_factory = sqlite3.Row
-        self._configure()
-        self._migrate()
+        self._initialize_schema()
         self._validate_integrity()
+
+    def _initialize_schema(self) -> None:
+        for attempt in range(4):
+            try:
+                self._configure()
+                self._migrate()
+                return
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error).lower() or attempt == 3:
+                    raise
+                if self._connection.in_transaction:
+                    self._connection.rollback()
+                time.sleep(0.25 * (attempt + 1))
 
     def _configure(self) -> None:
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=FULL")
         self._connection.execute("PRAGMA foreign_keys=ON")
-        self._connection.execute("PRAGMA busy_timeout=10000")
+        self._connection.execute("PRAGMA busy_timeout=30000")
         self._connection.execute("PRAGMA wal_autocheckpoint=1000")
         self._connection.execute("PRAGMA journal_size_limit=67108864")
 

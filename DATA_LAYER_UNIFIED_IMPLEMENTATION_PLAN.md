@@ -6498,3 +6498,63 @@ After an approved cutover, fence the selected Rust slice, restore the matching
 Python rollback manifest under a newer authority revision/lease, replay from the
 last common durable watermark and leave all unrelated venue/feed slices
 untouched.
+
+#### C.5 Merged Runtime Ingress Closure For Trading System V2_PRIMARY
+
+**2026-08-20 status: `APPROVED / PREFLIGHT`:**
+
+- Approved source is merged `origin/dev` commit `f4a7e1c`; the only eligible
+  release pair remains Python
+  `sha256:89e359ecc731d68db7a1814885023e1ff9f0aea793e668b6298109eb463ff91c`
+  and Rust
+  `sha256:ab57e015da2fb96ef6e4b2180676e0a41b2cc45b64080e820d6a8f29cdab180a`
+  from topology revision `be35aa7389a37b31c21cc2689c25873dcfc7e73d`.
+- The currently running isolated C.2 stack uses superseded images and private
+  ingress only. Recreate the isolated V2 project from the final bundle while
+  preserving its Kafka/state volumes and the live V1 project. Rotate all
+  candidate identities atomically; only query replicas and stream active/
+  passive join external `executor_network` with the frozen aliases.
+- Kafka, stable Redis, projector, ingestors and Rust cores remain private. V1
+  port `8100`, its Redis, storage and every current consumer remain live during
+  the V2 recreation. DNSE remains V1-only.
+- Acceptance requires final image IDs and non-root users, complete process
+  health, authenticated mTLS query/stream from `executor_network`, real-provider
+  Binance/OKX event continuity, bounded queue/lag/resources and no V1 restart or
+  persistent-volume deletion. Synthetic data may not satisfy this gate.
+- Rollback recreates the isolated C.2 ingress from its prior immutable image
+  pair or leaves V2 stopped while V1 remains authoritative. This operation does
+  not authorize `RUST_PRIMARY`; authority remains `RUST_SHADOW` until a separate
+  CAS packet proves terminal-watermark handoff for all twelve slices.
+- After ingress acceptance, Trading System may make its already-approved exact
+  routes `V2_PRIMARY` with V1 fallback. No alpha is started by this packet.
+
+**2026-08-20 final-stack recreation finding: `BLOCKED BEFORE CONSUMER CUTOVER`:**
+
+- Final immutable images and external aliases were applied while all Kafka,
+  stable-state and V1 volumes were preserved. V1 remained healthy.
+- Concurrent query/stream startup exposed a shared SQLite schema-initialization
+  race (`sqlite3.OperationalError: database is locked`). The shared spool is
+  intentional and cannot be split per replica; initialization needs bounded
+  busy retry while preserving one cache identity.
+- Recreating ephemeral stable Redis while retaining a non-empty durable spool
+  correctly triggered `ProjectionCacheMismatch`. The existing governed cache
+  rebuild must replay canonical Kafka into a fresh SQLite/Redis cache before
+  projector readiness. This is recovery behavior, not permission to discard
+  Kafka or V1 data.
+- Fix and gate the concurrent initialization path, rebuild only the isolated
+  projection cache through the existing confirmation-token runbook, then repeat
+  mTLS query/stream and real-provider continuity checks. Trading System remains
+  V1 until all gates pass.
+
+**2026-08-20 SQLite startup closure result: `PASS / REBUILD PENDING`:**
+
+- Shared-spool initialization now uses a 30-second SQLite busy timeout and four
+  bounded lock-only retries. Non-lock operational errors still fail immediately;
+  all replicas retain one durable cache identity and integrity check.
+- Added an eight-replica simultaneous-open regression. Targeted transport and
+  cache-rebuild tests passed 25/25. The full network-off Python suite passed
+  550 tests with six explicit skips using the final runtime dependencies and a
+  temporary writable log mount. No provider, V1, Kafka, Redis, order or DB state
+  was mutated by tests.
+- Next gate is a new immutable Python image from this exact commit followed by
+  the confirmation-token projection rebuild; the Rust binary is unchanged.
