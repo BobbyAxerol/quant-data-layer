@@ -21,6 +21,7 @@ KAFKA_BOOTSTRAP = "kafka1:9092,kafka2:9092,kafka3:9092"
 KAFKA_ADMIN_CONFIG = "/etc/kafka/secrets/admin.properties"
 EXPECTED_CANONICAL_PARTITIONS = 6
 MAX_ACCEPTED_LAG = 250
+REPLAY_TAIL_RECORDS_PER_PARTITION = 10_000
 REQUIRED_BOUNDED_LAG_SAMPLES = 3
 STOP_SERVICES = (
     "projector_v2",
@@ -64,6 +65,7 @@ def rebuild_plan(env_file: Path) -> dict[str, object]:
         "flush_service": "stable_redis",
         "reset_group": PROJECTOR_GROUP,
         "reset_topic": CANONICAL_TOPIC,
+        "replay_tail_records_per_partition": REPLAY_TAIL_RECORDS_PER_PARTITION,
         "lag_gate": {
             "expected_partitions": EXPECTED_CANONICAL_PARTITIONS,
             "max_total_records": MAX_ACCEPTED_LAG,
@@ -156,6 +158,24 @@ def _kafka_group(env_file: Path, *arguments: str) -> str:
         timeout=120,
     )
     return result.stdout
+
+
+def _reset_projector_to_bounded_tail(env_file: Path) -> None:
+    common = (
+        "--group",
+        PROJECTOR_GROUP,
+        "--topic",
+        CANONICAL_TOPIC,
+        "--reset-offsets",
+    )
+    _kafka_group(env_file, *common, "--to-latest", "--execute")
+    _kafka_group(
+        env_file,
+        *common,
+        "--shift-by",
+        f"-{REPLAY_TAIL_RECORDS_PER_PARTITION}",
+        "--execute",
+    )
 
 
 def _validate_project(env_file: Path) -> None:
@@ -320,16 +340,7 @@ def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, obje
     if dbsize != "0":
         raise RuntimeError("isolated stable Redis did not reset to zero keys")
 
-    _kafka_group(
-        env_file,
-        "--group",
-        PROJECTOR_GROUP,
-        "--topic",
-        CANONICAL_TOPIC,
-        "--reset-offsets",
-        "--to-earliest",
-        "--execute",
-    )
+    _reset_projector_to_bounded_tail(env_file)
     ssl_context = _stable_client_ssl_context(env_file)
     _start_services(env_file, *STREAM_SERVICES)
     _wait_http(

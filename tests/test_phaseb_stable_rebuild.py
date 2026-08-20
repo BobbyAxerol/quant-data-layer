@@ -15,9 +15,11 @@ from scripts.rebuild_v2_stable_projection_cache import (
     PROJECT_NAME,
     PROJECTOR_GROUP,
     QUERY_SERVICES,
+    REPLAY_TAIL_RECORDS_PER_PARTITION,
     STOP_SERVICES,
     STREAM_SERVICES,
     _env_value,
+    _reset_projector_to_bounded_tail,
     _stable_client_ssl_context,
     _start_services,
     _validate_project,
@@ -39,6 +41,10 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         self.assertEqual(plan["delete_files"], list(CACHE_FILES))
         self.assertEqual(plan["reset_group"], PROJECTOR_GROUP)
         self.assertEqual(plan["reset_topic"], CANONICAL_TOPIC)
+        self.assertEqual(
+            plan["replay_tail_records_per_partition"],
+            REPLAY_TAIL_RECORDS_PER_PARTITION,
+        )
         self.assertEqual(
             plan["lag_gate"]["expected_partitions"],
             EXPECTED_CANONICAL_PARTITIONS,
@@ -107,6 +113,27 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "at least one"):
             _start_services(env)
+
+    def test_bounded_tail_reset_matches_spool_partition_retention(self):
+        env = Path("/tmp/stable.env")
+        with patch(
+            "scripts.rebuild_v2_stable_projection_cache._kafka_group"
+        ) as kafka_group:
+            _reset_projector_to_bounded_tail(env)
+        kafka_group.assert_any_call(
+            env,
+            "--group", PROJECTOR_GROUP,
+            "--topic", CANONICAL_TOPIC,
+            "--reset-offsets", "--to-latest", "--execute",
+        )
+        kafka_group.assert_any_call(
+            env,
+            "--group", PROJECTOR_GROUP,
+            "--topic", CANONICAL_TOPIC,
+            "--reset-offsets", "--shift-by",
+            f"-{REPLAY_TAIL_RECORDS_PER_PARTITION}", "--execute",
+        )
+        self.assertEqual(kafka_group.call_count, 2)
 
     def test_lag_parser_requires_real_canonical_partitions(self):
         output = """GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG CONSUMER-ID HOST CLIENT-ID

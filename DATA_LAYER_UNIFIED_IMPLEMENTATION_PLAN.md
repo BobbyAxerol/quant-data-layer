@@ -6558,3 +6558,28 @@ untouched.
   was mutated by tests.
 - Next gate is a new immutable Python image from this exact commit followed by
   the confirmation-token projection rebuild; the Rust binary is unchanged.
+
+**2026-08-20 replay-efficiency finding: `FIX IN PROGRESS`:**
+
+- The governed rebuild reset the projector to the beginning of a 7.26-million
+  event canonical topic although the spool retains only 10,000 records per
+  partition. Replay progressed correctly but would spend tens of minutes reading
+  records guaranteed to be trimmed. The orchestrator was interrupted without
+  deleting Kafka; five cache users were stopped while ingestors/Rust core kept
+  capturing approved real-provider bytes.
+- Rebuild will atomically reset the inactive projector group to each partition
+  end and then shift back exactly 10,000 records, matching the spool retention
+  bound. It must still replay all six partitions, reach lag <=250 for three
+  samples, rebuild non-empty Redis, and prove fresh events for every approved
+  Binance/OKX route before query readiness. No synthetic event may satisfy the
+  runtime gate.
+
+**2026-08-20 bounded-tail recovery closure: `PASS / RUNTIME REBUILD PENDING`:**
+
+- Recovery now resets the inactive projector group to latest and shifts back
+  exactly 10,000 records on each of six canonical partitions, matching spool
+  retention without deleting any Kafka event. The existing <=250 total-lag,
+  three-consecutive-sample gate remains unchanged.
+- Added exact command/plan regression. Targeted recovery/transport tests passed
+  26/26; full network-off Python passed 551 with six explicit skips. No runtime
+  state changed during these tests.
