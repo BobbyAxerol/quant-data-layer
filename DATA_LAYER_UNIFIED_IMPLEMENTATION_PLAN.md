@@ -6754,3 +6754,33 @@ untouched.
   only the isolated V2 roles required by the changed core, then require bounded
   concurrent real-provider streams with zero invalid trade projection before
   resuming the Trading System acceptance drill.
+
+
+**2026-08-20 canonical semantic runtime closure: `PASS`:**
+
+- Tested commit `192c71bd57e44231cc4386c5969d54515d3d9490` produced immutable
+  Rust image `sha256:60832a3a6b7fbe0d5eb50de92306905380084e3e9c99d66e78e2343bff93339a`
+  and Python image
+  `sha256:45044af0fc771291e99543e039100c8d4321b87e0e80a0d8b59f26e1a05eb475`;
+  labels carry the exact revision/version and both images run non-root.
+- The three realtime Rust cores were rolling-recreated one at a time on the new
+  digest. Every replica is running with restart count zero. Kafka, ingestors,
+  projector, Redis, TLS, durable volumes, V1 and Trading System execution roles
+  were preserved. Rust authority remains `RUST_SHADOW`.
+- Real Binance/OKX traffic continued after the rollout. The owner core
+  quarantined 166 semantically invalid provider records during the observed
+  window while publishing tens of thousands of valid canonical records; no
+  invalid trade reached the Trading System after the fix. Other replicas had
+  zero quarantine for their assigned slices.
+- Trading System V2 cursors advanced from Binance TRADE 348395 to 359954, OKX
+  TRADE 111114 to 114662 and both BAR streams from 88 to 94 across soak and the
+  rollback drill. Projected trades were authoritative and sub-second fresh;
+  final 1m BARs remained closed and inside the 180-second execution freshness
+  bound.
+- V1 never restarted and returned HTTP 200 throughout. Building/recreating on
+  the same host caused one transient V1 recent queue-drop observation of 4,504;
+  the queue stayed at zero, Redis publish errors stayed zero and the subsequent
+  five-minute metric returned to recent-drop zero. This is recorded as capacity
+  evidence; future image builds should remain outside a latency-sensitive
+  cutover window. Broad-universe V1 health remains non-strict/degraded for its
+  previously documented unused feeds, while demanded-feed failures are zero.
