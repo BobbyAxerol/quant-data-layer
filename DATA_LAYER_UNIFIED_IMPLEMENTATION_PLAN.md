@@ -1,7 +1,7 @@
 # Quant Data Layer Unified Implementation Plan
 
 > **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; Phase 9.1 is `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`; Phase 9.2 is `COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED`; Phase 9.3 is `COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED` after isolated hold/closure/expansion governance certification. Authority promotion, production hold/closure and every expansion remain blocked on explicit production infrastructure, real canary/primary evidence and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
-> **Working branch:** `feat/v2-stable-rust-binance-okx`, based on `dev`; Phase A commits are local and Phase B is in progress. No push, merge or authority cutover is implied.
+> **Working branch:** `feat/v2-stable-rust-binance-okx`, based on `dev`; Phase B artifact certification is complete while the overall multi-venue conclusion remains `PARTIAL_EXTERNAL` for DNSE. No push, merge or authority cutover is implied.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 > **OKX V5 market-data specification:** [OKX Market Data V5 implementation guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
 > **Compatibility boundary:** Existing `/v1`, SDK v1, Redis keys and Redis Pub/Sub remain supported until a governed per-consumer sunset.
@@ -4067,7 +4067,7 @@ declared complete while an earlier required gate remains open.
 | `B.1 Runtime Correctness And Capacity` | Authentic acquisition, Rust canonical core, bounded projector/cache, final BAR lifecycle, lossless-vs-latest delivery and resource convergence | `COMPLETE` | B5-B8: final full Python discovery passed 478 tests with 6 explicit skips; Rust fmt/Clippy/workspace passed. A clean candidate loaded 2,000 authentic closed BARs, converged core/projector lag to 50/29, retained canonical-only bounded cache, zero quarantine and bounded Redis/app memory. Intermediate failed candidates are diagnostic evidence, not accepted releases. |
 | `B.2 Controlled Consumer Acceptance` | Registered Binance, OKX, VN, Trading System and monitoring warmup -> signed cursor -> replay -> live, including session/freshness semantics | `PARTIAL_EXTERNAL` | B9-B12: crypto alpha, monitoring and Trading System paper consumers passed on immutable `df88de0`; 500 rows per crypto binding, replica-equal results and 129-779 ms live freshness. DNSE remains blocked by official REST TCP/443 egress and cannot be replaced with synthetic or lineage-incomplete V1 data. |
 | `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `COMPLETE` | B13-B19 plus the approved clean-log closure passed. Fresh RF3/minISR2 Kafka accepted real Binance/OKX data; atomic cache rebuild converged at lag 19 with observed bound 46; 12 retained partitions had zero gaps/duplicates/quarantine; signed SDK consumers reached `REPLAYING -> LIVE`; Trading System paper snapshots were fresh/execution-eligible; V1 was unchanged. Conclusion: `PASS`. |
-| `B.4 Release Certification And Cleanup` | Full Python/Rust/Buf/OpenAPI/security/capacity suites, immutable one-SHA images, compact evidence, docs/runbook, exact candidate cleanup and V1 invariant | `IN_PROGRESS` | Source SHA `5054e1e` is provisionally frozen for full certification. No production cutover or consumer authority migration is authorized. |
+| `B.4 Release Certification And Cleanup` | Full Python/Rust/Buf/OpenAPI/security/capacity suites, immutable one-SHA images, compact evidence, docs/runbook, exact candidate cleanup and V1 invariant | `COMPLETE` | Final code SHA `2412572` produced the non-root Python/Rust image pair; full source, contract, security, capacity, real-provider restart and signed consumer gates passed. Exact candidate resources were removed and V1 stayed unchanged. Conclusion: `PASS`; Phase B overall remains `PARTIAL_EXTERNAL` only for the pre-existing DNSE provider gate. |
 
 Every subphase closure records: approved boundary, invariant, exact commands and
 pass/fail/skip counts, real-provider or test provenance, resource/latency data,
@@ -5684,6 +5684,52 @@ and removes the superseded candidate/rollback artifacts after verification.
   process or durable state was mutated. Freeze a final journal commit, build
   both images from that one SHA, rescan and run isolated real-provider restart
   acceptance next.
+- `2026-08-20 PHASE B.4 FINAL ARTIFACT/RUNTIME GATES PASSED`: final code
+  commit `2412572eaa89864ce74910b0f2e5f8b50833fb15` produced Python image
+  `sha256:fec269ec555624baa68ee15fdd0281d72996e55f847b7347856be6b2fa51ea25`
+  and Rust image
+  `sha256:fbff0ed3c4390831a2aebf12f57c266eb6f01dde258b3cffacacbcbaa30d6c97`.
+  Both are non-root and carry the exact OCI revision/version. Pinned Trivy
+  0.73.0 under the repository CI policy found zero fixable HIGH/CRITICAL
+  vulnerability and zero secret in both. The stricter no-ignore diagnostic
+  exposed only currently unfixed Debian findings and was retained as diagnostic
+  rather than hidden. The final Rust benchmark processed 100,000 events at
+  133,477.5 events/s, p99 14,124 ns, zero duplicate/quarantine against the
+  50,000/s gate; 25/25 final package/deployment tests passed.
+
+  A fresh isolated RF3/minISR2 candidate bootstrapped 500 authentic closed 1m
+  BARs for each Binance USD-M, Binance Spot, OKX SWAP and OKX Spot binding.
+  Restart restored the revision-2 ACK checkpoint, skipped overlapping history
+  and caught up the exact closed-bar backlog. Cache inspection found 75,187
+  canonical records across 12 bounded partitions, maximum 10,000 each, zero
+  offset gap, duplicate event ID or quarantine; Kafka quarantine offsets were
+  zero and projector lag was 35 under the 250 gate. Redis used 1.22 MiB/128
+  MiB with 51 keys; app and broker roles stayed inside all configured bounds;
+  application logs had no warning/error/collision/gap during acceptance.
+- `2026-08-20 PHASE B.4 FINAL CONSUMER ACCEPTANCE PASSED`: signed released
+  SDK clients read 500 final real-provider Binance and OKX BARs with replica-
+  equal market semantics. Both alpha streams reached `REPLAYING -> LIVE`,
+  ACKed contiguous events and resumed from durable cursor at exactly the prior
+  offset + 1. Trading System paper read authoritative/execution-eligible
+  Binance and OKX TRADE/QUOTE snapshots at 132-158 ms freshness; monitoring
+  reads were authoritative at 100-180 ms. No order, synthetic data or
+  production mutation occurred. DNSE remains the already recorded official-
+  provider external gate, so Phase B overall is `PARTIAL_EXTERNAL`; it does not
+  invalidate B.4 artifact certification or permit cutover.
+- `2026-08-20 PHASE B.4 CLEANUP AND CLOSURE PASSED`: removed the fresh
+  `qdl_v2_b4_candidate` project and all five disposable volumes; removed the
+  stopped old candidate containers/networks and only its four approved Kafka/
+  state test volumes while preserving `qdl_v2_stable_candidate_stable_tls`.
+  Removed three builder tags, superseded `ea84a21` Python/Rust tags and the
+  unused Python `cfc0246` tag. Retained final `2412572`, V1 and the tested
+  Python `c61fa39`/Rust `cfc0246` rollback pair. Exact-ID pruning of 41 B.4
+  BuildKit records reduced cache from 168/12.94 GB to 154/10.94 GB; no broad
+  prune ran. The exact `/tmp` secret bundle, scan output and SDK harness were
+  deleted after bounded evidence was recorded. V1 was never restarted and remained `status=ok`, Redis true,
+  recent queue drops zero and DNSE `OPEN_HEALTHY`. Full evidence is frozen in
+  `upgrade/evidence/PHASE_B4_RELEASE_CERTIFICATION_REPORT.md`. B.4 conclusion
+  is `PASS`/`COMPLETE`; push, merge, release publication and authority/consumer
+  cutover remain unapproved.
 - `2026-08-19 PHASE B ARTIFACT CLEANUP POLICY RECORDED`: Phase B ends at B.4;
   B17/B18 are repair slices inside B.3, not new subphases. Exact cleanup retains
   V1, active `e002da6`, active/rollback `cfc0246`, Kafka/Redis and all durable

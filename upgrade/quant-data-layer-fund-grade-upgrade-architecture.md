@@ -5636,6 +5636,34 @@ compose and diff validation were clean. Runtime remained untouched. Final
 same-SHA artifacts, scans and isolated authentic-provider restart acceptance
 remain.
 
+The final B.4 artifact and runtime gates passed at code source `2412572`.
+The non-root Python/Rust images carry that exact revision; final source,
+contract, package, security and capacity gates passed. The Rust benchmark
+processed 100,000 events at 133,477.5 events/s with p99 14,124 ns and zero
+duplicate/quarantine. The fresh isolated runtime bootstrapped 2,000 authentic
+Binance/OKX closed BARs, restored its ACK-authoritative checkpoint across edge
+restart, and retained zero Kafka/cache quarantine, zero offset gap and zero
+event-ID duplicate. The bounded cache held 75,187 canonical records across 12
+partitions; projector lag was 35 under the 250-record gate.
+
+Released SDK acceptance returned replica-equal 500-row Binance/OKX warmups,
+observed `REPLAYING -> LIVE`, and resumed each durable cursor at exactly the
+previous offset + 1. Trading System paper received four authoritative,
+execution-eligible Binance/OKX TRADE/QUOTE snapshots at 132-158 ms freshness.
+No order or synthetic provider row was created. Exact candidate projects,
+networks and disposable volumes were removed; final/rollback images and old
+candidate TLS were retained. Forty-one exact B.4 BuildKit IDs were pruned,
+reducing cache from 12.94 GB to 10.94 GB without a broad host prune. The exact
+temporary secret bundle, scan JSON and SDK harness were deleted after evidence
+was recorded. V1 port 8100 was never restarted and remained healthy.
+
+B.4 is therefore `PASS`/`COMPLETE` and `2.0.0 Internal Stable` artifacts are
+ready for operator review. Phase B overall remains `PARTIAL_EXTERNAL` only for
+the already recorded official DNSE provider gate. This is not authority or
+consumer cutover approval; that remains a separate explicit transaction. The
+compact ledger is
+`upgrade/evidence/PHASE_B4_RELEASE_CERTIFICATION_REPORT.md`.
+
 Start only after B.3 is `PASS`. Run full Python discovery, Rust fmt/workspace
 Clippy/tests, Buf/OpenAPI/package/security/capacity/compatibility gates; build
 Python and Rust images from one final commit SHA; freeze compact evidence and
