@@ -1,6 +1,7 @@
 use prost::Message;
 use qdl_contracts::qdl::common::v1::{
-    AggressorSide, BarOrigin, BookSide, QualityFlag, QuantityUnit, SourceRole,
+    decimal_value, AggressorSide, BarOrigin, BookSide, DecimalValue, QualityFlag, QuantityUnit,
+    SourceRole,
 };
 use qdl_contracts::qdl::marketdata::v2::{
     event_envelope, Bar, BarLifecycle, BookLevel, EventEnvelope, OrderBookSnapshot, Quote, Trade,
@@ -745,6 +746,21 @@ struct TradeInput {
     identity_kind: TradeIdentityKind,
 }
 
+fn parse_positive_trade_decimal(source: &str, field: &str) -> Result<DecimalValue, String> {
+    let value = parse_decimal(source)?;
+    let positive = match value.coefficient.as_ref() {
+        Some(decimal_value::Coefficient::Mantissa(value)) => *value > 0,
+        Some(decimal_value::Coefficient::MantissaText(value)) => {
+            value != "0" && !value.starts_with('-')
+        }
+        None => false,
+    };
+    if !positive {
+        return Err(format!("{field} must be positive"));
+    }
+    Ok(value)
+}
+
 fn build_trade(fixture: &TradeFixture, trade: TradeInput) -> Result<EventEnvelope, String> {
     let context = &fixture.context;
     validate_shadow_context(context)?;
@@ -802,8 +818,11 @@ fn build_trade(fixture: &TradeFixture, trade: TradeInput) -> Result<EventEnvelop
         raw_capture_id: context.raw_capture_id.clone(),
         payload: Some(event_envelope::Payload::Trade(Trade {
             native_trade_id: trade.native_trade_id,
-            price: Some(parse_decimal(&trade.price)?),
-            quantity: Some(parse_decimal(&trade.quantity)?),
+            price: Some(parse_positive_trade_decimal(&trade.price, "trade price")?),
+            quantity: Some(parse_positive_trade_decimal(
+                &trade.quantity,
+                "trade quantity",
+            )?),
             aggressor_side: trade.side as i32,
             is_block_trade: false,
             is_buyer_maker: trade.is_buyer_maker,
@@ -822,6 +841,28 @@ pub fn canonical_bytes(fixture: &TradeFixture) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::{canonical_bytes, TradeFixture};
+
+    #[test]
+    fn non_positive_trade_price_and_quantity_fail_closed() {
+        let fixture_path = format!(
+            "{}/../../tests/fixtures/phase2/binance_usdm_trade.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let template: TradeFixture =
+            serde_json::from_slice(&std::fs::read(fixture_path).expect("read fixture"))
+                .expect("decode fixture");
+        for (field, value, message) in [
+            ("p", "0", "trade price must be positive"),
+            ("p", "-0.01", "trade price must be positive"),
+            ("q", "0", "trade quantity must be positive"),
+            ("q", "-0.01", "trade quantity must be positive"),
+        ] {
+            let mut fixture = template.clone();
+            fixture.raw[field] = serde_json::Value::String(value.into());
+            let error = canonical_bytes(&fixture).expect_err("non-positive trade must fail");
+            assert_eq!(error, message);
+        }
+    }
 
     #[test]
     fn provider_fixtures_match_python_golden_bytes() {

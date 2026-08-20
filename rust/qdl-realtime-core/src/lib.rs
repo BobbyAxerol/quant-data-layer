@@ -549,8 +549,8 @@ mod tests {
     use qdl_contracts::qdl::common::v1::{QuantityUnit, SourceRole};
     use qdl_contracts::qdl::marketdata::v2::{event_envelope, EventEnvelope, TradeIdentityKind};
     use qdl_contracts::qdl::provider::v1::{
-        CaptureBoundary, QuarantineRecord, RawProviderEnvelope, TransportCompression,
-        TransportProtocol,
+        CaptureBoundary, QuarantineReason, QuarantineRecord, RawProviderEnvelope,
+        TransportCompression, TransportProtocol,
     };
     use qdl_venue_core::ordering::SequencePolicy;
     use sha2::{Digest, Sha256};
@@ -663,6 +663,33 @@ mod tests {
         let repeated = core.process(raw(&binding, frame, 2), 11).unwrap();
         assert_eq!(repeated.canonical.len(), 0);
         assert_eq!(repeated.duplicates, 1);
+    }
+
+    #[test]
+    fn non_positive_trade_is_quarantined_before_canonical_publish() {
+        let binding = binding((
+            "BINANCE_DIRECT",
+            "BINANCE",
+            "USDM",
+            "PERPETUAL",
+            "BTCUSDT",
+            "trade",
+            "binance_usdm_trade",
+            "PRIMARY",
+            SequencePolicy::Monotonic,
+        ));
+        for frame in [
+            br#"{"s":"BTCUSDT","t":10,"p":"0","q":"0.01","T":3,"m":false}"#.as_slice(),
+            br#"{"s":"BTCUSDT","t":11,"p":"60000.1","q":"-0.01","T":4,"m":false}"#.as_slice(),
+        ] {
+            let mut core = core(binding.clone(), true);
+            let result = core.process(raw(&binding, frame, 1), 10).unwrap();
+            assert!(result.canonical.is_empty());
+            assert_eq!(result.quarantines.len(), 1);
+            let record =
+                QuarantineRecord::decode(result.quarantines[0].payload.as_slice()).unwrap();
+            assert_eq!(record.reason, QuarantineReason::SemanticInvalid as i32);
+        }
     }
 
     #[test]

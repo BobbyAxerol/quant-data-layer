@@ -6703,3 +6703,54 @@ untouched.
 - Added exact command/plan regression. Targeted recovery/transport tests passed
   26/26; full network-off Python passed 551 with six explicit skips. No runtime
   state changed during these tests.
+
+#### C.6 Trading System V2 Primary Canonical-Trade Closure
+
+**2026-08-20 status: `APPROVED / ROOT CAUSE CONFIRMED`:**
+
+- The immutable Trading System consumer passed authenticated V2 query for
+  Binance USD-M and OKX Swap, but its long-running TRADE streams repeatedly
+  failed closed. A bounded isolated probe using the same immutable image,
+  workload identity and real provider stream reproduced the failure without
+  sharing runtime cursor state.
+- OKX passed 100/100 concurrent trade events. Binance reproduced an
+  authoritative/execution-eligible canonical trade carrying exact
+  `price=0` and `quantity=0`; the Trading System projector correctly rejected
+  it. This proves the defect is canonical semantic validation, not mTLS, JWT,
+  route quota, Redis, provider availability or consumer retry policy.
+- Close the defect at the source-owned domain boundary in both the Python
+  oracle and Rust core: trade price and quantity must be finite canonical
+  decimals strictly greater than zero. Invalid provider records must enter the
+  existing bounded `SEMANTIC_INVALID` quarantine path and must never reach the
+  canonical topic as execution-eligible data. Do not weaken Trading System
+  validation or fabricate replacement values.
+- Required gates are Python/Rust unit parity for zero and negative values,
+  Rust realtime-core quarantine behavior, existing golden/contract tests, full
+  network-off suites, a new immutable Rust image, bounded real-provider
+  Binance/OKX concurrent stream acceptance and unchanged V1 health. Recreate
+  only isolated V2 Rust roles necessary to apply the core fix; preserve Kafka,
+  Redis, projection state, certificates, V1 and every execution service.
+- Any post-fix zero/negative canonical trade, continuity gap, duplicate,
+  restart loop or V1 impact blocks the Trading System cutover. Rust authority
+  remains `RUST_SHADOW`; this closure does not authorize authority promotion.
+
+
+**2026-08-20 canonical semantic source closure: `PASS / IMMUTABLE BUILD PENDING`:**
+
+- Python canonical oracle and Rust canonical core now require exact finite trade
+  price and quantity strictly greater than zero for every venue. Existing BAR,
+  QUOTE, decimal encoding, event identity and frozen bytes are unchanged.
+- Rust realtime-core maps a non-positive provider trade through the existing
+  atomic `SEMANTIC_INVALID` quarantine path and publishes no canonical record.
+  No downstream projector validation was weakened and no replacement price or
+  quantity is generated.
+- Targeted evidence passed: Python multivenue contract 8/8, Rust `qdl-core`
+  16/16 and Rust `qdl-realtime-core` 11/11. The full network-off Python suite
+  passed 556 tests with six explicit skips. The full locked Rust workspace test
+  completed with no failure. The first Python full-suite invocation had four
+  harness-only permission errors because `/app/logs` was root-owned; rerunning
+  the unchanged source with the runtime UID/GID-owned tmpfs passed completely.
+- Build one immutable Python/Rust image pair from the resulting commit, recreate
+  only the isolated V2 roles required by the changed core, then require bounded
+  concurrent real-provider streams with zero invalid trade projection before
+  resuming the Trading System acceptance drill.
