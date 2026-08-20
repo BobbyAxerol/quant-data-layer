@@ -6012,6 +6012,25 @@ catalog or SDK wiring cannot be deferred as operational debt.
   `fabricated_metadata=false`. Compile plus production catalog, identity,
   Binance adapter and multi-venue contract tests passed 27/27. No real-provider
   call or runtime/authority/consumer mutation occurred.
+- `2026-08-20 C.0 TRANSACTIONAL AUTHORITY OUTBOX SLICE PASS`: added PostgreSQL
+  migration `0009_production_authority_outbox.sql`, which writes one immutable
+  authority-control outbox row in the same transaction as every Phase 9 CAS
+  transition. Bounded claim/ACK/retry operations bind worker ownership, recover
+  stale claims and never mutate event identity or payload. Added the Python
+  outbox dispatcher and idempotent Kafka publisher for the compacted authority
+  topic, plus a canonical `qdl.authority-control-event.v1` serializer that
+  validates exact Phase 9.2 checkpoint/handoff digests before exposing a
+  writable authority record. Rust now decodes that Python fixture, rejects
+  altered identity/conflicting duplicate/stale transition, remains fenced after
+  restart until every target watermark is restored, accepts only exact W/W+1
+  handoff, and supports a newer-revision rollback to Python. Disposable
+  PostgreSQL migration smoke proved four ordered revisions, payload immutability,
+  bounded claim/ACK and scoped cleanup; no production database was touched.
+  Python authority/outbox/migration regressions passed 38/38. The complete Rust workspace
+  passed 66 tests, `cargo fmt --check` and strict `clippy -D warnings`. The
+  long-running transactional Rust consume-transform-produce bridge, independent
+  durable target-watermark restoration and operator CLI are still required C.0
+  work; this slice does not authorize runtime authority or consumer cutover.
 - `2026-08-20 OPERATOR CUTOVER SIMPLIFICATION RECORDED`: the operator reports
   all alpha consumers are stopped and Trading System is the sole active
   consumer. Phase C therefore removes staged alpha/monitoring migrations and
