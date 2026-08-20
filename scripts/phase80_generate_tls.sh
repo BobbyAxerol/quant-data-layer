@@ -49,7 +49,7 @@ issue_certificate() {
 for broker in kafka1 kafka2 kafka3; do
   issue_certificate "${broker}" "${broker}"
 done
-for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized stable-trading-system; do
+for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized stable-authority-dispatcher stable-trading-system; do
   issue_certificate "${client}" "${client}"
 done
 issue_certificate stable-trading-system-jwt stable-trading-system-jwt
@@ -116,6 +116,7 @@ find "${OUTPUT_DIR}" -maxdepth 1 -name '*.key' \
   ! -name 'phase8-core.key' \
   ! -name 'stable-query.key' \
   ! -name 'stable-stream.key' \
+  ! -name 'stable-authority-dispatcher.key' \
   ! -name 'stable-trading-system.key' \
   ! -name 'stable-trading-system-jwt.key' \
   -delete

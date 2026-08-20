@@ -6234,6 +6234,19 @@ failure.
   isolated projector group are replaying authentic retained Kafka records
   because the exact destructive B17 rebuild was not approved. Therefore C.2 is
   not yet closed and no consumer route or authority was promoted.
+- `2026-08-20 C.2 ISOLATED CONSUMER ACCEPTANCE PASS`: the
+  non-destructive cache generation completed against authentic retained Kafka
+  bytes. At the final bounded snapshot the six-partition projector lag was
+  `144`, projector readiness was `READY`, both mTLS query replicas returned
+  200 and no new projector error appeared in the last two minutes. The
+  source-owned `qdl_sdk==2.0.0` acceptance passed for Binance and OKX:
+  each venue returned five final 1m BARs with `FULL` coverage, identical query
+  replica fingerprints and authoritative provider identity; cursor resume was
+  contiguous `982448 -> 982449` for Binance and
+  `339821 -> 339822` for OKX. A request without a client certificate remained
+  rejected. Earlier ACL/stream errors were bounded startup/replay history and
+  were not active at acceptance. V1 stayed HTTP 200, no Trading System route,
+  order path or authority changed, and all alpha processes remained stopped.
 - C.2 gates are mTLS positive/negative tests, certificate rotation/reconnect,
   exact BAR/trade SDK projection, bounded route-manifest parser tests, V1
   unmatched-symbol compatibility, authenticated real Binance/OKX adapter
@@ -6259,6 +6272,63 @@ fails closed. Fallback to V1 is allowed only when V1 passes the same
 freshness/session/contract checks and the source-switch audit is durable.
 
 #### C.3 Fast-Track Rust Authority Promotion
+
+**C.3 implementation journal:**
+
+- `2026-08-20 C.3 DURABLE AUTHORITY RUNTIME WIRING STARTED`: reuse, do not
+  fork, the accepted Phase 9.2 domain primitives: migrations
+  `0006/0007/0009`, transactional authority outbox, compacted control event,
+  Rust `qdl-production-core`, per-target sink fence and W/W+1 handoff. Add
+  only the missing deployable topology around them: a dedicated isolated
+  PostgreSQL authority-control database, one least-privilege authority
+  dispatcher identity, compacted authority/target-checkpoint topics, immutable
+  production-core configs and three bounded Rust workers behind an explicit
+  Compose profile. The existing shadow core remains the writer until a
+  separately approved operator packet fences it.
+- Add one source-owned operator command that is plan-only by default and accepts
+  a versioned immutable packet. It must validate exact slices, candidate/image/
+  contract/partition digests, expected state/revision/owner/lease, terminal
+  checkpoint, zero mismatch/gap canary evidence, hold expiry, Trading System
+  route and executable rollback before any SQL CAS. Apply requires an exact
+  confirmation token; transitions execute one slice at a time and stop on the
+  first failure. No environment-label-only promotion is valid.
+- Gates are migration idempotency, DB transaction/outbox atomicity, broker ACK
+  retry/crash recovery, compacted control rebuild, Rust startup with missing/
+  stale/partial authority failure, target fencing, real canary parity,
+  W/W+1 primary handoff, V1 fallback/return, bounded resources and full
+  Python/Rust/V1 contract regression. Code/test wiring cannot mutate production
+  authority; runtime promotion still requires the exact packet and explicit
+  operator approval named in this section.
+
+- `2026-08-20 C.3 TOPOLOGY/OPERATOR SLICE PASS`: added a dedicated
+  non-public PostgreSQL authority database, migration-owned least-privilege
+  dispatcher role, atomic dispatcher heartbeat, compacted authority/checkpoint
+  topics, per-principal Kafka ACLs and three bounded
+  `qdl-production-core` workers behind explicit control/primary profiles.
+  Stable bundle generation now emits production-core configs and separate
+  dispatcher/admin credentials outside Git. Added a strict, expiring,
+  digest-derived plan/apply packet command that validates real-data evidence,
+  exact route rollback, slice state/revision/owner/lease/digests and uses the
+  accepted SQL CAS functions one slice per transaction; it is plan-only unless
+  `--apply --confirm APPLY_C3_<digest>` matches the immutable packet.
+  Focused topology/outbox/packet tests passed 23/23. A network-none/tmpfs
+  PostgreSQL bootstrap proved all migrations, three SECURITY DEFINER functions,
+  direct-table UPDATE denial, dispatcher claim permission and migration
+  idempotency, then auto-removed the test container. Runbook:
+  [V2 production and Rust authority cutover](docs/runbooks/v2-production-rust-authority-cutover.md).
+  This code evidence does not authorize a production CAS or consumer restart.
+
+- `2026-08-20 C.3 FULL REGRESSION/BUNDLE GATE PASS`: full Python
+  regression passed 546/546 with six explicit environment skips; changed-file
+  Ruff passed; Rust passed 70/70, `cargo fmt --check` and strict Clippy.
+  TLS generation emitted the dedicated dispatcher identity, candidate bundle
+  generation passed with 12 runtime files and no secret values in the public
+  manifest, and Compose config parsed with both authority profiles. The first
+  Rust test attempt exhausted a 1 GiB disposable tmpfs during link; rerun with
+  debug symbols disabled passed in 1.5 GiB and left no build target on disk.
+  Repository-wide Ruff still reports 63 pre-existing findings outside this
+  slice; changed files have zero finding. No authority DB/volume, production
+  CAS, Trading System route, V1 service or provider ownership was mutated.
 
 Promote all approved Binance and OKX feed slices in one maintenance window, but
 execute the CAS internally one slice at a time so a failure is isolated. One

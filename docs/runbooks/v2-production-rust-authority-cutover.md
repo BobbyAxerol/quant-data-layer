@@ -93,6 +93,29 @@ Do not continue while the stable binary still rejects `RUST_CANARY` or
 `RUST_PRIMARY`, or while authority can be changed by environment variable
 alone.
 
+Gate 1 is implemented on the feature branch, but no production CAS has
+executed. The deployable topology reuses migrations 0006/0007/0009 and adds
+migration 0010, a dedicated non-public PostgreSQL authority database,
+function-scoped dispatcher role, transactional outbox dispatcher, compacted
+authority/checkpoint topics, per-principal ACLs, and three bounded
+qdl-production-core workers behind stable-authority and
+stable-authority-primary profiles.
+
+The stable binary reconstructs authority and every target checkpoint before
+reading raw input. Missing, partial, stale or wrong-owner state fails closed.
+Only RUST_CANARY writes the canary topic; only RUST_PRIMARY writes canonical,
+public V2 and legacy compatibility topics.
+
+Verification completed before immutable build:
+
+- focused topology/outbox/operator tests: 23/23 passed;
+- disposable network-none PostgreSQL bootstrap and least-privilege smoke: pass;
+- full Python suite: 546 passed, 6 environment skips;
+- Rust workspace: 70 passed; fmt and strict Clippy passed;
+- isolated real-provider SDK acceptance: Binance and OKX query/stream/cursor
+  parity passed while V1 remained HTTP 200.
+
+
 ## Gate 2 - Build Immutable Artifacts
 
 After Gate 1 is committed and CI-green:
@@ -171,29 +194,39 @@ docker compose \
 Acceptance:
 
 ```bash
-curl --fail --silent http://127.0.0.1:18201/health/ready
-curl --fail --silent http://127.0.0.1:18202/health/ready
-curl --fail --silent http://127.0.0.1:18210/health/live
-curl --fail --silent http://127.0.0.1:18211/health/live
+TLS_CA="$QDL_RELEASE_ROOT/identities/trading-system/ca.crt"
+TLS_CERT="$QDL_RELEASE_ROOT/identities/trading-system/client.crt"
+TLS_KEY="$QDL_RELEASE_ROOT/identities/trading-system/client.key"
+
+curl --fail --silent --cacert "$TLS_CA" --cert "$TLS_CERT" --key "$TLS_KEY" \
+  https://localhost:18201/health/ready
+curl --fail --silent --cacert "$TLS_CA" --cert "$TLS_CERT" --key "$TLS_KEY" \
+  https://localhost:18202/health/ready
+curl --fail --silent --cacert "$TLS_CA" --cert "$TLS_CERT" --key "$TLS_KEY" \
+  https://localhost:18210/health/live
+curl --fail --silent --cacert "$TLS_CA" --cert "$TLS_CERT" --key "$TLS_KEY" \
+  https://localhost:18211/health/live
 curl --fail --silent http://127.0.0.1:8100/v1/health
 
-# Active/passive means both stream replicas are live and exactly one is ready.
-# Select that replica's matching gRPC port for the SDK handoff/reconnect gate.
-if curl --fail --silent http://127.0.0.1:18210/health/ready >/dev/null; then
-  GRPC_TARGET=127.0.0.1:18220
+if curl --fail --silent --cacert "$TLS_CA" --cert "$TLS_CERT" --key "$TLS_KEY" \
+    https://localhost:18210/health/ready >/dev/null; then
+  GRPC_TARGET=localhost:18220
 else
-  curl --fail --silent http://127.0.0.1:18211/health/ready >/dev/null
-  GRPC_TARGET=127.0.0.1:18221
+  curl --fail --silent --cacert "$TLS_CA" --cert "$TLS_CERT" --key "$TLS_KEY" \
+    https://localhost:18211/health/ready >/dev/null
+  GRPC_TARGET=localhost:18221
 fi
-set -a
-. "$QDL_RELEASE_ROOT/stable.env"
-set +a
-docker run --rm --network host \
-  -e QDL_STABLE_JWT_KEYS_JSON="$QDL_STABLE_JWT_KEYS_JSON" \
-  -v "$PWD/scripts/phasec1_isolated_consumer_acceptance.py:/acceptance.py:ro" \
-  "$PYTHON_IMAGE" python /acceptance.py --grpc-target "$GRPC_TARGET"
-```
 
+docker run --rm --network host \
+  -e QDL_STABLE_JWT_PRIVATE_KEY_FILE=/bundle/identities/trading-system-jwt/private.key \
+  -e QDL_STABLE_JWT_KEY_ID=stable-trading-system-rs256-v1 \
+  -v "$PWD:/workspace:ro" -v "$QDL_RELEASE_ROOT:/bundle:ro" \
+  "$PYTHON_IMAGE" python /workspace/scripts/phasec1_isolated_consumer_acceptance.py \
+  --grpc-target "$GRPC_TARGET" \
+  --tls-ca-file /bundle/identities/trading-system/ca.crt \
+  --tls-certificate-file /bundle/identities/trading-system/client.crt \
+  --tls-private-key-file /bundle/identities/trading-system/client.key
+```
 Require authentic Binance/OKX data, zero unexplained gap/duplicate/quarantine,
 bounded broker/projector lag, exact replica results and V1 unchanged.
 
@@ -280,6 +313,39 @@ an arbitrary multi-day wait. The old writer is fenced at `W`; Rust reconstructs
 all required targets through `W` and first publishes at `W+1`. A failed slice
 enters `BLOCKED` and rolls back under a newer revision without undoing an
 unrelated healthy slice.
+
+The source-owned command is plan-only by default. Every packet contains exactly
+one state step for 1..32 unique slices, expires, binds image/contract/partition/
+route digests, requires clean real-provider evidence and includes an executable
+Trading System V1 rollback command.
+
+    python scripts/phasec3_authority_cutover.py \
+      --packet /secure/qdl-v2/change/canary-packet.json
+
+Review the printed APPLY_C3_<digest> token. Apply only the same packet bytes:
+
+    QDL_CONTROL_ADMIN_DSN='postgresql://...' \
+    python scripts/phasec3_authority_cutover.py \
+      --packet /secure/qdl-v2/change/canary-packet.json \
+      --apply --confirm APPLY_C3_<digest>
+
+Start control services before canary. Start production workers only after the
+RUST_CANARY authority event is durable:
+
+    docker compose --env-file "$QDL_RELEASE_ROOT/stable.env" \
+      -f docker-compose.v2-stable.yml --profile stable-authority \
+      up -d stable_authority_db authority_outbox_v2
+
+    docker compose --env-file "$QDL_RELEASE_ROOT/stable.env" \
+      -f docker-compose.v2-stable.yml \
+      --profile stable-authority --profile stable-authority-primary \
+      up -d production_core_1 production_core_2 production_core_3
+
+The command checks the current DB row under lock and executes one transaction
+per slice, stopping on the first stale CAS. Primary and Python restore use the
+accepted qdl_transition_authority_v2 handoff; no environment label can promote
+authority.
+
 
 ## Gate 7 - Close With V1 Hot Fallback
 

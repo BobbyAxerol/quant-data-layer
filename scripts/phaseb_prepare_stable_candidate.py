@@ -17,6 +17,7 @@ from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
     StableAcquisitionPlan,
     stable_authority_record,
+    write_production_core_bundle,
     write_stable_runtime_bundle,
 )
 
@@ -105,10 +106,18 @@ def prepare_candidate(
         acquisition=acquisition,
         authority=authority,
     )
+    bundle_digests.update(write_production_core_bundle(
+        runtime_dir,
+        catalog=catalog,
+        acquisition=acquisition,
+        raw_authority=authority,
+        partition_plan_epoch=1,
+    ))
     for role, principal in (
         ("producer", "phase8-producer"),
         ("core", "phase8-core"),
         ("projector", "phase8-consumer"),
+        ("authority-dispatcher", "stable-authority-dispatcher"),
         ("trading-system", "stable-trading-system"),
     ):
         copy_client_identity(cert_dir, identities_dir / role, principal)
@@ -132,6 +141,8 @@ def prepare_candidate(
     ).hexdigest()
     ingest_secret = secrets.token_urlsafe(48)
     cursor_secret = secrets.token_urlsafe(48)
+    control_db_password = secrets.token_urlsafe(32)
+    dispatcher_db_password = secrets.token_urlsafe(32)
     jwt_public_key = (jwt_identity_dir / "public.pem").read_text(encoding="utf-8")
     compose_cert_dir = (host_cert_dir or cert_dir).resolve()
     compose_output_dir = (host_output_dir or output_dir).resolve()
@@ -151,6 +162,9 @@ def prepare_candidate(
         "QDL_STABLE_PROJECTOR_CERT_DIR": str(
             compose_output_dir / "identities/projector"
         ),
+        "QDL_STABLE_AUTHORITY_CERT_DIR": str(
+            compose_output_dir / "identities/authority-dispatcher"
+        ),
         "QDL_STABLE_CORE_CERT_DIR": str(compose_output_dir / "identities/core"),
         "QDL_STABLE_PRODUCER_CERT_DIR": str(
             compose_output_dir / "identities/producer"
@@ -162,6 +176,16 @@ def prepare_candidate(
         ),
         "QDL_STABLE_TRADING_SYSTEM_JWT_PRIVATE_KEY": str(
             compose_output_dir / "identities/trading-system-jwt/private.key"
+        ),
+        "QDL_STABLE_CONTROL_DB_PASSWORD": control_db_password,
+        "QDL_STABLE_DISPATCHER_DB_PASSWORD": dispatcher_db_password,
+        "QDL_STABLE_CONTROL_DB_DSN": (
+            "postgresql://qdl_authority_dispatcher:"
+            f"{dispatcher_db_password}@stable_authority_db:5432/qdl_authority"
+        ),
+        "QDL_STABLE_CONTROL_ADMIN_DSN": (
+            "postgresql://qdl_authority:"
+            f"{control_db_password}@stable_authority_db:5432/qdl_authority"
         ),
         "QDL_STABLE_RUNTIME_DIR": str(compose_output_dir / "runtime"),
     }
@@ -186,7 +210,7 @@ def prepare_candidate(
         "acquisition_revision": acquisition.revision,
         "consumer_count": 5,
         "workload_mtls": True,
-        "workload_identity_count": 3,
+        "workload_identity_count": 4,
         "secret_values_recorded": False,
     }
     manifest_path = output_dir / "candidate-manifest.json"

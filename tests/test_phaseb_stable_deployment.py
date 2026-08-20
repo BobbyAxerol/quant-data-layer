@@ -809,6 +809,55 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 )
                 self.assertIn("stable_tls:/stable-certs:ro", services[name]["volumes"])
 
+        authority_db = services["stable_authority_db"]
+        self.assertEqual(authority_db["profiles"], ["stable-authority"])
+        self.assertNotIn("ports", authority_db)
+        self.assertIn(
+            "./migrations/postgres:/docker-entrypoint-initdb.d:ro",
+            authority_db["volumes"],
+        )
+        self.assertIn(
+            "stable_authority_db:/var/lib/postgresql/data",
+            authority_db["volumes"],
+        )
+        dispatcher = services["authority_outbox_v2"]
+        self.assertEqual(dispatcher["profiles"], ["stable-authority"])
+        self.assertEqual(dispatcher["networks"], ["stable_internal"])
+        self.assertNotIn("ports", dispatcher)
+        self.assertEqual(
+            dispatcher["environment"]["QDL_AUTHORITY_TOPIC"], "qdl.authority.v1"
+        )
+        self.assertIn(
+            "/stable-certs/authority-dispatcher/client.crt",
+            dispatcher["environment"]["QDL_KAFKA_CERT_LOCATION"],
+        )
+        production_names = (
+            "production_core_1", "production_core_2", "production_core_3"
+        )
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_KAFKA_CLIENT_ID"]
+                for name in production_names
+            },
+            {
+                "qdl-v2-production-core-001",
+                "qdl-v2-production-core-002",
+                "qdl-v2-production-core-003",
+            },
+        )
+        for name in production_names:
+            with self.subTest(production_service=name):
+                self.assertEqual(
+                    services[name]["profiles"], ["stable-authority-primary"]
+                )
+                self.assertEqual(
+                    services[name]["entrypoint"],
+                    ["/usr/local/bin/qdl-production-core"],
+                )
+                self.assertEqual(services[name]["user"], "10001:10001")
+                self.assertTrue(services[name]["read_only"])
+                self.assertNotIn("ports", services[name])
+
     def test_candidate_bundle_uses_image_ids_and_never_records_secret_values(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phaseb-cert-") as cert_directory:
             certs = Path(cert_directory)
@@ -817,6 +866,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 "phase8-producer",
                 "phase8-core",
                 "phase8-consumer",
+                "stable-authority-dispatcher",
                 "stable-trading-system",
                 "stable-query",
                 "stable-stream",
@@ -851,11 +901,32 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertIn(
                     "QDL_STABLE_RUNTIME_DIR=/host/qdl/candidate/runtime", env_text
                 )
+                self.assertIn(
+                    "QDL_STABLE_AUTHORITY_CERT_DIR="
+                    "/host/qdl/candidate/identities/authority-dispatcher",
+                    env_text,
+                )
+                self.assertIn(
+                    "postgresql://qdl_authority_dispatcher:", env_text
+                )
                 public_manifest = (output / "candidate-manifest.json").read_text()
                 self.assertNotIn("QDL_STABLE_INTERNAL_INGEST_SECRET", public_manifest)
                 for name in ("core.json", "core-002.json", "core-003.json"):
                     self.assertTrue((output / f"runtime/{name}").is_file())
+                for index in range(1, 4):
+                    self.assertTrue(
+                        (output / f"runtime/production-core-{index:03d}.json").is_file()
+                    )
+                self.assertTrue(
+                    (output / "runtime/production-core-manifest.json").is_file()
+                )
                 self.assertTrue((output / "identities/projector/client.key").is_file())
+                self.assertTrue(
+                    (
+                        output
+                        / "identities/authority-dispatcher/client.key"
+                    ).is_file()
+                )
 
 
 if __name__ == "__main__":
