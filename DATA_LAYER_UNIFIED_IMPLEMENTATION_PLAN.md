@@ -4069,6 +4069,78 @@ declared complete while an earlier required gate remains open.
 | `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `COMPLETE` | B13-B19 plus the approved clean-log closure passed. Fresh RF3/minISR2 Kafka accepted real Binance/OKX data; atomic cache rebuild converged at lag 19 with observed bound 46; 12 retained partitions had zero gaps/duplicates/quarantine; signed SDK consumers reached `REPLAYING -> LIVE`; Trading System paper snapshots were fresh/execution-eligible; V1 was unchanged. Conclusion: `PASS`. |
 | `B.4 Release Certification And Cleanup` | Full Python/Rust/Buf/OpenAPI/security/capacity suites, immutable one-SHA images, compact evidence, docs/runbook, exact candidate cleanup and V1 invariant | `COMPLETE` | Final code SHA `2412572` produced the non-root Python/Rust image pair; full source, contract, security, capacity, real-provider restart and signed consumer gates passed. Exact candidate resources were removed and V1 stayed unchanged. Conclusion: `PASS`; Phase B overall remains `PARTIAL_EXTERNAL` only for the pre-existing DNSE provider gate. |
 
+#### B.2-D DNSE Production Provider Closure (`IN_PROGRESS`)
+
+**Goal:** close the remaining Vietnam-market provider gap without weakening the
+first-class Binance/OKX/VN contract. DNSE remains a Python vendor acquisition
+edge, while every authenticated raw TRADE/BAR envelope continues through the
+shared Rust canonical, quality and durable-publication core.
+
+**Approved references:** the provider-neutral rules in
+`upgrade/quant-data-layer-fund-grade-upgrade-architecture.md` sections 4, 14.4,
+Phase A item 5 and Phase B; plus the operator-supplied local DNSE OpenAPI SDK
+snapshot under `dnse_provider/`. The snapshot is protocol reference only: it has
+no discovered redistribution license and contains credential-bearing examples,
+so no source, secret or generated artifact from that directory may be committed.
+
+**Scope and invariants:**
+
+1. Add a versioned, TLS-verifying DNSE REST history transport with explicit
+   proxy policy, bounded thread-safe provider quota, bounded retry/backoff with
+   `Retry-After`, strict response/pagination validation and secret-redacted
+   errors. The default API contract revision is `2026-07-23`, configurable by
+   `DNSE_API_VERSION`; insecure SDK `CERT_NONE` behavior is forbidden.
+2. Keep REST exclusively for cold bootstrap and bounded gap repair. Use the
+   provider-native authenticated `ohlc_closed.1` WebSocket for live final BARs;
+   TRADE and BAR enter one bounded lossless queue and are acknowledged only
+   after Kafka durable publication. No synthetic/no-trade BAR is fabricated.
+3. Persist an atomic, mode/catalog/acquisition/authority-bound DNSE BAR
+   watermark only after complete Kafka ACK. A matching complete checkpoint
+   avoids repeated cold REST bootstrap; unreadable, conflicting, partial or
+   stale-authority state fails closed. Reconnect may replay equal final BARs but
+   changed values at one timestamp are quarantined by the existing core.
+4. Preserve VN identity, `Asia/Ho_Chi_Minh` calendar/session semantics,
+   derivative contract/share units and immutable `DNSE_DIRECT` lineage. Market
+   closure is healthy non-execution state, not provider outage.
+5. V1 port `8100`, current Redis/Kafka namespaces, production authority and all
+   running consumers remain unchanged. No service restart, runtime cutover,
+   provider relabeling, production write or broad cleanup is approved here.
+
+**Test and acceptance gates:**
+
+- unit/contract tests for version/signature headers, TLS/proxy policy,
+  timeout/429/5xx retry, malformed JSON, unequal OHLC arrays, timestamp bounds,
+  duplicate/conflicting rows, non-monotonic pagination and quota concurrency;
+- closed-BAR WebSocket mapping tests for exact decimal text, final 1m timestamps,
+  wrong symbol/resolution, queue saturation, batched durable ACK and ACK failure;
+- restart/checkpoint tests for atomic persistence, exact restore, partial ACK,
+  corruption, authority/catalog/acquisition mismatch and duplicate replay;
+- existing Python/Rust VN golden parity, calendar/session, stable-edge,
+  deployment and compatibility suites remain green;
+- bounded real-provider smoke must use authentic DNSE bytes and zero public V1
+  writes. If this host still cannot reach official REST TCP/443, implementation
+  can become `PASS_LOCAL_EXTERNAL_GATE`, but DNSE production bootstrap remains
+  fail-closed until either DNSE permits this host egress or an approved isolated
+  DNSE acquisition edge publishes authenticated raw envelopes over mTLS/ACL.
+
+**Implementation journal:**
+
+- `2026-08-20 DNSE REST TRANSPORT SLICE PASSED`: added a dedicated provider
+  wrapper with API revision `2026-07-23`, HMAC nonce/signature, mandatory TLS and
+  hostname verification, explicit opt-in environment proxy, thread-safe bounded
+  quota, redacted status errors, bounded timeout/retry/`Retry-After`, response
+  byte/page/row limits, strict parallel-array/OHLC/timestamp validation and
+  monotonic pagination with exact duplicate/conflict handling. The legacy
+  `_fetch_ohlc_raw` signature now delegates to this wrapper; its date chunk loop
+  no longer skips one day between exclusive boundaries. Eight isolated,
+  network-disabled unit cases passed. No service, provider, Redis, Kafka or V1
+  runtime was contacted or changed.
+
+**Rollback:** revert only this bounded provider/edge commit and use the retained
+`2.0.0-2412572` artifacts. Existing V1 remains the authority throughout. The
+decision to deploy an egress-capable DNSE edge or promote the revised V2 slice
+requires a separate operator-approved topology and blast radius.
+
 Every subphase closure records: approved boundary, invariant, exact commands and
 pass/fail/skip counts, real-provider or test provenance, resource/latency data,
 runtime mutations, cleanup, V1 impact, commit SHA, remaining external gate and

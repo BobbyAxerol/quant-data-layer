@@ -1438,6 +1438,26 @@ Với VN market data:
 - After-hours last snapshot không được đánh dấu live.
 - Trading calendar quyết định market closed, không dùng absence đơn thuần.
 
+DNSE production acquisition boundary:
+
+- REST market-history transport sends an explicit version header, verifies TLS
+  and hostname, applies an explicit proxy policy, bounded quota/retry/backoff and
+  strict OHLC/pagination validation. REST is cold-bootstrap/gap-repair only.
+- Live final 1m bars use authenticated native `ohlc_closed.1`; they do not poll
+  REST every minute. TRADE and BAR share the bounded lossless raw edge and reach
+  consumers only through durable broker ACK plus the Rust canonical core.
+- The last final BAR watermark is atomic and bound to slice, authority, catalog,
+  acquisition revision and exact BAR bindings. It advances only after all
+  related durable ACKs; corrupt, partial or mismatched state fails closed.
+- An official SDK snapshot without a redistribution license is protocol
+  reference, not vendored source. Insecure certificate disabling and examples
+  carrying credentials are never copied into release artifacts.
+- If the primary host cannot reach official DNSE REST, run a separately governed
+  low-rate DNSE acquisition edge in an approved egress domain and publish
+  authenticated raw envelopes over mTLS/ACL. Never relabel vnstock/V1 Parquet as
+  `DNSE_DIRECT`; WebSocket-only collection may build durable future history but
+  is not an instant replacement for a fresh 500-row bootstrap.
+
 ### 14.5 Failover state machine
 
 ```text
