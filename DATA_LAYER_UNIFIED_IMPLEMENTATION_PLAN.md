@@ -6648,6 +6648,40 @@ untouched.
   Python image from the resulting commit and rerun exact-network real-provider
   acceptance before consumer cutover.
 
+**2026-08-20 C.5 Data Layer ingress runtime acceptance: `PASS / CONSUMER CUTOVER READY`:**
+
+- Immutable Python image `qdl-v2-python:2.0.0-4a605fbfe278` is
+  `sha256:9ba5f4a3419c9b5a71bf9dbc8dc65817956054c8bf6b29be6ff6affb45d9601b`,
+  runs as `qdl:qdl`, and carries exact revision
+  `4a605fbfe2783507d64819cdfdb1c930833b97d6` with version `2.0.0`.
+  The unchanged Rust image remains
+  `sha256:ab57e015da2fb96ef6e4b2180676e0a41b2cc45b64080e820d6a8f29cdab180a`.
+- Only the six Python V2 roles were recreated with the new immutable image.
+  Kafka, three Rust cores, stable Redis, all durable volumes, active certificate
+  set, V1 and Trading System were preserved. All six roles report restart count
+  zero; both query replicas are READY and exactly one stream replica is READY
+  while its peer is STANDBY.
+- Final acceptance ran from the immutable image itself over
+  `executor_network` and the frozen target order `qdl-v2-stream-a,b`, with
+  `a` deliberately standby. Binance USD-M and OKX Swap each returned five
+  authoritative final 1m bars, live provider events, persistent cursors and
+  exact `+1` resume. Status was PASS; no synthetic event was used.
+- A request without a client certificate failed the TLS handshake
+  (`curl rc=52`). V1 remained HTTP 200 at `/v1/health`, all 16 V1 Binance
+  shards stayed connected, recent queue-drop delta and Redis publish errors were
+  zero. Post-acceptance canonical lag was 191 across six partitions, within the
+  configured 250 bound; bounded Python-role logs contained no new error,
+  critical, exception, traceback or failure.
+- Resource snapshot remained bounded: Python roles used about 39-69 MiB each,
+  stable Redis about 4 MiB, Rust roles about 25-44 MiB and Kafka replicas about
+  435-471 MiB each. No container or persistent volume was deleted.
+- A generated but undeployed bundle was rejected because it rotated cursor/HMAC/
+  DB secrets during an image-only patch. It was verified unreferenced and removed
+  exactly; the active tested identity bundle remains intact. Trading System may
+  now proceed with the separately approved `V2_PRIMARY` plus V1 fallback
+  market-data cutover. This does not promote `RUST_SHADOW` to `RUST_PRIMARY`
+  and does not authorize DNSE migration.
+
 
 **2026-08-20 sparse-feed recovery closure: `PASS / RUNTIME REBUILD PENDING`:**
 
