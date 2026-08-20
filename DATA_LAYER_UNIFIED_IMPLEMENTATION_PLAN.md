@@ -4179,6 +4179,8 @@ so no source, secret or generated artifact from that directory may be committed.
   requires a valid dedicated key plus official REST reachability, or an
   operator-approved isolated egress edge, followed by the bounded 500-row,
   closed-BAR, restart/checkpoint and signed-consumer gates in the runbook.
+  Implementation commits: `583ae82` (strict versioned history) and `5d37976`
+  (durable closed-BAR acquisition, checkpoint, compatibility and runbook).
 
 **Rollback:** revert only this bounded provider/edge commit and use the retained
 `2.0.0-2412572` artifacts. Existing V1 remains the authority throughout. The
