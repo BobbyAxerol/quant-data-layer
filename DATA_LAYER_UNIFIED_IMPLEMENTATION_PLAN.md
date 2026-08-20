@@ -5873,7 +5873,7 @@ and removes the superseded candidate/rollback artifacts after verification.
 
 ### Phase C - Production V2 And Rust Authority Cutover
 
-**Status:** `C.0 RELEASE/MERGE PREPARATION IN PROGRESS / PRODUCTION CUTOVER NOT AUTHORIZED`
+**Status:** `C.1 SHADOW-CERTIFIED / C.2 CONSUMER CLOSURE IN PROGRESS / PRODUCTION CUTOVER NOT AUTHORIZED`
 
 **Purpose:** move approved Binance and OKX feed slices from the current V1
 authority to the stable V2 contract with Rust as the actual canonical realtime
@@ -6118,6 +6118,63 @@ Require real Binance/OKX warmup and stream data, zero unexplained gap/duplicate/
 quarantine, bounded lag/resources, broker and process restart recovery, exact
 cursor continuation, V1 health unchanged and exact disposable cleanup on
 failure.
+
+**C.1 implementation journal:**
+
+- `2026-08-20 C.1 IMMUTABLE ISOLATED DEPLOYMENT STARTED`: build the Python
+  edge and Rust core from the same tested source revision
+  `f93b7f0e4d3381a01da48dafbb8263436b0315e1`. The immutable candidates are
+  `qdl-v2-python:2.0.0-f93b7f0e4d33` with image ID
+  `sha256:7a1b11097e4e85a51630068b2a619e34ce654b532d5ea750c6b8678882f2cc86`
+  and `qdl-v2-rust:2.0.0-f93b7f0e4d33` with image ID
+  `sha256:fc50dbf0a83323966ed6d8e76ae468a98edad6e34c7f0392a07924e94018348f`;
+  both carry the exact source revision label and run as UID/GID `10001` in
+  the stable compose. The bounded certification slice contains authentic
+  Binance USDM/Spot and OKX Swap/Spot BTC-USDT feeds only. It uses project
+  `qdl_v2_stable_candidate`, dedicated RF3/minISR2 Kafka, ephemeral Redis,
+  private state/TLS, loopback ports `18201/18202/18210/18211/18220/18221`
+  and `RUST_SHADOW`; `stable-vn` is excluded. Port `8100`, V1 containers,
+  V1 volumes and current consumer routes are immutable boundaries. Rollback
+  before consumer migration is project-scoped `docker compose down` without
+  `-v`; no authority CAS or Trading System route mutation is authorized by
+  this journal entry.
+
+- `2026-08-20 C.1 ISOLATED SHADOW CERTIFICATION PASS`: generated a private
+  `0600` environment bundle with short-lived test TLS material and
+  `cutover_authorized=false`, then started only project
+  `qdl_v2_stable_candidate`. Kafka created three six-partition topics at RF3,
+  minISR2 and full ISR. Authentic Binance USDM/Spot and OKX Swap/Spot trades
+  plus 500 closed 1m bars per binding entered the raw topic and passed through
+  the Rust canonical core. Query replicas returned exact BAR payload parity;
+  Binance/OKX five-row warmups were `FULL`, `FINAL`, authoritative,
+  complete and gap-free. The reusable
+  `scripts/phasec1_isolated_consumer_acceptance.py` used the released SDK to
+  prove signed snapshot handoff, `REPLAYING -> LIVE`, ACK, fsynced cursor
+  persistence, client recreation through the other query replica and exact
+  `N+1` resume for both venues. The quarantine topic remained zero on all
+  six partitions.
+- Failure drills stayed project-scoped. Restarting one Rust worker made the
+  execution-grade query fail closed on freshness while the group rebalanced;
+  it recovered to lag 32 and the SDK acceptance passed again. Stopping the
+  current stream lease holder promoted the peer in five seconds; both replicas
+  remained live, exactly one was ready, and cursor/reconnect acceptance passed.
+  Restarting one Kafka broker restored full ISR with core lag 51 and projector
+  lag 57; post-restart SDK acceptance passed and quarantine remained zero.
+  Missing auth returned 401, mismatched consumer returned 403, and wrong
+  purpose on a market-data endpoint returned 403. At the bounded resource
+  sample Rust workers used 27-44 MiB each, Python roles 40-72 MiB, Redis 3 MiB
+  and Kafka brokers 427-433 MiB each. V1 remained healthy with 40 paths, image
+  `sha256:8f2a5a3f1ff97762feb1531c3787e714dfda60b0b64df5b7359b9e5f6740c980`,
+  original start time and restart count zero.
+- `C.1 conclusion: PASS / SHADOW-CERTIFIED`. This is not production authority.
+  C.2 inspection exposed mandatory blockers before consumer cutover: stable
+  gRPC currently binds insecurely and is reachable only through loopback;
+  Trading System runtime IDs do not match the registered stable consumer ID;
+  and V2 routing is provider-wide although this certified catalog is a bounded
+  BTC slice. In addition, the stable runtime accepts only `RUST_SHADOW`;
+  production promotion must consume the durable authority CAS/outbox and fence
+  writers instead of changing an environment label. These are in-scope C.2/C.3
+  correctness gates and must be fixed, not deferred as operational debt.
 
 #### C.2 Single-Consumer Trading System Cutover
 

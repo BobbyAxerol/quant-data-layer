@@ -173,9 +173,25 @@ Acceptance:
 ```bash
 curl --fail --silent http://127.0.0.1:18201/health/ready
 curl --fail --silent http://127.0.0.1:18202/health/ready
-curl --fail --silent http://127.0.0.1:18210/health/ready
-curl --fail --silent http://127.0.0.1:18211/health/ready
+curl --fail --silent http://127.0.0.1:18210/health/live
+curl --fail --silent http://127.0.0.1:18211/health/live
 curl --fail --silent http://127.0.0.1:8100/v1/health
+
+# Active/passive means both stream replicas are live and exactly one is ready.
+# Select that replica's matching gRPC port for the SDK handoff/reconnect gate.
+if curl --fail --silent http://127.0.0.1:18210/health/ready >/dev/null; then
+  GRPC_TARGET=127.0.0.1:18220
+else
+  curl --fail --silent http://127.0.0.1:18211/health/ready >/dev/null
+  GRPC_TARGET=127.0.0.1:18221
+fi
+set -a
+. "$QDL_RELEASE_ROOT/stable.env"
+set +a
+docker run --rm --network host \
+  -e QDL_STABLE_JWT_KEYS_JSON="$QDL_STABLE_JWT_KEYS_JSON" \
+  -v "$PWD/scripts/phasec1_isolated_consumer_acceptance.py:/acceptance.py:ro" \
+  "$PYTHON_IMAGE" python /acceptance.py --grpc-target "$GRPC_TARGET"
 ```
 
 Require authentic Binance/OKX data, zero unexplained gap/duplicate/quarantine,
