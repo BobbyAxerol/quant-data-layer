@@ -5871,6 +5871,141 @@ and removes the superseded candidate/rollback artifacts after verification.
 - `RUNTIME UNCHANGED`: port 8100 still serves V1 from the existing container;
   no restart, authority mutation or consumer migration has occurred.
 
+### Phase C - Production V2 And Rust Authority Cutover
+
+**Status:** `C.0 RELEASE/MERGE PREPARATION IN PROGRESS / PRODUCTION CUTOVER NOT AUTHORIZED`
+
+**Purpose:** move approved Binance and OKX feed slices from the current V1
+authority to the stable V2 contract with Rust as the actual canonical realtime
+authority and Python retained as the API/SDK/history/control/projector edge.
+DNSE remains a declared external debt and is disabled from initial production
+promotion until its provider gates pass.
+
+**2026-08-20 pre-cutover audit facts:**
+
+- public port `8100` currently serves `data-layer:v0.1.0`; OpenAPI exposes 40
+  V1 paths and zero V2 paths;
+- no V2 stable container is running; only the retained
+  `qdl_v2_stable_candidate_stable_tls` volume remains;
+- the feature branch is 81 commits ahead of `dev`; the latest released
+  `2.0.0-2412572` images predate the bounded DNSE closure commits;
+- the stable compose and realtime binaries deliberately accept only
+  `RUST_SHADOW`; Phase 9.2 proves the CAS/handoff/fencing behavior in an
+  isolated rehearsal but is not wired into the long-running stable runtime;
+- therefore changing an environment variable or routing consumers directly to
+  the current candidate would be an invalid cutover and could create ambiguous
+  writer authority.
+
+The operator procedure and merge/cutover commands are frozen in
+`docs/runbooks/v2-production-rust-authority-cutover.md`.
+
+#### C.0 Release Branch Closure And Production-Authority Design
+
+**Goal:** merge the already-certified V2 implementation through `dev`, then
+implement the missing long-running authority wiring on a new feature branch
+without mutating V1.
+
+**Required work:**
+
+1. Fix plan/document drift, run CI-equivalent source/contract/security suites,
+   push the current feature branch and merge it to `dev` only after CI passes.
+   Do not merge `main` and do not deploy from an unmerged worktree.
+2. Create `feat/v2-production-authority-cutover` from updated `dev`.
+3. Connect the Phase 9 persistent PostgreSQL CAS and immutable audit/handoff
+   records to a transactional authority outbox and compacted Kafka authority
+   topic. A database transition and its outbox record are one transaction;
+   retries are idempotent and stale revision/owner/lease/plan fail closed.
+4. Make the long-running Rust canonical sink consume and reconstruct that
+   authority stream, use the existing Phase 9.2 fence at every durable target,
+   and refuse canonical/public/compatibility writes until its exact authority
+   and target watermarks are reconstructed.
+5. Keep acquisition separate from publication authority. Binance/OKX native
+   acquisition may publish authenticated raw events only under the current
+   slice lease; Python adapters may never bypass the Rust canonical core.
+6. Add an operator CLI for preflight, transition, fence, rollback and status.
+   The CLI prints identities/revisions/watermarks/digests only, never secrets.
+7. Build one immutable Python/Rust image pair from the merged SHA, generate
+   SBOM/provenance, and retain exactly one tested V1 rollback generation.
+
+**C.0 gates:** migration idempotency, transactional outbox replay, compacted
+authority recovery, stale-writer rejection, restart recovery, exact Python/Rust
+parity, public V1 contract compatibility, full source/Clippy/security tests and
+zero production mutation. Conclusion must be either `PASS` or `FAIL`; missing
+authority wiring cannot be deferred as operational debt.
+
+**C.0 implementation journal:**
+
+- `2026-08-20 RELEASE/CUTOVER PREPARATION RECORDED`: corrected the malformed
+  `RUNTIME UNCHANGED` journal line and added the production cutover boundary
+  plus `docs/runbooks/v2-production-rust-authority-cutover.md`. Read-only
+  runtime inspection proved V1 `0.1.0` still owns port `8100` with 40 V1
+  paths and zero V2 paths, no V2 containers are running, and the current stable
+  binaries/config are intentionally shadow-only. The branch is 81 commits ahead
+  of `dev`; it must merge through CI before a new authority feature branch is
+  created.
+- Documentation whitespace and secret scans passed; stable compose rendered
+  successfully with isolated dummy values and no container start. Host
+  preflight observed 11 GiB available RAM, 108 GiB free disk and eight CPUs.
+  No image build, provider call, service restart, authority mutation, consumer
+  route change, topic/Redis write, volume deletion, push or merge occurred.
+  C.0 remains `IN_PROGRESS` until the current PR is CI-green and merged to
+  `dev`; production authority wiring starts only on the new branch named in
+  this phase.
+
+#### C.1 Isolated Stable V2 Deployment
+
+Deploy the immutable pair under project `qdl_v2_stable_candidate`, loopback
+ports `18201/18202/18210/18211/18220/18221`, dedicated RF3/minISR2 Kafka,
+dedicated Redis prefix/cache/state and unique credentials. Start in
+`RUST_SHADOW`; exclude the `stable-vn` profile. V1 port `8100`, current
+Redis, provider sockets and consumer routes remain unchanged.
+
+Require real Binance/OKX warmup and stream data, zero unexplained gap/duplicate/
+quarantine, bounded lag/resources, broker and process restart recovery, exact
+cursor continuation, V1 health unchanged and exact disposable cleanup on
+failure.
+
+#### C.2 Controlled Consumer Canary
+
+Migrate in order: monitoring, one paper alpha, Trading System paper adapter,
+then remaining approved paper consumers. Each manifest performs
+warmup -> signed cursor -> replay -> live and has an exact V1 rollback route.
+No sandbox/live order consumer is included. A stale, gapped, non-authoritative
+or session-invalid read blocks execution.
+
+#### C.3 Exact-Slice Rust Authority Promotion
+
+Promotion is one slice at a time, initially one Binance or OKX TRADE slice.
+The approval packet must name image IDs, slice/binding, old/new owner,
+authority revision, lease/plan epoch, terminal watermark `W`, topics/groups,
+ports, volumes, credentials by secret reference, affected consumers, hold
+duration and rollback command.
+
+The only allowed sequence is:
+
+`PYTHON_PRIMARY -> RUST_SHADOW -> RUST_CANARY -> RUST_PRIMARY`.
+
+Fence the old writer, persist its terminal checkpoint, accept the handoff,
+execute the CAS/outbox transition, reconstruct every target through `W`, and
+publish first as Rust at `W+1`. Any ambiguity, missing ACK, parity mismatch,
+lag/gap, stale CAS or consumer failure enters `BLOCKED` and rolls back under a
+newer revision; never restart V1 as an uncoordinated writer.
+
+#### C.4 Hold, Expand And Release
+
+Hold the first primary slice for the approved observation window with zero
+authority ambiguity or unexplained market-data mismatch. Expand independently
+by venue/feed manifest; no slice inherits certification. Only after all
+registered consumers use V2 may the operator approve routing the stable public
+endpoint and opening a V1 sunset window. DNSE remains disabled until its
+separate provider gate passes.
+
+**Decision boundary:** C.0 code/release preparation and C.1 isolated deployment
+are non-production-authority work. C.2 changes only explicitly named paper
+consumer routes. C.3 and C.4 require a separate operator approval containing
+the exact packet above. No command in this plan implicitly authorizes a restart,
+authority mutation, consumer cutover, volume deletion or V1 shutdown.
+
 ### Rollback
 
 Before runtime cutover, remove only isolated Rust/Kafka/V2 test resources.
