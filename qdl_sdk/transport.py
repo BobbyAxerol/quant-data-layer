@@ -212,37 +212,67 @@ class GrpcStreamTransport:
             ("x-qdl-consumer-id", consumer_id),
             ("x-qdl-purpose", RestQueryTransport._purpose(requirement)),
         )
-        try:
-            subscribe = self._subscribes[self._target_index]
-            async for response in subscribe(request, metadata=metadata):
-                record = response.record
-                payload = record.WhichOneof("payload")
-                if payload == "control":
-                    yield ControlEvent(
-                        record.control.code,
-                        record.control.detail,
-                        {"high_watermark": record.control.high_watermark},
-                    )
-                    continue
-                if payload == "event":
-                    yield StreamEvent(record.logical_offset, record.resume_token, record.event)
-        except grpc.aio.AioRpcError as error:
-            detail = error.details() or "gRPC stream failed"
-            if error.code() is grpc.StatusCode.UNAVAILABLE and len(self.targets) > 1:
-                self._target_index = (self._target_index + 1) % len(self.targets)
-                self.target = self.targets[self._target_index]
-            if error.code() is grpc.StatusCode.OUT_OF_RANGE:
-                raise CursorExpiredError("CURSOR_EXPIRED", detail, retryable=False) from error
-            if error.code() is grpc.StatusCode.RESOURCE_EXHAUSTED:
-                raise SlowConsumerError("RATE_LIMITED", detail, retryable=True) from error
-            if error.code() is grpc.StatusCode.INVALID_ARGUMENT:
-                raise DataLayerError("CURSOR_INVALID", detail, retryable=False) from error
-            if error.code() is grpc.StatusCode.PERMISSION_DENIED:
-                raise DataLayerError("SOURCE_NOT_ALLOWED", detail, retryable=False) from error
-            if error.code() is grpc.StatusCode.FAILED_PRECONDITION:
-                code = detail.partition(":")[0]
-                raise DataLayerError(code or "DATA_NOT_READY", detail, retryable=False) from error
-            raise DataLayerError("DEPENDENCY_UNAVAILABLE", detail, retryable=True) from error
+        start_index = self._target_index
+        for attempt in range(len(self.targets)):
+            target_index = (start_index + attempt) % len(self.targets)
+            self._target_index = target_index
+            self.target = self.targets[target_index]
+            responses_seen = False
+            try:
+                subscribe = self._subscribes[target_index]
+                async for response in subscribe(request, metadata=metadata):
+                    responses_seen = True
+                    record = response.record
+                    payload = record.WhichOneof("payload")
+                    if payload == "control":
+                        yield ControlEvent(
+                            record.control.code,
+                            record.control.detail,
+                            {"high_watermark": record.control.high_watermark},
+                        )
+                        continue
+                    if payload == "event":
+                        yield StreamEvent(
+                            record.logical_offset,
+                            record.resume_token,
+                            record.event,
+                        )
+                return
+            except grpc.aio.AioRpcError as error:
+                detail = error.details() or "gRPC stream failed"
+                if (
+                    error.code() is grpc.StatusCode.UNAVAILABLE
+                    and len(self.targets) > 1
+                ):
+                    next_index = (target_index + 1) % len(self.targets)
+                    self._target_index = next_index
+                    self.target = self.targets[next_index]
+                    if not responses_seen and attempt + 1 < len(self.targets):
+                        continue
+                if error.code() is grpc.StatusCode.OUT_OF_RANGE:
+                    raise CursorExpiredError(
+                        "CURSOR_EXPIRED", detail, retryable=False
+                    ) from error
+                if error.code() is grpc.StatusCode.RESOURCE_EXHAUSTED:
+                    raise SlowConsumerError(
+                        "RATE_LIMITED", detail, retryable=True
+                    ) from error
+                if error.code() is grpc.StatusCode.INVALID_ARGUMENT:
+                    raise DataLayerError(
+                        "CURSOR_INVALID", detail, retryable=False
+                    ) from error
+                if error.code() is grpc.StatusCode.PERMISSION_DENIED:
+                    raise DataLayerError(
+                        "SOURCE_NOT_ALLOWED", detail, retryable=False
+                    ) from error
+                if error.code() is grpc.StatusCode.FAILED_PRECONDITION:
+                    code = detail.partition(":")[0]
+                    raise DataLayerError(
+                        code or "DATA_NOT_READY", detail, retryable=False
+                    ) from error
+                raise DataLayerError(
+                    "DEPENDENCY_UNAVAILABLE", detail, retryable=True
+                ) from error
 
     async def close(self) -> None:
         for channel in self._channels:

@@ -6605,6 +6605,49 @@ untouched.
   regression, common workload identity, RS256 rotation and duplicate-target
   fail-closed behavior. No runtime or secret changed during tests.
 
+**2026-08-20 active/passive SDK failover finding: `BLOCKED BEFORE CONSUMER CUTOVER`:**
+
+- The rotated certificate and exact `executor_network` aliases now pass mTLS.
+  Governed recovery replayed 212,165 real-provider records across all six
+  canonical partitions, rebuilt 47 Redis keys and converged to total lag 36 for
+  three samples without touching V1.
+- Direct acceptance through the replica currently holding the gateway lease
+  passed for Binance USD-M and OKX Swap: five final 1m bars, authoritative
+  source/complete coverage, replay-to-live controls, persistent cursor and exact
+  `+1` resume. Shared spool timestamps also continued advancing from real
+  provider records.
+- Multi-target acceptance using the frozen order `qdl-v2-stream-a,b` timed out
+  when `a` was the standby owner. The transport rotates its target after gRPC
+  `UNAVAILABLE` but currently propagates that retryable error to the outer
+  session first; this can consume a bounded caller timeout before `b` is opened.
+- Close this as an SDK transport defect: retry each unique target at most once
+  inside the same subscribe generation, preserve the exact cursor and auth
+  metadata, and expose a retryable dependency error only after every target
+  fails. Add standby-first, all-target-failed and no-duplicate/no-gap tests,
+  rerun the full network-off suite, then repeat exact-network real-provider
+  acceptance. Public V2 schemas and V1 remain unchanged.
+
+**2026-08-20 active/passive SDK failover closure: `PASS / IMMUTABLE REBUILD PENDING`:**
+
+- `GrpcStreamTransport` now retries each unique target at most once only when
+  gRPC returns `UNAVAILABLE` before any response was observed. It preserves the
+  original cursor, requirement and JWT metadata. Once any control/data response
+  has been observed, it rotates the preferred target but returns a retryable
+  error to the session layer so recovery uses the last acknowledged cursor.
+- Real gRPC regression starts a standby endpoint before an active endpoint and
+  proves `REPLAYING -> offsets 1,2 -> LIVE` without duplicate or gap. A second
+  regression proves two standby endpoints are each attempted exactly once before
+  `DEPENDENCY_UNAVAILABLE` is exposed.
+- Targeted SDK/security tests passed 19/19. The full network-off Python suite
+  passed 555 tests with six explicit environment skips using disposable tmpfs
+  logs. An initial full-suite invocation failed only because the read-only source
+  mount did not provide a writable log path; rerunning with the governed tmpfs
+  test mount passed completely.
+- No running image, V1 route, provider, Kafka record, Redis/DB production state
+  or Trading System consumer was changed by this code slice. Build an immutable
+  Python image from the resulting commit and rerun exact-network real-provider
+  acceptance before consumer cutover.
+
 
 **2026-08-20 sparse-feed recovery closure: `PASS / RUNTIME REBUILD PENDING`:**
 
