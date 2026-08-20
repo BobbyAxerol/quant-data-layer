@@ -132,6 +132,12 @@ def _compose(
     )
 
 
+def _start_services(env_file: Path, *services: str) -> None:
+    if not services:
+        raise ValueError("at least one stable service is required")
+    _compose(env_file, "up", "-d", "--no-deps", *services)
+
+
 def _kafka_group(env_file: Path, *arguments: str) -> str:
     result = _compose(
         env_file,
@@ -292,15 +298,15 @@ def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, obje
         "--to-earliest",
         "--execute",
     )
-    _compose(env_file, "up", "-d", *STREAM_SERVICES)
+    _start_services(env_file, *STREAM_SERVICES)
     _wait_http("http://127.0.0.1:18210/health/live", deadline)
     _wait_http("http://127.0.0.1:18211/health/live", deadline)
 
-    _compose(env_file, "up", "-d", "projector_v2")
+    _start_services(env_file, "projector_v2")
     lag = _wait_bounded_lag(env_file, deadline)
     _wait_projector_ready(env_file, deadline)
 
-    _compose(env_file, "up", "-d", *QUERY_SERVICES)
+    _start_services(env_file, *QUERY_SERVICES)
     _wait_http("http://127.0.0.1:18201/health/ready", deadline)
     _wait_http("http://127.0.0.1:18202/health/ready", deadline)
 

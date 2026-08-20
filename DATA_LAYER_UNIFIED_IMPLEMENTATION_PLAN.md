@@ -4066,7 +4066,7 @@ declared complete while an earlier required gate remains open.
 | `B.0 Contract And Stable Edge` | Catalog identity, V2 query/stream/projector contracts, consumer manifests, isolated topology and V1 compatibility | `COMPLETE` | B1-B4: 6, 32, 26 and 34 targeted tests passed; the one conditional Redis case was run separately against disposable Redis and passed. Public V1 and production runtime were unchanged. |
 | `B.1 Runtime Correctness And Capacity` | Authentic acquisition, Rust canonical core, bounded projector/cache, final BAR lifecycle, lossless-vs-latest delivery and resource convergence | `COMPLETE` | B5-B8: final full Python discovery passed 478 tests with 6 explicit skips; Rust fmt/Clippy/workspace passed. A clean candidate loaded 2,000 authentic closed BARs, converged core/projector lag to 50/29, retained canonical-only bounded cache, zero quarantine and bounded Redis/app memory. Intermediate failed candidates are diagnostic evidence, not accepted releases. |
 | `B.2 Controlled Consumer Acceptance` | Registered Binance, OKX, VN, Trading System and monitoring warmup -> signed cursor -> replay -> live, including session/freshness semantics | `PARTIAL_EXTERNAL` | B9-B12: crypto alpha, monitoring and Trading System paper consumers passed on immutable `df88de0`; 500 rows per crypto binding, replica-equal results and 129-779 ms live freshness. DNSE remains blocked by official REST TCP/443 egress and cannot be replaced with synthetic or lineage-incomplete V1 data. |
-| `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `IN_PROGRESS` | B13-B19 recovery mechanics and bounded BAR repairs pass unit/real-captured-data gates. The retained isolated Kafka log contains early-final Binance rows with materially changed OHLCV and is correctly rejected; Python readers remain stopped. B.3 requires an explicitly approved clean candidate-log rehearsal before strict consumer acceptance. |
+| `B.3 Durability And Recovery` | Process generation, active/passive handoff, broker quorum loss, Redis/projection-cache rebuild, exact cursor continuity and fail-closed recovery | `COMPLETE` | B13-B19 plus the approved clean-log closure passed. Fresh RF3/minISR2 Kafka accepted real Binance/OKX data; atomic cache rebuild converged at lag 19 with observed bound 46; 12 retained partitions had zero gaps/duplicates/quarantine; signed SDK consumers reached `REPLAYING -> LIVE`; Trading System paper snapshots were fresh/execution-eligible; V1 was unchanged. Conclusion: `PASS`. |
 | `B.4 Release Certification And Cleanup` | Full Python/Rust/Buf/OpenAPI/security/capacity suites, immutable one-SHA images, compact evidence, docs/runbook, exact candidate cleanup and V1 invariant | `NOT_STARTED` | Starts only after B.3 passes. It does not authorize production cutover or consumer authority migration. |
 
 Every subphase closure records: approved boundary, invariant, exact commands and
@@ -5438,6 +5438,86 @@ and removes the superseded candidate/rollback artifacts after verification.
   recovery. The retained artifacts are V1, active candidate `c61fa39`, one
   Python/Rust rollback `cfc0246`, Kafka/Redis and all 17 volumes. No broad prune,
   volume deletion, topic reset or production mutation occurred.
+- `2026-08-20 PHASE B.3 CLEAN RUNTIME CLOSURE RESUMED`: the operator resumed
+  completion of the remaining B.3 durability/recovery gates before any B.4
+  work. The operator explicitly approved stopping only
+  `qdl_v2_stable_candidate` and deleting its exact four test volumes
+  `kafka1_data`, `kafka2_data`, `kafka3_data` and `stable_state`; `stable_tls`,
+  every V1/production container and every production volume remain protected. The rehearsal reuses only the isolated Docker project
+  `qdl_v2_stable_candidate`; it does not create another release topology or
+  address V1. The exact reset scope is limited to candidate volumes
+  `kafka1_data`, `kafka2_data`, `kafka3_data` and `stable_state`, whose retained
+  records are already classified as invalid release evidence because they
+  contain superseded early-final Binance BARs. Candidate TLS/credentials are
+  preserved. V1 containers, Redis, Parquet, provider state, ports, routes and
+  consumer authority are immutable.
+
+  The closure gate is: fresh real-provider bootstrap under immutable
+  `c61fa39`; ACK-authoritative BAR catch-up with the fixed two-second settlement
+  boundary; zero canonical gap/collision/quarantine; atomic Redis-plus-SQLite
+  rebuild; replica-equal query watermarks; signed SDK warmup -> replay -> LIVE
+  for registered Binance/OKX bindings; fresh Trading System paper snapshots;
+  bounded lag/resources; and unchanged V1 health. Any failure stops candidate
+  readers and leaves V1 authoritative. B.3 remains `IN_PROGRESS` until all
+  gates and exact cleanup evidence are recorded; B.4 remains forbidden.
+
+  The first reset command was rejected by the safety gate before execution
+  because exact deletion approval was not yet explicit. Candidate containers,
+  all five candidate volumes and V1 remain unchanged; no workaround was used.
+- `2026-08-20 PHASE B.3 CLEAN BOOTSTRAP PASSED, RECOVERY SAFETY REPAIR IN
+  PROGRESS`: after exact approval, only the candidate project was stopped and
+  the three Kafka plus one state volume were deleted; `stable_tls` and V1 were
+  verified preserved. Fresh RF3/minISR2 Kafka, Redis and state started; broker
+  bootstrap passed three topics, six partitions, mTLS and ACLs. Read-only TLS
+  validation found all nine expected files. Real-provider acquisition ACKed 500
+  settled BARs for each Binance USD-M, Binance Spot, OKX SWAP and OKX Spot
+  binding (2,000 total), then ACKed the next closed cycle; Rust workers reported
+  zero quarantine/collision/error and canonical offsets advanced.
+
+  Before the atomic rebuild, the safety gate identified that Compose dependency
+  traversal could rerun `stable_tls_init` when starting stream/query roles. It
+  was blocked before TLS mutation. The bounded repair makes recovery role start
+  explicit with `up --no-deps` after the project, Kafka, Redis, state and TLS
+  invariants are validated, and adds a unit test for the exact command. No
+  public contract, provider semantics, V1 route or authority changes.
+- `2026-08-20 PHASE B.3 CLEAN RUNTIME CLOSURE PASSED`: the safety repair passed
+  8/8 focused unit tests. The guarded atomic rebuild then deleted only the three
+  candidate SQLite cache files, flushed only candidate Redis and reset only
+  `stable-projector-v1` on `md.canonical.v2`. It observed all six partitions
+  for three consecutive samples within the fixed 250-record gate, with observed
+  bound 46 and final lag 19, then opened query replicas only after projector and
+  Redis readiness; Redis rebuilt to 47 keys.
+
+  Signed public SDK acceptance used real-provider data with
+  `test_provenance=false`. Binance and OKX each returned 500 final 1-minute BARs
+  with full coverage, no open gap and replica-equal market semantics/watermark
+  512. The only per-request replica difference was the expected clock-derived
+  `quality.freshness_ms`; all identity, timestamps, payload, source, contract
+  and other quality fields were equal. Both alpha streams emitted
+  `REPLAYING -> LIVE`, then two strictly contiguous events
+  (Binance 35752-35753; OKX 13155-13156) were ACKed. Trading System paper read
+  Binance/OKX TRADE and QUOTE snapshots at 146-316 ms freshness; all four were
+  execution eligible.
+
+  Read-only cache verification found 73,456 canonical records across 12 bounded
+  partitions, maximum 10,000 per partition, zero retained offset gaps, zero
+  duplicate event IDs and zero quarantine rows. Kafka quarantine offsets were
+  zero on all six partitions; observed projector/core lag totals were 34/12.
+  Exactly one stream owner was READY and its peer STANDBY. Candidate TLS matched
+  the preserved source bundle SHA-256, V1 health remained `ok`, Redis used
+  3.23 MiB/160 MiB and the largest app role used 69.87 MiB/512 MiB; Kafka
+  brokers stayed within 461.4 MiB/768 MiB. Logs contained no application
+  collision, unresolved gap, panic or quarantine; Kafka startup emitted only
+  benign internal-topic-already-exists warnings.
+
+  The final five-module Phase B regression ran 63 cases: 62 passed and one
+  separately proven real-Redis conditional case skipped in network-disabled
+  mode. The acceptance harness itself failed closed before the final pass on
+  least-privilege env access, an invalid test-only `event_id` assumption,
+  request-time freshness comparison and expected control-event handling; none
+  mutated provider/Kafka/Redis data or exposed candidate output to production.
+  B.3 conclusion is `PASS`/`COMPLETE`. B.4 remains `NOT_STARTED`; no
+  production cutover or consumer authority migration is authorized.
 - `2026-08-19 PHASE B ARTIFACT CLEANUP POLICY RECORDED`: Phase B ends at B.4;
   B17/B18 are repair slices inside B.3, not new subphases. Exact cleanup retains
   V1, active `e002da6`, active/rollback `cfc0246`, Kafka/Redis and all durable

@@ -17,6 +17,7 @@ from scripts.rebuild_v2_stable_projection_cache import (
     QUERY_SERVICES,
     STOP_SERVICES,
     STREAM_SERVICES,
+    _start_services,
     _validate_project,
     compose_command,
     execute_rebuild,
@@ -65,6 +66,23 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         self.assertIn("docker-compose.v2-stable.yml", command[5])
         self.assertEqual(command[-1], "config")
         self.assertNotIn("docker-compose.yml", command[5])
+
+    def test_recovery_starts_roles_without_dependency_traversal(self):
+        env = Path("/tmp/stable.env")
+        with patch(
+            "scripts.rebuild_v2_stable_projection_cache._compose"
+        ) as compose:
+            _start_services(env, "stream_v2_active", "stream_v2_passive")
+        compose.assert_called_once_with(
+            env,
+            "up",
+            "-d",
+            "--no-deps",
+            "stream_v2_active",
+            "stream_v2_passive",
+        )
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            _start_services(env)
 
     def test_lag_parser_requires_real_canonical_partitions(self):
         output = """GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG CONSUMER-ID HOST CLIENT-ID

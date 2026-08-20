@@ -5352,7 +5352,7 @@ substitute for the missing real history gate.
 Conclusion: crypto and paper adapter consumers pass; VN remains an explicit
 external egress/provider gate and must fail closed.
 
-### J.5 B.3 — Durability and recovery (`IN_PROGRESS`)
+### J.5 B.3 — Durability and recovery (`COMPLETE`)
 
 B13 passed exact active/passive handoff: the SDK ACKed offset 2,271 under epoch
 1 and resumed durable replay at offset 2,272 under epoch 2 before `LIVE`, with
@@ -5477,6 +5477,49 @@ Remaining B.3 gate: an explicitly approved clean isolated Kafka candidate,
 fresh atomic Redis-plus-SQLite rebuild, zero gap/collision/quarantine, replica
 equality, signed SDK replay/live, fresh Trading System paper data and unchanged
 V1.
+
+On 2026-08-20 the operator resumed this closure. The proposed reset boundary
+is only `qdl_v2_stable_candidate` Kafka broker volumes 1-3 plus `stable_state`;
+`stable_tls`, all V1/production state and every other Docker project are
+preserved. The candidate must use real provider data, immutable `c61fa39`
+Python code and the pinned Rust candidate, then pass settlement/catch-up,
+zero-gap/collision/quarantine, atomic cache rebuild, replica equality, signed
+SDK replay/live and Trading System paper-consumer checks. Failure leaves query
+and stream readers unavailable and V1 authoritative. B.4 cannot start from a
+partial result. The first reset attempt was safety-rejected before execution.
+The operator subsequently approved deletion of exactly the three candidate
+Kafka volumes and candidate `stable_state`; candidate `stable_tls`, all V1 and
+all production state remain protected.
+
+The approved clean reset and broker bootstrap passed: RF3/minISR2, three topics,
+six partitions, mTLS/ACLs and all nine preserved TLS files were verified.
+Authentic bootstrap ACKed 2,000 settled Binance/OKX BARs and the next closed
+cycle; Rust reported no quarantine/collision/error. A dependency-scope defect
+was then blocked before mutation: the rebuild CLI could rerun `stable_tls_init`
+when starting readers. Recovery starts must use `up --no-deps` after explicit
+infra validation, with a unit test proving the exact command, so preserved TLS
+and unrelated dependencies cannot be rewritten.
+
+
+The clean B.3 closure passed. The atomic cache rebuild converged on all six
+canonical partitions with observed lag bound 46 and final lag 19, restoring 47
+Redis keys before either query replica became ready. Signed SDK acceptance
+returned 500 full-coverage final BARs for Binance and OKX from both replicas,
+with equal market semantics and watermark 512; request-time
+`quality.freshness_ms` was correctly treated as an observation rather than
+replicated state. Both alpha consumers observed `REPLAYING -> LIVE` and ACKed
+two contiguous records. Four Binance/OKX Trading System paper TRADE/QUOTE
+snapshots were execution eligible at 146-316 ms freshness.
+
+The bounded SQLite cache held 73,456 records across 12 partitions, no retained
+offset gap, no duplicate event ID, no quarantine and at most 10,000 rows per
+partition. Kafka quarantine was empty; observed projector/core lag totals were
+34/12. One stream owner was READY, the other STANDBY; TLS bundle hashes matched,
+V1 health remained `ok`, and memory stayed within every container bound.
+The five Phase B regression modules ran 63 tests: 62 passed and one separately
+proven real-Redis conditional case skipped under network-disabled execution.
+Conclusion: B.3 is `PASS`/`COMPLETE`; B.4 remains `NOT_STARTED`, and no
+production authority or consumer cutover is implied.
 
 ### J.6 B.4 — Release certification and cleanup (`NOT_STARTED`)
 
