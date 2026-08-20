@@ -19,6 +19,7 @@ DNSE is excluded until its separate provider gate passes.
 - Stable project: `qdl_v2_stable_candidate`.
 - Initial V2 authority: `RUST_SHADOW`.
 - Initial venues: Binance and OKX only.
+- Operator-declared active consumer: Trading System only; all alphas are down.
 - V1, current Redis and current provider processes are not restarted by the
   merge or isolated-deploy steps.
 
@@ -191,20 +192,29 @@ docker compose \
 
 Do not add `-v`; preserve evidence until the failed gate is understood.
 
-## Gate 5 - Paper Consumer Canary
+## Gate 5 - Trading System Dual-Read And Route Switch
 
-Move only explicitly named manifests, in this order:
+Do not start or migrate an alpha. Keep Trading System on V1 while its adapter
+performs a bounded read-only comparison against V2 for the same Binance/OKX
+instruments and closed-bar/event boundaries.
 
-1. monitoring;
-2. one paper alpha;
-3. Trading System paper market-data adapter;
-4. remaining approved paper consumers.
+Require exact identity, timestamp, decimal, unit, finality and session semantics;
+zero unexplained gap/duplicate; bounded freshness/lag; and successful signed
+cursor replay/restart. Built-in health and authority telemetry must be green.
 
-For each consumer, record V1 cursor/watermark, V2 warmup result, first live
-cursor, restart cursor, freshness, gaps, duplicates, source/session status and
-rollback route. No sandbox/live order path is included.
+Then perform one controlled Trading System adapter restart with venue-aware
+routing:
 
-Rollback changes only that consumer endpoint/SDK config back to V1.
+```text
+Binance/OKX: V2 primary -> governed V1 fallback
+DNSE:        V1 only
+```
+
+The exact adapter config keys and restart command are populated from the current
+Trading System deployment during the cutover preflight; do not invent or
+hardcode them in advance. Every fallback/return transition records source,
+reason, watermark and operator identity. V1 fallback is accepted only when its
+freshness/session/contract checks pass; otherwise execution remains blocked.
 
 ## Gate 6 - Exact-Slice Authority Approval
 
@@ -236,9 +246,11 @@ operator:
 change_ticket:
 ```
 
-The operator must explicitly approve this exact packet.
+The operator must explicitly approve this exact packet. One packet may enumerate
+all approved Binance/OKX slices for one maintenance window, but the controller
+executes and audits each CAS independently.
 
-The transition follows only:
+Every slice follows only:
 
 ```text
 PYTHON_PRIMARY
@@ -247,16 +259,20 @@ PYTHON_PRIMARY
   -> RUST_PRIMARY
 ```
 
-The old writer is fenced at `W`; Rust reconstructs every required target
-through `W` and first publishes at `W+1`. Any failed gate enters `BLOCKED`
-and rolls back using a newer authority revision and accepted reverse handoff.
+The canary gate is bounded by accepted real events and continuity evidence, not
+an arbitrary multi-day wait. The old writer is fenced at `W`; Rust reconstructs
+all required targets through `W` and first publishes at `W+1`. A failed slice
+enters `BLOCKED` and rolls back under a newer revision without undoing an
+unrelated healthy slice.
 
-## Gate 7 - Expand And Release
+## Gate 7 - Close With V1 Hot Fallback
 
-Hold the first primary slice for the approved window. Expand one venue/feed
-slice at a time; no inherited certification. Keep V1 available until every
-registered consumer has migrated and rollback has been exercised.
+After approved Binance/OKX slices are `RUST_PRIMARY`, Trading System uses V2
+normally and V1 remains live at port `8100` as the tested fallback. Exercise
+one V2 -> V1 -> V2 route drill with durable source-switch audit and no market
+semantic mismatch.
 
-Only then may the operator approve stable V2 public routing, a V1 sunset date,
-a release PR `dev -> main`, and tag/release publication. DNSE remains disabled
-until its provider-specific external gates pass.
+There is no alpha migration and no V1 sunset in this cutover. Publish the V2
+release only after the Trading System cycle, authority audit, cursor/replay
+continuity and fallback drill pass. DNSE remains V1-only until its provider
+gate passes.

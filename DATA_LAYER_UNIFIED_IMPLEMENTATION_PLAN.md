@@ -5887,8 +5887,8 @@ promotion until its provider gates pass.
   V1 paths and zero V2 paths;
 - no V2 stable container is running; only the retained
   `qdl_v2_stable_candidate_stable_tls` volume remains;
-- the feature branch is 81 commits ahead of `dev`; the latest released
-  `2.0.0-2412572` images predate the bounded DNSE closure commits;
+- the feature branch is more than 80 commits ahead of `dev`; the latest
+  released `2.0.0-2412572` images predate the bounded DNSE closure commits;
 - the stable compose and realtime binaries deliberately accept only
   `RUST_SHADOW`; Phase 9.2 proves the CAS/handoff/fencing behavior in an
   isolated rehearsal but is not wired into the long-running stable runtime;
@@ -5940,9 +5940,9 @@ authority wiring cannot be deferred as operational debt.
   plus `docs/runbooks/v2-production-rust-authority-cutover.md`. Read-only
   runtime inspection proved V1 `0.1.0` still owns port `8100` with 40 V1
   paths and zero V2 paths, no V2 containers are running, and the current stable
-  binaries/config are intentionally shadow-only. The branch is 81 commits ahead
-  of `dev`; it must merge through CI before a new authority feature branch is
-  created.
+  binaries/config are intentionally shadow-only. The branch is more than 80
+  commits ahead of `dev`; it must merge through CI before a new authority
+  feature branch is created.
 - Documentation whitespace and secret scans passed; stable compose rendered
   successfully with isolated dummy values and no container start. Host
   preflight observed 11 GiB available RAM, 108 GiB free disk and eight CPUs.
@@ -5951,6 +5951,14 @@ authority wiring cannot be deferred as operational debt.
   C.0 remains `IN_PROGRESS` until the current PR is CI-green and merged to
   `dev`; production authority wiring starts only on the new branch named in
   this phase. Preparation commit: `130da39`.
+- `2026-08-20 OPERATOR CUTOVER SIMPLIFICATION RECORDED`: the operator reports
+  all alpha consumers are stopped and Trading System is the sole active
+  consumer. Phase C therefore removes staged alpha/monitoring migrations and
+  uses one bounded Trading System parity-and-route switch followed by a
+  preapproved Binance/OKX maintenance window. This reduces operations, not
+  correctness: persistent authority CAS/outbox, sink fencing, W/W+1 handoff,
+  durable audit and per-slice rollback remain mandatory. V1 stays hot on port
+  `8100`; DNSE stays V1-only.
 
 #### C.1 Isolated Stable V2 Deployment
 
@@ -5965,46 +5973,62 @@ quarantine, bounded lag/resources, broker and process restart recovery, exact
 cursor continuation, V1 health unchanged and exact disposable cleanup on
 failure.
 
-#### C.2 Controlled Consumer Canary
+#### C.2 Single-Consumer Trading System Cutover
 
-Migrate in order: monitoring, one paper alpha, Trading System paper adapter,
-then remaining approved paper consumers. Each manifest performs
-warmup -> signed cursor -> replay -> live and has an exact V1 rollback route.
-No sandbox/live order consumer is included. A stale, gapped, non-authoritative
-or session-invalid read blocks execution.
+The operator confirms all alpha consumers are currently stopped and Trading
+System is the only active Data Layer consumer. Do not create artificial alpha or
+monitoring migration stages. Built-in V2 health/lag/authority telemetry remains
+mandatory, but it is not a separate cutover consumer.
 
-#### C.3 Exact-Slice Rust Authority Promotion
+Run one bounded Trading System dual-read parity window for Binance and OKX:
+V1 remains the decision source while the same requested instruments, timestamps,
+decimals, units, final BAR lifecycle and freshness are compared against V2.
+After zero correctness mismatch and healthy cursor/replay evidence, switch the
+Trading System market-data adapter to V2 in one controlled restart. Configure a
+venue-aware rollback route: Binance/OKX primary V2 with explicit V1 fallback;
+DNSE remains V1-only. Never splice providers silently--every route transition
+records source, reason, watermark and operator/audit identity.
 
-Promotion is one slice at a time, initially one Binance or OKX TRADE slice.
-The approval packet must name image IDs, slice/binding, old/new owner,
-authority revision, lease/plan epoch, terminal watermark `W`, topics/groups,
-ports, volumes, credentials by secret reference, affected consumers, hold
-duration and rollback command.
+A stale, gapped, non-authoritative, wrong-session or unit-mismatched V2 read
+fails closed. Fallback to V1 is allowed only when V1 passes the same
+freshness/session/contract checks and the source-switch audit is durable.
 
-The only allowed sequence is:
+#### C.3 Fast-Track Rust Authority Promotion
+
+Promote all approved Binance and OKX feed slices in one maintenance window, but
+execute the CAS internally one slice at a time so a failure is isolated. One
+operator packet may list the complete slice set, image IDs, old/new owners,
+authority/lease/plan revisions, terminal watermarks, topics/groups, ports,
+volumes, secret references, Trading System route and rollback command.
+
+Each slice still follows:
 
 `PYTHON_PRIMARY -> RUST_SHADOW -> RUST_CANARY -> RUST_PRIMARY`.
 
-Fence the old writer, persist its terminal checkpoint, accept the handoff,
-execute the CAS/outbox transition, reconstruct every target through `W`, and
-publish first as Rust at `W+1`. Any ambiguity, missing ACK, parity mismatch,
-lag/gap, stale CAS or consumer failure enters `BLOCKED` and rolls back under a
-newer revision; never restart V1 as an uncoordinated writer.
+The canary is bounded by accepted real events and continuity evidence rather
+than a long calendar wait. Fence the old writer at `W`, persist its terminal
+checkpoint, accept the handoff, execute CAS/outbox, reconstruct every target
+through `W`, and publish first as Rust at `W+1`. When one slice passes, the
+same preapproved window proceeds to the next. Any ambiguity, missing ACK,
+parity mismatch, lag/gap, stale CAS or Trading System failure enters `BLOCKED`
+for that slice and restores V1 under a newer revision; unrelated promoted slices
+remain governed independently.
 
-#### C.4 Hold, Expand And Release
+#### C.4 Close With V1 Hot Fallback
 
-Hold the first primary slice for the approved observation window with zero
-authority ambiguity or unexplained market-data mismatch. Expand independently
-by venue/feed manifest; no slice inherits certification. Only after all
-registered consumers use V2 may the operator approve routing the stable public
-endpoint and opening a V1 sunset window. DNSE remains disabled until its
+After all approved Binance/OKX slices are `RUST_PRIMARY`, Trading System reads
+V2 as its normal source and V1 stays running on port `8100` as the tested hot
+fallback. There is no alpha-by-alpha migration while those alphas remain down
+and no V1 sunset is part of this cutover. Publish the V2 release only after the
+Trading System cycle, Rust authority audit, cursor/replay continuity and an
+exercised V1 fallback/return-to-V2 drill pass. DNSE remains V1-only until its
 separate provider gate passes.
 
 **Decision boundary:** C.0 code/release preparation and C.1 isolated deployment
-are non-production-authority work. C.2 changes only explicitly named paper
-consumer routes. C.3 and C.4 require a separate operator approval containing
-the exact packet above. No command in this plan implicitly authorizes a restart,
-authority mutation, consumer cutover, volume deletion or V1 shutdown.
+are non-production-authority work. C.2 changes only the Trading System
+market-data route. C.3 requires one explicit operator packet for the approved
+Binance/OKX slice set. No command implicitly authorizes deleting volumes,
+stopping V1 or promoting DNSE.
 
 ### Rollback
 
