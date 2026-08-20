@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from urllib.parse import urlsplit
 
 import grpc
@@ -11,6 +11,7 @@ from qdl.query.v2 import query_pb2
 from qdl_sdk.credentials import CredentialProvider
 from qdl_sdk.errors import CursorExpiredError, DataLayerError, SlowConsumerError
 from qdl_sdk.models import ControlEvent, DataRequirement, Grade, StreamEvent
+from qdl_sdk.tls import WorkloadTlsConfig
 
 
 class RestQueryTransport:
@@ -21,16 +22,20 @@ class RestQueryTransport:
         timeout_seconds: float = 10.0,
         client: httpx.AsyncClient | None = None,
         credential_provider: CredentialProvider | None = None,
+        tls: WorkloadTlsConfig | None = None,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("query timeout must be positive")
         self.base_url = base_url.rstrip("/")
+        if client is not None and tls is not None:
+            raise ValueError("provide either REST client or workload TLS, not both")
         self._owns_client = client is None
         self._credential_provider = credential_provider
         self._client = client or httpx.AsyncClient(
             base_url=self.base_url,
             timeout=httpx.Timeout(timeout_seconds),
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+            verify=tls.ssl_context() if tls is not None else True,
         )
 
     async def warmup(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
@@ -139,26 +144,46 @@ class RestQueryTransport:
 class GrpcStreamTransport:
     def __init__(
         self,
-        target: str,
+        target: str | Sequence[str],
         *,
         credentials: grpc.ChannelCredentials | None = None,
+        tls: WorkloadTlsConfig | None = None,
         allow_insecure_loopback: bool = False,
         credential_provider: CredentialProvider | None = None,
     ) -> None:
-        if not target.strip():
-            raise ValueError("gRPC stream target is required")
-        self.target = target
+        raw_targets = (target,) if isinstance(target, str) else tuple(target)
+        targets = tuple(
+            value.strip()
+            for item in raw_targets
+            for value in item.split(",")
+            if value.strip()
+        )
+        if not targets or len(set(targets)) != len(targets):
+            raise ValueError("gRPC stream targets must be non-empty and unique")
+        self.targets = targets
+        self.target = targets[0]
+        self._target_index = 0
         self._credential_provider = credential_provider
+        if credentials is not None and tls is not None:
+            raise ValueError("provide either credentials or workload TLS, not both")
+        credentials = credentials or (tls.grpc_credentials() if tls is not None else None)
         if credentials is None:
-            if not allow_insecure_loopback or not self._is_loopback(target):
+            if not allow_insecure_loopback or not all(
+                self._is_loopback(value) for value in targets
+            ):
                 raise ValueError("insecure gRPC is allowed only for explicit loopback tests")
-            self._channel = grpc.aio.insecure_channel(target)
+            self._channels = tuple(grpc.aio.insecure_channel(value) for value in targets)
         else:
-            self._channel = grpc.aio.secure_channel(target, credentials)
-        self._subscribe = self._channel.unary_stream(
-            "/qdl.query.v2.MarketDataStreamService/Subscribe",
-            request_serializer=query_pb2.SubscribeRequest.SerializeToString,
-            response_deserializer=query_pb2.SubscribeResponse.FromString,
+            self._channels = tuple(
+                grpc.aio.secure_channel(value, credentials) for value in targets
+            )
+        self._subscribes = tuple(
+            channel.unary_stream(
+                "/qdl.query.v2.MarketDataStreamService/Subscribe",
+                request_serializer=query_pb2.SubscribeRequest.SerializeToString,
+                response_deserializer=query_pb2.SubscribeResponse.FromString,
+            )
+            for channel in self._channels
         )
 
     async def subscribe(
@@ -188,7 +213,8 @@ class GrpcStreamTransport:
             ("x-qdl-purpose", RestQueryTransport._purpose(requirement)),
         )
         try:
-            async for response in self._subscribe(request, metadata=metadata):
+            subscribe = self._subscribes[self._target_index]
+            async for response in subscribe(request, metadata=metadata):
                 record = response.record
                 payload = record.WhichOneof("payload")
                 if payload == "control":
@@ -202,6 +228,9 @@ class GrpcStreamTransport:
                     yield StreamEvent(record.logical_offset, record.resume_token, record.event)
         except grpc.aio.AioRpcError as error:
             detail = error.details() or "gRPC stream failed"
+            if error.code() is grpc.StatusCode.UNAVAILABLE and len(self.targets) > 1:
+                self._target_index = (self._target_index + 1) % len(self.targets)
+                self.target = self.targets[self._target_index]
             if error.code() is grpc.StatusCode.OUT_OF_RANGE:
                 raise CursorExpiredError("CURSOR_EXPIRED", detail, retryable=False) from error
             if error.code() is grpc.StatusCode.RESOURCE_EXHAUSTED:
@@ -216,7 +245,8 @@ class GrpcStreamTransport:
             raise DataLayerError("DEPENDENCY_UNAVAILABLE", detail, retryable=True) from error
 
     async def close(self) -> None:
-        await self._channel.close()
+        for channel in self._channels:
+            await channel.close()
 
     @staticmethod
     def _is_loopback(target: str) -> bool:

@@ -17,6 +17,8 @@ from scripts.rebuild_v2_stable_projection_cache import (
     QUERY_SERVICES,
     STOP_SERVICES,
     STREAM_SERVICES,
+    _env_value,
+    _stable_client_ssl_context,
     _start_services,
     _validate_project,
     compose_command,
@@ -59,6 +61,28 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, CONFIRM_TOKEN):
             require_authorization(apply=True, confirm="WRONG")
         require_authorization(apply=True, confirm=CONFIRM_TOKEN)
+
+    def test_tls_identity_is_loaded_from_exact_env_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            identity = root / "identity"
+            identity.mkdir()
+            env = root / "stable.env"
+            env.write_text(
+                f"QDL_STABLE_TRADING_SYSTEM_CERT_DIR={identity}\n"
+            )
+            self.assertEqual(
+                _env_value(env, "QDL_STABLE_TRADING_SYSTEM_CERT_DIR"),
+                str(identity),
+            )
+            with self.assertRaises(FileNotFoundError):
+                _stable_client_ssl_context(env)
+            env.write_text(
+                "QDL_STABLE_TRADING_SYSTEM_CERT_DIR=/first\n"
+                "QDL_STABLE_TRADING_SYSTEM_CERT_DIR=/second\n"
+            )
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                _env_value(env, "QDL_STABLE_TRADING_SYSTEM_CERT_DIR")
 
     def test_compose_command_is_pinned_to_stable_manifest(self):
         command = compose_command(Path("/tmp/stable.env"), "config")

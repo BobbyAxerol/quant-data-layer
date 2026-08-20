@@ -50,6 +50,19 @@ spec:
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_primary_v2
+    interval: 1m
+    warmup_limit: 1000
+    max_freshness_ms: 180000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
   - instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
     feed: TRADE
     consumer_grade: EXECUTION
@@ -68,6 +81,19 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+    feed: BAR
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_primary_v2
+    interval: 1m
+    warmup_limit: 1000
+    max_freshness_ms: 180000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK

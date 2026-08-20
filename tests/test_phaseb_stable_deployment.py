@@ -6,7 +6,6 @@ import json
 import tempfile
 import time
 import unittest
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
@@ -814,9 +813,22 @@ class StableComposeAndBundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="qdl-phaseb-cert-") as cert_directory:
             certs = Path(cert_directory)
             (certs / "ca.crt").write_text("ca", encoding="ascii")
-            for principal in ("phase8-producer", "phase8-core", "phase8-consumer"):
+            for principal in (
+                "phase8-producer",
+                "phase8-core",
+                "phase8-consumer",
+                "stable-trading-system",
+                "stable-query",
+                "stable-stream",
+            ):
                 (certs / f"{principal}.crt").write_text("crt", encoding="ascii")
                 (certs / f"{principal}.key").write_text("key", encoding="ascii")
+            (certs / "stable-trading-system-jwt.key").write_text(
+                "private", encoding="ascii"
+            )
+            (certs / "stable-trading-system-jwt.public.pem").write_text(
+                "public", encoding="ascii"
+            )
             with tempfile.TemporaryDirectory(prefix="qdl-phaseb-output-") as parent:
                 output = Path(parent) / "candidate"
                 with patch(

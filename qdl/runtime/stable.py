@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import ssl
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -74,6 +75,9 @@ class StableRuntimeConfig:
     audit_path: Path
     manifest_paths: tuple[Path, ...]
     source_bindings_path: Path
+    tls_ca_path: Path
+    tls_certificate_path: Path
+    tls_private_key_path: Path
     internal_ingest_secret: bytes
     redis_url: str
     redis_prefix: str
@@ -121,6 +125,13 @@ class StableRuntimeConfig:
             raise ValueError("stable authority revision and consumer manifests are required")
         if not self.source_bindings_path.is_file():
             raise ValueError("stable source binding catalog is unavailable")
+        missing_tls = [
+            path for path in (
+                self.tls_ca_path, self.tls_certificate_path, self.tls_private_key_path
+            ) if not path.is_file()
+        ]
+        if missing_tls:
+            raise ValueError("stable workload TLS files are unavailable")
         if len(self.internal_ingest_secret) < 32:
             raise ValueError("stable internal ingest secret must contain 256 bits")
         if self.active_cursor_key_id not in self.cursor_keys or any(
@@ -190,6 +201,9 @@ class StableRuntimeConfig:
             )),
             manifest_paths=manifests,
             source_bindings_path=Path(env["QDL_STABLE_SOURCE_BINDINGS"]),
+            tls_ca_path=Path(env["QDL_STABLE_TLS_CA_FILE"]),
+            tls_certificate_path=Path(env["QDL_STABLE_TLS_CERT_FILE"]),
+            tls_private_key_path=Path(env["QDL_STABLE_TLS_KEY_FILE"]),
             internal_ingest_secret=env["QDL_STABLE_INTERNAL_INGEST_SECRET"].encode(),
             redis_url=env["QDL_STABLE_REDIS_URL"],
             redis_prefix=env["QDL_STABLE_REDIS_PREFIX"],
@@ -238,6 +252,7 @@ class StableRuntimeConfig:
             "compatibility_projection": "DEDICATED_REDIS_ONLY",
             "replay_authority": "KAFKA",
             "query_cache_authority": False,
+            "transport_security": "MTLS_PLUS_JWT",
         }
 
 
@@ -245,6 +260,35 @@ def _ready(name: str, *, detail: str, revision: str | None = None) -> ComponentR
     return ComponentReadiness(
         name, ComponentState.READY, detail=detail, revision=revision,
         checked_at_ns=time.time_ns(),
+    )
+
+
+def stable_client_ssl_context(config: StableRuntimeConfig) -> ssl.SSLContext:
+    context = ssl.create_default_context(cafile=str(config.tls_ca_path))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(
+        certfile=str(config.tls_certificate_path),
+        keyfile=str(config.tls_private_key_path),
+    )
+    return context
+
+
+def stable_uvicorn_tls(config: StableRuntimeConfig) -> dict[str, object]:
+    return {
+        "ssl_keyfile": str(config.tls_private_key_path),
+        "ssl_certfile": str(config.tls_certificate_path),
+        "ssl_ca_certs": str(config.tls_ca_path),
+        "ssl_cert_reqs": ssl.CERT_REQUIRED,
+    }
+
+
+def stable_grpc_server_credentials(
+    config: StableRuntimeConfig,
+) -> grpc.ServerCredentials:
+    return grpc.ssl_server_credentials(
+        ((config.tls_private_key_path.read_bytes(), config.tls_certificate_path.read_bytes()),),
+        root_certificates=config.tls_ca_path.read_bytes(),
+        require_client_auth=True,
     )
 
 
@@ -420,7 +464,12 @@ class StableStreamRuntime:
     async def start(self) -> None:
         await self.redis.ping()
         await self.lease.start()
-        self.grpc_server.add_insecure_port(f"0.0.0.0:{self.config.grpc_port}")
+        bound = self.grpc_server.add_secure_port(
+            f"0.0.0.0:{self.config.grpc_port}",
+            stable_grpc_server_credentials(self.config),
+        )
+        if bound != self.config.grpc_port:
+            raise RuntimeError("stable gRPC mTLS port binding failed")
         await self.grpc_server.start()
 
     async def stop(self) -> None:
@@ -496,12 +545,24 @@ def create_stable_stream_runtime(
     )
 
 
+async def serve_stable_query() -> None:
+    config = StableRuntimeConfig.from_environment("query_v2")
+    app = create_stable_query_app(config)
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="0.0.0.0", port=config.http_port,
+        log_level="info", access_log=False,
+        **stable_uvicorn_tls(config),
+    ))
+    await server.serve()
+
+
 async def serve_stable_stream() -> None:
     runtime = create_stable_stream_runtime()
     await runtime.start()
     server = uvicorn.Server(uvicorn.Config(
         runtime.health_app, host="0.0.0.0", port=runtime.config.http_port,
         log_level="info", access_log=False,
+        **stable_uvicorn_tls(runtime.config),
     ))
     try:
         await server.serve()
@@ -536,7 +597,8 @@ async def serve_stable_projector() -> None:
         config.redis_url, prefix=f"{config.redis_prefix}:projector"
     )
     sink = StableHttpCanonicalSink(
-        config.stream_ingest_urls, config.internal_ingest_secret, spool
+        config.stream_ingest_urls, config.internal_ingest_secret, spool,
+        ssl_context=stable_client_ssl_context(config),
     )
     projector = StableCompatibilityProjector(
         catalog, namespace=config.redis_prefix.rstrip(":")

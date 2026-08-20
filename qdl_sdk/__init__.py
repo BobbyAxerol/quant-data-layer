@@ -6,6 +6,7 @@ from qdl_sdk.client import AsyncDataLayerClient, DataLayerClientV2, WarmupStream
 from qdl_sdk.credentials import (
     CallbackCredentialProvider,
     CredentialProvider,
+    RotatingJwtCredentialProvider,
     StaticBearerCredential,
 )
 from qdl_sdk.cursor import CursorCheckpoint, FileCursorStore, MemoryCursorStore
@@ -31,6 +32,7 @@ from qdl_sdk.models import (
 )
 from qdl_sdk.projection import market_data_view_from_stream
 from qdl_sdk.transport import GrpcStreamTransport, RestQueryTransport
+from qdl_sdk.tls import WorkloadTlsConfig
 from qdl_sdk.v1_facade import V1CompatibilityFacade
 
 __all__ = [
@@ -58,12 +60,14 @@ __all__ = [
     "QuantityUnit",
     "RestQueryTransport",
     "RecoveryPolicy",
+    "RotatingJwtCredentialProvider",
     "SnapshotResponse",
     "StalePolicy",
     "StaticBearerCredential",
     "StreamEvent",
     "TradeIdentityKind",
     "WarmupResponse",
+    "WorkloadTlsConfig",
     "V1CompatibilityFacade",
     "WarmupStreamSession",
 ]

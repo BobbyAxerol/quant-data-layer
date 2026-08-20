@@ -6178,6 +6178,68 @@ failure.
 
 #### C.2 Single-Consumer Trading System Cutover
 
+**C.2 implementation journal:**
+
+- `2026-08-20 C.2 CONSUMER INGRESS CLOSURE STARTED`: close the real
+  integration gaps found by C.1 before any consumer restart. Stable REST and
+  gRPC data-plane ingress must use server-authenticated TLS plus client
+  workload certificates; JWT issuer/audience/manifest authorization remains
+  mandatory at the application layer. Projector-to-stream ingest uses the same
+  authenticated transport. The source-owned `qdl_sdk` adds CA/client
+  certificate configuration once; Trading System and execution-alpha consume
+  it without custom transports. The Trading System manifest gains only the
+  final 1m BAR permissions its market-cache bridge actually uses.
+- Trading System must route by a strict versioned slice manifest
+  `venue + market + product + native symbol + feed + interval`. In
+  `V2_PRIMARY`, only approved slices leave V1; all unmatched Binance symbols
+  remain on V1 and are audited as compatibility routes. OKX has no equivalent
+  V1 realtime endpoint and therefore fails closed on V2 outage rather than
+  being relabelled as a cross-venue fallback. One configured external consumer
+  identity must match the registered Data Layer manifest; unrelated Trading
+  System services remain V1 until separately manifested and credentialed.
+- `2026-08-20 C.2 WORKLOAD TLS/SDK SLICE PASS`: added one source-owned
+  `WorkloadTlsConfig` for REST and gRPC client certificates, bounded
+  multi-target gRPC failover, mandatory stable query/stream server mTLS and
+  projector-to-stream HTTPS mTLS while retaining JWT/manifest authorization
+  and HMAC ingest signing. Stable bundles now carry separate query, stream,
+  projector and Trading System identities outside Git; the Trading System
+  manifest gained only Binance USDM and OKX SWAP final 1m BAR requirements.
+  Focused transport/security/stable-ingest tests passed 6/6; Python compile and
+  YAML parse gates passed. No V1 container, consumer route, authority state,
+  production data or order path was mutated. Real certificate handshake,
+  immutable rebuild and rotation/reconnect remain C.2 gates before closure.
+- `2026-08-20 C.2 ISOLATED RESTART RECOVERY GATE FOUND`: the first secure
+  isolated restart proved the query mTLS positive handshake and rejected a
+  client without a workload certificate, while V1 remained HTTP 200 and was
+  not restarted. The projector correctly failed closed because retained
+  SQLite projection state was paired with a newly empty ephemeral Redis cache.
+  This is the designed B16 generation fence, not permission to bind an empty
+  cache over retained state. Before acceptance continues, update the existing
+  exact-scope B17 cache-unit rebuild command to use the new mTLS health probes,
+  then rebuild only the isolated Redis plus three SQLite cache files from the
+  Kafka canonical log. Kafka/provider data, V1, production Redis and authority
+  remain untouched. Acceptance requires bounded six-partition lag, a bound
+  cache identity, both secure query replicas ready and a fresh signed SDK
+  handoff after rebuild.
+- `2026-08-20 C.2 RELEASE/REGRESSION SLICE PASS; RUNTIME REPLAY CONTINUES`:
+  the final source-owned `qdl_sdk==2.0.0` artifact was built twice
+  byte-identically at SHA-256
+  `5891c0b99b29fd30ce008f6987a4ff9c9d4896259e415f72e5f9210460669951`
+  with Python >=3.10 and `PyJWT[crypto]` declared. The complete Python suite
+  passed 540/540 with six explicit environment skips; targeted secure
+  bundle/recovery/transport tests passed 14/14. Rust passed 70/70 plus
+  `cargo fmt --check` and strict Clippy. The real mTLS query handshake
+  returned 200 and a request without a client certificate failed the TLS
+  handshake; V1 remained HTTP 200. A non-destructive cache generation and
+  isolated projector group are replaying authentic retained Kafka records
+  because the exact destructive B17 rebuild was not approved. Therefore C.2 is
+  not yet closed and no consumer route or authority was promoted.
+- C.2 gates are mTLS positive/negative tests, certificate rotation/reconnect,
+  exact BAR/trade SDK projection, bounded route-manifest parser tests, V1
+  unmatched-symbol compatibility, authenticated real Binance/OKX adapter
+  acceptance, no order submission and unchanged V1/runtime state. Authority
+  stays `RUST_SHADOW` until the separate C.3 CAS/outbox/fence packet passes.
+
 The operator confirms all alpha consumers are currently stopped and Trading
 System is the only active Data Layer consumer. Do not create artificial alpha or
 monitoring migration stages. Built-in V2 health/lag/authority telemetry remains

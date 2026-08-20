@@ -22,6 +22,7 @@ DEPENDENCIES = (
     "httpx>=0.28.0,<1.0.0",
     "protobuf>=6.31.1,<7.0.0",
     "pydantic>=2.0.0,<3.0.0",
+    "PyJWT[crypto]>=2.13.0,<3.0.0",
 )
 FIXED_TIMESTAMP = (2020, 1, 1, 0, 0, 0)
 

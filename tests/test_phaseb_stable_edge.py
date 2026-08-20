@@ -34,7 +34,7 @@ from qdl.domain.instrument import (
     ProductType,
 )
 from qdl.domain.decimal import CanonicalDecimal
-from qdl.query import ConsumerGrade, DataRequirement, FeedType
+from qdl.query import ConsumerGrade, DataRequirement
 from qdl.projection.stable import (
     InMemoryStableProjectionTarget,
     ProjectionCacheMismatch,
@@ -1319,6 +1319,8 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
 class StableRuntimeBoundaryTests(unittest.TestCase):
     def environment(self, root):
+        for name in ("ca.crt", "workload.crt", "workload.key"):
+            (root / name).write_text("test", encoding="utf-8")
         return {
             "QDL_ENVIRONMENT": "paper",
             "QDL_CONFIG_REVISION": "phase-b-test-1",
@@ -1330,6 +1332,9 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             "QDL_STABLE_AUDIT_PATH": str(root / "state" / "audit.jsonl"),
             "QDL_STABLE_CONSUMER_MANIFESTS": str(root / "consumer.yaml"),
             "QDL_STABLE_SOURCE_BINDINGS": str(CATALOG_PATH),
+            "QDL_STABLE_TLS_CA_FILE": str(root / "ca.crt"),
+            "QDL_STABLE_TLS_CERT_FILE": str(root / "workload.crt"),
+            "QDL_STABLE_TLS_KEY_FILE": str(root / "workload.key"),
             "QDL_STABLE_INTERNAL_INGEST_SECRET": "i" * 32,
             "QDL_STABLE_REDIS_URL": "redis://qdl-stable-redis:6379/0",
             "QDL_STABLE_REDIS_PREFIX": "qdl:stable:v2:paper:test",
@@ -1346,9 +1351,13 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             secret, object(), client=client,
         )
         self.assertIs(sink.client, client)
-        with self.assertRaisesRegex(ValueError, "configuration is invalid"):
+        secure = StableHttpCanonicalSink(
+            ("https://stream_v2_active:8200",), secret, object(), client=client
+        )
+        self.assertIs(secure.client, client)
+        with self.assertRaisesRegex(ValueError, "workload TLS context"):
             StableHttpCanonicalSink(
-                ("https://stream_v2_active:8200",), secret, object(), client=client
+                ("https://stream_v2_active:8200",), secret, object()
             )
         with self.assertRaisesRegex(ValueError, "configuration is invalid"):
             StableHttpCanonicalSink(

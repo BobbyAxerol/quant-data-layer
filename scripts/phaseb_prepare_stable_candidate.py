@@ -50,6 +50,21 @@ def copy_client_identity(source: Path, destination: Path, principal: str) -> Non
         item.chmod(0o440)
 
 
+def copy_server_identity(source: Path, destination: Path, principal: str) -> None:
+    destination.mkdir(parents=True, exist_ok=False)
+    for source_name, target_name in (
+        ("ca.crt", "ca.crt"),
+        (f"{principal}.crt", "server.crt"),
+        (f"{principal}.key", "server.key"),
+    ):
+        origin = source / source_name
+        if not origin.is_file():
+            raise FileNotFoundError(f"stable TLS source is unavailable: {origin}")
+        shutil.copyfile(origin, destination / target_name)
+    for item in destination.iterdir():
+        item.chmod(0o440)
+
+
 def prepare_candidate(
     *,
     rust_image: str,
@@ -94,15 +109,30 @@ def prepare_candidate(
         ("producer", "phase8-producer"),
         ("core", "phase8-core"),
         ("projector", "phase8-consumer"),
+        ("trading-system", "stable-trading-system"),
     ):
         copy_client_identity(cert_dir, identities_dir / role, principal)
+    copy_server_identity(cert_dir, identities_dir / "query", "stable-query")
+    copy_server_identity(cert_dir, identities_dir / "stream", "stable-stream")
+    jwt_identity_dir = identities_dir / "trading-system-jwt"
+    jwt_identity_dir.mkdir(parents=True, exist_ok=False)
+    for source_name, target_name in (
+        ("stable-trading-system-jwt.key", "private.key"),
+        ("stable-trading-system-jwt.public.pem", "public.pem"),
+    ):
+        origin = cert_dir / source_name
+        if not origin.is_file():
+            raise FileNotFoundError(f"stable JWT source is unavailable: {origin}")
+        shutil.copyfile(origin, jwt_identity_dir / target_name)
+    for item in jwt_identity_dir.iterdir():
+        item.chmod(0o440)
 
     schema_digest = hashlib.sha256(
         (ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto").read_bytes()
     ).hexdigest()
     ingest_secret = secrets.token_urlsafe(48)
     cursor_secret = secrets.token_urlsafe(48)
-    jwt_secret = secrets.token_urlsafe(48)
+    jwt_public_key = (jwt_identity_dir / "public.pem").read_text(encoding="utf-8")
     compose_cert_dir = (host_cert_dir or cert_dir).resolve()
     compose_output_dir = (host_output_dir or output_dir).resolve()
     values = {
@@ -112,7 +142,8 @@ def prepare_candidate(
             {"stable-k1": cursor_secret}, separators=(",", ":")
         ),
         "QDL_STABLE_JWT_KEYS_JSON": json.dumps(
-            {"stable-jwt-k1": jwt_secret}, separators=(",", ":")
+            {"stable-trading-system-rs256-v1": jwt_public_key},
+            separators=(",", ":"),
         ),
         "QDL_STABLE_PYTHON_IMAGE": python_digest,
         "QDL_STABLE_RUST_IMAGE": rust_digest,
@@ -123,6 +154,14 @@ def prepare_candidate(
         "QDL_STABLE_CORE_CERT_DIR": str(compose_output_dir / "identities/core"),
         "QDL_STABLE_PRODUCER_CERT_DIR": str(
             compose_output_dir / "identities/producer"
+        ),
+        "QDL_STABLE_QUERY_CERT_DIR": str(compose_output_dir / "identities/query"),
+        "QDL_STABLE_STREAM_CERT_DIR": str(compose_output_dir / "identities/stream"),
+        "QDL_STABLE_TRADING_SYSTEM_CERT_DIR": str(
+            compose_output_dir / "identities/trading-system"
+        ),
+        "QDL_STABLE_TRADING_SYSTEM_JWT_PRIVATE_KEY": str(
+            compose_output_dir / "identities/trading-system-jwt/private.key"
         ),
         "QDL_STABLE_RUNTIME_DIR": str(compose_output_dir / "runtime"),
     }
@@ -146,6 +185,8 @@ def prepare_candidate(
         "catalog_revision": catalog.catalog_revision,
         "acquisition_revision": acquisition.revision,
         "consumer_count": 5,
+        "workload_mtls": True,
+        "workload_identity_count": 3,
         "secret_values_recorded": False,
     }
     manifest_path = output_dir / "candidate-manifest.json"

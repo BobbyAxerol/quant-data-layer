@@ -26,6 +26,7 @@ from qdl_sdk import (
     RestQueryTransport,
     StalePolicy,
     StaticBearerCredential,
+    WorkloadTlsConfig,
     StreamEvent,
     market_data_view_from_stream,
 )
@@ -44,23 +45,23 @@ CASES = (
     VenueCase(
         "BINANCE",
         "a953e16e-7138-5562-b5e8-c337a44d0b65",
-        "alpha.binance.paper.stable",
-        "spiffe://qdl/paper/alpha-binance-stable",
+        "trading-system.paper.stable",
+        "spiffe://qdl/paper/trading-system-stable",
         "BINANCE_DIRECT",
     ),
     VenueCase(
         "OKX",
         "fb26214c-7b9b-5961-95b2-55154755af0f",
-        "alpha.okx.paper.stable",
-        "spiffe://qdl/paper/alpha-okx-stable",
+        "trading-system.paper.stable",
+        "spiffe://qdl/paper/trading-system-stable",
         "OKX_DIRECT",
     ),
 )
 
 
 def token(subject: str, *, issuer: str, audience: str) -> str:
-    keys = json.loads(os.environ["QDL_STABLE_JWT_KEYS_JSON"])
-    key_id, secret = sorted(keys.items())[0]
+    private_key_path = Path(os.environ["QDL_STABLE_JWT_PRIVATE_KEY_FILE"])
+    key_id = os.environ["QDL_STABLE_JWT_KEY_ID"]
     now = int(time.time())
     return jwt.encode(
         {
@@ -79,8 +80,8 @@ def token(subject: str, *, issuer: str, audience: str) -> str:
             ],
             "consumer_manifest_revision": 1,
         },
-        secret,
-        algorithm="HS256",
+        private_key_path.read_bytes(),
+        algorithm="RS256",
         headers={"kid": key_id},
     )
 
@@ -92,6 +93,7 @@ def client(
     consumer_id: str,
     bearer: str,
     cursor_path: Path,
+    tls: WorkloadTlsConfig,
 ) -> AsyncDataLayerClient:
     credential = StaticBearerCredential(bearer)
     return AsyncDataLayerClient(
@@ -99,10 +101,11 @@ def client(
             base_url,
             timeout_seconds=8,
             credential_provider=credential,
+            tls=tls,
         ),
         stream_transport=GrpcStreamTransport(
             grpc_target,
-            allow_insecure_loopback=True,
+            tls=tls,
             credential_provider=credential,
         ),
         consumer_id=consumer_id,
@@ -160,12 +163,13 @@ async def certify_case(
     issuer: str,
     audience: str,
     state_dir: Path,
+    tls: WorkloadTlsConfig,
 ) -> dict[str, object]:
     bearer = token(case.subject, issuer=issuer, audience=audience)
     bar_requirement = DataRequirement(
         case.instrument_uid,
         Feed.BAR,
-        Grade.ALPHA,
+        Grade.EXECUTION,
         "crypto_primary_v2",
         interval="1m",
         warmup_limit=5,
@@ -180,6 +184,7 @@ async def certify_case(
         consumer_id=case.consumer_id,
         bearer=bearer,
         cursor_path=state_dir / f"{case.venue.lower()}-query-primary.json",
+        tls=tls,
     )
     secondary = client(
         base_url=secondary_url,
@@ -187,6 +192,7 @@ async def certify_case(
         consumer_id=case.consumer_id,
         bearer=bearer,
         cursor_path=state_dir / f"{case.venue.lower()}-query-secondary.json",
+        tls=tls,
     )
     try:
         first = await primary.warmup(bar_requirement)
@@ -202,7 +208,7 @@ async def certify_case(
     trade_requirement = DataRequirement(
         case.instrument_uid,
         Feed.TRADE,
-        Grade.ALPHA,
+        Grade.EXECUTION,
         "crypto_primary_v2",
         warmup_limit=0,
         max_freshness_ms=15_000,
@@ -217,6 +223,7 @@ async def certify_case(
         consumer_id=case.consumer_id,
         bearer=bearer,
         cursor_path=cursor_path,
+        tls=tls,
     )
     try:
         async with first_client.warmup_then_stream(trade_requirement) as session:
@@ -243,6 +250,7 @@ async def certify_case(
         consumer_id=case.consumer_id,
         bearer=bearer,
         cursor_path=cursor_path,
+        tls=tls,
     )
     try:
         async with resumed_client.warmup_then_stream(
@@ -290,6 +298,11 @@ async def certify_case(
 
 
 async def run(args: argparse.Namespace) -> dict[str, object]:
+    tls = WorkloadTlsConfig(
+        args.tls_ca_file,
+        args.tls_certificate_file,
+        args.tls_private_key_file,
+    )
     with tempfile.TemporaryDirectory(prefix="qdl-c1-sdk-") as temporary:
         state_dir = Path(temporary)
         results = []
@@ -303,6 +316,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     issuer=args.issuer,
                     audience=args.audience,
                     state_dir=state_dir,
+                    tls=tls,
                 )
             )
     return {
@@ -317,16 +331,24 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--primary-url", default="http://127.0.0.1:18201")
-    parser.add_argument("--secondary-url", default="http://127.0.0.1:18202")
+    parser.add_argument("--primary-url", default="https://localhost:18201")
+    parser.add_argument("--secondary-url", default="https://localhost:18202")
     parser.add_argument("--grpc-target", required=True)
     parser.add_argument(
         "--issuer", default="https://identity.qdl.stable.internal"
     )
     parser.add_argument("--audience", default="qdl-v2-stable")
+    parser.add_argument("--tls-ca-file", required=True)
+    parser.add_argument("--tls-certificate-file", required=True)
+    parser.add_argument("--tls-private-key-file", required=True)
     args = parser.parse_args()
-    if "QDL_STABLE_JWT_KEYS_JSON" not in os.environ:
-        raise SystemExit("QDL_STABLE_JWT_KEYS_JSON is required")
+    required_env = {
+        "QDL_STABLE_JWT_PRIVATE_KEY_FILE",
+        "QDL_STABLE_JWT_KEY_ID",
+    }
+    missing = sorted(required_env - os.environ.keys())
+    if missing:
+        raise SystemExit(f"required JWT signer environment is missing: {missing}")
     print(json.dumps(asyncio.run(run(args)), sort_keys=True))
     return 0
 
