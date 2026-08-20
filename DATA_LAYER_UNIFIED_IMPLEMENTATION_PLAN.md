@@ -6784,3 +6784,31 @@ untouched.
   evidence; future image builds should remain outside a latency-sensitive
   cutover window. Broad-universe V1 health remains non-strict/degraded for its
   previously documented unused feeds, while demanded-feed failures are zero.
+
+
+#### C.7 Trading System Consumer Backpressure Ownership Closure
+
+**2026-08-20 status: `PASS / NO DATA LAYER BEHAVIOR CHANGE`:**
+
+- Trading System bounded diagnostics classified the intermittent post-cutover
+  failure as `DATA_STALE`, not sequence gap, source transition, mTLS, quota or
+  canonical semantic corruption.
+- Read-only inspection of the latest 10,000 Binance USD-M BTCUSDT canonical
+  trades measured source-to-receive p99 33.379 ms, canonical projection p99
+  1,095.165 ms and maximum 1,174.830 ms, with zero canonical records over five
+  seconds. Kafka projector lag was 34 records across six partitions. V1 health
+  remained `ok`.
+- The owner was the Trading System consumer: per-event Redis projection and
+  per-event durable cursor replacement could not absorb provider bursts. The
+  consumer now preserves ordered events in bounded 64-item/20 ms Redis batches
+  and checkpoints only the final offset after successful projection.
+- Real-provider acceptance then ran six minutes plus a three-minute
+  post-rollback soak with zero continuity/reconnect warning. Binance and OKX
+  projected cache ages stayed below the unchanged five-second execution
+  contract, and the audited V2 -> V1 -> V2 service-only drill passed.
+- No Data Layer source policy, freshness threshold, public contract, Kafka
+  topic, stable cache, authority record or provider adapter was changed for this
+  issue. Rust remains `RUST_SHADOW`; DNSE remains V1. The Data Layer Python
+  desired-image pin still differs from the already accepted running Python-role
+  image and requires a separate operator packet if those roles are to be
+  recreated; it is not part of this consumer closure.
