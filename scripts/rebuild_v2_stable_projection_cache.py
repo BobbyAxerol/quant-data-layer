@@ -7,6 +7,7 @@ import ssl
 import subprocess
 import time
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -21,7 +22,8 @@ KAFKA_BOOTSTRAP = "kafka1:9092,kafka2:9092,kafka3:9092"
 KAFKA_ADMIN_CONFIG = "/etc/kafka/secrets/admin.properties"
 EXPECTED_CANONICAL_PARTITIONS = 6
 MAX_ACCEPTED_LAG = 250
-REPLAY_TAIL_RECORDS_PER_PARTITION = 10_000
+REPLAY_LOOKBACK_SECONDS = 15 * 60
+MAX_REPLAY_BOOTSTRAP_RECORDS = 1_000_000
 REQUIRED_BOUNDED_LAG_SAMPLES = 3
 STOP_SERVICES = (
     "projector_v2",
@@ -65,7 +67,8 @@ def rebuild_plan(env_file: Path) -> dict[str, object]:
         "flush_service": "stable_redis",
         "reset_group": PROJECTOR_GROUP,
         "reset_topic": CANONICAL_TOPIC,
-        "replay_tail_records_per_partition": REPLAY_TAIL_RECORDS_PER_PARTITION,
+        "replay_lookback_seconds": REPLAY_LOOKBACK_SECONDS,
+        "max_replay_bootstrap_records": MAX_REPLAY_BOOTSTRAP_RECORDS,
         "lag_gate": {
             "expected_partitions": EXPECTED_CANONICAL_PARTITIONS,
             "max_total_records": MAX_ACCEPTED_LAG,
@@ -160,22 +163,40 @@ def _kafka_group(env_file: Path, *arguments: str) -> str:
     return result.stdout
 
 
-def _reset_projector_to_bounded_tail(env_file: Path) -> None:
-    common = (
-        "--group",
-        PROJECTOR_GROUP,
-        "--topic",
-        CANONICAL_TOPIC,
-        "--reset-offsets",
+def _reset_projector_to_bounded_window(
+    env_file: Path, *, now: datetime | None = None
+) -> dict[str, int | str]:
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        raise ValueError("replay bootstrap time must be timezone-aware")
+    start = current.astimezone(timezone.utc) - timedelta(
+        seconds=REPLAY_LOOKBACK_SECONDS
     )
-    _kafka_group(env_file, *common, "--to-latest", "--execute")
+    start_text = start.strftime("%Y-%m-%dT%H:%M:%S.") + (
+        f"{start.microsecond // 1000:03d}"
+    )
     _kafka_group(
         env_file,
-        *common,
-        "--shift-by",
-        f"-{REPLAY_TAIL_RECORDS_PER_PARTITION}",
-        "--execute",
+        "--group", PROJECTOR_GROUP,
+        "--topic", CANONICAL_TOPIC,
+        "--reset-offsets", "--to-datetime", start_text, "--execute",
     )
+    total_records, partitions = parse_canonical_lag(_kafka_group(
+        env_file, "--group", PROJECTOR_GROUP, "--describe"
+    ))
+    if partitions != EXPECTED_CANONICAL_PARTITIONS:
+        raise RuntimeError("replay bootstrap does not cover every canonical partition")
+    if total_records > MAX_REPLAY_BOOTSTRAP_RECORDS:
+        raise RuntimeError(
+            "replay bootstrap exceeds its bounded event budget: "
+            f"{total_records}>{MAX_REPLAY_BOOTSTRAP_RECORDS}"
+        )
+    return {
+        "lookback_seconds": REPLAY_LOOKBACK_SECONDS,
+        "start_datetime_utc": start_text,
+        "records": total_records,
+        "partitions": partitions,
+    }
 
 
 def _validate_project(env_file: Path) -> None:
@@ -340,7 +361,7 @@ def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, obje
     if dbsize != "0":
         raise RuntimeError("isolated stable Redis did not reset to zero keys")
 
-    _reset_projector_to_bounded_tail(env_file)
+    replay_bootstrap = _reset_projector_to_bounded_window(env_file)
     ssl_context = _stable_client_ssl_context(env_file)
     _start_services(env_file, *STREAM_SERVICES)
     _wait_http(
@@ -387,6 +408,7 @@ def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, obje
         "apply": True,
         "status": "PASS",
         "canonical_lag": lag,
+        "replay_bootstrap": replay_bootstrap,
         "redis_keys": final_size,
     }
 

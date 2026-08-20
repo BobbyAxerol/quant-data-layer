@@ -6574,6 +6574,28 @@ untouched.
   Binance/OKX route before query readiness. No synthetic event may satisfy the
   runtime gate.
 
+**2026-08-20 sparse-feed coverage correction: `FIX IN PROGRESS`:**
+
+- Real acceptance rejected five-bar warmup after the 10,000-record Kafka-tail
+  rebuild. A physical Kafka partition mixes dense TRADE with sparse BAR events,
+  so a record-count tail cannot guarantee BAR coverage even though it is bounded.
+- Recovery must instead reset to a 15-minute broker timestamp window, require
+  all six canonical partitions and reject a bootstrap over one million events
+  before projector startup. This retains at least five expected 1m BAR closes
+  independently of trade density while keeping recovery bounded. Exact warmup,
+  source authority and cursor continuity gates remain unchanged.
+
+**2026-08-20 sparse-feed recovery closure: `PASS / RUNTIME REBUILD PENDING`:**
+
+- Recovery now derives a UTC broker timestamp exactly 15 minutes behind apply
+  time, resets the inactive projector group with `--to-datetime`, then verifies
+  six partitions and at most one million pending events before starting any
+  cache writer. Missing partition or oversized replay fails closed.
+- Targeted recovery tests passed 11/11, including deterministic timestamp,
+  missing-partition and oversized-window cases. Full network-off Python passed
+  552 tests with six explicit skips.
+
+
 **2026-08-20 bounded-tail recovery closure: `PASS / RUNTIME REBUILD PENDING`:**
 
 - Recovery now resets the inactive projector group to latest and shifts back
