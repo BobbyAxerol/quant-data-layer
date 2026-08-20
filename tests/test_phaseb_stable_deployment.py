@@ -697,6 +697,16 @@ class StableDeploymentContractTests(unittest.TestCase):
 
 
 class StableComposeAndBundleTests(unittest.TestCase):
+    def test_python_release_base_is_digest_pinned_in_both_stages(self):
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        pinned = (
+            "python:3.12-slim@sha256:"
+            "2c941e860699f878900b0edc2403613c234d4b32"
+            "eda3cc9fa7036991a2a63c4a"
+        )
+        self.assertEqual(dockerfile.count(pinned), 2)
+        self.assertNotIn("FROM python:3.12-slim AS", dockerfile)
+
     def test_compose_is_isolated_bounded_nonroot_and_has_no_v1_route(self):
         raw = (ROOT / "docker-compose.v2-stable.yml").read_text(encoding="utf-8")
         compose = yaml.safe_load(raw)

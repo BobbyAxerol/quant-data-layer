@@ -6330,6 +6330,15 @@ freshness/session/contract checks and the source-switch audit is durable.
   slice; changed files have zero finding. No authority DB/volume, production
   CAS, Trading System route, V1 service or provider ownership was mutated.
 
+- `2026-08-20 C.3 IMMUTABLE BUILD HYGIENE STARTED`: release preflight
+  found the Python builder/runtime base referenced a mutable tag while Rust
+  bases were digest-pinned. Pin both Python stages to the locally resolved
+  official image digest before building the commit-SHA release; verify both
+  stages use the same digest, rebuild, inspect OCI revision/version/non-root
+  identity, rerun image-level smoke and retain V1 unchanged. The source/test
+  slice pins both stages to the same official digest; focused contract tests
+  passed 14/14, changed-file Ruff and diff checks passed.
+
 Promote all approved Binance and OKX feed slices in one maintenance window, but
 execute the CAS internally one slice at a time so a failure is isolated. One
 operator packet may list the complete slice set, image IDs, old/new owners,
