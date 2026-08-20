@@ -111,6 +111,7 @@ class Phase5ApiTests(unittest.TestCase):
                     "low": str(59_999 + index),
                     "close": str(60_000 + index),
                     "volume": "12.5",
+                    "volume_unit": "BASE_ASSET",
                     "trade_count": 10,
                     "origin": "VENUE_NATIVE",
                     "is_final": True,
@@ -329,6 +330,43 @@ class Phase5ApiTests(unittest.TestCase):
         )
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(denied.json()["code"], "SOURCE_NOT_ALLOWED")
+
+    def test_market_closed_history_is_available_but_not_execution_eligible(self):
+        current = self.backend.latest(self.requirement)
+        self.backend.put_latest(
+            self.requirement,
+            MarketDataItem(
+                **{
+                    **current.__dict__,
+                    "quality": QualityMetadata(
+                        "MARKET_CLOSED", 86_400_000, False, True, False,
+                        "alpha_crypto_primary_v1", ("MARKET_CLOSED",),
+                    ),
+                }
+            ),
+        )
+        response = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/snapshot",
+            params=self.params(max_freshness_ms=500),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"]["quality"]["state"], "MARKET_CLOSED")
+        self.assertFalse(response.json()["data"]["quality"]["execution_eligible"])
+
+        execution_requirement = DataRequirement(
+            **{**self.requirement.__dict__, "consumer_grade": ConsumerGrade.EXECUTION}
+        )
+        self.backend.put_latest(
+            execution_requirement, self.backend.latest(self.requirement)
+        )
+        blocked = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/snapshot",
+            headers=self.headers("INTERNAL_EXECUTION"),
+            params=self.params(consumer_grade="EXECUTION", max_freshness_ms=500),
+        )
+        self.assertEqual(blocked.status_code, 503)
+        self.assertEqual(blocked.json()["code"], "DATA_NOT_READY")
+        self.assertEqual(blocked.json()["quality_state"], "MARKET_CLOSED")
 
     def test_single_query_preserves_manifest_freshness_and_final_bar_policy(self):
         current = self.backend.latest(self.requirement)

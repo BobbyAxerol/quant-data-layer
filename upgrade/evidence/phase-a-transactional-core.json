@@ -1,0 +1,33 @@
+{
+  "authority": "RUST_SHADOW",
+  "canonical_digest": "0bea64d8c43f6124c2db5921eda008e00a82b3ef16b415a65df6e3178ca73c1b",
+  "canonical_read_committed": 6,
+  "cleanup": {
+    "containers_after": 0,
+    "networks_after": 0,
+    "v1_health_after": 200,
+    "v1_topology_unchanged": true,
+    "volumes_after": 0
+  },
+  "duplicates_suppressed": 1,
+  "one_replica_loss_elapsed_seconds": 7.889127,
+  "one_replica_loss_transaction_committed": true,
+  "python_image_id": "sha256:f1cd07c18b3816e6da57d1ae99ffe90c908be1fc99cd309392911f9fc9e179f1",
+  "quarantine_read_committed": 1,
+  "quarantine_reasons": [
+    7
+  ],
+  "raw_acked": 8,
+  "replicas_restored_before_inspection": true,
+  "runtime_cutover": false,
+  "rust_image_id": "sha256:7ff46a43188dd65cbb7c9ec16347c0bbd19e1e2c4a8bca6f403b728bf1b6e79c",
+  "schema": "qdl.phase-a.transactional-core-certification.v1",
+  "status": "PASS",
+  "v1_health_before": 200,
+  "venues": [
+    "BINANCE",
+    "HNX",
+    "HOSE",
+    "OKX"
+  ]
+}

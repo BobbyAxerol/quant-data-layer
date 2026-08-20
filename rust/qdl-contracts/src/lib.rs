@@ -59,8 +59,10 @@ pub mod qdl {
 
 #[cfg(test)]
 mod tests {
-    use super::qdl::common::v1::{decimal_value, AggressorSide, DecimalValue, SourceRole};
-    use super::qdl::marketdata::v2::{event_envelope, EventEnvelope, Trade};
+    use super::qdl::common::v1::{
+        decimal_value, AggressorSide, DecimalValue, QuantityUnit, SourceRole,
+    };
+    use super::qdl::marketdata::v2::{event_envelope, EventEnvelope, Trade, TradeIdentityKind};
     use prost::Message;
 
     fn decimal(mantissa: i64, scale: i32, source_text: &str) -> DecimalValue {
@@ -113,6 +115,8 @@ mod tests {
                 aggressor_side: AggressorSide::Buy as i32,
                 is_block_trade: false,
                 is_buyer_maker: false,
+                quantity_unit: QuantityUnit::BaseAsset as i32,
+                identity_kind: TradeIdentityKind::Native as i32,
             })),
         }
     }

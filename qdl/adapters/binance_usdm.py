@@ -24,7 +24,7 @@ from qdl.ingestion.contracts import ConnectionShard, FeedType
 
 BINANCE_USDM_EXCHANGE_INFO = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 BINANCE_USDM_KLINES = "https://fapi.binance.com/fapi/v1/klines"
-BINANCE_USDM_WS_BASE = "wss://fstream.binance.com/stream?streams="
+BINANCE_USDM_WS_BASE = "wss://fstream.binance.com/public/stream?streams="
 
 
 async def _receive_until_stop(socket: Any, stop: asyncio.Event, timeout: float) -> Any | None:

@@ -21,6 +21,13 @@ FROM python:3.12-slim AS runtime
 
 ARG QDL_UID=10001
 ARG QDL_GID=10001
+ARG QDL_GIT_SHA=unknown
+ARG QDL_RELEASE=development
+
+LABEL org.opencontainers.image.title="Quant Data Layer" \
+      org.opencontainers.image.revision="${QDL_GIT_SHA}" \
+      org.opencontainers.image.version="${QDL_RELEASE}" \
+      org.opencontainers.image.source="https://github.com/BobbyAxerol/quant-data-layer"
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -33,7 +40,10 @@ ENV PATH=/opt/venv/bin:$PATH
 
 WORKDIR /app
 
-RUN groupadd --gid ${QDL_GID} qdl && \
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --gid ${QDL_GID} qdl && \
     useradd --uid ${QDL_UID} --gid ${QDL_GID} --create-home \
       --home-dir /home/qdl --shell /usr/sbin/nologin qdl && \
     install -d -o qdl -g qdl -m 0750 /home/qdl/.cache/matplotlib

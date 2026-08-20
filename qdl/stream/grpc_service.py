@@ -38,6 +38,38 @@ class SnapshotLoader(Protocol):
     def load(self, requirement: DataRequirement, *, consumer_id: str) -> GrpcSnapshot: ...
 
 
+class CursorScopeValidator(Protocol):
+    def validate(
+        self,
+        requirement: DataRequirement,
+        *,
+        stream: str,
+        partition_key: str,
+    ) -> None: ...
+
+
+class FeedScopedCursorScopeValidator:
+    """Validate the original feed-specific canonical stream convention."""
+
+    def validate(
+        self,
+        requirement: DataRequirement,
+        *,
+        stream: str,
+        partition_key: str,
+    ) -> None:
+        parts = partition_key.split("/")
+        if (
+            len(parts) != 3
+            or not parts[2]
+            or parts[:2]
+            != [requirement.instrument_uid, requirement.feed.value.lower()]
+        ):
+            raise ValueError("cursor scope does not match the data requirement")
+        if stream != f"md.canonical.v2.{requirement.feed.value.lower()}":
+            raise ValueError("cursor stream does not match the data requirement")
+
+
 def requirement_from_proto(value: query_pb2.DataRequirement) -> DataRequirement:
     def enum_value(number: int, enum_wrapper, prefix: str) -> str:
         name = enum_wrapper.Name(number)
@@ -81,10 +113,14 @@ class GrpcMarketDataService:
         gateway: DurableStreamGateway,
         query_service: V2QueryService,
         snapshot_loader: SnapshotLoader,
+        cursor_scope_validator: CursorScopeValidator | None = None,
     ) -> None:
         self.gateway = gateway
         self.query_service = query_service
         self.snapshot_loader = snapshot_loader
+        self.cursor_scope_validator = (
+            cursor_scope_validator or FeedScopedCursorScopeValidator()
+        )
 
     @staticmethod
     def _event(stored: StoredEvent, token: str) -> query_pb2.StreamRecord:
@@ -114,13 +150,9 @@ class GrpcMarketDataService:
                 token=request.cursor_token, consumer_id=request.consumer_id
             )
             stream, partition_key = scope.stream, scope.partition_key
-            parts = partition_key.split("/", 2)
-            if len(parts) != 3 or parts[:2] != [
-                requirement.instrument_uid, requirement.feed.value.lower()
-            ]:
-                raise ValueError("cursor scope does not match the data requirement")
-            if stream != f"md.canonical.v2.{requirement.feed.value.lower()}":
-                raise ValueError("cursor stream does not match the data requirement")
+            self.cursor_scope_validator.validate(
+                requirement, stream=stream, partition_key=partition_key
+            )
             subscription = await self.gateway.open(
                 consumer_id=request.consumer_id,
                 stream=stream,

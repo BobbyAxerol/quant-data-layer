@@ -29,6 +29,8 @@ class ShardState:
     last_connected_at: Optional[float] = None
     last_message_at: Optional[float] = None
     last_error: Optional[str] = None
+    data_timeout_count: int = 0
+    last_data_timeout_at: Optional[float] = None
     outage_started_at: Optional[float] = None
     last_disconnected_at: Optional[float] = None
     last_recovered_at: Optional[float] = None
@@ -52,6 +54,8 @@ class ShardState:
             "last_connected_at": _iso(self.last_connected_at),
             "last_message_at": _iso(self.last_message_at),
             "last_error": self.last_error,
+            "data_timeout_count": self.data_timeout_count,
+            "last_data_timeout_at": _iso(self.last_data_timeout_at),
             "outage_started_at": _iso(self.outage_started_at),
             "last_disconnected_at": _iso(self.last_disconnected_at),
             "last_recovered_at": _iso(self.last_recovered_at),
@@ -116,9 +120,11 @@ class StreamSupervisor:
         sample_limit: int = 10,
         startup_grace_seconds: float = 180.0,
         strict_feed_health: bool = False,
+        first_frame_timeout_seconds: float = 15.0,
     ):
         self.stale_after_seconds = stale_after_seconds
         self.startup_grace_seconds = startup_grace_seconds
+        self.first_frame_timeout_seconds = first_frame_timeout_seconds
         self.strict_feed_health = strict_feed_health
         self.sample_limit = sample_limit
         self.started_at = _now()
@@ -129,6 +135,8 @@ class StreamSupervisor:
         self.queue_drop_count = 0
         self.queue_drop_window_seconds = 300.0
         self._queue_drop_times: deque[float] = deque(maxlen=100_000)
+        self.queue_pressure_count = 0
+        self.last_queue_pressure_at: Optional[float] = None
         self.redis_error_count = 0
         self.last_redis_error: Optional[str] = None
         self.publisher_batch_count = 0
@@ -186,7 +194,15 @@ class StreamSupervisor:
             now = _now()
             shard.status = "connected"
             shard.last_connected_at = now
-            shard.last_error = None
+            data_timeout_active = bool(
+                shard.last_data_timeout_at
+                and (
+                    not shard.last_message_at
+                    or shard.last_data_timeout_at >= shard.last_message_at
+                )
+            )
+            if not data_timeout_active:
+                shard.last_error = None
             if recovered:
                 duration = max(0.0, now - float(shard.outage_started_at))
                 shard.last_outage_seconds = duration
@@ -202,6 +218,16 @@ class StreamSupervisor:
         if shard:
             shard.message_count += 1
             shard.last_message_at = _now()
+            if shard.last_error and shard.last_error.startswith("data_timeout:"):
+                shard.last_error = None
+
+    def mark_data_timeout(self, shard_id: str, reason: str) -> None:
+        shard = self.shards.get(shard_id)
+        if shard:
+            now = _now()
+            shard.data_timeout_count += 1
+            shard.last_data_timeout_at = now
+            shard.last_error = f"data_timeout:{reason}"
 
     def mark_parse_error(self, shard_id: str, error: Exception) -> None:
         shard = self.shards.get(shard_id)
@@ -243,6 +269,10 @@ class StreamSupervisor:
         self._queue_drop_times.append(_now())
         if shard_id and shard_id in self.shards:
             self.shards[shard_id].queue_drop_count += 1
+
+    def record_queue_pressure(self) -> None:
+        self.queue_pressure_count += 1
+        self.last_queue_pressure_at = _now()
 
     def record_redis_error(self, error: Exception) -> None:
         self.redis_error_count += 1
@@ -300,6 +330,68 @@ class StreamSupervisor:
         self.publisher_batch_count += 1
         self.last_publisher_at = _now()
 
+    def _source_states(self, now: float) -> Dict[str, Dict[str, Any]]:
+        states: Dict[str, Dict[str, Any]] = {}
+        for source in sorted({shard.source for shard in self.shards.values()}):
+            shards = [shard for shard in self.shards.values() if shard.source == source]
+            connected = [shard for shard in shards if shard.status == "connected"]
+            producing = []
+            waiting = []
+            stale = []
+            unavailable = []
+            for shard in shards:
+                session_has_frame = bool(
+                    shard.status == "connected"
+                    and shard.last_message_at
+                    and shard.last_connected_at
+                    and shard.last_message_at >= shard.last_connected_at
+                )
+                if session_has_frame:
+                    age = max(0.0, now - float(shard.last_message_at))
+                    if age <= self.stale_after_seconds:
+                        producing.append(shard)
+                    else:
+                        stale.append(shard)
+                elif shard.status == "connected" and shard.last_connected_at:
+                    age = max(0.0, now - float(shard.last_connected_at))
+                    data_timeout_active = bool(
+                        shard.last_data_timeout_at
+                        and (
+                            not shard.last_message_at
+                            or shard.last_data_timeout_at >= shard.last_message_at
+                        )
+                    )
+                    if not data_timeout_active and age <= self.first_frame_timeout_seconds:
+                        waiting.append(shard)
+                    else:
+                        unavailable.append(shard)
+                else:
+                    unavailable.append(shard)
+
+            if len(producing) == len(shards) and shards:
+                status = "ready"
+            elif producing:
+                status = "degraded"
+            elif waiting and len(waiting) == len(shards):
+                status = "starting"
+            else:
+                status = "unavailable"
+            states[source] = {
+                "feed": "trade" if source.endswith("_trade") else "kline",
+                "status": status,
+                "transport_ready": len(connected) == len(shards) and bool(shards),
+                "data_ready": status == "ready",
+                "shard_count": len(shards),
+                "connected_count": len(connected),
+                "producing_count": len(producing),
+                "waiting_first_frame_count": len(waiting),
+                "stale_count": len(stale),
+                "unavailable_count": len(unavailable),
+                "first_frame_timeout_seconds": self.first_frame_timeout_seconds,
+                "stale_after_seconds": self.stale_after_seconds,
+            }
+        return states
+
     def snapshot(
         self,
         now: Optional[float] = None,
@@ -344,6 +436,15 @@ class StreamSupervisor:
         ]
         reconnect_count = sum(shard.reconnect_count for shard in self.shards.values())
         connected_shards = [shard for shard in self.shards.values() if shard.status == "connected"]
+        source_states = self._source_states(now)
+        unavailable_sources = [
+            source
+            for source, state in source_states.items()
+            if state["status"] in {"degraded", "unavailable"}
+        ]
+        starting_sources = [
+            source for source, state in source_states.items() if state["status"] == "starting"
+        ]
 
         health_warnings = []
         cutoff = now - self.queue_drop_window_seconds
@@ -361,12 +462,18 @@ class StreamSupervisor:
             health_warnings.append("missing_expected_feeds")
         if stale:
             health_warnings.append("stale_expected_feeds")
+        if unavailable_sources:
+            health_warnings.append("source_data_unavailable")
 
         if self.redis_error_count:
             status = "degraded"
         elif not self.shards:
             status = "not_started"
+        elif unavailable_sources:
+            status = "degraded"
         elif not connected_shards:
+            status = "starting"
+        elif starting_sources:
             status = "starting"
         elif demanded_stale or (demanded_missing and uptime_seconds > self.startup_grace_seconds):
             status = "degraded"
@@ -388,6 +495,8 @@ class StreamSupervisor:
                 "maxsize": self.queue_maxsize,
                 "drop_count": self.queue_drop_count,
                 "recent_drop_count": recent_queue_drops,
+                "pressure_count": self.queue_pressure_count,
+                "last_pressure_at": _iso(self.last_queue_pressure_at),
                 "window_seconds": self.queue_drop_window_seconds,
             },
             "publisher": {
@@ -403,6 +512,7 @@ class StreamSupervisor:
                 "reconnect_count": reconnect_count,
                 "items": [s.to_dict() for s in list(self.shards.values())[: self.sample_limit]],
             },
+            "sources": source_states,
             "feeds": {
                 "expected_count": len(expected_feeds),
                 "observed_count": len([feed for feed in expected_feeds if feed.last_published_at]),

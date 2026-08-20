@@ -141,6 +141,7 @@ def _book_levels(values: object) -> list[dict]:
             "side": item["side"],
             "price": _decimal(item["price"]),
             "quantity": _decimal(item["quantity"]),
+            "quantity_unit": item["quantity_unit"],
             "order_count": int(item.get("order_count", 0)),
         }
         for item in values
@@ -155,7 +156,9 @@ def _typed_payload(item) -> dict:
             "native_trade_id": value["native_trade_id"],
             "price": _decimal(value["price"]),
             "quantity": _decimal(value["quantity"]),
+            "quantity_unit": value["quantity_unit"],
             "aggressor_side": value["aggressor_side"],
+            "identity_kind": value["identity_kind"],
             "is_block_trade": bool(value.get("is_block_trade", False)),
             "is_buyer_maker": bool(value.get("is_buyer_maker", False)),
         }
@@ -166,6 +169,7 @@ def _typed_payload(item) -> dict:
             "bid_quantity": _decimal(value["bid_quantity"]),
             "ask_price": _decimal(value["ask_price"]),
             "ask_quantity": _decimal(value["ask_quantity"]),
+            "quantity_unit": value["quantity_unit"],
             "level": int(value.get("level", 1)),
         }
     if item.feed is FeedType.BAR:
@@ -179,6 +183,22 @@ def _typed_payload(item) -> dict:
             "low": _decimal(value["low"]),
             "close": _decimal(value["close"]),
             "volume": _decimal(value["volume"]),
+            "volume_unit": value["volume_unit"],
+            "base_volume": (
+                _decimal(value["base_volume"])
+                if value.get("base_volume") is not None
+                else None
+            ),
+            "quote_volume": (
+                _decimal(value["quote_volume"])
+                if value.get("quote_volume") is not None
+                else None
+            ),
+            "contract_volume": (
+                _decimal(value["contract_volume"])
+                if value.get("contract_volume") is not None
+                else None
+            ),
             "trade_count": int(value.get("trade_count", 0)),
             "lifecycle": item.bar_lifecycle,
             "revision": item.revision,
@@ -214,6 +234,7 @@ def _typed_payload(item) -> dict:
         return {
             "feed": item.feed,
             "quantity": _decimal(value["quantity"]),
+            "quantity_unit": value["quantity_unit"],
             "notional": _decimal(value["notional"]) if value.get("notional") is not None else None,
         }
     if item.feed is FeedType.MARK_INDEX_PRICE:
@@ -226,6 +247,8 @@ def _typed_payload(item) -> dict:
         result = {"feed": item.feed, "last_price": _decimal(value["last_price"])}
         for field in ("last_quantity", "open_24h", "high_24h", "low_24h", "volume_24h"):
             result[field] = _decimal(value[field]) if value.get(field) is not None else None
+        result["last_quantity_unit"] = value.get("last_quantity_unit")
+        result["volume_24h_unit"] = value.get("volume_24h_unit")
         return result
     raise ValueError(f"public typed payload is undefined for {item.feed.value}")
 
@@ -674,8 +697,14 @@ def create_v2_app(
     readiness_service=None,
     request_bounds: RequestBounds | None = None,
     cursor_issuer=None,
+    contract_version: str = "2.0.0-shadow",
+    authority: str = "SHADOW",
 ) -> FastAPI:
-    app = FastAPI(title="Quant Data Layer V2", version="2.0.0-shadow")
+    if not contract_version.startswith("2.0.0") or authority not in {
+        "SHADOW", "INTERNAL_STABLE", "PRIMARY"
+    }:
+        raise ValueError("V2 app contract version/authority is invalid")
+    app = FastAPI(title="Quant Data Layer V2", version=contract_version)
     app.state.v2_query_service = service
     app.state.v2_identity_service = identity_service
     app.state.v2_runtime_readiness = readiness_service or FailClosedReadiness()
@@ -684,7 +713,8 @@ def create_v2_app(
         "role": "api_v2",
         "owns_live_ingestion": False,
         "owns_venue_connections": False,
-        "authority": "SHADOW",
+        "authority": authority,
+        "contract_version": contract_version,
     }
     app.include_router(router)
     if request_bounds is not None:

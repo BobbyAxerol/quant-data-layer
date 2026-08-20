@@ -1,0 +1,85 @@
+{
+  "schema_version": "qdl.phase-evidence.v1",
+  "phase": "9.0-A",
+  "name": "Runtime Correctness Closure",
+  "captured_at": "2026-08-18T11:05:00Z",
+  "status": "PASS_ISOLATED_NO_PRODUCTION_CUTOVER",
+  "branch": "feat/phase9-runtime-correctness",
+  "commits": [
+    "765a7f1",
+    "7302c45"
+  ],
+  "tests": {
+    "targeted": {"run": 35, "passed": 35, "failed": 0},
+    "full": {"run": 345, "passed": 340, "failed": 0, "skipped": 5},
+    "compileall": "PASS",
+    "diff_check": "PASS"
+  },
+  "v1_contract": {
+    "live_path_count": 40,
+    "candidate_path_count": 40,
+    "added_paths": [],
+    "removed_paths": []
+  },
+  "candidate": {
+    "source_commit": "7302c45",
+    "image_digest": "sha256:4a2723ec39057c75a89889d955feac7acc6fb01bc126a579f8c74d384b9b6999",
+    "runtime_uid_gid": "10001:10001",
+    "read_only_root": true,
+    "source_bind": false,
+    "loopback_port": 18120,
+    "limits": {"cpus": 1.5, "memory_bytes": 1610612736, "pids": 256}
+  },
+  "real_provider_smoke": {
+    "binance_usdm_trade": {"shards": 8, "producing": 8, "ready": true},
+    "binance_usdm_kline": {"shards": 8, "producing": 0, "ready": false},
+    "top_level_health_with_kline_unavailable": "degraded",
+    "queue_drop_count": 0,
+    "queue_pressure_count": 0,
+    "recovery": {
+      "symbol": "BTCUSDT",
+      "interval": "1m",
+      "event": "kline_recovery",
+      "recovery_source": "BINANCE_REST_GAP_FILL",
+      "provider": "binance",
+      "market": "binance_usdm",
+      "authoritative": true,
+      "final": true,
+      "open_time_ms": 1787050680000,
+      "close_time_ms": 1787050739999,
+      "provider_open_time_equal": true,
+      "provider_close_time_equal": true,
+      "provider_ohlcv_equal": true
+    },
+    "demand_expiry": {
+      "lease_count_after_expiry": 0,
+      "active_recovery_demands_after_expiry": 0,
+      "provider_fetch_count_before_observation": 2,
+      "provider_fetch_count_after_one_poll": 2
+    }
+  },
+  "resource_snapshot": {
+    "candidate_app": {"cpu_percent": 20.07, "memory_mib": 131.0, "pids": 16},
+    "candidate_redis": {"cpu_percent": 2.27, "memory_mib": 5.129, "pids": 5},
+    "note": "One non-soak snapshot while broad trade and failing kline shards were active."
+  },
+  "production_v1": {
+    "container_id": "0e0eb56c78ba9d6b816cde3461bc79425ceea8095a71518a608a87294388035f",
+    "image": "data-layer:v0.1.0",
+    "started_at": "2026-08-16T11:09:12.471324413Z",
+    "loopback_port": 8100,
+    "restarted": false,
+    "state_mutated": false
+  },
+  "cleanup": {
+    "candidate_containers": 0,
+    "candidate_networks": 0,
+    "candidate_volumes": 0,
+    "candidate_images": 0
+  },
+  "decision": {
+    "phase_90a": "GO_FOR_REVIEW_AND_OPERATOR_APPROVED_ROLLOUT",
+    "phase_91": "BLOCKED",
+    "reason": "Phase 9.1 still requires the independent production infrastructure and exact-slice approval listed in the implementation plan."
+  }
+}

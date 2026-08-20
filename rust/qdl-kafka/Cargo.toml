@@ -11,13 +11,18 @@ hex.workspace = true
 indexmap.workspace = true
 jobserver.workspace = true
 proc-macro-crate.workspace = true
+prost.workspace = true
+qdl-contracts.workspace = true
 qdl-core.workspace = true
+qdl-realtime-core = { path = "../qdl-realtime-core", version = "=0.1.0" }
 qdl-venue-core = { path = "../qdl-venue-core", version = "=0.1.0" }
 rdkafka.workspace = true
 serde.workspace = true
+rustls.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 
 [[bin]]
 name = "qdl-kafka-smoke"
@@ -26,3 +31,11 @@ path = "src/bin/qdl-kafka-smoke.rs"
 [[bin]]
 name = "qdl-authority-rehearsal"
 path = "src/bin/qdl-authority-rehearsal.rs"
+
+[[bin]]
+name = "qdl-phase91-canary-rehearsal"
+path = "src/bin/qdl-phase91-canary-rehearsal.rs"
+
+[[bin]]
+name = "qdl-phase92-primary-rehearsal"
+path = "src/bin/qdl-phase92-primary-rehearsal.rs"

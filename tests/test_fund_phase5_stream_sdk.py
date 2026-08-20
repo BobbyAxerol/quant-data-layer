@@ -165,6 +165,7 @@ class FakeQueryTransport:
                 "low": decimal,
                 "close": decimal,
                 "volume": decimal,
+                "volume_unit": "BASE_ASSET",
                 "trade_count": 1,
                 "lifecycle": "FINAL",
                 "revision": 0,
@@ -400,6 +401,47 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             await transport.close()
             await server.stop(grace=0)
 
+    async def test_grpc_stream_close_has_no_cross_context_finalizer_error(self):
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, self.token),
+        )
+        server = create_grpc_server(service, identity_service=self.identity)
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}",
+            allow_insecure_loopback=True,
+            credential_provider=self.credential,
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA,
+            "alpha_binance_v1", interval="1m", warmup_limit=1,
+        )
+        loop = asyncio.get_running_loop()
+        previous_handler = loop.get_exception_handler()
+        unhandled = []
+        loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+        events = transport.subscribe(
+            requirement, consumer_id="alpha-shadow", cursor_token=self.token,
+            max_buffer_events=1,
+        ).__aiter__()
+        try:
+            self.assertEqual((await events.__anext__()).code, "REPLAYING")
+            await events.aclose()
+            await asyncio.sleep(0.05)
+            self.assertFalse(
+                [
+                    item for item in unhandled
+                    if "different Context" in str(item.get("exception", ""))
+                ]
+            )
+        finally:
+            loop.set_exception_handler(previous_handler)
+            await transport.close()
+            await server.stop(grace=0)
+
     async def test_real_grpc_sdk_handoff_ack_restart_and_bar_revisions(self):
         registry = InstrumentRegistry()
         registry.register(self.record, [])
@@ -416,7 +458,8 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
                 "open_time_ns": now - 60_000_000_000,
                 "close_time_ns": now,
                 "open": "60000", "high": "60100", "low": "59900",
-                "close": "60050", "volume": "10", "trade_count": 5,
+                "close": "60050", "volume": "10", "volume_unit": "BASE_ASSET",
+                "trade_count": 5,
                 "origin": "VENUE_NATIVE", "is_final": True,
             },
             SourceMetadata("BINANCE", "BINANCE_DIRECT", "BINANCE_DIRECT", "PRIMARY", True),
@@ -578,6 +621,39 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             ["snapshot-token", "snapshot-token", "token-1"],
         )
 
+    async def test_warmup_applies_realtime_quality_only_to_tail_watermark(self):
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.EXECUTION,
+            "execution_binance_v1", interval="1m", warmup_limit=2,
+            max_freshness_ms=500,
+        )
+        query = FakeQueryTransport("snapshot-token")
+        original = query.warmup
+
+        async def historical_context(*args, **kwargs):
+            payload = await original(*args, **kwargs)
+            old = {**payload["data"][0]}
+            old["quality"] = {
+                **payload["data"][0]["quality"],
+                "state": "STALE",
+                "freshness_ms": 86_400_000,
+                "execution_eligible": False,
+            }
+            payload["count"] = 2
+            payload["data"] = [old, payload["data"][0]]
+            return payload
+
+        query.warmup = historical_context
+        client = AsyncDataLayerClient(
+            query_transport=query,
+            stream_transport=ScriptedStreamTransport(()),
+            consumer_id="trading-system-shadow",
+        )
+        response = await client.warmup(requirement)
+        self.assertEqual(response.count, 2)
+        self.assertEqual(response.data[0].quality.state, "STALE")
+        self.assertTrue(response.data[-1].quality.execution_eligible)
+
     async def test_sdk_rejects_semantically_invalid_success_response(self):
         requirement = DataRequirement(
             self.record.instrument_uid, Feed.BAR, Grade.EXECUTION,
@@ -604,6 +680,44 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
                 requirement
             ):
                 pass
+
+    async def test_market_closed_is_readable_for_alpha_but_execution_fails_closed(self):
+        alpha = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA,
+            "alpha_binance_v1", interval="1m", warmup_limit=1,
+            max_freshness_ms=500,
+        )
+        query = FakeQueryTransport(self.token)
+        original = query.warmup
+
+        async def market_closed(*args, **kwargs):
+            payload = await original(*args, **kwargs)
+            payload["data"][0]["quality"].update({
+                "state": "MARKET_CLOSED",
+                "freshness_ms": 86_400_000,
+                "execution_eligible": False,
+                "flags": ["MARKET_CLOSED"],
+            })
+            return payload
+
+        query.warmup = market_closed
+        alpha_client = AsyncDataLayerClient(
+            query_transport=query,
+            stream_transport=ScriptedStreamTransport(()),
+            consumer_id="alpha-shadow",
+        )
+        response = await alpha_client.warmup(alpha)
+        self.assertEqual(response.data[0].quality.state, "MARKET_CLOSED")
+        self.assertFalse(response.data[0].quality.execution_eligible)
+
+        execution = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.EXECUTION,
+            "alpha_binance_v1", interval="1m", warmup_limit=1,
+            max_freshness_ms=500,
+        )
+        with self.assertRaises(DataLayerError) as raised:
+            await alpha_client.warmup(execution)
+        self.assertEqual(raised.exception.code, "SOURCE_NON_AUTHORITATIVE")
 
     async def test_public_query_wrappers_preserve_all_requirement_policies(self):
         requirement = DataRequirement(

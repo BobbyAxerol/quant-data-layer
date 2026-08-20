@@ -1,0 +1,17 @@
+{
+  "binary_sha256": "02972e3e09c9c40d6499ebf9e3fc3caf8d3cdd016ea75c200821c1e54d333321",
+  "canonical": 100000,
+  "duplicates": 0,
+  "elapsed_seconds": 0.648765929,
+  "events": 100000,
+  "events_per_second": 154138.79726103804,
+  "minimum_events_per_second": 50000.0,
+  "output_bytes": 45550175,
+  "p50_ns": 4539,
+  "p99_ns": 10760,
+  "production_writes": 0,
+  "provenance": "SYNTHETIC_CAPACITY_ONLY",
+  "quarantines": 0,
+  "schema": "qdl.phase-a.realtime-core-capacity.v1",
+  "status": "PASS"
+}

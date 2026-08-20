@@ -1,0 +1,850 @@
+from __future__ import annotations
+
+import asyncio
+import copy
+import json
+import tempfile
+import time
+import unittest
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
+from pathlib import Path
+
+import yaml
+
+from qdl.adapters.vn import build_dnse_bar_raw_envelope
+from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
+from qdl.runtime.stable_vn_edge import StableDnseVendorEdge
+from qdl.runtime.stable_catalog import StableSourceCatalog
+from scripts.phaseb_prepare_stable_candidate import prepare_candidate
+
+from qdl.runtime.stable_deployment import (
+    STABLE_CORE_WORKER_COUNT,
+    StableAcquisitionPlan,
+    stable_authority_record,
+    write_stable_runtime_bundle,
+)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
+ACQUISITION_PATH = ROOT / "config/v2/stable-acquisition-bindings.yaml"
+
+
+class StableDeploymentContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.catalog = StableSourceCatalog.load(CATALOG_PATH)
+        self.acquisition = StableAcquisitionPlan.load(
+            ACQUISITION_PATH, catalog=self.catalog
+        )
+        self.authority = stable_authority_record(
+            rust_image_digest="a" * 64,
+            capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
+            contract=ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto",
+            partition_plan=ACQUISITION_PATH.read_bytes(),
+            effective_at_ns=time.time_ns(),
+        )
+
+    def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
+        self.assertEqual(len(self.catalog.bindings), 16)
+        self.assertEqual(len(self.acquisition.bindings), 16)
+        self.assertEqual(self.acquisition.revision, 3)
+        modes = {item.mode for item in self.acquisition.bindings}
+        self.assertEqual(modes, {"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
+        native = self.acquisition.native_ingestor_configs(
+            catalog=self.catalog, authority=self.authority
+        )
+        self.assertEqual(
+            set(native),
+            {"binance-usdm", "binance-spot", "okx-swap", "okx-spot"},
+        )
+        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 8)
+        self.assertTrue(all(item["authority"]["mode"] == "RUST_SHADOW" for item in native.values()))
+        self.assertEqual(
+            {
+                item.binding_id
+                for item in self.acquisition.bindings
+                if item.mode == "PYTHON_REST"
+            },
+            {
+                "binance-usdm-btcusdt-bar-1m",
+                "binance-spot-btcusdt-bar-1m",
+                "okx-swap-btcusdt-bar-1m",
+                "okx-spot-btcusdt-bar-1m",
+            },
+        )
+        self.assertEqual(
+            {item["max_inflight_publishes"] for item in native.values()}, {512}
+        )
+        generation_paths = {
+            item["generation_state_path"] for item in native.values()
+        }
+        self.assertEqual(len(generation_paths), 4)
+        self.assertTrue(all(
+            value.startswith("/var/lib/qdl-stable/runtime/generations/")
+            for value in generation_paths
+        ))
+        self.assertEqual(
+            {item["latest_state_flush_ms"] for item in native.values()}, {50}
+        )
+        delivery_by_feed = {
+            binding["feed"]: binding["delivery_class"]
+            for item in native.values()
+            for binding in item["bindings"]
+        }
+        self.assertEqual(
+            delivery_by_feed,
+            {"TRADE": "LOSSLESS", "QUOTE": "LATEST_STATE"},
+        )
+        okx_bbo = {
+            item.binding_id: item.sequence_policy
+            for item in self.acquisition.bindings
+            if item.provider_kind == "okx_bbo"
+        }
+        self.assertEqual(
+            okx_bbo,
+            {
+                "okx-spot-btcusdt-quote": "NONE",
+                "okx-swap-btcusdt-quote": "NONE",
+            },
+        )
+
+    def test_core_bundle_uses_stable_identity_lineage_and_never_enables_public_writes(self):
+        core = self.acquisition.core_config(
+            catalog=self.catalog, authority=self.authority
+        )
+        bindings = core["core"]["bindings"]
+        expected = {item.instrument.instrument_uid for item in self.catalog.bindings}
+        self.assertEqual({item["instrument_uid"] for item in bindings}, expected)
+        self.assertEqual(
+            {item["source_id"] for item in bindings},
+            {item.source_id for item in self.catalog.bindings},
+        )
+        finality_by_source = {
+            item.source_id: item.require_final_bar for item in self.catalog.bindings
+        }
+        self.assertEqual(
+            {item["source_id"]: item["require_final_bar"] for item in bindings},
+            finality_by_source,
+        )
+        self.assertEqual(sum(finality_by_source.values()), 6)
+        self.assertFalse(core["authority"]["public_write_allowed"])
+        self.assertFalse(core["authority"]["legacy_write_allowed"])
+        self.assertFalse(core["core"]["allow_test_provenance"])
+        self.assertEqual(core["raw_topics"], ["md.raw.stable.v1"])
+        workers = [
+            self.acquisition.core_config(
+                catalog=self.catalog,
+                authority=self.authority,
+                worker_index=index,
+            )
+            for index in range(1, STABLE_CORE_WORKER_COUNT + 1)
+        ]
+        self.assertEqual(
+            {item["transactional_id"] for item in workers},
+            {"qdl-v2-stable-core-001", "qdl-v2-stable-core-002", "qdl-v2-stable-core-003"},
+        )
+        self.assertEqual(
+            {item["shard_id"] for item in workers},
+            {item["transactional_id"] for item in workers},
+        )
+        self.assertEqual({item["raw_topics"][0] for item in workers}, {"md.raw.stable.v1"})
+        self.assertEqual({json.dumps(item["authority"], sort_keys=True) for item in workers}, {
+            json.dumps(self.authority, sort_keys=True)
+        })
+        for invalid_index in (0, STABLE_CORE_WORKER_COUNT + 1):
+            with self.assertRaisesRegex(ValueError, "worker index"):
+                self.acquisition.core_config(
+                    catalog=self.catalog,
+                    authority=self.authority,
+                    worker_index=invalid_index,
+                )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-phaseb-bundle-") as directory:
+            first = write_stable_runtime_bundle(
+                Path(directory),
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+            )
+            second = write_stable_runtime_bundle(
+                Path(directory),
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+            )
+            self.assertEqual(first, second)
+            self.assertEqual(
+                set(first),
+                {
+                    "authority.json",
+                    "core.json",
+                    "core-002.json",
+                    "core-003.json",
+                    "ingestor-binance-spot.json",
+                    "ingestor-binance-usdm.json",
+                    "ingestor-okx-spot.json",
+                    "ingestor-okx-swap.json",
+                },
+            )
+            persisted = json.loads((Path(directory) / "core.json").read_text())
+            self.assertEqual(persisted, core)
+            persisted_workers = [
+                json.loads((Path(directory) / name).read_text())
+                for name in ("core.json", "core-002.json", "core-003.json")
+            ]
+            self.assertEqual(
+                len({item["transactional_id"] for item in persisted_workers}),
+                STABLE_CORE_WORKER_COUNT,
+            )
+
+    def test_binance_bar_edge_publishes_each_closed_bar_once(self):
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return tuple(range(len(batch)))
+
+        class Envelope:
+            def __init__(self, venue, open_time_ms):
+                payload = (
+                    {"row": [open_time_ms, "1", "1", "1", "1", "1", open_time_ms + 59999]}
+                    if venue == "BINANCE"
+                    else {"data": [[str(open_time_ms), "1", "1", "1", "1", "1", "1", "1", "1"]]}
+                )
+                self.raw_frame_bytes = json.dumps(payload).encode()
+
+        publisher = Publisher()
+        edge = StableBinanceBarEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=self.authority,
+            publisher=publisher,
+            clock=lambda: 120.0,
+        )
+        with patch(
+            "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
+            side_effect=(
+                Envelope("BINANCE", 60_000), Envelope("BINANCE", 60_000),
+                Envelope("BINANCE", 60_000), Envelope("BINANCE", 60_000),
+            ),
+        ) as binance_latest, patch(
+            "qdl.runtime.stable_bar_edge.fetch_okx_latest",
+            side_effect=(
+                Envelope("OKX", 60_000), Envelope("OKX", 60_000),
+                Envelope("OKX", 60_000), Envelope("OKX", 60_000),
+            ),
+        ) as okx_latest:
+            self.assertEqual(edge.run_cycle(), 4)
+            self.assertEqual(edge.run_cycle(), 0)
+        self.assertEqual([len(batch) for batch in publisher.batches], [4])
+        self.assertEqual(
+            {call.kwargs["now_ms"] for call in binance_latest.call_args_list},
+            {110_000},
+        )
+        self.assertEqual(
+            {call.kwargs["now_ms"] for call in okx_latest.call_args_list},
+            {110_000},
+        )
+
+    def test_bar_edge_retries_complete_catchup_after_kafka_ack_failure(self):
+        class Publisher:
+            def __init__(self):
+                self.calls = 0
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.calls += 1
+                self.batches.append(batch)
+                if self.calls == 1:
+                    raise RuntimeError("injected Kafka ACK failure")
+                return tuple(range(len(batch)))
+
+        class Envelope:
+            def __init__(self, venue, open_time_ms):
+                payload = (
+                    {"row": [
+                        open_time_ms, "1", "1", "1", "1", "1",
+                        open_time_ms + 59_999,
+                    ]}
+                    if venue == "BINANCE"
+                    else {"data": [[
+                        str(open_time_ms), "1", "1", "1", "1",
+                        "1", "1", "1", "1",
+                    ]]}
+                )
+                self.raw_frame_bytes = json.dumps(payload).encode()
+
+        publisher = Publisher()
+        edge = StableBinanceBarEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=self.authority,
+            publisher=publisher,
+            clock=lambda: 240.0,
+        )
+        binding_ids = [
+            source.binding_id
+            for source, _acquisition in edge.bindings + edge.okx_bindings
+        ]
+        edge._last_open_ms.update({binding_id: 60_000 for binding_id in binding_ids})
+        binance_history = (
+            Envelope("BINANCE", 120_000),
+            Envelope("BINANCE", 180_000),
+        )
+        okx_history = (
+            Envelope("OKX", 120_000),
+            Envelope("OKX", 180_000),
+        )
+        with patch(
+            "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
+            side_effect=[Envelope("BINANCE", 180_000)] * 4,
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_okx_latest",
+            new_callable=AsyncMock,
+            side_effect=[Envelope("OKX", 180_000)] * 4,
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_binance_history",
+            side_effect=[binance_history] * 4,
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_okx_history",
+            new_callable=AsyncMock,
+            side_effect=[okx_history] * 4,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected Kafka ACK failure"):
+                edge.run_cycle()
+            self.assertEqual(
+                edge._last_open_ms,
+                {binding_id: 60_000 for binding_id in binding_ids},
+            )
+            self.assertEqual(edge.run_cycle(), 8)
+
+        self.assertEqual([len(batch) for batch in publisher.batches], [8, 8])
+        self.assertEqual(
+            edge._last_open_ms,
+            {binding_id: 180_000 for binding_id in binding_ids},
+        )
+
+    def test_bar_edge_rejects_incomplete_catchup_without_advancing_watermark(self):
+        class Publisher:
+            def __init__(self):
+                self.calls = 0
+
+            def publish_many(self, _values):
+                self.calls += 1
+                return ()
+
+        class Envelope:
+            def __init__(self, venue, open_time_ms):
+                payload = (
+                    {"row": [
+                        open_time_ms, "1", "1", "1", "1", "1",
+                        open_time_ms + 59_999,
+                    ]}
+                    if venue == "BINANCE"
+                    else {"data": [[
+                        str(open_time_ms), "1", "1", "1", "1",
+                        "1", "1", "1", "1",
+                    ]]}
+                )
+                self.raw_frame_bytes = json.dumps(payload).encode()
+
+        publisher = Publisher()
+        edge = StableBinanceBarEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=self.authority,
+            publisher=publisher,
+            clock=lambda: 240.0,
+        )
+        binding_ids = [
+            source.binding_id
+            for source, _acquisition in edge.bindings + edge.okx_bindings
+        ]
+        edge._last_open_ms.update({binding_id: 60_000 for binding_id in binding_ids})
+        with patch(
+            "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
+            side_effect=[Envelope("BINANCE", 180_000)] * 2,
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_okx_latest",
+            new_callable=AsyncMock,
+            side_effect=[Envelope("OKX", 180_000)] * 2,
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_binance_history",
+            return_value=(Envelope("BINANCE", 180_000),),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not contiguous"):
+                edge.run_cycle()
+
+        self.assertEqual(publisher.calls, 0)
+        self.assertEqual(
+            edge._last_open_ms,
+            {binding_id: 60_000 for binding_id in binding_ids},
+        )
+
+    def test_dnse_edge_fences_on_queue_pressure_and_bar_keeps_exact_units(self):
+        class Publisher:
+            pass
+
+        edge = StableDnseVendorEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=self.authority,
+            publisher=Publisher(),
+            queue_capacity=1,
+        )
+        trade = type("Trade", (), {
+            "symbol": "VN30F1M",
+            "price": "1820.7",
+            "quantity": "1",
+            "marketId": "VN30",
+            "boardId": "G3",
+            "tradingSessionId": "CONTINUOUS",
+            "totalVolumeTraded": "12",
+        })()
+        edge.on_trade(trade)
+        edge.on_trade(trade)
+        self.assertTrue(edge._fatal.is_set())
+        self.assertEqual(edge._queue.qsize(), 1)
+
+        source = edge.bar_sources["VN30F1M"]
+        row = {"t": 1_786_352_340, "o": "1820.7", "h": "1821.2",
+               "l": "1820.2", "c": "1820.7", "v": "0"}
+        envelope = build_dnse_bar_raw_envelope(
+            row,
+            edge._binding(source),
+            received_at_ns=1_786_352_400_000_000_000,
+        )
+        websocket_envelope = build_dnse_bar_raw_envelope(
+            row,
+            edge._binding(source),
+            received_at_ns=1_786_352_400_000_000_001,
+            acquisition_origin="WEBSOCKET_CLOSED",
+        )
+        payload = json.loads(envelope.raw_frame_bytes)
+        self.assertEqual(payload["interval"], "1m")
+        self.assertEqual(payload["v"], "0")
+        self.assertTrue(payload["is_final"])
+        self.assertEqual(envelope.native_channel, websocket_envelope.native_channel)
+        self.assertNotEqual(
+            envelope.transport_protocol, websocket_envelope.transport_protocol
+        )
+        self.assertNotEqual(
+            envelope.capture_boundary, websocket_envelope.capture_boundary
+        )
+        self.assertFalse(envelope.test_provenance)
+
+    def test_dnse_history_bootstrap_retries_checkpoints_and_restores(self):
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+                self.fail = False
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return () if self.fail else tuple(range(len(batch)))
+
+        rows = [
+            {"t": value, "o": "100", "h": "101", "l": "99", "c": "100.5", "v": "10"}
+            for value in (120, 180, 240)
+        ]
+        calls = []
+        sleeps = []
+
+        def fetcher(symbol, resolution, start, end):
+            calls.append((symbol, resolution, start, end))
+            if len(calls) == 1:
+                raise TimeoutError("injected transient DNSE timeout")
+            return rows
+
+        with tempfile.TemporaryDirectory(prefix="qdl-dnse-state-") as directory:
+            state_path = Path(directory) / "dnse.json"
+            publisher = Publisher()
+            edge = StableDnseVendorEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=publisher,
+                warmup_rows=2,
+                history_lookback_days=1,
+                history_attempts=2,
+                history_fetcher=fetcher,
+                state_path=state_path,
+                clock=lambda: 400.0,
+                sleep=sleeps.append,
+            )
+            self.assertEqual(edge.bootstrap_history(), 4)
+            self.assertEqual(edge.bootstrap_history(), 0)
+            self.assertEqual([len(batch) for batch in publisher.batches], [4])
+            self.assertEqual(sleeps, [1])
+            self.assertEqual(set(edge._last_bar), set(edge._bar_binding_ids))
+            self.assertEqual(state_path.stat().st_mode & 0o777, 0o600)
+            self.assertTrue(all(
+                not item.test_provenance
+                for batch in publisher.batches
+                for item in batch
+            ))
+
+            restored = StableDnseVendorEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=publisher,
+                warmup_rows=2,
+                history_fetcher=lambda *_args: (_ for _ in ()).throw(
+                    AssertionError("matching checkpoint must avoid REST bootstrap")
+                ),
+                state_path=state_path,
+                clock=lambda: 400.0,
+            )
+            self.assertEqual(restored.bootstrap_history(), 0)
+            self.assertEqual(restored._last_bar, edge._last_bar)
+
+    def test_dnse_closed_bar_uses_websocket_and_ack_advances_checkpoint(self):
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return tuple(range(len(batch)))
+
+        rows = [
+            {"t": value, "o": "100", "h": "101", "l": "99", "c": "100.5", "v": "10"}
+            for value in (120, 180, 240)
+        ]
+        with tempfile.TemporaryDirectory(prefix="qdl-dnse-state-") as directory:
+            state_path = Path(directory) / "dnse.json"
+            publisher = Publisher()
+            edge = StableDnseVendorEdge(
+                catalog=self.catalog, acquisition=self.acquisition,
+                authority=self.authority, publisher=publisher, warmup_rows=2,
+                history_attempts=1, history_fetcher=lambda *_args: rows,
+                state_path=state_path, clock=lambda: 400.0,
+            )
+            edge.bootstrap_history()
+            edge.history_fetcher = lambda *_args: (_ for _ in ()).throw(
+                AssertionError("live closed BAR must not poll REST")
+            )
+            bar = type("Ohlc", (), {
+                "symbol": "VN30F1M", "resolution": "1", "time": 300,
+                "open": "100", "high": "102", "low": "99", "close": "101",
+                "volume": "12",
+            })()
+            edge.on_ohlc_closed(bar)
+            edge._stopped.set()
+            edge._publish_worker()
+            self.assertFalse(edge._fatal.is_set())
+            self.assertEqual([len(batch) for batch in publisher.batches], [4, 1])
+            live = publisher.batches[-1][0]
+            self.assertEqual(live.native_channel, "ohlcv/1m")
+            self.assertNotEqual(
+                live.transport_protocol, publisher.batches[0][0].transport_protocol
+            )
+            binding_id = edge.bar_sources["VN30F1M"].binding_id
+            self.assertEqual(edge._last_bar[binding_id][0], 300_000)
+            restored = StableDnseVendorEdge(
+                catalog=self.catalog, acquisition=self.acquisition,
+                authority=self.authority, publisher=publisher,
+                state_path=state_path, clock=lambda: 400.0,
+            )
+            self.assertEqual(restored._last_bar[binding_id][0], 300_000)
+            restored.on_ohlc_closed(bar)
+            self.assertTrue(restored._queue.empty())
+
+    def test_dnse_run_subscribes_native_closed_bar_without_live_rest_polling(self):
+        calls = []
+
+        class Publisher:
+            def publish_many(self, values):
+                batch = tuple(values)
+                return tuple(range(len(batch)))
+
+            def close(self):
+                calls.append(("close",))
+
+        class Client:
+            is_healthy = True
+
+            def __init__(self, **kwargs):
+                calls.append((
+                    "init", kwargs["base_url"], kwargs["dispatch_queue_capacity"]
+                ))
+
+            async def connect(self):
+                calls.append(("connect",))
+
+            async def subscribe_trades(self, **kwargs):
+                calls.append(("trade", kwargs["board_id"], tuple(kwargs["symbols"])))
+
+            async def subscribe_ohlc_closed(self, **kwargs):
+                calls.append(("bar", kwargs["resolution"], tuple(kwargs["symbols"])))
+                edge.stop()
+
+            async def disconnect(self):
+                calls.append(("disconnect",))
+
+        edge = StableDnseVendorEdge(
+            catalog=self.catalog, acquisition=self.acquisition,
+            authority=self.authority, publisher=Publisher(),
+            history_fetcher=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("restored runtime must not call REST")
+            ),
+        )
+        edge._history_bootstrapped = True
+        with patch("qdl.adapters.vn.stable_edge.DNSE_API_KEY", "key"), patch(
+            "qdl.adapters.vn.stable_edge.DNSE_API_SECRET_KEY", "secret"
+        ), patch("qdl.adapters.vn.stable_edge.TradingClient", Client):
+            asyncio.run(edge.run())
+        self.assertIn(
+            ("init", "wss://ws-openapi.dnse.com.vn", 833), calls
+        )
+        self.assertIn(("trade", "G1", ("FPT", "VN30F1M")), calls)
+        self.assertIn(("trade", "G3", ("FPT", "VN30F1M")), calls)
+        self.assertIn(("bar", "1", ("FPT", "VN30F1M")), calls)
+        self.assertEqual(calls[-2:], [("disconnect",), ("close",)])
+
+    def test_dnse_history_conflict_partial_checkpoint_and_ack_failure_fail_closed(self):
+        base = {"t": 120, "o": "100", "h": "101", "l": "99", "c": "100", "v": "1"}
+        conflict = {**base, "c": "101"}
+        edge = StableDnseVendorEdge(
+            catalog=self.catalog, acquisition=self.acquisition, authority=self.authority,
+            publisher=object(), warmup_rows=2, history_attempts=1,
+            history_fetcher=lambda *_args: [base, conflict],
+            clock=lambda: 400.0, sleep=lambda _delay: None,
+        )
+        with self.assertRaisesRegex(RuntimeError, "bootstrap exhausted"):
+            edge._closed_history("VN30F1M")
+
+        partial = StableDnseVendorEdge(
+            catalog=self.catalog, acquisition=self.acquisition, authority=self.authority,
+            publisher=object(), warmup_rows=2, history_attempts=1,
+            history_fetcher=lambda *_args: [base],
+            clock=lambda: 400.0, sleep=lambda _delay: None,
+        )
+        with self.assertRaisesRegex(RuntimeError, "bootstrap exhausted"):
+            partial._closed_history("VN30F1M")
+
+        with tempfile.TemporaryDirectory(prefix="qdl-dnse-state-") as directory:
+            state_path = Path(directory) / "dnse.json"
+            state_path.write_text(json.dumps({
+                "schema": "qdl.stable-dnse-edge-state.v1",
+                "slice_id": self.authority["slice_id"],
+                "authority_revision": self.authority["revision"],
+                "catalog_revision": self.catalog.catalog_revision,
+                "acquisition_revision": self.acquisition.revision,
+                "binding_ids": list(edge._bar_binding_ids),
+                "last_bar": {},
+            }))
+            with self.assertRaisesRegex(RuntimeError, "partial"):
+                StableDnseVendorEdge(
+                    catalog=self.catalog, acquisition=self.acquisition,
+                    authority=self.authority, publisher=object(), state_path=state_path,
+                )
+
+        class MissingAckPublisher:
+            def publish_many(self, values):
+                tuple(values)
+                return ()
+
+        no_ack = StableDnseVendorEdge(
+            catalog=self.catalog, acquisition=self.acquisition,
+            authority=self.authority, publisher=MissingAckPublisher(),
+            warmup_rows=1, history_attempts=1,
+            history_fetcher=lambda *_args: [base], clock=lambda: 400.0,
+        )
+        with self.assertRaisesRegex(RuntimeError, "missed a Kafka ACK"):
+            no_ack.bootstrap_history()
+        self.assertEqual(no_ack._last_bar, {})
+
+    def test_missing_binding_wrong_provider_kind_and_primary_authority_fail_closed(self):
+        payload = yaml.safe_load(ACQUISITION_PATH.read_text(encoding="utf-8"))
+        missing = copy.deepcopy(payload)
+        missing["bindings"].pop()
+        with tempfile.TemporaryDirectory(prefix="qdl-phaseb-acquisition-") as directory:
+            path = Path(directory) / "missing.yaml"
+            path.write_text(yaml.safe_dump(missing, sort_keys=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "binding sets differ"):
+                StableAcquisitionPlan.load(path, catalog=self.catalog)
+
+            wrong = copy.deepcopy(payload)
+            wrong["bindings"][0]["provider_kind"] = "okx_trade"
+            path.write_text(yaml.safe_dump(wrong, sort_keys=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "provider kind differs"):
+                StableAcquisitionPlan.load(path, catalog=self.catalog)
+
+            contiguous_bbo = copy.deepcopy(payload)
+            for item in contiguous_bbo["bindings"]:
+                if item["provider_kind"] == "okx_bbo":
+                    item["sequence_policy"] = "CONTIGUOUS"
+                    break
+            path.write_text(
+                yaml.safe_dump(contiguous_bbo, sort_keys=False), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "replace-only"):
+                StableAcquisitionPlan.load(path, catalog=self.catalog)
+
+        primary = copy.deepcopy(self.authority)
+        primary["mode"] = "RUST_PRIMARY"
+        primary["public_write_allowed"] = True
+        with self.assertRaisesRegex(ValueError, "not an isolated Rust shadow"):
+            self.acquisition.core_config(catalog=self.catalog, authority=primary)
+
+
+class StableComposeAndBundleTests(unittest.TestCase):
+    def test_compose_is_isolated_bounded_nonroot_and_has_no_v1_route(self):
+        raw = (ROOT / "docker-compose.v2-stable.yml").read_text(encoding="utf-8")
+        compose = yaml.safe_load(raw)
+        services = compose["services"]
+        self.assertNotIn("8100", raw)
+        self.assertNotIn("redis_marketdata", raw)
+        self.assertTrue(compose["networks"]["stable_internal"]["internal"])
+        self.assertFalse(compose["networks"]["stable_ingress"].get("internal", False))
+        for name in ("query_v2_1", "query_v2_2", "stream_v2_active", "stream_v2_passive"):
+            self.assertEqual(
+                set(services[name]["networks"]), {"stable_internal", "stable_ingress"}
+            )
+            self.assertTrue(
+                all(str(port).startswith("127.0.0.1:") for port in services[name]["ports"])
+            )
+        self.assertNotIn("ports", services["projector_v2"])
+        self.assertEqual(services["projector_v2"]["networks"], ["stable_internal"])
+        self.assertEqual(
+            compose["x-kafka-env"]["KAFKA_MIN_INSYNC_REPLICAS"], 2
+        )
+        self.assertEqual(
+            compose["x-kafka-env"]["KAFKA_DEFAULT_REPLICATION_FACTOR"], 3
+        )
+        self.assertEqual(compose["x-kafka"]["mem_limit"], "768m")
+        self.assertEqual(
+            compose["x-kafka-env"]["KAFKA_HEAP_OPTS"], "-Xms256m -Xmx256m"
+        )
+        kafka_tmpfs = compose["x-kafka"]["tmpfs"]
+        self.assertEqual(kafka_tmpfs, ["/tmp:rw,nosuid,nodev,exec,size=32m"])
+        self.assertNotIn("noexec", kafka_tmpfs[0])
+        self.assertIn("stable_tls:/stable-certs:ro", services["projector_v2"]["volumes"])
+        self.assertNotIn("/certs:ro", " ".join(services["projector_v2"]["volumes"]))
+        bar_edge = services["binance_bar_edge"]
+        self.assertEqual(
+            bar_edge["environment"]["QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS"],
+            "10",
+        )
+        self.assertEqual(
+            bar_edge["environment"]["QDL_STABLE_BAR_STATE_PATH"],
+            "/var/lib/qdl-stable/runtime/stable-crypto-bar-edge.json",
+        )
+        self.assertIn("stable_state:/var/lib/qdl-stable", bar_edge["volumes"])
+        self.assertEqual(
+            bar_edge["depends_on"]["stable_state_init"],
+            {"condition": "service_completed_successfully"},
+        )
+        for name in (
+            "query_v2_1", "query_v2_2", "stream_v2_active",
+            "stream_v2_passive", "projector_v2",
+        ):
+            with self.subTest(service=name):
+                self.assertEqual(services[name]["user"], "10001:10001")
+                self.assertTrue(services[name]["read_only"])
+                self.assertIn("ALL", services[name]["cap_drop"])
+                self.assertEqual(services[name]["restart"], "no")
+        self.assertEqual(
+            set(services["ingestor_okx_swap"]["networks"]),
+            {"stable_internal", "stable_egress"},
+        )
+        for name in (
+            "ingestor_binance_usdm", "ingestor_binance_spot",
+            "ingestor_okx_swap", "ingestor_okx_spot",
+        ):
+            with self.subTest(native_ingestor=name):
+                self.assertTrue(services[name]["read_only"])
+                self.assertIn(
+                    "stable_state:/var/lib/qdl-stable", services[name]["volumes"]
+                )
+                self.assertEqual(
+                    services[name]["depends_on"],
+                    {
+                        "stable_tls_init": {
+                            "condition": "service_completed_successfully"
+                        },
+                        "stable_state_init": {
+                            "condition": "service_completed_successfully"
+                        },
+                        "kafka1": {"condition": "service_healthy"},
+                        "kafka2": {"condition": "service_healthy"},
+                        "kafka3": {"condition": "service_healthy"},
+                    },
+                )
+        core_names = ("rust_core", "rust_core_2", "rust_core_3")
+        self.assertLessEqual(
+            len(core_names), compose["x-kafka-env"]["KAFKA_NUM_PARTITIONS"]
+        )
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_KAFKA_CLIENT_ID"]
+                for name in core_names
+            },
+            {
+                "qdl-v2-stable-core-001",
+                "qdl-v2-stable-core-002",
+                "qdl-v2-stable-core-003",
+            },
+        )
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_KAFKA_GROUP_ID"]
+                for name in core_names
+            },
+            {"qdl-v2-stable-core-v1"},
+        )
+        for name in core_names:
+            with self.subTest(service=name):
+                self.assertEqual(
+                    services[name]["entrypoint"],
+                    ["/usr/local/bin/qdl-realtime-core"],
+                )
+                self.assertIn("stable_tls:/stable-certs:ro", services[name]["volumes"])
+
+    def test_candidate_bundle_uses_image_ids_and_never_records_secret_values(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-phaseb-cert-") as cert_directory:
+            certs = Path(cert_directory)
+            (certs / "ca.crt").write_text("ca", encoding="ascii")
+            for principal in ("phase8-producer", "phase8-core", "phase8-consumer"):
+                (certs / f"{principal}.crt").write_text("crt", encoding="ascii")
+                (certs / f"{principal}.key").write_text("key", encoding="ascii")
+            with tempfile.TemporaryDirectory(prefix="qdl-phaseb-output-") as parent:
+                output = Path(parent) / "candidate"
+                with patch(
+                    "scripts.phaseb_prepare_stable_candidate.image_id",
+                    side_effect=("sha256:" + "a" * 64, "sha256:" + "b" * 64),
+                ):
+                    manifest = prepare_candidate(
+                        rust_image="qdl-rust:test",
+                        python_image="qdl-python:test",
+                        cert_dir=certs,
+                        output_dir=output,
+                        host_cert_dir=Path("/host/qdl/certs"),
+                        host_output_dir=Path("/host/qdl/candidate"),
+                    )
+                self.assertFalse(manifest["cutover_authorized"])
+                self.assertFalse(manifest["secret_values_recorded"])
+                self.assertEqual((output / "stable.env").stat().st_mode & 0o777, 0o600)
+                env_text = (output / "stable.env").read_text()
+                self.assertIn("QDL_STABLE_CERT_DIR=/host/qdl/certs", env_text)
+                self.assertIn(
+                    "QDL_STABLE_RUNTIME_DIR=/host/qdl/candidate/runtime", env_text
+                )
+                public_manifest = (output / "candidate-manifest.json").read_text()
+                self.assertNotIn("QDL_STABLE_INTERNAL_INGEST_SECRET", public_manifest)
+                for name in ("core.json", "core-002.json", "core-003.json"):
+                    self.assertTrue((output / f"runtime/{name}").is_file())
+                self.assertTrue((output / "identities/projector/client.key").is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()

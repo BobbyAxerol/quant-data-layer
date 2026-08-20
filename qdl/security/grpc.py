@@ -100,12 +100,27 @@ class GrpcDataPlaneInterceptor(grpc.aio.ServerInterceptor):
 
             async def unary_stream(request, context):
                 request_access = await authorize(context)
-                token = _CURRENT_ACCESS.set(request_access)
+                iterator = behavior(request, context).__aiter__()
                 try:
-                    async for response in behavior(request, context):
+                    while True:
+                        token = _CURRENT_ACCESS.set(request_access)
+                        try:
+                            response = await iterator.__anext__()
+                        except StopAsyncIteration:
+                            return
+                        finally:
+                            _CURRENT_ACCESS.reset(token)
+                        # Never retain a ContextVar token across a yielded
+                        # response: gRPC may finalize the generator elsewhere.
                         yield response
                 finally:
-                    _CURRENT_ACCESS.reset(token)
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        token = _CURRENT_ACCESS.set(request_access)
+                        try:
+                            await close()
+                        finally:
+                            _CURRENT_ACCESS.reset(token)
 
             return grpc.unary_stream_rpc_method_handler(
                 unary_stream,

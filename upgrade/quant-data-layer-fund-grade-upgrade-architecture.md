@@ -1438,6 +1438,26 @@ Với VN market data:
 - After-hours last snapshot không được đánh dấu live.
 - Trading calendar quyết định market closed, không dùng absence đơn thuần.
 
+DNSE production acquisition boundary:
+
+- REST market-history transport sends an explicit version header, verifies TLS
+  and hostname, applies an explicit proxy policy, bounded quota/retry/backoff and
+  strict OHLC/pagination validation. REST is cold-bootstrap/gap-repair only.
+- Live final 1m bars use authenticated native `ohlc_closed.1`; they do not poll
+  REST every minute. TRADE and BAR share the bounded lossless raw edge and reach
+  consumers only through durable broker ACK plus the Rust canonical core.
+- The last final BAR watermark is atomic and bound to slice, authority, catalog,
+  acquisition revision and exact BAR bindings. It advances only after all
+  related durable ACKs; corrupt, partial or mismatched state fails closed.
+- An official SDK snapshot without a redistribution license is protocol
+  reference, not vendored source. Insecure certificate disabling and examples
+  carrying credentials are never copied into release artifacts.
+- If the primary host cannot reach official DNSE REST, run a separately governed
+  low-rate DNSE acquisition edge in an approved egress domain and publish
+  authenticated raw envelopes over mTLS/ACL. Never relabel vnstock/V1 Parquet as
+  `DNSE_DIRECT`; WebSocket-only collection may build durable future history but
+  is not an instant replacement for a fresh 500-row bootstrap.
+
 ### 14.5 Failover state machine
 
 ```text
@@ -4884,6 +4904,244 @@ replicated transport, production telemetry/security, full consumer cutover and
 regional DR claims until their real infrastructure exists. V1 remains
 authoritative and was not restarted or mutated.
 
+## Appendix E — Phase 9.0-B isolated V2 beta boundary
+
+Phase 9.0-B reuses the Phase 7 V2 API/query/stream topology after the runtime
+correctness fixes of Phase 9.0-A. It is an evidence refresh on the migrated
+host, not a new public contract and not a Rust authority promotion.
+
+The approved topology contains one immutable query replica, two fenced
+active/passive stream replicas, one dedicated AOF Redis, bounded canonical
+spool volumes and an optional continuous V1 read-only bridge. Only the bridge
+joins the existing internal V1 network. All V2 ingress is loopback-only and all
+state, keys, groups, credentials, audit files and Compose resources use an
+isolated Phase 9.0-B namespace.
+
+The first slice is fixed to `BINANCE / USDM / PERPETUAL / BTCUSDT / BAR / 1m`.
+The bridge obtains authentic final bars through the internal V1 API and cannot
+resolve arbitrary URLs or call a venue directly. V1 remains source authority;
+the beta canonical spool is shadow evidence only. The beta may neither write
+legacy Redis keys/channels nor claim execution eligibility.
+
+Certification combines Sections 18-19, 24-25, 30, 32, 37-41 and Appendix B:
+
+1. freeze V2 OpenAPI/Protobuf/SDK and verify V1 compatibility;
+2. prove consumer-bound workload identity, entitlement, rate/concurrency bounds
+   and cursor signing/rotation/adversarial rejection;
+3. compare provider-authentic V1 and V2 final bars field-for-field and prove
+   deterministic event identity, deduplication and contiguous replay-to-live;
+4. stop the active stream owner and require a higher fencing epoch before the
+   passive owner serves work; stale-owner writes remain rejected;
+5. stop/restart beta Redis and processes, require dependency-derived readiness,
+   preserve bounded durable state and keep V1 fallback available;
+6. measure CPU, memory, PIDs, Redis/spool growth and latency under normal, burst
+   and slow-consumer cases; and
+7. remove all disposable resources and verify the V1 topology, state and public
+   contract are byte/identity-equivalent before and after.
+
+Passing this appendix permits only an isolated `V2_BETA_READ_ONLY` review. It
+does not close replicated broker, production OTel/alerting, workload identity,
+external secrets, signature admission, independent DR, consumer registration
+or exact authority-slice approval. Those remain mandatory before Phase 9.1.
+
+Phase 9.0-B certification completed on candidate revision
+`1c881389b4ee21a153903505822c61512b176044` with exact authentic-bar parity,
+active/passive fencing, dependency recovery, adversarial security, bounded load
+and zero-residue cleanup all passing. The frozen report is
+[`PHASE90B_ISOLATED_V2_BETA_REPORT.md`](evidence/PHASE90B_ISOLATED_V2_BETA_REPORT.md).
+This evidence does not alter the authority boundary above.
+
+## Appendix F — Phase 9.0-C production prerequisite boundary
+
+Phase 9.0-C converts the Phase 6 and Phase 9 production blockers into one
+provider-neutral, machine-verifiable gate bundle. The evaluator distinguishes
+`TEST`, `LOCAL_REHEARSAL`, `PRODUCTION` and `INDEPENDENT_FAILURE_DOMAIN`
+evidence. A stronger gate cannot be satisfied by evidence from a weaker scope.
+
+The mandatory gates are replicated durable transport; OTel collection,
+persistent dashboards and acknowledged alert routing; workload identity, RBAC
+and network policy; external secret rotation; signed artifact admission;
+PostgreSQL PITR; object-store restore; independent failure-domain DR;
+Redis/projector reconstruction; complete affected-consumer registration and
+rollback; persistent authority/sink fencing; and explicit exact-slice approval.
+
+Evidence records carry an ID, gate, environment, scope, status, artifact hash,
+observation/expiry time, issuer and immutable details. Missing, duplicate,
+expired, malformed, contradictory or lower-scope evidence fails closed. Local
+Kafka replication, debug OTel exporters, self-signed test keys and same-host
+restore remain useful rehearsal evidence but never become production proof.
+
+Authority identity and transitions follow Section 30. PostgreSQL stores the
+current exact slice and append-only audit; compacted Kafka remains the durable
+distribution/audit substrate. A compare-and-swap transition checks current
+state, authority revision, owner, lease epoch and partition-plan epoch. Canary
+and primary transitions additionally require the exact passing prerequisite
+bundle and named operator approval.
+
+Passing Phase 9.0-C code and local tests may yield
+`COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`. Only real infrastructure evidence can
+yield `PRODUCTION_PREREQUISITES_PASS`. Neither result changes V1 automatically;
+Phase 9.1 remains a separately approved exact-slice canary.
+
+Implementation status (2026-08-18): `COMPLETE_CONTROL_PLANE /
+NO_GO_EXTERNAL`. The strict 12-gate evaluator, additive persistent authority
+CAS/audit schema, frozen candidate, migration smoke, operator runbook and
+checksummed evidence are complete. Local, focused and full candidate suites pass
+with V1 unchanged. The external infrastructure/operator gates remain explicit;
+none was relabeled or bypassed to manufacture a production approval.
+
+## Appendix G — Phase 9.1 Rust canary boundary
+
+Phase 9.1 is an exact-slice dual-read/compare stage, not source-authority
+cutover. Python remains the only public and V1 compatibility writer. Rust may
+publish only to a dedicated canary canonical namespace that no production
+consumer treats as authoritative.
+
+The production path accepts one Phase 9.0-C decision bundle only when it is
+`GO`, fresh, checksummed and bound to the exact candidate digest, partition-plan
+epoch, image/signature, contract, normalizer, adapter, catalog, source policy,
+consumer set, blast radius, operator and hold window. The isolated rehearsal
+path has a separate entrypoint and cannot invoke production CAS or public sinks.
+No environment variable or test mode may convert rehearsal evidence into a
+production decision.
+
+A versioned Phase 9 authority record binds:
+
+```text
+slice_id
+state
+owner_id
+authority_revision
+lease_epoch
+partition_plan_epoch
+candidate_digest
+prerequisite_bundle_id
+start_watermark
+approved_by
+approved_at
+hold_until
+```
+
+Every canary publication repeats slice, owner and all three epochs plus source
+watermark. The sink rejects wrong or stale identity before durable append.
+`RUST_SHADOW` can write shadow targets; `RUST_CANARY` adds only the isolated
+canary canonical target; `BLOCKED` writes nothing. Public V2 and Legacy V1 remain
+forbidden throughout Phase 9.1.
+
+Parity compares Python and Rust outputs from the same authentic captured frame
+range. Correctness-critical fields have zero tolerance. Guardrails block on any
+unexplained mismatch, open gap, final/revision mismatch, duplicate external
+publication, stale writer, authority ambiguity, durable ACK failure or approved
+lag/freshness/resource threshold breach. A monotonic hold-down prevents noisy
+automatic re-entry.
+
+The certification matrix includes deterministic replay, burst, clean-process
+restart, stale lease/owner/revision/partition, producer and broker interruption,
+slow consumer, guardrail block, rollback to shadow, V1 compatibility and exact
+cleanup. Same-host Kafka and captured frames prove implementation behavior only;
+they do not close the production/failure-domain prerequisites from Appendix F.
+With a `NO_GO_EXTERNAL` prerequisite decision the only valid result is
+`COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`.
+
+
+### Phase 9.1 implementation closure (2026-08-18)
+
+The isolated implementation is certified as
+`COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`. The frozen authentic capture
+produced 25,600 events with zero Python/Rust semantic mismatch over three clean
+Rust processes. The replicated TLS/ACL broker rehearsal passed exact sink
+fencing, one-replica availability, below-min-ISR fail-closed behavior, full
+restart recovery, compacted authority reconstruction, immutable audit order,
+64-record slow-consumer catch-up and rollback to `RUST_SHADOW`. Public and
+legacy write counts remained zero; V1 health and topology were unchanged.
+
+Operator artifacts are the [runbook](../docs/runbooks/phase91-rust-canary.md),
+[machine evidence](../upgrade/evidence/phase91-rust-canary-certification.json),
+[human report](../upgrade/evidence/PHASE91_RUST_CANARY_REPORT.md) and
+[checksum manifest](../upgrade/evidence/phase91-evidence.sha256). Phase 9.0-C
+still returns `NO_GO_EXTERNAL`; no production authority transition is allowed
+until independent production prerequisites and exact-slice approval are
+provided.
+
+## Appendix H — Phase 9.2 bounded Rust primary boundary
+
+Phase 9.2 promotes no broad venue and changes no public API. It defines one
+provider-neutral ownership handoff for one exact slice. With the current
+`NO_GO_EXTERNAL` decision, only an isolated rehearsal is legal; production V1,
+Redis, subscriptions and public destinations remain untouched.
+
+The immutable handoff chain is:
+
+```text
+old-owner durable terminal checkpoint at W
+    -> same-range parity/reconciliation accepted through W
+    -> persistent CAS: revision + 1, lease epoch + 1, new owner
+    -> final sink and compatibility projector load accepted authority
+    -> first new-owner authoritative watermark W + 1
+```
+
+A terminal checkpoint binds slice, old owner, authority revision, lease epoch,
+partition-plan epoch, source session, connection generation, terminal event ID,
+terminal payload hash and durable watermark. An accepted handoff additionally
+binds the checkpoint digest, exact overlap range, zero gaps, zero semantic
+mismatches, matching event/output counts, candidate and prerequisite bundle,
+approver and expiration. These records are append-only.
+
+The authority schema is additive. Phase 8 v1 and Phase 9.1 v2 records remain
+decodable. Phase 9.2 v3 grants authoritative targets only in `RUST_PRIMARY` (or
+the newer fenced `PYTHON_PRIMARY` rollback owner). Revision must advance exactly
+one per transition. Owner changes require a strictly newer lease. A changed
+slice, candidate or partition plan cannot be smuggled through a handoff.
+
+Final canonical, public V2 and legacy V1 compatibility destinations each keep an
+independent acknowledged watermark under the same authority identity. A write
+is accepted only for the active owner/revision/lease/plan, correct target and
+next boundary. Watermark state advances after durable ACK. A crash before ACK is
+retryable; a crash after ACK is reconciled by deterministic event ID and durable
+cursor. Stale and zombie writers are rejected at the sink/projector, even if a
+producer process still believes its lease is valid.
+
+Production authorization is distinct from rehearsal. It requires:
+
+- a fresh exact Phase 9.0-C `GO` bundle;
+- a real `RUST_CANARY` hold completed with zero correctness breach;
+- registered consumers and immutable Python rollback manifest;
+- accepted terminal/handoff records for the exact slice;
+- explicit operator, ticket, blast-radius and hold-window approval.
+
+The isolated harness uses authentic frozen provider frames and replicated
+test-only topics to model final/public/legacy projections. Those topic names can
+never equal production destinations. It tests `N-1/N/N+1`, off-by-one, gap,
+duplicate, stale owner/revision/lease/plan, competing CAS, process loss before
+and after CAS, sink/projector restart, broker replica loss/min-ISR, full restart,
+slow consumer and formal rollback. It records production mutations as zero,
+checks V1 topology before/after and deletes only disposable resources.
+
+A process loading an already-primary v3 authority starts fail-closed. It must
+reconstruct the latest ACKed watermark independently from each durable final,
+public V2 and legacy V1 destination, validate identity and a contiguous range,
+and restore that target fence before any append. A duplicate terminal
+watermark remains rejected and the first permitted write is exactly W+1. This
+prevents a crash after durable broker ACK but before process-local commit from
+re-emitting an external duplicate.
+
+A valid isolated result is
+`COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED`. It proves protocol and
+recovery behavior; it does not authorize disabling the Python subscription or
+claim independent failure-domain resilience.
+
+**Implementation closure (2026-08-18):** The isolated Phase 9.2 harness passed
+over 25,600 authentic provider events with zero Python/Rust semantic mismatch.
+The broker-backed second-process recovery reconstructed three independent
+target watermarks at 180 and resumed exactly at 181; canonical, V2 and V1
+projections remained identical and gap-free. PostgreSQL CAS/handoff, formal
+rollback, replica-loss/min-ISR, full restart, slow-consumer, full Rust/Python
+regression and scoped cleanup gates passed. Evidence is frozen in
+[`phase92-bounded-primary-certification.json`](../upgrade/evidence/phase92-bounded-primary-certification.json),
+the [human report](../upgrade/evidence/PHASE92_BOUNDED_PRIMARY_REPORT.md) and
+[`phase92-evidence.sha256`](../upgrade/evidence/phase92-evidence.sha256). Phase
+9.0-C remains `NO_GO_EXTERNAL`, so this closure grants no production authority.
+
 ### Option and Deribit extension boundary
 
 Adding an option venue must not require changing canonical core identities or rewriting distribution. The common boundary must represent:
@@ -4897,3 +5155,559 @@ Adding an option venue must not require changing canonical core identities or re
 - source authority, quality state and entitlement/licensing metadata.
 
 An adapter declares unsupported capabilities explicitly. Phase 3 uses sanitized Deribit-style fixtures to prove the boundary; Phase 6 certifies architecture readiness. Real Deribit activation remains a separate adapter certification requiring official source semantics, credentials, licensing and capacity evidence.
+
+
+## Appendix I — Phase 9.3 hold, closure and independent expansion
+
+Phase 9.3 is a control-plane boundary after one exact slice has become a real
+`RUST_PRIMARY`. It does not introduce a new sink authority state. The data plane
+continues to use the Phase 9.2 owner/revision/lease/partition and watermark
+fences. Hold and closure records describe whether operators may reduce the
+rollback posture; they never grant writes by themselves.
+
+### Hold identity and observation contract
+
+A hold is immutable and binds:
+
+```text
+hold_id
+slice_id
+candidate_digest
+prerequisite_bundle_id
+owner_id
+authority_revision
+lease_epoch
+partition_plan_epoch
+started_at_ns
+required_until_ns
+policy_digest
+```
+
+Each observation repeats that identity and carries an increasing sequence,
+observation time, last durable watermark, correctness counters, source quality,
+consumer checkpoint state and bounded resource/lag metrics. The evaluator
+requires ordered observations across the whole approved interval and a maximum
+sample gap. It never fabricates a missing observation.
+
+The following values are zero tolerance:
+
+```text
+semantic_mismatches
+open_gaps
+duplicate_external_writes
+accepted_stale_writer_writes
+authority_ambiguities
+durable_ack_failures
+projection_mismatches
+consumer_checkpoint_regressions
+unexplained_quality_failures
+```
+
+Lag, freshness, queue, spool, CPU and RSS use explicit upper bounds. An owner,
+authority revision, lease, partition plan or candidate change invalidates the
+hold. A breach is sticky for that hold identifier; a later clean sample cannot
+rewrite history. Starting again requires a new hold and preserves the failed
+record.
+
+### Rollback-window closure
+
+A closure authorizer consumes six independently frozen inputs:
+
+1. fresh Phase 9.0-C production prerequisite `GO` bound to the candidate;
+2. production-authorized Phase 9.2 primary evidence for the exact owner/epochs;
+3. a passing real hold decision covering the minimum approved duration;
+4. complete consumer registry snapshot with healthy contiguous checkpoints;
+5. exact authority registry snapshot plus a fresh successful rollback rehearsal;
+6. explicit operator/change-ticket approval with bounded expiry.
+
+The database closure transaction locks the current authority row and rechecks
+state `RUST_PRIMARY`, owner, revision, lease, partition-plan epoch, candidate,
+bundle and hold identity. It inserts one immutable closure record. It must not
+update authority state, owner, revision, lease, watermark, public-write or
+legacy-write fields. A concurrent authority change makes the closure fail.
+
+Closing the window means normal rollback is no longer an unreviewed routine
+operation. It does not delete the Python manifest or make emergency recovery
+impossible. A later incident still fences Rust first and creates new immutable
+rollback authority/audit records.
+
+### Consumer and authority registry freeze
+
+The closure snapshot records only stable IDs, versions, digests, contiguous
+checkpoints and health decisions. It does not embed secrets, tokens or raw
+unbounded logs. Every affected critical consumer must be registered exactly
+once, acknowledge the current authority revision and expose no checkpoint
+regression or unresolved migration. Unknown or duplicate consumers fail closed.
+
+### Independent expansion manifests
+
+Expansion types are provider-neutral:
+
+| Expansion | Mandatory independent certification |
+|---|---|
+| `INSTRUMENT_PARTITION` | partition churn, source capacity, exact-frame parity, handoff and rollback |
+| `BBO` | quote identity, coalescing policy, freshness, ordering and reconnect |
+| `L2_BOOK` | snapshot/delta sequence, checksum, resync, lossless backpressure and capacity |
+| `BAR_LIFECYCLE` | final/revised/cancelled lineage, close-time semantics and replay |
+| `VENUE_MARKET` | adapter capability, instrument identity, provider semantics, entitlement and DR |
+
+Every manifest has a new `expansion_id`, candidate digest, scope digest,
+partition-plan epoch, required-gate set and status
+`INDEPENDENT_CERTIFICATION_REQUIRED`. It sets write authority false. Parent
+hold/closure evidence is provenance only and cannot satisfy child gates.
+Combining expansion classes in one manifest is forbidden so risk and rollback
+remain bounded.
+
+### Runtime decommission boundary
+
+A Python hot path may be nominated for removal only when it owns zero slices,
+is absent from every active rollback manifest and consumer dependency, all
+replacement windows are governed closed, and repository cleanup is explicitly
+approved. Shared canonical contracts, provider semantics, fixtures, migration
+knowledge and compatibility projectors are not removed merely because one hot
+path moved to Rust.
+
+### Current decision boundary and certification
+
+The current Phase 9.0-C result is `NO_GO_EXTERNAL`, and Phase 9.2 produced only
+isolated primary evidence. Therefore Phase 9.3 may certify contract validation,
+PostgreSQL transaction behavior, fail-closed closure denial, expansion
+independence, V1 invariants and exact cleanup. It may not claim a real hold,
+close a production rollback window, decommission Python or authorize an
+expansion.
+
+The maximum local result is:
+
+```text
+COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED
+```
+
+Production completion later requires authentic sustained observations over the
+approved wall-clock duration, real consumer checkpoints, current authority and
+rollback evidence, independent infrastructure scope and explicit operator
+approval. No accelerated fixture or same-host rehearsal can satisfy that gate.
+
+
+**Implementation closure (2026-08-19):** Phase 9.3 control-plane implementation
+is certified as `COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED`. Typed
+hold evaluation, immutable registry snapshots, exact authority-locking closure,
+closure-digest-bound independent expansion and conservative decommission gates
+pass focused and full regression. PostgreSQL smoke proved that closure changed
+no authority field and that dirty/sparse/stale/mutable evidence fails closed.
+The final suites passed 415 Python tests with 5 intentional skips and 40 Rust
+tests with fmt/clippy clean. V1 remained healthy and unchanged; production
+mutations and residual Phase 9.3 resources are zero. Evidence is frozen in
+[`phase93-hold-close-expand-certification.json`](../upgrade/evidence/phase93-hold-close-expand-certification.json),
+the [human report](../upgrade/evidence/PHASE93_HOLD_CLOSE_EXPAND_REPORT.md), the
+[operator runbook](../docs/runbooks/phase93-hold-close-expand.md) and
+[`phase93-evidence.sha256`](../upgrade/evidence/phase93-evidence.sha256). This
+closure starts no production hold and grants no production authority.
+
+## Appendix J — Phase B stable release execution ledger
+
+This appendix is the detailed execution index for Phase B in
+`DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`. It does not replace the immutable
+journal there. The plan owns status and exact chronological evidence; this
+guide owns the bounded work packages, decision rules and closure gates.
+
+### J.1 Subphase rule
+
+Phase B is split into `B.0` through `B.4`. Work on a discovered defect remains
+inside the active subphase as a numbered repair slice. The agent must stop after
+each coherent test gate, write the result to both this ledger and the main plan,
+and commit that tested slice before continuing. A failed runtime candidate is
+recorded as diagnostic evidence and cannot be cited as release acceptance.
+
+Each entry records the exact source/image SHA, tests actually run, pass/fail/skip
+counts, provider/test provenance, correctness conclusion, resource evidence,
+runtime impact, cleanup and remaining gate. Generated market data is permitted
+only in explicit unit/failure/capacity tests. Real-provider or durably captured
+provider bytes are mandatory for shadow/stable runtime claims.
+
+### J.2 B.0 — Contract and stable edge (`COMPLETE`)
+
+Scope: deterministic catalog identity, canonical V2 query/stream/projector
+contracts, stable consumer manifests, isolated topology and exact V1
+compatibility. B1-B4 passed targeted suites of 6, 32, 26 and 34 tests. The
+conditional Redis case was executed separately against named disposable Redis
+and passed Lua TTL, Pub/Sub, idempotency and fencing. No V1 process, route,
+authority or current Redis namespace changed.
+
+Conclusion: stable outer contracts and isolation boundary are accepted.
+
+### J.3 B.1 — Runtime correctness and capacity (`COMPLETE`)
+
+Scope: authentic provider acquisition, Rust canonicalization, final/revised BAR
+lifecycle, deterministic replay, lossless versus latest-state delivery, bounded
+SQLite/Redis state, Kafka lag and query latency. B5-B8 found and closed
+deployment, provider-control, replay determinism, generation persistence,
+projector batching/backpressure and hot-partition capacity defects.
+
+Final accepted evidence includes 478 Python tests with 6 explicit conditional
+skips, clean Rust fmt/Clippy/workspace gates, 100,000-event Rust benchmarks
+above the 50,000 events/s floor, exactly 2,000 authentic final closed crypto
+BARs, core/projector lag of 50/29 at the observation point, canonical-only
+SQLite with every partition at or below 10,000 records, zero quarantine and
+bounded Redis/app memory. The 100-request execution QUOTE sample measured p50
+2.94 ms, p95 3.74 ms and p99 32.44 ms after the query-tail repair.
+
+Conclusion: the isolated runtime data path and measured capacity gate are
+accepted; intermediate overloaded candidates are not release artifacts.
+
+### J.4 B.2 — Controlled consumer acceptance (`PARTIAL_EXTERNAL`)
+
+Scope: governed manifests for Binance alpha, OKX alpha, VN alpha, monitoring
+and Trading System paper, each using warmup -> signed cursor -> replay -> live.
+Targeted repairs passed 31 multi-venue/session tests, 85 broader tests with one
+infrastructure skip, 14 OKX close-boundary tests, 22 SDK warmup tests and 39
+cursor/stream tests with one dependency skip.
+
+Immutable `df88de0` accepted Binance and OKX alpha flows with 500 authentic
+rows per binding, replica-equal watermarks, live monitoring and Trading System
+TRADE/QUOTE snapshots at 129-779 ms freshness. DNSE is not accepted on this
+host because official REST TCP/443 is unreachable. Authenticated WebSocket
+reachability or legacy Parquet without exact `DNSE_DIRECT` lineage cannot
+substitute for the missing real history gate.
+
+Conclusion: crypto and paper adapter consumers pass; VN remains an explicit
+external egress/provider gate and must fail closed.
+
+### J.5 B.3 — Durability and recovery (`COMPLETE`)
+
+B13 passed exact active/passive handoff: the SDK ACKed offset 2,271 under epoch
+1 and resumed durable replay at offset 2,272 under epoch 2 before `LIVE`, with
+no gRPC ContextVar/finalizer error. Its focused suites passed 51 tests with one
+dependency skip. B14 passed two-broker minISR failure and recovery: no false
+ACK, no broker OOM at the corrected 768 MiB bound, all raw partitions restored
+ISR `1,2,3`, offsets advanced, quarantine remained zero and Trading System
+QUOTE returned execution-eligible at 239 ms freshness.
+
+B15 failed because a Redis-only earliest replay retained a trimmed SQLite cache
+and reintroduced old event IDs at new logical offsets, producing
+`OPEN_SEQUENCE_GAP`. The accepted B16 repair treats Redis plus SQLite as one
+rebuildable projection cache unit and fences them with a persistent cache
+identity. Current source has passed 41 targeted tests with one explicit
+real-Redis integration skip; this is unit-implemented, not runtime-accepted.
+
+The real-Redis generation gate then ran separately against a named Redis 7.2
+container with persistence disabled and a 16 MiB no-eviction bound. It passed
+atomic first bind, exact-ID reuse, conflicting-ID rejection, TTL/latest writes,
+single Pub/Sub publication, duplicate suppression, stale-lease fencing and
+write rejection after live identity deletion in 0.210 seconds. Together with
+the network-disabled run, B16 targeted evidence is 42/42 passed with zero
+skips. The disposable Redis container and network were removed.
+
+`B17` now provides `scripts/rebuild_v2_stable_projection_cache.py`, plan-only
+by default and apply-gated by the exact confirmation token. Its allowlist stops
+only projector/query/stream roles, deletes only `canonical-cache.sqlite3` plus
+its WAL/SHM sidecars, flushes only `stable_redis`, resets only
+`stable-projector-v1` on `md.canonical.v2`, and starts stream -> projector ->
+query after two zero-lag samples and readiness gates. Any failure leaves the
+cache unavailable and rerunnable from Kafka; no partial cache may report ready.
+
+Six command-policy tests passed for authorization, exact scope, lag parsing,
+wrong-project rejection and abort-before-mutation. Combined B16/B17 targeted
+execution ran 48 tests with 47 passes and one real-Redis conditional skip; that
+same Redis case passed separately.
+
+The first authentic replay converged from about 448,000 to 32 records but
+timed out because two exact-zero samples cannot be guaranteed while producers
+remain live. It failed closed with query replicas stopped. The corrected gate
+uses three consecutive samples `<=250` across exactly six canonical partitions,
+then projector identity readiness and strict downstream freshness/gap checks.
+Acquisition remains live and no operator-configurable relaxation is allowed.
+
+The corrected guarded rebuild then passed with all six partitions, three
+consecutive samples inside the fixed 250-record live-lag bound, observed bound
+232 and final lag 63. Redis was rebuilt to 47 keys and readers were started only
+after projector identity readiness. A strict authenticated consumer warmup
+immediately afterward still failed closed on an unresolved BAR sequence gap.
+Because this was a fresh cache built from canonical Kafka, B.3 now treats the
+gap as a canonical/provider-bootstrap or revision-ordering defect rather than a
+stale-cache artifact. The repair must identify the exact real-data
+discontinuity; synthetic bars and relaxed gap policy are prohibited.
+
+Bounded B18 diagnosis then proved the exact discontinuity: Binance Spot and
+USD-M both lacked 16:53 UTC after a four-record Kafka ACK failure at 16:54; OKX
+remained continuous. The edge advanced `_last_open_ms` before ACK and only read
+the latest closed bar on retry. The repair keeps the watermark ACK-authoritative
+and performs bounded, continuity-validated provider-history catch-up whenever
+more than one interval is pending. It must fail closed on incomplete history and
+must not synthesize a candle.
+
+The B18 implementation keeps a per-cycle provider observation boundary and a
+1,000-row hard catch-up bound. It advances each binding only after the complete
+ordered batch receives Kafka ACKs. Sixteen focused deployment/history tests
+passed, including multi-venue ACK failure/retry and incomplete-history fencing.
+Runtime healing and strict consumer acceptance remain required.
+
+Runtime healing with `2041f18` then exposed a second bounded defect: repeated
+historical BARs retain one semantic event ID/hash but carry new capture
+provenance, so generic byte-level spool collision fencing stopped the projector.
+The stable projector, not the generic spool, must recognize only equal 32-byte
+canonical payload hashes as semantic duplicates and must keep late historical
+repairs from regressing Redis/latest. Changed market semantics remain a hard
+collision.
+
+The bounded projector repair is now unit-passed. It recomputes and validates
+both canonical market-payload hashes, requires event ID and partition equality,
+checkpoints provenance-only duplicates without a second fan-out, preserves the
+generic spool collision policy and stores late BARs without replacing newer
+latest state. The focused stable-edge/deployment/history suite ran 46 cases in
+the immutable `2041f18` test image with network disabled: 45 passed and the one
+conditional Redis case, already proven separately, was skipped. No runtime was
+mutated. This is implementation evidence only; B.3 still requires a committed
+immutable image, fresh atomic cache rebuild and real-provider consumer gate.
+
+A committed `8851166` runtime replay remained fail-closed. It exceeded the
+900-second operator deadline with 733,158 records of lag and then exposed actual
+BAR conflicts. Read-only inspection proved that OKX REST/WS rows had equal
+numeric values but different exact decimal spelling and acquisition origin,
+whereas early Binance rows had materially different close/volume/trade counts
+from the later settled backfill. B19 therefore narrows semantic equality only
+for BAR decimal normalization and origin provenance, keeps non-BAR/hash and all
+actual BAR values strict, and adds aligned provider close-settlement grace.
+Changed numeric bars remain rejected; the projector must not invent revisions.
+The candidate remains unavailable and its volumes are retained until a clean
+runtime rehearsal is explicitly authorized.
+
+B19 is unit-passed. BAR duplicate comparison now uses exact numeric Decimal
+semantics while validating the preserved venue spelling, ignores only acquisition
+origin and equivalent trailing zeros, and leaves every non-BAR payload plus all
+actual BAR values strict. The generic spool remains byte-immutable. Binance and
+OKX closed-history/latest observation now share an explicit two-second settlement
+grace aligned to the poll boundary. The focused suite ran 48 cases: 47 passed and
+the separately proven Redis conditional case was the sole skip. Runtime remains
+fail-closed because the retained isolated Kafka log contains early-final Binance
+rows with materially wrong values; relaxing changed-value policy is forbidden.
+
+Immutable `c61fa39` then passed a read-only durable-provider classifier gate:
+OKX equivalent numeric Decimal/origin variants were semantic duplicates while a
+Binance row with materially changed close/volume/trade count remained a hard
+conflict. No Kafka offset was committed. The invalid retained candidate log was
+not relaxed or rewritten; all Python roles were consolidated onto `c61fa39` and
+left stopped while Kafka/Rust/Redis volumes were retained for audit.
+
+Incremental cleanup removed only three zero-reference Python tags (`e002da6`,
+`2041f18`, `8851166`) plus four QDL BuildKit records older than one hour. Image
+storage fell 11.1 -> 9.278 GB and build cache 9.097 -> 8.488 GB, about 2.43 GB
+recovered. V1, `c61fa39`, rollback `cfc0246`, Kafka/Redis and all volumes remain.
+
+Remaining B.3 gate: an explicitly approved clean isolated Kafka candidate,
+fresh atomic Redis-plus-SQLite rebuild, zero gap/collision/quarantine, replica
+equality, signed SDK replay/live, fresh Trading System paper data and unchanged
+V1.
+
+On 2026-08-20 the operator resumed this closure. The proposed reset boundary
+is only `qdl_v2_stable_candidate` Kafka broker volumes 1-3 plus `stable_state`;
+`stable_tls`, all V1/production state and every other Docker project are
+preserved. The candidate must use real provider data, immutable `c61fa39`
+Python code and the pinned Rust candidate, then pass settlement/catch-up,
+zero-gap/collision/quarantine, atomic cache rebuild, replica equality, signed
+SDK replay/live and Trading System paper-consumer checks. Failure leaves query
+and stream readers unavailable and V1 authoritative. B.4 cannot start from a
+partial result. The first reset attempt was safety-rejected before execution.
+The operator subsequently approved deletion of exactly the three candidate
+Kafka volumes and candidate `stable_state`; candidate `stable_tls`, all V1 and
+all production state remain protected.
+
+The approved clean reset and broker bootstrap passed: RF3/minISR2, three topics,
+six partitions, mTLS/ACLs and all nine preserved TLS files were verified.
+Authentic bootstrap ACKed 2,000 settled Binance/OKX BARs and the next closed
+cycle; Rust reported no quarantine/collision/error. A dependency-scope defect
+was then blocked before mutation: the rebuild CLI could rerun `stable_tls_init`
+when starting readers. Recovery starts must use `up --no-deps` after explicit
+infra validation, with a unit test proving the exact command, so preserved TLS
+and unrelated dependencies cannot be rewritten.
+
+
+The clean B.3 closure passed. The atomic cache rebuild converged on all six
+canonical partitions with observed lag bound 46 and final lag 19, restoring 47
+Redis keys before either query replica became ready. Signed SDK acceptance
+returned 500 full-coverage final BARs for Binance and OKX from both replicas,
+with equal market semantics and watermark 512; request-time
+`quality.freshness_ms` was correctly treated as an observation rather than
+replicated state. Both alpha consumers observed `REPLAYING -> LIVE` and ACKed
+two contiguous records. Four Binance/OKX Trading System paper TRADE/QUOTE
+snapshots were execution eligible at 146-316 ms freshness.
+
+The bounded SQLite cache held 73,456 records across 12 partitions, no retained
+offset gap, no duplicate event ID, no quarantine and at most 10,000 rows per
+partition. Kafka quarantine was empty; observed projector/core lag totals were
+34/12. One stream owner was READY, the other STANDBY; TLS bundle hashes matched,
+V1 health remained `ok`, and memory stayed within every container bound.
+The five Phase B regression modules ran 63 tests: 62 passed and one separately
+proven real-Redis conditional case skipped under network-disabled execution.
+Conclusion: B.3 is `PASS`/`COMPLETE`; B.4 remains `NOT_STARTED`, and no
+production authority or consumer cutover is implied.
+
+### J.6 B.4 — Release certification and cleanup (`IN_PROGRESS`)
+
+
+B.4 started on 2026-08-20 with provisional common source SHA `5054e1e`.
+Certification is correctness-first: full Python, Rust, Buf/OpenAPI,
+security/package/capacity/compatibility gates must pass before either final
+image is built. Both images then use that same source SHA and only the isolated
+candidate may be recreated. Rollback pins `c61fa39` Python and `cfc0246` Rust
+against preserved candidate Kafka/state/TLS. V1 and production authority are
+immutable; release publication, push/merge and cutover are not authorized.
+
+
+The full Python certification gate passed 503 tests with 497 passes and six
+explicit conditional skips under network-disabled, read-only, cap-dropped
+execution. Source was `5054e1e` with dependencies from the immutable Python
+candidate. No runtime or durable state was mutated. Rust and contract gates are
+still pending, so B.4 remains `IN_PROGRESS`.
+
+The first Rust gate found a builder-packaging defect before any runtime change:
+release binaries compiled, but test compilation could not see immutable
+`contracts/golden` and `tests/fixtures/phase2` inputs because the builder did
+not copy them. The bounded repair adds only those test oracle paths plus a
+packaging regression assertion, then rebuilds and reruns fmt/Clippy/tests.
+Runtime-stage contents and market-data semantics remain unchanged.
+
+The bounded repair is accepted. The rebuilt no-network/cap-dropped builder
+passed Rust format, locked workspace Clippy with warnings denied and all 62
+workspace tests with zero failures/skips. The six release-packaging regression
+tests also passed. This covers exact Python/Rust golden bytes, multi-venue
+provider semantics, deterministic replay, ordering/gap/quarantine, authority
+handoff and rollback, Kafka security bindings, delivery classes and VN source
+identity. No runtime was recreated; contract/security/package/capacity gates
+remain open.
+
+The contract gate is also accepted: Buf 1.50.0 format/lint, two frozen-baseline
+breaking checks and generation passed with no generated-code drift; seven
+Python golden-contract tests passed. OpenAPI comparison against `dev` retained
+10 operations and 42 schemas with zero hard break or security/required-parameter
+change. Runtime remained untouched. Security/package/capacity and final
+one-SHA artifact gates remain open.
+
+Capacity diagnostics passed the approved Phase 2 persistence/replay and Phase 5
+eight-replica API gates. An exploratory 10,000/40,000 events/s Python sustained
+profile under 2 CPU failed closed at 5,656 events/s; these are above the
+approved Phase 6 default 500/1,500 targets, so the result is diagnostic only and
+does not lower any gate. The approved profile and final Rust release benchmark
+remain mandatory.
+
+Cargo-deny then exposed a release-policy defect: advisories/bans/sources were
+clean, but the Rust builder omitted the repository's tracked `deny.toml`, so its
+containerized audit fell back to default deny-all and rejected every normal
+permissive dependency. Host CI retained the policy. B.4 must copy and harden
+that least-permissive license/source/advisory policy, add a packaging
+regression check and rerun the checksum-pinned scanner.
+
+The repair is accepted. The explicit Linux policy has no advisory/license
+exception, denies wildcard and unknown registry/Git sources, and allows only
+the permissive licenses in the locked graph. Cargo-deny passed advisories,
+bans, licenses and sources. Pip-audit found no known Python vulnerability;
+Trivy found zero HIGH/CRITICAL source misconfiguration and zero secret. The
+approved 80-partition Phase 6 profile also passed at 503.62/503.70 normal and
+1,503.07 burst events/s with no queue reject, replay mismatch or memory growth.
+Final full regression, one-SHA image/image-scan and candidate gates remain.
+
+The final source rerun first exposed only a harness omission: read-only
+execution lacked the required non-root `/app/logs` tmpfs. The corrected
+unchanged-source run passed all 504 tests with six explicit skips. Source-level
+certification is closed; freeze/commit, same-SHA images, image scans and
+isolated candidate recreation remain.
+
+The one-SHA artifact gate passed at source `ea84a21`: both non-root images
+carried the exact revision, had zero HIGH/CRITICAL vulnerability/embedded
+secret, and the final Rust core processed 100,000 events at 129,256 events/s
+with p99 12.906 microseconds and zero duplicate/quarantine.
+
+The first isolated rolling recreation failed closed. All 13 app roles moved to
+the new images without touching infra or V1, but the projector detected an
+event-ID/market-semantics collision and two Rust workers reported 497
+quarantines. Query/stream readiness alone is rejected as acceptance. Stop
+candidate app roles, preserve durable evidence and either repair the root cause
+or restore the pinned rollback before B.4 can close.
+
+Read-only durable diagnosis narrowed the failure to two acquisition-lifecycle
+defects, not weakened projector/core checks. Exactly 994 committed quarantine
+records are OKX `candle1m` `STALE_GENERATION`: stateless REST used generation
+1 after the WebSocket owner advanced the same BAR partition. Repeated Binance
+REST bootstrap also emitted the same revision-0 BAR identity with materially
+different close/volume/trade-count values. The bounded B.4 repair assigns one
+REST owner to final 1m BAR for both Binance and OKX while retaining Rust as the
+only canonical core; persists an atomic authority/catalog-bound last-ACKed
+watermark in `stable_state`; skips overlap on restart; and uses the approved
+10-second settlement ceiling. Corrupt or mismatched state, partial ACK,
+incomplete history and changed immutable BAR semantics remain fail-closed.
+V1/V2 public contracts, event identity and production authority are unchanged.
+Restart/state-corruption/ACK-loss tests, native manifest proof, full regression
+and a clean real-provider zero-gap/collision/quarantine rehearsal gate closure.
+
+The bounded repair is unit-accepted at acquisition revision 2. All four final
+Binance/OKX 1m BAR bindings have one REST owner; native Rust ingestors retain
+eight TRADE/QUOTE bindings and Rust remains the canonical core. Atomic
+ACK-authoritative checkpoint restore is strict to slice/authority/catalog/
+acquisition identity, compose mounts initialized isolated state, and runtime
+settlement is 10 seconds. Eighteen targeted tests passed; the five Phase B
+modules ran 65 cases with 64 passes and one separately proven real-Redis skip.
+No runtime or durable service was changed. Full regression, new same-SHA images
+and clean real-provider restart acceptance remain.
+
+The repair full-source gate passed. Two initial Python harness attempts used a
+root-owned child log tmpfs and stopped four imports without a domain failure;
+the corrected non-root tmpfs run passed 500 of 506 tests with six explicit
+conditional skips. Rust fmt, locked Clippy and all 62 workspace tests passed;
+compose and diff validation were clean. Runtime remained untouched. Final
+same-SHA artifacts, scans and isolated authentic-provider restart acceptance
+remain.
+
+The final B.4 artifact and runtime gates passed at code source `2412572`.
+The non-root Python/Rust images carry that exact revision; final source,
+contract, package, security and capacity gates passed. The Rust benchmark
+processed 100,000 events at 133,477.5 events/s with p99 14,124 ns and zero
+duplicate/quarantine. The fresh isolated runtime bootstrapped 2,000 authentic
+Binance/OKX closed BARs, restored its ACK-authoritative checkpoint across edge
+restart, and retained zero Kafka/cache quarantine, zero offset gap and zero
+event-ID duplicate. The bounded cache held 75,187 canonical records across 12
+partitions; projector lag was 35 under the 250-record gate.
+
+Released SDK acceptance returned replica-equal 500-row Binance/OKX warmups,
+observed `REPLAYING -> LIVE`, and resumed each durable cursor at exactly the
+previous offset + 1. Trading System paper received four authoritative,
+execution-eligible Binance/OKX TRADE/QUOTE snapshots at 132-158 ms freshness.
+No order or synthetic provider row was created. Exact candidate projects,
+networks and disposable volumes were removed; final/rollback images and old
+candidate TLS were retained. Forty-one exact B.4 BuildKit IDs were pruned,
+reducing cache from 12.94 GB to 10.94 GB without a broad host prune. The exact
+temporary secret bundle, scan JSON and SDK harness were deleted after evidence
+was recorded. V1 port 8100 was never restarted and remained healthy.
+
+B.4 is therefore `PASS`/`COMPLETE` and `2.0.0 Internal Stable` artifacts are
+ready for operator review. Phase B overall remains `PARTIAL_EXTERNAL` only for
+the already recorded official DNSE provider gate. This is not authority or
+consumer cutover approval; that remains a separate explicit transaction. The
+compact ledger is
+`upgrade/evidence/PHASE_B4_RELEASE_CERTIFICATION_REPORT.md`.
+
+Start only after B.3 is `PASS`. Run full Python discovery, Rust fmt/workspace
+Clippy/tests, Buf/OpenAPI/package/security/capacity/compatibility gates; build
+Python and Rust images from one final commit SHA; freeze compact evidence and
+runbooks; remove only exact candidate containers, networks, volumes, bundles
+and obsolete candidate images; verify V1 port 8100 and topology unchanged.
+
+Conclusion boundary: B.4 may declare `2.0.0 Internal Stable` artifacts ready
+for operator review. It does not authorize production authority, route cutover
+or consumer migration.
+
+Artifact hygiene is incremental, not deferred wholesale to B.4. Every tested
+repair removes its named disposable containers/networks and unreferenced QDL
+image tags. Keep only running V1, the active candidate and one named rollback
+generation. Clean BuildKit only by the Data Layer builder/cache scope; never use
+a broad host-wide prune on a shared server. Record exact objects and reclaimed
+bytes in this ledger. B.4 replaces the surviving mixed candidate images with
+one final SHA and performs the final bounded cleanup.
+
+The first incremental cleanup removed exactly two disposable Phase B builder
+containers and 47 obsolete unreferenced QDL image tags while retaining V1,
+`e002da6`, `cfc0246`, Kafka/Redis and all volumes. It then pruned only BuildKit
+records matching `description~=qdl` and older than one hour. Image/cache cleanup
+reduced root filesystem use from 91 GiB to 47 GiB; BuildKit cache fell from
+50.2 GB to 6.484 GB. No broad Docker prune or runtime/data-volume mutation
+occurred. Post-cleanup B16/B17 regression ran 49 cases: 48 passed and
+the separately proven real-Redis conditional case was the sole skip; compile
+and diff checks passed.

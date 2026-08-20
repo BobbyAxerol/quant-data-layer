@@ -1,0 +1,112 @@
+{
+  "candidate_digest": "72eb1500e19a7e738373c85442c6fc42331cebd15aba86a8b746f62c2fedc037",
+  "cleanup": {
+    "production_rows_created": 0,
+    "resources_remaining": 0
+  },
+  "control_plane_fixture": {
+    "accelerated_time_is_production_evidence": false,
+    "current_no_go_rejection": "PREREQUISITE_DECISION_NOT_GO",
+    "decommission_reason": "RUNTIME_STILL_REQUIRED_FOR_ROLLBACK",
+    "expansion_manifest_count": 5,
+    "expansions": [
+      {
+        "digest": "febb0bb6e5f785c34f169c141814fae6789ea2ad18cacad82fd9dd441562683c",
+        "required_gate_count": 7,
+        "status": "INDEPENDENT_CERTIFICATION_REQUIRED",
+        "transitive_evidence_allowed": false,
+        "type": "INSTRUMENT_PARTITION",
+        "write_authority": false
+      },
+      {
+        "digest": "bd498010e9297433f18101911853d4dd7f74257fcfa0ef52492b6de5f5276db6",
+        "required_gate_count": 9,
+        "status": "INDEPENDENT_CERTIFICATION_REQUIRED",
+        "transitive_evidence_allowed": false,
+        "type": "BBO",
+        "write_authority": false
+      },
+      {
+        "digest": "1a72f3c0ff729fa938c9dbff2837c5084017b6b2988d2cc69cde8c3deeeaba21",
+        "required_gate_count": 9,
+        "status": "INDEPENDENT_CERTIFICATION_REQUIRED",
+        "transitive_evidence_allowed": false,
+        "type": "L2_BOOK",
+        "write_authority": false
+      },
+      {
+        "digest": "46e72af783a551a3fcc6ca227c3a91302e6c24f023766d7e38e3318dfed3396c",
+        "required_gate_count": 8,
+        "status": "INDEPENDENT_CERTIFICATION_REQUIRED",
+        "transitive_evidence_allowed": false,
+        "type": "BAR_LIFECYCLE",
+        "write_authority": false
+      },
+      {
+        "digest": "6244ea1445c4334f20025bc27cdf1c95c4257a64fe8981808973a471b3fd436f",
+        "required_gate_count": 10,
+        "status": "INDEPENDENT_CERTIFICATION_REQUIRED",
+        "transitive_evidence_allowed": false,
+        "type": "VENUE_MARKET",
+        "write_authority": false
+      }
+    ],
+    "local_phase92_production_eligible": false,
+    "provenance": "TEST_CONTROL_PLANE_FIXTURE",
+    "test_hold_production_authorized": false,
+    "test_hold_status": "PASSED"
+  },
+  "issued_at_ns": 1787103230688606493,
+  "migration": {
+    "all_expansion_types_registered_independently": true,
+    "append_only_mutation_rejected": true,
+    "approval_and_closure_ids_distinct": true,
+    "authority_state_after_closure": "RUST_PRIMARY:4:rust-primary:2:100",
+    "closure_did_not_mutate_authority": true,
+    "closure_digest_bound_to_expansion": true,
+    "closure_records": 1,
+    "decision_records": 2,
+    "decommission_records": 2,
+    "dirty_hold_pass_rejected": true,
+    "expansion_records": 5,
+    "final_test_state_after_stale_cas_setup": "BLOCKED:5:rust-primary:2:130",
+    "hold_records": 2,
+    "idempotent_migration": true,
+    "incomplete_expansion_gates_rejected": true,
+    "observation_records": 3,
+    "out_of_order_observation_rejected": true,
+    "production_mutations": 0,
+    "registry_mutation_rejected": true,
+    "schema": "qdl.phase93.hold-close-migration.v1",
+    "stale_authority_closure_rejected": true,
+    "status": "PASS"
+  },
+  "parent_phase92": {
+    "authentic_events": 25600,
+    "production_authorized": false,
+    "semantic_mismatches": 0,
+    "sha256": "2acf8616d9134dea52eea0ccaebcc7f783efa29a86d85aad627f97dbbee3cfe6",
+    "status": "COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED"
+  },
+  "prerequisite_decision": "NO_GO_EXTERNAL",
+  "production_authorized": false,
+  "production_expansions_authorized": 0,
+  "production_hold_started": false,
+  "production_mutations": 0,
+  "production_rollback_window_closed": false,
+  "python_decommission_authorized": false,
+  "schema": "qdl.phase93.hold-close-expand-certification.v1",
+  "slice_id": "production/binance/usdm/perpetual/trade/plan-1/btcusdt",
+  "status": "COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED",
+  "technical_debt": [
+    "Phase 9.0-C production infrastructure remains NO_GO_EXTERNAL",
+    "real production primary and sustained hold observations do not exist",
+    "real consumer checkpoints and operator closure approval do not exist",
+    "every expansion remains independently uncertified"
+  ],
+  "v1": {
+    "health_after": 200,
+    "health_before": 200,
+    "topology_unchanged": true
+  }
+}

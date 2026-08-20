@@ -15,6 +15,16 @@
       "BarPayload": {
         "additionalProperties": false,
         "properties": {
+          "base_volume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "close": {
             "$ref": "#/components/schemas/DecimalValue"
           },
@@ -22,6 +32,16 @@
             "exclusiveMinimum": 0.0,
             "title": "Close Time Ns",
             "type": "integer"
+          },
+          "contract_volume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "feed": {
             "const": "BAR",
@@ -62,6 +82,16 @@
             "title": "Origin",
             "type": "string"
           },
+          "quote_volume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "revision": {
             "minimum": 0.0,
             "title": "Revision",
@@ -86,6 +116,9 @@
           },
           "volume": {
             "$ref": "#/components/schemas/DecimalValue"
+          },
+          "volume_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
           }
         },
         "required": [
@@ -97,6 +130,7 @@
           "low",
           "close",
           "volume",
+          "volume_unit",
           "lifecycle",
           "revision",
           "origin"
@@ -302,6 +336,9 @@
           "quantity": {
             "$ref": "#/components/schemas/DecimalValue"
           },
+          "quantity_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
+          },
           "side": {
             "enum": [
               "BID",
@@ -314,7 +351,8 @@
         "required": [
           "side",
           "price",
-          "quantity"
+          "quantity",
+          "quantity_unit"
         ],
         "title": "BookLevel",
         "type": "object"
@@ -983,10 +1021,14 @@
           },
           "quantity": {
             "$ref": "#/components/schemas/DecimalValue"
+          },
+          "quantity_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
           }
         },
         "required": [
-          "quantity"
+          "quantity",
+          "quantity_unit"
         ],
         "title": "OpenInterestPayload",
         "type": "object"
@@ -1133,6 +1175,16 @@
         "title": "QualityView",
         "type": "object"
       },
+      "QuantityUnit": {
+        "enum": [
+          "BASE_ASSET",
+          "QUOTE_ASSET",
+          "CONTRACT",
+          "SHARE"
+        ],
+        "title": "QuantityUnit",
+        "type": "string"
+      },
       "QuotePayload": {
         "additionalProperties": false,
         "properties": {
@@ -1159,13 +1211,17 @@
             "minimum": 1.0,
             "title": "Level",
             "type": "integer"
+          },
+          "quantity_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
           }
         },
         "required": [
           "bid_price",
           "bid_quantity",
           "ask_price",
-          "ask_quantity"
+          "ask_quantity",
+          "quantity_unit"
         ],
         "title": "QuotePayload",
         "type": "object"
@@ -1485,6 +1541,16 @@
               }
             ]
           },
+          "last_quantity_unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuantityUnit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "low_24h": {
             "anyOf": [
               {
@@ -1514,6 +1580,16 @@
                 "type": "null"
               }
             ]
+          },
+          "volume_24h_unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuantityUnit"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1522,13 +1598,22 @@
         "title": "TickerPayload",
         "type": "object"
       },
+      "TradeIdentityKind": {
+        "enum": [
+          "NATIVE",
+          "DERIVED_RAW_CAPTURE"
+        ],
+        "title": "TradeIdentityKind",
+        "type": "string"
+      },
       "TradePayload": {
         "additionalProperties": false,
         "properties": {
           "aggressor_side": {
             "enum": [
               "BUY",
-              "SELL"
+              "SELL",
+              "UNKNOWN"
             ],
             "title": "Aggressor Side",
             "type": "string"
@@ -1538,6 +1623,9 @@
             "default": "TRADE",
             "title": "Feed",
             "type": "string"
+          },
+          "identity_kind": {
+            "$ref": "#/components/schemas/TradeIdentityKind"
           },
           "is_block_trade": {
             "default": false,
@@ -1560,13 +1648,18 @@
           },
           "quantity": {
             "$ref": "#/components/schemas/DecimalValue"
+          },
+          "quantity_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
           }
         },
         "required": [
           "native_trade_id",
           "price",
           "quantity",
-          "aggressor_side"
+          "quantity_unit",
+          "aggressor_side",
+          "identity_kind"
         ],
         "title": "TradePayload",
         "type": "object"
@@ -1687,7 +1780,7 @@
   },
   "info": {
     "title": "Quant Data Layer V2",
-    "version": "2.0.0-shadow"
+    "version": "2.0.0"
   },
   "openapi": "3.1.0",
   "paths": {

@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT_DIR="${1:?usage: phase80_generate_tls.sh OUTPUT_DIR}"
 KAFKA_IMAGE="${QDL_PHASE8_KAFKA_IMAGE:-apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9}"
 PASSWORD="${QDL_PHASE8_CERT_PASSWORD:-phase8-certification-only}"
+CERT_UID="${QDL_PHASE8_CERT_UID:-$(id -u)}"
+CERT_GID="${QDL_PHASE8_CERT_GID:-$(id -g)}"
 
 umask 077
 mkdir -p "${OUTPUT_DIR}"
@@ -46,7 +48,7 @@ issue_certificate() {
 for broker in kafka1 kafka2 kafka3; do
   issue_certificate "${broker}" "${broker}"
 done
-for client in phase8-admin phase8-producer phase8-consumer phase8-unauthorized; do
+for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized; do
   issue_certificate "${client}" "${client}"
 done
 
@@ -54,7 +56,9 @@ printf '%s\n' "${PASSWORD}" >"${OUTPUT_DIR}/key.password"
 printf '%s\n' "${PASSWORD}" >"${OUTPUT_DIR}/store.password"
 printf '%s\n' "${PASSWORD}" >"${OUTPUT_DIR}/truststore.password"
 
-docker run --rm --user 0:0 \
+# Match the host caller so bind-mounted stores remain chmod/removal-safe on
+# rootless, user-namespaced and migrated Docker hosts.
+docker run --rm --user "${CERT_UID}:${CERT_GID}" \
   --mount "type=bind,source=${OUTPUT_DIR},target=/certs" \
   --entrypoint /opt/java/openjdk/bin/keytool \
   "${KAFKA_IMAGE}" \
@@ -103,6 +107,7 @@ find "${OUTPUT_DIR}" -type f -exec chmod 0644 {} +
 find "${OUTPUT_DIR}" -maxdepth 1 -name '*.key' \
   ! -name 'phase8-producer.key' \
   ! -name 'phase8-consumer.key' \
+  ! -name 'phase8-core.key' \
   -delete
 rm -f "${OUTPUT_DIR}"/*.csr "${OUTPUT_DIR}"/*.ext "${OUTPUT_DIR}"/*.srl
 

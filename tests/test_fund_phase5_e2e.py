@@ -13,6 +13,7 @@ import httpx
 from qdl.api_v2 import create_v2_app
 from qdl.canonical.market import canonicalize_binance_usdm_bar
 from qdl.canonical.trade import TradeContext, canonical_event, raw_market_event
+from qdl.common.v1 import common_pb2
 from qdl.consumer import (
     ConsumerManifestLoader,
     ConsumerMigrationRegistry,
@@ -129,14 +130,17 @@ def _payload(feed: FeedType, now: int) -> dict:
             "open_time_ns": now - 60_000_000_000,
             "close_time_ns": now,
             "open": "60000", "high": "60100", "low": "59900",
-            "close": "60050", "volume": "10", "trade_count": 5,
+            "close": "60050", "volume": "10", "volume_unit": "BASE_ASSET",
+            "trade_count": 5,
             "origin": "VENUE_NATIVE", "is_final": True,
         }
     return {
         "native_trade_id": "trade-1",
         "price": "60050",
         "quantity": "0.01",
+        "quantity_unit": "BASE_ASSET",
         "aggressor_side": "BUY",
+        "identity_kind": "NATIVE",
         "is_block_trade": False,
         "is_buyer_maker": False,
     }
@@ -328,6 +332,9 @@ class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
                     "low": canonical.bar.low.source_text,
                     "close": canonical.bar.close.source_text,
                     "volume": canonical.bar.volume.source_text,
+                    "volume_unit": common_pb2.QuantityUnit.Name(
+                        canonical.bar.volume_unit
+                    ).removeprefix("QUANTITY_UNIT_"),
                     "trade_count": canonical.bar.trade_count,
                     "origin": "VENUE_NATIVE",
                     "is_final": canonical.bar.is_final,

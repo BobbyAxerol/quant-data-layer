@@ -1,0 +1,102 @@
+{
+  "authority": "RUST_SHADOW",
+  "canonical_digest": "88a0000ebdf2210dae33592f3759b65eee805172e55e23f000858bc0ab5ce8f6",
+  "canonical_read_committed": 26,
+  "cleanup": {
+    "containers_after": 0,
+    "networks_after": 0,
+    "v1_health_after": 200,
+    "v1_topology_unchanged": true,
+    "volumes_after": 0
+  },
+  "dnse_snapshot_age_seconds_at_test": 154.115,
+  "dnse_symbol": "GEX",
+  "duplicates_suppressed": 0,
+  "native_runs": [
+    {
+      "accepted_raw_frames": 3,
+      "channel": "btcusdt@trade",
+      "market": "USDM",
+      "runtime": "BINANCE"
+    },
+    {
+      "accepted_raw_frames": 2,
+      "channel": "btcusdt@bookTicker",
+      "market": "USDM",
+      "runtime": "BINANCE"
+    },
+    {
+      "accepted_raw_frames": 3,
+      "channel": "btcusdt@trade",
+      "market": "SPOT",
+      "runtime": "BINANCE"
+    },
+    {
+      "accepted_raw_frames": 2,
+      "channel": "btcusdt@bookTicker",
+      "market": "SPOT",
+      "runtime": "BINANCE"
+    },
+    {
+      "accepted_raw_frames": 3,
+      "channel": "trades",
+      "market": "SWAP",
+      "runtime": "OKX"
+    },
+    {
+      "accepted_raw_frames": 2,
+      "channel": "bbo-tbt",
+      "market": "SWAP",
+      "runtime": "OKX"
+    },
+    {
+      "accepted_raw_frames": 1,
+      "channel": "candle1m",
+      "market": "SWAP",
+      "runtime": "OKX"
+    },
+    {
+      "accepted_raw_frames": 3,
+      "channel": "trades",
+      "market": "SPOT",
+      "runtime": "OKX"
+    },
+    {
+      "accepted_raw_frames": 2,
+      "channel": "bbo-tbt",
+      "market": "SPOT",
+      "runtime": "OKX"
+    },
+    {
+      "accepted_raw_frames": 1,
+      "channel": "candle1m",
+      "market": "SPOT",
+      "runtime": "OKX"
+    }
+  ],
+  "products": [
+    "BINANCE/SPOT/SPOT",
+    "BINANCE/USDM/PERPETUAL",
+    "HNX/VN_DERIVATIVES/FUTURE",
+    "HOSE/EQUITIES/COMMON_STOCK",
+    "OKX/SPOT/SPOT",
+    "OKX/SWAP/PERPETUAL"
+  ],
+  "provenance": {
+    "binance_bar": "REAL_BINANCE_REST_LATEST_CLOSED",
+    "crypto_trade_bbo": "REAL_PROVIDER_WEBSOCKET",
+    "generated_market_data": 0,
+    "okx_bar": "REAL_PROVIDER_WEBSOCKET",
+    "vn_derivative": "REAL_DNSE_PROVIDER_DERIVED_CANONICAL_PARQUET_REPLAY",
+    "vn_derivative_capture_boundary": "REPLAY_BYTES",
+    "vn_equity": "REAL_DNSE_PROVIDER_DERIVED_DURABLE_REPLAY",
+    "vn_equity_capture_boundary": "SDK_DELIVERY"
+  },
+  "quarantines": 0,
+  "raw_acked": 26,
+  "runtime_cutover": false,
+  "rust_image_id": "sha256:7ff46a43188dd65cbb7c9ec16347c0bbd19e1e2c4a8bca6f403b728bf1b6e79c",
+  "schema": "qdl.phase-a.real-provider-core-certification.v1",
+  "status": "PASS",
+  "v1_health_before": 200
+}

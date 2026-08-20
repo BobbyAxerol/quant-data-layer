@@ -2,6 +2,10 @@
 
 from typing import TYPE_CHECKING, Any
 
+from qdl.consumer.stable import (
+    StableConsumerMigration,
+    StableConsumerMigrationPlan,
+)
 from qdl.consumer.manifest import (
     ConsumerManifest,
     ConsumerManifestLoader,
@@ -26,6 +30,8 @@ __all__ = [
     "ConsumerQuotas",
     "ConsumerRoute",
     "MigrationState",
+    "StableConsumerMigration",
+    "StableConsumerMigrationPlan",
     "ManifestShadowConsumer",
     "ShadowObservation",
     "UsageTelemetry",

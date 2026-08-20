@@ -113,8 +113,18 @@ class InstrumentRecord:
         if self.identity.product_type is ProductType.OPTION:
             if self.expiry_time_ns is None or self.strike_price is None or self.option_type is None:
                 raise ValueError("options require expiry, strike and option_type")
-        if self.identity.product_type is ProductType.FUTURE and self.expiry_time_ns is None:
+        continuous_future = (
+            self.identity.product_type is ProductType.FUTURE
+            and self.attributes.get("continuous_series", "false").lower() == "true"
+        )
+        if (
+            self.identity.product_type is ProductType.FUTURE
+            and self.expiry_time_ns is None
+            and not continuous_future
+        ):
             raise ValueError("dated futures require expiry_time_ns")
+        if continuous_future and self.expiry_time_ns is not None:
+            raise ValueError("continuous futures cannot carry a fixed expiry_time_ns")
 
     @property
     def instrument_uid(self) -> str:

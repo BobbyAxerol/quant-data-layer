@@ -51,3 +51,18 @@ class TradingCalendar:
 
     def is_open_ns(self, timestamp_ns: int) -> bool:
         return self.session_at_ns(timestamp_ns) is not None
+
+
+def trading_calendar_for_id(calendar_id: str) -> TradingCalendar:
+    """Resolve a governed session calendar from canonical instrument metadata."""
+    if calendar_id.startswith("VN_"):
+        return TradingCalendar(
+            calendar_id=calendar_id,
+            timezone_name="Asia/Ho_Chi_Minh",
+            weekly_sessions=(
+                MarketSession(time(9, 0), time(11, 30), "MORNING"),
+                MarketSession(time(13, 0), time(14, 30), "AFTERNOON"),
+                MarketSession(time(14, 45), time(14, 46), "ATC_CLOSE"),
+            ),
+        )
+    raise ValueError(f"unknown governed trading calendar: {calendar_id}")

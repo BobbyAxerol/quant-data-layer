@@ -8,6 +8,8 @@ from qdl.stream.gateway import (
     StreamSubscription,
 )
 from qdl.stream.grpc_service import (
+    CursorScopeValidator,
+    FeedScopedCursorScopeValidator,
     GrpcMarketDataService,
     GrpcSnapshot,
     SnapshotLoader,
@@ -22,6 +24,8 @@ __all__ = [
     "StreamCapacityExceeded",
     "StreamRecord",
     "StreamSubscription",
+    "CursorScopeValidator",
+    "FeedScopedCursorScopeValidator",
     "GrpcMarketDataService",
     "GrpcSnapshot",
     "SnapshotLoader",

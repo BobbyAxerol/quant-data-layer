@@ -102,12 +102,16 @@ def compose(env: dict[str, str], *arguments: str, **kwargs: object) -> CommandRe
 
 
 def kafka(env: dict[str, str], script: str, *arguments: str, **kwargs: object) -> CommandResult:
+    # Kafka CLI tools are JVMs. Running them inside a 512 MiB broker cgroup can
+    # OOM-kill the broker, so administration uses a disposable isolated client.
     return compose(
         env,
-        "exec",
-        "-T",
-        "kafka1",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--entrypoint",
         f"/opt/kafka/bin/{script}",
+        "phase8_admin",
         *arguments,
         **kwargs,
     )

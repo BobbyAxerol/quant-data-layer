@@ -1,0 +1,42 @@
+{
+  "context": {
+    "adapter_version": "okx-json/2.0.0",
+    "config_revision": 12,
+    "correlation_id": "phase19-okx-bar",
+    "instrument_id": "OKX.SWAP.PERPETUAL.BTC-USDT",
+    "instrument_revision": 2,
+    "instrument_uid": "23533297-11a8-5290-a800-c7f584706cd6",
+    "lease_epoch": 7,
+    "market": "SWAP",
+    "native_symbol": "BTC-USDT-SWAP",
+    "normalized_at_ns": 1786352400124100000,
+    "normalizer_version": "qdl-normalizer/2.0.0",
+    "partition_sequence": 90,
+    "product_type": "PERPETUAL",
+    "provider": "OKX_DIRECT",
+    "published_at_ns": 1786352400124200000,
+    "received_at_ns": 1786352400124000000,
+    "source_id": "okx-business-candle-001",
+    "venue": "OKX"
+  },
+  "provider_kind": "okx_bar",
+  "raw": {
+    "arg": {
+      "channel": "candle1m",
+      "instId": "BTC-USDT-SWAP"
+    },
+    "data": [
+      [
+        "1786352340000",
+        "61200.00",
+        "61240.00",
+        "61190.00",
+        "61234.10",
+        "12.500",
+        "12.500",
+        "765200.00",
+        "1"
+      ]
+    ]
+  }
+}

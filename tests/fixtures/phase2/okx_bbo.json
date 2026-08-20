@@ -1,0 +1,52 @@
+{
+  "context": {
+    "adapter_version": "okx-json/2.0.0",
+    "config_revision": 12,
+    "correlation_id": "phase19-okx-bbo",
+    "instrument_id": "OKX.SWAP.PERPETUAL.BTC-USDT",
+    "instrument_revision": 2,
+    "instrument_uid": "23533297-11a8-5290-a800-c7f584706cd6",
+    "lease_epoch": 7,
+    "market": "SWAP",
+    "native_symbol": "BTC-USDT-SWAP",
+    "normalized_at_ns": 1786352400124100000,
+    "normalizer_version": "qdl-normalizer/2.0.0",
+    "partition_sequence": 89,
+    "product_type": "PERPETUAL",
+    "provider": "OKX_DIRECT",
+    "published_at_ns": 1786352400124200000,
+    "received_at_ns": 1786352400124000000,
+    "source_id": "okx-public-bbo-001",
+    "venue": "OKX"
+  },
+  "provider_kind": "okx_bbo",
+  "raw": {
+    "action": "snapshot",
+    "arg": {
+      "channel": "bbo-tbt",
+      "instId": "BTC-USDT-SWAP"
+    },
+    "data": [
+      {
+        "asks": [
+          [
+            "61234.20",
+            "0.500",
+            "0",
+            "2"
+          ]
+        ],
+        "bids": [
+          [
+            "61234.10",
+            "1.250",
+            "0",
+            "3"
+          ]
+        ],
+        "seqId": 817263,
+        "ts": "1786352400125"
+      }
+    ]
+  }
+}

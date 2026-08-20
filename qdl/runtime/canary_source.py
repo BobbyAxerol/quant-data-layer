@@ -18,6 +18,7 @@ from qdl.domain.instrument import (
     InstrumentRegistry,
     ProductType,
 )
+from qdl.domain.quantity import quantity_unit_name
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import (
     AccessPurpose,
@@ -533,6 +534,22 @@ class SpoolCanonicalQueryBackend:
                 "low": _decimal_text(bar.low),
                 "close": _decimal_text(bar.close),
                 "volume": _decimal_text(bar.volume),
+                "volume_unit": quantity_unit_name(bar.volume_unit),
+                "base_volume": (
+                    _decimal_text(bar.base_volume)
+                    if bar.HasField("base_volume")
+                    else None
+                ),
+                "quote_volume": (
+                    _decimal_text(bar.quote_volume)
+                    if bar.HasField("quote_volume")
+                    else None
+                ),
+                "contract_volume": (
+                    _decimal_text(bar.contract_volume)
+                    if bar.HasField("contract_volume")
+                    else None
+                ),
                 "trade_count": int(bar.trade_count),
                 "origin": origin_name,
                 "is_final": bool(bar.is_final),
