@@ -6406,6 +6406,9 @@ freshness/session/contract checks and the source-switch audit is durable.
   This pair supersedes the revoked `5823d642` pair. No running container or
   authority/consumer route changed. Merge/immutable deployment and the exact
   operator packet remain the only gates before bounded runtime promotion.
+  Exact cleanup removed the two revoked `5823d642` image tags and three
+  disposable test/revoked-bundle paths only; no broad prune, active image,
+  final release bundle, V1 rollback artifact or volume was removed.
 
 Promote all approved Binance and OKX feed slices in one maintenance window, but
 execute the CAS internally one slice at a time so a failure is isolated. One
