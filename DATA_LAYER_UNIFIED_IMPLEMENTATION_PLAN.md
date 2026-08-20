@@ -5994,6 +5994,24 @@ catalog or SDK wiring cannot be deferred as operational debt.
   authority, Redis, Kafka, consumer routes and production data were untouched.
   Production demand/catalog generation and long-running Rust authority wiring
   remain the next C.0 slices; this slice alone does not authorize cutover.
+- `2026-08-20 C.0 PRODUCTION CATALOG SLICE PASS`: added a strict
+  `qdl.v2.production-demand.v1` manifest and deterministic source/acquisition
+  catalog generator. It composes the existing authoritative Binance
+  `exchangeInfo` and OKX V5 `/public/instruments` parsers, preserves exact
+  price tick/quantity step/contract multiplier, derives stable UUIDv5 identity
+  from the approved canonical instrument ID, de-duplicates consumer demand and
+  fails closed on conflicting policies, missing/inactive metadata, ambiguous
+  identity or uncertified feeds/intervals. Binance canonical identity now uses
+  provider base/quote metadata (`ETH-USDT`) and includes the explicit contract
+  code for dated futures rather than treating native `ETHUSDT` as canonical.
+  Current production BAR acquisition is deliberately bounded to certified 1m;
+  higher alpha intervals must be resampled from final 1m bars or remain on
+  explicit V1 capability fallback until independently certified. Generated
+  source/acquisition YAML is reloaded through the runtime validators before it
+  is accepted, and provenance records metadata-capture hashes with
+  `fabricated_metadata=false`. Compile plus production catalog, identity,
+  Binance adapter and multi-venue contract tests passed 27/27. No real-provider
+  call or runtime/authority/consumer mutation occurred.
 - `2026-08-20 OPERATOR CUTOVER SIMPLIFICATION RECORDED`: the operator reports
   all alpha consumers are stopped and Trading System is the sole active
   consumer. Phase C therefore removes staged alpha/monitoring migrations and
