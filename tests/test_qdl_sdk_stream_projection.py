@@ -266,6 +266,8 @@ class SdkStreamProjectionTests(unittest.TestCase):
 
     def test_all_public_market_payloads_project_to_typed_view(self):
         for feed in Feed:
+            if feed is Feed.UNSPECIFIED:
+                continue
             with self.subTest(feed=feed):
                 result = market_data_view_from_stream(
                     StreamEvent(11, "signed", envelope(feed)),
@@ -277,6 +279,15 @@ class SdkStreamProjectionTests(unittest.TestCase):
                 self.assertEqual(result.watermark_offset, 11)
                 self.assertEqual(result.cursor, "signed")
                 self.assertTrue(result.quality.execution_eligible)
+
+    def test_unspecified_feed_is_rejected_at_requirement_boundary(self):
+        with self.assertRaisesRegex(ValueError, "UNSPECIFIED"):
+            DataRequirement(
+                instrument_uid="uid-1",
+                feed=Feed.UNSPECIFIED,
+                consumer_grade=Grade.ALPHA,
+                source_policy_id="crypto_primary_v2",
+            )
 
     def test_gap_and_stale_execution_events_fail_closed(self):
         gapped = envelope(Feed.TRADE)

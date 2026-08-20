@@ -16,16 +16,32 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from qdl.query.v2 import query_pb2
 
 
-class Feed(StrEnum):
-    TRADE = "TRADE"
-    QUOTE = "QUOTE"
-    BAR = "BAR"
-    BOOK_SNAPSHOT = "BOOK_SNAPSHOT"
-    BOOK_DELTA = "BOOK_DELTA"
-    FUNDING_RATE = "FUNDING_RATE"
-    OPEN_INTEREST = "OPEN_INTEREST"
-    MARK_INDEX_PRICE = "MARK_INDEX_PRICE"
-    TICKER = "TICKER"
+try:
+    # The service and SDK share enum identity when the public query package is present.
+    from qdl.query import BarLifecycle, FeedType
+except ImportError:
+    class FeedType(StrEnum):
+        UNSPECIFIED = "UNSPECIFIED"
+        TRADE = "TRADE"
+        QUOTE = "QUOTE"
+        BAR = "BAR"
+        BOOK_SNAPSHOT = "BOOK_SNAPSHOT"
+        BOOK_DELTA = "BOOK_DELTA"
+        FUNDING_RATE = "FUNDING_RATE"
+        OPEN_INTEREST = "OPEN_INTEREST"
+        MARK_INDEX_PRICE = "MARK_INDEX_PRICE"
+        TICKER = "TICKER"
+
+    class BarLifecycle(StrEnum):
+        UNSPECIFIED = "UNSPECIFIED"
+        IN_PROGRESS = "IN_PROGRESS"
+        FINAL = "FINAL"
+        REVISED = "REVISED"
+        CANCELLED = "CANCELLED"
+
+
+# Concise public SDK spelling; the frozen wire component remains FeedType.
+Feed = FeedType
 
 
 class Grade(StrEnum):
@@ -56,13 +72,6 @@ class BarRevisionPolicy(StrEnum):
     LATEST = "LATEST"
     INITIAL_ONLY = "INITIAL_ONLY"
     EMIT_REVISIONS = "EMIT_REVISIONS"
-
-
-class BarLifecycle(StrEnum):
-    IN_PROGRESS = "IN_PROGRESS"
-    FINAL = "FINAL"
-    REVISED = "REVISED"
-    CANCELLED = "CANCELLED"
 
 
 class ClosedModel(BaseModel):
@@ -178,6 +187,8 @@ class BarPayload(ClosedModel):
 
     @model_validator(mode="after")
     def validate_lifecycle(self):
+        if self.lifecycle is BarLifecycle.UNSPECIFIED:
+            raise ValueError("bar lifecycle cannot be UNSPECIFIED")
         if self.lifecycle is BarLifecycle.REVISED and not self.supersedes_event_id:
             raise ValueError("revised bar must identify the superseded event")
         if self.close_time_ns <= self.open_time_ns:
@@ -416,6 +427,8 @@ class DataRequirement:
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.source_policy_id.strip():
             raise ValueError("instrument_uid and source_policy_id are required")
+        if self.feed is Feed.UNSPECIFIED:
+            raise ValueError("UNSPECIFIED feed is invalid at the V2 boundary")
         enum_fields = (
             (self.feed, Feed, "feed"),
             (self.consumer_grade, Grade, "consumer_grade"),
