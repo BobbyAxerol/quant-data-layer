@@ -5977,6 +5977,18 @@ catalog or SDK wiring cannot be deferred as operational debt.
   passed on the Data Layer Python 3.12 runtime. Trading System updated its
   vendor manifest/lock to that exact digest. V1 runtime, providers, authority,
   Redis/PostgreSQL and consumer routes were unchanged.
+- `2026-08-20 C.0 SDK STREAM PROJECTION PASS`: added one SDK-owned
+  canonical protobuf-to-typed-view decoder, so Trading System and alpha
+  consumers do not copy schema logic. It covers TRADE, QUOTE, BAR, book
+  snapshot/delta, funding, open interest, mark/index and ticker payloads with
+  exact coefficient/scale decimals, enums and optional bytes. The signed query
+  handoff remains the policy/catalog template; instrument/source transitions,
+  lower authority revision, stale execution data, open gap, incomplete
+  contract metadata and non-final execution bars fail closed. Freshness,
+  quality and execution eligibility are recomputed per event and the signed
+  cursor/watermark is preserved. All-feed projection, source/revision, gap and
+  stale tests plus existing SDK release/stream tests passed 20/20; isolated
+  lint and `git diff --check` passed. No runtime or provider was touched.
 - `2026-08-20 C.0 LONG-RUNNING PRIMARY BRIDGE CODE PASS`: added a separate
   multi-slice `qdl-production-core` binary and Phase 9.2 transactional bridge.
   Authority is reconstructed per slice from the compacted control topic; raw

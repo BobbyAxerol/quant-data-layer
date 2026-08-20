@@ -29,6 +29,7 @@ from qdl_sdk.models import (
     TradeIdentityKind,
     WarmupResponse,
 )
+from qdl_sdk.projection import market_data_view_from_stream
 from qdl_sdk.transport import GrpcStreamTransport, RestQueryTransport
 from qdl_sdk.v1_facade import V1CompatibilityFacade
 
@@ -53,6 +54,7 @@ __all__ = [
     "InstrumentView",
     "MemoryCursorStore",
     "MarketDataView",
+    "market_data_view_from_stream",
     "QuantityUnit",
     "RestQueryTransport",
     "RecoveryPolicy",
