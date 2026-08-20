@@ -232,7 +232,10 @@ services:
   query_v2_1:
     <<: *python
     command: [python, -m, app.entrypoints.query_v2_stable]
-    networks: [stable_internal, stable_ingress]
+    networks:
+      stable_internal: {}
+      stable_ingress: {}
+      stable_consumer: {aliases: [qdl-v2-query]}
     ports: ["127.0.0.1:18201:8200"]
     environment:
       <<: *stable-env
@@ -250,7 +253,10 @@ services:
   query_v2_2:
     <<: *python
     command: [python, -m, app.entrypoints.query_v2_stable]
-    networks: [stable_internal, stable_ingress]
+    networks:
+      stable_internal: {}
+      stable_ingress: {}
+      stable_consumer: {aliases: [qdl-v2-query]}
     ports: ["127.0.0.1:18202:8200"]
     environment:
       <<: *stable-env
@@ -267,7 +273,10 @@ services:
   stream_v2_active:
     <<: *python
     command: [python, -m, app.entrypoints.stream_v2_stable]
-    networks: [stable_internal, stable_ingress]
+    networks:
+      stable_internal: {}
+      stable_ingress: {}
+      stable_consumer: {aliases: [qdl-v2-stream-a]}
     ports: ["127.0.0.1:18210:8200", "127.0.0.1:18220:8210"]
     environment:
       <<: *stable-env
@@ -284,7 +293,10 @@ services:
   stream_v2_passive:
     <<: *python
     command: [python, -m, app.entrypoints.stream_v2_stable]
-    networks: [stable_internal, stable_ingress]
+    networks:
+      stable_internal: {}
+      stable_ingress: {}
+      stable_consumer: {aliases: [qdl-v2-stream-b]}
     ports: ["127.0.0.1:18211:8200", "127.0.0.1:18221:8210"]
     environment:
       <<: *stable-env
@@ -603,6 +615,9 @@ networks:
   stable_internal: {internal: true, labels: {qdl.scope: v2-stable-candidate}}
   stable_ingress: {labels: {qdl.scope: v2-stable-candidate-ingress}}
   stable_egress: {labels: {qdl.scope: v2-stable-candidate-egress}}
+  stable_consumer:
+    external: true
+    name: ${QDL_STABLE_CONSUMER_NETWORK:?set QDL_STABLE_CONSUMER_NETWORK}
 volumes:
   kafka1_data: {labels: {qdl.scope: v2-stable-candidate}}
   kafka2_data: {labels: {qdl.scope: v2-stable-candidate}}

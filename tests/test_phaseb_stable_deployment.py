@@ -769,7 +769,8 @@ class StableComposeAndBundleTests(unittest.TestCase):
         self.assertFalse(compose["networks"]["stable_ingress"].get("internal", False))
         for name in ("query_v2_1", "query_v2_2", "stream_v2_active", "stream_v2_passive"):
             self.assertEqual(
-                set(services[name]["networks"]), {"stable_internal", "stable_ingress"}
+                set(services[name]["networks"]),
+                {"stable_internal", "stable_ingress", "stable_consumer"},
             )
             self.assertTrue(
                 all(str(port).startswith("127.0.0.1:") for port in services[name]["ports"])
@@ -814,6 +815,30 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertTrue(services[name]["read_only"])
                 self.assertIn("ALL", services[name]["cap_drop"])
                 self.assertEqual(services[name]["restart"], "no")
+        ingress_aliases = {
+            "query_v2_1": "qdl-v2-query",
+            "query_v2_2": "qdl-v2-query",
+            "stream_v2_active": "qdl-v2-stream-a",
+            "stream_v2_passive": "qdl-v2-stream-b",
+        }
+        for name, alias in ingress_aliases.items():
+            self.assertEqual(
+                services[name]["networks"]["stable_consumer"]["aliases"],
+                [alias],
+            )
+        self.assertEqual(
+            compose["networks"]["stable_consumer"],
+            {
+                "external": True,
+                "name": "${QDL_STABLE_CONSUMER_NETWORK:"
+                "?set QDL_STABLE_CONSUMER_NETWORK}",
+            },
+        )
+        for name in (
+            "kafka1", "kafka2", "kafka3", "stable_redis", "projector_v2",
+            "rust_core", "rust_core_2", "rust_core_3",
+        ):
+            self.assertNotIn("stable_consumer", services[name]["networks"])
         self.assertEqual(
             set(services["ingestor_okx_swap"]["networks"]),
             {"stable_internal", "stable_egress"},
@@ -952,12 +977,14 @@ class StableComposeAndBundleTests(unittest.TestCase):
                         python_image="qdl-python:test",
                         cert_dir=certs,
                         output_dir=output,
+                        consumer_network="executor_network",
                         host_cert_dir=Path("/host/qdl/certs"),
                         host_output_dir=Path("/host/qdl/candidate"),
                     )
                 self.assertFalse(manifest["cutover_authorized"])
                 self.assertFalse(manifest["secret_values_recorded"])
                 self.assertEqual(manifest["authority_promotion_binding_count"], 12)
+                self.assertEqual(manifest["consumer_network"], "executor_network")
                 self.assertEqual(len(manifest["authority_promotion_scope_digest"]), 64)
                 production = json.loads(
                     (output / "runtime/production-core-001.json").read_text()
@@ -970,6 +997,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertEqual((output / "stable.env").stat().st_mode & 0o777, 0o600)
                 env_text = (output / "stable.env").read_text()
                 self.assertIn("QDL_STABLE_CERT_DIR=/host/qdl/certs", env_text)
+                self.assertIn("QDL_STABLE_CONSUMER_NETWORK=executor_network", env_text)
                 self.assertIn(
                     "QDL_STABLE_RUNTIME_DIR=/host/qdl/candidate/runtime", env_text
                 )

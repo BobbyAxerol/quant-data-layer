@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import secrets
 import shutil
 import subprocess
@@ -73,6 +74,7 @@ def prepare_candidate(
     python_image: str,
     cert_dir: Path,
     output_dir: Path,
+    consumer_network: str,
     rust_image_id: str | None = None,
     python_image_id: str | None = None,
     host_cert_dir: Path | None = None,
@@ -80,6 +82,8 @@ def prepare_candidate(
 ) -> dict[str, object]:
     if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError("stable candidate output directory must be empty")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", consumer_network) is None:
+        raise ValueError("stable consumer network name is invalid")
     output_dir.mkdir(parents=True, exist_ok=True)
     runtime_dir = output_dir / "runtime"
     identities_dir = output_dir / "identities"
@@ -154,6 +158,7 @@ def prepare_candidate(
     compose_output_dir = (host_output_dir or output_dir).resolve()
     values = {
         "QDL_STABLE_SCHEMA_DIGEST": schema_digest,
+        "QDL_STABLE_CONSUMER_NETWORK": consumer_network,
         "QDL_STABLE_INTERNAL_INGEST_SECRET": ingest_secret,
         "QDL_STABLE_CURSOR_KEYS_JSON": json.dumps(
             {"stable-k1": cursor_secret}, separators=(",", ":")
@@ -217,6 +222,7 @@ def prepare_candidate(
         "authority_promotion_scope_revision": promotion_scope.revision,
         "authority_promotion_scope_digest": promotion_scope.digest(),
         "authority_promotion_binding_count": len(promotion_scope.binding_ids),
+        "consumer_network": consumer_network,
         "consumer_count": 5,
         "workload_mtls": True,
         "workload_identity_count": 4,
@@ -236,6 +242,7 @@ def main() -> int:
     parser.add_argument("--python-image", required=True)
     parser.add_argument("--cert-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--consumer-network", required=True)
     parser.add_argument("--rust-image-id")
     parser.add_argument("--python-image-id")
     parser.add_argument("--host-cert-dir", type=Path)
@@ -246,6 +253,7 @@ def main() -> int:
         python_image=args.python_image,
         cert_dir=args.cert_dir,
         output_dir=args.output_dir,
+        consumer_network=args.consumer_network,
         rust_image_id=args.rust_image_id,
         python_image_id=args.python_image_id,
         host_cert_dir=args.host_cert_dir,

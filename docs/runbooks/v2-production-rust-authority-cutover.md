@@ -154,12 +154,15 @@ python scripts/phaseb_prepare_stable_candidate.py \
   --python-image "$PYTHON_IMAGE" \
   --rust-image "$RUST_IMAGE" \
   --cert-dir /path/to/approved/phase8-certificates \
-  --output-dir "$QDL_RELEASE_ROOT"
+  --output-dir "$QDL_RELEASE_ROOT" \
+  --consumer-network executor_network
 ```
 
 The manifest must report contract `2.0.0`, authority `RUST_SHADOW`,
 `cutover_authorized=false`, immutable image IDs, five consumer manifests and
-no recorded secret values.
+no recorded secret values. `--consumer-network` must name an already-created
+external network shared with the sole approved consumer. Only V2 query/stream
+ingress joins it; Kafka, Redis, projector and Rust cores remain private.
 
 ## Gate 4 - Start Isolated V2
 

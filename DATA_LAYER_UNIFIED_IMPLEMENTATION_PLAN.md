@@ -6410,6 +6410,34 @@ freshness/session/contract checks and the source-switch audit is durable.
   disposable test/revoked-bundle paths only; no broad prune, active image,
   final release bundle, V1 rollback artifact or volume was removed.
 
+
+- `2026-08-20 C.2 CONSUMER-NETWORK BLOCKER FOUND`: final deployment
+  preflight compared Data Layer and Trading System Compose topology. Stable V2
+  query/stream roles only join project-private networks and expose loopback host
+  ports, while Trading System resolves `qdl-v2-query` and
+  `qdl-v2-stream-a/b` from external `executor_network`; the container cannot
+  reach host loopback, so a real consumer cutover would fail despite valid SDK
+  and mTLS tests. Add one explicit generated external-consumer-network setting,
+  attach only the two query and two stream ingress roles with the frozen DNS
+  aliases, and keep Kafka/Redis/projector/Rust core off that network. Require
+  Compose contract tests for aliases/isolation plus existing full regressions.
+  Rebuild the same-SHA release pair after this bounded topology repair. No
+  running network/container is changed by the source fix.
+
+
+- `2026-08-20 C.2 CONSUMER-NETWORK REPAIR PASS`: stable bundle generation now
+  requires a validated external consumer network and records it in private env
+  plus the non-secret manifest. Only query replicas join it as
+  `qdl-v2-query`; only active/passive stream roles join as
+  `qdl-v2-stream-a/b`. Kafka, Redis, projector, Rust shadow/primary cores and
+  ingestors remain absent from that network. Generated Compose validated
+  against existing external `executor_network`; focused tests passed 19/19,
+  full Python passed 543 with six environment skips, changed-file Ruff passed,
+  and the canonical cutover runbook now requires the network explicitly.
+  No container was attached, recreated or restarted; port 8100 and Trading
+  System remained unchanged. Commit and one final same-SHA image rebuild are
+  required before PR/cutover.
+
 Promote all approved Binance and OKX feed slices in one maintenance window, but
 execute the CAS internally one slice at a time so a failure is isolated. One
 operator packet may list the complete slice set, image IDs, old/new owners,
