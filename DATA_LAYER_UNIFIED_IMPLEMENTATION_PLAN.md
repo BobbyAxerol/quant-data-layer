@@ -5980,6 +5980,20 @@ catalog or SDK wiring cannot be deferred as operational debt.
   The audit also found the stable catalog is certification-bounded to BTC/VN
   examples, so deterministic production symbol/catalog generation is a
   mandatory C.0 gate before alpha consumers can be called V2-ready.
+- `2026-08-20 C.0 SDK ARTIFACT/IDENTITY SLICE PASS`: moved every public V2
+  response model into `qdl_sdk.models` and made `qdl.api_v2.models` reuse and
+  re-export that exact implementation. The SDK no longer imports Data Layer
+  service internals. Added bounded typed instrument catalog resolution by
+  venue/market/product/native symbol, including pagination-cycle, missing and
+  ambiguous-identity fail-closed behavior; consumers no longer need hardcoded
+  UUIDs. Added a deterministic standalone `qdl_sdk==2.0.0` wheel builder,
+  SHA-256 release manifest, generated-contract digest and CycloneDX SBOM.
+  Repeated builds produced an identical wheel digest and a network-off install
+  smoke imported exclusively from the installed wheel. Compile plus V1 golden,
+  API/SDK/stream/security/multi-venue tests passed 47/47. V1 runtime, provider sockets,
+  authority, Redis, Kafka, consumer routes and production data were untouched.
+  Production demand/catalog generation and long-running Rust authority wiring
+  remain the next C.0 slices; this slice alone does not authorize cutover.
 - `2026-08-20 OPERATOR CUTOVER SIMPLIFICATION RECORDED`: the operator reports
   all alpha consumers are stopped and Trading System is the sole active
   consumer. Phase C therefore removes staged alpha/monitoring migrations and

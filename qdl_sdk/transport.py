@@ -53,31 +53,75 @@ class RestQueryTransport:
         )
         return self._decode(response)
 
+    async def instruments(
+        self,
+        *,
+        consumer_id: str,
+        consumer_grade: Grade,
+        cursor: str | None = None,
+        limit: int = 500,
+    ) -> dict:
+        headers = await self._identity_headers(consumer_grade, consumer_id)
+        params: dict[str, str | int] = {"limit": limit}
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = await self._client.get(
+            "/v2/instruments", params=params, headers=headers
+        )
+        return self._decode(response)
+
+    async def instrument(
+        self,
+        identity: str,
+        *,
+        consumer_id: str,
+        consumer_grade: Grade,
+    ) -> dict:
+        if not identity.strip():
+            raise ValueError("instrument identity is required")
+        headers = await self._identity_headers(consumer_grade, consumer_id)
+        response = await self._client.get(
+            f"/v2/instruments/{identity}", headers=headers
+        )
+        return self._decode(response)
+
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
 
     async def _headers(self, requirement: DataRequirement, consumer_id: str) -> dict[str, str]:
+        return await self._identity_headers(requirement.consumer_grade, consumer_id)
+
+    async def _identity_headers(
+        self, consumer_grade: Grade, consumer_id: str
+    ) -> dict[str, str]:
         if self._credential_provider is None:
             raise DataLayerError(
                 "UNAUTHENTICATED",
                 "V2 REST transport requires a workload credential provider",
                 retryable=False,
             )
+        if not isinstance(consumer_grade, Grade):
+            raise TypeError("consumer_grade must use the typed SDK enum")
         token = await self._credential_provider.get_token()
         return {
             "Authorization": f"Bearer {token}",
             "X-QDL-Consumer-ID": consumer_id,
-            "X-QDL-Purpose": self._purpose(requirement),
+            "X-QDL-Purpose": self._purpose(consumer_grade),
         }
 
     @staticmethod
-    def _purpose(requirement: DataRequirement) -> str:
+    def _purpose(consumer_grade: Grade | DataRequirement) -> str:
+        grade = (
+            consumer_grade.consumer_grade
+            if isinstance(consumer_grade, DataRequirement)
+            else consumer_grade
+        )
         return {
             Grade.EXECUTION: "INTERNAL_EXECUTION",
             Grade.ALPHA: "INTERNAL_ALPHA",
             Grade.RESEARCH: "INTERNAL_RESEARCH",
-        }[requirement.consumer_grade]
+        }[grade]
 
     @staticmethod
     def _decode(response: httpx.Response) -> dict:
