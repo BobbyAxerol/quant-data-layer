@@ -169,17 +169,39 @@ state="$(docker exec "${CONTAINER}" psql -U postgres -d postgres -Atc   "SELECT 
 audit_count="$(docker exec "${CONTAINER}" psql -U postgres -d postgres -Atc   "SELECT count(*) FROM qdl_authority_transition_audit;")"
 checkpoint_count="$(docker exec "${CONTAINER}" psql -U postgres -d postgres -Atc   "SELECT count(*) FROM qdl_terminal_owner_checkpoints;")"
 handoff_count="$(docker exec "${CONTAINER}" psql -U postgres -d postgres -Atc   "SELECT count(*) FROM qdl_authority_handoffs;")"
+outbox_count="$(docker exec "${CONTAINER}" psql -U postgres -d postgres -Atc   "SELECT count(*) FROM qdl_authority_event_outbox;")"
+outbox_revisions="$(docker exec "${CONTAINER}" psql -U postgres -d postgres -Atc   "SELECT string_agg(authority_revision::text, ',' ORDER BY authority_revision) FROM qdl_authority_event_outbox;")"
 [[ "${state}" == "PYTHON_PRIMARY:7:python-rollback:3:120" ]]
 [[ "${audit_count}" == "4" ]]
 [[ "${checkpoint_count}" == "2" ]]
 [[ "${handoff_count}" == "2" ]]
+[[ "${outbox_count}" == "4" ]]
+[[ "${outbox_revisions}" == "4,5,6,7" ]]
+expect_failure "UPDATE qdl_authority_event_outbox SET payload = '{}'::jsonb;"
 
-python3 - "${OUTPUT}" "${state}" "${audit_count}" "${checkpoint_count}" "${handoff_count}" <<'PY'
+docker exec -i "${CONTAINER}" psql -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL' >/dev/null
+DO $$
+DECLARE
+  claimed qdl_authority_event_outbox%ROWTYPE;
+BEGIN
+  SELECT * INTO claimed FROM qdl_claim_authority_outbox('phase92-smoke', 1);
+  IF claimed.event_id IS NULL THEN
+    RAISE EXCEPTION 'authority outbox claim returned no event';
+  END IF;
+  PERFORM qdl_complete_authority_outbox(
+    claimed.event_id, 'phase92-smoke', 'qdl.authority.v1', 0, 12
+  );
+END;
+$$;
+SQL
+[[ "$(docker exec "${CONTAINER}" psql -U postgres -d postgres -Atc "SELECT count(*) FROM qdl_authority_event_outbox WHERE status='PUBLISHED' AND topic_offset=12;")" == "1" ]]
+
+python3 - "${OUTPUT}" "${state}" "${audit_count}" "${checkpoint_count}" "${handoff_count}" "${outbox_count}" <<'PY'
 import json
 import pathlib
 import sys
 
-output, state, audits, checkpoints, handoffs = sys.argv[1:]
+output, state, audits, checkpoints, handoffs, outbox = sys.argv[1:]
 path = pathlib.Path(output)
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(json.dumps({
@@ -189,6 +211,9 @@ path.write_text(json.dumps({
     "audit_records": int(audits),
     "terminal_checkpoints": int(checkpoints),
     "accepted_handoffs": int(handoffs),
+    "authority_outbox_records": int(outbox),
+    "authority_outbox_payload_immutable": True,
+    "authority_outbox_claim_ack_passed": True,
     "direct_primary_bypass_rejected": True,
     "stale_cas_rejected": True,
     "handoff_mutation_rejected": True,
@@ -203,4 +228,4 @@ PY
 cleanup
 trap - EXIT
 [[ -z "$(docker ps -aq --filter name=^/${CONTAINER}$)" ]]
-printf '{"status":"PASS","state":"%s","audits":%s,"checkpoints":%s,"handoffs":%s,"cleanup":true}\n'   "${state}" "${audit_count}" "${checkpoint_count}" "${handoff_count}"
+printf '{"status":"PASS","state":"%s","audits":%s,"checkpoints":%s,"handoffs":%s,"outbox":%s,"cleanup":true}\n'   "${state}" "${audit_count}" "${checkpoint_count}" "${handoff_count}" "${outbox_count}"

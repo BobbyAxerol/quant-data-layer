@@ -13,6 +13,9 @@ from qdl_sdk.models import (
     DataRequirement,
     Feed,
     Grade,
+    InstrumentPageResponse,
+    InstrumentResponse,
+    InstrumentView,
     SnapshotResponse,
     StreamEvent,
     WarmupResponse,
@@ -22,6 +25,17 @@ from qdl_sdk.models import (
 class QueryTransport(Protocol):
     async def warmup(self, requirement: DataRequirement, *, consumer_id: str) -> dict: ...
     async def snapshot(self, requirement: DataRequirement, *, consumer_id: str) -> dict: ...
+    async def instruments(
+        self,
+        *,
+        consumer_id: str,
+        consumer_grade: Grade,
+        cursor: str | None,
+        limit: int,
+    ) -> dict: ...
+    async def instrument(
+        self, identity: str, *, consumer_id: str, consumer_grade: Grade
+    ) -> dict: ...
     async def close(self) -> None: ...
 
 
@@ -296,6 +310,98 @@ class AsyncDataLayerClient:
         assert isinstance(response, WarmupResponse)
         self._record_query("/v2/market-data/warmup", response)
         return response
+
+    async def instrument(
+        self, identity: str, *, consumer_grade: Grade
+    ) -> InstrumentResponse:
+        payload = await self.query_transport.instrument(
+            identity,
+            consumer_id=self.consumer_id,
+            consumer_grade=consumer_grade,
+        )
+        try:
+            return InstrumentResponse.model_validate(payload)
+        except ValidationError as error:
+            raise ContinuityError(
+                "SCHEMA_NOT_SUPPORTED",
+                "instrument response violates the typed V2 contract",
+            ) from error
+
+    async def resolve_instrument(
+        self,
+        *,
+        venue: str,
+        product_type: str,
+        native_symbol: str,
+        consumer_grade: Grade,
+        market: str | None = None,
+        page_limit: int = 500,
+        max_pages: int = 100,
+    ) -> InstrumentView:
+        if not isinstance(consumer_grade, Grade):
+            raise TypeError("consumer_grade must use the typed SDK enum")
+        if not 1 <= page_limit <= 500 or not 1 <= max_pages <= 100:
+            raise ValueError("instrument resolver page bounds are invalid")
+        expected = {
+            "venue": venue.strip().upper(),
+            "product_type": product_type.strip().upper(),
+            "native_symbol": native_symbol.strip().upper(),
+            "market": market.strip().upper() if market is not None else None,
+        }
+        if not all(expected[key] for key in ("venue", "product_type", "native_symbol")):
+            raise ValueError("venue, product_type and native_symbol are required")
+        cursor: str | None = None
+        matches: list[InstrumentView] = []
+        seen_cursors: set[str] = set()
+        for _ in range(max_pages):
+            payload = await self.query_transport.instruments(
+                consumer_id=self.consumer_id,
+                consumer_grade=consumer_grade,
+                cursor=cursor,
+                limit=page_limit,
+            )
+            try:
+                page = InstrumentPageResponse.model_validate(payload)
+            except ValidationError as error:
+                raise ContinuityError(
+                    "SCHEMA_NOT_SUPPORTED",
+                    "instrument page violates the typed V2 contract",
+                ) from error
+            for item in page.items:
+                if (
+                    item.venue.upper() == expected["venue"]
+                    and item.product_type.upper() == expected["product_type"]
+                    and item.native_symbol.upper() == expected["native_symbol"]
+                    and (
+                        expected["market"] is None
+                        or item.market.upper() == expected["market"]
+                    )
+                ):
+                    matches.append(item)
+            if page.next_cursor is None:
+                break
+            if page.next_cursor in seen_cursors:
+                raise ContinuityError(
+                    "CONFLICT", "instrument catalog returned a cursor cycle"
+                )
+            seen_cursors.add(page.next_cursor)
+            cursor = page.next_cursor
+        else:
+            raise ContinuityError(
+                "PARTIAL_RESULT", "instrument catalog exceeded bounded pagination"
+            )
+        active = [item for item in matches if item.status.upper() == "ACTIVE"]
+        if len(active) == 1:
+            return active[0]
+        if not active:
+            raise DataLayerError(
+                "INSTRUMENT_NOT_FOUND",
+                "no active V2 instrument matches the venue/product/native symbol",
+                retryable=False,
+            )
+        raise ContinuityError(
+            "CONFLICT", "instrument identity is ambiguous; specify market"
+        )
 
     @asynccontextmanager
     async def warmup_then_stream(

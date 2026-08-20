@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import secrets
 import shutil
 import subprocess
@@ -15,8 +16,10 @@ sys.path.insert(0, str(ROOT))
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
+    AuthorityPromotionScope,
     StableAcquisitionPlan,
     stable_authority_record,
+    write_production_core_bundle,
     write_stable_runtime_bundle,
 )
 
@@ -50,12 +53,28 @@ def copy_client_identity(source: Path, destination: Path, principal: str) -> Non
         item.chmod(0o440)
 
 
+def copy_server_identity(source: Path, destination: Path, principal: str) -> None:
+    destination.mkdir(parents=True, exist_ok=False)
+    for source_name, target_name in (
+        ("ca.crt", "ca.crt"),
+        (f"{principal}.crt", "server.crt"),
+        (f"{principal}.key", "server.key"),
+    ):
+        origin = source / source_name
+        if not origin.is_file():
+            raise FileNotFoundError(f"stable TLS source is unavailable: {origin}")
+        shutil.copyfile(origin, destination / target_name)
+    for item in destination.iterdir():
+        item.chmod(0o440)
+
+
 def prepare_candidate(
     *,
     rust_image: str,
     python_image: str,
     cert_dir: Path,
     output_dir: Path,
+    consumer_network: str,
     rust_image_id: str | None = None,
     python_image_id: str | None = None,
     host_cert_dir: Path | None = None,
@@ -63,6 +82,8 @@ def prepare_candidate(
 ) -> dict[str, object]:
     if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError("stable candidate output directory must be empty")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", consumer_network) is None:
+        raise ValueError("stable consumer network name is invalid")
     output_dir.mkdir(parents=True, exist_ok=True)
     runtime_dir = output_dir / "runtime"
     identities_dir = output_dir / "identities"
@@ -77,6 +98,10 @@ def prepare_candidate(
     )
     acquisition_path = ROOT / "config/v2/stable-acquisition-bindings.yaml"
     acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
+    promotion_scope = AuthorityPromotionScope.load(
+        ROOT / "config/v2/stable-authority-promotion-scope.yaml",
+        catalog=catalog,
+    )
     authority = stable_authority_record(
         rust_image_digest=rust_digest,
         capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
@@ -90,29 +115,57 @@ def prepare_candidate(
         acquisition=acquisition,
         authority=authority,
     )
+    bundle_digests.update(write_production_core_bundle(
+        runtime_dir,
+        catalog=catalog,
+        acquisition=acquisition,
+        promotion_scope=promotion_scope,
+        raw_authority=authority,
+        partition_plan_epoch=1,
+    ))
     for role, principal in (
         ("producer", "phase8-producer"),
         ("core", "phase8-core"),
         ("projector", "phase8-consumer"),
+        ("authority-dispatcher", "stable-authority-dispatcher"),
+        ("trading-system", "stable-trading-system"),
     ):
         copy_client_identity(cert_dir, identities_dir / role, principal)
+    copy_server_identity(cert_dir, identities_dir / "query", "stable-query")
+    copy_server_identity(cert_dir, identities_dir / "stream", "stable-stream")
+    jwt_identity_dir = identities_dir / "trading-system-jwt"
+    jwt_identity_dir.mkdir(parents=True, exist_ok=False)
+    for source_name, target_name in (
+        ("stable-trading-system-jwt.key", "private.key"),
+        ("stable-trading-system-jwt.public.pem", "public.pem"),
+    ):
+        origin = cert_dir / source_name
+        if not origin.is_file():
+            raise FileNotFoundError(f"stable JWT source is unavailable: {origin}")
+        shutil.copyfile(origin, jwt_identity_dir / target_name)
+    for item in jwt_identity_dir.iterdir():
+        item.chmod(0o440)
 
     schema_digest = hashlib.sha256(
         (ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto").read_bytes()
     ).hexdigest()
     ingest_secret = secrets.token_urlsafe(48)
     cursor_secret = secrets.token_urlsafe(48)
-    jwt_secret = secrets.token_urlsafe(48)
+    control_db_password = secrets.token_urlsafe(32)
+    dispatcher_db_password = secrets.token_urlsafe(32)
+    jwt_public_key = (jwt_identity_dir / "public.pem").read_text(encoding="utf-8")
     compose_cert_dir = (host_cert_dir or cert_dir).resolve()
     compose_output_dir = (host_output_dir or output_dir).resolve()
     values = {
         "QDL_STABLE_SCHEMA_DIGEST": schema_digest,
+        "QDL_STABLE_CONSUMER_NETWORK": consumer_network,
         "QDL_STABLE_INTERNAL_INGEST_SECRET": ingest_secret,
         "QDL_STABLE_CURSOR_KEYS_JSON": json.dumps(
             {"stable-k1": cursor_secret}, separators=(",", ":")
         ),
         "QDL_STABLE_JWT_KEYS_JSON": json.dumps(
-            {"stable-jwt-k1": jwt_secret}, separators=(",", ":")
+            {"stable-trading-system-rs256-v1": jwt_public_key},
+            separators=(",", ":"),
         ),
         "QDL_STABLE_PYTHON_IMAGE": python_digest,
         "QDL_STABLE_RUST_IMAGE": rust_digest,
@@ -120,9 +173,30 @@ def prepare_candidate(
         "QDL_STABLE_PROJECTOR_CERT_DIR": str(
             compose_output_dir / "identities/projector"
         ),
+        "QDL_STABLE_AUTHORITY_CERT_DIR": str(
+            compose_output_dir / "identities/authority-dispatcher"
+        ),
         "QDL_STABLE_CORE_CERT_DIR": str(compose_output_dir / "identities/core"),
         "QDL_STABLE_PRODUCER_CERT_DIR": str(
             compose_output_dir / "identities/producer"
+        ),
+        "QDL_STABLE_QUERY_CERT_DIR": str(compose_output_dir / "identities/query"),
+        "QDL_STABLE_STREAM_CERT_DIR": str(compose_output_dir / "identities/stream"),
+        "QDL_STABLE_TRADING_SYSTEM_CERT_DIR": str(
+            compose_output_dir / "identities/trading-system"
+        ),
+        "QDL_STABLE_TRADING_SYSTEM_JWT_PRIVATE_KEY": str(
+            compose_output_dir / "identities/trading-system-jwt/private.key"
+        ),
+        "QDL_STABLE_CONTROL_DB_PASSWORD": control_db_password,
+        "QDL_STABLE_DISPATCHER_DB_PASSWORD": dispatcher_db_password,
+        "QDL_STABLE_CONTROL_DB_DSN": (
+            "postgresql://qdl_authority_dispatcher:"
+            f"{dispatcher_db_password}@stable_authority_db:5432/qdl_authority"
+        ),
+        "QDL_STABLE_CONTROL_ADMIN_DSN": (
+            "postgresql://qdl_authority:"
+            f"{control_db_password}@stable_authority_db:5432/qdl_authority"
         ),
         "QDL_STABLE_RUNTIME_DIR": str(compose_output_dir / "runtime"),
     }
@@ -145,7 +219,13 @@ def prepare_candidate(
         "runtime_digests": bundle_digests,
         "catalog_revision": catalog.catalog_revision,
         "acquisition_revision": acquisition.revision,
+        "authority_promotion_scope_revision": promotion_scope.revision,
+        "authority_promotion_scope_digest": promotion_scope.digest(),
+        "authority_promotion_binding_count": len(promotion_scope.binding_ids),
+        "consumer_network": consumer_network,
         "consumer_count": 5,
+        "workload_mtls": True,
+        "workload_identity_count": 4,
         "secret_values_recorded": False,
     }
     manifest_path = output_dir / "candidate-manifest.json"
@@ -162,6 +242,7 @@ def main() -> int:
     parser.add_argument("--python-image", required=True)
     parser.add_argument("--cert-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--consumer-network", required=True)
     parser.add_argument("--rust-image-id")
     parser.add_argument("--python-image-id")
     parser.add_argument("--host-cert-dir", type=Path)
@@ -172,6 +253,7 @@ def main() -> int:
         python_image=args.python_image,
         cert_dir=args.cert_dir,
         output_dir=args.output_dir,
+        consumer_network=args.consumer_network,
         rust_image_id=args.rust_image_id,
         python_image_id=args.python_image_id,
         host_cert_dir=args.host_cert_dir,

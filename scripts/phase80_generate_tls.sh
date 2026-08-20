@@ -22,13 +22,14 @@ issue_certificate() {
   local principal="$1"
   local dns_name="$2"
   local extension_file="${OUTPUT_DIR}/${principal}.ext"
+  local san_entries="${3:-DNS:${dns_name}}"
 
   openssl genrsa -out "${OUTPUT_DIR}/${principal}.key" 2048 >/dev/null 2>&1
   openssl req -new -sha256 \
     -key "${OUTPUT_DIR}/${principal}.key" \
     -subj "/CN=${principal}" \
     -out "${OUTPUT_DIR}/${principal}.csr" >/dev/null 2>&1
-  printf 'subjectAltName=DNS:%s,DNS:localhost\nextendedKeyUsage=serverAuth,clientAuth\n' "${dns_name}" >"${extension_file}"
+  printf 'subjectAltName=%s,DNS:localhost\nextendedKeyUsage=serverAuth,clientAuth\n' "${san_entries}" >"${extension_file}"
   openssl x509 -req -sha256 -days 2 \
     -in "${OUTPUT_DIR}/${principal}.csr" \
     -CA "${OUTPUT_DIR}/ca.crt" \
@@ -48,9 +49,14 @@ issue_certificate() {
 for broker in kafka1 kafka2 kafka3; do
   issue_certificate "${broker}" "${broker}"
 done
-for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized; do
+for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized stable-authority-dispatcher stable-trading-system; do
   issue_certificate "${client}" "${client}"
 done
+issue_certificate stable-trading-system-jwt stable-trading-system-jwt
+openssl pkey -in "${OUTPUT_DIR}/stable-trading-system-jwt.key" -pubout \
+  -out "${OUTPUT_DIR}/stable-trading-system-jwt.public.pem" >/dev/null 2>&1
+issue_certificate stable-query query_v2_1 "DNS:query_v2_1,DNS:query_v2_2,DNS:qdl-v2-query"
+issue_certificate stable-stream stream_v2_active "DNS:stream_v2_active,DNS:stream_v2_passive,DNS:qdl-v2-stream"
 
 printf '%s\n' "${PASSWORD}" >"${OUTPUT_DIR}/key.password"
 printf '%s\n' "${PASSWORD}" >"${OUTPUT_DIR}/store.password"
@@ -108,6 +114,11 @@ find "${OUTPUT_DIR}" -maxdepth 1 -name '*.key' \
   ! -name 'phase8-producer.key' \
   ! -name 'phase8-consumer.key' \
   ! -name 'phase8-core.key' \
+  ! -name 'stable-query.key' \
+  ! -name 'stable-stream.key' \
+  ! -name 'stable-authority-dispatcher.key' \
+  ! -name 'stable-trading-system.key' \
+  ! -name 'stable-trading-system-jwt.key' \
   -delete
 rm -f "${OUTPUT_DIR}"/*.csr "${OUTPUT_DIR}"/*.ext "${OUTPUT_DIR}"/*.srl
 

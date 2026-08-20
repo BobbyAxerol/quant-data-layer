@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ssl
 import subprocess
 import time
 import urllib.request
@@ -166,11 +167,42 @@ def _validate_project(env_file: Path) -> None:
         raise RuntimeError("compose project is not the isolated stable candidate")
 
 
-def _wait_http(url: str, deadline: float) -> None:
+def _env_value(env_file: Path, key: str) -> str:
+    prefix = f"{key}="
+    matches = [
+        line[len(prefix):]
+        for line in env_file.read_text().splitlines()
+        if line.startswith(prefix)
+    ]
+    if len(matches) != 1 or not matches[0]:
+        raise ValueError(f"stable env must define exactly one {key}")
+    return matches[0]
+
+
+def _stable_client_ssl_context(env_file: Path) -> ssl.SSLContext:
+    identity_root = Path(
+        _env_value(env_file, "QDL_STABLE_TRADING_SYSTEM_CERT_DIR")
+    )
+    context = ssl.create_default_context(cafile=str(identity_root / "ca.crt"))
+    context.load_cert_chain(
+        certfile=str(identity_root / "client.crt"),
+        keyfile=str(identity_root / "client.key"),
+    )
+    return context
+
+
+def _wait_http(
+    url: str,
+    deadline: float,
+    *,
+    ssl_context: ssl.SSLContext | None = None,
+) -> None:
     last_error: BaseException | None = None
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=2) as response:
+            with urllib.request.urlopen(
+                url, timeout=2, context=ssl_context
+            ) as response:
                 if response.status == 200:
                     return
         except BaseException as error:
@@ -298,17 +330,34 @@ def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, obje
         "--to-earliest",
         "--execute",
     )
+    ssl_context = _stable_client_ssl_context(env_file)
     _start_services(env_file, *STREAM_SERVICES)
-    _wait_http("http://127.0.0.1:18210/health/live", deadline)
-    _wait_http("http://127.0.0.1:18211/health/live", deadline)
+    _wait_http(
+        "https://localhost:18210/health/live",
+        deadline,
+        ssl_context=ssl_context,
+    )
+    _wait_http(
+        "https://localhost:18211/health/live",
+        deadline,
+        ssl_context=ssl_context,
+    )
 
     _start_services(env_file, "projector_v2")
     lag = _wait_bounded_lag(env_file, deadline)
     _wait_projector_ready(env_file, deadline)
 
     _start_services(env_file, *QUERY_SERVICES)
-    _wait_http("http://127.0.0.1:18201/health/ready", deadline)
-    _wait_http("http://127.0.0.1:18202/health/ready", deadline)
+    _wait_http(
+        "https://localhost:18201/health/ready",
+        deadline,
+        ssl_context=ssl_context,
+    )
+    _wait_http(
+        "https://localhost:18202/health/ready",
+        deadline,
+        ssl_context=ssl_context,
+    )
 
     final_size = int(
         _compose(

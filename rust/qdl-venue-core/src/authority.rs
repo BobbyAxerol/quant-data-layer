@@ -658,6 +658,74 @@ impl Phase92AuthorityRecord {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Phase92AuthorityControlEvent {
+    pub schema: String,
+    pub event_id: String,
+    pub slice_id: String,
+    pub authority_revision: u64,
+    pub database_state: String,
+    pub authority: Option<Phase92AuthorityRecord>,
+    pub checkpoint: Option<Phase92TerminalCheckpoint>,
+    pub handoff: Option<Phase92AcceptedHandoff>,
+}
+
+impl Phase92AuthorityControlEvent {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema != "qdl.authority-control-event.v1"
+            || !valid_uuid(&self.event_id)
+            || self.slice_id.trim().is_empty()
+            || self.authority_revision == 0
+            || self.database_state.trim().is_empty()
+        {
+            return Err("Phase 9.2 authority control event identity is invalid".into());
+        }
+        let Some(authority) = &self.authority else {
+            if self.checkpoint.is_some() || self.handoff.is_some() {
+                return Err("non-writable authority event cannot carry handoff evidence".into());
+            }
+            return Ok(());
+        };
+        authority.validate()?;
+        if authority.slice_id != self.slice_id
+            || authority.authority_revision != self.authority_revision
+        {
+            return Err("authority control event and authority record differ".into());
+        }
+        let primary = matches!(
+            authority.state,
+            Phase92AuthorityState::RustPrimary | Phase92AuthorityState::PythonPrimary
+        );
+        if primary {
+            let checkpoint = self
+                .checkpoint
+                .as_ref()
+                .ok_or_else(|| "primary authority control event needs checkpoint".to_owned())?;
+            let handoff = self
+                .handoff
+                .as_ref()
+                .ok_or_else(|| "primary authority control event needs handoff".to_owned())?;
+            handoff.validate(checkpoint)?;
+            let handoff_digest = handoff.digest()?;
+            if authority.owner_id != handoff.new_owner_id
+                || authority.previous_owner_id.as_deref() != Some(handoff.old_owner_id.as_str())
+                || authority.authority_revision != handoff.new_authority_revision
+                || authority.lease_epoch != handoff.new_lease_epoch
+                || authority.partition_plan_epoch != handoff.partition_plan_epoch
+                || authority.start_watermark != handoff.terminal_watermark
+                || authority.terminal_watermark != Some(handoff.terminal_watermark)
+                || authority.handoff_digest.as_deref() != Some(handoff_digest.as_str())
+            {
+                return Err("primary authority record does not bind accepted handoff".into());
+            }
+        } else if self.checkpoint.is_some() || self.handoff.is_some() {
+            return Err("non-primary authority event cannot carry handoff evidence".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Phase92PublicationContext {
     pub slice_id: String,
@@ -670,7 +738,7 @@ pub struct Phase92PublicationContext {
     pub target: SinkTarget,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Phase92AuthorityFence {
     current: Option<Phase92AuthorityRecord>,
     committed_watermarks: HashMap<(String, SinkTarget), u64>,
@@ -680,7 +748,15 @@ pub struct Phase92AuthorityFence {
 impl Phase92AuthorityFence {
     pub fn apply(&mut self, record: Phase92AuthorityRecord) -> Result<(), String> {
         record.validate()?;
-        if self.current.is_none() {
+        if let Some(current) = &self.current {
+            if record.authority_revision == current.authority_revision {
+                return if record == *current {
+                    Ok(())
+                } else {
+                    Err("conflicting Phase 9.2 authority at the same revision".into())
+                };
+            }
+        } else {
             self.recovery_required = matches!(
                 record.state,
                 Phase92AuthorityState::RustPrimary | Phase92AuthorityState::PythonPrimary
@@ -695,6 +771,41 @@ impl Phase92AuthorityFence {
             return Err("primary ownership transition requires accepted handoff".into());
         }
         self.apply_transition(record)
+    }
+
+    pub fn apply_control_event(
+        &mut self,
+        event: &Phase92AuthorityControlEvent,
+        now_ns: i64,
+    ) -> Result<(), String> {
+        event.validate()?;
+        let Some(record) = event.authority.clone() else {
+            return Ok(());
+        };
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|current| current == &record)
+        {
+            return Ok(());
+        }
+        let primary = matches!(
+            record.state,
+            Phase92AuthorityState::RustPrimary | Phase92AuthorityState::PythonPrimary
+        );
+        if primary && self.current.is_some() {
+            let checkpoint = event
+                .checkpoint
+                .as_ref()
+                .ok_or_else(|| "primary authority event needs checkpoint".to_owned())?;
+            let handoff = event
+                .handoff
+                .as_ref()
+                .ok_or_else(|| "primary authority event needs handoff".to_owned())?;
+            self.apply_handoff(checkpoint, handoff, record, now_ns)
+        } else {
+            self.apply(record)
+        }
     }
 
     pub fn apply_handoff(
@@ -780,26 +891,26 @@ impl Phase92AuthorityFence {
         &mut self,
         context: &Phase92PublicationContext,
     ) -> Result<(), String> {
-        if !self.recovery_required {
-            return Err("Phase 9.2 watermark restore is only permitted during recovery".into());
-        }
         let current = self
             .current
             .as_ref()
             .ok_or_else(|| "Phase 9.2 authority record is not loaded".to_owned())?;
-        if !matches!(
+        let restoring_canary = current.state == Phase92AuthorityState::RustCanary
+            && context.target == SinkTarget::CanaryCanonical;
+        let restoring_primary = matches!(
             current.state,
             Phase92AuthorityState::RustPrimary | Phase92AuthorityState::PythonPrimary
-        ) || context.slice_id != current.slice_id
+        ) && matches!(
+            context.target,
+            SinkTarget::PrimaryCanonical | SinkTarget::PublicV2 | SinkTarget::LegacyV1
+        );
+        if !(restoring_canary || (self.recovery_required && restoring_primary))
+            || context.slice_id != current.slice_id
             || context.owner_id != current.owner_id
             || context.authority_revision != current.authority_revision
             || context.lease_epoch != current.lease_epoch
             || context.partition_plan_epoch != current.partition_plan_epoch
             || context.shard_id.trim().is_empty()
-            || !matches!(
-                context.target,
-                SinkTarget::PrimaryCanonical | SinkTarget::PublicV2 | SinkTarget::LegacyV1
-            )
             || context.source_watermark < current.start_watermark
         {
             return Err("Phase 9.2 recovered watermark identity is invalid".into());
@@ -899,6 +1010,22 @@ impl Phase92AuthorityFence {
         self.committed_watermarks
             .insert(key, context.source_watermark);
         Ok(())
+    }
+
+    pub fn next_watermark(&self, shard_id: &str, target: SinkTarget) -> Result<u64, String> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or_else(|| "Phase 9.2 authority record is not loaded".to_owned())?;
+        if shard_id.trim().is_empty() {
+            return Err("Phase 9.2 shard identity is empty".into());
+        }
+        self.committed_watermarks
+            .get(&(shard_id.to_owned(), target))
+            .copied()
+            .unwrap_or(current.start_watermark)
+            .checked_add(1)
+            .ok_or_else(|| "Phase 9.2 watermark overflow".to_owned())
     }
 
     pub fn current(&self) -> Option<&Phase92AuthorityRecord> {
@@ -1538,5 +1665,110 @@ mod phase92_tests {
         dirty.semantic_mismatches = 0;
         dirty.first_new_watermark = 102;
         assert!(dirty.validate(&checkpoint).is_err());
+    }
+}
+
+#[cfg(test)]
+mod phase92_control_event_tests {
+    use super::{
+        Phase92AuthorityControlEvent, Phase92AuthorityFence, Phase92AuthorityState,
+        Phase92PublicationContext, SinkTarget,
+    };
+
+    const EVENT_JSON: &str =
+        include_str!("../../../tests/fixtures/phase9/authority-control-primary.json");
+    const ACTIVE_NOW_NS: i64 = 1_787_218_200_000_000_000;
+
+    fn publication(
+        event: &Phase92AuthorityControlEvent,
+        target: SinkTarget,
+        watermark: u64,
+    ) -> Phase92PublicationContext {
+        let authority = event.authority.as_ref().expect("fixture authority");
+        Phase92PublicationContext {
+            slice_id: authority.slice_id.clone(),
+            owner_id: authority.owner_id.clone(),
+            authority_revision: authority.authority_revision,
+            shard_id: "binance-usdm-trade-ethusdt-0".into(),
+            lease_epoch: authority.lease_epoch,
+            partition_plan_epoch: authority.partition_plan_epoch,
+            source_watermark: watermark,
+            target,
+        }
+    }
+
+    #[test]
+    fn python_control_event_decodes_and_restart_stays_fenced_until_target_restore() {
+        let event: Phase92AuthorityControlEvent =
+            serde_json::from_str(EVENT_JSON).expect("control fixture decodes");
+        event.validate().expect("control fixture validates");
+        let mut fence = Phase92AuthorityFence::default();
+        fence
+            .apply_control_event(&event, ACTIVE_NOW_NS)
+            .expect("primary snapshot loads in recovery mode");
+        let first = publication(&event, SinkTarget::PrimaryCanonical, 501);
+        assert!(fence
+            .permits(&first, ACTIVE_NOW_NS)
+            .is_err_and(|error| error.contains("recovery is required")));
+        for target in [
+            SinkTarget::PrimaryCanonical,
+            SinkTarget::PublicV2,
+            SinkTarget::LegacyV1,
+        ] {
+            fence
+                .restore_committed_watermark(&publication(&event, target, 500))
+                .expect("independent target watermark restores");
+        }
+        fence
+            .permits(&first, ACTIVE_NOW_NS)
+            .expect("first post-handoff canonical watermark is W+1");
+        fence.commit(&first).expect("W+1 commits");
+        assert!(fence
+            .permits(
+                &publication(&event, SinkTarget::PrimaryCanonical, 501),
+                ACTIVE_NOW_NS,
+            )
+            .is_err_and(|error| error.contains("duplicate, stale or gapped")));
+        fence
+            .apply_control_event(&event, ACTIVE_NOW_NS)
+            .expect("identical compacted authority replay is idempotent");
+    }
+
+    #[test]
+    fn canary_to_primary_requires_and_applies_exact_handoff() {
+        let event: Phase92AuthorityControlEvent =
+            serde_json::from_str(EVENT_JSON).expect("control fixture decodes");
+        let primary = event.authority.as_ref().expect("fixture authority");
+        let handoff = event.handoff.as_ref().expect("fixture handoff");
+        let mut canary = primary.clone();
+        canary.state = Phase92AuthorityState::RustCanary;
+        canary.owner_id = handoff.old_owner_id.clone();
+        canary.authority_revision = handoff.expected_authority_revision;
+        canary.lease_epoch = handoff.expected_lease_epoch;
+        canary.start_watermark = handoff.terminal_watermark;
+        canary.terminal_watermark = None;
+        canary.previous_owner_id = None;
+        canary.handoff_digest = None;
+        canary.public_write_allowed = false;
+        canary.legacy_write_allowed = false;
+        let mut fence = Phase92AuthorityFence::default();
+        fence.apply(canary).expect("canary authority loads");
+        fence
+            .apply_control_event(&event, ACTIVE_NOW_NS)
+            .expect("exact handoff promotes primary");
+        assert_eq!(
+            fence.current().expect("primary authority").state,
+            Phase92AuthorityState::RustPrimary
+        );
+    }
+
+    #[test]
+    fn altered_outer_identity_fails_closed() {
+        let mut event: Phase92AuthorityControlEvent =
+            serde_json::from_str(EVENT_JSON).expect("control fixture decodes");
+        event.authority_revision += 1;
+        assert!(event
+            .validate()
+            .is_err_and(|error| error.contains("differ")));
     }
 }

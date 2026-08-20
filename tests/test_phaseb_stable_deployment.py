@@ -6,7 +6,6 @@ import json
 import tempfile
 import time
 import unittest
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from scripts.phaseb_prepare_stable_candidate import prepare_candidate
 
 from qdl.runtime.stable_deployment import (
     STABLE_CORE_WORKER_COUNT,
+    AuthorityPromotionScope,
     StableAcquisitionPlan,
     stable_authority_record,
     write_stable_runtime_bundle,
@@ -29,6 +29,7 @@ from qdl.runtime.stable_deployment import (
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 ACQUISITION_PATH = ROOT / "config/v2/stable-acquisition-bindings.yaml"
+PROMOTION_SCOPE_PATH = ROOT / "config/v2/stable-authority-promotion-scope.yaml"
 
 
 class StableDeploymentContractTests(unittest.TestCase):
@@ -37,6 +38,9 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.acquisition = StableAcquisitionPlan.load(
             ACQUISITION_PATH, catalog=self.catalog
         )
+        self.promotion_scope = AuthorityPromotionScope.load(
+            PROMOTION_SCOPE_PATH, catalog=self.catalog
+        )
         self.authority = stable_authority_record(
             rust_image_digest="a" * 64,
             capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
@@ -44,6 +48,53 @@ class StableDeploymentContractTests(unittest.TestCase):
             partition_plan=ACQUISITION_PATH.read_bytes(),
             effective_at_ns=time.time_ns(),
         )
+
+    def test_initial_authority_scope_is_explicit_and_excludes_dnse(self):
+        expected = {
+            item.binding_id
+            for item in self.catalog.bindings
+            if item.instrument.identity.venue in {"BINANCE", "OKX"}
+        }
+        self.assertEqual(set(self.promotion_scope.binding_ids), expected)
+        self.assertEqual(len(expected), 12)
+        runtime = self.acquisition.production_core_config(
+            catalog=self.catalog,
+            raw_authority=self.authority,
+            promotion_scope=self.promotion_scope,
+            worker_index=1,
+        )
+        self.assertEqual(len(runtime["slices"]), 12)
+        self.assertEqual(
+            {item["subscription_id"] for item in runtime["slices"]},
+            {
+                item.source_id
+                for item in self.catalog.bindings
+                if item.binding_id in expected
+            },
+        )
+        self.assertEqual(
+            {item["venue"] for item in runtime["core"]["bindings"]},
+            {"BINANCE", "OKX"},
+        )
+
+    def test_authority_scope_rejects_unknown_and_duplicate_bindings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "scope.yaml"
+            path.write_text(
+                "schema: qdl.v2.authority-promotion-scope.v1\n"
+                "revision: 1\nbinding_ids: [missing-binding]\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "unknown bindings"):
+                AuthorityPromotionScope.load(path, catalog=self.catalog)
+            path.write_text(
+                "schema: qdl.v2.authority-promotion-scope.v1\n"
+                "revision: 1\nbinding_ids: [binance-usdm-btcusdt-trade, "
+                "binance-usdm-btcusdt-trade]\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "scope is invalid"):
+                AuthorityPromotionScope.load(path, catalog=self.catalog)
 
     def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
         self.assertEqual(len(self.catalog.bindings), 16)
@@ -698,6 +749,16 @@ class StableDeploymentContractTests(unittest.TestCase):
 
 
 class StableComposeAndBundleTests(unittest.TestCase):
+    def test_python_release_base_is_digest_pinned_in_both_stages(self):
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        pinned = (
+            "python:3.12-slim@sha256:"
+            "2c941e860699f878900b0edc2403613c234d4b32"
+            "eda3cc9fa7036991a2a63c4a"
+        )
+        self.assertEqual(dockerfile.count(pinned), 2)
+        self.assertNotIn("FROM python:3.12-slim AS", dockerfile)
+
     def test_compose_is_isolated_bounded_nonroot_and_has_no_v1_route(self):
         raw = (ROOT / "docker-compose.v2-stable.yml").read_text(encoding="utf-8")
         compose = yaml.safe_load(raw)
@@ -708,7 +769,8 @@ class StableComposeAndBundleTests(unittest.TestCase):
         self.assertFalse(compose["networks"]["stable_ingress"].get("internal", False))
         for name in ("query_v2_1", "query_v2_2", "stream_v2_active", "stream_v2_passive"):
             self.assertEqual(
-                set(services[name]["networks"]), {"stable_internal", "stable_ingress"}
+                set(services[name]["networks"]),
+                {"stable_internal", "stable_ingress", "stable_consumer"},
             )
             self.assertTrue(
                 all(str(port).startswith("127.0.0.1:") for port in services[name]["ports"])
@@ -753,6 +815,30 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertTrue(services[name]["read_only"])
                 self.assertIn("ALL", services[name]["cap_drop"])
                 self.assertEqual(services[name]["restart"], "no")
+        ingress_aliases = {
+            "query_v2_1": "qdl-v2-query",
+            "query_v2_2": "qdl-v2-query",
+            "stream_v2_active": "qdl-v2-stream-a",
+            "stream_v2_passive": "qdl-v2-stream-b",
+        }
+        for name, alias in ingress_aliases.items():
+            self.assertEqual(
+                services[name]["networks"]["stable_consumer"]["aliases"],
+                [alias],
+            )
+        self.assertEqual(
+            compose["networks"]["stable_consumer"],
+            {
+                "external": True,
+                "name": "${QDL_STABLE_CONSUMER_NETWORK:"
+                "?set QDL_STABLE_CONSUMER_NETWORK}",
+            },
+        )
+        for name in (
+            "kafka1", "kafka2", "kafka3", "stable_redis", "projector_v2",
+            "rust_core", "rust_core_2", "rust_core_3",
+        ):
+            self.assertNotIn("stable_consumer", services[name]["networks"])
         self.assertEqual(
             set(services["ingestor_okx_swap"]["networks"]),
             {"stable_internal", "stable_egress"},
@@ -810,13 +896,76 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 )
                 self.assertIn("stable_tls:/stable-certs:ro", services[name]["volumes"])
 
+        authority_db = services["stable_authority_db"]
+        self.assertEqual(authority_db["profiles"], ["stable-authority"])
+        self.assertNotIn("ports", authority_db)
+        self.assertIn(
+            "./migrations/postgres:/docker-entrypoint-initdb.d:ro",
+            authority_db["volumes"],
+        )
+        self.assertIn(
+            "stable_authority_db:/var/lib/postgresql/data",
+            authority_db["volumes"],
+        )
+        dispatcher = services["authority_outbox_v2"]
+        self.assertEqual(dispatcher["profiles"], ["stable-authority"])
+        self.assertEqual(dispatcher["networks"], ["stable_internal"])
+        self.assertNotIn("ports", dispatcher)
+        self.assertEqual(
+            dispatcher["environment"]["QDL_AUTHORITY_TOPIC"], "qdl.authority.v1"
+        )
+        self.assertIn(
+            "/stable-certs/authority-dispatcher/client.crt",
+            dispatcher["environment"]["QDL_KAFKA_CERT_LOCATION"],
+        )
+        production_names = (
+            "production_core_1", "production_core_2", "production_core_3"
+        )
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_KAFKA_CLIENT_ID"]
+                for name in production_names
+            },
+            {
+                "qdl-v2-production-core-001",
+                "qdl-v2-production-core-002",
+                "qdl-v2-production-core-003",
+            },
+        )
+        for name in production_names:
+            with self.subTest(production_service=name):
+                self.assertEqual(
+                    services[name]["profiles"], ["stable-authority-primary"]
+                )
+                self.assertEqual(
+                    services[name]["entrypoint"],
+                    ["/usr/local/bin/qdl-production-core"],
+                )
+                self.assertEqual(services[name]["user"], "10001:10001")
+                self.assertTrue(services[name]["read_only"])
+                self.assertNotIn("ports", services[name])
+
     def test_candidate_bundle_uses_image_ids_and_never_records_secret_values(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phaseb-cert-") as cert_directory:
             certs = Path(cert_directory)
             (certs / "ca.crt").write_text("ca", encoding="ascii")
-            for principal in ("phase8-producer", "phase8-core", "phase8-consumer"):
+            for principal in (
+                "phase8-producer",
+                "phase8-core",
+                "phase8-consumer",
+                "stable-authority-dispatcher",
+                "stable-trading-system",
+                "stable-query",
+                "stable-stream",
+            ):
                 (certs / f"{principal}.crt").write_text("crt", encoding="ascii")
                 (certs / f"{principal}.key").write_text("key", encoding="ascii")
+            (certs / "stable-trading-system-jwt.key").write_text(
+                "private", encoding="ascii"
+            )
+            (certs / "stable-trading-system-jwt.public.pem").write_text(
+                "public", encoding="ascii"
+            )
             with tempfile.TemporaryDirectory(prefix="qdl-phaseb-output-") as parent:
                 output = Path(parent) / "candidate"
                 with patch(
@@ -828,22 +977,56 @@ class StableComposeAndBundleTests(unittest.TestCase):
                         python_image="qdl-python:test",
                         cert_dir=certs,
                         output_dir=output,
+                        consumer_network="executor_network",
                         host_cert_dir=Path("/host/qdl/certs"),
                         host_output_dir=Path("/host/qdl/candidate"),
                     )
                 self.assertFalse(manifest["cutover_authorized"])
                 self.assertFalse(manifest["secret_values_recorded"])
+                self.assertEqual(manifest["authority_promotion_binding_count"], 12)
+                self.assertEqual(manifest["consumer_network"], "executor_network")
+                self.assertEqual(len(manifest["authority_promotion_scope_digest"]), 64)
+                production = json.loads(
+                    (output / "runtime/production-core-001.json").read_text()
+                )
+                self.assertEqual(len(production["slices"]), 12)
+                self.assertEqual(
+                    {item["venue"] for item in production["core"]["bindings"]},
+                    {"BINANCE", "OKX"},
+                )
                 self.assertEqual((output / "stable.env").stat().st_mode & 0o777, 0o600)
                 env_text = (output / "stable.env").read_text()
                 self.assertIn("QDL_STABLE_CERT_DIR=/host/qdl/certs", env_text)
+                self.assertIn("QDL_STABLE_CONSUMER_NETWORK=executor_network", env_text)
                 self.assertIn(
                     "QDL_STABLE_RUNTIME_DIR=/host/qdl/candidate/runtime", env_text
+                )
+                self.assertIn(
+                    "QDL_STABLE_AUTHORITY_CERT_DIR="
+                    "/host/qdl/candidate/identities/authority-dispatcher",
+                    env_text,
+                )
+                self.assertIn(
+                    "postgresql://qdl_authority_dispatcher:", env_text
                 )
                 public_manifest = (output / "candidate-manifest.json").read_text()
                 self.assertNotIn("QDL_STABLE_INTERNAL_INGEST_SECRET", public_manifest)
                 for name in ("core.json", "core-002.json", "core-003.json"):
                     self.assertTrue((output / f"runtime/{name}").is_file())
+                for index in range(1, 4):
+                    self.assertTrue(
+                        (output / f"runtime/production-core-{index:03d}.json").is_file()
+                    )
+                self.assertTrue(
+                    (output / "runtime/production-core-manifest.json").is_file()
+                )
                 self.assertTrue((output / "identities/projector/client.key").is_file())
+                self.assertTrue(
+                    (
+                        output
+                        / "identities/authority-dispatcher/client.key"
+                    ).is_file()
+                )
 
 
 if __name__ == "__main__":

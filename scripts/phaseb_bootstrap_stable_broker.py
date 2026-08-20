@@ -11,11 +11,17 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "docker-compose.v2-stable.yml"
 BOOTSTRAP = "kafka1:9092,kafka2:9092,kafka3:9092"
 ADMIN_CONFIG = "/etc/kafka/secrets/admin.properties"
-TOPICS = (
-    "md.raw.stable.v1",
-    "md.canonical.v2",
-    "md.quarantine.stable.v1",
-)
+TOPIC_POLICIES = {
+    "md.raw.stable.v1": "delete",
+    "md.canonical.v2": "delete",
+    "md.quarantine.stable.v1": "delete",
+    "qdl.authority.v1": "compact",
+    "qdl.target-checkpoint.v1": "compact",
+    "md.canary.canonical.v2": "delete",
+    "md.projector.public.v2": "delete",
+    "md.projector.legacy.v1": "delete",
+}
+TOPICS = tuple(TOPIC_POLICIES)
 
 
 def compose(env_file: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -60,7 +66,7 @@ def add_acl(
 
 
 def bootstrap(env_file: Path) -> dict[str, object]:
-    for topic in TOPICS:
+    for topic, cleanup_policy in TOPIC_POLICIES.items():
         kafka(
             env_file,
             "kafka-topics.sh",
@@ -71,6 +77,7 @@ def bootstrap(env_file: Path) -> dict[str, object]:
             "--config", "min.insync.replicas=2",
             "--config", "unclean.leader.election.enable=false",
             "--config", "compression.type=producer",
+            "--config", f"cleanup.policy={cleanup_policy}",
         )
 
     add_acl(
@@ -91,13 +98,46 @@ def bootstrap(env_file: Path) -> dict[str, object]:
         env_file, "phase8-core", ("READ",),
         ("--group", "qdl-v2-stable-core-v1"),
     )
-    add_acl(env_file, "phase8-core", ("IdempotentWrite",), ("--cluster",))
+    for topic in ("qdl.authority.v1", "qdl.target-checkpoint.v1"):
+        add_acl(
+            env_file, "phase8-core", ("READ", "DESCRIBE"),
+            ("--topic", topic),
+        )
+    for topic in (
+        "qdl.target-checkpoint.v1",
+        "md.canary.canonical.v2",
+        "md.projector.public.v2",
+        "md.projector.legacy.v1",
+    ):
+        add_acl(
+            env_file, "phase8-core", ("WRITE", "DESCRIBE"),
+            ("--topic", topic),
+        )
     add_acl(
-        env_file, "phase8-core", ("WRITE", "DESCRIBE"),
+        env_file, "phase8-core", ("READ",),
         (
-            "--transactional-id", "qdl-v2-stable-core-",
+            "--group", "qdl-v2-production-core-v1-",
             "--resource-pattern-type", "prefixed",
         ),
+    )
+    add_acl(env_file, "phase8-core", ("IdempotentWrite",), ("--cluster",))
+    for transactional_prefix in (
+        "qdl-v2-stable-core-", "qdl-v2-production-core-"
+    ):
+        add_acl(
+            env_file, "phase8-core", ("WRITE", "DESCRIBE"),
+            (
+                "--transactional-id", transactional_prefix,
+                "--resource-pattern-type", "prefixed",
+            ),
+        )
+    add_acl(
+        env_file, "stable-authority-dispatcher", ("WRITE", "DESCRIBE"),
+        ("--topic", "qdl.authority.v1"),
+    )
+    add_acl(
+        env_file, "stable-authority-dispatcher", ("IdempotentWrite",),
+        ("--cluster",),
     )
     for topic in (TOPICS[0], TOPICS[1]):
         add_acl(
@@ -127,7 +167,11 @@ def bootstrap(env_file: Path) -> dict[str, object]:
         "replication_factor": 3,
         "min_insync_replicas": 2,
         "tls_client_auth": "required",
-        "principals": ["phase8-producer", "phase8-core", "phase8-consumer"],
+        "topic_policies": dict(TOPIC_POLICIES),
+        "principals": [
+            "phase8-producer", "phase8-core", "phase8-consumer",
+            "stable-authority-dispatcher",
+        ],
     }
 
 

@@ -82,7 +82,7 @@ x-stable-env: &stable-env
   QDL_DATA_JWT_KEYS_JSON: ${QDL_STABLE_JWT_KEYS_JSON:?set QDL_STABLE_JWT_KEYS_JSON}
   QDL_DATA_JWT_ISSUER: https://identity.qdl.stable.internal
   QDL_DATA_JWT_AUDIENCE: qdl-v2-stable
-  QDL_DATA_JWT_ALGORITHMS: HS256
+  QDL_DATA_JWT_ALGORITHMS: RS256
   QDL_DATA_JWT_MAX_LIFETIME_SECONDS: "900"
 
 x-python: &python
@@ -94,7 +94,7 @@ x-python: &python
   cap_drop: [ALL]
   networks: [stable_internal]
   tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=64m"]
-  volumes: [stable_state:/var/lib/qdl-stable]
+  volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
   environment: {<<: *stable-env}
   mem_limit: 512m
   cpus: 0.75
@@ -132,6 +132,33 @@ services:
     hostname: kafka3
     environment: {<<: *kafka-env, KAFKA_NODE_ID: 3, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka3:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka3.keystore.p12}
     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka3_data:/var/lib/kafka/data]
+
+  stable_authority_db:
+    image: postgres@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    profiles: [stable-authority]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    networks: [stable_internal]
+    environment:
+      POSTGRES_DB: qdl_authority
+      POSTGRES_USER: qdl_authority
+      POSTGRES_PASSWORD: ${QDL_STABLE_CONTROL_DB_PASSWORD:?set QDL_STABLE_CONTROL_DB_PASSWORD}
+      QDL_STABLE_DISPATCHER_DB_PASSWORD: ${QDL_STABLE_DISPATCHER_DB_PASSWORD:?set QDL_STABLE_DISPATCHER_DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - stable_authority_db:/var/lib/postgresql/data
+      - ./migrations/postgres:/docker-entrypoint-initdb.d:ro
+    tmpfs:
+      - /run/postgresql:rw,nosuid,nodev,noexec,size=8m
+      - /tmp:rw,nosuid,nodev,noexec,size=16m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U qdl_authority -d qdl_authority"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+    mem_limit: 256m
+    cpus: 0.50
 
   stable_redis:
     image: redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8
@@ -177,10 +204,14 @@ services:
       - -c
       - >-
         install -d -o 10001 -g 10001 -m 0750
-        /stable-certs/producer /stable-certs/core /stable-certs/projector &&
+        /stable-certs/producer /stable-certs/core /stable-certs/projector
+        /stable-certs/query /stable-certs/stream /stable-certs/authority-dispatcher &&
         cp /source/producer/* /stable-certs/producer/ &&
         cp /source/core/* /stable-certs/core/ &&
         cp /source/projector/* /stable-certs/projector/ &&
+        cp /source/query/* /stable-certs/query/ &&
+        cp /source/stream/* /stable-certs/stream/ &&
+        cp /source/authority-dispatcher/* /stable-certs/authority-dispatcher/ &&
         chown -R 10001:10001 /stable-certs &&
         find /stable-certs -type f -exec chmod 0440 {} +
     restart: "no"
@@ -193,12 +224,18 @@ services:
       - ${QDL_STABLE_PRODUCER_CERT_DIR:?set QDL_STABLE_PRODUCER_CERT_DIR}:/source/producer:ro
       - ${QDL_STABLE_CORE_CERT_DIR:?set QDL_STABLE_CORE_CERT_DIR}:/source/core:ro
       - ${QDL_STABLE_PROJECTOR_CERT_DIR:?set QDL_STABLE_PROJECTOR_CERT_DIR}:/source/projector:ro
+      - ${QDL_STABLE_QUERY_CERT_DIR:?set QDL_STABLE_QUERY_CERT_DIR}:/source/query:ro
+      - ${QDL_STABLE_STREAM_CERT_DIR:?set QDL_STABLE_STREAM_CERT_DIR}:/source/stream:ro
+      - ${QDL_STABLE_AUTHORITY_CERT_DIR:?set QDL_STABLE_AUTHORITY_CERT_DIR}:/source/authority-dispatcher:ro
       - stable_tls:/stable-certs
 
   query_v2_1:
     <<: *python
-    command: [uvicorn, app.entrypoints.query_v2_stable:app, --host, 0.0.0.0, --port, "8200", --no-access-log]
-    networks: [stable_internal, stable_ingress]
+    command: [python, -m, app.entrypoints.query_v2_stable]
+    networks:
+      stable_internal: {}
+      stable_ingress: {}
+      stable_consumer: {aliases: [qdl-v2-query]}
     ports: ["127.0.0.1:18201:8200"]
     environment:
       <<: *stable-env
@@ -207,13 +244,19 @@ services:
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-1-audit.jsonl
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
-    healthcheck: {test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/health/ready', timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
+    healthcheck: {test: [CMD, python, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/query/ca.crt'); c.load_cert_chain('/stable-certs/query/server.crt','/stable-certs/query/server.key'); urllib.request.urlopen('https://localhost:8200/health/ready',context=c,timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 
   query_v2_2:
     <<: *python
-    command: [uvicorn, app.entrypoints.query_v2_stable:app, --host, 0.0.0.0, --port, "8200", --no-access-log]
-    networks: [stable_internal, stable_ingress]
+    command: [python, -m, app.entrypoints.query_v2_stable]
+    networks:
+      stable_internal: {}
+      stable_ingress: {}
+      stable_consumer: {aliases: [qdl-v2-query]}
     ports: ["127.0.0.1:18202:8200"]
     environment:
       <<: *stable-env
@@ -222,12 +265,18 @@ services:
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-2-audit.jsonl
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
 
   stream_v2_active:
     <<: *python
     command: [python, -m, app.entrypoints.stream_v2_stable]
-    networks: [stable_internal, stable_ingress]
+    networks:
+      stable_internal: {}
+      stable_ingress: {}
+      stable_consumer: {aliases: [qdl-v2-stream-a]}
     ports: ["127.0.0.1:18210:8200", "127.0.0.1:18220:8210"]
     environment:
       <<: *stable-env
@@ -236,12 +285,18 @@ services:
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-stream-active-audit.jsonl
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/stream/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/stream/server.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/stream/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
 
   stream_v2_passive:
     <<: *python
     command: [python, -m, app.entrypoints.stream_v2_stable]
-    networks: [stable_internal, stable_ingress]
+    networks:
+      stable_internal: {}
+      stable_ingress: {}
+      stable_consumer: {aliases: [qdl-v2-stream-b]}
     ports: ["127.0.0.1:18211:8200", "127.0.0.1:18221:8210"]
     environment:
       <<: *stable-env
@@ -250,6 +305,9 @@ services:
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-stream-passive-audit.jsonl
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/stream/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/stream/server.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/stream/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
 
   projector_v2:
@@ -267,7 +325,10 @@ services:
       QDL_STABLE_KAFKA_RAW_TOPICS: md.raw.stable.v1
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
       QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
-      QDL_STABLE_STREAM_INGEST_URLS_JSON: '["http://stream_v2_active:8200","http://stream_v2_passive:8200"]'
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
+      QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
     volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
@@ -278,6 +339,33 @@ services:
       stable_redis: {condition: service_healthy}
       stream_v2_active: {condition: service_started}
       stream_v2_passive: {condition: service_started}
+
+  authority_outbox_v2:
+    <<: *python
+    profiles: [stable-authority]
+    command: [python, /app/scripts/run_authority_outbox_dispatcher.py, --poll-seconds, "0.5", --batch-size, "20"]
+    environment:
+      <<: *stable-env
+      QDL_CONTROL_DB_DSN: ${QDL_STABLE_CONTROL_DB_DSN:?set QDL_STABLE_CONTROL_DB_DSN}
+      QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-authority-dispatcher
+      QDL_KAFKA_CA_LOCATION: /stable-certs/authority-dispatcher/ca.crt
+      QDL_KAFKA_CERT_LOCATION: /stable-certs/authority-dispatcher/client.crt
+      QDL_KAFKA_KEY_LOCATION: /stable-certs/authority-dispatcher/client.key
+      QDL_AUTHORITY_TOPIC: qdl.authority.v1
+      QDL_AUTHORITY_HEALTH_FILE: /var/lib/qdl-stable/runtime/authority-dispatcher-health.json
+    depends_on:
+      stable_authority_db: {condition: service_healthy}
+      stable_tls_init: {condition: service_completed_successfully}
+      stable_state_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import json,time; p=json.load(open('/var/lib/qdl-stable/runtime/authority-dispatcher-health.json')); assert p['status']=='READY' and time.time_ns()-int(p['heartbeat_ns'])<5000000000"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
 
   rust_core:
     <<: *rust
@@ -322,6 +410,66 @@ services:
       QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
     volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core-003.json:/runtime/core-003.json:ro"]
     depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+
+  production_core_1:
+    <<: *rust
+    profiles: [stable-authority-primary]
+    entrypoint: [/usr/local/bin/qdl-production-core]
+    command: [/runtime/production-core-001.json]
+    environment:
+      <<: *rust-env
+      QDL_KAFKA_CERT_ROOT: /stable-certs/core
+      QDL_KAFKA_CLIENT_ID: qdl-v2-production-core-001
+      QDL_KAFKA_GROUP_ID: qdl-v2-production-core-v1
+    volumes:
+      - stable_tls:/stable-certs:ro
+      - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-core-001.json:/runtime/production-core-001.json:ro"
+    depends_on:
+      authority_outbox_v2: {condition: service_healthy}
+      stable_tls_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+
+  production_core_2:
+    <<: *rust
+    profiles: [stable-authority-primary]
+    entrypoint: [/usr/local/bin/qdl-production-core]
+    command: [/runtime/production-core-002.json]
+    environment:
+      <<: *rust-env
+      QDL_KAFKA_CERT_ROOT: /stable-certs/core
+      QDL_KAFKA_CLIENT_ID: qdl-v2-production-core-002
+      QDL_KAFKA_GROUP_ID: qdl-v2-production-core-v1
+    volumes:
+      - stable_tls:/stable-certs:ro
+      - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-core-002.json:/runtime/production-core-002.json:ro"
+    depends_on:
+      authority_outbox_v2: {condition: service_healthy}
+      stable_tls_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+
+  production_core_3:
+    <<: *rust
+    profiles: [stable-authority-primary]
+    entrypoint: [/usr/local/bin/qdl-production-core]
+    command: [/runtime/production-core-003.json]
+    environment:
+      <<: *rust-env
+      QDL_KAFKA_CERT_ROOT: /stable-certs/core
+      QDL_KAFKA_CLIENT_ID: qdl-v2-production-core-003
+      QDL_KAFKA_GROUP_ID: qdl-v2-production-core-v1
+    volumes:
+      - stable_tls:/stable-certs:ro
+      - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-core-003.json:/runtime/production-core-003.json:ro"
+    depends_on:
+      authority_outbox_v2: {condition: service_healthy}
       stable_tls_init: {condition: service_completed_successfully}
       kafka1: {condition: service_healthy}
       kafka2: {condition: service_healthy}
@@ -467,9 +615,13 @@ networks:
   stable_internal: {internal: true, labels: {qdl.scope: v2-stable-candidate}}
   stable_ingress: {labels: {qdl.scope: v2-stable-candidate-ingress}}
   stable_egress: {labels: {qdl.scope: v2-stable-candidate-egress}}
+  stable_consumer:
+    external: true
+    name: ${QDL_STABLE_CONSUMER_NETWORK:?set QDL_STABLE_CONSUMER_NETWORK}
 volumes:
   kafka1_data: {labels: {qdl.scope: v2-stable-candidate}}
   kafka2_data: {labels: {qdl.scope: v2-stable-candidate}}
   kafka3_data: {labels: {qdl.scope: v2-stable-candidate}}
   stable_state: {labels: {qdl.scope: v2-stable-candidate}}
   stable_tls: {labels: {qdl.scope: v2-stable-candidate-secrets}}
+  stable_authority_db: {labels: {qdl.scope: v2-stable-authority-control}}

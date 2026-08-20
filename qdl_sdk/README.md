@@ -32,11 +32,18 @@ atomically restored the local state associated with that checkpoint.
 ```python
 from qdl_sdk import DataRequirement, Feed, Grade
 
+instrument = await client.resolve_instrument(
+    venue="BINANCE",
+    market="USDM",
+    product_type="PERPETUAL",
+    native_symbol="BTCUSDT",
+    consumer_grade=Grade.EXECUTION,
+)
 requirement = DataRequirement(
-    instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+    instrument_uid=instrument.instrument_uid,
     feed=Feed.TRADE,
     consumer_grade=Grade.EXECUTION,
-    source_policy_id="execution_binance_usdm_v1",
+    source_policy_id="crypto_primary_v2",
     max_freshness_ms=1000,
 )
 
@@ -68,3 +75,18 @@ async with client.warmup_then_stream(
   handoff metadata is a hard continuity error.
 - The SDK never parses cursor internals and never silently accepts stale,
   gapped, partial or non-authoritative execution data.
+
+## Immutable consumer artifact
+
+Build the standalone artifact with:
+
+```bash
+python scripts/build_qdl_sdk_release.py --output-dir dist/qdl-sdk
+```
+
+The output contains a reproducible `qdl_sdk-2.0.0-py3-none-any.whl`, a release
+manifest with the wheel/source/generated-contract SHA-256 digests, and a
+CycloneDX SBOM. The wheel contains only the public SDK plus generated Protobuf
+contracts; it does not package `qdl.api_v2`, runtime adapters, provider code or
+other Data Layer service internals. Trading System and the shared alpha runtime
+must pin the same verified wheel digest.

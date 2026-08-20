@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a AS builder
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -17,7 +17,7 @@ RUN python -m venv /opt/venv && \
       poetry install --no-root --only main --no-ansi && \
     /opt/venv/bin/python -m pip install --no-cache-dir --upgrade "setuptools>=78.1.1"
 
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a AS runtime
 
 ARG QDL_UID=10001
 ARG QDL_GID=10001

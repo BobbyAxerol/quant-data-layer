@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import ssl
 import uuid
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -33,7 +34,7 @@ def _signature(secret: bytes, body: bytes) -> str:
 
 def _internal_url(value: str) -> bool:
     parsed = urlsplit(value)
-    if parsed.scheme != "http" or not parsed.hostname:
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return False
     try:
         return ipaddress.ip_address(parsed.hostname).is_loopback
@@ -212,6 +213,7 @@ class StableHttpCanonicalSink:
     spool: SQLiteDurableSpool
     timeout_seconds: float = 10.0
     client: httpx.AsyncClient | None = None
+    ssl_context: ssl.SSLContext | None = None
     _owns_client: bool = field(init=False)
 
     def __post_init__(self) -> None:
@@ -222,12 +224,17 @@ class StableHttpCanonicalSink:
             or self.timeout_seconds <= 0
         ):
             raise ValueError("stable HTTP sink configuration is invalid")
+        if any(urlsplit(value).scheme == "https" for value in self.urls) and self.ssl_context is None and self.client is None:
+            raise ValueError("stable HTTPS sink requires a workload TLS context")
+        if self.client is not None and self.ssl_context is not None:
+            raise ValueError("stable HTTP sink client and TLS context are mutually exclusive")
         self._owns_client = self.client is None
         if self.client is None:
             self.client = httpx.AsyncClient(
                 follow_redirects=False,
                 limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
                 timeout=self.timeout_seconds,
+                verify=self.ssl_context or True,
             )
 
     async def publish(self, event: DurableEvent) -> StoredEvent:

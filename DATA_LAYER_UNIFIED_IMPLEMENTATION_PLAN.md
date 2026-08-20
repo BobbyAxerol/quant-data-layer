@@ -5873,7 +5873,7 @@ and removes the superseded candidate/rollback artifacts after verification.
 
 ### Phase C - Production V2 And Rust Authority Cutover
 
-**Status:** `C.0 RELEASE/MERGE PREPARATION IN PROGRESS / PRODUCTION CUTOVER NOT AUTHORIZED`
+**Status:** `C.1 SHADOW-CERTIFIED / C.2 CONSUMER CLOSURE IN PROGRESS / PRODUCTION CUTOVER NOT AUTHORIZED`
 
 **Purpose:** move approved Binance and OKX feed slices from the current V1
 authority to the stable V2 contract with Rust as the actual canonical realtime
@@ -5887,8 +5887,8 @@ promotion until its provider gates pass.
   V1 paths and zero V2 paths;
 - no V2 stable container is running; only the retained
   `qdl_v2_stable_candidate_stable_tls` volume remains;
-- the feature branch is 81 commits ahead of `dev`; the latest released
-  `2.0.0-2412572` images predate the bounded DNSE closure commits;
+- the feature branch is more than 80 commits ahead of `dev`; the latest
+  released `2.0.0-2412572` images predate the bounded DNSE closure commits;
 - the stable compose and realtime binaries deliberately accept only
   `RUST_SHADOW`; Phase 9.2 proves the CAS/handoff/fencing behavior in an
   isolated rehearsal but is not wired into the long-running stable runtime;
@@ -5926,23 +5926,98 @@ without mutating V1.
    The CLI prints identities/revisions/watermarks/digests only, never secrets.
 7. Build one immutable Python/Rust image pair from the merged SHA, generate
    SBOM/provenance, and retain exactly one tested V1 rollback generation.
+8. Publish `qdl_sdk==2.0.0` as a standalone immutable wheel with checksum,
+   SBOM and generated-contract digest. Trading System and execution-alpha base
+   images pin the same artifact; neither repository copies Data Layer service
+   internals or maintains an independent V2 schema parser.
+9. Replace the bounded BTC-only certification catalog with a deterministic
+   production catalog/binding generator driven by approved venue metadata and
+   consumer manifests. Instrument UIDs remain stable across restart/rebuild;
+   arbitrary alpha symbols are resolved through `/v2/instruments`, never by
+   hardcoded UUIDs in consumers. Only demanded/approved Binance and OKX feeds
+   are acquired; disabled symbols fail readiness rather than creating data.
+10. Freeze two versioned consumer classes: Trading System
+    `EXECUTION` grade and shared alpha runtime `ALPHA` grade. The execution
+    client requires authoritative/fresh/gap-free snapshots. Alpha warmup uses
+    final BAR snapshot/cursor/replay and the same SDK, while strategy/order
+    source remains untouched. V1 fallback is explicit and source-switch audited.
 
 **C.0 gates:** migration idempotency, transactional outbox replay, compacted
 authority recovery, stale-writer rejection, restart recovery, exact Python/Rust
-parity, public V1 contract compatibility, full source/Clippy/security tests and
-zero production mutation. Conclusion must be either `PASS` or `FAIL`; missing
-authority wiring cannot be deferred as operational debt.
+parity, deterministic multi-symbol catalog generation, SDK wheel reproducibility
+and checksum verification, Trading System/alpha consumer contract tests, public
+V1 compatibility, full source/Clippy/security tests and zero production
+mutation. Conclusion must be either `PASS` or `FAIL`; missing authority,
+catalog or SDK wiring cannot be deferred as operational debt.
 
 **C.0 implementation journal:**
 
+- `2026-08-20 C.0 LONG-RUNNING PRIMARY BRIDGE ACTIVE`: implement the
+  production consume-transform-produce boundary as a separate Rust runtime,
+  leaving the certified shadow binary and V1 runtime unchanged. Every accepted
+  raw offset must transactionally commit its canonical/quarantine decision,
+  per-target projection progress and compacted target checkpoint. Startup must
+  reconstruct the latest compacted authority event and all applicable target
+  watermarks before any write; fresh accepted handoff may bootstrap exactly at
+  terminal W, and every normal/restart path resumes at W+1. Authority updates
+  race under the same fence held through transaction ACK. Missing, partial,
+  stale or conflicting recovery state fails closed. Tests must cover valid,
+  filtered, duplicate and quarantine decisions, crash/restart, compacted replay,
+  active authority change and rollback. This slice cannot change port 8100,
+  production routes, topics, consumers or authority.
+- `2026-08-20 C.0 SDK PYTHON 3.10 BLOCKER PASS`: Trading System consumer
+  acceptance imported the prior immutable SDK wheel under its declared minimum
+  Python 3.10 runtime and found `enum.StrEnum` was Python 3.11-only. The fix is
+  owned by `qdl_sdk.models`, not patched in the consumer: Python 3.11+ uses the
+  standard enum and Python 3.10 uses an equivalent `str, Enum` compatibility
+  type. Added a dedicated CI job that builds and imports the standalone wheel
+  on Python 3.10 outside the source tree. Two release builds were byte-identical
+  at SHA-256 `3ea8f7e8b58f6c5ea1b2aa66ee94157f949d4cf6a71d708cb7508ed3b0abc600`;
+  an actual Python 3.10 wheel import passed and 17/17 SDK release/stream tests
+  passed on the Data Layer Python 3.12 runtime. Trading System updated its
+  vendor manifest/lock to that exact digest. V1 runtime, providers, authority,
+  Redis/PostgreSQL and consumer routes were unchanged.
+- `2026-08-20 C.0 SDK STREAM PROJECTION PASS`: added one SDK-owned
+  canonical protobuf-to-typed-view decoder, so Trading System and alpha
+  consumers do not copy schema logic. It covers TRADE, QUOTE, BAR, book
+  snapshot/delta, funding, open interest, mark/index and ticker payloads with
+  exact coefficient/scale decimals, enums and optional bytes. The signed query
+  handoff remains the policy/catalog template; instrument/source transitions,
+  lower authority revision, stale execution data, open gap, incomplete
+  contract metadata and non-final execution bars fail closed. Freshness,
+  quality and execution eligibility are recomputed per event and the signed
+  cursor/watermark is preserved. All-feed projection, source/revision, gap and
+  stale tests plus existing SDK release/stream tests passed 20/20; isolated
+  lint and `git diff --check` passed. No runtime or provider was touched.
+- `2026-08-20 C.0 LONG-RUNNING PRIMARY BRIDGE CODE PASS`: added a separate
+  multi-slice `qdl-production-core` binary and Phase 9.2 transactional bridge.
+  Authority is reconstructed per slice from the compacted control topic; raw
+  acquisition revision/lease is explicitly bound but separate from final
+  publication authority. Logical per-slice watermarks are independent of Kafka
+  partition offsets. Every raw decision commits its source offset, zero or more
+  canonical/quarantine records, progress for each permitted target and compacted
+  target checkpoints in one Kafka transaction. Filtered, duplicate and
+  quarantine decisions still advance projection progress without fabricating
+  market data. Expanded provider rows are hashed as one ordered checkpoint
+  payload set. Restart requires complete current-owner checkpoints, except the
+  first accepted W handoff may bootstrap exactly at terminal W; partial recovery
+  fails closed. Authority watcher updates share the transaction fence, so
+  BLOCKED/rollback cannot race a durable output ACK. Added deterministic
+  production-core configs generated from the approved provider metadata catalog,
+  plus immutable image packaging. Production catalog/runtime and outbox tests
+  passed 7/7; the complete Rust workspace passed 70/70 with strict Clippy and
+  formatting. No broker integration, image deployment, provider call, V1 route,
+  port 8100, production topic/database or consumer was mutated. RF3 transaction,
+  restart and rollback evidence remains mandatory in isolated C.1 before this
+  code can be called runtime-certified.
 - `2026-08-20 RELEASE/CUTOVER PREPARATION RECORDED`: corrected the malformed
   `RUNTIME UNCHANGED` journal line and added the production cutover boundary
   plus `docs/runbooks/v2-production-rust-authority-cutover.md`. Read-only
   runtime inspection proved V1 `0.1.0` still owns port `8100` with 40 V1
   paths and zero V2 paths, no V2 containers are running, and the current stable
-  binaries/config are intentionally shadow-only. The branch is 81 commits ahead
-  of `dev`; it must merge through CI before a new authority feature branch is
-  created.
+  binaries/config are intentionally shadow-only. The branch is more than 80
+  commits ahead of `dev`; it must merge through CI before a new authority
+  feature branch is created.
 - Documentation whitespace and secret scans passed; stable compose rendered
   successfully with isolated dummy values and no container start. Host
   preflight observed 11 GiB available RAM, 108 GiB free disk and eight CPUs.
@@ -5951,6 +6026,85 @@ authority wiring cannot be deferred as operational debt.
   C.0 remains `IN_PROGRESS` until the current PR is CI-green and merged to
   `dev`; production authority wiring starts only on the new branch named in
   this phase. Preparation commit: `130da39`.
+- `2026-08-20 CROSS-REPOSITORY V2 CONSUMER AUDIT RECORDED`: remote `dev`
+  merged the certified V2 branch at `468c951`; authority work continues on
+  `feat/v2-production-authority-cutover` from that merge, with the later
+  fast-track plan cherry-picked as `9e35b34` and `df94a51`. Trading System
+  currently has a V1 REST/Redis bridge and its `alpha_sdk` is primarily an
+  execution client; execution-alpha warmup/stream calls live in the shared
+  `alpha_runtime.orchestration.DataLayerGateway`. Therefore V2 is introduced
+  as one versioned `qdl_sdk` artifact used by both consumers. No strategy file,
+  signal rule or order endpoint is migrated for this data-plane change.
+  The audit also found the stable catalog is certification-bounded to BTC/VN
+  examples, so deterministic production symbol/catalog generation is a
+  mandatory C.0 gate before alpha consumers can be called V2-ready.
+- `2026-08-20 C.0 SDK ARTIFACT/IDENTITY SLICE PASS`: moved every public V2
+  response model into `qdl_sdk.models` and made `qdl.api_v2.models` reuse and
+  re-export that exact implementation. The SDK no longer imports Data Layer
+  service internals. Added bounded typed instrument catalog resolution by
+  venue/market/product/native symbol, including pagination-cycle, missing and
+  ambiguous-identity fail-closed behavior; consumers no longer need hardcoded
+  UUIDs. Added a deterministic standalone `qdl_sdk==2.0.0` wheel builder,
+  SHA-256 release manifest, generated-contract digest and CycloneDX SBOM.
+  Repeated builds produced an identical wheel digest and a network-off install
+  smoke imported exclusively from the installed wheel. Compile plus V1 golden,
+  API/SDK/stream/security/multi-venue tests passed 47/47. V1 runtime, provider sockets,
+  authority, Redis, Kafka, consumer routes and production data were untouched.
+  Production demand/catalog generation and long-running Rust authority wiring
+  remain the next C.0 slices; this slice alone does not authorize cutover.
+- `2026-08-20 C.0 PRODUCTION CATALOG SLICE PASS`: added a strict
+  `qdl.v2.production-demand.v1` manifest and deterministic source/acquisition
+  catalog generator. It composes the existing authoritative Binance
+  `exchangeInfo` and OKX V5 `/public/instruments` parsers, preserves exact
+  price tick/quantity step/contract multiplier, derives stable UUIDv5 identity
+  from the approved canonical instrument ID, de-duplicates consumer demand and
+  fails closed on conflicting policies, missing/inactive metadata, ambiguous
+  identity or uncertified feeds/intervals. Binance canonical identity now uses
+  provider base/quote metadata (`ETH-USDT`) and includes the explicit contract
+  code for dated futures rather than treating native `ETHUSDT` as canonical.
+  Current production BAR acquisition is deliberately bounded to certified 1m;
+  higher alpha intervals must be resampled from final 1m bars or remain on
+  explicit V1 capability fallback until independently certified. Generated
+  source/acquisition YAML is reloaded through the runtime validators before it
+  is accepted, and provenance records metadata-capture hashes with
+  `fabricated_metadata=false`. Compile plus production catalog, identity,
+  Binance adapter and multi-venue contract tests passed 27/27. No real-provider
+  call or runtime/authority/consumer mutation occurred.
+- `2026-08-20 C.0 TRANSACTIONAL AUTHORITY OUTBOX SLICE PASS`: added PostgreSQL
+  migration `0009_production_authority_outbox.sql`, which writes one immutable
+  authority-control outbox row in the same transaction as every Phase 9 CAS
+  transition. Bounded claim/ACK/retry operations bind worker ownership, recover
+  stale claims and never mutate event identity or payload. Added the Python
+  outbox dispatcher and idempotent Kafka publisher for the compacted authority
+  topic, plus a canonical `qdl.authority-control-event.v1` serializer that
+  validates exact Phase 9.2 checkpoint/handoff digests before exposing a
+  writable authority record. Rust now decodes that Python fixture, rejects
+  altered identity/conflicting duplicate/stale transition, remains fenced after
+  restart until every target watermark is restored, accepts only exact W/W+1
+  handoff, and supports a newer-revision rollback to Python. Disposable
+  PostgreSQL migration smoke proved four ordered revisions, payload immutability,
+  bounded claim/ACK and scoped cleanup; no production database was touched.
+  Python authority/outbox/migration regressions passed 38/38. The complete Rust workspace
+  passed 66 tests, `cargo fmt --check` and strict `clippy -D warnings`. The
+  long-running transactional Rust consume-transform-produce bridge, independent
+  durable target-watermark restoration and operator CLI are still required C.0
+  work; this slice does not authorize runtime authority or consumer cutover.
+- `2026-08-20 OPERATOR CUTOVER SIMPLIFICATION RECORDED`: the operator reports
+  all alpha consumers are stopped and Trading System is the sole active
+  consumer. Phase C therefore removes staged alpha/monitoring migrations and
+  uses one bounded Trading System parity-and-route switch followed by a
+  preapproved Binance/OKX maintenance window. This reduces operations, not
+  correctness: persistent authority CAS/outbox, sink fencing, W/W+1 handoff,
+  durable audit and per-slice rollback remain mandatory. V1 stays hot on port
+  `8100`; DNSE stays V1-only. Fast-track planning commit: `e8167d4`.
+
+- `2026-08-20 C.0 SDK ALPHA STREAM POLICY CLOSURE STARTED`: downstream shared-runtime tests exposed a contract asymmetry: query validation enforces typed stale/gap policies for every consumer grade, while the stream projector currently blocks stale/gapped events only for `EXECUTION`. The source-owned SDK will enforce `stale_policy` and `gap_policy` identically for `ALPHA` and `EXECUTION`, retain the additional execution-eligibility gate for `EXECUTION`, and add explicit ALPHA stale/gap regression tests. A new deterministic wheel supersedes prior candidate digests only after Python 3.10 import, SDK release/stream tests, lint and byte-identical build pass. Consumers must update to that one digest; no downstream copy of projection logic is permitted. V1/runtime/provider/authority routes remain unchanged.
+
+- `2026-08-20 C.0 SDK ALPHA STREAM POLICY CLOSURE PASS`: the stream projector now applies typed `gap_policy` and `stale_policy` to ALPHA and EXECUTION consumers consistently; execution grade retains its additional authority/eligibility check. Added explicit ALPHA gap/stale regressions. SDK source projection/release/stream tests passed 21/21 on Python 3.12; the built wheel imported and passed 4/4 projection tests on the released Python 3.10 consumer runtime. Two independent builds were byte-identical at SHA-256 `3e1ce5e43d55ac4c04baf5b69354513f32090bd2e7060f1f4e659323470a27d0`; isolated Ruff lint and `git diff --check` passed. The repository legacy Poetry version syntax prevents modern Ruff from loading the root config and its existing files are not Ruff-format clean, so no unrelated format churn was introduced. No runtime/provider/authority route was touched.
+
+- `2026-08-20 C.0 FROZEN OPENAPI COMPATIBILITY BLOCKER STARTED`: the pre-build full suite passed 526 tests with 6 skips but failed both frozen OpenAPI assertions. Inspection found the earlier model-ownership move accidentally renamed response component `FeedType` to `Feed` and removed `BarLifecycle.UNSPECIFIED` from the published enum. Restore the frozen wire schema without reverting SDK ownership: declare `FeedType` as the concrete enum, export `Feed` as its SDK alias, retain `UNSPECIFIED` in OpenAPI and continue rejecting it in model validation. The unchanged frozen snapshot must pass; regenerating it to hide this break is forbidden. The SDK wheel and both downstream consumer pins must be rebuilt once more after the complete Python/Rust gates pass.
+
+- `2026-08-20 C.0 FROZEN OPENAPI COMPATIBILITY BLOCKER PASS`: the Data Layer service and SDK now share the exact public `qdl.query.FeedType`/`BarLifecycle` enum identity when that contract package is present; the standalone wheel supplies equivalent fallback enums and exports concise `Feed` as an alias. `UNSPECIFIED` remains published for wire compatibility and is rejected at the typed requirement/model boundary. The frozen OpenAPI snapshot was not modified and now matches exactly: 10 paths and 42 schemas. Targeted OpenAPI/SDK tests passed 24/24; the full Python suite passed 535/535 with 6 skips. The Rust workspace passed 70/70 plus `cargo fmt --check` and strict Clippy. Two release builds were byte-identical at final wheel SHA-256 `10f894604c543fc07499247b5c6fc38910b8e704bffe29683f100c519d6caa49`; the installed wheel passed 5/5 stream-projection tests on Python 3.10 and exposed `Feed.__name__ == FeedType`. Isolated Ruff and `git diff --check` passed. This supersedes all earlier candidate wheel digests; consumers must pin only this digest. V1/runtime/provider/authority routes remain unchanged.
 
 #### C.1 Isolated Stable V2 Deployment
 
@@ -5965,46 +6119,377 @@ quarantine, bounded lag/resources, broker and process restart recovery, exact
 cursor continuation, V1 health unchanged and exact disposable cleanup on
 failure.
 
-#### C.2 Controlled Consumer Canary
+**C.1 implementation journal:**
 
-Migrate in order: monitoring, one paper alpha, Trading System paper adapter,
-then remaining approved paper consumers. Each manifest performs
-warmup -> signed cursor -> replay -> live and has an exact V1 rollback route.
-No sandbox/live order consumer is included. A stale, gapped, non-authoritative
-or session-invalid read blocks execution.
+- `2026-08-20 C.1 IMMUTABLE ISOLATED DEPLOYMENT STARTED`: build the Python
+  edge and Rust core from the same tested source revision
+  `f93b7f0e4d3381a01da48dafbb8263436b0315e1`. The immutable candidates are
+  `qdl-v2-python:2.0.0-f93b7f0e4d33` with image ID
+  `sha256:7a1b11097e4e85a51630068b2a619e34ce654b532d5ea750c6b8678882f2cc86`
+  and `qdl-v2-rust:2.0.0-f93b7f0e4d33` with image ID
+  `sha256:fc50dbf0a83323966ed6d8e76ae468a98edad6e34c7f0392a07924e94018348f`;
+  both carry the exact source revision label and run as UID/GID `10001` in
+  the stable compose. The bounded certification slice contains authentic
+  Binance USDM/Spot and OKX Swap/Spot BTC-USDT feeds only. It uses project
+  `qdl_v2_stable_candidate`, dedicated RF3/minISR2 Kafka, ephemeral Redis,
+  private state/TLS, loopback ports `18201/18202/18210/18211/18220/18221`
+  and `RUST_SHADOW`; `stable-vn` is excluded. Port `8100`, V1 containers,
+  V1 volumes and current consumer routes are immutable boundaries. Rollback
+  before consumer migration is project-scoped `docker compose down` without
+  `-v`; no authority CAS or Trading System route mutation is authorized by
+  this journal entry.
 
-#### C.3 Exact-Slice Rust Authority Promotion
+- `2026-08-20 C.1 ISOLATED SHADOW CERTIFICATION PASS`: generated a private
+  `0600` environment bundle with short-lived test TLS material and
+  `cutover_authorized=false`, then started only project
+  `qdl_v2_stable_candidate`. Kafka created three six-partition topics at RF3,
+  minISR2 and full ISR. Authentic Binance USDM/Spot and OKX Swap/Spot trades
+  plus 500 closed 1m bars per binding entered the raw topic and passed through
+  the Rust canonical core. Query replicas returned exact BAR payload parity;
+  Binance/OKX five-row warmups were `FULL`, `FINAL`, authoritative,
+  complete and gap-free. The reusable
+  `scripts/phasec1_isolated_consumer_acceptance.py` used the released SDK to
+  prove signed snapshot handoff, `REPLAYING -> LIVE`, ACK, fsynced cursor
+  persistence, client recreation through the other query replica and exact
+  `N+1` resume for both venues. The quarantine topic remained zero on all
+  six partitions.
+- Failure drills stayed project-scoped. Restarting one Rust worker made the
+  execution-grade query fail closed on freshness while the group rebalanced;
+  it recovered to lag 32 and the SDK acceptance passed again. Stopping the
+  current stream lease holder promoted the peer in five seconds; both replicas
+  remained live, exactly one was ready, and cursor/reconnect acceptance passed.
+  Restarting one Kafka broker restored full ISR with core lag 51 and projector
+  lag 57; post-restart SDK acceptance passed and quarantine remained zero.
+  Missing auth returned 401, mismatched consumer returned 403, and wrong
+  purpose on a market-data endpoint returned 403. At the bounded resource
+  sample Rust workers used 27-44 MiB each, Python roles 40-72 MiB, Redis 3 MiB
+  and Kafka brokers 427-433 MiB each. V1 remained healthy with 40 paths, image
+  `sha256:8f2a5a3f1ff97762feb1531c3787e714dfda60b0b64df5b7359b9e5f6740c980`,
+  original start time and restart count zero.
+- `C.1 conclusion: PASS / SHADOW-CERTIFIED`. This is not production authority.
+  C.2 inspection exposed mandatory blockers before consumer cutover: stable
+  gRPC currently binds insecurely and is reachable only through loopback;
+  Trading System runtime IDs do not match the registered stable consumer ID;
+  and V2 routing is provider-wide although this certified catalog is a bounded
+  BTC slice. In addition, the stable runtime accepts only `RUST_SHADOW`;
+  production promotion must consume the durable authority CAS/outbox and fence
+  writers instead of changing an environment label. These are in-scope C.2/C.3
+  correctness gates and must be fixed, not deferred as operational debt.
 
-Promotion is one slice at a time, initially one Binance or OKX TRADE slice.
-The approval packet must name image IDs, slice/binding, old/new owner,
-authority revision, lease/plan epoch, terminal watermark `W`, topics/groups,
-ports, volumes, credentials by secret reference, affected consumers, hold
-duration and rollback command.
+#### C.2 Single-Consumer Trading System Cutover
 
-The only allowed sequence is:
+**C.2 implementation journal:**
+
+- `2026-08-20 C.2 CONSUMER INGRESS CLOSURE STARTED`: close the real
+  integration gaps found by C.1 before any consumer restart. Stable REST and
+  gRPC data-plane ingress must use server-authenticated TLS plus client
+  workload certificates; JWT issuer/audience/manifest authorization remains
+  mandatory at the application layer. Projector-to-stream ingest uses the same
+  authenticated transport. The source-owned `qdl_sdk` adds CA/client
+  certificate configuration once; Trading System and execution-alpha consume
+  it without custom transports. The Trading System manifest gains only the
+  final 1m BAR permissions its market-cache bridge actually uses.
+- Trading System must route by a strict versioned slice manifest
+  `venue + market + product + native symbol + feed + interval`. In
+  `V2_PRIMARY`, only approved slices leave V1; all unmatched Binance symbols
+  remain on V1 and are audited as compatibility routes. OKX has no equivalent
+  V1 realtime endpoint and therefore fails closed on V2 outage rather than
+  being relabelled as a cross-venue fallback. One configured external consumer
+  identity must match the registered Data Layer manifest; unrelated Trading
+  System services remain V1 until separately manifested and credentialed.
+- `2026-08-20 C.2 WORKLOAD TLS/SDK SLICE PASS`: added one source-owned
+  `WorkloadTlsConfig` for REST and gRPC client certificates, bounded
+  multi-target gRPC failover, mandatory stable query/stream server mTLS and
+  projector-to-stream HTTPS mTLS while retaining JWT/manifest authorization
+  and HMAC ingest signing. Stable bundles now carry separate query, stream,
+  projector and Trading System identities outside Git; the Trading System
+  manifest gained only Binance USDM and OKX SWAP final 1m BAR requirements.
+  Focused transport/security/stable-ingest tests passed 6/6; Python compile and
+  YAML parse gates passed. No V1 container, consumer route, authority state,
+  production data or order path was mutated. Real certificate handshake,
+  immutable rebuild and rotation/reconnect remain C.2 gates before closure.
+- `2026-08-20 C.2 ISOLATED RESTART RECOVERY GATE FOUND`: the first secure
+  isolated restart proved the query mTLS positive handshake and rejected a
+  client without a workload certificate, while V1 remained HTTP 200 and was
+  not restarted. The projector correctly failed closed because retained
+  SQLite projection state was paired with a newly empty ephemeral Redis cache.
+  This is the designed B16 generation fence, not permission to bind an empty
+  cache over retained state. Before acceptance continues, update the existing
+  exact-scope B17 cache-unit rebuild command to use the new mTLS health probes,
+  then rebuild only the isolated Redis plus three SQLite cache files from the
+  Kafka canonical log. Kafka/provider data, V1, production Redis and authority
+  remain untouched. Acceptance requires bounded six-partition lag, a bound
+  cache identity, both secure query replicas ready and a fresh signed SDK
+  handoff after rebuild.
+- `2026-08-20 C.2 RELEASE/REGRESSION SLICE PASS; RUNTIME REPLAY CONTINUES`:
+  the final source-owned `qdl_sdk==2.0.0` artifact was built twice
+  byte-identically at SHA-256
+  `5891c0b99b29fd30ce008f6987a4ff9c9d4896259e415f72e5f9210460669951`
+  with Python >=3.10 and `PyJWT[crypto]` declared. The complete Python suite
+  passed 540/540 with six explicit environment skips; targeted secure
+  bundle/recovery/transport tests passed 14/14. Rust passed 70/70 plus
+  `cargo fmt --check` and strict Clippy. The real mTLS query handshake
+  returned 200 and a request without a client certificate failed the TLS
+  handshake; V1 remained HTTP 200. A non-destructive cache generation and
+  isolated projector group are replaying authentic retained Kafka records
+  because the exact destructive B17 rebuild was not approved. Therefore C.2 is
+  not yet closed and no consumer route or authority was promoted.
+- `2026-08-20 C.2 ISOLATED CONSUMER ACCEPTANCE PASS`: the
+  non-destructive cache generation completed against authentic retained Kafka
+  bytes. At the final bounded snapshot the six-partition projector lag was
+  `144`, projector readiness was `READY`, both mTLS query replicas returned
+  200 and no new projector error appeared in the last two minutes. The
+  source-owned `qdl_sdk==2.0.0` acceptance passed for Binance and OKX:
+  each venue returned five final 1m BARs with `FULL` coverage, identical query
+  replica fingerprints and authoritative provider identity; cursor resume was
+  contiguous `982448 -> 982449` for Binance and
+  `339821 -> 339822` for OKX. A request without a client certificate remained
+  rejected. Earlier ACL/stream errors were bounded startup/replay history and
+  were not active at acceptance. V1 stayed HTTP 200, no Trading System route,
+  order path or authority changed, and all alpha processes remained stopped.
+- C.2 gates are mTLS positive/negative tests, certificate rotation/reconnect,
+  exact BAR/trade SDK projection, bounded route-manifest parser tests, V1
+  unmatched-symbol compatibility, authenticated real Binance/OKX adapter
+  acceptance, no order submission and unchanged V1/runtime state. Authority
+  stays `RUST_SHADOW` until the separate C.3 CAS/outbox/fence packet passes.
+
+The operator confirms all alpha consumers are currently stopped and Trading
+System is the only active Data Layer consumer. Do not create artificial alpha or
+monitoring migration stages. Built-in V2 health/lag/authority telemetry remains
+mandatory, but it is not a separate cutover consumer.
+
+Run one bounded Trading System dual-read parity window for Binance and OKX:
+V1 remains the decision source while the same requested instruments, timestamps,
+decimals, units, final BAR lifecycle and freshness are compared against V2.
+After zero correctness mismatch and healthy cursor/replay evidence, switch the
+Trading System market-data adapter to V2 in one controlled restart. Configure a
+venue-aware rollback route: Binance/OKX primary V2 with explicit V1 fallback;
+DNSE remains V1-only. Never splice providers silently--every route transition
+records source, reason, watermark and operator/audit identity.
+
+A stale, gapped, non-authoritative, wrong-session or unit-mismatched V2 read
+fails closed. Fallback to V1 is allowed only when V1 passes the same
+freshness/session/contract checks and the source-switch audit is durable.
+
+#### C.3 Fast-Track Rust Authority Promotion
+
+**C.3 implementation journal:**
+
+- `2026-08-20 C.3 DURABLE AUTHORITY RUNTIME WIRING STARTED`: reuse, do not
+  fork, the accepted Phase 9.2 domain primitives: migrations
+  `0006/0007/0009`, transactional authority outbox, compacted control event,
+  Rust `qdl-production-core`, per-target sink fence and W/W+1 handoff. Add
+  only the missing deployable topology around them: a dedicated isolated
+  PostgreSQL authority-control database, one least-privilege authority
+  dispatcher identity, compacted authority/target-checkpoint topics, immutable
+  production-core configs and three bounded Rust workers behind an explicit
+  Compose profile. The existing shadow core remains the writer until a
+  separately approved operator packet fences it.
+- Add one source-owned operator command that is plan-only by default and accepts
+  a versioned immutable packet. It must validate exact slices, candidate/image/
+  contract/partition digests, expected state/revision/owner/lease, terminal
+  checkpoint, zero mismatch/gap canary evidence, hold expiry, Trading System
+  route and executable rollback before any SQL CAS. Apply requires an exact
+  confirmation token; transitions execute one slice at a time and stop on the
+  first failure. No environment-label-only promotion is valid.
+- Gates are migration idempotency, DB transaction/outbox atomicity, broker ACK
+  retry/crash recovery, compacted control rebuild, Rust startup with missing/
+  stale/partial authority failure, target fencing, real canary parity,
+  W/W+1 primary handoff, V1 fallback/return, bounded resources and full
+  Python/Rust/V1 contract regression. Code/test wiring cannot mutate production
+  authority; runtime promotion still requires the exact packet and explicit
+  operator approval named in this section.
+
+- `2026-08-20 C.3 TOPOLOGY/OPERATOR SLICE PASS`: added a dedicated
+  non-public PostgreSQL authority database, migration-owned least-privilege
+  dispatcher role, atomic dispatcher heartbeat, compacted authority/checkpoint
+  topics, per-principal Kafka ACLs and three bounded
+  `qdl-production-core` workers behind explicit control/primary profiles.
+  Stable bundle generation now emits production-core configs and separate
+  dispatcher/admin credentials outside Git. Added a strict, expiring,
+  digest-derived plan/apply packet command that validates real-data evidence,
+  exact route rollback, slice state/revision/owner/lease/digests and uses the
+  accepted SQL CAS functions one slice per transaction; it is plan-only unless
+  `--apply --confirm APPLY_C3_<digest>` matches the immutable packet.
+  Focused topology/outbox/packet tests passed 23/23. A network-none/tmpfs
+  PostgreSQL bootstrap proved all migrations, three SECURITY DEFINER functions,
+  direct-table UPDATE denial, dispatcher claim permission and migration
+  idempotency, then auto-removed the test container. Runbook:
+  [V2 production and Rust authority cutover](docs/runbooks/v2-production-rust-authority-cutover.md).
+  This code evidence does not authorize a production CAS or consumer restart.
+
+- `2026-08-20 C.3 FULL REGRESSION/BUNDLE GATE PASS`: full Python
+  regression passed 546/546 with six explicit environment skips; changed-file
+  Ruff passed; Rust passed 70/70, `cargo fmt --check` and strict Clippy.
+  TLS generation emitted the dedicated dispatcher identity, candidate bundle
+  generation passed with 12 runtime files and no secret values in the public
+  manifest, and Compose config parsed with both authority profiles. The first
+  Rust test attempt exhausted a 1 GiB disposable tmpfs during link; rerun with
+  debug symbols disabled passed in 1.5 GiB and left no build target on disk.
+  Repository-wide Ruff still reports 63 pre-existing findings outside this
+  slice; changed files have zero finding. No authority DB/volume, production
+  CAS, Trading System route, V1 service or provider ownership was mutated.
+
+- `2026-08-20 C.3 IMMUTABLE BUILD HYGIENE STARTED`: release preflight
+  found the Python builder/runtime base referenced a mutable tag while Rust
+  bases were digest-pinned. Pin both Python stages to the locally resolved
+  official image digest before building the commit-SHA release; verify both
+  stages use the same digest, rebuild, inspect OCI revision/version/non-root
+  identity, rerun image-level smoke and retain V1 unchanged. The source/test
+  slice pins both stages to the same official digest; focused contract tests
+  passed 14/14, changed-file Ruff and diff checks passed.
+
+- `2026-08-20 C.3 FINAL IMMUTABLE ARTIFACT GATE PASS`: commit
+  `5823d642027b7446aa72160aa2ec53c28fdd88f1` produced Python image
+  `sha256:1758b35646293eca717d269681b867fc485db896a70889bab53df47d8d87345f`
+  and Rust image
+  `sha256:1eda689c30484157092cc276a1487d36174acd1a97a353ed792642a6d5512211`.
+  Both images expose OCI version `2.0.0` and the exact full revision; Python
+  runs as `qdl:qdl`, Rust as UID/GID `10001:10001`. A network-none Python
+  image smoke imported the API and source-owned `qdl_sdk==2.0.0`; the Rust
+  image contains `qdl-production-core`, which failed closed with its usage
+  error when started without a config. A fresh private bundle generated from
+  those exact image IDs reported 12 runtime files, `RUST_SHADOW`,
+  `cutover_authorized=false` and no secret values in its public manifest.
+  Its manifest SHA-256 is
+  `a9d2835e86c0f6b2be7f90f7671d2f3d8dc9462da324703658991da774b4b1cb`;
+  Compose rendered successfully with both `stable-authority` and
+  `stable-authority-primary` profiles. No container, authority row, consumer
+  route, V1 service, provider ownership or persistent volume changed. The
+  next permitted operation is topology/packet preflight; a production CAS and
+  Trading System restart still require the exact packet approval below.
+
+
+- `2026-08-20 C.3 PROMOTION-SCOPE BLOCKER FOUND; ARTIFACT REVOKED`: packet
+  preflight inspected the generated production-core configs and found all four
+  DNSE bindings present alongside the twelve approved Binance/OKX bindings.
+  This violates the explicit initial-cutover boundary that DNSE remains V1-only
+  and would make a production worker require DNSE authority/checkpoints even
+  when the `stable-vn` profile is disabled. The two image IDs above are valid
+  build evidence but are revoked as cutover artifacts. Fix the generator with
+  one strict, versioned, explicit authority-promotion binding manifest; filter
+  both canonical bindings and runtime slices from that manifest, reject empty,
+  duplicate or unknown bindings, and record its digest in the bundle. Add a
+  regression proving initial authority contains exactly twelve Binance/OKX
+  bindings and zero HNX/HOSE/DNSE binding. Re-run focused/full gates and rebuild
+  one new immutable image pair before topology deployment. V1 and the running
+  isolated shadow stack remain unchanged while this source-only repair runs.
+
+
+- `2026-08-20 C.3 PROMOTION-SCOPE REPAIR PASS`: added strict manifest
+  `qdl.v2.authority-promotion-scope.v1`; production-core generation now filters
+  both canonical bindings and authority slices from its explicit binding IDs,
+  rejects empty/duplicate/unknown scope and records revision/digest/count in
+  the public bundle. The initial manifest selects exactly twelve Binance/OKX
+  trade/quote/final-1m-bar bindings and no DNSE/HNX/HOSE binding. Targeted
+  contract/bundle/authority tests passed 22/22; full Python passed 543 with six
+  environment skips; full Rust passed 70/70 with fmt and strict Clippy; isolated
+  changed-file Ruff passed. All three generated production workers contain
+  12 slices, venues `BINANCE,OKX`, zero DNSE subscriptions and common scope
+  digest `06178202d7ec592c19c41a36c919a13a74971c3e39ed8e67ce9b5de3a978fcd2`.
+  Compose authority profiles render successfully. Tests used network-none
+  source mounts and disposable tmpfs/tooling; V1, the running isolated shadow,
+  Trading System routes, authority state and persistent volumes were unchanged.
+
+
+- `2026-08-20 C.3 REBUILT RELEASE PAIR PASS`: tested repair commit
+  `3d3af1c530e1dd52b402294e0bb677eb334a15a2` produced Python image
+  `sha256:e61c7cb1372071daeb3f9753e616b073b514998845abc61ab168b2cb63617e90`
+  and Rust image
+  `sha256:676de79940ed83cc45a8c1490055c8fa69ddc5bcb032af4ab6a4851d25e921b6`.
+  Both carry exact revision/version labels and retain non-root users. Image-level
+  network-none smoke imported `qdl_sdk==2.0.0`; `qdl-production-core` remained
+  fail-closed without config. The fresh bundle binds those exact IDs, reports
+  `RUST_SHADOW`, `cutover_authorized=false`, scope digest
+  `06178202d7ec592c19c41a36c919a13a74971c3e39ed8e67ce9b5de3a978fcd2`
+  and twelve approved bindings; authority Compose profiles render cleanly.
+  This pair supersedes the revoked `5823d642` pair. No running container or
+  authority/consumer route changed. Merge/immutable deployment and the exact
+  operator packet remain the only gates before bounded runtime promotion.
+  Exact cleanup removed the two revoked `5823d642` image tags and three
+  disposable test/revoked-bundle paths only; no broad prune, active image,
+  final release bundle, V1 rollback artifact or volume was removed.
+
+
+- `2026-08-20 C.2 CONSUMER-NETWORK BLOCKER FOUND`: final deployment
+  preflight compared Data Layer and Trading System Compose topology. Stable V2
+  query/stream roles only join project-private networks and expose loopback host
+  ports, while Trading System resolves `qdl-v2-query` and
+  `qdl-v2-stream-a/b` from external `executor_network`; the container cannot
+  reach host loopback, so a real consumer cutover would fail despite valid SDK
+  and mTLS tests. Add one explicit generated external-consumer-network setting,
+  attach only the two query and two stream ingress roles with the frozen DNS
+  aliases, and keep Kafka/Redis/projector/Rust core off that network. Require
+  Compose contract tests for aliases/isolation plus existing full regressions.
+  Rebuild the same-SHA release pair after this bounded topology repair. No
+  running network/container is changed by the source fix.
+
+
+- `2026-08-20 C.2 CONSUMER-NETWORK REPAIR PASS`: stable bundle generation now
+  requires a validated external consumer network and records it in private env
+  plus the non-secret manifest. Only query replicas join it as
+  `qdl-v2-query`; only active/passive stream roles join as
+  `qdl-v2-stream-a/b`. Kafka, Redis, projector, Rust shadow/primary cores and
+  ingestors remain absent from that network. Generated Compose validated
+  against existing external `executor_network`; focused tests passed 19/19,
+  full Python passed 543 with six environment skips, changed-file Ruff passed,
+  and the canonical cutover runbook now requires the network explicitly.
+  No container was attached, recreated or restarted; port 8100 and Trading
+  System remained unchanged. Commit and one final same-SHA image rebuild are
+  required before PR/cutover.
+
+
+- `2026-08-20 C.2/C.3 FINAL RELEASE ARTIFACT PASS`: topology commit
+  `be35aa7389a37b31c21cc2689c25873dcfc7e73d` produced Python image
+  `sha256:89e359ecc731d68db7a1814885023e1ff9f0aea793e668b6298109eb463ff91c`
+  and Rust image
+  `sha256:ab57e015da2fb96ef6e4b2180676e0a41b2cc45b64080e820d6a8f29cdab180a`.
+  Machine-read OCI labels exactly match the Git SHA and version `2.0.0`; users
+  remain `qdl:qdl` and `10001:10001`. The final bundle manifest digest is
+  `6a3edff0fdaa690b1fc1237f5678bf8463355bbdc51afb59a018f3e629840425`,
+  binds `executor_network`, twelve Binance/OKX promotion bindings, zero DNSE,
+  `RUST_SHADOW` and `cutover_authorized=false`; complete authority Compose
+  rendering passes. One mistyped preflight revision image was detected by label
+  comparison and is explicitly not a release artifact or deployed runtime.
+  This is the only V2 pair eligible for the merge/cutover packet.
+  Scoped cleanup then removed the superseded `3d3af1c` pair, the mistyped
+  Python tag and disposable netfix/test bundles. No broad prune, active
+  candidate image, final bundle, V1 image or Docker volume was removed.
+
+Promote all approved Binance and OKX feed slices in one maintenance window, but
+execute the CAS internally one slice at a time so a failure is isolated. One
+operator packet may list the complete slice set, image IDs, old/new owners,
+authority/lease/plan revisions, terminal watermarks, topics/groups, ports,
+volumes, secret references, Trading System route and rollback command.
+
+Each slice still follows:
 
 `PYTHON_PRIMARY -> RUST_SHADOW -> RUST_CANARY -> RUST_PRIMARY`.
 
-Fence the old writer, persist its terminal checkpoint, accept the handoff,
-execute the CAS/outbox transition, reconstruct every target through `W`, and
-publish first as Rust at `W+1`. Any ambiguity, missing ACK, parity mismatch,
-lag/gap, stale CAS or consumer failure enters `BLOCKED` and rolls back under a
-newer revision; never restart V1 as an uncoordinated writer.
+The canary is bounded by accepted real events and continuity evidence rather
+than a long calendar wait. Fence the old writer at `W`, persist its terminal
+checkpoint, accept the handoff, execute CAS/outbox, reconstruct every target
+through `W`, and publish first as Rust at `W+1`. When one slice passes, the
+same preapproved window proceeds to the next. Any ambiguity, missing ACK,
+parity mismatch, lag/gap, stale CAS or Trading System failure enters `BLOCKED`
+for that slice and restores V1 under a newer revision; unrelated promoted slices
+remain governed independently.
 
-#### C.4 Hold, Expand And Release
+#### C.4 Close With V1 Hot Fallback
 
-Hold the first primary slice for the approved observation window with zero
-authority ambiguity or unexplained market-data mismatch. Expand independently
-by venue/feed manifest; no slice inherits certification. Only after all
-registered consumers use V2 may the operator approve routing the stable public
-endpoint and opening a V1 sunset window. DNSE remains disabled until its
+After all approved Binance/OKX slices are `RUST_PRIMARY`, Trading System reads
+V2 as its normal source and V1 stays running on port `8100` as the tested hot
+fallback. There is no alpha-by-alpha migration while those alphas remain down
+and no V1 sunset is part of this cutover. Publish the V2 release only after the
+Trading System cycle, Rust authority audit, cursor/replay continuity and an
+exercised V1 fallback/return-to-V2 drill pass. DNSE remains V1-only until its
 separate provider gate passes.
 
 **Decision boundary:** C.0 code/release preparation and C.1 isolated deployment
-are non-production-authority work. C.2 changes only explicitly named paper
-consumer routes. C.3 and C.4 require a separate operator approval containing
-the exact packet above. No command in this plan implicitly authorizes a restart,
-authority mutation, consumer cutover, volume deletion or V1 shutdown.
+are non-production-authority work. C.2 changes only the Trading System
+market-data route. C.3 requires one explicit operator packet for the approved
+Binance/OKX slice set. No command implicitly authorizes deleting volumes,
+stopping V1 or promoting DNSE.
 
 ### Rollback
 
