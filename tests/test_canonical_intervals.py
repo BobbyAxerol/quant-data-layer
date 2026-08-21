@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import dataclasses
 import json
 import unittest
+from pathlib import Path
 
 from qdl.adapters.intervals import (
     canonical_interval_ms,
     okx_bar_size,
     okx_candle_channel,
+    okx_interval_from_bar_size,
+    okx_interval_from_channel,
 )
+from qdl.canonical.market import canonicalize_okx_bar
+from qdl.canonical.trade import TradeContext
 from qdl.adapters.okx.bar_edge import (
     OkxBarRawBinding,
     fetch_closed_bar_history_raw_envelopes as fetch_okx_history,
@@ -19,6 +25,9 @@ from qdl.adapters.okx.history import (
     OkxCandle,
     OkxCandleHistory,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _binding(interval: str) -> OkxBarRawBinding:
@@ -219,6 +228,57 @@ class OkxIntervalGenericHistoryTests(unittest.TestCase):
     def test_binding_rejects_an_interval_okx_does_not_expose(self):
         with self.assertRaises(ValueError):
             dataclasses.replace(_binding("1m"), interval="45m")
+
+
+class OkxBarCanonicalisationTests(unittest.TestCase):
+    """The canonicaliser previously pinned channel, interval and close time to 1m."""
+
+    def setUp(self) -> None:
+        self.fixture = json.loads(
+            (ROOT / "tests/fixtures/phase2/okx_bar.json").read_text(encoding="utf-8")
+        )
+        self.context = TradeContext(**self.fixture["context"])
+
+    def _canonicalise(self, channel: str):
+        raw = copy.deepcopy(self.fixture["raw"])
+        raw["arg"]["channel"] = channel
+        return canonicalize_okx_bar(raw, self.context)
+
+    def test_round_trip_between_canonical_and_native_bar_size(self):
+        for interval in ("1m", "5m", "30m", "1h", "4h", "6h", "1d", "1w"):
+            with self.subTest(interval=interval):
+                native = okx_bar_size(interval)
+                self.assertEqual(okx_interval_from_bar_size(native), interval)
+                self.assertEqual(
+                    okx_interval_from_channel(f"candle{native}"), interval
+                )
+
+    def test_minute_bar_behaviour_is_unchanged(self):
+        envelope = self._canonicalise("candle1m")
+        open_ns = envelope.bar.open_time_ns
+        self.assertEqual(envelope.bar.interval, "1m")
+        self.assertEqual(
+            envelope.bar.close_time_ns, open_ns + 60_000 * 1_000_000 - 1_000_000
+        )
+
+    def test_interval_is_read_from_the_frame_not_assumed(self):
+        envelope = self._canonicalise("candle1H")
+        open_ns = envelope.bar.open_time_ns
+        self.assertEqual(envelope.bar.interval, "1h")
+        self.assertEqual(
+            envelope.bar.close_time_ns,
+            open_ns + 3_600_000 * 1_000_000 - 1_000_000,
+        )
+
+    def test_utc_daily_channel_maps_to_the_canonical_day(self):
+        envelope = self._canonicalise("candle1Dutc")
+        self.assertEqual(envelope.bar.interval, "1d")
+
+    def test_unsupported_or_foreign_channels_fail_closed(self):
+        for channel in ("candle45m", "candle1D", "trades", "candle", ""):
+            with self.subTest(channel=channel):
+                with self.assertRaises(ValueError):
+                    self._canonicalise(channel)
 
 
 if __name__ == "__main__":

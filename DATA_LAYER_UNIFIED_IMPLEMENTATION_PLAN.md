@@ -7259,6 +7259,32 @@ untouched.
   correct until the catalog advertises those intervals, and must be lifted in
   the same packet that certifies them, not before.
 
+**2026-08-21 completion - canonical side of the OKX interval path:**
+
+- The first commit of this slice changed the OKX producer but not its consumer.
+  `canonicalize_okx_bar` still matched `channel="candle1m"` exactly and emitted
+  `interval="1m"` with a close time of `open + 60_000 - 1`, so the `candle1H`
+  and `candle1Dutc` frames the edge had just learned to produce would have been
+  rejected at canonicalisation. The complete suite stayed green because no test
+  fed a non-`1m` OKX frame through the canonicaliser, which is the same blind
+  spot that hid the broken bundle CLI in C.12.
+- Behaviour was fail-closed rather than silently wrong, but the OKX interval
+  path was not functional end to end until this completion.
+- `qdl/adapters/intervals.py` gains the exact inverse mapping
+  (`okx_interval_from_bar_size`, `okx_interval_from_channel`).
+  `canonicalize_okx_bar` now resolves the interval from the frame's own channel
+  through `_okx_candle_frame_row`, so the canonical event describes what the
+  provider actually sent instead of asserting a constant, and derives
+  `close_time_ns` from that interval.
+- `candle1D`, the OKX UTC+8 default, is now explicitly rejected. Only the `utc`
+  calendar variants resolve, which enforces the alignment decision above in
+  code rather than in prose.
+- Evidence: five added canonicalisation cases covering the native/canonical
+  round trip, unchanged `1m` close-time arithmetic, hourly interval and close
+  time read from the frame, the UTC daily mapping, and fail-closed rejection of
+  `candle45m`, `candle1D`, `trades`, `candle` and the empty channel. Focused run
+  16/16. Complete network-off suite 576 tests with six environment skips.
+
 #### C.14 BAR Serving Model: Materialized Binding Versus Governed Pass-Through
 
 **2026-08-21 status: `DESIGN DECISION RECORDED / NOT IMPLEMENTED`:**

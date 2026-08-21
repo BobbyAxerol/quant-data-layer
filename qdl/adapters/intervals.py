@@ -88,3 +88,30 @@ def okx_bar_size(interval: str) -> str:
 def okx_candle_channel(interval: str) -> str:
     """Return the OKX candle channel name for a canonical interval."""
     return f"candle{okx_bar_size(interval)}"
+
+
+_OKX_SUPPORTED = _OKX_INTRADAY + _OKX_CALENDAR_UTC
+
+
+def okx_interval_from_bar_size(bar: str) -> str:
+    """Return the canonical interval for an OKX ``bar`` token.
+
+    The inverse of :func:`okx_bar_size`. Resolution is exact: an unknown or
+    ambiguously cased token fails closed rather than being coerced.
+    """
+    value = str(bar or "").strip()
+    if not value:
+        raise ValueError("OKX bar size is required")
+    for interval in _OKX_SUPPORTED:
+        if okx_bar_size(interval) == value:
+            return interval
+    raise ValueError(f"unsupported OKX bar size: {bar!r}")
+
+
+def okx_interval_from_channel(channel: str) -> str:
+    """Return the canonical interval for an OKX candle channel name."""
+    value = str(channel or "").strip()
+    prefix = "candle"
+    if not value.startswith(prefix) or len(value) == len(prefix):
+        raise ValueError(f"not an OKX candle channel: {channel!r}")
+    return okx_interval_from_bar_size(value[len(prefix):])
