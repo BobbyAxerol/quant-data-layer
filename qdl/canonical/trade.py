@@ -65,6 +65,13 @@ def _decimal(value: Any) -> common_pb2.DecimalValue:
     return message
 
 
+def _positive_trade_decimal(value: Any, *, field: str) -> common_pb2.DecimalValue:
+    parsed = CanonicalDecimal.from_text(str(value))
+    if parsed.as_decimal() <= 0:
+        raise ValueError(f"{field} must be positive")
+    return _decimal(value)
+
+
 def _required(raw: Mapping[str, Any], field: str) -> Any:
     value = raw.get(field)
     if value is None or value == "":
@@ -164,8 +171,8 @@ def _trade_envelope(
         raw_capture_id=context.raw_capture_id,
         trade=market_data_pb2.Trade(
             native_trade_id=native_trade_id,
-            price=_decimal(price),
-            quantity=_decimal(quantity),
+            price=_positive_trade_decimal(price, field="trade price"),
+            quantity=_positive_trade_decimal(quantity, field="trade quantity"),
             aggressor_side=side,
             is_block_trade=False,
             is_buyer_maker=is_buyer_maker,

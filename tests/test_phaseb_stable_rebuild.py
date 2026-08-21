@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,9 +16,12 @@ from scripts.rebuild_v2_stable_projection_cache import (
     PROJECT_NAME,
     PROJECTOR_GROUP,
     QUERY_SERVICES,
+    MAX_REPLAY_BOOTSTRAP_RECORDS,
+    REPLAY_LOOKBACK_SECONDS,
     STOP_SERVICES,
     STREAM_SERVICES,
     _env_value,
+    _reset_projector_to_bounded_window,
     _stable_client_ssl_context,
     _start_services,
     _validate_project,
@@ -39,6 +43,11 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         self.assertEqual(plan["delete_files"], list(CACHE_FILES))
         self.assertEqual(plan["reset_group"], PROJECTOR_GROUP)
         self.assertEqual(plan["reset_topic"], CANONICAL_TOPIC)
+        self.assertEqual(plan["replay_lookback_seconds"], REPLAY_LOOKBACK_SECONDS)
+        self.assertEqual(
+            plan["max_replay_bootstrap_records"],
+            MAX_REPLAY_BOOTSTRAP_RECORDS,
+        )
         self.assertEqual(
             plan["lag_gate"]["expected_partitions"],
             EXPECTED_CANONICAL_PARTITIONS,
@@ -107,6 +116,59 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "at least one"):
             _start_services(env)
+
+    def test_bounded_time_window_covers_sparse_feeds_and_caps_records(self):
+        env = Path("/tmp/stable.env")
+        describe = """GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG CONSUMER-ID HOST CLIENT-ID
+stable-projector-v1 md.canonical.v2 0 10 20 10 - - -
+stable-projector-v1 md.canonical.v2 1 10 20 10 - - -
+stable-projector-v1 md.canonical.v2 2 10 20 10 - - -
+stable-projector-v1 md.canonical.v2 3 10 20 10 - - -
+stable-projector-v1 md.canonical.v2 4 10 20 10 - - -
+stable-projector-v1 md.canonical.v2 5 10 20 10 - - -
+"""
+        now = datetime(2026, 8, 20, 17, 30, tzinfo=timezone.utc)
+        with patch(
+            "scripts.rebuild_v2_stable_projection_cache._kafka_group",
+            side_effect=["", describe],
+        ) as kafka_group:
+            result = _reset_projector_to_bounded_window(env, now=now)
+        kafka_group.assert_any_call(
+            env,
+            "--group", PROJECTOR_GROUP,
+            "--topic", CANONICAL_TOPIC,
+            "--reset-offsets", "--to-datetime",
+            "2026-08-20T17:15:00.000", "--execute",
+        )
+        kafka_group.assert_any_call(
+            env, "--group", PROJECTOR_GROUP, "--describe"
+        )
+        self.assertEqual(result["records"], 60)
+        self.assertEqual(result["partitions"], EXPECTED_CANONICAL_PARTITIONS)
+        self.assertEqual(kafka_group.call_count, 2)
+
+    def test_bounded_time_window_rejects_missing_partition_or_oversized_replay(self):
+        env = Path("/tmp/stable.env")
+        line = "stable-projector-v1 md.canonical.v2 {partition} 0 {lag} {lag} - - -"
+        missing = "\n".join(
+            line.format(partition=index, lag=1) for index in range(5)
+        )
+        oversized_lag = (MAX_REPLAY_BOOTSTRAP_RECORDS // 6) + 1
+        oversized = "\n".join(
+            line.format(partition=index, lag=oversized_lag) for index in range(6)
+        )
+        for output, message in (
+            (missing, "every canonical partition"),
+            (oversized, "bounded event budget"),
+        ):
+            with self.subTest(message=message), patch(
+                "scripts.rebuild_v2_stable_projection_cache._kafka_group",
+                side_effect=["", output],
+            ):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    _reset_projector_to_bounded_window(
+                        env, now=datetime(2026, 8, 20, tzinfo=timezone.utc)
+                    )
 
     def test_lag_parser_requires_real_canonical_partitions(self):
         output = """GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG CONSUMER-ID HOST CLIENT-ID

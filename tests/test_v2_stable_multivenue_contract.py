@@ -141,6 +141,27 @@ class StableMultivenueCanonicalContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "quantity unit is undefined"):
             resolve_quantity_unit(venue="UNKNOWN", market="X", product_type="Y")
 
+    def test_non_positive_trade_price_and_quantity_fail_closed_for_all_venues(self):
+        cases = (
+            ("binance_usdm_trade.json", canonicalize_binance_usdm_trade, "p", "q"),
+            ("okx_trade.json", canonicalize_okx_trade, "px", "sz"),
+            ("dnse_derivative_trade.json", canonicalize_dnse_trade, "price", "quantity"),
+        )
+        for fixture_name, build, price_field, quantity_field in cases:
+            fixture = json.loads((FIXTURES / fixture_name).read_text())
+            context = TradeContext(**fixture["context"])
+            for field, value, message in (
+                (price_field, "0", "trade price must be positive"),
+                (price_field, "-0.01", "trade price must be positive"),
+                (quantity_field, "0", "trade quantity must be positive"),
+                (quantity_field, "-0.01", "trade quantity must be positive"),
+            ):
+                raw = dict(fixture["raw"])
+                raw[field] = value
+                with self.subTest(fixture=fixture_name, field=field, value=value):
+                    with self.assertRaisesRegex(ValueError, message):
+                        build(raw, context)
+
 
 class StablePublicPayloadUnitTests(unittest.TestCase):
     decimal = DecimalValue(coefficient="1", scale=0, source_text="1")

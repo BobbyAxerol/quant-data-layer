@@ -36,6 +36,7 @@ from qdl.query import (
 )
 from qdl.query.v2 import query_pb2
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
+from qdl.runtime import GatewayFenced
 from qdl.consumer import UsageTelemetry
 from qdl.stream import (
     DurableStreamGateway,
@@ -360,6 +361,146 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.spool.high_watermark(STREAM, self.partition), 2)
         await slow.close()
         await peer.close()
+
+    async def test_grpc_multitarget_fails_over_from_standby_without_gap(self):
+        class StandbyAuthority:
+            current_epoch = None
+
+            def __init__(self):
+                self.attempts = 0
+
+            def assert_active(self, expected_epoch=None):
+                del expected_epoch
+                self.attempts += 1
+                raise GatewayFenced("test standby")
+
+        standby_authority = StandbyAuthority()
+        standby_gateway = DurableStreamGateway(
+            handoff=self.handoff,
+            sink=self.spool,
+            max_buffer_events=2,
+            authority=standby_authority,
+        )
+        standby_server = create_grpc_server(
+            GrpcMarketDataService(
+                gateway=standby_gateway,
+                query_service=None,
+                snapshot_loader=SnapshotLoader(self.record, self.token),
+            ),
+            identity_service=self.identity,
+        )
+        active_server = create_grpc_server(
+            GrpcMarketDataService(
+                gateway=self.gateway,
+                query_service=None,
+                snapshot_loader=SnapshotLoader(self.record, self.token),
+            ),
+            identity_service=self.identity,
+        )
+        standby_port = standby_server.add_insecure_port("127.0.0.1:0")
+        active_port = active_server.add_insecure_port("127.0.0.1:0")
+        await standby_server.start()
+        await active_server.start()
+        await self.gateway.publish(durable(self.record, 1))
+        transport = GrpcStreamTransport(
+            (f"127.0.0.1:{standby_port}", f"127.0.0.1:{active_port}"),
+            allow_insecure_loopback=True,
+            credential_provider=self.credential,
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid,
+            Feed.BAR,
+            Grade.ALPHA,
+            "alpha_binance_v1",
+            interval="1m",
+            warmup_limit=1,
+        )
+        events = transport.subscribe(
+            requirement,
+            consumer_id="alpha-shadow",
+            cursor_token=self.token,
+            max_buffer_events=2,
+        ).__aiter__()
+        try:
+            self.assertEqual((await events.__anext__()).code, "REPLAYING")
+            first = await events.__anext__()
+            self.assertEqual(first.logical_offset, 1)
+            self.assertEqual((await events.__anext__()).code, "LIVE")
+            await self.gateway.publish(durable(self.record, 2))
+            second = await events.__anext__()
+            self.assertEqual(second.logical_offset, 2)
+            self.assertEqual(
+                transport.target,
+                f"127.0.0.1:{active_port}",
+            )
+            self.assertEqual(standby_authority.attempts, 1)
+        finally:
+            await transport.close()
+            await standby_server.stop(grace=0)
+            await active_server.stop(grace=0)
+
+    async def test_grpc_multitarget_fails_after_each_standby_once(self):
+        class StandbyAuthority:
+            current_epoch = None
+
+            def __init__(self):
+                self.attempts = 0
+
+            def assert_active(self, expected_epoch=None):
+                del expected_epoch
+                self.attempts += 1
+                raise GatewayFenced("test standby")
+
+        authorities = (StandbyAuthority(), StandbyAuthority())
+        servers = []
+        ports = []
+        for authority in authorities:
+            gateway = DurableStreamGateway(
+                handoff=self.handoff,
+                sink=self.spool,
+                max_buffer_events=2,
+                authority=authority,
+            )
+            server = create_grpc_server(
+                GrpcMarketDataService(
+                    gateway=gateway,
+                    query_service=None,
+                    snapshot_loader=SnapshotLoader(self.record, self.token),
+                ),
+                identity_service=self.identity,
+            )
+            ports.append(server.add_insecure_port("127.0.0.1:0"))
+            servers.append(server)
+            await server.start()
+        transport = GrpcStreamTransport(
+            tuple(f"127.0.0.1:{port}" for port in ports),
+            allow_insecure_loopback=True,
+            credential_provider=self.credential,
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid,
+            Feed.BAR,
+            Grade.ALPHA,
+            "alpha_binance_v1",
+            interval="1m",
+            warmup_limit=1,
+        )
+        events = transport.subscribe(
+            requirement,
+            consumer_id="alpha-shadow",
+            cursor_token=self.token,
+            max_buffer_events=2,
+        ).__aiter__()
+        try:
+            with self.assertRaises(DataLayerError) as raised:
+                await events.__anext__()
+            self.assertEqual(raised.exception.code, "DEPENDENCY_UNAVAILABLE")
+            self.assertTrue(raised.exception.retryable)
+            self.assertEqual(tuple(item.attempts for item in authorities), (1, 1))
+        finally:
+            await transport.close()
+            for server in servers:
+                await server.stop(grace=0)
 
     async def test_grpc_emits_backpressure_control_before_slow_consumer_disconnect(self):
         grpc_service = GrpcMarketDataService(

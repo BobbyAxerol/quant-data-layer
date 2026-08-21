@@ -6498,3 +6498,317 @@ After an approved cutover, fence the selected Rust slice, restore the matching
 Python rollback manifest under a newer authority revision/lease, replay from the
 last common durable watermark and leave all unrelated venue/feed slices
 untouched.
+
+#### C.5 Merged Runtime Ingress Closure For Trading System V2_PRIMARY
+
+**2026-08-20 status: `APPROVED / PREFLIGHT`:**
+
+- Approved source is merged `origin/dev` commit `f4a7e1c`; the only eligible
+  release pair remains Python
+  `sha256:89e359ecc731d68db7a1814885023e1ff9f0aea793e668b6298109eb463ff91c`
+  and Rust
+  `sha256:ab57e015da2fb96ef6e4b2180676e0a41b2cc45b64080e820d6a8f29cdab180a`
+  from topology revision `be35aa7389a37b31c21cc2689c25873dcfc7e73d`.
+- The currently running isolated C.2 stack uses superseded images and private
+  ingress only. Recreate the isolated V2 project from the final bundle while
+  preserving its Kafka/state volumes and the live V1 project. Rotate all
+  candidate identities atomically; only query replicas and stream active/
+  passive join external `executor_network` with the frozen aliases.
+- Kafka, stable Redis, projector, ingestors and Rust cores remain private. V1
+  port `8100`, its Redis, storage and every current consumer remain live during
+  the V2 recreation. DNSE remains V1-only.
+- Acceptance requires final image IDs and non-root users, complete process
+  health, authenticated mTLS query/stream from `executor_network`, real-provider
+  Binance/OKX event continuity, bounded queue/lag/resources and no V1 restart or
+  persistent-volume deletion. Synthetic data may not satisfy this gate.
+- Rollback recreates the isolated C.2 ingress from its prior immutable image
+  pair or leaves V2 stopped while V1 remains authoritative. This operation does
+  not authorize `RUST_PRIMARY`; authority remains `RUST_SHADOW` until a separate
+  CAS packet proves terminal-watermark handoff for all twelve slices.
+- After ingress acceptance, Trading System may make its already-approved exact
+  routes `V2_PRIMARY` with V1 fallback. No alpha is started by this packet.
+
+**2026-08-20 final-stack recreation finding: `BLOCKED BEFORE CONSUMER CUTOVER`:**
+
+- Final immutable images and external aliases were applied while all Kafka,
+  stable-state and V1 volumes were preserved. V1 remained healthy.
+- Concurrent query/stream startup exposed a shared SQLite schema-initialization
+  race (`sqlite3.OperationalError: database is locked`). The shared spool is
+  intentional and cannot be split per replica; initialization needs bounded
+  busy retry while preserving one cache identity.
+- Recreating ephemeral stable Redis while retaining a non-empty durable spool
+  correctly triggered `ProjectionCacheMismatch`. The existing governed cache
+  rebuild must replay canonical Kafka into a fresh SQLite/Redis cache before
+  projector readiness. This is recovery behavior, not permission to discard
+  Kafka or V1 data.
+- Fix and gate the concurrent initialization path, rebuild only the isolated
+  projection cache through the existing confirmation-token runbook, then repeat
+  mTLS query/stream and real-provider continuity checks. Trading System remains
+  V1 until all gates pass.
+
+**2026-08-20 SQLite startup closure result: `PASS / REBUILD PENDING`:**
+
+- Shared-spool initialization now uses a 30-second SQLite busy timeout and four
+  bounded lock-only retries. Non-lock operational errors still fail immediately;
+  all replicas retain one durable cache identity and integrity check.
+- Added an eight-replica simultaneous-open regression. Targeted transport and
+  cache-rebuild tests passed 25/25. The full network-off Python suite passed
+  550 tests with six explicit skips using the final runtime dependencies and a
+  temporary writable log mount. No provider, V1, Kafka, Redis, order or DB state
+  was mutated by tests.
+- Next gate is a new immutable Python image from this exact commit followed by
+  the confirmation-token projection rebuild; the Rust binary is unchanged.
+
+**2026-08-20 replay-efficiency finding: `FIX IN PROGRESS`:**
+
+- The governed rebuild reset the projector to the beginning of a 7.26-million
+  event canonical topic although the spool retains only 10,000 records per
+  partition. Replay progressed correctly but would spend tens of minutes reading
+  records guaranteed to be trimmed. The orchestrator was interrupted without
+  deleting Kafka; five cache users were stopped while ingestors/Rust core kept
+  capturing approved real-provider bytes.
+- Rebuild will atomically reset the inactive projector group to each partition
+  end and then shift back exactly 10,000 records, matching the spool retention
+  bound. It must still replay all six partitions, reach lag <=250 for three
+  samples, rebuild non-empty Redis, and prove fresh events for every approved
+  Binance/OKX route before query readiness. No synthetic event may satisfy the
+  runtime gate.
+
+**2026-08-20 sparse-feed coverage correction: `FIX IN PROGRESS`:**
+
+- Real acceptance rejected five-bar warmup after the 10,000-record Kafka-tail
+  rebuild. A physical Kafka partition mixes dense TRADE with sparse BAR events,
+  so a record-count tail cannot guarantee BAR coverage even though it is bounded.
+- Recovery must instead reset to a 15-minute broker timestamp window, require
+  all six canonical partitions and reject a bootstrap over one million events
+  before projector startup. This retains at least five expected 1m BAR closes
+  independently of trade density while keeping recovery bounded. Exact warmup,
+  source authority and cursor continuity gates remain unchanged.
+
+**2026-08-20 container-network TLS finding: `BLOCKED BEFORE CONSUMER CUTOVER`:**
+
+- Host-port mTLS/JWT acceptance passed for Binance and OKX, but the same SDK
+  call over `executor_network` rejected gRPC hostname verification. Compose uses
+  `qdl-v2-stream-a` and `qdl-v2-stream-b`; the generated stream certificate
+  covered only `stream_v2_active`, `stream_v2_passive` and `qdl-v2-stream`.
+- Add both published aliases to the certificate SAN contract, test the generator,
+  regenerate a private bundle and rotate the isolated V2 stack atomically. REST
+  query alias remains valid. Trading System stays V1 until container-network
+  query/stream acceptance passes with the exact production endpoint names.
+
+**2026-08-20 ingress SAN closure: `PASS / CERT ROTATION PENDING`:**
+
+- Stable stream certificate generation now covers `qdl-v2-stream-a` and
+  `qdl-v2-stream-b` in addition to internal role names and localhost. Query SAN
+  contract is unchanged.
+- TLS/deployment contract tests passed 21/21, including published-alias
+  regression, common workload identity, RS256 rotation and duplicate-target
+  fail-closed behavior. No runtime or secret changed during tests.
+
+**2026-08-20 active/passive SDK failover finding: `BLOCKED BEFORE CONSUMER CUTOVER`:**
+
+- The rotated certificate and exact `executor_network` aliases now pass mTLS.
+  Governed recovery replayed 212,165 real-provider records across all six
+  canonical partitions, rebuilt 47 Redis keys and converged to total lag 36 for
+  three samples without touching V1.
+- Direct acceptance through the replica currently holding the gateway lease
+  passed for Binance USD-M and OKX Swap: five final 1m bars, authoritative
+  source/complete coverage, replay-to-live controls, persistent cursor and exact
+  `+1` resume. Shared spool timestamps also continued advancing from real
+  provider records.
+- Multi-target acceptance using the frozen order `qdl-v2-stream-a,b` timed out
+  when `a` was the standby owner. The transport rotates its target after gRPC
+  `UNAVAILABLE` but currently propagates that retryable error to the outer
+  session first; this can consume a bounded caller timeout before `b` is opened.
+- Close this as an SDK transport defect: retry each unique target at most once
+  inside the same subscribe generation, preserve the exact cursor and auth
+  metadata, and expose a retryable dependency error only after every target
+  fails. Add standby-first, all-target-failed and no-duplicate/no-gap tests,
+  rerun the full network-off suite, then repeat exact-network real-provider
+  acceptance. Public V2 schemas and V1 remain unchanged.
+
+**2026-08-20 active/passive SDK failover closure: `PASS / IMMUTABLE REBUILD PENDING`:**
+
+- `GrpcStreamTransport` now retries each unique target at most once only when
+  gRPC returns `UNAVAILABLE` before any response was observed. It preserves the
+  original cursor, requirement and JWT metadata. Once any control/data response
+  has been observed, it rotates the preferred target but returns a retryable
+  error to the session layer so recovery uses the last acknowledged cursor.
+- Real gRPC regression starts a standby endpoint before an active endpoint and
+  proves `REPLAYING -> offsets 1,2 -> LIVE` without duplicate or gap. A second
+  regression proves two standby endpoints are each attempted exactly once before
+  `DEPENDENCY_UNAVAILABLE` is exposed.
+- Targeted SDK/security tests passed 19/19. The full network-off Python suite
+  passed 555 tests with six explicit environment skips using disposable tmpfs
+  logs. An initial full-suite invocation failed only because the read-only source
+  mount did not provide a writable log path; rerunning with the governed tmpfs
+  test mount passed completely.
+- No running image, V1 route, provider, Kafka record, Redis/DB production state
+  or Trading System consumer was changed by this code slice. Build an immutable
+  Python image from the resulting commit and rerun exact-network real-provider
+  acceptance before consumer cutover.
+
+**2026-08-20 C.5 Data Layer ingress runtime acceptance: `PASS / CONSUMER CUTOVER READY`:**
+
+- Immutable Python image `qdl-v2-python:2.0.0-4a605fbfe278` is
+  `sha256:9ba5f4a3419c9b5a71bf9dbc8dc65817956054c8bf6b29be6ff6affb45d9601b`,
+  runs as `qdl:qdl`, and carries exact revision
+  `4a605fbfe2783507d64819cdfdb1c930833b97d6` with version `2.0.0`.
+  The unchanged Rust image remains
+  `sha256:ab57e015da2fb96ef6e4b2180676e0a41b2cc45b64080e820d6a8f29cdab180a`.
+- Only the six Python V2 roles were recreated with the new immutable image.
+  Kafka, three Rust cores, stable Redis, all durable volumes, active certificate
+  set, V1 and Trading System were preserved. All six roles report restart count
+  zero; both query replicas are READY and exactly one stream replica is READY
+  while its peer is STANDBY.
+- Final acceptance ran from the immutable image itself over
+  `executor_network` and the frozen target order `qdl-v2-stream-a,b`, with
+  `a` deliberately standby. Binance USD-M and OKX Swap each returned five
+  authoritative final 1m bars, live provider events, persistent cursors and
+  exact `+1` resume. Status was PASS; no synthetic event was used.
+- A request without a client certificate failed the TLS handshake
+  (`curl rc=52`). V1 remained HTTP 200 at `/v1/health`, all 16 V1 Binance
+  shards stayed connected, recent queue-drop delta and Redis publish errors were
+  zero. Post-acceptance canonical lag was 191 across six partitions, within the
+  configured 250 bound; bounded Python-role logs contained no new error,
+  critical, exception, traceback or failure.
+- Resource snapshot remained bounded: Python roles used about 39-69 MiB each,
+  stable Redis about 4 MiB, Rust roles about 25-44 MiB and Kafka replicas about
+  435-471 MiB each. No container or persistent volume was deleted.
+- A generated but undeployed bundle was rejected because it rotated cursor/HMAC/
+  DB secrets during an image-only patch. It was verified unreferenced and removed
+  exactly; the active tested identity bundle remains intact. Trading System may
+  now proceed with the separately approved `V2_PRIMARY` plus V1 fallback
+  market-data cutover. This does not promote `RUST_SHADOW` to `RUST_PRIMARY`
+  and does not authorize DNSE migration.
+
+
+**2026-08-20 sparse-feed recovery closure: `PASS / RUNTIME REBUILD PENDING`:**
+
+- Recovery now derives a UTC broker timestamp exactly 15 minutes behind apply
+  time, resets the inactive projector group with `--to-datetime`, then verifies
+  six partitions and at most one million pending events before starting any
+  cache writer. Missing partition or oversized replay fails closed.
+- Targeted recovery tests passed 11/11, including deterministic timestamp,
+  missing-partition and oversized-window cases. Full network-off Python passed
+  552 tests with six explicit skips.
+
+
+**2026-08-20 bounded-tail recovery closure: `PASS / RUNTIME REBUILD PENDING`:**
+
+- Recovery now resets the inactive projector group to latest and shifts back
+  exactly 10,000 records on each of six canonical partitions, matching spool
+  retention without deleting any Kafka event. The existing <=250 total-lag,
+  three-consecutive-sample gate remains unchanged.
+- Added exact command/plan regression. Targeted recovery/transport tests passed
+  26/26; full network-off Python passed 551 with six explicit skips. No runtime
+  state changed during these tests.
+
+#### C.6 Trading System V2 Primary Canonical-Trade Closure
+
+**2026-08-20 status: `APPROVED / ROOT CAUSE CONFIRMED`:**
+
+- The immutable Trading System consumer passed authenticated V2 query for
+  Binance USD-M and OKX Swap, but its long-running TRADE streams repeatedly
+  failed closed. A bounded isolated probe using the same immutable image,
+  workload identity and real provider stream reproduced the failure without
+  sharing runtime cursor state.
+- OKX passed 100/100 concurrent trade events. Binance reproduced an
+  authoritative/execution-eligible canonical trade carrying exact
+  `price=0` and `quantity=0`; the Trading System projector correctly rejected
+  it. This proves the defect is canonical semantic validation, not mTLS, JWT,
+  route quota, Redis, provider availability or consumer retry policy.
+- Close the defect at the source-owned domain boundary in both the Python
+  oracle and Rust core: trade price and quantity must be finite canonical
+  decimals strictly greater than zero. Invalid provider records must enter the
+  existing bounded `SEMANTIC_INVALID` quarantine path and must never reach the
+  canonical topic as execution-eligible data. Do not weaken Trading System
+  validation or fabricate replacement values.
+- Required gates are Python/Rust unit parity for zero and negative values,
+  Rust realtime-core quarantine behavior, existing golden/contract tests, full
+  network-off suites, a new immutable Rust image, bounded real-provider
+  Binance/OKX concurrent stream acceptance and unchanged V1 health. Recreate
+  only isolated V2 Rust roles necessary to apply the core fix; preserve Kafka,
+  Redis, projection state, certificates, V1 and every execution service.
+- Any post-fix zero/negative canonical trade, continuity gap, duplicate,
+  restart loop or V1 impact blocks the Trading System cutover. Rust authority
+  remains `RUST_SHADOW`; this closure does not authorize authority promotion.
+
+
+**2026-08-20 canonical semantic source closure: `PASS / IMMUTABLE BUILD PENDING`:**
+
+- Python canonical oracle and Rust canonical core now require exact finite trade
+  price and quantity strictly greater than zero for every venue. Existing BAR,
+  QUOTE, decimal encoding, event identity and frozen bytes are unchanged.
+- Rust realtime-core maps a non-positive provider trade through the existing
+  atomic `SEMANTIC_INVALID` quarantine path and publishes no canonical record.
+  No downstream projector validation was weakened and no replacement price or
+  quantity is generated.
+- Targeted evidence passed: Python multivenue contract 8/8, Rust `qdl-core`
+  16/16 and Rust `qdl-realtime-core` 11/11. The full network-off Python suite
+  passed 556 tests with six explicit skips. The full locked Rust workspace test
+  completed with no failure. The first Python full-suite invocation had four
+  harness-only permission errors because `/app/logs` was root-owned; rerunning
+  the unchanged source with the runtime UID/GID-owned tmpfs passed completely.
+- Build one immutable Python/Rust image pair from the resulting commit, recreate
+  only the isolated V2 roles required by the changed core, then require bounded
+  concurrent real-provider streams with zero invalid trade projection before
+  resuming the Trading System acceptance drill.
+
+
+**2026-08-20 canonical semantic runtime closure: `PASS`:**
+
+- Tested commit `192c71bd57e44231cc4386c5969d54515d3d9490` produced immutable
+  Rust image `sha256:60832a3a6b7fbe0d5eb50de92306905380084e3e9c99d66e78e2343bff93339a`
+  and Python image
+  `sha256:45044af0fc771291e99543e039100c8d4321b87e0e80a0d8b59f26e1a05eb475`;
+  labels carry the exact revision/version and both images run non-root.
+- The three realtime Rust cores were rolling-recreated one at a time on the new
+  digest. Every replica is running with restart count zero. Kafka, ingestors,
+  projector, Redis, TLS, durable volumes, V1 and Trading System execution roles
+  were preserved. Rust authority remains `RUST_SHADOW`.
+- Real Binance/OKX traffic continued after the rollout. The owner core
+  quarantined 166 semantically invalid provider records during the observed
+  window while publishing tens of thousands of valid canonical records; no
+  invalid trade reached the Trading System after the fix. Other replicas had
+  zero quarantine for their assigned slices.
+- Trading System V2 cursors advanced from Binance TRADE 348395 to 359954, OKX
+  TRADE 111114 to 114662 and both BAR streams from 88 to 94 across soak and the
+  rollback drill. Projected trades were authoritative and sub-second fresh;
+  final 1m BARs remained closed and inside the 180-second execution freshness
+  bound.
+- V1 never restarted and returned HTTP 200 throughout. Building/recreating on
+  the same host caused one transient V1 recent queue-drop observation of 4,504;
+  the queue stayed at zero, Redis publish errors stayed zero and the subsequent
+  five-minute metric returned to recent-drop zero. This is recorded as capacity
+  evidence; future image builds should remain outside a latency-sensitive
+  cutover window. Broad-universe V1 health remains non-strict/degraded for its
+  previously documented unused feeds, while demanded-feed failures are zero.
+
+
+#### C.7 Trading System Consumer Backpressure Ownership Closure
+
+**2026-08-20 status: `PASS / NO DATA LAYER BEHAVIOR CHANGE`:**
+
+- Trading System bounded diagnostics classified the intermittent post-cutover
+  failure as `DATA_STALE`, not sequence gap, source transition, mTLS, quota or
+  canonical semantic corruption.
+- Read-only inspection of the latest 10,000 Binance USD-M BTCUSDT canonical
+  trades measured source-to-receive p99 33.379 ms, canonical projection p99
+  1,095.165 ms and maximum 1,174.830 ms, with zero canonical records over five
+  seconds. Kafka projector lag was 34 records across six partitions. V1 health
+  remained `ok`.
+- The owner was the Trading System consumer: per-event Redis projection and
+  per-event durable cursor replacement could not absorb provider bursts. The
+  consumer now preserves ordered events in bounded 64-item/20 ms Redis batches
+  and checkpoints only the final offset after successful projection.
+- Real-provider acceptance then ran six minutes plus a three-minute
+  post-rollback soak with zero continuity/reconnect warning. Binance and OKX
+  projected cache ages stayed below the unchanged five-second execution
+  contract, and the audited V2 -> V1 -> V2 service-only drill passed.
+- No Data Layer source policy, freshness threshold, public contract, Kafka
+  topic, stable cache, authority record or provider adapter was changed for this
+  issue. Rust remains `RUST_SHADOW`; DNSE remains V1. The Data Layer Python
+  desired-image pin still differs from the already accepted running Python-role
+  image and requires a separate operator packet if those roles are to be
+  recreated; it is not part of this consumer closure.

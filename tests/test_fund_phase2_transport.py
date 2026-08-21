@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 from qdl.transport import (
     BackpressureRequired,
@@ -79,6 +81,23 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             max_partition_records=overrides.get("max_partition_records", 0),
         )
         return SQLiteDurableSpool(config, clock_ns=self.clock)
+
+    def test_concurrent_replicas_share_one_initialized_spool(self):
+        config = SpoolConfig(path=self.path, min_free_disk_bytes=0)
+        barrier = Barrier(8)
+
+        def open_replica() -> SQLiteDurableSpool:
+            barrier.wait()
+            return SQLiteDurableSpool(config)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            replicas = list(executor.map(lambda _: open_replica(), range(8)))
+        try:
+            self.assertEqual(len({replica.cache_id for replica in replicas}), 1)
+            self.assertTrue(all(replica.integrity_check() for replica in replicas))
+        finally:
+            for replica in replicas:
+                replica.close()
 
     def test_commit_restart_replay_and_idempotent_retry(self):
         with self.spool() as spool:
