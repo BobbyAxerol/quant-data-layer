@@ -6812,3 +6812,66 @@ untouched.
   desired-image pin still differs from the already accepted running Python-role
   image and requires a separate operator packet if those roles are to be
   recreated; it is not part of this consumer closure.
+
+#### C.8 Post-Merge Long-Soak Stream Session Recovery Closure
+
+**2026-08-21 status: `SOURCE PASS / IMMUTABLE RUNTIME ACCEPTANCE PENDING`:**
+
+- Source branches merged cleanly into Data Layer `origin/dev` commit `6b6b345`
+  and Trading System `origin/dev` commit `be80256`; both merge trees are byte
+  identical to their tested feature heads. No `dev -> main` release is allowed
+  by this fact alone.
+- Read-only inspection after approximately eight hours of runtime found the
+  Trading System V2 consumer repeatedly receiving `DATA_STALE`, then
+  `RATE_LIMITED: consumer request quota is exhausted` for Binance USD-M and OKX
+  Swap. The shared quota reached 602-604 requests against its unchanged
+  600/minute limit. `market_data_service` remained running but grew to about
+  212 MiB and no longer held stable long-lived TRADE sessions.
+- The source-owned SDK session replaces its current transport iterator during
+  retry and cursor replacement, while `warmup_then_stream` closes only the
+  iterator created at initial entry. A replacement iterator can therefore lose
+  cleanup ownership. Immediate bounded SDK retries then amplify a stream fault
+  into quota pressure. Raising quota/freshness, dropping events or weakening
+  Trading System validation is forbidden.
+- Approved hotfix scope is limited to explicit iterator ownership in
+  `WarmupStreamSession`: close the current iterator before replacement, close
+  the current iterator on context exit, make close idempotent and retain the
+  last acknowledged cursor. Public V2 models, protobuf, endpoint, provider,
+  source policy, freshness, quota and V1 contracts stay frozen.
+- Required gates are deterministic retry/cursor-replacement/context-exit close
+  tests; no duplicate/gap and no acknowledgment before consumer commit; the
+  existing stream SDK/transport/security suite; full network-off Python and
+  locked Rust regressions; deterministic `qdl_sdk==2.0.0` rebuild and consumer
+  repin; then an immutable runtime test with bounded real Binance/OKX streams,
+  request rate below quota, stable memory, fresh cache and V1 fallback intact.
+- Runtime rollback remains the already exercised Trading System service-only
+  `V2_PRIMARY -> V1` route. Source verification does not authorize a container
+  recreation, Redis mutation, authority CAS, DNSE promotion, alpha startup or
+  `dev -> main` release.
+
+**2026-08-21 source hotfix result: `PASS`:**
+
+- `WarmupStreamSession` now owns exactly one current iterator. Cursor expiry and
+  retry close the old iterator before replacement; terminal errors close it
+  before propagating; context exit closes the current replacement and repeated
+  `aclose()` is idempotent. Cursor restoration and acknowledgment ordering are
+  unchanged.
+- Deterministic recovery regression proves three generations (expired cursor,
+  transient reconnect and final live iterator) are each closed exactly once and
+  that an additional close is a no-op. The complete stream SDK suite passed
+  15/15, including real gRPC handoff, standby failover, slow-consumer recovery,
+  signed cursor scope and bar revision behavior.
+- Full network-off Data Layer Python regression passed 556 tests with six
+  explicit environment skips. Production SDK lint and `git diff --check`
+  passed. Rust source is byte-identical to merged `dev`; no Rust authority,
+  canonical or provider behavior changed in this SDK-only slice.
+- Two independent SDK builds were byte-identical at SHA-256
+  `6c1e374153756d1918be03c7efeac2d36c68ef235e46f12035ee59afa462a19a`;
+  source digest is
+  `1535f7f5cfb50050dc300a3b65471508ca9e10d4f3bcff0d9a9a9108cc23737e`.
+  The corresponding release manifest and SBOM are the only artifacts eligible
+  for the Trading System repin.
+- No running container, quota key, cursor, Kafka record, Redis projection,
+  PostgreSQL row, V1 route or authority state was changed. Runtime acceptance
+  remains blocked on an immutable image/recreation packet and a bounded
+  real-provider soak.

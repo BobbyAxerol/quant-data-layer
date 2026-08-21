@@ -244,6 +244,7 @@ class SnapshotLoader:
 class ScriptedIterator:
     def __init__(self, values):
         self.values = list(values)
+        self.close_calls = 0
 
     def __aiter__(self):
         return self
@@ -257,18 +258,21 @@ class ScriptedIterator:
         return value
 
     async def aclose(self):
-        return None
+        self.close_calls += 1
 
 
 class ScriptedStreamTransport:
     def __init__(self, scripts):
         self.scripts = list(scripts)
         self.tokens = []
+        self.iterators = []
 
     def subscribe(self, requirement, **kwargs):
         del requirement
         self.tokens.append(kwargs["cursor_token"])
-        return ScriptedIterator(self.scripts.pop(0))
+        iterator = ScriptedIterator(self.scripts.pop(0))
+        self.iterators.append(iterator)
+        return iterator
 
     async def close(self):
         return None
@@ -760,6 +764,15 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             stream.tokens,
             ["snapshot-token", "snapshot-token", "token-1"],
+        )
+        self.assertEqual(
+            [iterator.close_calls for iterator in stream.iterators],
+            [1, 1, 1],
+        )
+        await session.aclose()
+        self.assertEqual(
+            [iterator.close_calls for iterator in stream.iterators],
+            [1, 1, 1],
         )
 
     async def test_warmup_applies_realtime_quality_only_to_tail_watermark(self):

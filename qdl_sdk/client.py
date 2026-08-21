@@ -160,14 +160,18 @@ class WarmupStreamSession:
         self._reconnect_attempts = 0
         self._telemetry = telemetry
         self.state_restored = state_restored
+        self._closed = False
 
     def __aiter__(self):
         return self
 
     async def __anext__(self) -> StreamEvent | ControlEvent:
+        if self._closed or self._events is None:
+            raise StopAsyncIteration
         try:
             event = await self._events.__anext__()
         except CursorExpiredError:
+            await self._close_events()
             self.warmup = await self._fresh_snapshot()
             self._last_seen_offset = self.warmup.watermark_offset
             self._events = self._subscribe(
@@ -180,6 +184,7 @@ class WarmupStreamSession:
                 self.warmup,
             )
         except DataLayerError as error:
+            await self._close_events()
             if not error.retryable or self._reconnect_attempts >= self._max_reconnect_attempts:
                 raise
             self._reconnect_attempts += 1
@@ -226,6 +231,19 @@ class WarmupStreamSession:
                 contract="grpc:Subscribe",
                 cursor_offset=event.logical_offset,
             )
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await self._close_events()
+
+    async def _close_events(self) -> None:
+        events = self._events
+        self._events = None
+        close = getattr(events, "aclose", None)
+        if close is not None:
+            await close()
 
     def _subscribe(self, token: str):
         return self._stream_transport.subscribe(
@@ -482,9 +500,7 @@ class AsyncDataLayerClient:
         try:
             yield session
         finally:
-            close = getattr(events, "aclose", None)
-            if close is not None:
-                await close()
+            await session.aclose()
 
     async def close(self) -> None:
         await self.stream_transport.close()
