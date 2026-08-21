@@ -7471,3 +7471,57 @@ per-symbol connection capacity, which the existing sharding already bounds.
 **In-flight scope is not widened.** The multi-symbol ETH packet keeps its
 current shape and evidence. This rule and its fix apply from the next slice
 onward.
+
+**2026-08-21 C.16 implementation result: `PARTIAL / SOURCE ONLY`:**
+
+Measured relationships across the committed configuration:
+
+- six `(venue, market, product)` families, 22 catalog bindings, 22 acquisition
+  bindings;
+- 14 distinct consumer requirements across the five registered manifests, all
+  of which resolve to a binding;
+- **eight bindings that no registered consumer requires**: Binance Spot
+  TRADE/QUOTE/BAR, OKX Spot TRADE/QUOTE/BAR, and DNSE FPT TRADE/BAR.
+
+The eight are not accidental. `StableBinanceBarEdge` refused to construct
+unless Binance `{SPOT, USDM}` and OKX `{SPOT, SWAP}` were all present, so the
+Spot bindings existed to satisfy the edge, not a consumer. That inverts program
+rule 6: demand is supposed to control cost, but a zero-demand Spot feed could
+not be disabled without breaking the BAR edge, and two Spot ingestor roles run
+because of it.
+
+**Fixed in this slice:**
+
+- The BAR edge no longer asserts a fixed market-family set. It now asserts that
+  it serves every configured `PYTHON_REST` BAR binding and at least one, so a
+  deployment may drop a zero-demand market or add a venue without editing the
+  edge, while a config that silently drops a binding, or introduces a runtime
+  the edge cannot serve, still fails closed.
+- The Binance branch now filters on `feed == BAR` like the OKX branch already
+  did. It previously matched every Binance `PYTHON_REST` binding and worked
+  only because BAR is the sole Python REST Binance feed today.
+- Added `tests/test_catalog_demand_consistency.py`: every consumer requirement
+  resolves to a binding, the acquisition plan covers exactly the catalog, every
+  declared instrument backs at least one binding, and the zero-demand set is
+  pinned so it may shrink but never silently grow.
+- Added `BarEdgeDeploymentShapeTests`: the edge serves exactly the configured
+  REST BAR set, the Binance branch carries BAR only, and reduced deployments
+  without Spot, and with a single venue, both construct successfully.
+
+**Still open, and why:**
+
+- Catalog regeneration from tracked inputs is *not* delivered. The generator
+  covers three families (`BINANCE/USDM/PERPETUAL`, `OKX/SWAP/PERPETUAL`,
+  `OKX/SPOT/SPOT`) through `_SUPPORTED_MARKETS`, while the committed catalog
+  carries six, including `BINANCE/SPOT/SPOT` and both VN families. The catalog
+  therefore cannot be reproduced by the builder as it stands, and no provider
+  metadata capture is available offline to try. Extending the generator to the
+  remaining families, committing the demand manifests and the capture
+  provenance, and adding the regenerate-and-diff test remain the next slice.
+- Retiring the eight zero-demand bindings is now *possible* but is a runtime
+  change: it removes Spot acquisition and two ingestor roles. It needs its own
+  approved packet and is not bundled here.
+
+Evidence: complete network-off suite 589 tests with six environment skips, up
+from 581 by exactly the eight added cases. No runtime, image, bundle or
+provider state was touched.

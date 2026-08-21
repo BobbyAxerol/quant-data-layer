@@ -90,7 +90,11 @@ class StableBinanceBarEdge:
         self.bindings = tuple(
             pair
             for pair in pairs
-            if pair[1].mode == "PYTHON_REST" and pair[1].runtime == "BINANCE"
+            if (
+                pair[1].mode == "PYTHON_REST"
+                and pair[1].runtime == "BINANCE"
+                and pair[0].feed.value == "BAR"
+            )
         )
         self.okx_bindings = tuple(
             pair
@@ -101,19 +105,27 @@ class StableBinanceBarEdge:
                 and pair[0].feed.value == "BAR"
             )
         )
-        binance_markets = {
-            source.instrument.identity.market
-            for source, _acquisition in self.bindings
+        # Demand decides which venues and markets exist, so this edge must not
+        # assert a fixed market-family set. It asserts instead that it owns every
+        # REST BAR binding the deployment configured: a config that silently drops
+        # one, or that introduces a runtime this edge cannot serve, fails closed.
+        expected = {
+            source.binding_id
+            for source, acquisition in pairs
+            if acquisition.mode == "PYTHON_REST" and source.feed.value == "BAR"
         }
-        okx_markets = {
-            source.instrument.identity.market
-            for source, _acquisition in self.okx_bindings
+        owned = {
+            source.binding_id
+            for source, _acquisition in self.bindings + self.okx_bindings
         }
-        if not {"SPOT", "USDM"}.issubset(binance_markets) or not {
-            "SPOT", "SWAP"
-        }.issubset(okx_markets):
+        if not expected:
             raise ValueError(
-                "stable crypto BAR edge requires Binance and OKX Spot/derivative bindings"
+                "stable crypto BAR edge requires at least one REST BAR binding"
+            )
+        if owned != expected:
+            raise ValueError(
+                "stable crypto BAR edge does not serve every configured REST BAR "
+                "binding: " + ",".join(sorted(expected - owned))
             )
         if (
             authority.get("mode") != "RUST_SHADOW"

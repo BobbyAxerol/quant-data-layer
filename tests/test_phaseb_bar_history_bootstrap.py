@@ -6,6 +6,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+
+import yaml
 from unittest.mock import AsyncMock, patch
 
 from qdl.adapters.binance.bar_edge import (
@@ -406,3 +408,124 @@ class StableBarBootstrapTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BarEdgeDeploymentShapeTests(unittest.TestCase):
+    """The edge must follow the configured deployment, not a fixed market list.
+
+    It previously refused to start unless Binance Spot/USDM and OKX Spot/SWAP
+    were all present, so a deployment could not drop a zero-demand market or
+    add a venue without editing this class.
+    """
+
+    CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
+    ACQUISITION_PATH = ROOT / "config/v2/stable-acquisition-bindings.yaml"
+
+    def setUp(self) -> None:
+        self.catalog = StableSourceCatalog.load(self.CATALOG_PATH)
+        self.acquisition = StableAcquisitionPlan.load(
+            self.ACQUISITION_PATH, catalog=self.catalog
+        )
+        self.authority = stable_authority_record(
+            rust_image_digest="d" * 64,
+            capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
+            contract=ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto",
+            partition_plan=self.ACQUISITION_PATH.read_bytes(),
+            effective_at_ns=time.time_ns(),
+        )
+
+    class _Publisher:
+        def publish_many(self, values):
+            return tuple(range(len(tuple(values))))
+
+    def _edge(self, catalog, acquisition):
+        return StableBinanceBarEdge(
+            catalog=catalog,
+            acquisition=acquisition,
+            authority=self.authority,
+            publisher=self._Publisher(),
+            warmup_rows=2,
+            clock=lambda: 180.0,
+        )
+
+    def _rest_bar_binding_ids(self, catalog, acquisition) -> set[str]:
+        by_id = {item.binding_id: item for item in catalog.bindings}
+        return {
+            item.binding_id
+            for item in acquisition.bindings
+            if item.mode == "PYTHON_REST"
+            and by_id[item.binding_id].feed.value == "BAR"
+        }
+
+    def _reduced(self, directory: Path, keep: set[tuple[str, str]]):
+        """Write a catalog/acquisition pair limited to the given (venue, market)."""
+        catalog_raw = yaml.safe_load(self.CATALOG_PATH.read_text(encoding="utf-8"))
+        keep_uids = {
+            item["instrument_uid"]
+            for item in catalog_raw["instruments"]
+            if (item["venue"], item["market"]) in keep
+        }
+        catalog_raw["instruments"] = [
+            item for item in catalog_raw["instruments"]
+            if item["instrument_uid"] in keep_uids
+        ]
+        catalog_raw["bindings"] = [
+            item for item in catalog_raw["bindings"]
+            if item["instrument_uid"] in keep_uids
+        ]
+        kept_bindings = {item["binding_id"] for item in catalog_raw["bindings"]}
+        acquisition_raw = yaml.safe_load(
+            self.ACQUISITION_PATH.read_text(encoding="utf-8")
+        )
+        acquisition_raw["bindings"] = [
+            item for item in acquisition_raw["bindings"]
+            if item["binding_id"] in kept_bindings
+        ]
+        catalog_path = directory / "catalog.yaml"
+        acquisition_path = directory / "acquisition.yaml"
+        catalog_path.write_text(yaml.safe_dump(catalog_raw), encoding="utf-8")
+        acquisition_path.write_text(yaml.safe_dump(acquisition_raw), encoding="utf-8")
+        catalog = StableSourceCatalog.load(catalog_path)
+        return catalog, StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
+
+    def test_edge_serves_every_configured_rest_bar_binding(self):
+        edge = self._edge(self.catalog, self.acquisition)
+        owned = {
+            source.binding_id
+            for source, _ in edge.bindings + edge.okx_bindings
+        }
+        self.assertEqual(
+            owned, self._rest_bar_binding_ids(self.catalog, self.acquisition)
+        )
+
+    def test_binance_branch_carries_bar_bindings_only(self):
+        edge = self._edge(self.catalog, self.acquisition)
+        self.assertTrue(edge.bindings)
+        for source, acquisition in edge.bindings:
+            self.assertEqual(source.feed.value, "BAR")
+            self.assertEqual(acquisition.runtime, "BINANCE")
+
+    def test_a_deployment_without_spot_markets_is_accepted(self):
+        with tempfile.TemporaryDirectory() as raw:
+            catalog, acquisition = self._reduced(
+                Path(raw), {("BINANCE", "USDM"), ("OKX", "SWAP")}
+            )
+            markets = {
+                item.instrument.identity.market for item in catalog.bindings
+            }
+            self.assertEqual(markets, {"USDM", "SWAP"})
+            edge = self._edge(catalog, acquisition)
+            owned = {
+                source.binding_id
+                for source, _ in edge.bindings + edge.okx_bindings
+            }
+            self.assertEqual(
+                owned, self._rest_bar_binding_ids(catalog, acquisition)
+            )
+
+    def test_a_deployment_with_one_venue_is_accepted(self):
+        with tempfile.TemporaryDirectory() as raw:
+            catalog, acquisition = self._reduced(Path(raw), {("BINANCE", "USDM")})
+            edge = self._edge(catalog, acquisition)
+            self.assertTrue(edge.bindings)
+            self.assertEqual(edge.okx_bindings, ())
