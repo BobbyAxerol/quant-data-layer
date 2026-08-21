@@ -7412,3 +7412,62 @@ packet.
   revisions 2 and 3, kept the promotion scope at revision 1 with 12 bindings,
   and reported exactly twelve changed files with none added or removed. Nothing
   was written and no role was touched.
+
+#### C.16 Symbols Are Demand Entries, Not Packets
+
+**2026-08-21 status: `RULE RECORDED / DEFECT IDENTIFIED / NOT YET FIXED`:**
+
+**Standing rule.** A venue symbol is a line in a demand manifest, not a work
+packet. Certification gates apply to the demanded *set* - metadata
+authenticity, shard and capacity headroom, entitlement - never to each symbol
+in turn. BTC was the reference slice and ETH was the multi-symbol capability
+proof; both were justified as proofs of mechanism. Repeating that shape for a
+third symbol would be pure overhead and must not happen.
+
+**Nothing in the architecture requires per-symbol work.**
+
+- `partition_bindings` in the native Rust ingestor chunks bindings generically
+  up to a configured `max_subscriptions_per_connection` of at most 1024.
+- `plan_shards` is covered by `test_sharding_never_truncates_requested_subscriptions`.
+- `ProductionCatalogBuilder` generates instruments and bindings from authentic
+  Binance `exchangeInfo` and OKX V5 instruments captures, and
+  `ProductionDemandManifest.load_many` accepts up to 10000 declared consumers.
+
+**Defect that makes expansion feel manual.** The runtime catalog is a generated
+artifact whose generator inputs and provenance are not tracked:
+
+- no demand manifest and no provider metadata capture is version controlled;
+- `ProductionCatalogBuilder.write` emits `production-source-bindings.yaml`,
+  `production-acquisition-bindings.yaml` and
+  `production-catalog-provenance.json`, the last carrying
+  `fabricated_metadata: false` and the SHA-256 of each provider capture;
+- the repository instead carries `config/v2/stable-source-bindings.yaml` and
+  `config/v2/stable-acquisition-bindings.yaml` under different names, with the
+  provenance document dropped entirely and no capture hash anywhere in either
+  file.
+
+The catalog therefore cannot be regenerated or audited from this repository,
+and `fabricated_metadata: false` cannot be verified from it either. Adding a
+symbol degenerates into hand editing the catalog YAML, which is exactly what
+commit `8277ca1` did for the six ETH bindings, and that manual edit is the real
+reason each symbol has been behaving like a separate packet.
+
+**Fix, scheduled as the next source slice:**
+
+1. Version control the demand manifests that declare which registered consumer
+   requires which venue, market, product and symbol set.
+2. Record and commit the provider capture provenance, so
+   `fabricated_metadata: false` is checkable rather than asserted.
+3. Regenerate the catalog and acquisition plan from those tracked inputs and
+   review the deterministic diff, instead of editing the generated files.
+4. Add a test that fails when the committed catalog does not match a
+   regeneration from the committed inputs, so the two can never drift again.
+
+Combined with the pass-through decision in C.14, this makes wide-universe
+coverage cheap: instruments become catalog metadata generated from tracked
+demand, and only lossless live TRADE subscriptions continue to consume
+per-symbol connection capacity, which the existing sharding already bounds.
+
+**In-flight scope is not widened.** The multi-symbol ETH packet keeps its
+current shape and evidence. This rule and its fix apply from the next slice
+onward.
