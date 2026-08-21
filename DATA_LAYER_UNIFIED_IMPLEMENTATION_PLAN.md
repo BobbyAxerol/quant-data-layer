@@ -7525,3 +7525,96 @@ because of it.
 Evidence: complete network-off suite 589 tests with six environment skips, up
 from 581 by exactly the eight added cases. No runtime, image, bundle or
 provider state was touched.
+
+#### C.17 Generalised Test Strategy For Feeds, Venues And Consumers
+
+**2026-08-21 status: `STRATEGY RECORDED / COVERAGE ASSERTION NOT YET IMPLEMENTED`:**
+
+**Problem this replaces.** Test coverage has been written around the consumers
+that happened to exist: one symbol, one interval, the feeds the current alphas
+use. That shape hid three defects in this program alone - a deployment CLI that
+could not run, an OKX canonicaliser pinned to one minute, and a BAR edge that
+required a fixed market list - and each was found by inspection rather than by
+a failing test. A suite that enumerates today's consumers cannot certify
+tomorrow's.
+
+**Rule 1 - cases come from declared configuration, never from literals.**
+A test derives its cases from the catalog, the acquisition plan, the consumer
+manifests and the capability matrix. Adding a symbol, an interval, a venue or a
+consumer must add zero test code. `tests/test_catalog_demand_consistency.py`
+and `BarEdgeDeploymentShapeTests` are the reference shape: they assert
+relationships over whatever is configured, so they keep their meaning when the
+configuration grows.
+
+**Rule 2 - coverage is asserted, not assumed.** Every advertised capability
+must have a test that proves it, and a meta-test must fail when an advertised
+capability has no covering case. Without this, adding a feed to
+`stable-capabilities.yaml` silently ships an untested product.
+
+**Rule 3 - consumers are tested by class, not by name.** The classes are the
+cross product of consumer grade, recovery policy and execution dependency, not
+the list of registered ids. A new alpha, the portal edge or a research batch
+client must be a new manifest, not a new test.
+
+**Rule 4 - every entry point is driven end to end.** The recurring failure mode
+in this program was a test that exercised a library function while the wired
+path stayed broken: the bundle CLI, and the adapter-to-canonicaliser handoff.
+Each executable entry point, service constructor and adapter handoff needs at
+least one case that drives it as production drives it.
+
+**Rule 5 - fail-closed has a negative test per feed class.** Stale, gap,
+non-authoritative, wrong quantity unit, wrong session state, missing
+entitlement and unsupported interval each need a case proving refusal, per feed
+class rather than per symbol.
+
+**Rule 6 - real-provider smoke is bounded and never substitutes for fixtures.**
+Deterministic fixtures are the oracle. A networked check confirms the venue
+still behaves as the fixture claims; it is evidence about the provider, not
+about the code.
+
+**Dimensions the matrix must span.** These are independent, and coverage is the
+product of them, not a list of symbols:
+
+| Dimension | Values today | Values to expect |
+|---|---|---|
+| Feed shape | TRADE, QUOTE/BBO, BAR | L2 book, funding, open interest, basis, index/reference |
+| Venue family | `(venue, market, product_type)`, six today | Deribit options, further VN products |
+| Acquisition mode | `RUST_NATIVE`, `PYTHON_REST`, `PYTHON_VENDOR_SDK` | additional vendor edges |
+| Delivery class | lossless, latest-state coalescible | unchanged |
+| Recovery policy | `SNAPSHOT_AND_REPLAY`, `FRESH_SNAPSHOT` | `NONE` for fire-and-forget consumers |
+| Consumer grade | execution, internal alpha, monitoring | portal edge, research batch |
+| Session model | 24/7 crypto, VN sessions and holidays | further venue calendars |
+| Quantity unit | base, quote, contract | option contracts and multipliers |
+| Interval | `1m` advertised; `1m`..`1w` supported in code | month and quarter bars, which have no fixed duration |
+
+**Test layers, and what each is allowed to conclude.**
+
+1. *Contract and schema* - typed payloads, closed models, enum rejection.
+2. *Canonical identity and units* - exact decimals, timestamps, unit lineage.
+3. *Lifecycle and delivery* - bar in-progress to final to revision; replace-only
+   quote; lossless trade ordering. Per feed class.
+4. *Ordering, deduplication and gap* - sequence semantics per venue family.
+5. *Recovery* - cursor replay for `SNAPSHOT_AND_REPLAY`; window re-fetch for
+   `FRESH_SNAPSHOT`. A pass-through consumer must never be asserted to have
+   replay continuity.
+6. *Failure* - reconnect, session change, backpressure, broker interruption.
+7. *Entitlement and eligibility* - manifest revision, quota, scope, server-side
+   execution eligibility.
+8. *Compatibility* - V1 projection and legacy payload golden.
+9. *Capacity* - throughput, latency percentile, resource bound, shard headroom.
+10. *Bounded real provider* - the only networked layer, read-only, recorded as
+    provenance and hashes.
+
+**Definition of done for one cell of the matrix.** A `(feed shape, venue
+family, delivery class)` cell is closed when layers 1 to 8 pass deterministically
+for it, layer 9 has a recorded headroom figure, and layer 10 has a dated bounded
+capture. A consumer class is closed when every cell it declares is closed and
+its negative cases pass. A capability may not be advertised in
+`stable-capabilities.yaml` before its cell is closed.
+
+**Next implementation step.** Add the coverage meta-test required by rule 2: it
+reads `config/v2/stable-capabilities.yaml`, enumerates the advertised
+`(venue, market, product_type, feed)` cells, and fails when a cell has no
+registered deterministic case. That converts this strategy from prose into a
+gate, and it is the smallest change that stops the next capability from
+shipping untested.
