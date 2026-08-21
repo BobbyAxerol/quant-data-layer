@@ -7258,3 +7258,66 @@ untouched.
   `v2_final_bar_history_certified_1m_only` at three call sites. That gate is
   correct until the catalog advertises those intervals, and must be lifted in
   the same packet that certifies them, not before.
+
+#### C.14 BAR Serving Model: Materialized Binding Versus Governed Pass-Through
+
+**2026-08-21 status: `DESIGN DECISION RECORDED / NOT IMPLEMENTED`:**
+
+**Question.** Does interval and symbol expansion require one materialized
+binding per instrument, interval and feed?
+
+**What a BAR binding does today.** `StableBinanceBarEdge.bootstrap_history`
+fetches `warmup_rows` closed bars over REST and publishes them into Kafka,
+requiring an ACK for every record (`qdl/runtime/stable_bar_edge.py:290`); the
+service loop then publishes each newly closed bar. The Rust core canonicalises,
+the projector writes Redis, and `StableSpoolQueryBackend.history` answers warmup
+by reading the SQLite spool tail. A BAR binding therefore downloads and stores
+bars. It is not a wrapper over the provider endpoint, and it keeps running
+whether or not a consumer is asking for that series.
+
+**Why that model exists.** A consumer that declares
+`recovery: SNAPSHOT_AND_REPLAY` needs a durable offset to resume without a gap.
+`consumers/stable/trading-system-paper.yaml` declares exactly that for BAR.
+Materialisation is what makes a signed resume cursor possible, so the model is
+correct for that consumer class.
+
+**What the alpha fleet actually needs.** Batch warmup at start plus the newest
+closed bar each cycle. No cursor, no replay continuity. The selected acceptance
+alpha runs with `ALPHA_ENABLE_REALTIME_STREAM=false` and opens no stream at all.
+
+**Decision.** Serve BAR through two modes behind one public contract:
+
+1. *Materialized binding* — only for a slice a consumer explicitly declares with
+   cursor-replay recovery. It stays small and enumerated, as it is today.
+2. *Governed pass-through history* — any catalogued instrument at any supported
+   interval, resolved on demand with no binding, no Kafka publication, no spool
+   row and no checkpoint. It reuses
+   `fetch_closed_bar_history_raw_envelopes`, which already returns a
+   lineage-complete `RawProviderEnvelope` and already fails closed on a gap
+   inside the requested window.
+
+**Consequence.** Expansion cost moves from runtime bindings scaled by
+instrument x interval x feed to catalog metadata scaled by instrument. Three
+hundred instruments of metadata is cheap; eighteen hundred runtime bindings is
+not. The earlier proposal to enable five symbols across six intervals as thirty
+materialized BAR bindings is withdrawn: it was an artefact of assuming
+materialisation, and it would not have scaled to the 300 and 317 symbol
+universe alphas at all. One design now serves both.
+
+**Obligations the pass-through must keep.** Instrument identity from the
+catalog; exact Decimal and quantity units; provider provenance from the raw
+envelope; freshness computed from provider timestamps; gap rejection inside the
+fetched window; server-side execution eligibility; and the existing per-consumer
+entitlement and quota checks. None of these may be relaxed to make the route
+cheaper.
+
+**Open items before implementation:**
+
+- *Snapshot and cursor semantics.* A pass-through response can derive a snapshot
+  identity from the fetched window, but it cannot offer a durable replay offset.
+  Consumers that require replay continuity therefore stay on the materialized
+  path. This boundary must be explicit in the contract rather than blurred.
+- *Rate-limit amortisation.* Without a cache keyed on
+  `(instrument, interval, closed-bar open time)` every consumer request reaches
+  the venue. V1 already amortises this way, which is why it serves a wide
+  universe today.
