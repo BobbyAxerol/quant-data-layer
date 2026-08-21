@@ -248,7 +248,7 @@ def _requirement(binding, *, grade=ConsumerGrade.ALPHA, warmup=1):
 class StableCatalogContractTests(unittest.TestCase):
     def test_catalog_covers_equal_source_baseline_with_deterministic_identity(self):
         catalog = StableSourceCatalog.load(CATALOG_PATH)
-        self.assertEqual(len(catalog.bindings), 16)
+        self.assertEqual(len(catalog.bindings), 22)
         self.assertEqual(
             {(item.instrument.identity.venue, item.feed.value) for item in catalog.bindings},
             {

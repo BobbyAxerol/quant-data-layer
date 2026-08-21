@@ -5,7 +5,7 @@ metadata:
   owner: alpha-platform
   subject: spiffe://qdl/paper/alpha-okx-stable
   environment: paper
-  revision: 1
+  revision: 2
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -40,6 +40,31 @@ spec:
     bar_revision_policy: EMIT_REVISIONS
     interval: 1m
   - instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+    feed: TRADE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    warmup_limit: 0
+    max_freshness_ms: 15000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    warmup_limit: 500
+    max_freshness_ms: 180000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+    interval: 1m
+  - instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
     feed: TRADE
     consumer_grade: ALPHA
     source_policy_id: crypto_primary_v2

@@ -5,7 +5,7 @@ metadata:
   owner: data-platform
   subject: spiffe://qdl/paper/monitoring-multivenue-stable
   environment: paper
-  revision: 1
+  revision: 2
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -63,3 +63,27 @@ spec:
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: EMIT_REVISIONS
     interval: 1m
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: TRADE
+    consumer_grade: RESEARCH
+    source_policy_id: crypto_primary_v2
+    warmup_limit: 0
+    max_freshness_ms: 15000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+    feed: TRADE
+    consumer_grade: RESEARCH
+    source_policy_id: crypto_primary_v2
+    warmup_limit: 0
+    max_freshness_ms: 15000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST

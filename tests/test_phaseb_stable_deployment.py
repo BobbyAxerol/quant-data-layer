@@ -62,13 +62,10 @@ class StableDeploymentContractTests(unittest.TestCase):
                 self.assertIn(f"DNS:{alias}", script)
 
     def test_initial_authority_scope_is_explicit_and_excludes_dnse(self):
-        expected = {
-            item.binding_id
-            for item in self.catalog.bindings
-            if item.instrument.identity.venue in {"BINANCE", "OKX"}
-        }
+        expected = set(self.promotion_scope.binding_ids)
         self.assertEqual(set(self.promotion_scope.binding_ids), expected)
         self.assertEqual(len(expected), 12)
+        self.assertFalse(any("eth" in binding_id for binding_id in expected))
         runtime = self.acquisition.production_core_config(
             catalog=self.catalog,
             raw_authority=self.authority,
@@ -109,9 +106,9 @@ class StableDeploymentContractTests(unittest.TestCase):
                 AuthorityPromotionScope.load(path, catalog=self.catalog)
 
     def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
-        self.assertEqual(len(self.catalog.bindings), 16)
-        self.assertEqual(len(self.acquisition.bindings), 16)
-        self.assertEqual(self.acquisition.revision, 3)
+        self.assertEqual(len(self.catalog.bindings), 22)
+        self.assertEqual(len(self.acquisition.bindings), 22)
+        self.assertEqual(self.acquisition.revision, 4)
         modes = {item.mode for item in self.acquisition.bindings}
         self.assertEqual(modes, {"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
         native = self.acquisition.native_ingestor_configs(
@@ -121,7 +118,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             set(native),
             {"binance-usdm", "binance-spot", "okx-swap", "okx-spot"},
         )
-        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 8)
+        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 12)
         self.assertTrue(all(item["authority"]["mode"] == "RUST_SHADOW" for item in native.values()))
         self.assertEqual(
             {
@@ -132,12 +129,23 @@ class StableDeploymentContractTests(unittest.TestCase):
             {
                 "binance-usdm-btcusdt-bar-1m",
                 "binance-spot-btcusdt-bar-1m",
+                "binance-usdm-ethusdt-bar-1m",
                 "okx-swap-btcusdt-bar-1m",
+                "okx-swap-eth-usdt-swap-bar-1m",
                 "okx-spot-btcusdt-bar-1m",
             },
         )
         self.assertEqual(
             {item["max_inflight_publishes"] for item in native.values()}, {512}
+        )
+        self.assertEqual(
+            {key: item["max_subscriptions_per_connection"] for key, item in native.items()},
+            {
+                "binance-spot": 200,
+                "binance-usdm": 200,
+                "okx-spot": 100,
+                "okx-swap": 100,
+            },
         )
         generation_paths = {
             item["generation_state_path"] for item in native.values()
@@ -169,6 +177,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             {
                 "okx-spot-btcusdt-quote": "NONE",
                 "okx-swap-btcusdt-quote": "NONE",
+                "okx-swap-eth-usdt-swap-quote": "NONE",
             },
         )
 
@@ -190,7 +199,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             {item["source_id"]: item["require_final_bar"] for item in bindings},
             finality_by_source,
         )
-        self.assertEqual(sum(finality_by_source.values()), 6)
+        self.assertEqual(sum(finality_by_source.values()), 8)
         self.assertFalse(core["authority"]["public_write_allowed"])
         self.assertFalse(core["authority"]["legacy_write_allowed"])
         self.assertFalse(core["core"]["allow_test_provenance"])
@@ -288,22 +297,19 @@ class StableDeploymentContractTests(unittest.TestCase):
             publisher=publisher,
             clock=lambda: 120.0,
         )
+        binance_count = len(edge.bindings)
+        okx_count = len(edge.okx_bindings)
+        total_count = binance_count + okx_count
         with patch(
             "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
-            side_effect=(
-                Envelope("BINANCE", 60_000), Envelope("BINANCE", 60_000),
-                Envelope("BINANCE", 60_000), Envelope("BINANCE", 60_000),
-            ),
+            side_effect=[Envelope("BINANCE", 60_000)] * (binance_count * 2),
         ) as binance_latest, patch(
             "qdl.runtime.stable_bar_edge.fetch_okx_latest",
-            side_effect=(
-                Envelope("OKX", 60_000), Envelope("OKX", 60_000),
-                Envelope("OKX", 60_000), Envelope("OKX", 60_000),
-            ),
+            side_effect=[Envelope("OKX", 60_000)] * (okx_count * 2),
         ) as okx_latest:
-            self.assertEqual(edge.run_cycle(), 4)
+            self.assertEqual(edge.run_cycle(), total_count)
             self.assertEqual(edge.run_cycle(), 0)
-        self.assertEqual([len(batch) for batch in publisher.batches], [4])
+        self.assertEqual([len(batch) for batch in publisher.batches], [total_count])
         self.assertEqual(
             {call.kwargs["now_ms"] for call in binance_latest.call_args_list},
             {110_000},
@@ -355,6 +361,9 @@ class StableDeploymentContractTests(unittest.TestCase):
             for source, _acquisition in edge.bindings + edge.okx_bindings
         ]
         edge._last_open_ms.update({binding_id: 60_000 for binding_id in binding_ids})
+        binance_count = len(edge.bindings)
+        okx_count = len(edge.okx_bindings)
+        expected_catchup = 2 * (binance_count + okx_count)
         binance_history = (
             Envelope("BINANCE", 120_000),
             Envelope("BINANCE", 180_000),
@@ -365,18 +374,18 @@ class StableDeploymentContractTests(unittest.TestCase):
         )
         with patch(
             "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
-            side_effect=[Envelope("BINANCE", 180_000)] * 4,
+            side_effect=[Envelope("BINANCE", 180_000)] * (binance_count * 2),
         ), patch(
             "qdl.runtime.stable_bar_edge.fetch_okx_latest",
             new_callable=AsyncMock,
-            side_effect=[Envelope("OKX", 180_000)] * 4,
+            side_effect=[Envelope("OKX", 180_000)] * (okx_count * 2),
         ), patch(
             "qdl.runtime.stable_bar_edge.fetch_binance_history",
-            side_effect=[binance_history] * 4,
+            side_effect=[binance_history] * (binance_count * 2),
         ), patch(
             "qdl.runtime.stable_bar_edge.fetch_okx_history",
             new_callable=AsyncMock,
-            side_effect=[okx_history] * 4,
+            side_effect=[okx_history] * (okx_count * 2),
         ):
             with self.assertRaisesRegex(RuntimeError, "injected Kafka ACK failure"):
                 edge.run_cycle()
@@ -384,9 +393,12 @@ class StableDeploymentContractTests(unittest.TestCase):
                 edge._last_open_ms,
                 {binding_id: 60_000 for binding_id in binding_ids},
             )
-            self.assertEqual(edge.run_cycle(), 8)
+            self.assertEqual(edge.run_cycle(), expected_catchup)
 
-        self.assertEqual([len(batch) for batch in publisher.batches], [8, 8])
+        self.assertEqual(
+            [len(batch) for batch in publisher.batches],
+            [expected_catchup, expected_catchup],
+        )
         self.assertEqual(
             edge._last_open_ms,
             {binding_id: 180_000 for binding_id in binding_ids},
@@ -431,11 +443,11 @@ class StableDeploymentContractTests(unittest.TestCase):
         edge._last_open_ms.update({binding_id: 60_000 for binding_id in binding_ids})
         with patch(
             "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
-            side_effect=[Envelope("BINANCE", 180_000)] * 2,
+            side_effect=[Envelope("BINANCE", 180_000)] * len(edge.bindings),
         ), patch(
             "qdl.runtime.stable_bar_edge.fetch_okx_latest",
             new_callable=AsyncMock,
-            side_effect=[Envelope("OKX", 180_000)] * 2,
+            side_effect=[Envelope("OKX", 180_000)] * len(edge.okx_bindings),
         ), patch(
             "qdl.runtime.stable_bar_edge.fetch_binance_history",
             return_value=(Envelope("BINANCE", 180_000),),

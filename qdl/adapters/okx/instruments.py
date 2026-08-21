@@ -84,14 +84,21 @@ def parse_public_instrument(
         multiplier_text = format(Decimal(ct_val_text) * Decimal(ct_mult_text), "f")
     except InvalidOperation as exc:
         raise ValueError("OKX contract multiplier fields must be exact decimals") from exc
+    family_parts = identity.canonical_symbol.split("-")
+    family_base = family_parts[0] if len(family_parts) >= 2 else ""
+    family_quote = family_parts[-1] if len(family_parts) >= 2 else ""
     record = InstrumentRecord(
         identity=identity,
         metadata_revision=metadata_revision,
         asset_class=_ASSET_CLASSES[inst_type],
         native_symbol=inst_id,
-        base_asset=str(payload.get("baseCcy") or payload.get("ctValCcy") or "").upper(),
-        quote_asset=str(payload.get("quoteCcy") or "").upper(),
-        settlement_asset=str(payload.get("settleCcy") or payload.get("quoteCcy") or "").upper(),
+        base_asset=str(
+            payload.get("baseCcy") or payload.get("ctValCcy") or family_base
+        ).upper(),
+        quote_asset=str(payload.get("quoteCcy") or family_quote).upper(),
+        settlement_asset=str(
+            payload.get("settleCcy") or payload.get("quoteCcy") or family_quote
+        ).upper(),
         price_tick=CanonicalDecimal.from_text(_required(payload, "tickSz")),
         quantity_step=CanonicalDecimal.from_text(_required(payload, "lotSz")),
         contract_multiplier=CanonicalDecimal.from_text(multiplier_text),

@@ -1,6 +1,6 @@
 schema: qdl.v2.stable-source-bindings.v1
 canonical_stream: md.canonical.v2
-catalog_revision: 2
+catalog_revision: 3
 source_policy_revision: 1
 authority_revision: 1
 instruments:
@@ -112,6 +112,49 @@ instruments:
   contract_multiplier: '1'
   session_calendar_id: VN_EQUITIES
   attributes: {}
+- instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  instrument_id: BINANCE.USDM.PERPETUAL.ETH-USDT
+  metadata_revision: 1
+  venue: BINANCE
+  market: USDM
+  product_type: PERPETUAL
+  canonical_symbol: ETH-USDT
+  native_symbol: ETHUSDT
+  asset_class: DERIVATIVE
+  base_asset: ETH
+  quote_asset: USDT
+  settlement_asset: USDT
+  price_tick: '0.01'
+  quantity_step: '0.001'
+  contract_multiplier: '1'
+  session_calendar_id: CRYPTO_24X7
+  attributes:
+    contractType: PERPETUAL
+- instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  instrument_id: OKX.SWAP.PERPETUAL.ETH-USDT
+  metadata_revision: 1
+  venue: OKX
+  market: SWAP
+  product_type: PERPETUAL
+  canonical_symbol: ETH-USDT
+  native_symbol: ETH-USDT-SWAP
+  asset_class: DERIVATIVE
+  base_asset: ETH
+  quote_asset: USDT
+  settlement_asset: USDT
+  price_tick: '0.01'
+  quantity_step: '0.01'
+  contract_multiplier: '0.1'
+  session_calendar_id: CRYPTO_24X7
+  attributes:
+    ctMult: '1'
+    ctType: linear
+    ctVal: '0.1'
+    ctValCcy: ETH
+    groupId: '4'
+    instFamily: ETH-USDT
+    instIdCode: '10461'
+    uly: ETH-USDT
 bindings:
 - binding_id: binance-usdm-btcusdt-trade
   instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
@@ -384,4 +427,106 @@ bindings:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: false
+  v1_compatibility: NONE
+- binding_id: binance-usdm-ethusdt-bar-1m
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 1m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-1m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-rest/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-quote
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: QUOTE
+  interval: null
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-quote-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5000
+    require_final_bar: false
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: binance-usdm-ethusdt-trade
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: TRADE
+  interval: null
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-trade-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: true
+  v1_compatibility: BINANCE_TRADE_MARKET_AND_GENERIC
+- binding_id: okx-swap-eth-usdt-swap-bar-1m
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 1m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-1m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-quote
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: QUOTE
+  interval: null
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-quote-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5000
+    require_final_bar: false
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-trade
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: TRADE
+  interval: null
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-trade-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: true
   v1_compatibility: NONE

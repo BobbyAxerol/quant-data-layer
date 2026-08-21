@@ -21,6 +21,19 @@ BINANCE = {
     "serverTime": 1000,
     "symbols": [
         {
+            "symbol": "BTCUSDT",
+            "status": "TRADING",
+            "contractType": "PERPETUAL",
+            "baseAsset": "BTC",
+            "quoteAsset": "USDT",
+            "marginAsset": "USDT",
+            "deliveryDate": 0,
+            "filters": [
+                {"filterType": "PRICE_FILTER", "tickSize": "0.10"},
+                {"filterType": "LOT_SIZE", "stepSize": "0.001"},
+            ],
+        },
+        {
             "symbol": "ETHUSDT",
             "status": "TRADING",
             "contractType": "PERPETUAL",
@@ -51,17 +64,37 @@ BINANCE = {
 OKX = [
     {
         "instType": "SWAP",
+        "instId": "BTC-USDT-SWAP",
+        "instFamily": "BTC-USDT",
+        "baseCcy": "BTC",
+        "quoteCcy": "USDT",
+        "settleCcy": "USDT",
+        "tickSz": "0.1",
+        "lotSz": "1",
+        "ctVal": "0.01",
+        "ctMult": "1",
+        "state": "live",
+    },
+    {
+        "instType": "SWAP",
         "instId": "ETH-USDT-SWAP",
         "instFamily": "ETH-USDT",
-        "baseCcy": "ETH",
-        "quoteCcy": "USDT",
+        "baseCcy": "",
+        "quoteCcy": "",
+        "ctValCcy": "ETH",
         "settleCcy": "USDT",
         "tickSz": "0.01",
         "lotSz": "1",
         "ctVal": "0.1",
         "ctMult": "1",
         "state": "live",
-    }
+    },
+    {
+        "instType": "SWAP",
+        "instId": "PREOPEN-USDT-SWAP",
+        "instFamily": "",
+        "state": "preopen",
+    },
 ]
 
 
@@ -76,6 +109,18 @@ class ProductionCatalogTests(unittest.TestCase):
                     "consumer_id": "trading-system.execution.v2",
                     "consumer_grade": "EXECUTION",
                     "requirements": [
+                        {
+                            "venue": "BINANCE", "market": "USDM",
+                            "product_type": "PERPETUAL", "native_symbol": "BTCUSDT",
+                            "feed": "TRADE", "interval": None,
+                            "source_policy_id": "crypto_primary_v2",
+                        },
+                        {
+                            "venue": "OKX", "market": "SWAP",
+                            "product_type": "PERPETUAL", "native_symbol": "BTC-USDT-SWAP",
+                            "feed": "BAR", "interval": "1m",
+                            "source_policy_id": "crypto_primary_v2",
+                        },
                         {
                             "venue": "BINANCE", "market": "USDM",
                             "product_type": "PERPETUAL", "native_symbol": "ETHUSDT",
@@ -145,19 +190,30 @@ class ProductionCatalogTests(unittest.TestCase):
             self.assertEqual(first.source_catalog, second.source_catalog)
             self.assertEqual(first.acquisition_plan, second.acquisition_plan)
             self.assertEqual(first.provenance["fabricated_metadata"], False)
-            self.assertEqual(first.provenance["instrument_count"], 2)
+            self.assertEqual(first.provenance["instrument_count"], 4)
             paths = first.write(root / "out")
             catalog = StableSourceCatalog.load(paths["source_catalog"])
-            self.assertEqual(len(catalog.bindings), 2)
+            self.assertEqual(len(catalog.bindings), 4)
             self.assertEqual(
                 {item.instrument.instrument_id for item in catalog.bindings},
                 {
+                    "BINANCE.USDM.PERPETUAL.BTC-USDT",
                     "BINANCE.USDM.PERPETUAL.ETH-USDT",
+                    "OKX.SWAP.PERPETUAL.BTC-USDT",
                     "OKX.SWAP.PERPETUAL.ETH-USDT",
                 },
             )
+            eth_okx = next(
+                item.instrument
+                for item in catalog.bindings
+                if item.instrument.instrument_id == "OKX.SWAP.PERPETUAL.ETH-USDT"
+            )
             self.assertEqual(
-                json.loads(Path(paths["provenance"]).read_text())["binding_count"], 2
+                (eth_okx.base_asset, eth_okx.quote_asset, eth_okx.settlement_asset),
+                ("ETH", "USDT", "USDT"),
+            )
+            self.assertEqual(
+                json.loads(Path(paths["provenance"]).read_text())["binding_count"], 4
             )
             acquisition = StableAcquisitionPlan.load(
                 paths["acquisition_plan"], catalog=catalog
@@ -187,7 +243,7 @@ class ProductionCatalogTests(unittest.TestCase):
                 promotion_scope=promotion_scope,
                 worker_index=1,
             )
-            self.assertEqual(len(runtime["slices"]), 2)
+            self.assertEqual(len(runtime["slices"]), 4)
             self.assertEqual(
                 {item["subscription_id"] for item in runtime["slices"]},
                 {item.source_id for item in catalog.bindings},

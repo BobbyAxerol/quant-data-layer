@@ -7059,3 +7059,80 @@ untouched.
   remains open and requires a bounded diagnostic capture on recurrence or a
   clean longer soak. No freshness threshold, cursor, authority or provider
   timestamp was weakened to force acceptance.
+
+#### C.11 Multi-Symbol Crypto Capability And Fresh Consumer Projection Closure
+
+**2026-08-21 status: `APPROVED / IMPLEMENTATION IN PROGRESS / RUNTIME UNCHANGED`:**
+
+- The BTC-only Binance USD-M and OKX Swap slices were certification seeds, not
+  the intended production capability. V2 must support a governed list of any
+  active Binance USD-M perpetual and OKX Swap instrument discovered from real
+  venue metadata. Strategy/source code must never hardcode BTC as a product
+  boundary.
+- “Multi-symbol” means provider-wide capability through immutable instrument
+  metadata plus consumer demand manifests. It does **not** authorize opening
+  every venue stream continuously. Lossless `TRADE` remains canonical and is
+  acquired/served only for registered demand; `BAR 1m` warmup remains bounded,
+  final and provider-authentic. Per-consumer entitlements, stream quotas and
+  source-policy checks continue to fail closed.
+- Extend the production catalog/deployment tooling so more than one symbol per
+  venue is generated deterministically from authentic Binance `exchangeInfo`
+  and OKX V5 instruments captures. Add sharding/capacity validation so a demand
+  set is never silently truncated and a provider subscription limit cannot be
+  exceeded. Binance, OKX, VN and V1 remain isolated by venue/product identity.
+- The recurring Trading System `DATA_STALE` is not fixed by increasing the
+  five-second execution freshness limit. Canonical lossless trade remains
+  unchanged; the downstream Redis compatibility cache is explicitly a
+  latest-state consumer projection and may coalesce only already-consumed
+  same-instrument trade snapshots inside one bounded batch. Direct alpha SDK
+  streams retain every canonical trade and acknowledge only after consumer
+  acceptance.
+- Source gates: multi-symbol catalog/golden tests for Binance USD-M and OKX
+  Swap, duplicate/retired/wrong-product rejection, deterministic metadata
+  revision, non-truncating shard/capacity tests, exact SDK artifact rebuild and
+  full network-off Python/Rust/contract suites. Runtime gates use real provider
+  bytes for at least two symbols per venue, prove identity/Decimal/time/order/
+  freshness and lossless alpha delivery, then prove the Trading System latest
+  cache remains below freshness bounds with stable cursor/resource use.
+- Consumer acceptance uses one disposable paper alpha deployment with strategy
+  submission disabled or an exact disposable account scope. It must warm up and
+  append closed bars for BTCUSDT plus ETHUSDT through V2, observe live V2 data,
+  preserve signal assumptions, create no broker effect, then be composed down
+  and have only its test namespace cleaned. Existing stopped alphas, V1 port
+  8100, production Redis/PostgreSQL and durable provider data are invariants.
+- Rollback is role-scoped: restore the prior immutable Data Layer/Trading System
+  images and V2 route/catalog manifests, set the alpha consumer back to `V1`,
+  and stop only the disposable alpha. No cursor, audit, provider capture or
+  terminal execution evidence is deleted.
+
+**2026-08-21 source slice result: `PASS / AUTHORITY AND RUNTIME UNCHANGED`:**
+
+- The stable catalog now contains 22 bindings. Binance USD-M and OKX Swap each
+  include BTC and ETH `TRADE`, `QUOTE` and final `BAR 1m` bindings; the new ETH
+  instrument metadata was derived from authentic Binance `exchangeInfo` and OKX
+  V5 instruments responses with `fabricated_metadata=false`. Exact consumer
+  manifests were expanded; wildcard entitlements remain prohibited.
+- Production catalog parsing now validates every demanded OKX instrument while
+  ignoring unrelated malformed/pre-open rows. This removes a provider-wide
+  failure mode without weakening demanded-instrument identity, active-state,
+  Decimal or product checks.
+- Native Rust ingestion now partitions provider subscriptions without
+  truncation (`205 -> 100/100/5` oracle), gives each shard a separate producer,
+  session and durable connection generation, and retains `LOSSLESS` delivery
+  for `TRADE`. Binance and OKX limits are emitted as 200 and 100 subscriptions
+  per connection respectively. The multi-venue BAR edge no longer assumes one
+  symbol; it requires the Spot plus derivative market families and checkpoints
+  every configured binding.
+- Test-first findings were closed: the initial Rust build exposed missing
+  `Vec<RawBinding>` inference and strict clippy exposed an eight-argument OKX
+  service function. Explicit vectors plus `OkxServiceShard` fixed both without
+  suppressing lints or changing provider semantics. Focused Python tests passed
+  59/59 with one intentional skip; full network-off Python tests passed 558/558
+  with six environment skips; Rust release build, rustfmt, strict clippy and the
+  exact 205-binding sharding test passed.
+- The six ETH bindings deliberately remain outside
+  `stable-authority-promotion-scope.yaml`. This source result proves capability
+  and shadow safety only. Promotion to Rust primary requires an exact authority
+  packet naming those six bindings, role-only rollback and real-provider
+  acceptance; it must not be inferred from catalog presence. V1 and all running
+  services remain unchanged at this checkpoint.

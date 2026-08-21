@@ -109,7 +109,17 @@ class StableBinanceBarEdge:
                 and pair[0].feed.value == "BAR"
             )
         )
-        if len(self.bindings) != 2 or len(self.okx_bindings) != 2:
+        binance_markets = {
+            source.instrument.identity.market
+            for source, _acquisition in self.bindings
+        }
+        okx_markets = {
+            source.instrument.identity.market
+            for source, _acquisition in self.okx_bindings
+        }
+        if not {"SPOT", "USDM"}.issubset(binance_markets) or not {
+            "SPOT", "SWAP"
+        }.issubset(okx_markets):
             raise ValueError(
                 "stable crypto BAR edge requires Binance and OKX Spot/derivative bindings"
             )

@@ -243,7 +243,7 @@ class StableBarBootstrapTests(unittest.TestCase):
             effective_at_ns=time.time_ns(),
         )
 
-    def test_bootstrap_publishes_four_real_provider_batches_once(self):
+    def test_bootstrap_publishes_multi_symbol_real_provider_batches_once(self):
         class Envelope:
             def __init__(self, venue: str, open_time: int):
                 payload = (
@@ -279,10 +279,11 @@ class StableBarBootstrapTests(unittest.TestCase):
             new_callable=AsyncMock,
             return_value=(Envelope("OKX", 60_000), Envelope("OKX", 120_000)),
         ):
-            self.assertEqual(edge.bootstrap_history(), 8)
+            expected_bindings = len(edge.bindings) + len(edge.okx_bindings)
+            self.assertEqual(edge.bootstrap_history(), expected_bindings * 2)
             self.assertEqual(edge.bootstrap_history(), 0)
-        self.assertEqual([len(item) for item in publisher.batches], [2, 2, 2, 2])
-        self.assertEqual(len(edge._last_open_ms), 4)
+        self.assertEqual([len(item) for item in publisher.batches], [2] * expected_bindings)
+        self.assertEqual(len(edge._last_open_ms), expected_bindings)
         self.assertTrue(edge._history_bootstrapped)
 
     def test_durable_ack_watermark_skips_overlapping_restart_bootstrap(self):
@@ -330,7 +331,8 @@ class StableBarBootstrapTests(unittest.TestCase):
                     Envelope("OKX", 120_000),
                 ),
             ):
-                self.assertEqual(first.bootstrap_history(), 8)
+                expected_bindings = len(first.bindings) + len(first.okx_bindings)
+                self.assertEqual(first.bootstrap_history(), expected_bindings * 2)
 
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v1")

@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures_util::future::try_join_all;
 use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
 use prost::Message as ProstMessage;
@@ -128,9 +129,22 @@ struct IngestorConfig {
     metrics_every_events: u64,
     generation_state_path: String,
     max_inflight_publishes: usize,
+    #[serde(default = "default_max_subscriptions_per_connection")]
+    max_subscriptions_per_connection: usize,
     latest_state_flush_ms: u64,
     authority: AuthorityRecord,
     bindings: Vec<RawBinding>,
+}
+
+fn default_max_subscriptions_per_connection() -> usize {
+    100
+}
+
+fn partition_bindings(bindings: &[RawBinding], max_subscriptions: usize) -> Vec<Vec<RawBinding>> {
+    bindings
+        .chunks(max_subscriptions)
+        .map(|chunk| chunk.to_vec())
+        .collect()
 }
 
 impl IngestorConfig {
@@ -149,6 +163,8 @@ impl IngestorConfig {
             || self.metrics_every_events == 0
             || self.max_inflight_publishes == 0
             || self.max_inflight_publishes > 4_096
+            || self.max_subscriptions_per_connection == 0
+            || self.max_subscriptions_per_connection > 1_024
             || self.latest_state_flush_ms == 0
             || self.latest_state_flush_ms > 1_000
             || self.bindings.is_empty()
@@ -530,16 +546,16 @@ async fn reserve(accepted: &AtomicU64, max_events: u64) -> bool {
     }
 }
 
-async fn run_binance(
+async fn run_binance_connection(
     config: Arc<IngestorConfig>,
+    shard_index: usize,
+    shard_bindings: Vec<RawBinding>,
     accepted: Arc<AtomicU64>,
     coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let bindings: HashMap<String, RawBinding> = config
-        .bindings
-        .iter()
-        .cloned()
+    let bindings: HashMap<String, RawBinding> = shard_bindings
+        .into_iter()
         .map(|binding| (binding.native_channel.clone(), binding))
         .collect();
     let streams = bindings.keys().cloned().collect::<Vec<_>>().join("/");
@@ -547,7 +563,7 @@ async fn run_binance(
         "{}?streams={streams}",
         config.websocket_url.trim_end_matches('?')
     );
-    let publisher = RawPublisher::new(&config, "binance")?;
+    let publisher = RawPublisher::new(&config, &format!("binance-{shard_index:03}"))?;
     let backoff = BackoffPolicy {
         initial_ms: 250,
         maximum_ms: 30_000,
@@ -555,7 +571,7 @@ async fn run_binance(
         jitter_bps: 2_000,
     }
     .validate()?;
-    let generation_path = format!("{}.binance", config.generation_state_path);
+    let generation_path = format!("{}.binance-{shard_index:03}", config.generation_state_path);
     let expires = deadline(config.max_runtime_seconds);
     let mut failures = 0_u32;
     while !should_stop(&stopped, &accepted, config.max_events, expires) {
@@ -563,7 +579,7 @@ async fn run_binance(
         match connect_async(&url).await {
             Ok((mut socket, _)) => {
                 let session_id = format!(
-                    "binance-{}-{generation}-{}",
+                    "binance-{}-{shard_index:03}-{generation}-{}",
                     config.market_name(),
                     now_ns()?
                 );
@@ -752,6 +768,27 @@ async fn run_binance(
     Ok(())
 }
 
+async fn run_binance(
+    config: Arc<IngestorConfig>,
+    accepted: Arc<AtomicU64>,
+    coalesced_latest: Arc<AtomicU64>,
+    stopped: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let shards = partition_bindings(&config.bindings, config.max_subscriptions_per_connection);
+    let futures = shards.into_iter().enumerate().map(|(index, bindings)| {
+        run_binance_connection(
+            config.clone(),
+            index + 1,
+            bindings,
+            accepted.clone(),
+            coalesced_latest.clone(),
+            stopped.clone(),
+        )
+    });
+    try_join_all(futures).await?;
+    Ok(())
+}
+
 impl IngestorConfig {
     fn market_name(&self) -> &str {
         self.bindings
@@ -761,24 +798,38 @@ impl IngestorConfig {
     }
 }
 
-async fn run_okx_service(
+struct OkxServiceShard {
     service: OkxService,
+    shard_index: usize,
     url: String,
     bindings: Vec<RawBinding>,
+}
+
+async fn run_okx_service(
+    shard: OkxServiceShard,
     config: Arc<IngestorConfig>,
     accepted: Arc<AtomicU64>,
     coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let OkxServiceShard {
+        service,
+        shard_index,
+        url,
+        bindings,
+    } = shard;
     if bindings.is_empty() {
         return Ok(());
     }
     let publisher = RawPublisher::new(
         &config,
-        match service {
-            OkxService::Public => "okx-public",
-            OkxService::Business => "okx-business",
-        },
+        &format!(
+            "{}-{shard_index:03}",
+            match service {
+                OkxService::Public => "okx-public",
+                OkxService::Business => "okx-business",
+            }
+        ),
     )?;
     let subscriptions: Vec<OkxSubscription> = bindings
         .iter()
@@ -803,7 +854,10 @@ async fn run_okx_service(
         OkxService::Public => "public",
         OkxService::Business => "business",
     };
-    let generation_path = format!("{}.okx-{service_name}", config.generation_state_path);
+    let generation_path = format!(
+        "{}.okx-{service_name}-{shard_index:03}",
+        config.generation_state_path
+    );
     let mut failures = 0_u32;
     let mut budget = ControlRequestBudget::default();
     while !should_stop(&stopped, &accepted, config.max_events, expires) {
@@ -834,7 +888,7 @@ async fn run_okx_service(
                     }
                 }
                 let session_id = format!(
-                    "okx-{}-{generation}-{}",
+                    "okx-{}-{shard_index:03}-{generation}-{}",
                     match service {
                         OkxService::Public => "public",
                         OkxService::Business => "business",
@@ -1059,7 +1113,7 @@ async fn run_okx(
     coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let public = config
+    let public: Vec<RawBinding> = config
         .bindings
         .iter()
         .filter(|binding| {
@@ -1072,7 +1126,7 @@ async fn run_okx(
         })
         .cloned()
         .collect();
-    let business = config
+    let business: Vec<RawBinding> = config
         .bindings
         .iter()
         .filter(|binding| {
@@ -1085,29 +1139,46 @@ async fn run_okx(
         })
         .cloned()
         .collect();
-    tokio::try_join!(
-        run_okx_service(
-            OkxService::Public,
-            config.websocket_url.clone(),
-            public,
+    let business_url = config
+        .business_websocket_url
+        .clone()
+        .ok_or("OKX business WebSocket URL is required")?;
+    let mut futures = Vec::new();
+    for (index, bindings) in partition_bindings(&public, config.max_subscriptions_per_connection)
+        .into_iter()
+        .enumerate()
+    {
+        futures.push(run_okx_service(
+            OkxServiceShard {
+                service: OkxService::Public,
+                shard_index: index + 1,
+                url: config.websocket_url.clone(),
+                bindings,
+            },
             config.clone(),
             accepted.clone(),
             coalesced_latest.clone(),
             stopped.clone(),
-        ),
-        run_okx_service(
-            OkxService::Business,
-            config
-                .business_websocket_url
-                .clone()
-                .ok_or("OKX business WebSocket URL is required")?,
-            business,
-            config,
-            accepted,
-            coalesced_latest,
-            stopped,
-        ),
-    )?;
+        ));
+    }
+    for (index, bindings) in partition_bindings(&business, config.max_subscriptions_per_connection)
+        .into_iter()
+        .enumerate()
+    {
+        futures.push(run_okx_service(
+            OkxServiceShard {
+                service: OkxService::Business,
+                shard_index: index + 1,
+                url: business_url.clone(),
+                bindings,
+            },
+            config.clone(),
+            accepted.clone(),
+            coalesced_latest.clone(),
+            stopped.clone(),
+        ));
+    }
+    try_join_all(futures).await?;
     Ok(())
 }
 
@@ -1221,8 +1292,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        next_connection_generation, DeliveryClass, LatestStateBuffer, PendingRawFrame,
-        ProviderRuntime, RawBinding, RawFeed,
+        next_connection_generation, partition_bindings, DeliveryClass, LatestStateBuffer,
+        PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1257,6 +1328,25 @@ mod tests {
             feed,
             delivery_class,
         }
+    }
+
+    #[test]
+    fn provider_bindings_are_sharded_without_truncation() {
+        let values: Vec<RawBinding> = (0..205)
+            .map(|index| {
+                let mut value = binding(RawFeed::Trade, DeliveryClass::Lossless);
+                value.native_symbol = format!("S{index}USDT");
+                value.native_channel = format!("s{index}usdt@trade");
+                value.subscription_id = format!("source-{index}");
+                value
+            })
+            .collect();
+        let shards = partition_bindings(&values, 100);
+        assert_eq!(
+            shards.iter().map(Vec::len).collect::<Vec<_>>(),
+            vec![100, 100, 5]
+        );
+        assert_eq!(shards.into_iter().flatten().count(), values.len());
     }
 
     #[test]

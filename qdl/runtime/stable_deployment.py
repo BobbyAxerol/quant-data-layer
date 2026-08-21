@@ -398,6 +398,9 @@ class StableAcquisitionPlan:
                     f"/var/lib/qdl-stable/runtime/generations/{key}"
                 ),
                 "max_inflight_publishes": 512,
+                "max_subscriptions_per_connection": (
+                    200 if runtime == "BINANCE" else 100
+                ),
                 "latest_state_flush_ms": 50,
                 "authority": dict(authority),
                 "bindings": bindings,

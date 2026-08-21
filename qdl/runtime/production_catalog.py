@@ -207,7 +207,7 @@ class ProductionCatalogBuilder:
         previous_catalog: StableSourceCatalog | None = None,
         metadata_provenance: Mapping[str, str] | None = None,
     ) -> ProductionCatalogBundle:
-        metadata = self._metadata(binance_usdm, okx_rows)
+        metadata = self._metadata(binance_usdm, okx_rows, demand.demands)
         previous = self._previous_records(previous_catalog)
         selected: dict[str, InstrumentRecord] = {}
         bindings: list[dict[str, Any]] = []
@@ -269,11 +269,19 @@ class ProductionCatalogBuilder:
     def _metadata(
         binance_usdm: BinanceDiscovery | None,
         okx_rows: Iterable[Mapping[str, str]],
+        demands: Iterable[ProductionDemand],
     ) -> dict[tuple[str, str, str], InstrumentRecord]:
         values: list[InstrumentRecord] = []
         if binance_usdm is not None:
             values.extend(binance_usdm.records)
+        demanded_okx = {
+            item.native_symbol
+            for item in demands
+            if item.venue == "OKX"
+        }
         for raw in okx_rows:
+            if str(raw.get("instId") or "").upper() not in demanded_okx:
+                continue
             record, _ = parse_public_instrument(
                 raw, metadata_revision=1, valid_from_ns=0
             )
