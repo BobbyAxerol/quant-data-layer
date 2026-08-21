@@ -6875,3 +6875,35 @@ untouched.
   PostgreSQL row, V1 route or authority state was changed. Runtime acceptance
   remains blocked on an immutable image/recreation packet and a bounded
   real-provider soak.
+
+**2026-08-21 immutable consumer runtime acceptance: `PASS`:**
+
+- Merged Trading System `origin/dev` revision
+  `8c9a96cc8ebabf3e55c405e319747e2317824ff9` produced immutable consumer
+  image `sha256:41e3008e9981f32d31758333746ed2420f5fa64c43620c1138d105dc76158c0d`.
+  Its embedded `qdl-sdk==2.0.0` wheel matched the approved SHA-256
+  `6c1e374153756d1918be03c7efeac2d36c68ef235e46f12035ee59afa462a19a`.
+  Only Trading System `market_data_service` was recreated. Data Layer V1,
+  Kafka, projector, both stream roles, three Rust cores, Redis and all durable
+  volumes retained their prior process identity and restart count zero.
+- The first four-minute real-provider window sampled eight advancing durable
+  cursor hashes. Consumer memory remained approximately 57 MiB, restart count
+  remained zero and there was no new `RATE_LIMITED`, `DATA_STALE`, continuity
+  or reconnect event. This closes the leaked replacement-iterator request
+  amplification seen before the hotfix.
+- The governed service-only `V2_PRIMARY -> V1 -> V2_PRIMARY` drill passed.
+  Returning from the deliberate V1 pause produced three bounded OKX
+  `DATA_STALE` rejections with the configured 1/2/4-second backoff, then caught
+  up without quota or continuity failure. Four subsequent samples advanced the
+  same cursor every 31 seconds with stable 56-59 MiB memory and restart count
+  zero; no further fault was observed.
+- Final projected Binance and OKX TRADE ages were 263 ms and 528 ms. Their
+  final 1m BARs were closed and approximately 107.5 seconds old, inside the
+  unchanged 180-second bar contract. Both records retained canonical venue,
+  product, venue-symbol, metadata version and `qdl_v2` provider provenance.
+- V1 health remained `ok`, with current queue size zero, recent queue-drop
+  count zero and Redis publish errors zero. The selected V2 stream role was
+  `READY`, its peer was `STANDBY`, and all V2 roles remained restart-free.
+  Rust authority remains `RUST_SHADOW`; DNSE and unmatched routes remain V1.
+  No Data Layer runtime rebuild was required because this defect belonged to
+  the SDK consumer lifecycle rather than the stream server.
