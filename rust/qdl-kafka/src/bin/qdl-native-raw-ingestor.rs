@@ -337,19 +337,6 @@ impl RawPublisher {
         }
     }
 
-    async fn publish(
-        &self,
-        binding: &RawBinding,
-        session_id: &str,
-        generation: u64,
-        raw_frame: &[u8],
-        received_at_ns: i64,
-    ) -> Result<(), KafkaTransportError> {
-        let record = self.record(binding, session_id, generation, raw_frame, received_at_ns);
-        self.sink.append(&record, &self.publication()).await?;
-        Ok(())
-    }
-
     async fn enqueue_with_retry(
         &self,
         binding: &RawBinding,
@@ -398,56 +385,6 @@ impl RawPublisher {
             }
         }
     }
-
-    async fn publish_with_retry(
-        &self,
-        binding: &RawBinding,
-        session_id: &str,
-        generation: u64,
-        raw_frame: &[u8],
-        received_at_ns: i64,
-        stopped: &AtomicBool,
-    ) -> Result<(), KafkaTransportError> {
-        let backoff = BackoffPolicy {
-            initial_ms: 100,
-            maximum_ms: 30_000,
-            multiplier: 2,
-            jitter_bps: 2_000,
-        }
-        .validate()
-        .map_err(KafkaTransportError::Configuration)?;
-        let mut failures = 0_u32;
-        loop {
-            match self
-                .publish(binding, session_id, generation, raw_frame, received_at_ns)
-                .await
-            {
-                Ok(()) => return Ok(()),
-                Err(error)
-                    if error.retry_class() != RetryClass::NonRetryable
-                        && !stopped.load(Ordering::Acquire) =>
-                {
-                    failures = failures.saturating_add(1);
-                    eprintln!(
-                        "{}",
-                        serde_json::to_string(&json!({
-                            "event": "qdl_native_raw_publish_retry",
-                            "runtime": binding.venue.as_str(),
-                            "attempt": failures,
-                            "retry_class": format!("{:?}", error.retry_class()).to_ascii_uppercase(),
-                            "error": error.to_string(),
-                        }))
-                        .unwrap_or_else(|_| "{\"event\":\"qdl_native_raw_publish_retry\"}".into())
-                    );
-                    tokio::time::sleep(Duration::from_millis(
-                        backoff.delay_ms(failures, failures.min(10_000) as u16),
-                    ))
-                    .await;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-    }
 }
 
 type RawPublishFuture = Pin<Box<dyn Future<Output = Result<(), KafkaTransportError>> + Send>>;
@@ -485,7 +422,7 @@ impl LatestStateBuffer {
     }
 }
 
-async fn enqueue_binance_frame(
+async fn enqueue_lossless_frame(
     frame: PendingRawFrame,
     publisher: &RawPublisher,
     inflight: &mut FuturesUnordered<RawPublishFuture>,
@@ -499,7 +436,7 @@ async fn enqueue_binance_frame(
             Some(result) => result?,
             None => {
                 return Err(KafkaTransportError::Configuration(
-                    "Binance publish window became inconsistent".into(),
+                    "lossless publish window became inconsistent".into(),
                 ))
             }
         }
@@ -531,7 +468,7 @@ async fn enqueue_binance_frame(
     }
 }
 
-async fn flush_binance_latest(
+async fn flush_latest_concurrent(
     buffer: &mut LatestStateBuffer,
     publisher: &RawPublisher,
     inflight: &mut FuturesUnordered<RawPublishFuture>,
@@ -541,7 +478,7 @@ async fn flush_binance_latest(
     stopped: &AtomicBool,
 ) -> Result<bool, KafkaTransportError> {
     for frame in buffer.drain() {
-        if !enqueue_binance_frame(
+        if !enqueue_lossless_frame(
             frame,
             publisher,
             inflight,
@@ -552,50 +489,6 @@ async fn flush_binance_latest(
         )
         .await?
         {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-async fn publish_serial_frame(
-    frame: PendingRawFrame,
-    publisher: &RawPublisher,
-    accepted: &AtomicU64,
-    max_events: u64,
-    stopped: &AtomicBool,
-) -> Result<bool, KafkaTransportError> {
-    if !reserve(accepted, max_events).await {
-        return Ok(false);
-    }
-    if let Err(error) = publisher
-        .publish_with_retry(
-            &frame.binding,
-            &frame.session_id,
-            frame.generation,
-            &frame.raw_frame,
-            frame.received_at_ns,
-            stopped,
-        )
-        .await
-    {
-        if max_events > 0 {
-            accepted.fetch_sub(1, Ordering::AcqRel);
-        }
-        return Err(error);
-    }
-    Ok(true)
-}
-
-async fn flush_latest_serial(
-    buffer: &mut LatestStateBuffer,
-    publisher: &RawPublisher,
-    accepted: &AtomicU64,
-    max_events: u64,
-    stopped: &AtomicBool,
-) -> Result<bool, KafkaTransportError> {
-    for frame in buffer.drain() {
-        if !publish_serial_frame(frame, publisher, accepted, max_events, stopped).await? {
             return Ok(false);
         }
     }
@@ -693,13 +586,15 @@ async fn run_binance(
                                 publish_error = Some(error);
                                 break;
                             }
-                            None => return Err("Binance publish window became inconsistent".into()),
+                            None => {
+                                return Err("lossless publish window became inconsistent".into())
+                            }
                         }
                     }
                     let message = tokio::select! {
                         biased;
                         _ = latest_tick.tick(), if !latest.is_empty() => {
-                            if !flush_binance_latest(
+                            if !flush_latest_concurrent(
                                 &mut latest,
                                 &publisher,
                                 &mut inflight,
@@ -724,7 +619,9 @@ async fn run_binance(
                                     publish_error = Some(error);
                                     break;
                                 }
-                                None => return Err("Binance publish window became inconsistent".into()),
+                                None => {
+                                return Err("lossless publish window became inconsistent".into())
+                            }
                             }
                         }
                     };
@@ -787,7 +684,7 @@ async fn run_binance(
                         }
                         continue;
                     }
-                    if !enqueue_binance_frame(
+                    if !enqueue_lossless_frame(
                         frame,
                         &publisher,
                         &mut inflight,
@@ -802,7 +699,7 @@ async fn run_binance(
                     }
                 }
                 if publish_error.is_none() {
-                    if let Err(error) = flush_binance_latest(
+                    if let Err(error) = flush_latest_concurrent(
                         &mut latest,
                         &publisher,
                         &mut inflight,
@@ -944,39 +841,75 @@ async fn run_okx_service(
                     },
                     now_ns()?
                 );
+                let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
                 let mut latest = LatestStateBuffer::default();
                 let mut latest_tick =
                     tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
                 latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 latest_tick.tick().await;
+                let mut disconnected = false;
+                let mut publish_error = None;
                 while !should_stop(&stopped, &accepted, config.max_events, expires) {
+                    if inflight.len() >= config.max_inflight_publishes {
+                        match inflight.next().await {
+                            Some(Ok(())) => {
+                                failures = 0;
+                                continue;
+                            }
+                            Some(Err(error)) => {
+                                publish_error = Some(error);
+                                break;
+                            }
+                            None => {
+                                return Err("lossless publish window became inconsistent".into())
+                            }
+                        }
+                    }
                     let read = tokio::time::timeout(
                         Duration::from_secs(config.heartbeat_seconds),
                         reader.next(),
                     );
                     tokio::pin!(read);
                     let outcome = tokio::select! {
-                        result = &mut read => Some(result),
-                        _ = latest_tick.tick(), if !latest.is_empty() => None,
-                    };
-                    if outcome.is_none() {
-                        if !flush_latest_serial(
-                            &mut latest,
-                            &publisher,
-                            &accepted,
-                            config.max_events,
-                            &stopped,
-                        )
-                        .await?
-                        {
-                            break;
+                        biased;
+                        _ = latest_tick.tick(), if !latest.is_empty() => {
+                            if !flush_latest_concurrent(
+                                &mut latest,
+                                &publisher,
+                                &mut inflight,
+                                &accepted,
+                                config.max_events,
+                                config.max_inflight_publishes,
+                                &stopped,
+                            ).await? {
+                                break;
+                            }
+                            failures = 0;
+                            continue;
                         }
-                        failures = 0;
-                        continue;
-                    }
+                        result = &mut read => Some(result),
+                        completed = inflight.next(), if !inflight.is_empty() => {
+                            match completed {
+                                Some(Ok(())) => {
+                                    failures = 0;
+                                    continue;
+                                }
+                                Some(Err(error)) => {
+                                    publish_error = Some(error);
+                                    break;
+                                }
+                                None => {
+                                return Err("lossless publish window became inconsistent".into())
+                            }
+                            }
+                        }
+                    };
                     let message = match outcome.expect("OKX read outcome is present") {
                         Ok(Some(Ok(message))) => message,
-                        Ok(Some(Err(_))) | Ok(None) => break,
+                        Ok(Some(Err(_))) | Ok(None) => {
+                            disconnected = true;
+                            break;
+                        }
                         Err(_) => {
                             writer.send(Message::Text("ping".into())).await?;
                             match tokio::time::timeout(
@@ -990,16 +923,24 @@ async fn run_okx_service(
                                 {
                                     continue
                                 }
-                                _ => break,
+                                _ => {
+                                    disconnected = true;
+                                    break;
+                                }
                             }
                         }
                     };
+                    if let Message::Ping(payload) = message {
+                        writer.send(Message::Pong(payload)).await?;
+                        continue;
+                    }
                     if !message.is_text() {
                         continue;
                     }
                     let raw_text = message.to_text()?.to_owned();
                     let payload: Value = serde_json::from_str(&raw_text)?;
                     if payload.get("event").and_then(Value::as_str) == Some("notice") {
+                        disconnected = true;
                         break;
                     }
                     if payload.get("event").is_some() {
@@ -1033,29 +974,46 @@ async fn run_okx_service(
                         }
                         continue;
                     }
-                    if !publish_serial_frame(
+                    if !enqueue_lossless_frame(
                         frame,
                         &publisher,
+                        &mut inflight,
                         &accepted,
                         config.max_events,
+                        config.max_inflight_publishes,
                         &stopped,
                     )
                     .await?
                     {
-                        stopped.store(true, Ordering::Release);
                         break;
                     }
-                    failures = 0;
                 }
-                flush_latest_serial(
-                    &mut latest,
-                    &publisher,
-                    &accepted,
-                    config.max_events,
-                    &stopped,
-                )
-                .await?;
-                if !should_stop(&stopped, &accepted, config.max_events, expires) {
+                if publish_error.is_none() {
+                    if let Err(error) = flush_latest_concurrent(
+                        &mut latest,
+                        &publisher,
+                        &mut inflight,
+                        &accepted,
+                        config.max_events,
+                        config.max_inflight_publishes,
+                        &stopped,
+                    )
+                    .await
+                    {
+                        publish_error = Some(error);
+                    }
+                }
+                while let Some(result) = inflight.next().await {
+                    match result {
+                        Ok(()) => failures = 0,
+                        Err(error) if publish_error.is_none() => publish_error = Some(error),
+                        Err(_) => {}
+                    }
+                }
+                if let Some(error) = publish_error {
+                    return Err(error.into());
+                }
+                if disconnected && !should_stop(&stopped, &accepted, config.max_events, expires) {
                     failures = failures.saturating_add(1);
                     eprintln!(
                         "{}",
@@ -1318,6 +1276,29 @@ mod tests {
         assert!(binding(RawFeed::Quote, DeliveryClass::Lossless)
             .validate(ProviderRuntime::Binance)
             .is_err());
+    }
+
+    #[test]
+    fn lossless_and_latest_state_delivery_contracts_are_provider_neutral() {
+        let mut okx_trade = binding(RawFeed::Trade, DeliveryClass::Lossless);
+        okx_trade.provider = "OKX_DIRECT".into();
+        okx_trade.venue = "OKX".into();
+        okx_trade.market = "SWAP".into();
+        okx_trade.product_type = "PERPETUAL".into();
+        okx_trade.native_symbol = "BTC-USDT-SWAP".into();
+        okx_trade.native_channel = "trades".into();
+        assert!(okx_trade.validate(ProviderRuntime::Okx).is_ok());
+
+        let mut okx_quote = okx_trade.clone();
+        okx_quote.feed = RawFeed::Quote;
+        okx_quote.delivery_class = DeliveryClass::LatestState;
+        okx_quote.native_channel = "bbo-tbt".into();
+        assert!(okx_quote.validate(ProviderRuntime::Okx).is_ok());
+
+        okx_trade.delivery_class = DeliveryClass::LatestState;
+        okx_quote.delivery_class = DeliveryClass::Lossless;
+        assert!(okx_trade.validate(ProviderRuntime::Okx).is_err());
+        assert!(okx_quote.validate(ProviderRuntime::Okx).is_err());
     }
 
     #[test]

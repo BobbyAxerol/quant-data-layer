@@ -6907,3 +6907,57 @@ untouched.
   Rust authority remains `RUST_SHADOW`; DNSE and unmatched routes remain V1.
   No Data Layer runtime rebuild was required because this defect belonged to
   the SDK consumer lifecycle rather than the stream server.
+
+#### C.9 OKX Raw-Ingestion Burst Freshness Closure
+
+**2026-08-21 status: `IN PROGRESS / RUNTIME UNCHANGED`:**
+
+- The SDK session-ownership fix remains accepted: the longer audit found no new
+  request-quota exhaustion. It also found 20 intermittent OKX-only
+  `DATA_STALE` rejections between 05:36 and 06:49 UTC while cursors continued
+  advancing and Binance remained unaffected. Current tails are fresh; the
+  defect is burst-sensitive rather than a permanently stuck stream.
+- Read-only Kafka time-window probes located the delay before the raw topic:
+  affected OKX windows contained 50-768 records above the unchanged five-second
+  freshness contract, with p99 source-to-local-receive delay of 5.3-11.2
+  seconds. Raw/core/projector consumer lag is currently small and the canonical
+  tail has p99 1.6 seconds with no record above five seconds.
+- Root ownership is the native OKX WebSocket loop. It waits for a durable Kafka
+  delivery acknowledgment after every lossless trade frame, so provider bursts
+  can accumulate unread socket frames. Binance already uses the configured
+  bounded in-flight window. The fix is to make that lossless publication
+  primitive provider-neutral and use it for both venues. Kafka remains
+  `acks=all`, idempotent and ordered per partition with a bounded window;
+  latest-state quote coalescing remains bounded and no event may be dropped,
+  synthesized or timestamp-rewritten.
+- Public V1/V2 contracts, canonical models, freshness thresholds, source-event
+  time, authority mode, topics, consumer groups and Redis projections remain
+  frozen. The change must not promote Rust authority or alter DNSE.
+- Gates: locked Rust format/clippy/unit tests; deterministic provider-neutral
+  delivery-class tests; immutable Rust-core image build; recreation of only the
+  affected OKX native ingestor roles; bounded real-provider burst acceptance
+  proving no loss/duplicate/sequence fault, no source delay above five seconds,
+  advancing Kafka/projector/Redis cursors and stable resources; unchanged V1
+  health and Trading System execution invariants. Rollback restores the prior
+  immutable ingestor image and recreates only those OKX roles.
+
+**2026-08-21 source result: `PASS / RUNTIME ACCEPTANCE PENDING`:**
+
+- The native lossless publisher is now provider-neutral. Binance and both OKX
+  WebSocket services enqueue authentic lossless frames through the same bounded
+  `max_inflight_publishes` window; the idempotent `acks=all` producer preserves
+  per-partition order. Delivery failures are drained and surfaced before a
+  session exits. Latest-state quote frames retain bounded per-binding
+  coalescing, and provider Ping frames receive Pong responses.
+- The serial per-frame OKX Kafka wait was removed. No contract, timestamp,
+  partition key, topic, authority, freshness threshold, provider payload or
+  Redis behavior changed. A regression test proves Binance and OKX both reject
+  lossy trade and lossless quote delivery-class inversions.
+- Deterministic builder compilation passed. `cargo fmt --all -- --check`, locked
+  workspace clippy with `-D warnings`, and all 73 locked Rust tests passed.
+  Builder image `sha256:b09372a9276def31ddb34b93387fd402c602b582b1975fdad50730389a3aebb4`
+  is test-only and must be removed after runtime evidence is recorded.
+- Running Data Layer roles remain byte-for-byte unchanged. The exact next gate
+  is an immutable Rust runtime image followed by recreation of only
+  `ingestor_okx_spot` and `ingestor_okx_swap`; all Kafka brokers, Rust cores,
+  projector/query/stream roles, V1, Redis and durable volumes stay running.
