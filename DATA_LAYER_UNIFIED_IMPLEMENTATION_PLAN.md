@@ -7184,3 +7184,77 @@ untouched.
 - `config/v2/stable-authority-promotion-scope.yaml` remains revision 1 with the
   12 BTC bindings. This slice does not promote ETH, does not regenerate any
   deployed bundle and does not authorize a rollout.
+
+#### C.13 Canonical Interval Parity For V1 Replacement
+
+**2026-08-21 status: `IMPLEMENTED / SOURCE ONLY / CATALOG UNCHANGED`:**
+
+- Driver is Section 18 item 8: V1 may only be sunset once every consumer
+  completes a governed migration, and item 10: expansion must reuse the existing
+  contracts. Measured against the alpha fleet, 85 Compose services are defined
+  across 19 alpha families and 83 of them declare a BAR interval other than
+  `1m`; the only two `1m` deployments are DNSE, which stays V1-only. The V2
+  catalog exposes `BAR 1m` on every binding. V2 therefore could not have
+  replaced V1 for a single Binance alpha, independently of symbol coverage.
+- This is a wiring gap, not a missing product. `qdl/adapters/binance/bar_edge.py`
+  was already interval-generic and derives its window, gap check and
+  `rest-klines/{interval}` channel from `binding.interval`. Only the OKX edge
+  and the duplicated duration helpers were pinned to one minute.
+
+**Decision recorded - OKX calendar alignment:**
+
+- `upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md` documents three bar
+  families: intraday `1m` through `4H` spelled natively; `6H`, `12H`, `1D`,
+  `2D`, `3D`, `1W` aligned to a **UTC+8** calendar by default; and the `...utc`
+  variants aligned to **UTC+0**.
+- Binance daily bars are UTC+0. Mapping canonical `1d` onto the OKX `1D`
+  default would produce two venue series eight hours apart while both claim the
+  same canonical interval, which breaks the single canonical identity contract
+  in Section 19.
+- Decision: canonical `1d` means exactly one UTC day on every venue, so
+  canonical calendar bars resolve to the OKX `utc` variants
+  (`1d -> 1Dutc`, `6h -> 6Hutc`, `1w -> 1Wutc`) and never to the UTC+8 default.
+  Intraday bars keep the native spelling (`1h -> 1H`, `4h -> 4H`). This is a
+  decision about domain identity, not a provider convenience.
+
+**2026-08-21 result: `PASS / SOURCE ONLY`:**
+
+- Added `qdl/adapters/intervals.py` as the single owner of canonical interval
+  semantics: `canonical_interval_ms`, `okx_bar_size` and `okx_candle_channel`.
+  Venue-native spellings are derived there so no adapter keeps a private table.
+- `qdl/adapters/okx/bar_edge.py` is now interval-generic. The `1m`-only guard,
+  the hard-coded `60_000` window and gap arithmetic, and the two `candle1m`
+  literals are replaced by values derived from `binding.interval`. The OKX
+  `bar` request parameter is now the normalised native token instead of the raw
+  canonical string, which was previously wrong for every interval at or above
+  one hour.
+- Removed the duplicated duration arithmetic in
+  `qdl/adapters/binance/bar_edge.py` and `qdl/runtime/stable_bar_edge.py`; both
+  delegate to the shared helper and keep their own venue guard, so accepted
+  interval sets are unchanged.
+- Defect found by the new tests during implementation and fixed before commit:
+  the first draft normalised input with `.lower()`, which silently turned a
+  calendar-month request `1M` into a one-minute request `1m` on both venues.
+  Case is now never folded; month bars and non-canonical spellings fail closed
+  with an explicit error.
+- Evidence: `tests/test_canonical_intervals.py` adds 11 cases covering exact
+  durations, malformed and variable-length rejection, the full intraday and
+  calendar mapping, channel naming, the hourly request window and native `bar`
+  token, the UTC daily mapping, unchanged `1m` behaviour, interval-aware gap
+  detection, and binding rejection of an interval OKX does not expose. Focused
+  run 11/11. Complete network-off suite 571 tests, six environment skips, up
+  from 560 by exactly the eleven added cases. Tests ran in a disposable
+  container with `--network none`, read-only source mount and tmpfs work dir.
+- Scope boundary: no higher-interval binding is added to
+  `config/v2/stable-source-bindings.yaml` by this slice. The code now supports
+  them, but advertising a feed still requires the bounded real-provider
+  certification the phase gates demand. Catalog, acquisition plan, promotion
+  scope, deployed bundles, images and every running role are unchanged.
+
+**Open follow-up tracked here:**
+
+- `runtime/app/alpha_runtime/orchestration/data_layer_client.py` still routes
+  every non-`1m` interval to V1 with reason
+  `v2_final_bar_history_certified_1m_only` at three call sites. That gate is
+  correct until the catalog advertises those intervals, and must be lifted in
+  the same packet that certifies them, not before.

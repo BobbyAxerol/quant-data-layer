@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.providers.binance.rest import BinanceProviderError, fetch_klines
+from qdl.adapters.intervals import canonical_interval_ms
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.capture import capture_exact_frame
 
@@ -54,13 +55,11 @@ class BinanceBarRawBinding:
 
 
 def _interval_ms(interval: str) -> int:
-    units = {"m": 60_000, "h": 3_600_000, "d": 86_400_000}
-    if not interval or interval[-1] not in units:
+    # Duration arithmetic is shared; the venue guard stays local because
+    # Binance klines expose no sub-minute or weekly REST bar here.
+    if not interval or interval[-1] not in {"m", "h", "d"}:
         raise ValueError("Binance history interval must have a fixed m/h/d duration")
-    count = int(interval[:-1])
-    if count <= 0:
-        raise ValueError("Binance history interval must be positive")
-    return count * units[interval[-1]]
+    return canonical_interval_ms(interval)
 
 
 def _fetch_rows(

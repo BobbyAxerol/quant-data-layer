@@ -9,6 +9,7 @@ import threading
 import time
 from pathlib import Path
 
+from qdl.adapters.intervals import canonical_interval_ms
 from qdl.adapters.binance import (
     BinanceBarRawBinding,
     fetch_closed_bar_history_raw_envelopes as fetch_binance_history,
@@ -31,18 +32,9 @@ logger = logging.getLogger(__name__)
 
 
 def _bar_interval_ms(interval: str) -> int:
-    units = {
-        "s": 1_000,
-        "m": 60_000,
-        "h": 3_600_000,
-        "d": 86_400_000,
-    }
-    if not interval or interval[-1] not in units:
+    if not interval or interval[-1] not in {"s", "m", "h", "d"}:
         raise ValueError("stable BAR interval is unsupported")
-    count = int(interval[:-1])
-    if count <= 0:
-        raise ValueError("stable BAR interval must be positive")
-    return count * units[interval[-1]]
+    return canonical_interval_ms(interval)
 
 
 class StableBinanceBarEdge:
