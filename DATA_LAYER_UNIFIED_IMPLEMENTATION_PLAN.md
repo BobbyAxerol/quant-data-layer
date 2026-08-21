@@ -6961,3 +6961,64 @@ untouched.
   is an immutable Rust runtime image followed by recreation of only
   `ingestor_okx_spot` and `ingestor_okx_swap`; all Kafka brokers, Rust cores,
   projector/query/stream roles, V1, Redis and durable volumes stay running.
+
+#### C.10 gRPC Stream Call Ownership And Quota Closure
+
+**2026-08-21 status: `IN PROGRESS / RUNTIME UNCHANGED`:**
+
+- C.9 fixed provider-to-raw freshness: 16,717 authentic post-rollout OKX trade
+  events in the read-only canonical spool had p50/p95/p99/max delay
+  28.9/37.5/80.5/91.2 ms, zero events above five seconds, zero duplicate event
+  IDs and zero non-monotonic partition sequences. Both OKX ingestors remain
+  restart-free on immutable image
+  `sha256:daf0fb09a992adbc1c7082c0b7da5bf66d11e5471236f71b368f29b3aafd900f`.
+- Consumer acceptance exposed an independent ownership defect. The shared
+  trading-system identity counter reaches 602-604 requests/minute; BAR cursors
+  advance but Binance/OKX TRADE cursors stopped at 07:10/07:02 UTC. Four
+  supervised feeds then fail `RATE_LIMITED`. This predates the C.9 ingestor
+  rollout and must not be hidden by raising quota.
+- `WarmupStreamSession` now closes its current SDK iterator, but
+  `GrpcStreamTransport.subscribe` does not explicitly cancel the underlying
+  `grpc.aio.UnaryStreamCall` when that iterator is closed/replaced. The call and
+  server subscription therefore lack deterministic shared ownership.
+- Approved source scope is explicit current-call cancellation in every normal,
+  failover, exception and async-generator-close path. Public contracts,
+  request quota, retries, cursor acknowledgment, freshness and provider data
+  remain frozen. Regression must prove a gateway bounded to one subscriber can
+  be reopened immediately after client iterator close and that one 100-response
+  RPC authenticates once.
+- Gates: focused transport/session tests, complete stream SDK suite, full
+  network-off Python suite, deterministic wheel rebuild and Trading System
+  repin; then recreation of only Data Layer active/passive stream roles if
+  server observability changes (otherwise none) and Trading System
+  `market_data_service`. Acceptance requires bounded RPC count, four advancing
+  cursors, no quota/stale/sequence fault, stable memory and unchanged execution
+  DB/Redis invariants. Rollback restores the previous SDK consumer image and
+  stops/recreates only `market_data_service`.
+
+**2026-08-21 source result: `PASS / CONSUMER REPIN PENDING`:**
+
+- A pre-fix real gRPC regression filled the manifest's ten stream slots,
+  closed one SDK iterator, then failed the replacement with
+  `stream subscriber capacity exhausted`. This reproduced the missing transport
+  ownership without touching production state. After the fix, the same test
+  releases the server slot and opens the replacement successfully.
+- `GrpcStreamTransport` now owns the exact current `UnaryStreamCall` and invokes
+  idempotent `cancel()` in a `finally` block for normal completion, failover,
+  protocol error and async-generator close. Warmup/session cursor and
+  acknowledgment ordering are unchanged. A separate permanent regression
+  proves 100 responses on one stream authenticate and consume request quota
+  exactly once.
+- Complete stream SDK plus contract-security suites passed 28/28. The full
+  network-off Python suite passed 558 tests with six environment skips. Syntax,
+  `git diff --check` and deterministic release generation passed.
+- Two SDK builds were byte-identical at wheel SHA-256
+  `34d48dae481e9e33ceee8b27cff7c1d7ea8466f14273e06ab787542f890907be`;
+  source digest is
+  `2049e2f032293e9dbf6ad034d9e4743fd0dc7b0e1a746e6dba144de79b336614`
+  and generated-contract digest is
+  `f4fd745b88925797558d3e2e2350e21e4e74deba46734c94cfcb01ab25b32e8b`.
+- Runtime remains unchanged by C.10 source work. The next exact action is a
+  Trading System wheel/lock/SBOM repin and immutable recreation of only
+  `market_data_service`; the four Data Layer query/stream roles need no code or
+  image change for this client-owned defect.

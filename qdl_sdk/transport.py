@@ -218,9 +218,11 @@ class GrpcStreamTransport:
             self._target_index = target_index
             self.target = self.targets[target_index]
             responses_seen = False
+            call = None
             try:
                 subscribe = self._subscribes[target_index]
-                async for response in subscribe(request, metadata=metadata):
+                call = subscribe(request, metadata=metadata)
+                async for response in call:
                     responses_seen = True
                     record = response.record
                     payload = record.WhichOneof("payload")
@@ -273,6 +275,9 @@ class GrpcStreamTransport:
                 raise DataLayerError(
                     "DEPENDENCY_UNAVAILABLE", detail, retryable=True
                 ) from error
+            finally:
+                if call is not None:
+                    call.cancel()
 
     async def close(self) -> None:
         for channel in self._channels:

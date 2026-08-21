@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 import unittest
+from types import SimpleNamespace
 
 import grpc
 from fastapi.testclient import TestClient
@@ -39,6 +40,7 @@ from qdl.query import (
 )
 from qdl.query.v2 import query_pb2
 from qdl.security import DataPlaneAccessError, DataPlanePermission
+from qdl.security.grpc import GrpcDataPlaneInterceptor
 from qdl.stream import GrpcMarketDataService, create_grpc_server
 from qdl.stream.grpc_service import requirement_from_proto
 from qdl_sdk import (
@@ -553,6 +555,49 @@ class Phase7GrpcIdentityTests(unittest.IsolatedAsyncioTestCase):
                 metadata=self.metadata(purpose="INTERNAL_EXECUTION"),
             )
         self.assertEqual(purpose.exception.code(), grpc.StatusCode.PERMISSION_DENIED)
+
+
+class GrpcStreamQuotaAccountingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unary_stream_authenticates_once_for_many_responses(self):
+        class Access:
+            def require_purpose(self, _purpose):
+                return None
+
+        class Identity:
+            def __init__(self):
+                self.calls = 0
+
+            def authenticate(self, *_args, **_kwargs):
+                self.calls += 1
+                return Access()
+
+        class Context:
+            async def abort(self, *_args):
+                raise AssertionError("valid stream metadata must not abort")
+
+        async def behavior(_request, _context):
+            for index in range(100):
+                yield index
+
+        identity = Identity()
+        interceptor = GrpcDataPlaneInterceptor(identity)
+        handler = grpc.unary_stream_rpc_method_handler(behavior)
+
+        async def continuation(_details):
+            return handler
+
+        details = SimpleNamespace(invocation_metadata=(
+            ("authorization", "Bearer token"),
+            ("x-qdl-consumer-id", "consumer"),
+            ("x-qdl-purpose", "INTERNAL_EXECUTION"),
+        ))
+        wrapped = await interceptor.intercept_service(continuation, details)
+        values = [
+            value
+            async for value in wrapped.unary_stream(None, Context())
+        ]
+        self.assertEqual(values, list(range(100)))
+        self.assertEqual(identity.calls, 1)
 
 
 if __name__ == "__main__":

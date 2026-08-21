@@ -587,6 +587,65 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             await transport.close()
             await server.stop(grace=0)
 
+    async def test_grpc_iterator_close_releases_server_subscription_capacity(self):
+        gateway = DurableStreamGateway(
+            handoff=self.handoff,
+            sink=self.spool,
+            max_subscribers=10,
+            max_buffer_events=2,
+        )
+        server = create_grpc_server(
+            GrpcMarketDataService(
+                gateway=gateway,
+                query_service=None,
+                snapshot_loader=SnapshotLoader(self.record, self.token),
+            ),
+            identity_service=self.identity,
+        )
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}",
+            allow_insecure_loopback=True,
+            credential_provider=self.credential,
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid,
+            Feed.BAR,
+            Grade.ALPHA,
+            "alpha_binance_v1",
+            interval="1m",
+            warmup_limit=1,
+        )
+        streams = []
+        replacement = None
+        try:
+            for _ in range(10):
+                stream = transport.subscribe(
+                    requirement,
+                    consumer_id="alpha-shadow",
+                    cursor_token=self.token,
+                    max_buffer_events=1,
+                ).__aiter__()
+                self.assertEqual((await stream.__anext__()).code, "REPLAYING")
+                streams.append(stream)
+            await streams[0].aclose()
+            await asyncio.sleep(0.05)
+            replacement = transport.subscribe(
+                requirement,
+                consumer_id="alpha-shadow",
+                cursor_token=self.token,
+                max_buffer_events=1,
+            ).__aiter__()
+            self.assertEqual((await replacement.__anext__()).code, "REPLAYING")
+        finally:
+            if replacement is not None:
+                await replacement.aclose()
+            for stream in streams:
+                await stream.aclose()
+            await transport.close()
+            await server.stop(grace=0)
+
     async def test_real_grpc_sdk_handoff_ack_restart_and_bar_revisions(self):
         registry = InstrumentRegistry()
         registry.register(self.record, [])
