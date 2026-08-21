@@ -7022,3 +7022,40 @@ untouched.
   Trading System wheel/lock/SBOM repin and immutable recreation of only
   `market_data_service`; the four Data Layer query/stream roles need no code or
   image change for this client-owned defect.
+
+**2026-08-21 C.9 runtime result: `PASS`:**
+
+- Immutable OKX ingestor image
+  `sha256:daf0fb09a992adbc1c7082c0b7da5bf66d11e5471236f71b368f29b3aafd900f`
+  was applied only to the OKX spot/swap ingestion roles. Kafka, three Rust
+  cores, projector/query/stream roles, Redis, V1 and durable volumes were not
+  recreated.
+- A read-only post-rollout canonical-spool probe covered 16,717 authentic OKX
+  trades. Source-to-canonical p50/p95/p99/max were
+  28.9/37.5/80.5/91.2 ms, with zero event above five seconds, zero duplicate
+  event ID and zero non-monotonic partition sequence. Both ingestors stayed
+  restart-free.
+- Cleanup removed the disposable Rust builder and both deterministic SDK
+  build directories after hashes/evidence were committed. Runtime images,
+  containers, volumes and provider data were preserved. The prior OKX image
+  remains the explicit role-only rollback.
+
+**2026-08-21 C.10 consumer result: `SDK OWNERSHIP PASS / NO-FAULT CAPACITY GATE OPEN`:**
+
+- The deterministic SDK wheel with SHA-256
+  `34d48dae481e9e33ceee8b27cff7c1d7ea8466f14273e06ab787542f890907be`
+  was pinned into Trading System. A one-slot real gRPC regression proved closed
+  iterators release server capacity immediately; request quota remained bounded
+  after runtime recreation and all four configured TRADE/BAR cursors advanced.
+- At 08:13 UTC the selected Binance USD-M and OKX swap TRADE consumers rejected
+  stale data fail-closed. Their exponential retry recovered without restart by
+  approximately 08:17; cursors resumed advancing, latest Redis projections were
+  again sub-second fresh and the following five-minute consumer log window had
+  no stale/quota/sequence fault.
+- Canonical spool tails were fresh after recovery, but the retained 10,000-event
+  partition window had already trimmed the exact fault interval, so this audit
+  cannot honestly attribute that transient to raw ingestion, Rust core,
+  projector or query cache. The zero-fault end-to-end capacity gate therefore
+  remains open and requires a bounded diagnostic capture on recurrence or a
+  clean longer soak. No freshness threshold, cursor, authority or provider
+  timestamp was weakened to force acceptance.
