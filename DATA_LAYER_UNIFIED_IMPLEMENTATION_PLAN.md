@@ -7347,3 +7347,68 @@ cheaper.
   `(instrument, interval, closed-bar open time)` every consumer request reaches
   the venue. V1 already amortises this way, which is why it serves a wide
   universe today.
+
+#### C.15 Rollout Shape Decision And In-Place Bundle Refresh
+
+**2026-08-21 status: `DECIDED / TOOL IMPLEMENTED / RUNTIME UNCHANGED`:**
+
+**Decision: refresh the existing stable project in place; do not stand up a
+second parallel stack for this packet.**
+
+The operator freed disk after the pre-rollout audit, so a second isolated stack
+became affordable at 67 GB free against roughly 48 GB of Kafka volumes.
+Affordability was not treated as a reason to choose it.
+
+A parallel stack is forced by exactly one requirement: giving the acceptance
+alpha its own V2 workload identity. `scripts/phase80_generate_tls.sh` deletes
+the CA private key after issuing the enumerated principals, so a new client
+identity requires a new CA, a new CA requires a new bundle, and a new bundle
+requires a second stack. That chain is sound, but it belongs to the alpha
+migration programme, not to the multi-symbol crypto capability packet.
+
+Bundling it here would inflate this packet from thirteen role recreations to a
+full second deployment plus a later decommission, and it would force cursor
+discontinuity for the Trading System at cutover, because a new bundle mints a
+new cursor signing key and every persisted consumer cursor becomes invalid.
+
+The claim this packet must prove is narrower: governed multi-symbol crypto
+reaches the registered consumer with unchanged execution semantics. The Trading
+System is that consumer and already reads V2 directly. The alpha acceptance
+therefore runs through the existing Redis latest-state projection, which is the
+path every currently stopped alpha actually uses.
+
+**Recorded limitation.** This shape proves warmup and closed-BAR delivery to an
+alpha through the Trading System projection. It does **not** prove direct alpha
+SDK consumption of V2, and no report may describe it as such. Direct alpha V2
+identity, including a planned CA rotation, is deferred to the alpha migration
+packet.
+
+**2026-08-21 result: `PASS / SOURCE ONLY`:**
+
+- Added `scripts/refresh_stable_runtime_bundle.py`, the safe counterpart to
+  `phaseb_prepare_stable_candidate.py`. It regenerates only
+  `<bundle>/runtime/*.json` from the current catalog, acquisition plan and
+  promotion scope. It never reads or writes `stable.env` or `identities/`, so
+  the cursor signing key, ingest secret, both database passwords and every
+  workload identity are preserved exactly.
+- The tool is a dry run unless `--apply` is passed. A dry run stages outside the
+  bundle so that inspecting a bundle which is serving traffic writes nothing
+  into it at all; an apply stages beside the target because the swap relies on
+  an atomic rename inside one filesystem, and it leaves the previous configs in
+  a timestamped `runtime.backup-*` directory as the rollback.
+- Applying does not disturb running roles. Each config is bind mounted as a
+  file, so a container keeps the inode it started with until it is explicitly
+  recreated; the refreshed configs take effect only at that recreation.
+- Evidence: `tests/test_stable_runtime_refresh.py` adds five cases covering
+  refusal of a directory that is not an existing bundle, refusal of a mutable
+  image reference, a dry run that reports the diff and leaves the bundle
+  byte-identical, an apply that preserves `stable.env` and `identities/` while
+  regenerating configs and retaining a backup, and the invariant that
+  `core.json` carries the whole catalog while `production-core-*.json` honours
+  the promotion scope. Focused run 5/5.
+- Real dry run against the live bundle at
+  `/home/bobby/.local/state/qdl-v2/655d2106d01f/bundle`, mounted read-only,
+  resolved catalog revision 3 and acquisition revision 4 against the deployed
+  revisions 2 and 3, kept the promotion scope at revision 1 with 12 bindings,
+  and reported exactly twelve changed files with none added or removed. Nothing
+  was written and no role was touched.
