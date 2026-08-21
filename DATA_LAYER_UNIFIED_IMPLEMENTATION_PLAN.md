@@ -7136,3 +7136,51 @@ untouched.
   packet naming those six bindings, role-only rollback and real-provider
   acceptance; it must not be inferred from catalog presence. V1 and all running
   services remain unchanged at this checkpoint.
+
+#### C.12 Pre-Rollout Preflight Remediation
+
+**2026-08-21 status: `IN PROGRESS / RUNTIME UNCHANGED`:**
+
+- A pre-rollout audit of the multi-symbol ETH packet found deployment tooling and
+  cross-repo couplings that would have failed during the rollout rather than
+  before it. This subsection tracks source-only remediation. No image is built,
+  no role is recreated, no bundle is regenerated and no authority changes here.
+- Finding closed by this slice: `scripts/build_production_core_bundle.py` could
+  not run at all. `write_production_core_bundle`
+  (`qdl/runtime/stable_deployment.py:423`) gained the required keyword-only
+  `promotion_scope` argument in `3d3af1c`, while the CLI wrapper was last
+  touched in `56ca153` and never passed it, so every invocation raised
+  `TypeError`. The gap survived because tests exercised the library function
+  only, never the entry point.
+- Findings tracked outside this slice and still open: the Trading System
+  workload token declares consumer manifest revision 1 while
+  `consumers/stable/*.yaml` are revision 2, and
+  `qdl/security/data_plane.py:304` compares exactly and answers 401; the alpha
+  compose SDK mount resolves outside the worktree; OKX has no V1 live-trade
+  fallback path (`latest_trade`/`latest_kline` accept Binance only); and the
+  isolated parallel-deployment option is not yet costed against available host
+  disk, where the three running Kafka volumes already hold 48 GB against 48 GB
+  free.
+
+**2026-08-21 result: `PASS / SOURCE ONLY`:**
+
+- `scripts/build_production_core_bundle.py` now requires `--promotion-scope`,
+  loads it through `AuthorityPromotionScope.load` against the same catalog,
+  passes it to `write_production_core_bundle`, and reports the scope revision,
+  digest and binding count in its result document. No library behaviour changed.
+- Added `ProductionCoreBundleCliTests` to `tests/test_phaseb_stable_deployment.py`.
+  One case drives `main()` end to end into a temporary directory and asserts the
+  manifest plus every generated worker config carries exactly the promotion-scope
+  binding count; one asserts the argument is mandatory. Both cases were run
+  against the pre-fix script first and reproduced the exact
+  `TypeError: write_production_core_bundle() missing 1 required keyword-only
+  argument: 'promotion_scope'`, so the regression is demonstrated rather than
+  assumed.
+- Focused tests passed 2/2. The complete network-off suite passed 560 tests with
+  six environment skips, up from 558 by exactly the two added cases. Tests ran in
+  a disposable container with `--network none`, a read-only source mount and a
+  tmpfs work directory. No provider, Kafka, Redis, PostgreSQL, container, cursor,
+  bundle or runtime state was touched.
+- `config/v2/stable-authority-promotion-scope.yaml` remains revision 1 with the
+  12 BTC bindings. This slice does not promote ETH, does not regenerate any
+  deployed bundle and does not authorize a rollout.

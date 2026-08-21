@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import io
 import json
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from qdl.adapters.vn import build_dnse_bar_raw_envelope
 from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
 from qdl.runtime.stable_vn_edge import StableDnseVendorEdge
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from scripts.build_production_core_bundle import main as build_production_core_bundle_main
 from scripts.phaseb_prepare_stable_candidate import prepare_candidate
 
 from qdl.runtime.stable_deployment import (
@@ -1055,3 +1058,83 @@ class StableComposeAndBundleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProductionCoreBundleCliTests(unittest.TestCase):
+    """The CLI must stay callable against the library signature it wraps.
+
+    A missing keyword only surfaced at rollout time because no test invoked the
+    entry point itself.
+    """
+
+    def setUp(self) -> None:
+        self.catalog = StableSourceCatalog.load(CATALOG_PATH)
+        self.promotion_scope = AuthorityPromotionScope.load(
+            PROMOTION_SCOPE_PATH, catalog=self.catalog
+        )
+        self.authority = stable_authority_record(
+            rust_image_digest="b" * 64,
+            capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
+            contract=ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto",
+            partition_plan=ACQUISITION_PATH.read_bytes(),
+            effective_at_ns=time.time_ns(),
+        )
+
+    def _run(self, directory: Path, *extra: str) -> dict:
+        authority_path = directory / "authority.json"
+        authority_path.write_text(json.dumps(self.authority), encoding="utf-8")
+        output_dir = directory / "runtime"
+        argv = [
+            "build_production_core_bundle.py",
+            "--source-catalog", str(CATALOG_PATH),
+            "--acquisition-plan", str(ACQUISITION_PATH),
+            "--raw-authority", str(authority_path),
+            "--output-dir", str(output_dir),
+            *extra,
+        ]
+        stdout = io.StringIO()
+        with patch("sys.argv", argv), redirect_stdout(stdout):
+            self.assertEqual(build_production_core_bundle_main(), 0)
+        return json.loads(stdout.getvalue())
+
+    def test_cli_builds_bundle_scoped_to_the_promotion_scope(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            result = self._run(
+                directory, "--promotion-scope", str(PROMOTION_SCOPE_PATH)
+            )
+            self.assertEqual(result["status"], "PASS")
+            self.assertEqual(
+                result["promotion_scope_revision"], self.promotion_scope.revision
+            )
+            self.assertEqual(
+                result["promotion_scope_digest"], self.promotion_scope.digest()
+            )
+            self.assertEqual(
+                result["promotion_binding_count"],
+                len(self.promotion_scope.binding_ids),
+            )
+            manifest = json.loads(
+                (directory / "runtime/production-core-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                manifest["promotion_binding_count"],
+                len(self.promotion_scope.binding_ids),
+            )
+            for worker_index in range(1, STABLE_CORE_WORKER_COUNT + 1):
+                payload = json.loads(
+                    (
+                        directory / f"runtime/production-core-{worker_index:03d}.json"
+                    ).read_text(encoding="utf-8")
+                )
+                self.assertEqual(
+                    len(payload["slices"]), len(self.promotion_scope.binding_ids)
+                )
+
+    def test_cli_requires_an_explicit_promotion_scope(self):
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaises(SystemExit) as caught:
+                self._run(Path(raw))
+            self.assertEqual(caught.exception.code, 2)
