@@ -5,7 +5,7 @@ này. Chỉ chạy lại khi **commit / image / config** ở cột "Pinned at" �
 
 Ledger phủ cả ba repo. Cập nhật cùng transaction với commit làm nó đổi (G4).
 
-Cập nhật lần cuối: **2026-08-22**, data layer `833f4ce`.
+Cập nhật lần cuối: **2026-08-22 15:00 UTC**, data layer `d58f594`+.
 
 ---
 
@@ -119,7 +119,57 @@ chạy, nên chỉ cần thêm principal vào danh sách.
 
 ---
 
-## 4. KHẨN — toàn bộ PKI mTLS hết hạn hôm nay
+## 4. ĐÃ XOAY — PKI mTLS (C.38)
+
+**Xong 2026-08-22 ~14:50 UTC.** Vấn đề hết hạn 48 giờ đã đóng.
+
+| | Trước | Sau |
+|---|---|---|
+| CA hết hạn | Aug 22 17:39 2026 | **Nov 20 14:43 2026** |
+| Hạn cert | `-days 2` hard-code 2 chỗ | `QDL_PHASE8_CERT_DAYS`, mặc định **90** |
+| Consumer identity | 1 (`trading-system`, EXECUTION) | **2** (+ `alpha-binance`, **ALPHA**) |
+| JWT key id đăng ký | 1 | **2** |
+
+Material mới: `cert-material-rotate-20260822T144323Z`,
+`bundle/identities-rotate-20260822T144323Z`,
+`bundle/stable.env.rotate-20260822T144323Z`.
+Mọi secret đối chiếu digest, giống hệt.
+
+**Đã xoay và xác minh khoẻ:** kafka1/2/3 (healthy), stable_redis, rust_core_3
+(generation 3, đang xử lý), 4 ingestor, binance_bar_edge, query ×2, stream ×2,
+`market_data_service` (**0 lỗi TLS** sau khi trỏ lại identity mới).
+
+**Hai bài học đã trả giá — đừng lặp lại:**
+
+1. **Không roll được xoay CA.** Recreate kafka1 một mình → `PKIX path validation
+   failed: Path does not chain with any of the trust anchors`, vì kafka2/3 còn CA
+   cũ. Mọi peer xác thực lẫn nhau phải đổi **cùng lúc**.
+2. **Consumer nằm trong phạm vi xoay.** `market_data_service` mount identity theo
+   đường host; không trỏ lại thì `CERTIFICATE_VERIFY_FAILED` dù server đã xoay.
+
+### 4.1 Đang hỏng — `projector_v2`
+
+`stable_redis` **không nằm trên mesh mTLS và không cần recreate**. Tôi đưa nhầm
+nó vào danh sách; nó ephemeral (`--appendonly no`, tmpfs) nên mất cache identity:
+
+```
+ProjectionCacheMismatch: stable Redis cache identity is missing for a non-empty spool
+```
+
+Guard này **đúng** và đã gặp 2026-08-20. Hệ quả đã đo, không đoán: projector là
+thứ nạp spool, nên spool **đứng yên** — newest accepted 14:47:24 trong khi đồng hồ
+14:57:44. `market_data_service` báo `DATA_STALE` chính vì lý do này.
+
+Spool lúc đóng băng: 127.584 record, 18 partition, **1440 nến 1m mỗi BAR
+partition** = đúng cửa sổ 24 giờ.
+
+**Cách chữa: runbook có sẵn** `scripts/rebuild_v2_stable_projection_cache.py`.
+Giá phải trả: warmup 1m tụt từ 1440 nến xuống ~15, đầy lại 1 nến/phút → 24 giờ.
+**Pass-through không ảnh hưởng** (lấy từ sàn), nên 15m/1h/1d giữ nguyên độ sâu.
+
+---
+
+## 5. Ghi chú lịch sử — PKI hết hạn (đã đóng ở §4)
 
 Phát hiện 2026-08-22 14:23 UTC khi truy tìm CA key.
 

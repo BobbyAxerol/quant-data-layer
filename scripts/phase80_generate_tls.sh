@@ -7,13 +7,18 @@ KAFKA_IMAGE="${QDL_PHASE8_KAFKA_IMAGE:-apache/kafka@sha256:9516fb7634bad307d17c3
 PASSWORD="${QDL_PHASE8_CERT_PASSWORD:-phase8-certification-only}"
 CERT_UID="${QDL_PHASE8_CERT_UID:-$(id -u)}"
 CERT_GID="${QDL_PHASE8_CERT_GID:-$(id -g)}"
+# Validity of the CA and every leaf. This was hard-coded to 2 days in two
+# places, which expired the entire mTLS mesh every 48 hours and took the whole
+# V2 deployment down with it when nobody was watching the clock. One name, one
+# value, overridable for a short-lived certification run.
+CERT_DAYS="${QDL_PHASE8_CERT_DAYS:-90}"
 
 umask 077
 mkdir -p "${OUTPUT_DIR}"
 chmod 0755 "${OUTPUT_DIR}"
 
 openssl genrsa -out "${OUTPUT_DIR}/ca.key" 3072 >/dev/null 2>&1
-openssl req -x509 -new -sha256 -days 2 \
+openssl req -x509 -new -sha256 -days "${CERT_DAYS}" \
   -key "${OUTPUT_DIR}/ca.key" \
   -subj "/CN=qdl-phase8-certification-ca" \
   -out "${OUTPUT_DIR}/ca.crt" >/dev/null 2>&1
@@ -30,7 +35,7 @@ issue_certificate() {
     -subj "/CN=${principal}" \
     -out "${OUTPUT_DIR}/${principal}.csr" >/dev/null 2>&1
   printf 'subjectAltName=%s,DNS:localhost\nextendedKeyUsage=serverAuth,clientAuth\n' "${san_entries}" >"${extension_file}"
-  openssl x509 -req -sha256 -days 2 \
+  openssl x509 -req -sha256 -days "${CERT_DAYS}" \
     -in "${OUTPUT_DIR}/${principal}.csr" \
     -CA "${OUTPUT_DIR}/ca.crt" \
     -CAkey "${OUTPUT_DIR}/ca.key" \
@@ -49,12 +54,18 @@ issue_certificate() {
 for broker in kafka1 kafka2 kafka3; do
   issue_certificate "${broker}" "${broker}"
 done
-for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized stable-authority-dispatcher stable-trading-system; do
+# stable-alpha-binance carries the INTERNAL_ALPHA purpose. Every identity here
+# before it was INTERNAL_EXECUTION, which is the one purpose the provider
+# pass-through must refuse, so no consumer could reach that product at all.
+for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized stable-authority-dispatcher stable-trading-system stable-alpha-binance; do
   issue_certificate "${client}" "${client}"
 done
 issue_certificate stable-trading-system-jwt stable-trading-system-jwt
 openssl pkey -in "${OUTPUT_DIR}/stable-trading-system-jwt.key" -pubout \
   -out "${OUTPUT_DIR}/stable-trading-system-jwt.public.pem" >/dev/null 2>&1
+issue_certificate stable-alpha-binance-jwt stable-alpha-binance-jwt
+openssl pkey -in "${OUTPUT_DIR}/stable-alpha-binance-jwt.key" -pubout \
+  -out "${OUTPUT_DIR}/stable-alpha-binance-jwt.public.pem" >/dev/null 2>&1
 issue_certificate stable-query query_v2_1 "DNS:query_v2_1,DNS:query_v2_2,DNS:qdl-v2-query"
 issue_certificate stable-stream stream_v2_active "DNS:stream_v2_active,DNS:stream_v2_passive,DNS:qdl-v2-stream,DNS:qdl-v2-stream-a,DNS:qdl-v2-stream-b"
 
@@ -119,6 +130,8 @@ find "${OUTPUT_DIR}" -maxdepth 1 -name '*.key' \
   ! -name 'stable-authority-dispatcher.key' \
   ! -name 'stable-trading-system.key' \
   ! -name 'stable-trading-system-jwt.key' \
+  ! -name 'stable-alpha-binance.key' \
+  ! -name 'stable-alpha-binance-jwt.key' \
   -delete
 rm -f "${OUTPUT_DIR}"/*.csr "${OUTPUT_DIR}"/*.ext "${OUTPUT_DIR}"/*.srl
 

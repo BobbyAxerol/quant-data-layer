@@ -8690,6 +8690,98 @@ plan. The next attempt has to run inside a VN session with reachability
 re-checked first, and `vn_edge_v2` — still behind the `stable-vn` Compose
 profile and still never created — has to be started, which is its own rollout.
 
+#### C.38 PKI Rotation And The First ALPHA Workload Identity
+
+**2026-08-22 status: `ROTATED / ONE ROLE DOWN AWAITING A GOVERNED REBUILD`.**
+
+Triggered by the C.37 finding: the whole mTLS mesh expired at 17:39 UTC the same
+day. Approved by the user for full-deployment blast radius, with the alpha
+principal added in the same pass.
+
+**Validity is now a named fact, not a literal.** `scripts/phase80_generate_tls.sh`
+hard-coded `-days 2` in two places, which is what expired the entire mesh every
+48 hours. Replaced with `CERT_DAYS="${QDL_PHASE8_CERT_DAYS:-90}"` used by both the
+CA and every leaf. New material runs to **Nov 20 2026**.
+
+**First INTERNAL_ALPHA identity.** `stable-alpha-binance` (mTLS) and
+`stable-alpha-binance-jwt` (RS256) added to the principal list. Every identity
+before it was `INTERNAL_EXECUTION`, which is the one purpose the pass-through
+must refuse — that is why no consumer could reach the product (C.36).
+`QDL_STABLE_JWT_KEYS_JSON` now registers two key ids:
+`stable-trading-system-rs256-v1` and `stable-alpha-binance-rs256-v1`.
+
+The earlier claim that this was blocked on a missing CA private key was wrong.
+The script **generates a fresh CA** on every run (`openssl req -x509 -new`) and
+deletes `ca.key` at the end, which is why it was never on disk. Nothing was
+blocked; the file was simply not read closely enough.
+
+**Staged, not overwritten.** New material went to
+`cert-material-rotate-20260822T144323Z`, new per-role identities to
+`bundle/identities-rotate-20260822T144323Z`, and a new
+`bundle/stable.env.rotate-20260822T144323Z`. Every secret carried across byte for
+byte — ingest secret, cursor keys, both DB passwords and the schema digest
+verified identical by digest before anything was recreated.
+
+**A CA rotation cannot be rolled.** kafka1 was recreated first, alone, and went
+unhealthy:
+
+```
+SSLHandshakeException: (certificate_unknown) PKIX path validation failed:
+Path does not chain with any of the trust anchors
+```
+
+kafka1 held the new CA while kafka2 and kafka3 held the old one, so KRaft peers
+could not authenticate each other. Without cross-signing, every mutually
+authenticating peer has to move together. All three were recreated in one
+command and quorum re-formed; all healthy.
+
+**Consumer side is part of the rotation.** `market_data_service` mounts its
+identity from a host path and kept pointing at the *old* directory, so it failed
+with `CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate chain`
+until repointed at the rotated identity and recreated. Zero TLS errors after.
+This was a gap in the rotation plan, not in the code: rotating the server mesh
+without repointing the consumer leaves the consumer locked out.
+
+### Regression: `stable_redis` was recreated and did not need to be
+
+`stable_redis` is not on the mTLS mesh (`redis://stable_redis:6379/0`, plain) and
+had no reason to be in the recreate list. It is also deliberately ephemeral
+(`--appendonly no --save "" `, tmpfs `/data`), so recreating it wiped the
+projection cache identity and `projector_v2` refused to start:
+
+```
+ProjectionCacheMismatch: stable Redis cache identity is missing for a non-empty spool
+```
+
+**The guard is correct** and this exact failure is already recorded for
+2026-08-20: binding an empty Redis to a non-empty spool would serve a partial
+projection silently.
+
+**Consequence measured, not assumed.** The projector is what feeds the spool
+through `StableHttpCanonicalSink`, so with it down the spool is frozen: newest
+accepted event stayed at 14:47:24 while the clock reached 14:57:44. Every
+`market_data_service` slice now reports `DATA_STALE` for that reason, which is
+the same symptom with a different cause than the pre-existing intermittent one
+in C.36.
+
+Spool contents at the freeze: 127 584 records, 18 partitions, 1440 one-minute
+bars per BAR partition — exactly the 24-hour retention window.
+
+**Recovery is the existing governed runbook**,
+`scripts/rebuild_v2_stable_projection_cache.py`, which stops
+projector/query/stream, deletes the SQLite cache and replays
+`REPLAY_LOOKBACK_SECONDS = 900` of canonical Kafka into a fresh cache. It is
+gated on `--confirm REBUILD_QDL_V2_STABLE_PROJECTION_CACHE`.
+
+Cost, stated plainly: 1m warmup depth drops from 1440 bars to about 15 and
+refills at one bar per minute, back to 24 hours within a day. **The pass-through
+is unaffected** — it fetches from the venue, so 15m/1h/1d warmup keeps full depth
+throughout, which is the first practical demonstration of why that product is
+worth having.
+
+Not run: it deletes a durable cache, which is outside the approved blast radius,
+and the session tooling refused the command.
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**
