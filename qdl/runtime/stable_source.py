@@ -565,12 +565,28 @@ def build_stable_query_stack(
     schema_digest: str,
     handoff: GapFreeHandoff,
     cursor_ttl_seconds: int,
+    pass_through_enabled: bool = False,
 ) -> tuple[V2QueryService, StableSpoolQueryBackend, StableConsumerCursorIssuer]:
+    """Build the query stack, optionally including the pass-through product.
+
+    The pass-through is off unless a deployment enables it, so declaring catalog
+    metadata for an instrument never opens a data product by itself. When it is
+    off, the registry, the entitlements and the backend are exactly what they
+    were before, which keeps the default deployment unchanged.
+    """
     backend = StableSpoolQueryBackend(spool, catalog, schema_digest=schema_digest)
+    served: MarketDataQueryBackend = backend
+    if pass_through_enabled:
+        from qdl.runtime.provider_history import ProviderBarHistorySource
+        from qdl.runtime.routed_query import RoutedQueryBackend
+
+        served = RoutedQueryBackend(backend, ProviderBarHistorySource(catalog))
     service = V2QueryService(
-        instruments=InstrumentQuery(catalog.instrument_registry()),
-        backend=backend,
-        entitlements=catalog.entitlements(),
+        instruments=InstrumentQuery(
+            catalog.instrument_registry(include_unbound=pass_through_enabled)
+        ),
+        backend=served,
+        entitlements=catalog.entitlements(include_unbound=pass_through_enabled),
     )
     issuer = StableConsumerCursorIssuer(
         handoff, catalog, ttl_seconds=cursor_ttl_seconds

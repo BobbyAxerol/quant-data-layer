@@ -54,6 +54,17 @@ from qdl.runtime.stable_source import bar_item_fields
 from qdl.runtime.stable_catalog import StableSourceCatalog
 
 PASS_THROUGH_SOURCE_ROLE = "REFERENCE"
+PASS_THROUGH_LICENSE_REVISION = "internal-pass-through-v2"
+
+
+def pass_through_source_id(instrument_uid: str) -> str:
+    """Source id for a pass-through answer.
+
+    Shared with the entitlement grant: if the two ever disagreed, the grant
+    would silently stop matching and every pass-through request would be
+    refused as unlicensed for a reason nobody could see.
+    """
+    return f"pass-through-{instrument_uid}"
 PASS_THROUGH_QUALITY_FLAG = "PROVIDER_PASS_THROUGH"
 # A pass-through window is re-fetched, never resumed, so it must not hand a
 # consumer anything that looks like a durable replay position.
@@ -216,7 +227,7 @@ class ProviderBarHistorySource:
             product_type=identity.product_type.value,
             native_symbol=instrument.native_symbol,
             provider=raw.provider,
-            source_id=f"pass-through-{identity.instrument_uid}",
+            source_id=pass_through_source_id(identity.instrument_uid),
             lease_epoch=1,
             received_at_ns=received_ns,
             normalized_at_ns=received_ns,

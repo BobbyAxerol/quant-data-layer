@@ -7903,3 +7903,50 @@ route. That wiring, the closed-bar cache that keeps a wide universe inside venue
 rate limits, and the catalog entries for the instruments and intervals the alpha
 fleet actually needs are the next slices. No runtime, image or catalog changed
 in this one.
+
+#### C.22 Pass-Through Wiring And Its Access Boundary
+
+**2026-08-22 status: `WIRED BEHIND A DISABLED FLAG / RUNTIME UNCHANGED`:**
+
+Wiring the routed backend exposed that the whole query stack, not just the
+backend, is derived from bindings. `instrument_registry` and `entitlements`
+both iterate `self.bindings`, so an unbound instrument could not be resolved and
+carried no licence: the pass-through was unreachable no matter how the backend
+routed. Both now take an explicit `include_unbound` switch, and
+`build_stable_query_stack` takes `pass_through_enabled`, defaulting to false.
+
+**The access boundary, which was the real question.** Making the product
+reachable must not widen who may read what. Two properties keep it narrow:
+
+- a pass-through grant is **strictly narrower** than a bound grant. It carries
+  `INTERNAL_ALPHA` and `INTERNAL_RESEARCH` and never `INTERNAL_EXECUTION`,
+  because that output passed no canonical core and is covered by no authority
+  record. The licence revision is distinct, so an audit can tell the two apart.
+- it is **opt-in**. Adding catalog metadata for an instrument does not by itself
+  register it, licence it or route it. A deployment that leaves the flag off
+  gets exactly the previous registry, entitlements and backend.
+
+`pass_through_source_id` is shared between the source and the grant. Had the two
+computed it separately, a drift would have made every pass-through request fail
+as unlicensed, for a reason no log would explain.
+
+**Evidence.** `tests/test_pass_through_wiring.py` adds six cases: the default
+stack is unchanged and not routed, an unbound instrument is unresolvable while
+disabled, enabling it routes and resolves that instrument, no pass-through
+licence authorises anything while disabled, an enabled pass-through grant
+authorises alpha but **refuses execution**, and bound sources keep authorising
+either way. Entitlement assertions go through `authorize` rather than private
+state, so they test the contract a caller actually meets. Complete network-off
+suite 645 tests with six environment skips, up from 639 by exactly the six added
+cases.
+
+Two defects were found and fixed while writing those tests: the unbound alias
+omitted `valid_from_ns`, and the first draft of the tests reached into
+`EntitlementPolicy._grants` instead of calling `authorize`.
+
+**Remaining for phase B.** A closed-bar cache keyed on instrument, interval and
+bar open time, so a wide universe stays inside venue rate limits; the runtime
+config surface for the flag; catalog entries for the instruments and intervals
+the alpha fleet needs; and only then lifting the `1m` gate in the alpha runtime,
+which stays correct until those entries are certified. No runtime, image,
+catalog or deployed configuration changed in this slice.

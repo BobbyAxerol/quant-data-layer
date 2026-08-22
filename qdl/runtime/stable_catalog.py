@@ -387,7 +387,15 @@ class StableSourceCatalog:
         else:
             raise ValueError("stable baseline supports only TRADE/QUOTE/BAR")
 
-    def instrument_registry(self) -> InstrumentRegistry:
+    def instrument_registry(
+        self, *, include_unbound: bool = False
+    ) -> InstrumentRegistry:
+        """Registry of resolvable instruments.
+
+        Unbound instruments are excluded by default: declaring metadata must not
+        by itself make an instrument queryable. A deployment opts in when it
+        enables the pass-through product.
+        """
         registry = InstrumentRegistry()
         registered: set[str] = set()
         for binding in self.bindings:
@@ -403,9 +411,38 @@ class StableSourceCatalog:
                 valid_from_ns=0,
             )])
             registered.add(record.instrument_uid)
+        if include_unbound:
+            for record in self.instruments:
+                if record.identity.instrument_uid in registered:
+                    continue
+                # No binding means no provider adapter, so the venue itself is
+                # the only honest alias namespace for the pass-through.
+                registry.register(record, [InstrumentAlias(
+                    provider=record.identity.venue,
+                    market=record.identity.market,
+                    native_symbol=record.native_symbol,
+                    instrument_uid=record.identity.instrument_uid,
+                    instrument_revision=record.metadata_revision,
+                    valid_from_ns=0,
+                )])
+                registered.add(record.identity.instrument_uid)
         return registry
 
-    def entitlements(self) -> EntitlementPolicy:
+    def entitlements(
+        self, *, include_unbound: bool = False
+    ) -> EntitlementPolicy:
+        from qdl.runtime.provider_history import (
+            PASS_THROUGH_LICENSE_REVISION,
+            pass_through_source_id,
+        )
+
+        """Source licensing grants.
+
+        A pass-through grant is strictly narrower than a bound one: it never
+        carries `INTERNAL_EXECUTION`, because that product never passed the
+        canonical core and is covered by no authority record. It is also opt-in,
+        so adding catalog metadata cannot silently open a new data product.
+        """
         grants = []
         for binding in self.bindings:
             purposes = {
@@ -424,4 +461,23 @@ class StableSourceCatalog:
                 }),
                 valid_from_ns=0,
             ))
+        if include_unbound:
+            bound = {binding.instrument.identity.instrument_uid for binding in self.bindings}
+            for record in self.instruments:
+                uid = record.identity.instrument_uid
+                if uid in bound:
+                    continue
+                grants.append(EntitlementGrant(
+                    source_id=pass_through_source_id(uid),
+                    license_revision=PASS_THROUGH_LICENSE_REVISION,
+                    purposes=frozenset({
+                        AccessPurpose.INTERNAL_ALPHA,
+                        AccessPurpose.INTERNAL_RESEARCH,
+                    }),
+                    products=frozenset({
+                        DataProduct.CANONICAL_SNAPSHOT,
+                        DataProduct.CANONICAL_HISTORY,
+                    }),
+                    valid_from_ns=0,
+                ))
         return EntitlementPolicy(tuple(grants))
