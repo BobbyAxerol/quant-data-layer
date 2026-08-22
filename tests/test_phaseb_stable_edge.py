@@ -354,6 +354,26 @@ class StableQueryContractTests(unittest.TestCase):
                 self.assertEqual(item.quality.state, expected_state)
                 self.assertEqual(item.quality.execution_eligible, expected_state == "LIVE")
 
+    def test_materialized_bar_history_data_as_of_is_the_closed_boundary(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        event = _stable_event(
+            self.catalog, "binance_usdm_rest_bar.json", binding.binding_id
+        )
+        _append(self.spool, self.catalog, event)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: event.bar.close_time_ns + 1_000_000,
+        )
+        history = backend.history(_requirement(binding))
+        self.assertIsNotNone(history)
+        self.assertEqual(history.data_as_of_ns, event.bar.close_time_ns)
+
     def test_query_reads_are_bounded_by_feed_and_requested_history(self):
         trade = next(
             item

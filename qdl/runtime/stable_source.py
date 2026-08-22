@@ -183,7 +183,11 @@ class StableSpoolQueryBackend:
             snapshot_id=f"qdl-v2-{snapshot_hash[:32]}",
             stream_cursor="CONSUMER_CURSOR_PENDING",
             watermark_offset=last.cursor.offset,
-            data_as_of_ns=items[-1].observed_at_ns,
+            data_as_of_ns=(
+                int(items[-1].payload["close_time_ns"])
+                if binding.feed is FeedType.BAR
+                else items[-1].observed_at_ns
+            ),
         )
 
     def feed_status(self, requirement: DataRequirement) -> QualityMetadata | None:

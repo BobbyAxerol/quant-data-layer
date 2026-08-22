@@ -19,6 +19,10 @@ from qdl.runtime.stable_vn_edge import StableDnseVendorEdge
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from scripts.build_production_core_bundle import main as build_production_core_bundle_main
 from scripts.phaseb_prepare_stable_candidate import prepare_candidate
+from scripts.phasec1_isolated_consumer_acceptance import (
+    CASES as C39_ACCEPTANCE_CASES,
+    token_claims as c39_token_claims,
+)
 
 from qdl.runtime.stable_deployment import (
     STABLE_CORE_WORKER_COUNT,
@@ -51,6 +55,34 @@ class StableDeploymentContractTests(unittest.TestCase):
             partition_plan=ACQUISITION_PATH.read_bytes(),
             effective_at_ns=time.time_ns(),
         )
+
+    def test_c39_acceptance_matrix_covers_btc_and_eth_on_both_venues(self):
+        self.assertEqual(
+            {(item.venue, item.symbol) for item in C39_ACCEPTANCE_CASES},
+            {
+                ("BINANCE", "BTCUSDT"),
+                ("BINANCE", "ETHUSDT"),
+                ("OKX", "BTC-USDT-SWAP"),
+                ("OKX", "ETH-USDT-SWAP"),
+            },
+        )
+        self.assertEqual(
+            len({item.instrument_uid for item in C39_ACCEPTANCE_CASES}),
+            4,
+        )
+
+    def test_c39_acceptance_token_binds_current_manifest_revision(self):
+        claims = c39_token_claims(
+            "spiffe://qdl/paper/trading-system-stable",
+            issuer="https://identity.qdl.stable.internal",
+            audience="qdl-v2-stable",
+            manifest_revision=2,
+            now=1_800_000_000,
+        )
+        self.assertEqual(claims["consumer_manifest_revision"], 2)
+        self.assertEqual(claims["iat"], 1_800_000_000)
+        self.assertEqual(claims["exp"], 1_800_000_300)
+        self.assertEqual(claims["environment"], "paper")
 
     def test_tls_generator_covers_all_published_ingress_aliases(self):
         script = (ROOT / "scripts/phase80_generate_tls.sh").read_text(

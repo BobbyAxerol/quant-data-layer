@@ -9039,6 +9039,55 @@ Pinned code at 96d0d19; ledger-only follow-up 97a1d63 does not change runtime.
   and DNSE correctly MARKET_CLOSED. C39.2 is `COMPLETE / PASS`.
 
 
+**C39.3 start - 2026-08-22.**
+
+- Scope is limited to read-only runtime and real-provider certification. It
+  will not recreate a role, change authority, commit a Kafka offset, mutate V1
+  or restart Trading System.
+- The existing acceptance harness predates the current consumer contract: it
+  covers only BTC and issues manifest-revision-1 tokens, while
+  `trading-system.paper.stable` revision 2 grants BTC and ETH for Binance USD-M
+  and OKX Swap. The first tested slice is therefore to bind the harness to an
+  explicit manifest revision and certify all four real instruments through
+  both query replicas plus replay-to-live stream cursor resume.
+- Acceptance additionally requires canonical envelope/decimal/time/finality
+  checks, Kafka/mTLS health, pass-through 15m/1h/1d positive and negative
+  cases, demanded-slice Trading System health and bounded resource/lag/growth
+  evidence. Any stale demanded V2 slice or fallback masking remains a NO-GO.
+- Disposable consumers use unique groups and file cursors and are removed
+  after capture. Stable runtime mutation is forbidden in this gate.
+
+
+**C39.3 contract slice - 2026-08-22.**
+
+- Expanded the isolated consumer harness from BTC-only/revision 1 to the
+  current `trading-system.paper.stable` revision 2 matrix: BTC and ETH on
+  Binance USD-M and OKX Swap. Cursor state is now unique per venue/instrument.
+- The first real-provider run passed 4/4 query-replica, replay-to-live, ACK and
+  exact N+1 reconnect checks. The stricter rerun then deliberately rejected a
+  false test assumption: historical warmup rows may be `STALE`; only the latest
+  closed BAR must be `LIVE` and execution-eligible. Provider clocks matched the
+  host, the BAR checkpoint matched the latest venue-closed boundary and Kafka
+  projector lag was 42 across six partitions, so this was not pipeline delay.
+- The same strict run exposed one real public-contract mismatch. Materialized
+  history returned `data_as_of_ns` from provider `source_event_time`; OKX REST
+  represents that as BAR open time, whereas pass-through correctly returns the
+  closed boundary. `StableSpoolQueryBackend` now reports the final BAR close
+  time for BAR history while preserving provider source time in each item.
+- Acceptance now validates exact decimal coefficient/scale/source text, OHLCV
+  inequalities and units through typed SDK models, exact one-minute spacing,
+  no duplicate/gap, final lifecycle, source authority, full coverage, latest
+  LIVE eligibility, watermark/cursor and per-stage latency.
+- Tests: four targeted contract tests passed; focused stable edge/provider/
+  deployment modules passed 82 tests with one intentional skip; full isolated
+  Python discovery passed 707 tests with six intentional skips in 26.913s. One
+  earlier full-suite attempt failed because the read-only test container's log
+  tmpfs was not writable by the non-root image user; rerunning with mode 1777
+  passed and no product defect was hidden. Runtime still uses image `0df4360`;
+  the corrected contract is not runtime-certified until a new immutable image
+  is built and the affected edge roles are explicitly recreated.
+
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**

@@ -290,3 +290,21 @@ Pinned at: data layer 96d0d19.
   catalog, collision, quarantine, traceback or error matches. Redis/SQLite cache
   identity matched. Disposable backup audit: 114542 events, 18 partitions, zero
   open gaps, zero quarantine. V1 remained healthy and untouched. C39.2 PASS.
+
+## 8. C39.3 - Multi-symbol contract slice
+
+- Harness now binds `trading-system.paper.stable` revision 2 and covers BTC/ETH
+  for Binance USD-M and OKX Swap with per-instrument durable cursors.
+- First real-provider run passed 4/4 replica parity and exact N+1 stream resume.
+  The stricter gate correctly distinguishes stale historical warmup members from
+  the mandatory LIVE/execution-eligible latest closed BAR.
+- Found and fixed one contract defect: materialized BAR history now reports
+  `data_as_of_ns` at the final BAR close boundary, matching pass-through history,
+  while preserving venue source timestamps on individual items.
+- Correctness checks now include exact decimals, OHLCV, one-minute boundaries,
+  ordering/gaps, finality, authority, coverage, latest quality, cursor/watermark
+  and bounded latency measurements.
+- Tests at the source revision before immutable build: 4 targeted PASS; 82 focused
+  PASS with one intentional skip; 707 full Python PASS with six intentional
+  skips. Runtime remains on `0df4360` pending immutable rebuild and explicitly
+  scoped edge-role recreate.
