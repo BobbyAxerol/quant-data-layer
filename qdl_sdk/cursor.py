@@ -21,6 +21,7 @@ class CursorCheckpoint:
 class CursorStore(Protocol):
     def load(self, key: str) -> CursorCheckpoint | None: ...
     def save(self, key: str, checkpoint: CursorCheckpoint) -> None: ...
+    def replace(self, key: str, checkpoint: CursorCheckpoint) -> None: ...
 
 
 class MemoryCursorStore:
@@ -34,6 +35,10 @@ class MemoryCursorStore:
         current = self._items.get(key)
         if current is not None and checkpoint.offset < current.offset:
             raise ValueError("cursor checkpoint cannot move backwards")
+        self._items[key] = checkpoint
+
+    def replace(self, key: str, checkpoint: CursorCheckpoint) -> None:
+        """Begin a new snapshot generation, whose offsets may restart lower."""
         self._items[key] = checkpoint
 
 
@@ -62,6 +67,15 @@ class FileCursorStore:
         if current is not None and checkpoint.offset < int(current["offset"]):
             raise ValueError("cursor checkpoint cannot move backwards")
         items[key] = asdict(checkpoint)
+        self._write(items)
+
+    def replace(self, key: str, checkpoint: CursorCheckpoint) -> None:
+        """Atomically establish a fresh snapshot as the new offset baseline."""
+        items = self._read()
+        items[key] = asdict(checkpoint)
+        self._write(items)
+
+    def _write(self, items: dict[str, dict[str, str | int]]) -> None:
         payload = json.dumps(
             {"schema": "qdl.sdk-cursors.v2", "items": items},
             sort_keys=True,

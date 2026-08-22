@@ -308,3 +308,20 @@ Pinned at: data layer 96d0d19.
   PASS with one intentional skip; 707 full Python PASS with six intentional
   skips. Runtime remains on `0df4360` pending immutable rebuild and explicitly
   scoped edge-role recreate.
+
+## 9. C39.3 - SDK generation reset and provider status-frame correction
+
+- Shared SDK correction: a fresh warmup now establishes a new durable cursor
+  generation on first ACK, while restored-state and all later ACKs remain
+  strictly monotonic. Retry before first ACK stays on the fresh server cursor.
+- SDK module: 17 passed, 0 failed. Full Python discovery: 708 passed, 6
+  environment-dependent skips, 0 failed in 27.004 seconds.
+- Rust correction filters only observed Binance `e=trade,p=0,q=0,X=NA,st=1`
+  status records, counts them as filtered, keeps normal trades canonical and
+  keeps every other non-positive/malformed trade quarantined.
+- Rust 1.82 gate: fmt PASS; workspace clippy `-D warnings` PASS; 75 tests PASS.
+  A first workspace harness lacked OpenSSL development packages; the corrected
+  run used the repository CI package set and passed.
+- Runtime mutation: none. V1, Trading System, Kafka offsets, Redis/SQLite state,
+  stable roles and authority are unchanged. Immutable rebuild/recreate, signed
+  cursor-generation semantics and demanded-slice health remain explicit gates.

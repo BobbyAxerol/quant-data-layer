@@ -753,6 +753,9 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         with self.assertRaisesRegex(ValueError, "backwards"):
             store.save("a", CursorCheckpoint("older", 6))
+        store.replace("a", CursorCheckpoint("new-snapshot", 2))
+        self.assertEqual(store.load("a"), CursorCheckpoint("new-snapshot", 2))
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
         class Legacy:
             def latest_trade(self, provider, symbol, **kwargs):
@@ -781,16 +784,48 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         )
         key = client._cursor_key(requirement)
         from qdl_sdk.cursor import CursorCheckpoint
-        store.save(key, CursorCheckpoint("old-token", 2))
+        store.save(key, CursorCheckpoint("old-generation-token", 200))
 
         async with client.warmup_then_stream(requirement) as session:
             event = await session.__anext__()
             session.acknowledge(event)
         self.assertEqual(stream.tokens, ["fresh-token"])
+        self.assertEqual(store.load(key), CursorCheckpoint("token-6", 6))
+        with self.assertRaisesRegex(ValueError, "backwards"):
+            store.save(key, CursorCheckpoint("regression", 5))
         contracts = {item["contract"] for item in telemetry.snapshot()}
         self.assertEqual(
             contracts, {"/v2/market-data/warmup", "grpc:Subscribe"}
         )
+
+    async def test_fresh_snapshot_reconnect_before_first_ack_keeps_new_generation(self):
+        store = MemoryCursorStore()
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
+            interval="1m", warmup_limit=1,
+        )
+        query = FakeQueryTransport("fresh-token", watermark=5)
+        stream = ScriptedStreamTransport((
+            (DataLayerError("DEPENDENCY_UNAVAILABLE", "retry", retryable=True),),
+            (StreamEvent(6, "token-6", envelope(self.record, 6)),),
+        ))
+        client = AsyncDataLayerClient(
+            query_transport=query, stream_transport=stream,
+            consumer_id="alpha-shadow", cursor_store=store,
+            max_reconnect_attempts=1,
+        )
+        key = client._cursor_key(requirement)
+        from qdl_sdk.cursor import CursorCheckpoint
+        store.save(key, CursorCheckpoint("old-generation-token", 200))
+
+        async with client.warmup_then_stream(requirement) as session:
+            reconnected = await session.__anext__()
+            self.assertEqual(reconnected.code, "RECONNECTED")
+            event = await session.__anext__()
+            session.acknowledge(event)
+
+        self.assertEqual(stream.tokens, ["fresh-token", "fresh-token"])
+        self.assertEqual(store.load(key), CursorCheckpoint("token-6", 6))
 
     async def test_cursor_expiration_rebuilds_snapshot_and_transient_error_reconnects(self):
         requirement = DataRequirement(
@@ -806,10 +841,15 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             ),
             (StreamEvent(2, "token-2", envelope(self.record, 2)),),
         ))
+        store = MemoryCursorStore()
         client = AsyncDataLayerClient(
             query_transport=query, stream_transport=stream,
-            consumer_id="alpha-shadow", max_reconnect_attempts=2,
+            consumer_id="alpha-shadow", cursor_store=store,
+            max_reconnect_attempts=2,
         )
+        key = client._cursor_key(requirement)
+        from qdl_sdk.cursor import CursorCheckpoint
+        store.save(key, CursorCheckpoint("old-generation-token", 200))
         async with client.warmup_then_stream(requirement) as session:
             replaced = await session.__anext__()
             self.assertEqual(replaced.code, "SNAPSHOT_REPLACED")
@@ -828,6 +868,7 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             [iterator.close_calls for iterator in stream.iterators],
             [1, 1, 1],
         )
+        self.assertEqual(store.load(key), CursorCheckpoint("token-1", 1))
         await session.aclose()
         self.assertEqual(
             [iterator.close_calls for iterator in stream.iterators],

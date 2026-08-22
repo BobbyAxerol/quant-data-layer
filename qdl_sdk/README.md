@@ -20,7 +20,9 @@ and quotas rather than trusting request-controlled grade/source fields.
 4. Observe typed `REPLAYING` and `LIVE` controls, then apply events in strict
    logical-offset order.
 5. Persist a cursor only after consumer state is durably applied by calling
-   `session.acknowledge(event)`.
+   `session.acknowledge(event)`. The first acknowledgement after a fresh
+   snapshot atomically establishes a new local offset baseline; later
+   acknowledgements remain strictly monotonic.
 6. On cursor expiry, rebuild from the supplied fresh snapshot after receiving
    `SNAPSHOT_REPLACED`. On a retryable disconnect, resume from the last
    acknowledged cursor.

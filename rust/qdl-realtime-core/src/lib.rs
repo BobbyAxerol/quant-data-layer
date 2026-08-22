@@ -272,6 +272,10 @@ impl RealtimeCore {
         };
         let mut failure: Option<(QuarantineReason, &'static str)> = None;
         for (row_index, (provider_kind, frame)) in frames.into_iter().enumerate() {
+            if is_binance_trade_status_frame(&binding, &provider_kind, &frame) {
+                batch.filtered += 1;
+                continue;
+            }
             let partition_key = format!(
                 "{}/{}/{}",
                 binding.instrument_uid, provider_kind, binding.source_id
@@ -498,6 +502,20 @@ fn binding_key(
     .join("|")
 }
 
+fn is_binance_trade_status_frame(
+    binding: &CoreBinding,
+    provider_kind: &str,
+    frame: &Value,
+) -> bool {
+    binding.venue == "BINANCE"
+        && provider_kind.ends_with("_trade")
+        && frame.get("e").and_then(Value::as_str) == Some("trade")
+        && frame.get("p").and_then(Value::as_str) == Some("0")
+        && frame.get("q").and_then(Value::as_str) == Some("0")
+        && frame.get("X").and_then(Value::as_str) == Some("NA")
+        && frame.get("st").and_then(Value::as_u64) == Some(1)
+}
+
 fn expand_frames(binding: &CoreBinding, payload: Value) -> Result<Vec<(String, Value)>, String> {
     if binding.venue == "OKX" && payload.get("arg").is_some() {
         return expand_data_frame(&payload).map(|frames| {
@@ -663,6 +681,42 @@ mod tests {
         let repeated = core.process(raw(&binding, frame, 2), 11).unwrap();
         assert_eq!(repeated.canonical.len(), 0);
         assert_eq!(repeated.duplicates, 1);
+    }
+
+    #[test]
+    fn binance_zero_trade_status_is_filtered_but_other_zero_trade_is_quarantined() {
+        let binding = binding((
+            "BINANCE_DIRECT",
+            "BINANCE",
+            "USDM",
+            "PERPETUAL",
+            "BTCUSDT",
+            "trade",
+            "binance_usdm_trade",
+            "PRIMARY",
+            SequencePolicy::Monotonic,
+        ));
+        let status = br#"{"e":"trade","s":"BTCUSDT","t":10,"p":"0","q":"0","T":3,"m":false,"X":"NA","st":1}"#;
+        let valid = br#"{"e":"trade","s":"BTCUSDT","t":11,"p":"60000.1","q":"0.01","T":4,"m":false,"X":"MARKET","st":1}"#;
+        let malformed = br#"{"e":"trade","s":"BTCUSDT","t":12,"p":"0","q":"0","T":5,"m":false,"X":"MARKET","st":1}"#;
+        let mut core = core(binding.clone(), true);
+
+        let filtered = core.process(raw(&binding, status, 1), 10).unwrap();
+        assert!(filtered.canonical.is_empty());
+        assert!(filtered.quarantines.is_empty());
+        assert_eq!(filtered.filtered, 1);
+
+        let accepted = core.process(raw(&binding, valid, 1), 11).unwrap();
+        assert_eq!(accepted.canonical.len(), 1);
+        assert!(accepted.quarantines.is_empty());
+        assert_eq!(accepted.filtered, 0);
+
+        let rejected = core.process(raw(&binding, malformed, 1), 12).unwrap();
+        assert!(rejected.canonical.is_empty());
+        assert_eq!(rejected.quarantines.len(), 1);
+        assert_eq!(rejected.filtered, 0);
+        let record = QuarantineRecord::decode(rejected.quarantines[0].payload.as_slice()).unwrap();
+        assert_eq!(record.reason, QuarantineReason::SemanticInvalid as i32);
     }
 
     #[test]

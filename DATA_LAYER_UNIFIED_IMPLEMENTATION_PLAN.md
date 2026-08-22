@@ -9088,6 +9088,99 @@ Pinned code at 96d0d19; ledger-only follow-up 97a1d63 does not change runtime.
   is built and the affected edge roles are explicitly recreated.
 
 
+**C39.3 demanded-consumer blocker - 2026-08-22.**
+
+- A network-disabled, read-only backup audit of the isolated projection cache
+  passed: 120306 records, 18 partitions, 120306 unique event IDs, matching
+  payload SHA-256 and spool counters, valid image-local catalog identity,
+  contiguous retained logical offsets, zero open gaps and zero quarantine.
+- Real-provider pass-through certification passed all 12 Binance USD-M/OKX
+  Swap cases: BTC and ETH at 15m, 1h and 1d, three final rows each, exact
+  interval continuity and decimal/OHLCV invariants, closed-boundary freshness,
+  direct-provider lineage, non-authoritative/non-execution-eligible flags and
+  the explicit no-replay cursor. Measured fetch latency was 67-102 ms.
+- The demanded Trading System consumer is a real NO-GO. Its eight TRADE/BAR
+  slices repeatedly disconnect with `cursor checkpoint cannot move backwards`
+  after the governed projection-cache rebuild, with intermittent DATA_STALE.
+  The SDK intentionally starts from a fresh warmup when
+  `resume_restored_state=False`, but leaves the older durable checkpoint in
+  place. The first acknowledged event from the new cache generation therefore
+  compares its reset logical offset against the pre-rebuild offset and is
+  rejected locally forever.
+- First corrective scope is the shared V2 SDK: add an explicit fresh-snapshot
+  checkpoint replacement operation and invoke it at the new warmup boundary
+  when restored state is not requested. Ordinary acknowledgement and the
+  `resume_restored_state=True` path must retain strict monotonic regression
+  protection. File replacement must remain atomic/fsynced and backward
+  compatible with the existing `qdl.sdk-cursors.v2` payload.
+- Required tests before runtime use: memory/file replacement of a lower offset,
+  unchanged strict `save` regression rejection, fresh warmup over a prior high
+  checkpoint, restored-state resume preserving the old checkpoint, filesystem
+  atomicity/schema behavior, cursor-expiry snapshot replacement and all
+  existing SDK/consumer/full-suite gates. No cursor file is deleted manually,
+  no runtime is restarted and no stable role is recreated in this slice.
+- A separate bounded Kafka observation found the Rust quarantine counter is
+  not harmless historical noise. Recent Binance USD-M `@trade` frames contain
+  provider-emitted status records with `p=0`, `q=0`, `X=NA`, `st=1`; a direct
+  30-second provider sample reproduced five such records among 812 frames.
+  They cannot represent executable trades and currently create one
+  `SEMANTIC_INVALID/canonicalization failed` quarantine record each. Binance
+  trade bindings use `MONOTONIC`, not contiguous, native sequence policy.
+- The corrective Rust scope is therefore an exact provider-status classifier:
+  filter only this observed zero-price/zero-quantity Binance trade status shape
+  before canonicalization, count it as `filtered`, and preserve quarantine for
+  every other malformed/unknown payload. Golden tests must prove the exact
+  status shape is filtered, a normal `X=MARKET` trade remains canonical and a
+  different invalid zero trade still quarantines. Runtime core replacement is
+  not authorized by this code slice and requires its own exact recreate/rollback
+  approval after an immutable image and focused/full Rust tests exist.
+- A stronger server-side cursor-generation binding was evaluated but is not in
+  the approved SDK-only corrective slice: it changes the signed public cursor
+  schema and causes all pre-generation tokens to expire. It must not be coded
+  or deployed without explicit owner approval of that compatibility boundary.
+
+
+**C39.3 SDK and Rust corrective code slice - 2026-08-22.**
+
+- The shared V2 SDK now distinguishes a fresh snapshot generation from a
+  restored-state resume. `MemoryCursorStore` and the atomic/fsynced
+  `FileCursorStore` expose an explicit replacement operation. The first ACK
+  after a fresh warmup replaces any pre-rebuild local baseline; every later ACK
+  and every `resume_restored_state=True` session retains strict monotonic-save
+  rejection. A transient disconnect before the first ACK continues from the
+  fresh server cursor and cannot resurrect the old checkpoint.
+- SDK regression result: 17/17 tests passed. Coverage includes atomic mode-0600
+  file replacement to a lower generation offset, strict later regression
+  rejection, fresh warmup over an old offset 200, reconnect before first ACK,
+  cursor-expiry snapshot replacement, post-ACK reconnect from the confirmed
+  token, and restored-state behavior. A workspace search found no custom cursor
+  stores outside the two shipped implementations; Trading System and the alpha
+  SDK use `FileCursorStore`.
+- Rust realtime core now filters only the empirically observed Binance status
+  shape `e=trade,p=0,q=0,X=NA,st=1` before canonicalization and increments the
+  existing filtered counter. It does not relax the canonical trade invariant:
+  a normal `X=MARKET` trade remains canonical and a zero trade with any other
+  shape remains `SEMANTIC_INVALID` quarantine. This is confined to Binance;
+  OKX and VN provider paths are unchanged.
+- Rust crate result: 12/12 tests passed. The exact repository Rust 1.82 CI path
+  then passed `cargo fmt --check`, workspace `clippy --all-targets --locked -D
+  warnings`, and all 75 workspace tests. One preceding full-workspace harness
+  stopped because a plain base image lacked `pkg-config`/OpenSSL headers; the
+  corrected run installed the same disposable packages declared by CI and
+  passed. It was an environment error, not hidden product failure.
+- Full isolated Python discovery result: 708 tests passed, six intentional
+  environment-dependent skips, zero failed in 27.004 seconds. Source was
+  mounted read-only in the immutable dependency image, logs/tmp were tmpfs,
+  network was disabled and all disposable containers/targets exited with no
+  runtime state retained.
+- **Runtime remains unchanged.** The five cache roles still run Python revision
+  `0df4360`; Rust core still runs the pre-filter image; Trading System was not
+  restarted and its demanded V2 slices remain a NO-GO until immutable artifacts
+  and an exact recreate packet are approved. The signed server-cursor generation
+  change and demanded-slice health semantics remain separate owner decision
+  gates, not silently implemented debt.
+
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**

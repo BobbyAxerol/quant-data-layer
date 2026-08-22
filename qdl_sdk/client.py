@@ -160,6 +160,7 @@ class WarmupStreamSession:
         self._reconnect_attempts = 0
         self._telemetry = telemetry
         self.state_restored = state_restored
+        self._checkpoint_generation_started = state_restored
         self._closed = False
 
     def __aiter__(self):
@@ -174,6 +175,7 @@ class WarmupStreamSession:
             await self._close_events()
             self.warmup = await self._fresh_snapshot()
             self._last_seen_offset = self.warmup.watermark_offset
+            self._checkpoint_generation_started = False
             self._events = self._subscribe(
                 self.warmup.stream_cursor
             )
@@ -189,7 +191,11 @@ class WarmupStreamSession:
                 raise
             self._reconnect_attempts += 1
             await asyncio.sleep(min(0.1 * 2 ** (self._reconnect_attempts - 1), 2.0))
-            checkpoint = self._cursor_store.load(self._cursor_key)
+            checkpoint = (
+                self._cursor_store.load(self._cursor_key)
+                if self._checkpoint_generation_started
+                else None
+            )
             if checkpoint is None:
                 token = self.warmup.stream_cursor
                 self._last_seen_offset = self.warmup.watermark_offset
@@ -220,10 +226,12 @@ class WarmupStreamSession:
     def acknowledge(self, event: StreamEvent) -> None:
         if event.logical_offset > self._last_seen_offset:
             raise ValueError("cannot acknowledge an event that was not observed")
-        self._cursor_store.save(
-            self._cursor_key,
-            CursorCheckpoint(event.resume_token, event.logical_offset),
-        )
+        checkpoint = CursorCheckpoint(event.resume_token, event.logical_offset)
+        if self._checkpoint_generation_started:
+            self._cursor_store.save(self._cursor_key, checkpoint)
+        else:
+            self._cursor_store.replace(self._cursor_key, checkpoint)
+            self._checkpoint_generation_started = True
         if self._telemetry is not None:
             self._telemetry.record(
                 consumer_id=self.consumer_id,
