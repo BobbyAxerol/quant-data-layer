@@ -238,6 +238,9 @@ Pinned at: data layer 96d0d19.
   occurred.
 - Projector_v2 remains exited because the rotated ephemeral stable Redis lost
   its cache identity. C39.2 is not certified.
+- Full current Python suite: 701 passed, 6 intentional skips, 0 failed.
+- Pinned Rust 1.82 CI gate: fmt passed, clippy -D warnings passed, 74 tests
+  passed, 0 failed. The disposable container and target state were removed.
 - External PKI hardening is not certified: current generator uses one fresh CA
   per run, CA and leaf share one lifetime, and Kafka reads a shared
   certification cert-material bind mount. This is acceptable only for the

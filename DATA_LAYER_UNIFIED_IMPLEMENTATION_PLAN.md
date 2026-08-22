@@ -8937,6 +8937,24 @@ tested slices with BobbyAxerol identity; no push or merge is implied.
   production PKI until a separately approved intermediate/dual-trust design is
   implemented.
 
+
+**C39.1 full-suite closure - 2026-08-22.**
+
+Pinned code at 96d0d19; ledger-only follow-up 97a1d63 does not change runtime.
+
+- Full Python discovery suite completed: 701 tests passed, 6 intentional
+  environment-dependent skips, 0 failures in 32.392 seconds.
+- Exact repository Rust CI path ran in a disposable pinned Rust 1.82 container:
+  cargo fmt passed, workspace clippy with -D warnings passed, and 74 Rust tests
+  passed with 0 failures.
+- The Rust container, package layer and CARGO_TARGET_DIR were ephemeral under
+  docker run --rm. No repository target directory, named volume or runtime
+  service was created.
+- C39.1 is complete for code/test correctness. C39.2-C39.5 remain open and no
+  runtime recovery, consumer smoke, bundle refresh or VN certification is
+  implied.
+
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**
