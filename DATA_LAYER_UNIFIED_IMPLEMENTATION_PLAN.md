@@ -7853,3 +7853,53 @@ the seventeen added cases.
 **Still not wired.** `StableSpoolQueryBackend` remains the only backend the
 query service consults. Selecting between the two sources, and the closed-bar
 cache that keeps a wide universe inside venue rate limits, are the next slices.
+
+#### C.21 Query Source Routing
+
+**2026-08-22 status: `IMPLEMENTED / NOT YET SERVED BY THE STABLE EDGE`:**
+
+`RoutedQueryBackend` selects between the two BAR sources and satisfies the
+existing `MarketDataQueryBackend` protocol, so it can replace the spool backend
+wherever one is constructed without changing the query service.
+
+**Precedence, and why this order.** A materialised binding always wins. The
+pass-through answers only when no binding covers the requirement and the
+consumer has declared `recovery: FRESH_SNAPSHOT`. Reversing the order would let
+a consumer downgrade itself off the authoritative path simply by declaring a
+recovery policy, which would be a silent loss of guarantees rather than a
+choice. The declaration therefore means "replay continuity is not required",
+not "give me the pass-through", and the server still selects the best source
+available for that request.
+
+Consequences that follow from the order:
+
+- a consumer covered by a binding is unaffected by this change entirely;
+- an uncovered instrument or interval becomes answerable instead of failing,
+  but only as the declared non-authoritative product from C.20;
+- a requirement that asks for replay continuity is never routed away from the
+  spool, so it still fails closed when nothing covers it, which is correct;
+- open gaps are only ever reported from materialised bindings, because a
+  pass-through window is validated at fetch time and never becomes tracked
+  state.
+
+A refused pass-through returns `None` rather than an empty result, so the query
+service raises its existing not-ready problem instead of handing back a
+silently short window.
+
+**Evidence.** `tests/test_routed_query_backend.py` adds nine cases: protocol
+conformance, a bound instrument staying on the spool even when it declares
+`FRESH_SNAPSHOT` and with the provider never called, an unbound instrument
+using the pass-through without touching the spool, an unbound instrument that
+did not declare the policy staying on the spool, `latest` taking the newest row
+of a bounded window and remaining non-eligible, a refusal reporting not-ready,
+feed status following the selected source, gaps coming only from bindings, and
+a backend constructed without a pass-through behaving exactly as before.
+Complete network-off suite 639 tests with six environment skips, up from 630 by
+exactly the nine added cases.
+
+**Remaining before a consumer sees any of this.** `build_stable_query_stack`
+still constructs the spool backend directly, so the stable edge does not yet
+route. That wiring, the closed-bar cache that keeps a wide universe inside venue
+rate limits, and the catalog entries for the instruments and intervals the alpha
+fleet actually needs are the next slices. No runtime, image or catalog changed
+in this one.
