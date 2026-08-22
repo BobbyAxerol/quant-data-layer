@@ -8285,3 +8285,48 @@ every interval above `1m` on Binance Spot and OKX Spot; and every VN feed.
 
 Evidence: complete network-off suite 675 tests with six environment skips.
 Network access was three GETs per venue and three to the local V1 route.
+
+#### C.30 VN Was Advertised And Never Exercised
+
+**2026-08-22 status: `ADVERTISEMENT WITHDRAWN / GATED / COVERAGE ASSERTED`:**
+
+`stable-capabilities.yaml` advertised HNX VN30F1M and HOSE FPT with
+`certification: PROVIDER_DERIVED_DURABLE_REPLAY`, a value that reads as
+certified. The reality:
+
+- `vn_edge_v2` sits behind the `stable-vn` Compose profile and **has never been
+  created**, let alone run;
+- the canonical spool holds 18 partitions and **not one is VN**, so no VN event
+  has ever existed in V2;
+- the four VN catalog bindings have therefore never produced anything.
+
+The manifest was claiming a product that had never emitted a byte. Nothing
+failed, because nothing checked - which is exactly the condition C.17 rule 2
+exists to prevent, found in the platform's own manifest.
+
+**Corrected, not papered over.** The two VN entries now read `UNEXERCISED`, and
+`VN_TRADE` and `VN_BAR` are gated `stable: false` with reasons naming the
+profile, the never-created role and the absent spool partitions. VN is not
+removed: the bindings and the role stay, and the honest claim is simply that
+nothing has exercised them.
+
+**The check that makes it stay honest.** `tests/test_capability_coverage.py`
+turns advertising into a checkable claim: every advertised feed must have a
+catalog binding, every certification value must come from the known set, an
+`UNEXERCISED` capability must carry an explicit gate per feed, every gate must
+state a reason, and a capability served by a profile-gated role may not claim
+certification at all.
+
+It was verified to fail, not merely to pass: restoring the old
+`PROVIDER_DERIVED_DURABLE_REPLAY` value turns four of its five cases red.
+
+**What certifying VN will actually require**, recorded so it is not
+underestimated: starting `vn_edge_v2` with real DNSE credentials, inside VN
+session hours, against the real provider; proving `MARKET_CLOSED` is
+distinguished from stale rather than conflated; proving the DNSE to vnstock
+source switch carries provenance; and recording VN partitions appearing in the
+spool. None of that is possible offline, and the VN market is closed at the time
+of writing.
+
+Evidence: complete network-off suite 680 tests with six environment skips, up
+from 675 by exactly the five added cases.
