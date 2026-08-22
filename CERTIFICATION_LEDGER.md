@@ -246,3 +246,33 @@ Pinned at: data layer 96d0d19.
   certification cert-material bind mount. This is acceptable only for the
   current controlled candidate, not as offline-CA/external-secret production
   evidence.
+
+---
+
+## 7. C39.2 - Governed cache rebuild attempt and artifact-skew failure
+
+- Owner-approved apply used confirmation token
+  `REBUILD_QDL_V2_STABLE_PROJECTION_CACHE` and the rotated environment
+  `stable.env.rotate-20260822T144323Z`.
+- Exact mutation: five cache users stopped; three isolated canonical-cache
+  SQLite paths removed; only `stable_redis` flushed; projector group reset to
+  the 900-second `md.canonical.v2` window; stream then projector started.
+- Result: **FAILED CLOSED**. Redis began repopulating, but projector rejected
+  Binance USD-M ETHUSDT and OKX Swap ETH-USDT-SWAP TRADE/QUOTE canonical events
+  as outside its image-local stable catalog. BTC events passed the same
+  non-committing Kafka probe.
+- Root cause: Rust ingestor runtime uses the current 22-binding catalog while
+  immutable Python image revision `4f411e8a216a` embeds the older catalog.
+- Safety result: the runbook never started query roles during the failed gate;
+  the waiting process was stopped, query roles were then restored to pre-state,
+  projector remains fail-closed, and V1 plus Trading System were untouched.
+- C39.2 is open until a same-revision immutable Python edge image and catalog
+  digest preflight are tested and the governed rebuild passes all lag/readiness
+  gates.
+- The rebuild tool now hashes the image-local catalog in an isolated no-network
+  container and rejects drift before any stop/delete/flush. Targeted tests:
+  13 passed, 0 failed.
+- Focused rebuild/deployment/refresh tests: 46 passed, 0 failed. Corrected
+  full-suite container (read-only source plus tmpfs log path): 703 passed, six
+  intentional skips, 0 failed in 26.944 seconds. Earlier system-Python and
+  read-only-log loader errors were harness errors and were rerun correctly.

@@ -20,7 +20,9 @@ from scripts.rebuild_v2_stable_projection_cache import (
     REPLAY_LOOKBACK_SECONDS,
     STOP_SERVICES,
     STREAM_SERVICES,
+    _assert_projector_catalog_matches_source,
     _env_value,
+    _parse_sha256sum,
     _reset_projector_to_bounded_window,
     _stable_client_ssl_context,
     _start_services,
@@ -99,6 +101,46 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         self.assertIn("docker-compose.v2-stable.yml", command[5])
         self.assertEqual(command[-1], "config")
         self.assertNotIn("docker-compose.yml", command[5])
+
+    def test_projector_catalog_preflight_accepts_exact_immutable_image(self):
+        expected = __import__("hashlib").sha256(
+            (Path(__file__).parents[1] / "config/v2/stable-source-bindings.yaml").read_bytes()
+        ).hexdigest()
+        completed = [
+            subprocess.CompletedProcess([], 0, "container-id\n", ""),
+            subprocess.CompletedProcess([], 0, "sha256:" + "a" * 64 + "\n", ""),
+            subprocess.CompletedProcess([], 0, expected + "  /app/catalog.yaml\n", ""),
+        ]
+        with patch(
+            "scripts.rebuild_v2_stable_projection_cache._compose",
+            return_value=completed[0],
+        ), patch(
+            "scripts.rebuild_v2_stable_projection_cache._run",
+            side_effect=completed[1:],
+        ):
+            result = _assert_projector_catalog_matches_source(Path("/tmp/stable.env"))
+        self.assertEqual(result["image_catalog_sha256"], expected)
+        self.assertEqual(result["source_catalog_sha256"], expected)
+        self.assertEqual(result["image_id"], "sha256:" + "a" * 64)
+
+    def test_projector_catalog_preflight_rejects_drift(self):
+        completed = [
+            subprocess.CompletedProcess([], 0, "container-id\n", ""),
+            subprocess.CompletedProcess([], 0, "sha256:" + "a" * 64 + "\n", ""),
+            subprocess.CompletedProcess([], 0, "b" * 64 + "  /app/catalog.yaml\n", ""),
+        ]
+        with patch(
+            "scripts.rebuild_v2_stable_projection_cache._compose",
+            return_value=completed[0],
+        ), patch(
+            "scripts.rebuild_v2_stable_projection_cache._run",
+            side_effect=completed[1:],
+        ):
+            with self.assertRaisesRegex(RuntimeError, "image catalog differs"):
+                _assert_projector_catalog_matches_source(Path("/tmp/stable.env"))
+        self.assertEqual(_parse_sha256sum("c" * 64 + "  value"), "c" * 64)
+        with self.assertRaisesRegex(RuntimeError, "lowercase SHA-256"):
+            _parse_sha256sum("NOT-A-DIGEST")
 
     def test_recovery_starts_roles_without_dependency_traversal(self):
         env = Path("/tmp/stable.env")
@@ -238,6 +280,10 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
                 patch(
                     "scripts.rebuild_v2_stable_projection_cache._compose",
                     fake_compose,
+                ),
+                patch(
+                    "scripts.rebuild_v2_stable_projection_cache._assert_projector_catalog_matches_source",
+                    return_value={},
                 ),
             ):
                 with self.assertRaisesRegex(RuntimeError, "still running"):

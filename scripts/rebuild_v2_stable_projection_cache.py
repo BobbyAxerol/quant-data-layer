@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import ssl
 import subprocess
@@ -14,6 +15,8 @@ from typing import Callable, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = ROOT / "docker-compose.v2-stable.yml"
+STABLE_CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
+IMAGE_CATALOG_PATH = "/app/config/v2/stable-source-bindings.yaml"
 PROJECT_NAME = "qdl_v2_stable_candidate"
 CONFIRM_TOKEN = "REBUILD_QDL_V2_STABLE_PROJECTION_CACHE"
 CANONICAL_TOPIC = "md.canonical.v2"
@@ -62,6 +65,9 @@ def rebuild_plan(env_file: Path) -> dict[str, object]:
         "project": PROJECT_NAME,
         "env_file": str(env_file),
         "authority": "Kafka canonical topic",
+        "source_catalog_sha256": hashlib.sha256(
+            STABLE_CATALOG_PATH.read_bytes()
+        ).hexdigest(),
         "stop_services": list(STOP_SERVICES),
         "delete_files": list(CACHE_FILES),
         "flush_service": "stable_redis",
@@ -208,6 +214,47 @@ def _validate_project(env_file: Path) -> None:
         raise RuntimeError("compose project is not the isolated stable candidate")
 
 
+def _parse_sha256sum(output: str) -> str:
+    fields = output.strip().split()
+    digest = fields[0] if fields else ""
+    if len(digest) != 64 or any(value not in "0123456789abcdef" for value in digest):
+        raise RuntimeError("image catalog did not return a lowercase SHA-256 digest")
+    return digest
+
+
+def _assert_projector_catalog_matches_source(env_file: Path) -> dict[str, str]:
+    container = _compose(
+        env_file, "ps", "-q", "--all", "projector_v2"
+    ).stdout.strip()
+    if not container or "\n" in container:
+        raise RuntimeError("stable projector container identity is unavailable or ambiguous")
+    image = _run(
+        ["docker", "inspect", "--format", "{{.Image}}", container],
+        timeout=30,
+    ).stdout.strip()
+    if not image.startswith("sha256:") or len(image) != 71:
+        raise RuntimeError("stable projector image is not an immutable SHA-256 ID")
+    observed = _parse_sha256sum(_run(
+        [
+            "docker", "run", "--rm", "--network", "none", "--read-only",
+            "--memory", "256m", "--pids-limit", "64",
+            "--entrypoint", "sha256sum", image, IMAGE_CATALOG_PATH,
+        ],
+        timeout=60,
+    ).stdout)
+    expected = hashlib.sha256(STABLE_CATALOG_PATH.read_bytes()).hexdigest()
+    if observed != expected:
+        raise RuntimeError(
+            "stable projector image catalog differs from the deployment source: "
+            f"image={observed} source={expected}"
+        )
+    return {
+        "image_id": image,
+        "image_catalog_sha256": observed,
+        "source_catalog_sha256": expected,
+    }
+
+
 def _env_value(env_file: Path, key: str) -> str:
     prefix = f"{key}="
     matches = [
@@ -318,6 +365,7 @@ def _wait_bounded_lag(env_file: Path, deadline: float) -> dict[str, int]:
 
 def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, object]:
     _validate_project(env_file)
+    catalog_preflight = _assert_projector_catalog_matches_source(env_file)
     deadline = time.monotonic() + timeout_seconds
     _compose(env_file, "stop", *STOP_SERVICES)
 
@@ -407,6 +455,7 @@ def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, obje
         **rebuild_plan(env_file),
         "apply": True,
         "status": "PASS",
+        "catalog_preflight": catalog_preflight,
         "canonical_lag": lag,
         "replay_bootstrap": replay_bootstrap,
         "redis_keys": final_size,

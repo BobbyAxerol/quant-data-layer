@@ -8955,6 +8955,54 @@ Pinned code at 96d0d19; ledger-only follow-up 97a1d63 does not change runtime.
   implied.
 
 
+**C39.2 first governed apply and fail-closed diagnosis - 2026-08-22.**
+
+- The owner explicitly approved the exact confirmation-token cache rebuild.
+  Pre-state proved `projector_v2` exited 1, isolated `stable_redis` contained
+  four keys, the four query/stream roles were running and V1 port 8100 still
+  returned `status=ok`.
+- The runbook stopped exactly the five approved cache users, removed only the
+  three isolated canonical-cache SQLite files, flushed only `stable_redis`,
+  reset `stable-projector-v1` to the bounded 900-second canonical window and
+  started stream then projector. Redis repopulated from four to 19 keys.
+- Acceptance did not pass. The projector repeatedly rejected real canonical
+  ETH events with `canonical event is outside the stable catalog`; therefore
+  the runbook correctly withheld both query roles. A bounded read-only Kafka
+  probe with a separate non-committing consumer proved that BTC events matched
+  while Binance USD-M ETHUSDT and OKX Swap ETH-USDT-SWAP TRADE/QUOTE events did
+  not. Their instrument UID and source ID matched the host catalog.
+- Root cause is immutable-artifact skew, not provider data: the active Rust
+  ingestor runtime was generated from the current 22-binding catalog including
+  ETH, while Python image revision `4f411e8a216a` still embeds the older catalog.
+  The probe container loaded that image-local catalog and reproduced the exact
+  rejection. A diagnostic process launched inside the projector's 256 MiB
+  cgroup caused that container to be OOM-killed; subsequent diagnostics use a
+  separate read-only 512 MiB container and the probe was removed automatically.
+- The waiting runbook was terminated after pass became impossible. Both query
+  roles were restored to their pre-attempt running state; stream roles remained
+  running, projector remains fail-closed and V1/Trading System were not
+  restarted or mutated. C39.2 remains `FAILED / OPEN`.
+- Corrective gate before a second apply: build one immutable Python edge image
+  from the same pinned source/catalog revision as the generated ingestor
+  runtime, assert the image-local catalog digest/count/revisions against the
+  bundle before any recreate, run catalog/event and rebuild regressions, and
+  replace only projector/query/stream cache users. Mixed catalog revisions must
+  fail deployment preflight before Kafka consumption, not at runtime.
+- Implemented that preflight in the governed rebuild tool. It resolves the
+  existing projector container to an immutable image ID, hashes the image-local
+  stable catalog in a network-disabled, read-only, memory/PID-bounded disposable
+  container, compares it with the deployment source catalog and fails before
+  stopping any cache user when they differ. Targeted rebuild tests pass 13/13,
+  including exact match, drift rejection and no-mutation ordering.
+- Focused rebuild/deployment/runtime-refresh suite passed 46/46 in the pinned
+  dependency image with current source mounted read-only. Two earlier harness
+  invocations were invalid rather than product failures: system Python lacked
+  protobuf/redis, then a read-only `/app` prevented the logger opening
+  `/app/logs/app.log`. The corrected isolated run kept source read-only, mounted
+  only `/app/logs` as tmpfs and completed the full suite: 703 passed, six
+  intentional environment skips, zero failed in 26.944 seconds.
+
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**
