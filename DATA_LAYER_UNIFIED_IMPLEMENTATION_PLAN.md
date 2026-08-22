@@ -8131,3 +8131,67 @@ crypto families being expressible, Binance Spot generating Spot kinds and the
 Spot endpoint, USD-M keeping its own, and the OKX bar channel following the
 demanded interval. Complete network-off suite 669 tests with six environment
 skips, up from 659 by exactly the ten added cases.
+
+#### C.27 Catalog Regeneration Closed, And A Metadata Defect It Found
+
+**2026-08-22 status: `LOOP CLOSED FOR CRYPTO / METADATA DEFECT RECORDED, NOT FIXED`:**
+
+Bounded read-only captures were taken once from the four public metadata
+endpoints and reduced to the demanded symbols, so the generation loop is now
+closed end to end for crypto: committed demand plus committed captures
+regenerate the committed catalog, and a test proves it.
+
+| Capture | Full response | Committed |
+|---|---:|---:|
+| Binance USD-M `exchangeInfo` | 1,077,582 B | 2,507 B |
+| Binance Spot `exchangeInfo` | 17,513,220 B | 4,963 B |
+| OKX V5 instruments SWAP | 476,038 B | 2,128 B |
+| OKX V5 instruments SPOT | 1,491,741 B | 1,084 B |
+
+Rows are stored verbatim; no field is rewritten, so `fabricated_metadata=false`
+is checkable by reading the file rather than by trusting a flag.
+`config/v2/captures/provenance.json` records both the full-response hash, which
+says what was fetched, and the filtered hash, which is what regeneration
+consumes and what a test re-verifies on every run.
+
+**Regeneration reproduces the committed catalog's identity exactly.** The same
+six crypto instruments, and every identity field including the deterministic
+instrument UIDs, match with no exception.
+
+**It also found a real defect.** Three of the six instruments carry tick or step
+metadata that disagrees with the venue:
+
+| Instrument | Provider | Committed |
+|---|---|---|
+| `BINANCE.SPOT.SPOT.BTC-USDT` | tick 0.01, step 0.00001 | tick 0.10, step 0.000001 |
+| `OKX.SPOT.SPOT.BTC-USDT` | step 0.00000001 | step 0.000001 |
+| `OKX.SWAP.PERPETUAL.BTC-USDT` | step 0.01 (`lotSz`) | step 1 |
+
+The Binance Spot values are exactly the USD-M values for the same symbol
+(tick 0.10, and USD-M step 0.001), so that record was copied from the
+derivatives one rather than derived from the Spot capture. This is precisely
+the failure C.16 predicted for hand-edited generated files, now demonstrated
+rather than argued.
+
+**Not fixed here, deliberately.** Correcting the catalog bumps its revision,
+which strands the BAR edge checkpoint exactly as C.19 recorded, so it needs an
+approved rollout rather than a quiet edit. The four drifting fields are pinned
+in `KNOWN_METADATA_DRIFT` so the set can shrink but never grow, and comparison
+is numeric so `0.1` and `0.10` are not reported as a difference.
+
+**Impact, stated honestly.** `price_tick` and `quantity_step` are instrument
+metadata used for price and size validation. Two of the three affected
+instruments carry zero consumer demand. The third,
+`OKX.SWAP.PERPETUAL.BTC-USDT`, is demanded by the Trading System, but that
+consumer takes market data only and does not route orders to OKX, so no order
+was sized against the wrong step. This is a correctness defect in published
+metadata, not an execution incident.
+
+**Evidence.** `tests/test_catalog_regeneration.py` adds five cases: every
+committed capture matching its recorded hash and byte count, provenance
+declaring non-fabricated metadata from HTTPS endpoints, the same instrument set
+being produced, identity fields reproducing exactly, and metadata drift not
+growing beyond the pinned set. Complete network-off suite 674 tests with six
+environment skips, up from 669 by exactly the five added cases. The captures
+were the only network access; nothing was written to a provider and no runtime
+changed.

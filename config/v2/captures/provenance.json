@@ -1,0 +1,48 @@
+{
+  "captured_at_utc": "2026-08-22T12:15:00Z",
+  "captures": [
+    {
+      "endpoint": "https://fapi.binance.com/fapi/v1/exchangeInfo",
+      "filtered_capture": "config/v2/captures/binance-usdm-exchangeinfo.filtered.json",
+      "filtered_capture_bytes": 2507,
+      "filtered_capture_sha256": "fe42249dfb2ca9b2deec378ac1405330c8bfd880e0713b3c2354f3e1a59cb76f",
+      "full_response_bytes": 1077582,
+      "full_response_sha256": "0793ca4b20a3ee4a0b34476b50e952ebd8099a67566afa1db9db4173e681396d",
+      "market": "USDM",
+      "venue": "BINANCE"
+    },
+    {
+      "endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+      "filtered_capture": "config/v2/captures/binance-spot-exchangeinfo.filtered.json",
+      "filtered_capture_bytes": 4963,
+      "filtered_capture_sha256": "c6bff3c65fb567bcf498e8d27bcc78f6d64d33831d57c13b7a4eaa8e4e8d8506",
+      "full_response_bytes": 17513220,
+      "full_response_sha256": "abb93d8a0a3c7c4e9e3f0738cbfb24f025ce16a98e78d33775093a2f75eb663e",
+      "market": "SPOT",
+      "venue": "BINANCE"
+    },
+    {
+      "endpoint": "https://www.okx.com/api/v5/public/instruments?instType=SWAP",
+      "filtered_capture": "config/v2/captures/okx-instruments-swap.filtered.json",
+      "filtered_capture_bytes": 2128,
+      "filtered_capture_sha256": "d94ed9fe65a677108a7ea590999b3379bf9742333faf2eb18bab9a9438b33638",
+      "full_response_bytes": 476038,
+      "full_response_sha256": "207b83d6210812dedd223a0530fb7efe85519c6528dda5a54b6b456cf83b72d4",
+      "market": "SWAP",
+      "venue": "OKX"
+    },
+    {
+      "endpoint": "https://www.okx.com/api/v5/public/instruments?instType=SPOT",
+      "filtered_capture": "config/v2/captures/okx-instruments-spot.filtered.json",
+      "filtered_capture_bytes": 1084,
+      "filtered_capture_sha256": "ec3c6f66375837087b2c59285012e52b6cbf7eff4aaeb36ebd12c22c5f2b7516",
+      "full_response_bytes": 1491741,
+      "full_response_sha256": "9c2e7f521ca89e9bb793d6a42a997973bc172492fdbb1e5274fd750feb569773",
+      "market": "SPOT",
+      "venue": "OKX"
+    }
+  ],
+  "fabricated_metadata": false,
+  "note": "Rows are verbatim provider bytes reduced to the demanded symbols by scripts/filter_metadata_capture.py. No field is rewritten.",
+  "schema": "qdl.v2.metadata-capture-provenance.v1"
+}
