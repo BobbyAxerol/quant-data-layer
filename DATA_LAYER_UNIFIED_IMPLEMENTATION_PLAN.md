@@ -9007,6 +9007,36 @@ Pinned code at 96d0d19; ledger-only follow-up 97a1d63 does not change runtime.
   `QDL_STABLE_COMPOSE_OVERRIDE` pinned by the staged env, includes it in every
   Compose operation and reports both files in the dry-run plan. Missing, relative
   or duplicate overrides fail before mutation. Focused suite now passes 47/47.
+- Built immutable Python edge image
+  `sha256:bd5a8b44974c123bdb15c7b75ec3bed1ef1c8b4834c671b1f47fd4fa555c4199`
+  from commit `0df4360`: non-root `qdl:qdl`, image label revision `0df4360`,
+  catalog revision 3, 22 bindings, eight instruments and catalog SHA-256
+  `a148e892b64232b854c8d80fc01109c66fb4a5bd6eb226dff5b8a93edcdf6347`.
+  Baked-image focused tests passed 46/46.
+- Staged a new mode-0600 env and mode-0640 override without overwriting the
+  rotated rollback artifacts. The only topology changes were the five cache
+  users; all use the new immutable image, and query/stream retain
+  `QDL_STABLE_PASS_THROUGH_ENABLED=true`. `binance_bar_edge`, Rust, Kafka,
+  provider ingestors, V1 and Trading System remained on their prior artifacts.
+  Compose `create --no-deps` was unsupported by the installed CLI after the
+  roles were stopped; `up --no-start --no-deps --force-recreate` performed the
+  intended stopped-state recreate, with no intermediate service start.
+- The second governed apply passed. It replayed 218706 real canonical records
+  from the 900-second window across all six partitions, below the one-million
+  bootstrap bound. Three consecutive live-lag samples were at or below 250;
+  final lag was 16 and the maximum accepted sample was 69. Redis was non-empty
+  with 71 keys when the runbook returned PASS.
+- Independent post-state checks: both query replicas and the active stream are
+  READY; the passive stream is live and correctly reports STANDBY on its lease;
+  projector is READY. Kafka later sampled at total lag 37. All five roles run
+  revision `0df4360`, pass-through remains set on four edge roles, and their
+  bounded logs contain zero TLS, outside-catalog, collision, quarantine,
+  traceback or error matches.
+- Redis and SQLite expose the same cache identity `ae7554250ad548e7818559c140728ed4`.
+  A disposable read-only SQLite backup audit found 114542 events, 18 durable
+  partitions, zero open gaps and zero quarantine rows. The probe was removed.
+  V1 port 8100 remained `status=ok`, Redis healthy, Binance trade stream live
+  and DNSE correctly MARKET_CLOSED. C39.2 is `COMPLETE / PASS`.
 
 
 ## 20. Derivatives Reference Feeds — Separate Program Definition

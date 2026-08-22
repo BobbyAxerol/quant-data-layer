@@ -280,3 +280,13 @@ Pinned at: data layer 96d0d19.
   because the runbook used only the base file. Override provenance is now an
   explicit staged-env input used by every Compose call; invalid or ambiguous
   paths fail before mutation. Focused suite after the fix: 47 passed, 0 failed.
+- Corrected image: `sha256:bd5a8b44974c...`, revision `0df4360`, non-root,
+  catalog revision 3/22 bindings/8 instruments and SHA-256 `a148e892b642...`.
+  Baked-image focused tests passed 46/46.
+- Second governed rebuild: PASS; 218706 replay records, six partitions, final
+  lag 16, observed accepted bound 69/250 and 71 Redis keys at completion.
+- Post-state: query replicas/active stream/projector READY; passive stream live
+  and STANDBY by design; later lag 37; five role logs had zero bounded TLS,
+  catalog, collision, quarantine, traceback or error matches. Redis/SQLite cache
+  identity matched. Disposable backup audit: 114542 events, 18 partitions, zero
+  open gaps, zero quarantine. V1 remained healthy and untouched. C39.2 PASS.
