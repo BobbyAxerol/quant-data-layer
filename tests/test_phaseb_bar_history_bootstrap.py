@@ -455,7 +455,8 @@ class BarEdgeDeploymentShapeTests(unittest.TestCase):
         return {
             item.binding_id
             for item in acquisition.bindings
-            if item.mode == "PYTHON_REST"
+            if item.enabled
+            and item.mode == "PYTHON_REST"
             and by_id[item.binding_id].feed.value == "BAR"
         }
 

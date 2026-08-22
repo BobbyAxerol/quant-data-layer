@@ -91,7 +91,8 @@ class StableBinanceBarEdge:
             pair
             for pair in pairs
             if (
-                pair[1].mode == "PYTHON_REST"
+                pair[1].enabled
+                and pair[1].mode == "PYTHON_REST"
                 and pair[1].runtime == "BINANCE"
                 and pair[0].feed.value == "BAR"
             )
@@ -100,7 +101,8 @@ class StableBinanceBarEdge:
             pair
             for pair in pairs
             if (
-                pair[1].mode == "PYTHON_REST"
+                pair[1].enabled
+                and pair[1].mode == "PYTHON_REST"
                 and pair[1].runtime == "OKX"
                 and pair[0].feed.value == "BAR"
             )
@@ -112,7 +114,9 @@ class StableBinanceBarEdge:
         expected = {
             source.binding_id
             for source, acquisition in pairs
-            if acquisition.mode == "PYTHON_REST" and source.feed.value == "BAR"
+            if acquisition.enabled
+            and acquisition.mode == "PYTHON_REST"
+            and source.feed.value == "BAR"
         }
         owned = {
             source.binding_id

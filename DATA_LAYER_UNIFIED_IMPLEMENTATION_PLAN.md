@@ -8365,3 +8365,54 @@ reads the boundary from the response.
 
 Evidence: complete network-off suite 680 tests with six environment skips, plus
 five live slices.
+
+#### C.32 Zero-Demand Spot: Rule 6 Was Not Expressible
+
+**2026-08-22 status: `DISABLED BY CONFIGURATION / RUNTIME ROLLOUT PENDING`:**
+
+Six Spot bindings carry zero consumer demand while two ingestor roles acquire
+them continuously. Program rule 6 says exactly what to do: *"Unused Spot feeds
+are disabled by configuration and zero-demand evidence, not deleted. A new
+consumer can re-enable them through a reviewed DataRequirement without code
+changes."*
+
+**That rule could not be obeyed.** `StableAcquisitionPlan.load` requires the
+acquisition set to equal the catalog set exactly - verified by construction, it
+raises `stable acquisition and source catalog binding sets differ` on any
+subset. So the only way to stop acquiring a feed was to delete it from the
+catalog, which deletes the capability the rule says to keep. The rule and the
+code contradicted each other, and the code won by default.
+
+**Fix.** `StableAcquisitionBinding` gains `enabled`, defaulting to true. The
+one-to-one requirement stays, so nothing can be dropped silently, but a disabled
+binding is excluded from the core configuration, from native ingestor role
+generation and from the BAR edge. Capability stays declared; acquisition stops.
+
+The six Spot bindings are now `enabled: false` and the acquisition plan is
+revision 5. The effect, measured:
+
+| | Before | After |
+|---|---:|---:|
+| Catalog bindings | 22 | 22 |
+| Acquisition bindings | 22 | 22 |
+| Bindings configured into the core | 22 | 16 |
+| Native ingestor roles generated | 4 | **2** |
+
+`ingestor_binance_spot` and `ingestor_okx_spot` receive no configuration at all
+after a bundle refresh, which is what makes stopping them a configuration
+consequence rather than a manual act.
+
+**Evidence.** `tests/test_disabled_acquisition.py` adds five cases: the
+capability is kept in both documents, the disabled set is exactly the
+zero-demand Spot set, a disabled binding is absent from the core configuration,
+no ingestor role is generated for a disabled market, and `enabled` defaults to
+true so every other binding is untouched. Six existing assertions that encoded
+the old all-or-nothing invariant were updated rather than deleted, each now
+stating that the core is configured from *acquired* bindings.
+
+Complete network-off suite 685 tests with six environment skips.
+
+**Runtime rollout still pending.** Taking effect requires a bundle refresh and
+recreating the affected roles, after which the two Spot ingestors can be
+stopped. The acquisition revision bump to 5 will strand the BAR edge checkpoint
+exactly as C.19 recorded; the refresh tool now reports that in its dry run.

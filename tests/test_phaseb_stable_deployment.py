@@ -111,17 +111,16 @@ class StableDeploymentContractTests(unittest.TestCase):
     def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
         self.assertEqual(len(self.catalog.bindings), 22)
         self.assertEqual(len(self.acquisition.bindings), 22)
-        self.assertEqual(self.acquisition.revision, 4)
+        self.assertEqual(self.acquisition.revision, 5)
         modes = {item.mode for item in self.acquisition.bindings}
         self.assertEqual(modes, {"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
         native = self.acquisition.native_ingestor_configs(
             catalog=self.catalog, authority=self.authority
         )
-        self.assertEqual(
-            set(native),
-            {"binance-usdm", "binance-spot", "okx-swap", "okx-spot"},
-        )
-        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 12)
+        # Spot is disabled by configuration, so no role is generated for it
+        # while its capability stays declared in the catalog.
+        self.assertEqual(set(native), {"binance-usdm", "okx-swap"})
+        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 8)
         self.assertTrue(all(item["authority"]["mode"] == "RUST_SHADOW" for item in native.values()))
         self.assertEqual(
             {
@@ -144,16 +143,14 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertEqual(
             {key: item["max_subscriptions_per_connection"] for key, item in native.items()},
             {
-                "binance-spot": 200,
                 "binance-usdm": 200,
-                "okx-spot": 100,
                 "okx-swap": 100,
             },
         )
         generation_paths = {
             item["generation_state_path"] for item in native.values()
         }
-        self.assertEqual(len(generation_paths), 4)
+        self.assertEqual(len(generation_paths), 2)
         self.assertTrue(all(
             value.startswith("/var/lib/qdl-stable/runtime/generations/")
             for value in generation_paths
@@ -189,20 +186,33 @@ class StableDeploymentContractTests(unittest.TestCase):
             catalog=self.catalog, authority=self.authority
         )
         bindings = core["core"]["bindings"]
-        expected = {item.instrument.instrument_uid for item in self.catalog.bindings}
+        # The core is configured from acquired bindings; a disabled binding
+        # keeps its catalog capability but is not consumed by any role.
+        acquired = {
+            item.binding_id for item in self.acquisition.bindings if item.enabled
+        }
+        expected = {
+            item.instrument.instrument_uid for item in self.catalog.bindings
+            if item.binding_id in acquired
+        }
         self.assertEqual({item["instrument_uid"] for item in bindings}, expected)
         self.assertEqual(
             {item["source_id"] for item in bindings},
-            {item.source_id for item in self.catalog.bindings},
+            {
+                item.source_id for item in self.catalog.bindings
+                if item.binding_id in acquired
+            },
         )
         finality_by_source = {
-            item.source_id: item.require_final_bar for item in self.catalog.bindings
+            item.source_id: item.require_final_bar
+            for item in self.catalog.bindings
+            if item.binding_id in acquired
         }
         self.assertEqual(
             {item["source_id"]: item["require_final_bar"] for item in bindings},
             finality_by_source,
         )
-        self.assertEqual(sum(finality_by_source.values()), 8)
+        self.assertEqual(sum(finality_by_source.values()), 6)
         self.assertFalse(core["authority"]["public_write_allowed"])
         self.assertFalse(core["authority"]["legacy_write_allowed"])
         self.assertFalse(core["core"]["allow_test_provenance"])
@@ -256,9 +266,7 @@ class StableDeploymentContractTests(unittest.TestCase):
                     "core.json",
                     "core-002.json",
                     "core-003.json",
-                    "ingestor-binance-spot.json",
                     "ingestor-binance-usdm.json",
-                    "ingestor-okx-spot.json",
                     "ingestor-okx-swap.json",
                 },
             )

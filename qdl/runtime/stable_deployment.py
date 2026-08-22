@@ -94,6 +94,13 @@ class StableAcquisitionBinding:
     sequence_policy: str
     websocket_url: str | None
     business_websocket_url: str | None
+    # Program rule 6: an unused feed is disabled by configuration and
+    # zero-demand evidence, never deleted. The catalog keeps the capability so a
+    # reviewed DataRequirement can re-enable it without a code change; this flag
+    # is what stops the runtime acquiring it in the meantime. Until it existed,
+    # the only way to stop acquiring a feed was to delete it from the catalog,
+    # which deleted the capability the rule says to keep.
+    enabled: bool = True
 
     def validate(self, source: StableSourceBinding) -> None:
         if (
@@ -184,11 +191,17 @@ class StableAcquisitionPlan:
             raise ValueError("stable acquisition requires 1..100000 bindings")
         bindings = []
         for value in values:
-            if not isinstance(value, dict) or set(value) != {
+            required = {
                 "binding_id", "mode", "runtime", "provider_kind", "native_channel",
                 "sequence_policy", "websocket_url", "business_websocket_url",
-            }:
+            }
+            if not isinstance(value, dict) or not required <= set(value) or (
+                set(value) - required - {"enabled"}
+            ):
                 raise ValueError("stable acquisition binding fields are incomplete or unknown")
+            enabled = value.get("enabled", True)
+            if not isinstance(enabled, bool):
+                raise ValueError("stable acquisition 'enabled' must be a boolean")
             bindings.append(StableAcquisitionBinding(
                 binding_id=str(value["binding_id"]),
                 mode=str(value["mode"]).upper(),
@@ -203,6 +216,7 @@ class StableAcquisitionPlan:
                     str(value["business_websocket_url"])
                     if value["business_websocket_url"] is not None else None
                 ),
+                enabled=enabled,
             ))
         result = cls(
             schema=str(payload["schema"]),
@@ -235,7 +249,12 @@ class StableAcquisitionPlan:
             raise ValueError("stable core worker index is outside the topology bound")
         source_by_id = {item.binding_id: item for item in catalog.bindings}
         acquisitions = {item.binding_id: item for item in self.bindings}
-        selected_ids = frozenset(source_by_id) if binding_ids is None else binding_ids
+        # A disabled binding keeps its capability in the catalog but is not
+        # acquired, so no runtime role is configured to consume it.
+        acquired = frozenset(
+            item.binding_id for item in self.bindings if item.enabled
+        )
+        selected_ids = acquired if binding_ids is None else frozenset(binding_ids) & acquired
         if not selected_ids or not selected_ids.issubset(source_by_id):
             raise ValueError("stable core binding selection is empty or unknown")
         bindings = []
@@ -351,7 +370,7 @@ class StableAcquisitionPlan:
         source_by_id = {item.binding_id: item for item in catalog.bindings}
         grouped: dict[tuple[str, str], list[StableAcquisitionBinding]] = {}
         for acquisition in self.bindings:
-            if acquisition.mode == "RUST_NATIVE":
+            if acquisition.enabled and acquisition.mode == "RUST_NATIVE":
                 source = source_by_id[acquisition.binding_id]
                 grouped.setdefault(
                     (acquisition.runtime, source.instrument.identity.market), []
