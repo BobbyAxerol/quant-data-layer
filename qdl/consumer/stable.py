@@ -7,7 +7,6 @@ from typing import Any
 import yaml
 
 from qdl.consumer.manifest import ConsumerManifest, ConsumerManifestLoader
-from qdl.runtime.provider_history import pass_through_eligible
 from qdl.runtime.stable_catalog import StableSourceCatalog
 
 
@@ -109,6 +108,12 @@ class StableConsumerMigrationPlan:
             except ValueError as error:
                 raise ValueError("stable consumer manifest escapes repository root") from error
             manifest = ConsumerManifestLoader.load(manifest_path)
+            # Imported here, not at module scope: `qdl.security` imports
+            # `qdl.consumer`, so a top-level import of anything under
+            # `qdl.runtime` closes a cycle back onto this module. The same
+            # reason `stable_catalog.entitlements` defers its import.
+            from qdl.runtime.provider_history import pass_through_eligible
+
             for requirement in manifest.requirements:
                 # A requirement is servable if a materialised binding covers it
                 # or, failing that, if the pass-through is able to answer it.

@@ -8533,6 +8533,46 @@ the data plane returns 401 (`qdl/security/data_plane.py:304`).
 
 Suite 699 tests, 6 environment skips.
 
+#### C.35 A Cycle The Whole Suite Imported Straight Through
+
+**2026-08-22 status: `FIXED / GUARDED`.**
+
+C.34 added a top-level import of `qdl.runtime.provider_history` to
+`qdl.consumer.stable`. That closes a cycle:
+
+```
+qdl.consumer.stable -> qdl.runtime.provider_history -> qdl.runtime.stable_source
+   -> qdl.stream -> qdl.security -> qdl.consumer.manifest -> qdl.consumer
+   -> qdl.consumer.stable
+```
+
+The 699-test suite passed. So did a direct import check run by hand. Neither
+found it, for the same reason: by the time anything ran, `sys.modules` already
+held the modules in a benign order. It surfaced on the **first container start**
+of the newly built image, which imports a different entry point first:
+
+```
+ImportError: cannot import name 'pass_through_eligible' from partially
+initialized module 'qdl.runtime.provider_history' (most likely due to a
+circular import)
+```
+
+Fixed by deferring the import into the function, the same pattern
+`stable_catalog.entitlements` already uses against the same cycle.
+
+`tests/test_module_import_order.py` imports each entry module in **its own
+interpreter**, which is the only place import order is genuinely fresh.
+Verified to fail against the pre-fix code: six of the ten entry points break,
+each with a different partially-initialised module.
+
+**Method note.** This is C.33's lesson repeated one layer down. There, tests
+proved the data was right but never ran the product where it is served. Here,
+the suite proved the modules work but never imported them the way a role does.
+Both were caught only by starting the real thing — which is why the flag flip
+was treated as a deployment, not a config edit.
+
+Suite 700 tests, 6 environment skips.
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**
