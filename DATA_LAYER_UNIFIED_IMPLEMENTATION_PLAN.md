@@ -7950,3 +7950,48 @@ config surface for the flag; catalog entries for the instruments and intervals
 the alpha fleet needs; and only then lifting the `1m` gate in the alpha runtime,
 which stays correct until those entries are certified. No runtime, image,
 catalog or deployed configuration changed in this slice.
+
+#### C.23 Closed-Bar Window Cache
+
+**2026-08-22 status: `IMPLEMENTED / SOURCE ONLY`:**
+
+Without amortisation every pass-through request reaches the venue, and a wide
+universe cannot stay inside a rate limit. This is the mechanism V1 already
+relies on, and it is what makes the 300 and 317 symbol universe alphas
+affordable on the pass-through path rather than only in principle.
+
+**Correctness rests on one fact: a closed bar is immutable.** The cache is keyed
+on the identity of the window, including the closed-bar boundary it was fetched
+for. When the boundary moves, every entry for that series becomes unreachable by
+construction rather than by expiry, so a window can never be served into a later
+bar period. That is a stronger guarantee than a TTL, which can outlive the
+period it was measured in.
+
+Three refusals keep it from answering wrongly:
+
+- a cached window **shorter** than the request is a miss, not a short answer,
+  so a larger request re-fetches instead of quietly returning fewer rows;
+- a different instrument, interval or boundary is a different window and never
+  matches;
+- the longest window seen for a boundary is retained, so one large request also
+  satisfies the smaller ones that follow rather than evicting itself.
+
+Entries are bounded and evicted least-recently-used, and hit and miss counters
+are exposed for the capacity evidence a later gate needs.
+
+**Recorded limitation.** A provider correction to an already closed bar is not
+observed until the next period, because the window is not re-fetched within one.
+A consumer that must see corrections immediately needs the materialised path,
+which carries revisions as append-only events. This is a property of the
+product, not a defect, and it belongs in the contract note beside
+`FRESH_SNAPSHOT`.
+
+**Evidence.** `tests/test_closed_bar_cache.py` adds eleven cases. Seven cover
+the cache directly: reuse within a boundary, a later boundary never reusing an
+earlier window, instrument and interval separation, a short window being a miss,
+the longest window winning, bounded least-recently-used eviction, and hit/miss
+accounting. Four drive it through the pass-through source with a counting
+fetcher: repeat requests in one period reach the venue once, a smaller request
+reuses the window, a larger request re-fetches rather than answering short, and
+the next bar period re-fetches. Complete network-off suite 656 tests with six
+environment skips, up from 645 by exactly the eleven added cases.

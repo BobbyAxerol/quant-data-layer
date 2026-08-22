@@ -39,6 +39,7 @@ from qdl.canonical.market import (
     canonicalize_okx_bar,
 )
 from qdl.canonical.trade import TradeContext
+from qdl.runtime.closed_bar_cache import ClosedBarWindowCache
 from qdl.domain.instrument import InstrumentRecord
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query.contracts import DataRequirement, FeedType, RecoveryPolicy
@@ -93,6 +94,7 @@ class ProviderBarHistorySource:
         clock_ns: Callable[[], int] = time.time_ns,
         binance_fetcher: Callable[..., Any] = fetch_binance_history,
         okx_fetcher: Callable[..., Any] = fetch_okx_history,
+        cache: ClosedBarWindowCache | None = None,
     ) -> None:
         self.catalog = catalog
         self.adapter_version = adapter_version
@@ -101,6 +103,7 @@ class ProviderBarHistorySource:
         self._clock_ns = clock_ns
         self._binance_fetcher = binance_fetcher
         self._okx_fetcher = okx_fetcher
+        self.cache = cache if cache is not None else ClosedBarWindowCache()
 
     def serves(self, requirement: DataRequirement) -> bool:
         """Whether this source may answer the requirement at all."""
@@ -145,6 +148,15 @@ class ProviderBarHistorySource:
             )
         instrument = self.catalog.instrument_for(requirement.instrument_uid)
         venue = _SUPPORTED[(instrument.identity.venue, instrument.identity.market)]
+        # The boundary is part of the cache identity, so a window fetched for an
+        # earlier bar period can never be served into a later one.
+        interval_ms = canonical_interval_ms(interval)
+        boundary_ms = (self._clock_ns() // 1_000_000) // interval_ms * interval_ms
+        cached = self.cache.get(
+            requirement.instrument_uid, interval, boundary_ms, limit
+        )
+        if cached is not None:
+            return cached
         raw_envelopes = (
             self._fetch_binance(instrument, interval, limit)
             if venue == "binance"
@@ -175,7 +187,11 @@ class ProviderBarHistorySource:
             raise ProviderHistoryUnavailable(
                 f"pass-through history is incomplete: {len(envelopes)} of {limit}"
             )
-        return tuple(envelopes)
+        window = tuple(envelopes)
+        self.cache.put(
+            requirement.instrument_uid, interval, boundary_ms, window
+        )
+        return window
 
     def _descriptor_fields(self, instrument: InstrumentRecord) -> dict[str, Any]:
         return {
