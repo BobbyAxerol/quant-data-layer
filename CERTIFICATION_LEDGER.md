@@ -325,3 +325,15 @@ Pinned at: data layer 96d0d19.
 - Runtime mutation: none. V1, Trading System, Kafka offsets, Redis/SQLite state,
   stable roles and authority are unchanged. Immutable rebuild/recreate, signed
   cursor-generation semantics and demanded-slice health remain explicit gates.
+
+## 10. C39.3/C39.5 - Immutable artifacts and bundle dry-run
+
+- Python image `sha256:6bc8ac77e9d...` and Rust image
+  `sha256:685aaa68f7c7...` are pinned to `a3b068a`, run non-root and have not
+  replaced any runtime role. Baked Python tests: 708 passed, 6 skipped.
+- Stable refresh dry-run only: acquisition revision 4 -> 5; only the two Spot
+  ingestor configs are removed; ten core/authority/active-ingestor artifacts
+  change; env and identities remain preserved.
+- `stable-crypto-bar-edge.json` is the single stranded checkpoint because it
+  pins acquisition revision 4. Apply requires an exact checkpoint backup/move,
+  real-provider bootstrap, role recreate and rollback packet. No apply occurred.

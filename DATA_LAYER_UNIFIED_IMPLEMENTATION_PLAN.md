@@ -9181,6 +9181,34 @@ Pinned code at 96d0d19; ledger-only follow-up 97a1d63 does not change runtime.
   gates, not silently implemented debt.
 
 
+**C39.3 immutable artifacts and C39.5 dry-run - 2026-08-22.**
+
+- Built immutable Python image `qdl-v2-python:2.0.0-a3b068a`, ID
+  `sha256:6bc8ac77e9d465e153b3bfa18884498c27c56183820a2fc05f80de4fb9b49261`,
+  non-root `qdl:qdl`, and Rust image `qdl-v2-rust:2.0.0-a3b068a`, ID
+  `sha256:685aaa68f7c7ff79451cdd735cd4319a56aa9d50dcab184819750af939614fcb`,
+  non-root `10001:10001`, default authority label `RUST_SHADOW`. Both carry
+  revision/version labels `a3b068a`/`2.0.0-a3b068a`.
+- The complete baked Python image suite passed 708 tests with six intentional
+  skips in 26.997 seconds. Rust binaries are executable under UID/GID 10001.
+  An initial binary probe accidentally appended `--help` to the image default
+  `qdl-kafka-smoke` entrypoint and correctly failed for absent Kafka env; the
+  corrected explicit-entrypoint executable probe passed. Neither probe joined
+  the runtime network or retained a container.
+- C39.5 refresh dry-run ran with bundle and stable-state volume read-only. It
+  preserves `stable.env` and identities, raises acquisition revision 4 to 5,
+  removes only `ingestor-binance-spot.json` and `ingestor-okx-spot.json`, and
+  changes ten authority/core/demanded-ingestor runtime artifacts for the pinned
+  Rust digest. No runtime file was written.
+- The dry-run correctly found one incompatible checkpoint:
+  `stable-crypto-bar-edge.json` pins acquisition revision 4 while the refresh is
+  revision 5. Applying without a checkpoint migration would make bar edge fail
+  closed. Any cutover packet must back up/move exactly this checkpoint, allow a
+  real-provider closed-BAR bootstrap under revision 5, retain its rollback copy,
+  and prove all demanded materialized bindings before cleanup. Apply/recreate is
+  not authorized by this dry-run.
+
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**
