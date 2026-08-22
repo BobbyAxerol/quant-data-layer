@@ -7814,3 +7814,42 @@ skips, up from 603 by exactly the ten added cases.
 spool. Wiring this as a second source, deciding how the query service reports
 the distinct product to the SDK, and the closed-bar cache that keeps a wide
 universe inside venue rate limits, are the next slices.
+
+**2026-08-22 C.20 continuation - complete history response:**
+
+`ProviderBarHistorySource.history_result` now returns a full `HistoryResult`
+rather than bare envelopes, so the remaining work is wiring rather than
+modelling.
+
+The response is built so it cannot be mistaken for authoritative output, by
+construction rather than by documentation:
+
+- every item reports `execution_eligible=false` and `authoritative=false`;
+- every item and the result carry `PROVIDER_PASS_THROUGH` in the quality flags;
+- the stream cursor is the explicit sentinel `PASS_THROUGH_NO_REPLAY` and the
+  watermark offset is zero, because a re-fetched window has no durable position
+  and must not hand back anything shaped like one;
+- the snapshot id is derived deterministically from instrument, interval, first
+  and last open time and row count, so the same window yields the same id and a
+  different window does not.
+
+Freshness is measured against the requirement's own `max_freshness_ms` and
+reported as `STALE` when exceeded, instead of silently returning an old window.
+
+**Shared payload builder.** `bar_item_fields` was extracted from
+`StableSpoolQueryBackend._item` and is now used by both paths. Decimal text,
+quantity-unit naming, lifecycle naming and the optional base/quote/contract
+volume fields are the places a second implementation would drift quietly, so
+there is only one implementation. The extraction is behaviour-preserving: the
+complete suite stayed green across it.
+
+Evidence: 27 focused cases, of which seven are new and cover eligibility,
+flags, the non-resumable cursor and zero watermark, snapshot determinism,
+coverage and ordering, decimal and unit text coming from the shared builder, and
+a window older than the declared freshness being reported stale. Complete
+network-off suite 630 tests with six environment skips, up from 613 by exactly
+the seventeen added cases.
+
+**Still not wired.** `StableSpoolQueryBackend` remains the only backend the
+query service consults. Selecting between the two sources, and the closed-bar
+cache that keeps a wide universe inside venue rate limits, are the next slices.

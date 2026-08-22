@@ -12,9 +12,12 @@ from qdl.query.contracts import (
     RecoveryPolicy,
 )
 from qdl.runtime.provider_history import (
+    PASS_THROUGH_QUALITY_FLAG,
+    PASS_THROUGH_STREAM_CURSOR,
     ProviderBarHistorySource,
     ProviderHistoryUnavailable,
 )
+from qdl.query.results import CoverageStatus
 from qdl.runtime.stable_catalog import StableSourceCatalog
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -148,6 +151,67 @@ class ProviderPassThroughTests(unittest.TestCase):
         self.assertEqual(
             binding.instrument_catalog_revision, self.catalog.catalog_revision
         )
+
+
+class PassThroughHistoryResultTests(ProviderPassThroughTests):
+    """The response must be unable to pass as authoritative output."""
+
+    DIGEST = "a" * 64
+
+    def _result(self, count: int = 3, **overrides):
+        rows = [
+            _binance_row(1_787_385_300_000 + index * 60_000)
+            for index in range(count)
+        ]
+        source = self._source(rows)
+        return source.history_result(
+            _requirement(BINANCE_ETH, warmup_limit=count, **overrides),
+            schema_digest=self.DIGEST,
+        )
+
+    def test_no_item_is_ever_execution_eligible(self):
+        result = self._result()
+        self.assertTrue(result.items)
+        for item in result.items:
+            self.assertFalse(item.quality.execution_eligible)
+            self.assertFalse(item.source.authoritative)
+
+    def test_every_item_is_flagged_as_pass_through(self):
+        for item in self._result().items:
+            self.assertIn(PASS_THROUGH_QUALITY_FLAG, item.quality.flags)
+
+    def test_the_cursor_is_an_explicit_non_resumable_sentinel(self):
+        result = self._result()
+        self.assertEqual(result.stream_cursor, PASS_THROUGH_STREAM_CURSOR)
+        self.assertEqual(result.watermark_offset, 0)
+        for item in result.items:
+            self.assertEqual(item.cursor, PASS_THROUGH_STREAM_CURSOR)
+            self.assertEqual(item.watermark_offset, 0)
+
+    def test_the_snapshot_id_is_deterministic_for_the_same_window(self):
+        first = self._result()
+        second = self._result()
+        self.assertEqual(first.snapshot_id, second.snapshot_id)
+        self.assertNotEqual(self._result(count=2).snapshot_id, first.snapshot_id)
+
+    def test_coverage_and_ordering_follow_the_fetched_window(self):
+        result = self._result()
+        self.assertEqual(result.coverage, CoverageStatus.FULL)
+        opens = [item.payload["open_time_ns"] for item in result.items]
+        self.assertEqual(opens, sorted(opens))
+        self.assertEqual(result.data_as_of_ns, result.items[-1].payload["close_time_ns"])
+
+    def test_decimal_text_and_units_come_from_the_shared_builder(self):
+        item = self._result().items[0]
+        self.assertEqual(item.payload["open"], "100")
+        self.assertEqual(item.payload["close"], "100.5")
+        self.assertTrue(item.payload["is_final"])
+        self.assertIn("volume_unit", item.payload)
+        self.assertEqual(item.interval, "1m")
+
+    def test_a_window_older_than_the_declared_freshness_is_reported_stale(self):
+        result = self._result(max_freshness_ms=1)
+        self.assertEqual(result.items[0].quality.state, "STALE")
 
 
 if __name__ == "__main__":

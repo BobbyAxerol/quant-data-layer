@@ -76,6 +76,62 @@ def _quality_flag_names(envelope: market_data_pb2.EventEnvelope) -> tuple[str, .
     )
 
 
+def bar_item_fields(
+    envelope: market_data_pb2.EventEnvelope,
+) -> dict[str, Any]:
+    """Return the feed-specific `MarketDataItem` fields for a canonical bar.
+
+    Shared so the spool-backed backend and the provider pass-through cannot
+    drift on decimal text, quantity units or lifecycle naming, which is exactly
+    where a second implementation would go wrong quietly.
+    """
+    lifecycle = market_data_pb2.BarLifecycle.Name(
+        envelope.bar.lifecycle
+    ).removeprefix("BAR_LIFECYCLE_")
+    origin = common_pb2.BarOrigin.Name(envelope.bar.origin).removeprefix(
+        "BAR_ORIGIN_"
+    )
+    return {
+        "feed": FeedType.BAR,
+        "interval": envelope.bar.interval,
+        "revision": int(envelope.bar.revision),
+        "bar_lifecycle": BarLifecycle(lifecycle),
+        "supersedes_event_id": (
+            bytes(envelope.bar.supersedes_event_id).hex()
+            if envelope.bar.HasField("supersedes_event_id")
+            else None
+        ),
+        "payload": {
+            "open_time_ns": int(envelope.bar.open_time_ns),
+            "close_time_ns": int(envelope.bar.close_time_ns),
+            "open": _decimal_text(envelope.bar.open),
+            "high": _decimal_text(envelope.bar.high),
+            "low": _decimal_text(envelope.bar.low),
+            "close": _decimal_text(envelope.bar.close),
+            "volume": _decimal_text(envelope.bar.volume),
+            "volume_unit": quantity_unit_name(envelope.bar.volume_unit),
+            "base_volume": (
+                _decimal_text(envelope.bar.base_volume)
+                if envelope.bar.HasField("base_volume")
+                else None
+            ),
+            "quote_volume": (
+                _decimal_text(envelope.bar.quote_volume)
+                if envelope.bar.HasField("quote_volume")
+                else None
+            ),
+            "contract_volume": (
+                _decimal_text(envelope.bar.contract_volume)
+                if envelope.bar.HasField("contract_volume")
+                else None
+            ),
+            "trade_count": int(envelope.bar.trade_count),
+            "origin": origin,
+            "is_final": bool(envelope.bar.is_final),
+        },
+    }
+
+
 class StableSpoolQueryBackend:
     """Provider-neutral stable query view over a Kafka-rebuildable SQLite cache."""
 
@@ -362,52 +418,7 @@ class StableSpoolQueryBackend:
                 **common,
             )
         if payload_name == "bar":
-            lifecycle = market_data_pb2.BarLifecycle.Name(
-                envelope.bar.lifecycle
-            ).removeprefix("BAR_LIFECYCLE_")
-            origin = common_pb2.BarOrigin.Name(envelope.bar.origin).removeprefix(
-                "BAR_ORIGIN_"
-            )
-            return MarketDataItem(
-                feed=FeedType.BAR,
-                interval=envelope.bar.interval,
-                revision=int(envelope.bar.revision),
-                bar_lifecycle=BarLifecycle(lifecycle),
-                supersedes_event_id=(
-                    bytes(envelope.bar.supersedes_event_id).hex()
-                    if envelope.bar.HasField("supersedes_event_id")
-                    else None
-                ),
-                payload={
-                    "open_time_ns": int(envelope.bar.open_time_ns),
-                    "close_time_ns": int(envelope.bar.close_time_ns),
-                    "open": _decimal_text(envelope.bar.open),
-                    "high": _decimal_text(envelope.bar.high),
-                    "low": _decimal_text(envelope.bar.low),
-                    "close": _decimal_text(envelope.bar.close),
-                    "volume": _decimal_text(envelope.bar.volume),
-                    "volume_unit": quantity_unit_name(envelope.bar.volume_unit),
-                    "base_volume": (
-                        _decimal_text(envelope.bar.base_volume)
-                        if envelope.bar.HasField("base_volume")
-                        else None
-                    ),
-                    "quote_volume": (
-                        _decimal_text(envelope.bar.quote_volume)
-                        if envelope.bar.HasField("quote_volume")
-                        else None
-                    ),
-                    "contract_volume": (
-                        _decimal_text(envelope.bar.contract_volume)
-                        if envelope.bar.HasField("contract_volume")
-                        else None
-                    ),
-                    "trade_count": int(envelope.bar.trade_count),
-                    "origin": origin,
-                    "is_final": bool(envelope.bar.is_final),
-                },
-                **common,
-            )
+            return MarketDataItem(**bar_item_fields(envelope), **common)
         raise ValueError("stable query backend supports only TRADE/QUOTE/BAR")
 
 

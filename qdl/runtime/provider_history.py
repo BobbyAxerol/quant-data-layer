@@ -20,6 +20,7 @@ competes with the authoritative path for the same requirement.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from typing import Any, Callable
@@ -41,10 +42,22 @@ from qdl.canonical.trade import TradeContext
 from qdl.domain.instrument import InstrumentRecord
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query.contracts import DataRequirement, FeedType, RecoveryPolicy
+from qdl.query.results import (
+    ContractMetadata,
+    CoverageStatus,
+    HistoryResult,
+    MarketDataItem,
+    QualityMetadata,
+    SourceMetadata,
+)
+from qdl.runtime.stable_source import bar_item_fields
 from qdl.runtime.stable_catalog import StableSourceCatalog
 
 PASS_THROUGH_SOURCE_ROLE = "REFERENCE"
 PASS_THROUGH_QUALITY_FLAG = "PROVIDER_PASS_THROUGH"
+# A pass-through window is re-fetched, never resumed, so it must not hand a
+# consumer anything that looks like a durable replay position.
+PASS_THROUGH_STREAM_CURSOR = "PASS_THROUGH_NO_REPLAY"
 _SUPPORTED = {
     ("BINANCE", "USDM"): "binance",
     ("BINANCE", "SPOT"): "binance",
@@ -220,4 +233,82 @@ class ProviderBarHistorySource:
             raw_capture_id=bytes(raw.capture_id),
             raw_frame_sha256=bytes(raw.raw_frame_sha256),
             source_role=PASS_THROUGH_SOURCE_ROLE,
+        )
+
+    def history_result(
+        self, requirement: DataRequirement, *, schema_digest: str
+    ) -> HistoryResult:
+        """Return the pass-through window as a complete history response.
+
+        The response is deliberately unable to masquerade as authoritative
+        output: the source is marked non-authoritative, every item is reported
+        not execution-eligible, the stream cursor is an explicit non-resumable
+        sentinel and the watermark offset is zero because no durable position
+        exists.
+        """
+        envelopes = self.history(requirement)
+        last = envelopes[-1]
+        data_as_of_ns = int(last.bar.close_time_ns)
+        freshness_ms = max(0, (self._clock_ns() - data_as_of_ns) // 1_000_000)
+        limit_ms = int(requirement.max_freshness_ms or 0)
+        stale = bool(limit_ms) and freshness_ms > limit_ms
+        quality = QualityMetadata(
+            state="STALE" if stale else "LIVE",
+            freshness_ms=int(freshness_ms),
+            gap_open=False,
+            complete=True,
+            # Never eligible: this window never passed the canonical core and
+            # is covered by no authority record.
+            execution_eligible=False,
+            policy_id=requirement.source_policy_id,
+            flags=(PASS_THROUGH_QUALITY_FLAG,),
+        )
+        snapshot_id = "qdl-v2-passthrough-" + hashlib.sha256(
+            "|".join((
+                requirement.instrument_uid,
+                str(requirement.interval),
+                str(envelopes[0].bar.open_time_ns),
+                str(last.bar.open_time_ns),
+                str(len(envelopes)),
+            )).encode()
+        ).hexdigest()[:32]
+        items = tuple(
+            MarketDataItem(
+                instrument_uid=envelope.instrument_uid,
+                instrument_id=envelope.instrument_id,
+                instrument_revision=int(envelope.instrument_revision),
+                observed_at_ns=int(envelope.source_event_time_ns),
+                source=SourceMetadata(
+                    venue=envelope.venue,
+                    provider=envelope.provider,
+                    source_id=envelope.source_id,
+                    source_role=PASS_THROUGH_SOURCE_ROLE,
+                    authoritative=False,
+                ),
+                quality=quality,
+                contract=ContractMetadata(
+                    schema_digest=schema_digest,
+                    contract_version="2.0.0",
+                    normalizer_version=envelope.normalizer_version,
+                    adapter_version=envelope.adapter_version,
+                    instrument_catalog_revision=self.catalog.catalog_revision,
+                    source_policy_revision=self.catalog.source_policy_revision,
+                    authority_revision=self.catalog.authority_revision,
+                    config_revision=max(1, int(envelope.config_revision or 1)),
+                    correlation_id=envelope.correlation_id,
+                ),
+                snapshot_id=snapshot_id,
+                cursor=PASS_THROUGH_STREAM_CURSOR,
+                watermark_offset=0,
+                **bar_item_fields(envelope),
+            )
+            for envelope in envelopes
+        )
+        return HistoryResult(
+            items=items,
+            coverage=CoverageStatus.FULL,
+            snapshot_id=snapshot_id,
+            stream_cursor=PASS_THROUGH_STREAM_CURSOR,
+            watermark_offset=0,
+            data_as_of_ns=data_as_of_ns,
         )
