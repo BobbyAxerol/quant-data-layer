@@ -8416,3 +8416,60 @@ Complete network-off suite 685 tests with six environment skips.
 recreating the affected roles, after which the two Spot ingestors can be
 stopped. The acquisition revision bump to 5 will strand the BAR edge checkpoint
 exactly as C.19 recorded; the refresh tool now reports that in its dry run.
+
+## 20. Derivatives Reference Feeds — Separate Program Definition
+
+**2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**
+
+V1 publishes eleven Binance derivatives endpoints that V2 has no model for.
+They are recorded here as their own program rather than folded into phase B,
+because they are a **new feed class**, not an extension of an existing one:
+`TRADE`, `QUOTE` and `BAR` all describe a price at a time, while funding, open
+interest and basis describe a contract state over an interval. Folding them in
+would mean phase B never closes.
+
+**Measured demand, not assumed.** Grepping the alpha fleet for real call sites,
+only three deployments use any of them:
+
+| Alpha | Feeds used |
+|---|---|
+| `basis_arb_binance` | funding rate, open interest, basis bundle, continuous basis, long/short ratio, taker long/short |
+| `dynamic_grid` | funding rate |
+| `qqe_ssl_wae_risk` | funding rate |
+
+So the surface splits cleanly. `funding_rate` is the only endpoint with more
+than one consumer and is the natural first slice. The remaining five are used by
+`basis_arb_binance` alone, which is also the only alpha carrying a research
+contract, so they can follow as one bundle rather than five separate feeds.
+`exchange-info`, `klines` and `depth` are already covered elsewhere or by the
+existing BAR path.
+
+**Why this cannot reuse the BAR model.** A funding rate has a settlement time
+and applies to an interval, not an instant; open interest is a level, not a
+flow; basis is derived from two instruments at once. The canonical envelope has
+`trade`, `quote` and `bar` payloads and nothing that expresses any of those. The
+program therefore starts with a contract question, not an adapter: what payload
+type, what lifecycle, what quality semantics, and what a gap means for a value
+that is sampled rather than streamed.
+
+**Open questions that must be answered before any code:**
+
+1. Is a funding rate a canonical event with its own payload type, or reference
+   metadata attached to an instrument revision?
+2. What does `execution_eligible` mean for a value sampled every eight hours,
+   and what is its freshness bound?
+3. Is a gap in a sampled series a fault, or the normal shape of the data?
+4. Does basis, being derived from two instruments, belong in the canonical core
+   at all, or is it a consumer-side computation over two canonical feeds?
+5. Which of these are provider-authoritative and which are computed, given rule
+   19 forbids publishing anything the venue did not send?
+
+Question 4 is the one that decides the size of the program. If basis is a
+consumer-side computation, only funding rate and open interest are new feeds and
+the rest is arithmetic over existing ones.
+
+**Sequencing.** This program must not start until phase B closes, and phase B
+closes when the pass-through product is enabled in a deployment and an alpha has
+consumed a non-`1m` interval through it. Until then `basis_arb_binance`,
+`dynamic_grid` and `qqe_ssl_wae_risk` keep their V1 capability routes with
+explicit source audit, which is the behaviour they have today.
