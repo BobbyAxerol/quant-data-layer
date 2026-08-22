@@ -7995,3 +7995,33 @@ fetcher: repeat requests in one period reach the venue once, a smaller request
 reuses the window, a larger request re-fetches rather than answering short, and
 the next bar period re-fetches. Complete network-off suite 656 tests with six
 environment skips, up from 645 by exactly the eleven added cases.
+
+#### C.24 Pass-Through Deployment Flag
+
+**2026-08-22 status: `IMPLEMENTED / DISABLED IN EVERY DEPLOYED ROLE`:**
+
+`StableRuntimeConfig` now carries `pass_through_enabled`, read from
+`QDL_STABLE_PASS_THROUGH_ENABLED` and defaulting to false, and both query-stack
+call sites pass it through. No deployed compose file sets the variable, so every
+running role keeps exactly its current behaviour and the product stays dark
+until a deployment turns it on deliberately.
+
+**The flag reader refuses ambiguity.** A misspelled value must not quietly
+select a default, because this particular flag decides whether a data product is
+served at all: `ture` silently meaning false would leave an operator convinced
+the product was enabled. `_env_flag` accepts `1/true/yes/on` and `0/false/no/off`
+in any case with surrounding space, treats absent and blank as the declared
+default, and raises naming the variable for anything else.
+
+**Evidence.** `tests/test_pass_through_config_flag.py` adds three cases:
+absent and blank taking the declared default in both directions, the recognised
+spellings in both cases, and five unrecognised values each failing loudly with
+the variable named. Complete network-off suite 659 tests with six environment
+skips, up from 656 by exactly the three added cases.
+
+A defect was found and fixed while wiring this: the helper was first inserted
+between the `@dataclass` decorator and `StableRuntimeConfig`, so the decorator
+applied to a function and the module failed to import. The same mistake was made
+earlier in the Trading System consumer, which is a pattern worth naming: an
+automated insertion anchored on a class name can land inside a decorated
+definition, and the suite catches it only because something imports the module.

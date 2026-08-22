@@ -61,6 +61,26 @@ from qdl.transport.kafka_projector import (
 logger = logging.getLogger(__name__)
 
 
+def _env_flag(
+    env: Mapping[str, str], name: str, *, default: bool
+) -> bool:
+    """Read a boolean deployment flag, refusing anything ambiguous.
+
+    A misspelled value must not quietly select a default: a flag that governs
+    whether a data product is served has to fail loudly when its value is not
+    understood.
+    """
+    raw = env.get(name)
+    if raw is None or not raw.strip():
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean flag, got {raw!r}")
+
+
 @dataclass(frozen=True, slots=True)
 class StableRuntimeConfig:
     role: str
@@ -104,6 +124,9 @@ class StableRuntimeConfig:
     stream_ingest_urls: tuple[str, ...] = ()
     max_pending_records: int = 10_000
     max_pending_bytes: int = 256 * 1024 * 1024
+    # Off unless a deployment turns it on. Declaring catalog metadata for an
+    # instrument must never open the pass-through product by itself.
+    pass_through_enabled: bool = False
 
     def __post_init__(self) -> None:
         if self.role not in {"query_v2", "stream_v2", "projector_v2"}:
@@ -233,6 +256,9 @@ class StableRuntimeConfig:
             stream_ingest_urls=tuple(str(value) for value in urls_raw),
             max_pending_records=int(env.get("QDL_STABLE_MAX_PENDING_RECORDS", "10000")),
             max_pending_bytes=int(env.get("QDL_STABLE_MAX_PENDING_BYTES", "268435456")),
+            pass_through_enabled=_env_flag(
+                env, "QDL_STABLE_PASS_THROUGH_ENABLED", default=False
+            ),
         )
 
     def public_manifest(self) -> dict[str, object]:
@@ -420,6 +446,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     service, _backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
+        pass_through_enabled=config.pass_through_enabled,
     )
     readiness = stable_readiness(
         config, manifests, spool, quota=identity.quota,
@@ -507,6 +534,7 @@ def create_stable_stream_runtime(
     query_service, backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
+        pass_through_enabled=config.pass_through_enabled,
     )
     grpc_service = GrpcMarketDataService(
         gateway=gateway, query_service=query_service,
