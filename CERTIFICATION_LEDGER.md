@@ -276,3 +276,7 @@ Pinned at: data layer 96d0d19.
   full-suite container (read-only source plus tmpfs log path): 703 passed, six
   intentional skips, 0 failed in 26.944 seconds. Earlier system-Python and
   read-only-log loader errors were harness errors and were rerun correctly.
+- The first apply also exposed loss of the active pass-through Compose override
+  because the runbook used only the base file. Override provenance is now an
+  explicit staged-env input used by every Compose call; invalid or ambiguous
+  paths fail before mutation. Focused suite after the fix: 47 passed, 0 failed.

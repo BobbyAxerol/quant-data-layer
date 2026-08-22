@@ -9001,6 +9001,12 @@ Pinned code at 96d0d19; ledger-only follow-up 97a1d63 does not change runtime.
   `/app/logs/app.log`. The corrected isolated run kept source read-only, mounted
   only `/app/logs` as tmpfs and completed the full suite: 703 passed, six
   intentional environment skips, zero failed in 26.944 seconds.
+- Runtime inspection exposed a second runbook defect: Compose was invoked with
+  only the base file, so `up` recreated stream/query roles without the active
+  pass-through override. The tool now accepts exactly one absolute existing
+  `QDL_STABLE_COMPOSE_OVERRIDE` pinned by the staged env, includes it in every
+  Compose operation and reports both files in the dry-run plan. Missing, relative
+  or duplicate overrides fail before mutation. Focused suite now passes 47/47.
 
 
 ## 20. Derivatives Reference Feeds — Separate Program Definition

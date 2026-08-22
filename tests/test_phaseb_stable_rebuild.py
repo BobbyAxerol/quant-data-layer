@@ -21,6 +21,7 @@ from scripts.rebuild_v2_stable_projection_cache import (
     STOP_SERVICES,
     STREAM_SERVICES,
     _assert_projector_catalog_matches_source,
+    _compose_files,
     _env_value,
     _parse_sha256sum,
     _reset_projector_to_bounded_window,
@@ -101,6 +102,30 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         self.assertIn("docker-compose.v2-stable.yml", command[5])
         self.assertEqual(command[-1], "config")
         self.assertNotIn("docker-compose.yml", command[5])
+
+    def test_compose_override_is_explicit_pinned_and_never_silently_dropped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            override = root / "stable.override.yml"
+            override.write_text("services: {}\n")
+            env = root / "stable.env"
+            env.write_text(f"QDL_STABLE_COMPOSE_OVERRIDE={override}\n")
+            self.assertEqual(_compose_files(env), (
+                Path(__file__).parents[1] / "docker-compose.v2-stable.yml",
+                override,
+            ))
+            command = compose_command(env, "config")
+            self.assertEqual(command.count("-f"), 2)
+            self.assertIn(str(override), command)
+            env.write_text(
+                f"QDL_STABLE_COMPOSE_OVERRIDE={override}\n"
+                f"QDL_STABLE_COMPOSE_OVERRIDE={override}\n"
+            )
+            with self.assertRaisesRegex(ValueError, "at most one"):
+                compose_command(env, "config")
+            env.write_text("QDL_STABLE_COMPOSE_OVERRIDE=relative.yml\n")
+            with self.assertRaisesRegex(FileNotFoundError, "unavailable"):
+                compose_command(env, "config")
 
     def test_projector_catalog_preflight_accepts_exact_immutable_image(self):
         expected = __import__("hashlib").sha256(

@@ -45,18 +45,32 @@ CACHE_FILES = (
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
 
+def _compose_files(env_file: Path) -> tuple[Path, ...]:
+    files = [COMPOSE_FILE]
+    if env_file.is_file():
+        prefix = "QDL_STABLE_COMPOSE_OVERRIDE="
+        matches = [
+            line[len(prefix):]
+            for line in env_file.read_text().splitlines()
+            if line.startswith(prefix)
+        ]
+        if len(matches) > 1:
+            raise ValueError("stable env may define at most one compose override")
+        if matches:
+            override = Path(matches[0])
+            if not override.is_absolute() or not override.is_file():
+                raise FileNotFoundError(
+                    f"stable compose override is unavailable: {override}"
+                )
+            files.append(override)
+    return tuple(files)
+
+
 def compose_command(env_file: Path, *arguments: str) -> list[str]:
-    return [
-        "docker",
-        "compose",
-        "--env-file",
-        str(env_file),
-        "-f",
-        str(COMPOSE_FILE),
-        "--profile",
-        "stable-admin",
-        *arguments,
-    ]
+    command = ["docker", "compose", "--env-file", str(env_file)]
+    for path in _compose_files(env_file):
+        command.extend(("-f", str(path)))
+    return [*command, "--profile", "stable-admin", *arguments]
 
 
 def rebuild_plan(env_file: Path) -> dict[str, object]:
@@ -64,6 +78,7 @@ def rebuild_plan(env_file: Path) -> dict[str, object]:
         "schema": "qdl.v2.stable-projection-cache-rebuild.v1",
         "project": PROJECT_NAME,
         "env_file": str(env_file),
+        "compose_files": [str(path) for path in _compose_files(env_file)],
         "authority": "Kafka canonical topic",
         "source_catalog_sha256": hashlib.sha256(
             STABLE_CATALOG_PATH.read_bytes()
