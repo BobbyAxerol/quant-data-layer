@@ -7618,3 +7618,41 @@ reads `config/v2/stable-capabilities.yaml`, enumerates the advertised
 registered deterministic case. That converts this strategy from prose into a
 gate, and it is the smallest change that stops the next capability from
 shipping untested.
+
+#### C.18 Declared Instruments Without Bindings
+
+**2026-08-21 status: `IMPLEMENTED / SOURCE ONLY / CATALOG UNCHANGED`:**
+
+First slice of the C.14 pass-through design. `StableSourceCatalog` derived its
+instrument set from the bindings alone: `load` parsed the declared
+`instruments` list, used it as a lookup while building bindings, then discarded
+it. An instrument could therefore only exist if some feed was materialised for
+it, which makes the pass-through case unrepresentable - that case needs the
+identity and metadata of an instrument precisely *without* acquiring a feed for
+it.
+
+**Change.** The catalog now retains the declared instrument set and exposes
+`instrument_for(instrument_uid)`. Construction still cross-checks the two
+sources against each other: a binding may not reference an undeclared
+instrument, a declared record may not disagree with the record a binding
+carries, and duplicate UIDs are rejected. The `instruments` argument is
+optional and defaults to deriving from bindings, so existing callers are
+unaffected.
+
+**Evidence.** `tests/test_catalog_instrument_declaration.py` adds six cases:
+declared instruments retained, a bound instrument resolving, an instrument
+declared with no binding retained and resolvable, an undeclared UID failing
+closed, a binding referencing an undeclared instrument rejected, and duplicate
+UIDs rejected. The unbound case derives its UID through
+`InstrumentIdentity.create` because instrument UIDs are deterministic UUIDv5
+values of the instrument id and cannot be invented.
+
+Complete network-off suite 595 tests with six environment skips, up from 589 by
+exactly the six added cases, run against the code baked into image
+`qdl-v2-python:2.0.0-0e6a9a3cd6f6`. The committed catalog is unchanged and
+still declares no unbound instrument; this slice only makes the shape
+expressible.
+
+**Next in this sequence.** `ProviderBarHistorySource` serving requirements that
+declare `recovery: FRESH_SNAPSHOT`, wired into the stable query backend as a
+second source, then the capability coverage meta-test required by C.17 rule 2.

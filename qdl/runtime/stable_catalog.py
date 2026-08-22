@@ -108,6 +108,7 @@ class StableSourceCatalog:
         catalog_revision: int,
         source_policy_revision: int,
         authority_revision: int,
+        instruments: tuple[InstrumentRecord, ...] | None = None,
     ) -> None:
         if not canonical_stream.strip() or not bindings:
             raise ValueError("stable catalog requires canonical stream and bindings")
@@ -133,6 +134,33 @@ class StableSourceCatalog:
             if current is not None and current != binding.instrument:
                 raise ValueError("stable bindings disagree on instrument metadata")
             records[binding.instrument.instrument_uid] = binding.instrument
+        # A declared instrument does not need a materialised binding. Bound
+        # feeds are acquired and stored; a pass-through history request only
+        # needs the instrument's identity and metadata. Keeping the declared
+        # set lets the query edge resolve the second case without inventing a
+        # binding for it.
+        declared = tuple(instruments) if instruments is not None else tuple(
+            records[uid] for uid in sorted(records)
+        )
+        by_uid: dict[str, InstrumentRecord] = {}
+        for item in declared:
+            current = by_uid.get(item.identity.instrument_uid)
+            if current is not None and current != item:
+                raise ValueError("stable catalog declares conflicting instrument metadata")
+            by_uid[item.identity.instrument_uid] = item
+        missing = set(records) - set(by_uid)
+        if missing:
+            raise ValueError(
+                "stable bindings reference undeclared instruments: "
+                + ",".join(sorted(missing))
+            )
+        for uid, bound in records.items():
+            if by_uid[uid] != bound:
+                raise ValueError(
+                    f"stable binding instrument disagrees with the declared record: {uid}"
+                )
+        self.instruments = declared
+        self._by_uid = by_uid
         self.canonical_stream = canonical_stream
         self.bindings = bindings
         self.catalog_revision = catalog_revision
@@ -140,6 +168,15 @@ class StableSourceCatalog:
         self.authority_revision = authority_revision
         self._by_requirement = {item.requirement_key: item for item in bindings}
         self._by_envelope = {key: item for key, item in zip(envelope_keys, bindings, strict=True)}
+
+    def instrument_for(self, instrument_uid: str) -> InstrumentRecord:
+        """Return a declared instrument whether or not it has a binding."""
+        try:
+            return self._by_uid[str(instrument_uid)]
+        except KeyError as error:
+            raise KeyError(
+                f"instrument is not declared in the stable catalog: {instrument_uid}"
+            ) from error
 
     @classmethod
     def load(cls, path: str | Path) -> "StableSourceCatalog":
@@ -171,6 +208,7 @@ class StableSourceCatalog:
             catalog_revision=int(raw["catalog_revision"]),
             source_policy_revision=int(raw["source_policy_revision"]),
             authority_revision=int(raw["authority_revision"]),
+            instruments=instruments,
         )
 
     @staticmethod
