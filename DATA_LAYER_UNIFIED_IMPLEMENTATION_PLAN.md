@@ -7749,3 +7749,68 @@ from 595 by exactly the eight added cases.
 **Outstanding for Mode A closure.** The disposable alpha smoke has not run. Its
 manifest and guards are committed in the execution alpha repository, and it
 needs one operator-run Compose invocation.
+
+#### C.20 Provider Pass-Through BAR History
+
+**2026-08-22 status: `SOURCE IMPLEMENTED / NOT WIRED / CATALOG UNCHANGED`:**
+
+Second slice of the C.14 design, after C.18 made an unbound instrument
+expressible. `ProviderBarHistorySource` answers a BAR history request by
+fetching the venue's own closed-bar window and canonicalising it with the same
+functions the golden parity suite uses. It publishes nothing, holds no cursor
+and creates no binding, so instrument and interval coverage stop costing
+runtime state.
+
+**Invariant question this raised, and how it is resolved.** Section 19 states
+that Python owns historical and warmup orchestration, that a Python vendor edge
+"may not bypass the Rust canonical/quality/durable core", and that Python may
+not reimplement venue **realtime** domain decisions **after promotion**. A
+pass-through response genuinely does not pass through the Rust core, so the
+middle clause has to be answered rather than assumed away.
+
+Three facts decide it. The prohibition is written for a Python *edge*, meaning a
+path that emits data into the platform; this source emits nothing. The
+reimplementation prohibition is scoped to realtime decisions after promotion,
+while this is bounded historical orchestration, which the same section assigns
+to Python. And the canonicalisers used here are the existing golden-parity
+reference implementations, not new logic.
+
+The residual risk is a consumer treating pass-through output as though it came
+from the authoritative core. That is closed structurally rather than by
+convention:
+
+- the result is a **distinct data product**, reported non-authoritative and
+  never execution-eligible;
+- a consumer receives it only by declaring `recovery: FRESH_SNAPSHOT`, so
+  nothing reaches it by accident;
+- `RecoveryPolicy.FRESH_SNAPSHOT` already existed in the frozen 2.0.0 contract
+  and had no server-side meaning, so this gives an declared policy its
+  behaviour instead of adding a field to a frozen schema;
+- it never answers a requirement that asks for replay continuity, so it cannot
+  compete with the authoritative path for the same request.
+
+If the owner reads the bypass clause more strictly, the correct alternative is
+to publish pass-through fetches through the Rust core as a distinct
+non-authoritative slice. That is a larger change and is not assumed here.
+
+**Behaviour.** Serves only a BAR requirement that declares `FRESH_SNAPSHOT`,
+resolves to a declared instrument, and belongs to a supported crypto venue and
+market; VN and undeclared instruments are refused. It fails closed on a
+non-canonical interval, an unbounded or zero warmup limit, a short window, a bar
+whose interval differs from the request, and any unfinished bar. One refusal
+type, `ProviderHistoryUnavailable`, covers every unservable requirement; the
+first draft leaked a raw `ValueError` from the interval helper for one of them.
+
+**Evidence.** `tests/test_provider_pass_through_history.py` adds ten cases
+covering eligibility, VN and undeclared refusal, canonical output for the
+declared interval, the fetch bounded by the declared warmup limit with test
+provenance off, and fail-closed behaviour for short windows, unsupported
+intervals, unbounded limits and requirements it does not serve, plus the
+descriptor carrying the resolved instrument identity and catalog revision.
+Focused run 10/10. Complete network-off suite 613 tests with six environment
+skips, up from 603 by exactly the ten added cases.
+
+**Not wired.** `StableSpoolQueryBackend` still answers every request from the
+spool. Wiring this as a second source, deciding how the query service reports
+the distinct product to the SDK, and the closed-bar cache that keeps a wide
+universe inside venue rate limits, are the next slices.
