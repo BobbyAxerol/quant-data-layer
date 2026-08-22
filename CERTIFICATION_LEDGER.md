@@ -217,3 +217,29 @@ cert-material/            <- phase80_generate_tls.sh ghi vào đây
 Xoay = sinh lại cert-material → làm mới `bundle/identities/*` → chạy lại
 `stable_tls_init` → **recreate mọi role, gồm cả kafka1/2/3** (chúng dùng keystore
 riêng từ cert-material). Đây là blast radius toàn deployment và cần bạn duyệt.
+
+---
+
+## 6. C39.1 - Closure contract and reproducible ALPHA bundle
+
+Pinned at: data layer 96d0d19.
+
+- Added the governed final-closure gates C39.1-C39.5 to the main plan.
+- Fixed candidate-bundle regeneration so stable-alpha-binance mTLS and RS256
+  identities, both public JWT keys and exact alpha identity paths are generated
+  from source rather than existing only in manually staged runtime material.
+- Targeted direct tests: 2/2 passed.
+- Complete test_phaseb_stable_deployment module: 20/20 passed.
+- Disposable real PKI contract: 15/15 leaf certificates chained to the
+  generated CA, QDL_PHASE8_CERT_DAYS=3 bounded the observed validity, ALPHA/JWT
+  artifacts existed, ca.key was removed and temporary state was cleaned.
+- Recovery runbook dry-run passed and reported only the exact isolated stable
+  cache scope. No apply, FLUSHDB, cache deletion, service restart or V1 mutation
+  occurred.
+- Projector_v2 remains exited because the rotated ephemeral stable Redis lost
+  its cache identity. C39.2 is not certified.
+- External PKI hardening is not certified: current generator uses one fresh CA
+  per run, CA and leaf share one lifetime, and Kafka reads a shared
+  certification cert-material bind mount. This is acceptable only for the
+  current controlled candidate, not as offline-CA/external-secret production
+  evidence.
