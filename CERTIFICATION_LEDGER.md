@@ -113,5 +113,57 @@ Cần: cert mTLS ký bởi stable CA + keypair RS256 đăng ký trong
 (`alpha-binance-paper`: Binance USD-M BTC/ETH 15m; `alpha-okx-paper`: OKX Swap
 BTC/ETH 1h).
 
-**Chặn ở CA private key**: `cert-material/ca.crt` có, `ca.key` **không có** ở
-`~/.local/state/qdl-v2` lẫn trong repo.
+**CA private key không có trên host** (`cert-material/ca.crt` có, `ca.key` không).
+Nhưng đó **không** phải blocker thật — xem §4: script sinh TLS tạo CA mới mỗi lần
+chạy, nên chỉ cần thêm principal vào danh sách.
+
+---
+
+## 4. KHẨN — toàn bộ PKI mTLS hết hạn hôm nay
+
+Phát hiện 2026-08-22 14:23 UTC khi truy tìm CA key.
+
+```
+CA                        notBefore=Aug 20 17:39:23 2026 GMT
+                          notAfter =Aug 22 17:39:23 2026 GMT
+```
+
+**Còn ~3,26 giờ tính từ lúc đo.** Mọi cert đều 48 giờ và cùng hạn:
+
+| Cert | notAfter |
+|---|---|
+| `ca.crt` | Aug 22 17:39:23 |
+| `kafka1/2/3.crt` | Aug 22 17:39:23 |
+| `phase8-producer/core/consumer.crt` | Aug 22 17:39:24 |
+| `stable-query.crt`, `stable-stream.crt` | Aug 22 17:39:25 |
+| `stable-trading-system.crt` | Aug 22 17:39:25 |
+
+Nguồn: `scripts/phase80_generate_tls.sh` dùng `-days 2` cho **cả CA lẫn mọi leaf**
+(dòng 16 và 33).
+
+**Khi hết hạn:** mọi kết nối mTLS trong deployment V2 đứt — query, stream,
+ingestor, Kafka broker, và `market_data_service`. Trading System sẽ **rơi về V1**
+theo đúng thiết kế `_select_v2`, nên không mất giao dịch, nhưng **V2 tắt hoàn toàn**.
+
+### Điều này gỡ luôn blocker ở §3
+
+`phase80_generate_tls.sh` **tự sinh CA mới** (`openssl req -x509 -new`, dòng 15–19),
+không cần CA key có sẵn. Thêm một identity ALPHA chỉ là thêm principal vào danh
+sách client ở dòng 52.
+
+**Xoay PKI là bắt buộc trong ~3 giờ dù có làm gì đi nữa.** Làm một lần và thêm
+principal alpha trong cùng lượt = đóng Phase B với **blast radius bằng không so
+với việc phải xoay**.
+
+### Đường lan truyền cert (đã truy)
+
+```
+cert-material/            <- phase80_generate_tls.sh ghi vào đây
+  -> bundle/identities/*  <- copy theo principal
+  -> stable_tls_init      <- copy vào volume stable_tls
+  -> mọi role mount :ro
+```
+
+Xoay = sinh lại cert-material → làm mới `bundle/identities/*` → chạy lại
+`stable_tls_init` → **recreate mọi role, gồm cả kafka1/2/3** (chúng dùng keystore
+riêng từ cert-material). Đây là blast radius toàn deployment và cần bạn duyệt.
