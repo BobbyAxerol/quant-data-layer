@@ -12,6 +12,7 @@ import yaml
 
 import qdl_sdk
 from qdl.consumer.stable import StableConsumerMigrationPlan
+from qdl.runtime.provider_history import pass_through_eligible
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.security import RedisMinuteQuota
 from qdl.transport.kafka_projector import (
@@ -63,7 +64,18 @@ class StableConsumerMigrationContractTests(unittest.TestCase):
                 self.assertEqual(item.manifest.rollback_contract, "V1")
                 self.assertEqual(item.manifest.environment, "paper")
                 for requirement in item.manifest.requirements:
-                    self.assertIsNotNone(self.catalog.binding_for(requirement))
+                    # Two sources can serve a requirement. A binding covers it,
+                    # or the pass-through answers it with no binding at all.
+                    # `test_unknown_fields_active_route_and_unknown_binding_
+                    # fail_closed` below proves an unservable requirement is
+                    # still refused, so this is a widening, not a weakening.
+                    try:
+                        self.assertIsNotNone(self.catalog.binding_for(requirement))
+                    except (KeyError, ValueError):
+                        self.assertTrue(
+                            pass_through_eligible(self.catalog, requirement),
+                            f"unservable requirement: {requirement}",
+                        )
 
     def test_unknown_fields_active_route_and_unknown_binding_fail_closed(self):
         payload = yaml.safe_load(MIGRATION_PATH.read_text(encoding="utf-8"))

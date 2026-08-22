@@ -5,6 +5,9 @@ from pathlib import Path
 
 import yaml
 
+from qdl.consumer.manifest import ConsumerManifestLoader
+from qdl.query.contracts import RecoveryPolicy
+from qdl.runtime.provider_history import pass_through_eligible
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 
@@ -67,13 +70,61 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
             for binding in self.catalog.bindings
         }
 
-    def test_every_consumer_requirement_resolves_to_a_binding(self):
-        unresolved = {
-            key: consumers
-            for key, consumers in _requirement_keys().items()
-            if key not in self.binding_keys
-        }
-        self.assertEqual(unresolved, {})
+    def test_every_consumer_requirement_is_servable(self):
+        """A requirement must resolve to a binding or to the pass-through.
+
+        Requiring a binding for every requirement was right while the spool was
+        the only source. It is now too strong: a `FRESH_SNAPSHOT` BAR request
+        for a declared instrument is served by the pass-through with no binding
+        at all, and the check has to say so rather than fail a manifest the
+        runtime serves correctly.
+
+        It stays a real check. A requirement that neither source can answer —
+        an undeclared instrument, an unbound TRADE feed, or a BAR request that
+        asks for replay continuity — still fails here.
+        """
+        unservable: dict[tuple[str, str, str | None], set[str]] = {}
+        for path in sorted(CONSUMER_DIR.glob("*.yaml")):
+            manifest = ConsumerManifestLoader.load(path)
+            for requirement in manifest.requirements:
+                key = (
+                    requirement.instrument_uid,
+                    requirement.feed.value,
+                    requirement.interval or None,
+                )
+                if key in self.binding_keys:
+                    continue
+                if pass_through_eligible(self.catalog, requirement):
+                    continue
+                unservable.setdefault(key, set()).add(manifest.consumer_id)
+        self.assertEqual(unservable, {})
+
+    def test_a_requirement_no_source_can_answer_still_fails(self):
+        """Guards the check above from having been weakened into nothing."""
+        from dataclasses import replace
+
+        manifest = ConsumerManifestLoader.load(
+            CONSUMER_DIR / "alpha-binance-paper.yaml"
+        )
+        served = next(
+            item for item in manifest.requirements
+            if item.recovery is RecoveryPolicy.FRESH_SNAPSHOT
+        )
+        self.assertTrue(pass_through_eligible(self.catalog, served))
+
+        # Asking for replay continuity: only a binding can promise that.
+        replay = replace(served, recovery=RecoveryPolicy.SNAPSHOT_AND_REPLAY)
+        self.assertNotIn(
+            (replay.instrument_uid, replay.feed.value, replay.interval),
+            self.binding_keys,
+        )
+        self.assertFalse(pass_through_eligible(self.catalog, replay))
+
+        # An instrument the catalog never declared.
+        unknown = replace(
+            served, instrument_uid="00000000-0000-5000-8000-000000000000"
+        )
+        self.assertFalse(pass_through_eligible(self.catalog, unknown))
 
     def test_acquisition_plan_covers_exactly_the_catalog(self):
         catalog_ids = {binding.binding_id for binding in self.catalog.bindings}

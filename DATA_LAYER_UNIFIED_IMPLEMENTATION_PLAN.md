@@ -8471,6 +8471,68 @@ code asserted a property of *its own runtime* — that it owned its thread —
 instead of working regardless. Certifying a data product against live venues
 proves the data is right; it does not prove the product can be served.
 
+#### C.34 The Pass-Through Refused The Case It Was Built For
+
+**2026-08-22 status: `FIXED / INVARIANT UPDATED`.**
+
+With the loop defect fixed (C.33), the next step was to let a consumer actually
+ask for a non-1m window. Two more defects surfaced, both from the same wrong
+idea: that "has a binding" is a property of an **instrument**. Routing has
+always treated it as a property of a **requirement** — instrument, feed and
+interval together.
+
+**1. The entitlement grant was scoped to unbound instruments.**
+`stable_catalog.entitlements` skipped any instrument that had a binding
+(`if uid in bound: continue`). Binance USD-M ETH-USDT is bound at 1m, so asking
+for it at 15m produced `NO_ACTIVE_ENTITLEMENT` — the pass-through refused
+exactly the case it exists for, and refused it as *unlicensed*, which is the
+wrong reason as well as the wrong answer.
+
+Every declared instrument now receives the grant. This cannot downgrade anyone:
+`RoutedQueryBackend` returns the spool whenever a binding covers the
+requirement, so the grant is only reachable where no binding serves. Verified
+on the deployed catalog:
+
+```
+grants  off=22  on=30   (8 declared instruments)
+BINANCE.USDM ETH-USDT (bound at 1m), source pass-through-ee93fabf…
+  flag off  INTERNAL_ALPHA      allowed=False NO_ACTIVE_ENTITLEMENT
+  flag on   INTERNAL_ALPHA      allowed=True  ALLOWED
+  flag on   INTERNAL_RESEARCH   allowed=True  ALLOWED
+  flag on   INTERNAL_EXECUTION  allowed=False PURPOSE_NOT_ALLOWED
+```
+
+**2. A manifest the runtime serves could not be released.**
+`StableConsumerMigrationPlan.load` calls `catalog.binding_for()` for every
+manifest requirement and raises when none exists. Adding the 15m/1h
+`FRESH_SNAPSHOT` requirements broke the loader — production code, not just a
+test. This is C.32's shape again: **the release check could not express a
+requirement served by the pass-through**, so it failed a manifest the runtime
+handles correctly.
+
+The eligibility rule now lives in one function, `pass_through_eligible`, used by
+the runtime router (`ProviderBarHistorySource.serves`) and by the release
+loader. Two copies would eventually disagree, and the failure mode of that is a
+manifest that validates and is then refused in production.
+
+**The invariant was widened, not dropped.** `test_every_consumer_requirement_
+is_servable` replaces `…resolves_to_a_binding`: servable means a binding covers
+it *or* the pass-through can answer it. Requirements neither source can serve
+still fail — an undeclared instrument, an unbound TRADE feed, or a BAR request
+asking for replay continuity — and `test_a_requirement_no_source_can_answer_
+still_fails` asserts each of those three, so the check cannot be quietly
+hollowed out later.
+
+**Manifest changes.** `alpha-binance-paper` and `alpha-okx-paper` go to
+revision 3, each gaining two BAR requirements with `recovery: FRESH_SNAPSHOT`
+and `bar_revision_policy: LATEST` (the pass-through emits no revisions):
+Binance USD-M BTC/ETH at 15m, OKX Swap BTC/ETH at 1h. Both intervals are inside
+the certified matrix from C.31. Revision 3 must be matched by
+`DATA_LAYER_V2_JWT_MANIFEST_REVISION` on the consumer side in the same batch or
+the data plane returns 401 (`qdl/security/data_plane.py:304`).
+
+Suite 699 tests, 6 environment skips.
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**

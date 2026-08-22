@@ -124,6 +124,25 @@ def _fetch_off_caller_thread(work: Callable[[], Any], *, timeout: float) -> Any:
     return outcome["value"]
 
 
+def pass_through_eligible(catalog: StableSourceCatalog, requirement) -> bool:
+    """Whether the pass-through is able to answer this requirement at all.
+
+    One definition, used by the runtime router and by the release-time check
+    that a consumer manifest is servable. If the two ever drifted, a manifest
+    would pass validation and then be refused in production, or the reverse.
+    """
+    if requirement.feed is not FeedType.BAR:
+        return False
+    if requirement.recovery is not RecoveryPolicy.FRESH_SNAPSHOT:
+        return False
+    try:
+        instrument = catalog.instrument_for(requirement.instrument_uid)
+    except KeyError:
+        return False
+    identity = instrument.identity
+    return (identity.venue, identity.market) in _SUPPORTED
+
+
 class ProviderBarHistorySource:
     def __init__(
         self,
@@ -158,16 +177,7 @@ class ProviderBarHistorySource:
 
     def serves(self, requirement: DataRequirement) -> bool:
         """Whether this source may answer the requirement at all."""
-        if requirement.feed is not FeedType.BAR:
-            return False
-        if requirement.recovery is not RecoveryPolicy.FRESH_SNAPSHOT:
-            return False
-        try:
-            instrument = self.catalog.instrument_for(requirement.instrument_uid)
-        except KeyError:
-            return False
-        identity = instrument.identity
-        return (identity.venue, identity.market) in _SUPPORTED
+        return pass_through_eligible(self.catalog, requirement)
 
     def history(
         self, requirement: DataRequirement

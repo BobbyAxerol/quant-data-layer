@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from qdl.consumer.manifest import ConsumerManifest, ConsumerManifestLoader
+from qdl.runtime.provider_history import pass_through_eligible
 from qdl.runtime.stable_catalog import StableSourceCatalog
 
 
@@ -109,7 +110,16 @@ class StableConsumerMigrationPlan:
                 raise ValueError("stable consumer manifest escapes repository root") from error
             manifest = ConsumerManifestLoader.load(manifest_path)
             for requirement in manifest.requirements:
-                catalog.binding_for(requirement)
+                # A requirement is servable if a materialised binding covers it
+                # or, failing that, if the pass-through is able to answer it.
+                # Declaring only the first would make a manifest that the
+                # runtime serves correctly fail to load here, which is how a
+                # release check stops describing the system it gates.
+                try:
+                    catalog.binding_for(requirement)
+                except (KeyError, ValueError):
+                    if not pass_through_eligible(catalog, requirement):
+                        raise
             consumers.append(StableConsumerMigration(
                 consumer_id=str(item["consumer_id"]),
                 manifest_path=manifest_path,

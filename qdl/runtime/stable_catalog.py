@@ -462,11 +462,19 @@ class StableSourceCatalog:
                 valid_from_ns=0,
             ))
         if include_unbound:
-            bound = {binding.instrument.identity.instrument_uid for binding in self.bindings}
+            # Every declared instrument gets the pass-through grant, including
+            # one that already has a binding. Routing decides per *requirement*
+            # — uid, feed and interval together — so an instrument bound at 1m
+            # still routes to the pass-through when asked for 15m. Granting
+            # only unbound instruments would refuse exactly the case the product
+            # exists for, and refuse it as unlicensed rather than as unbound,
+            # which is the wrong reason as well as the wrong answer.
+            #
+            # This cannot downgrade anyone: `RoutedQueryBackend` returns the
+            # spool whenever a binding covers the requirement, so the extra
+            # grant is only ever reachable for a requirement no binding serves.
             for record in self.instruments:
                 uid = record.identity.instrument_uid
-                if uid in bound:
-                    continue
                 grants.append(EntitlementGrant(
                     source_id=pass_through_source_id(uid),
                     license_revision=PASS_THROUGH_LICENSE_REVISION,
