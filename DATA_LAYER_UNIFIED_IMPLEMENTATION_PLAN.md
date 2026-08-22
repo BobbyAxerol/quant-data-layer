@@ -8782,6 +8782,161 @@ worth having.
 Not run: it deletes a durable cache, which is outside the approved blast radius,
 and the session tooling refused the command.
 
+
+#### C.39 Governed Final Closure After PKI Rotation
+
+**2026-08-22 status: IN_PROGRESS / NOT CERTIFIED / NO FURTHER AUTHORITY CHANGE.**
+
+**Goal.** Close the current V2 stable-runtime upgrade only after the rotated
+mesh, canonical projector, Binance/OKX data products and one real alpha consumer
+are proven together. This closure must not replay business orders, alter Trading
+System execution authority, touch V1 data, weaken fail-closed guards or call a
+process-up state acceptance.
+
+**Pinned input.** Candidate branch fix/v2-rollout-preflight at 426e6fe,
+rotated bundle stable.env.rotate-20260822T144323Z, immutable images and
+cert/manifest identities recorded in C.36-C.38 and CERTIFICATION_LEDGER.md.
+The four modified generated files in the separate /home/bobby/data_layer
+checkout are unrelated user state and must not be overwritten.
+
+**Invariants.**
+
+1. V1 remains available as rollback and receives no schema/data mutation.
+2. Kafka md.canonical.v2 remains the durable authority. Redis and SQLite are
+   rebuildable projection caches, never independent authority.
+3. ProjectionCacheMismatch remains fail-closed. Recovery may rebuild both
+   caches atomically but may not bypass or reset the guard independently.
+4. CA rotation is an atomic mesh transaction. Kafka peers and all mounted
+   consumers must share one trust anchor; stable_redis is excluded from future
+   certificate-only recreate sets.
+5. Real-provider evidence only for production/shadow data acceptance. Fixtures
+   remain test-only and never satisfy a live venue gate.
+6. No alpha order submission is needed for data-consumer certification. The
+   bounded alpha smoke must prove V2 warmup/stream semantics with execution
+   disabled and must be stopped and cleaned after evidence capture.
+7. Missing VN reachability/session evidence fails VN closed and may be recorded
+   only as a real external gate, never inferred from Binance/OKX evidence.
+
+**Gate C39.1 - code, branch and PKI correctness.**
+
+- Verify branch lineage, worktree cleanliness and user Git identity.
+- Add regression coverage for named certificate validity, default/custom
+  duration, complete broker/query/stream/Trading System/ALPHA identities and
+  matching RS256 public material.
+- Verify generated CA and every retained leaf chain, SAN/EKU, expiry and
+  permissions in a disposable directory; remove it afterwards.
+- Run targeted security/deployment tests, full Python suite and the applicable
+  Rust workspace suites against the exact candidate. Record pass/fail/skip
+  counts. A skip is acceptable only when its separately proven conditional
+  integration evidence remains pinned and unchanged.
+
+**Gate C39.2 - governed projection-cache recovery.**
+
+- First run the rebuild tool without --apply and record its exact plan.
+- Apply only after explicit owner approval of this blast radius: stop only
+  projector_v2, query_v2_1/2 and stream_v2_active/passive; delete only the
+  isolated stable canonical-cache.sqlite3 plus WAL/SHM; FLUSHDB only the
+  isolated stable_redis DB; reset stable-projector-v1 on md.canonical.v2 to a
+  bounded 900-second window; restart stream -> projector -> query.
+- Acceptance requires six canonical partitions, replay bootstrap below
+  1,000,000 records, three consecutive total-lag samples at or below 250,
+  non-empty Redis, matching cache identity, projector/query/stream readiness,
+  zero open gap/collision/quarantine and no new TLS error.
+- Rollback: stop only the five cache users and leave V1 authoritative. Never
+  bind an empty Redis to the old non-empty SQLite cache and never replay an
+  older application command/order stream.
+
+**Gate C39.3 - runtime and real-provider correctness.**
+
+- Prove Kafka quorum and one trust anchor across all mTLS roles; verify
+  certificate remaining lifetime and mounted consumer identity without
+  emitting keys.
+- Prove current canonical freshness, monotonic cursor/sequence, exact decimal,
+  venue/market/instrument identity, event/source/receive timestamps, bar
+  closure/finality and no unexplained duplicate/loss/gap for every active
+  Binance USD-M and OKX Swap binding.
+- Recheck materialized 1m warmup and stream continuity on multiple symbols for
+  both venues. Recheck pass-through 15m/1h/1d products and their negative
+  execution-purpose/bound-materialized-route cases.
+- Require market_data_service readiness to derive from all demanded slices.
+  DATA_STALE, TLS failure or fallback masking a demanded V2 failure is a NO-GO.
+- Measure bounded CPU, memory, RSS, queue/lag, Redis/SQLite/Kafka growth and
+  endpoint latency before and after; unexplained growth blocks closure.
+
+**Gate C39.4 - first governed alpha consumer.**
+
+- Use alpha-binance-paper manifest revision 3, mTLS principal
+  stable-alpha-binance and JWT key stable-alpha-binance-rs256-v1.
+- Run one explicitly named, execution-disabled alpha container through the
+  shared alpha SDK with DATA_LAYER_CONSUMER_MODE=V2_PRIMARY. It must consume
+  authenticated V2 warmup plus replay-to-live stream from real Binance data,
+  validate candle boundary and latest closed bar, and never submit an order.
+- Prove expired/wrong audience/wrong consumer/wrong manifest key failures,
+  stream reconnect, cursor resume, standby failover and V1 rollback.
+- Stop the alpha and remove only its disposable logs/state/test namespace after
+  evidence capture. Do not alter strategy logic or production config.
+
+**Gate C39.5 - bundle refresh and remaining venue boundary.**
+
+- Dry-run stable bundle refresh first. Resolve the four C.27 tick/step metadata
+  mismatches and make disabled broad Spot acquisition effective without
+  deleting declared capabilities.
+- Treat the C.19 bar-edge checkpoint/acquisition-revision warning as a planned
+  state migration with explicit checkpoint compatibility and rollback; do not
+  strand or silently reset it.
+- Recreate only roles whose immutable config/image/identity changed and prove
+  exact before/after topology.
+- VN remains NO-GO until DNSE is reachable during a valid session and the
+  historical/realtime contract, session calendar, staleness, identity and
+  fallback tests pass against real provider data.
+
+**Closure rule.** Phase B may close for the certified Binance/OKX crypto scope
+only when C39.1-C39.4 and the applicable C39.5 refresh gates pass on one pinned
+commit/image/config/identity set. Full multi-venue closure remains
+PARTIAL_EXTERNAL while DNSE is unverified. Every test command, result, runtime
+mutation, cleanup action, digest and remaining external decision is appended
+below this section and mirrored in CERTIFICATION_LEDGER.md. Commit coherent
+tested slices with BobbyAxerol identity; no push or merge is implied.
+
+
+**C39.1 progress - 2026-08-22.**
+
+- Protected repository state before editing: the canonical /home/bobby/data_layer
+  checkout is 118 commits behind origin/dev and contains four unrelated modified
+  generated protobuf files. All closure work therefore remains in the clean
+  fix/v2-rollout-preflight worktree, which is 37 commits ahead of origin/dev.
+- The rotated runtime facts in C.38 were verified. Projector_v2 is exited 1;
+  stable Redis, Kafka quorum, Rust core 3, four ingestors, bar edge, query and
+  stream roles are running. The governed rebuild dry-run reports exactly five
+  stopped cache users, three SQLite files, only stable_redis FLUSHDB, six
+  md.canonical.v2 partitions, a 900-second replay and a 250-record lag gate. No
+  apply or cache deletion has occurred.
+- Closed a reproducibility defect left by the manual rotation: the candidate
+  bundle generator now packages stable-alpha-binance mTLS and RS256 identities,
+  registers both JWT public keys, emits the two alpha identity paths and records
+  the increased identity counts. Rebuilding from source will no longer silently
+  remove the ALPHA principal.
+- Added regression coverage for named certificate validity, removal of the
+  hard-coded two-day lifetime, ALPHA artifacts, JWT registry, private paths and
+  0440 packaged-key permissions.
+- Targeted result: two direct regression tests passed. The complete
+  test_phaseb_stable_deployment module passed 20/20. One earlier command used
+  the wrong unittest class selector and produced one loader error; rerunning the
+  correct selector passed and this was not a product failure.
+- Disposable real PKI generation with QDL_PHASE8_CERT_DAYS=3 verified all 15
+  leaf certificates against the generated CA, verified the custom validity
+  window, retained the required ALPHA/JWT artifacts, deleted ca.key and removed
+  the temporary directory.
+- Security decision still open: phase80_generate_tls.sh remains a
+  certification-style CA generator. CA and leaf share one lifetime and deleting
+  ca.key means leaf renewal still requires full trust-anchor rotation. The
+  Kafka bind mount also exposes the shared cert-material directory to each
+  broker because host UID 1001 and Kafka appuser UID 1000 currently rely on
+  world-readable source files; stable role copies are correctly isolated as
+  0440 in the internal volume. Do not label this external-secret/offline-CA
+  production PKI until a separately approved intermediate/dual-trust design is
+  implemented.
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**

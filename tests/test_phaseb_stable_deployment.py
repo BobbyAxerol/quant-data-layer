@@ -64,6 +64,21 @@ class StableDeploymentContractTests(unittest.TestCase):
             with self.subTest(alias=alias):
                 self.assertIn(f"DNS:{alias}", script)
 
+    def test_tls_generator_names_validity_and_issues_alpha_identity(self):
+        script = (ROOT / "scripts/phase80_generate_tls.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('CERT_DAYS="${QDL_PHASE8_CERT_DAYS:-90}"', script)
+        self.assertEqual(script.count('-days "${CERT_DAYS}"'), 2)
+        self.assertNotIn("-days 2", script)
+        for artifact in (
+            "stable-alpha-binance",
+            "stable-alpha-binance-jwt",
+            "stable-alpha-binance-jwt.public.pem",
+        ):
+            with self.subTest(artifact=artifact):
+                self.assertIn(artifact, script)
+
     def test_initial_authority_scope_is_explicit_and_excludes_dnse(self):
         expected = set(self.promotion_scope.binding_ids)
         self.assertEqual(set(self.promotion_scope.binding_ids), expected)
@@ -990,6 +1005,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 "phase8-consumer",
                 "stable-authority-dispatcher",
                 "stable-trading-system",
+                "stable-alpha-binance",
                 "stable-query",
                 "stable-stream",
             ):
@@ -1000,6 +1016,12 @@ class StableComposeAndBundleTests(unittest.TestCase):
             )
             (certs / "stable-trading-system-jwt.public.pem").write_text(
                 "public", encoding="ascii"
+            )
+            (certs / "stable-alpha-binance-jwt.key").write_text(
+                "alpha-private", encoding="ascii"
+            )
+            (certs / "stable-alpha-binance-jwt.public.pem").write_text(
+                "alpha-public", encoding="ascii"
             )
             with tempfile.TemporaryDirectory(prefix="qdl-phaseb-output-") as parent:
                 output = Path(parent) / "candidate"
@@ -1018,6 +1040,8 @@ class StableComposeAndBundleTests(unittest.TestCase):
                     )
                 self.assertFalse(manifest["cutover_authorized"])
                 self.assertFalse(manifest["secret_values_recorded"])
+                self.assertEqual(manifest["consumer_count"], 6)
+                self.assertEqual(manifest["workload_identity_count"], 5)
                 self.assertEqual(manifest["authority_promotion_binding_count"], 12)
                 self.assertEqual(manifest["consumer_network"], "executor_network")
                 self.assertEqual(len(manifest["authority_promotion_scope_digest"]), 64)
@@ -1044,6 +1068,19 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertIn(
                     "postgresql://qdl_authority_dispatcher:", env_text
                 )
+                self.assertIn(
+                    "stable-alpha-binance-rs256-v1", env_text
+                )
+                self.assertIn(
+                    "QDL_STABLE_ALPHA_BINANCE_CERT_DIR="
+                    "/host/qdl/candidate/identities/alpha-binance",
+                    env_text,
+                )
+                self.assertIn(
+                    "QDL_STABLE_ALPHA_BINANCE_JWT_PRIVATE_KEY="
+                    "/host/qdl/candidate/identities/alpha-binance-jwt/private.key",
+                    env_text,
+                )
                 public_manifest = (output / "candidate-manifest.json").read_text()
                 self.assertNotIn("QDL_STABLE_INTERNAL_INGEST_SECRET", public_manifest)
                 for name in ("core.json", "core-002.json", "core-003.json"):
@@ -1062,6 +1099,14 @@ class StableComposeAndBundleTests(unittest.TestCase):
                         / "identities/authority-dispatcher/client.key"
                     ).is_file()
                 )
+                alpha_key = output / "identities/alpha-binance/client.key"
+                alpha_jwt_key = (
+                    output / "identities/alpha-binance-jwt/private.key"
+                )
+                self.assertTrue(alpha_key.is_file())
+                self.assertTrue(alpha_jwt_key.is_file())
+                self.assertEqual(alpha_key.stat().st_mode & 0o777, 0o440)
+                self.assertEqual(alpha_jwt_key.stat().st_mode & 0o777, 0o440)
 
 
 if __name__ == "__main__":

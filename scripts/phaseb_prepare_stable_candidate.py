@@ -68,6 +68,20 @@ def copy_server_identity(source: Path, destination: Path, principal: str) -> Non
         item.chmod(0o440)
 
 
+def copy_jwt_identity(source: Path, destination: Path, principal: str) -> None:
+    destination.mkdir(parents=True, exist_ok=False)
+    for source_name, target_name in (
+        (f"{principal}.key", "private.key"),
+        (f"{principal}.public.pem", "public.pem"),
+    ):
+        origin = source / source_name
+        if not origin.is_file():
+            raise FileNotFoundError(f"stable JWT source is unavailable: {origin}")
+        shutil.copyfile(origin, destination / target_name)
+    for item in destination.iterdir():
+        item.chmod(0o440)
+
+
 def prepare_candidate(
     *,
     rust_image: str,
@@ -129,22 +143,21 @@ def prepare_candidate(
         ("projector", "phase8-consumer"),
         ("authority-dispatcher", "stable-authority-dispatcher"),
         ("trading-system", "stable-trading-system"),
+        ("alpha-binance", "stable-alpha-binance"),
     ):
         copy_client_identity(cert_dir, identities_dir / role, principal)
     copy_server_identity(cert_dir, identities_dir / "query", "stable-query")
     copy_server_identity(cert_dir, identities_dir / "stream", "stable-stream")
-    jwt_identity_dir = identities_dir / "trading-system-jwt"
-    jwt_identity_dir.mkdir(parents=True, exist_ok=False)
-    for source_name, target_name in (
-        ("stable-trading-system-jwt.key", "private.key"),
-        ("stable-trading-system-jwt.public.pem", "public.pem"),
-    ):
-        origin = cert_dir / source_name
-        if not origin.is_file():
-            raise FileNotFoundError(f"stable JWT source is unavailable: {origin}")
-        shutil.copyfile(origin, jwt_identity_dir / target_name)
-    for item in jwt_identity_dir.iterdir():
-        item.chmod(0o440)
+    copy_jwt_identity(
+        cert_dir,
+        identities_dir / "trading-system-jwt",
+        "stable-trading-system-jwt",
+    )
+    copy_jwt_identity(
+        cert_dir,
+        identities_dir / "alpha-binance-jwt",
+        "stable-alpha-binance-jwt",
+    )
 
     schema_digest = hashlib.sha256(
         (ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto").read_bytes()
@@ -153,7 +166,12 @@ def prepare_candidate(
     cursor_secret = secrets.token_urlsafe(48)
     control_db_password = secrets.token_urlsafe(32)
     dispatcher_db_password = secrets.token_urlsafe(32)
-    jwt_public_key = (jwt_identity_dir / "public.pem").read_text(encoding="utf-8")
+    trading_system_jwt_public_key = (
+        identities_dir / "trading-system-jwt/public.pem"
+    ).read_text(encoding="utf-8")
+    alpha_binance_jwt_public_key = (
+        identities_dir / "alpha-binance-jwt/public.pem"
+    ).read_text(encoding="utf-8")
     compose_cert_dir = (host_cert_dir or cert_dir).resolve()
     compose_output_dir = (host_output_dir or output_dir).resolve()
     values = {
@@ -164,7 +182,10 @@ def prepare_candidate(
             {"stable-k1": cursor_secret}, separators=(",", ":")
         ),
         "QDL_STABLE_JWT_KEYS_JSON": json.dumps(
-            {"stable-trading-system-rs256-v1": jwt_public_key},
+            {
+                "stable-trading-system-rs256-v1": trading_system_jwt_public_key,
+                "stable-alpha-binance-rs256-v1": alpha_binance_jwt_public_key,
+            },
             separators=(",", ":"),
         ),
         "QDL_STABLE_PYTHON_IMAGE": python_digest,
@@ -187,6 +208,12 @@ def prepare_candidate(
         ),
         "QDL_STABLE_TRADING_SYSTEM_JWT_PRIVATE_KEY": str(
             compose_output_dir / "identities/trading-system-jwt/private.key"
+        ),
+        "QDL_STABLE_ALPHA_BINANCE_CERT_DIR": str(
+            compose_output_dir / "identities/alpha-binance"
+        ),
+        "QDL_STABLE_ALPHA_BINANCE_JWT_PRIVATE_KEY": str(
+            compose_output_dir / "identities/alpha-binance-jwt/private.key"
         ),
         "QDL_STABLE_CONTROL_DB_PASSWORD": control_db_password,
         "QDL_STABLE_DISPATCHER_DB_PASSWORD": dispatcher_db_password,
@@ -223,9 +250,9 @@ def prepare_candidate(
         "authority_promotion_scope_digest": promotion_scope.digest(),
         "authority_promotion_binding_count": len(promotion_scope.binding_ids),
         "consumer_network": consumer_network,
-        "consumer_count": 5,
+        "consumer_count": 6,
         "workload_mtls": True,
-        "workload_identity_count": 4,
+        "workload_identity_count": 5,
         "secret_values_recorded": False,
     }
     manifest_path = output_dir / "candidate-manifest.json"
