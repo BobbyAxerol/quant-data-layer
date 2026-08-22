@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -41,6 +42,81 @@ from qdl.runtime.stable_deployment import (
 )
 
 PRESERVED = ("stable.env", "identities")
+
+# Edge roles persist a checkpoint that pins the catalog and acquisition
+# revisions they were started with, and refuse to restore state when either
+# moves. A refresh that bumps a revision therefore strands every such role
+# until its checkpoint is reconciled, which surfaces as the role exiting on
+# startup rather than as a failure of this tool.
+CHECKPOINT_GLOB = "*-edge.json"
+CHECKPOINT_PINNED_FIELDS = ("catalog_revision", "acquisition_revision")
+
+
+def _checkpoint_reports(
+    state_dir: Path | None, *, catalog_revision: int, acquisition_revision: int
+) -> list[dict[str, object]]:
+    """Report edge checkpoints that this refresh would strand."""
+    if state_dir is None:
+        return []
+    expected = {
+        "catalog_revision": catalog_revision,
+        "acquisition_revision": acquisition_revision,
+    }
+    if not state_dir.is_dir():
+        return [{
+            "path": str(state_dir),
+            "compatible": False,
+            "reason": "state directory does not exist or is not a directory",
+        }]
+    try:
+        candidates = sorted(state_dir.glob(CHECKPOINT_GLOB))
+    except OSError as error:
+        return [{
+            "path": str(state_dir),
+            "compatible": False,
+            "reason": f"state directory is unreadable: {error}",
+        }]
+    if not candidates:
+        # An empty result is ambiguous: it can mean no role keeps state, or
+        # that the directory is unreadable to this process. Say which.
+        readable = os.access(state_dir, os.R_OK | os.X_OK)
+        return [{
+            "path": str(state_dir),
+            "compatible": readable,
+            "reason": (
+                "no edge checkpoint found"
+                if readable
+                else "state directory is not readable by this process, so "
+                     "checkpoints could not be inspected"
+            ),
+        }]
+    reports: list[dict[str, object]] = []
+    for path in candidates:
+        entry: dict[str, object] = {"path": str(path), "compatible": False}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            entry["reason"] = f"unreadable: {error}"
+            reports.append(entry)
+            continue
+        if not isinstance(payload, dict):
+            entry["reason"] = "checkpoint is not an object"
+            reports.append(entry)
+            continue
+        drift = {
+            field: {"checkpoint": payload.get(field), "refreshed": expected[field]}
+            for field in CHECKPOINT_PINNED_FIELDS
+            if payload.get(field) != expected[field]
+        }
+        binding_ids = payload.get("binding_ids")
+        entry["binding_count"] = len(binding_ids) if isinstance(binding_ids, list) else None
+        if drift:
+            entry["reason"] = "pinned revision differs from the refreshed bundle"
+            entry["drift"] = drift
+        else:
+            entry["compatible"] = True
+        reports.append(entry)
+    return reports
 
 
 def _digests(directory: Path) -> dict[str, str]:
@@ -73,6 +149,7 @@ def refresh(
     promotion_scope_path: Path,
     partition_plan_epoch: int,
     apply: bool,
+    state_dir: Path | None = None,
     clock=time.time_ns,
 ) -> dict[str, object]:
     bundle_dir = bundle_dir.resolve()
@@ -136,8 +213,16 @@ def refresh(
         if not (bundle_dir / name).exists():
             raise RuntimeError(f"refresh removed a preserved artifact: {name}")
 
+    checkpoints = _checkpoint_reports(
+        state_dir,
+        catalog_revision=catalog.catalog_revision,
+        acquisition_revision=acquisition.revision,
+    )
+    stranded = [item for item in checkpoints if not item["compatible"]]
     return {
         "schema": "qdl.v2.stable-runtime-refresh-result.v1",
+        "checkpoints": checkpoints,
+        "stranded_checkpoints": len(stranded),
         "status": "APPLIED" if apply else "DRY_RUN",
         "bundle_dir": str(bundle_dir),
         "catalog_revision": catalog.catalog_revision,
@@ -170,6 +255,11 @@ def main() -> int:
     )
     parser.add_argument("--partition-plan-epoch", type=int, default=1)
     parser.add_argument(
+        "--state-dir", type=Path,
+        help="mounted runtime state directory holding edge checkpoints; when "
+             "given, checkpoints stranded by this refresh are reported",
+    )
+    parser.add_argument(
         "--apply", action="store_true",
         help="write the refreshed configs; omit to report the diff only",
     )
@@ -182,8 +272,23 @@ def main() -> int:
         promotion_scope_path=args.promotion_scope,
         partition_plan_epoch=args.partition_plan_epoch,
         apply=args.apply,
+        state_dir=args.state_dir,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
+    if result["stranded_checkpoints"]:
+        print(
+            f"WARNING: {result['stranded_checkpoints']} edge checkpoint(s) pin an "
+            "older revision and will refuse to restore state. Move each stranded "
+            "checkpoint aside before restarting its role; the edge then "
+            "bootstraps a fresh history instead of exiting on startup.",
+            file=sys.stderr,
+        )
+    if args.state_dir is None:
+        print(
+            "NOTE: --state-dir was not given, so edge checkpoints were not "
+            "checked for revision drift.",
+            file=sys.stderr,
+        )
     return 0
 
 

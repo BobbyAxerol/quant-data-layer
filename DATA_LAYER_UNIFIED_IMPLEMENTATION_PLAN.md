@@ -7656,3 +7656,96 @@ expressible.
 **Next in this sequence.** `ProviderBarHistorySource` serving requirements that
 declare `recovery: FRESH_SNAPSHOT`, wired into the stable query backend as a
 second source, then the capability coverage meta-test required by C.17 rule 2.
+
+#### C.19 Mode A Runtime Rollout: Result And Three Incidents
+
+**2026-08-22 status: `DATA LAYER ACCEPTED / ALPHA SMOKE OUTSTANDING`:**
+
+Artifacts, all labelled with the exact source revision:
+
+| Artifact | Image ID | Revision |
+|---|---|---|
+| `qdl-v2-python:2.0.0-0e6a9a3cd6f6` | `sha256:41c135dcf450a97c…` | `0e6a9a3c…` |
+| `qdl-v2-rust:2.0.0-0e6a9a3cd6f6` | `sha256:15d7425e2fe906af…` | `0e6a9a3c…` |
+| `tradingsystem-image:sha-43bac2d` | `sha256:e7b83ab5bcc9b872…` | `43bac2d6…` |
+
+Pre-rollout suites: Data Layer 589 network-off tests from the code baked into
+the image; Trading System 732 pytest cases with zero failures, run from a
+disposable `test` stage image that was built for the purpose.
+
+The bundle refresh applied cleanly: catalog 2 to 3, acquisition 3 to 4, twelve
+files changed with none added or removed, promotion scope held at revision 1
+with 12 bindings, `stable.env` byte-identical before and after, all 23 identity
+files untouched, and the previous configs retained at
+`runtime.backup-1787381239961826892`.
+
+Fourteen roles were recreated in three waves ordered so that every consumer of
+ETH knew about it before any producer emitted it: query and stream and
+projector first, then the three Rust cores, then the BAR edge and the four
+ingestors, and only then the Trading System consumer.
+
+**Accepted evidence.** Both ETH bindings flow end to end. Sampling the V2 Redis
+projection twice six seconds apart changed all four TRADE keys, BTC and ETH on
+both Binance USD-M and OKX Swap. All six BAR projections changed across a
+seventy second window. The durable spool holds fresh records for every BAR
+binding: BTC and both ETH bars accepted about forty seconds earlier with an
+open time of 111 seconds, `interval='1m'`, `is_final=true`, well inside the
+180000 ms policy. The Trading System market cache updates BTCUSDT and ETHUSDT
+with event times advancing about six seconds per sample.
+
+Execution invariants are exactly unchanged: 1,179 orders, 6,094 fills, 21
+position rows, zero open orders, zero non-zero positions, 430 quarantined dead
+journal rows, zero pending, and both production command streams still empty.
+Kafka brokers and the stable Redis were never recreated.
+
+**Incident 1 - the Trading System consumer was recreated on the wrong image.**
+The rollout script did not pin the Trading System image, and
+`docker-compose.yml` declares `tradingsystem-image:latest`, which currently
+resolves to the `v1.2.0-9081397` release. That build predates the V2 consumer
+entirely, so it ignored `V2_PRIMARY` and initialised the V1 path while still
+carrying V2 environment variables: a silent downgrade that logged nothing
+alarming. Fixed by pinning the digest through an override. **This was an error
+in the rollout script, not a runtime fault**, and more permission would not
+have prevented it.
+
+**Incident 2 - `rust_core_3` was OOM-killed.** It died replaying the raw
+backlog after recreation, at 1,561,600 processed with zero canonical and every
+record quarantined, against a 256 MiB limit. The other two cores survived the
+same replay and their quarantine counters were static while canonical rose, so
+the total was historical backlog rather than a live fault. Restarting the third
+core brought it back healthy on 22 bindings with 3,137 canonical against 14
+quarantines. The memory limit was **not** raised; changing a resource threshold
+to make acceptance pass is precisely what the approved packet forbids.
+
+**Incident 3 - the BAR edge was stranded by its own checkpoint, and the refresh
+tool did not warn.** `StableBinanceBarEdge._restore_state` compares six pinned
+fields and refuses to start when any moved, so after the revision bump it
+exited with `stable BAR checkpoint catalog_revision differs from runtime
+authority`. Nothing produced bars, which is why the consumer reported
+`DATA_STALE` for BTC and `DATA_NOT_READY` for ETH. The checkpoint pinned
+catalog 2, acquisition 3 and four binding IDs while the runtime needed catalog
+3, acquisition 4 and six. There is no migration path in code; the supported
+state is no checkpoint at all, which triggers a fresh bootstrap.
+
+The stale checkpoint was renamed to `stable-crypto-bar-edge.json.pre-catalog3`
+rather than deleted, and a copy was taken first. The edge then bootstrapped six
+bindings and 3,000 provider-authentic rows including both ETH bars, and resumed
+closed-bar publication. Consumer errors stopped at the same minute.
+
+**Tool fix carried by this slice.** `refresh_stable_runtime_bundle.py` bumped
+revisions without ever looking at the checkpoints those revisions strand. It
+now accepts `--state-dir` and reports every edge checkpoint whose pinned
+catalog or acquisition revision differs, with the drift values, so a dry run
+surfaces the condition instead of a role exiting later. A first draft returned
+an empty list when the directory was unreadable, which reproduced the silent
+success it was written to prevent; it now distinguishes a missing directory, an
+unreadable one, and one that genuinely holds no checkpoint. Validated against
+the live volume, where it reports the rebuilt checkpoint as compatible with six
+bindings.
+
+Evidence: complete network-off suite 603 tests with six environment skips, up
+from 595 by exactly the eight added cases.
+
+**Outstanding for Mode A closure.** The disposable alpha smoke has not run. Its
+manifest and guards are committed in the execution alpha repository, and it
+needs one operator-run Compose invocation.
