@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import threading
 import time
 from typing import Any, Callable
 
@@ -77,10 +78,50 @@ _SUPPORTED = {
     ("OKX", "SPOT"): "okx",
 }
 _MAX_ROWS = 1000
+# A venue round-trip must never outlive the request that asked for it. Without
+# a bound, one unanswered socket holds a query worker for as long as the kernel
+# keeps the connection, which is far longer than any consumer will wait.
+_FETCH_TIMEOUT_SECONDS = 20.0
 
 
 class ProviderHistoryUnavailable(RuntimeError):
     """The request cannot be served from a provider pass-through."""
+
+
+def _fetch_off_caller_thread(work: Callable[[], Any], *, timeout: float) -> Any:
+    """Run a venue fetch on a thread of its own and bound how long it may take.
+
+    The query and stream roles both serve from inside a running event loop, so
+    a fetch cannot drive its own loop on the calling thread (`asyncio.run`
+    refuses) and blocking socket I/O there would stall every other request the
+    worker is serving. Both fetchers therefore run here, on one path, whether
+    or not a loop happens to be running: production and tests then exercise the
+    same code rather than only production meeting the loop.
+
+    The thread is a daemon because the timeout has to mean something. A venue
+    that never answers must not keep the process alive after the request that
+    started it has already been refused.
+    """
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = work()
+        except BaseException as error:  # re-raised on the calling thread
+            outcome["error"] = error
+
+    thread = threading.Thread(
+        target=run, name="qdl-pass-through-fetch", daemon=True
+    )
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        raise ProviderHistoryUnavailable(
+            f"provider pass-through fetch exceeded {timeout:g}s"
+        )
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
 
 
 class ProviderBarHistorySource:
@@ -95,6 +136,7 @@ class ProviderBarHistorySource:
         binance_fetcher: Callable[..., Any] = fetch_binance_history,
         okx_fetcher: Callable[..., Any] = fetch_okx_history,
         cache: ClosedBarWindowCache | None = None,
+        fetch_timeout_seconds: float = _FETCH_TIMEOUT_SECONDS,
     ) -> None:
         self.catalog = catalog
         self.adapter_version = adapter_version
@@ -104,6 +146,15 @@ class ProviderBarHistorySource:
         self._binance_fetcher = binance_fetcher
         self._okx_fetcher = okx_fetcher
         self.cache = cache if cache is not None else ClosedBarWindowCache()
+        if fetch_timeout_seconds <= 0:
+            raise ValueError("pass-through fetch timeout must be positive")
+        self.fetch_timeout_seconds = float(fetch_timeout_seconds)
+        # One in-flight fetch per window. Without this the gRPC role, which
+        # serves on a real thread pool, would send one venue request per
+        # concurrent consumer for the same bar period and spend its rate limit
+        # on answers it already had in flight.
+        self._inflight_lock = threading.Lock()
+        self._inflight: dict[tuple[str, str, int], threading.Lock] = {}
 
     def serves(self, requirement: DataRequirement) -> bool:
         """Whether this source may answer the requirement at all."""
@@ -157,41 +208,64 @@ class ProviderBarHistorySource:
         )
         if cached is not None:
             return cached
-        raw_envelopes = (
-            self._fetch_binance(instrument, interval, limit)
-            if venue == "binance"
-            else self._fetch_okx(instrument, interval, limit)
-        )
-        canonicalize = (
-            canonicalize_binance_usdm_rest_bar
-            if venue == "binance"
-            else canonicalize_okx_bar
-        )
-        received_ns = self._clock_ns()
-        envelopes = []
-        for index, raw in enumerate(raw_envelopes):
-            frame = json.loads(bytes(raw.raw_frame_bytes))
-            context = self._context(instrument, raw, received_ns + index, index)
-            envelope = canonicalize(frame, context)
-            if envelope.bar.interval != interval:
-                raise ProviderHistoryUnavailable(
-                    "provider returned a bar for a different interval: "
-                    f"{envelope.bar.interval!r} != {interval!r}"
-                )
-            if not envelope.bar.is_final:
-                raise ProviderHistoryUnavailable(
-                    "provider pass-through never returns an unfinished bar"
-                )
-            envelopes.append(envelope)
-        if len(envelopes) != limit:
-            raise ProviderHistoryUnavailable(
-                f"pass-through history is incomplete: {len(envelopes)} of {limit}"
+        with self._window_lock(requirement.instrument_uid, interval, boundary_ms):
+            # Another caller may have filled this window while this one
+            # waited for the lock, so re-check before spending a request.
+            cached = self.cache.get(
+                requirement.instrument_uid, interval, boundary_ms, limit
             )
-        window = tuple(envelopes)
-        self.cache.put(
-            requirement.instrument_uid, interval, boundary_ms, window
-        )
-        return window
+            if cached is not None:
+                return cached
+            raw_envelopes = (
+                self._fetch_binance(instrument, interval, limit)
+                if venue == "binance"
+                else self._fetch_okx(instrument, interval, limit)
+            )
+            canonicalize = (
+                canonicalize_binance_usdm_rest_bar
+                if venue == "binance"
+                else canonicalize_okx_bar
+            )
+            received_ns = self._clock_ns()
+            envelopes = []
+            for index, raw in enumerate(raw_envelopes):
+                frame = json.loads(bytes(raw.raw_frame_bytes))
+                context = self._context(instrument, raw, received_ns + index, index)
+                envelope = canonicalize(frame, context)
+                if envelope.bar.interval != interval:
+                    raise ProviderHistoryUnavailable(
+                        "provider returned a bar for a different interval: "
+                        f"{envelope.bar.interval!r} != {interval!r}"
+                    )
+                if not envelope.bar.is_final:
+                    raise ProviderHistoryUnavailable(
+                        "provider pass-through never returns an unfinished bar"
+                    )
+                envelopes.append(envelope)
+            if len(envelopes) != limit:
+                raise ProviderHistoryUnavailable(
+                    f"pass-through history is incomplete: {len(envelopes)} of {limit}"
+                )
+            window = tuple(envelopes)
+            self.cache.put(
+                requirement.instrument_uid, interval, boundary_ms, window
+            )
+            return window
+
+    def _window_lock(self, instrument_uid: str, interval: str, boundary_ms: int):
+        """Return the lock guarding one window, creating it once.
+
+        Keyed exactly like the cache, so two callers collapse only when they
+        want the identical window. The entry is dropped once no one holds it,
+        which keeps the map from growing one key per bar period forever.
+        """
+        key = (instrument_uid, interval, int(boundary_ms))
+        with self._inflight_lock:
+            lock = self._inflight.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._inflight[key] = lock
+        return _WindowGuard(self, key, lock)
 
     def _descriptor_fields(self, instrument: InstrumentRecord) -> dict[str, Any]:
         return {
@@ -214,7 +288,12 @@ class ProviderBarHistorySource:
             subscription_id=f"pass-through:{instrument.identity.instrument_uid}",
             **self._descriptor_fields(instrument),
         )
-        return self._binance_fetcher(binding, limit=limit, test_provenance=False)
+        return _fetch_off_caller_thread(
+            lambda: self._binance_fetcher(
+                binding, limit=limit, test_provenance=False
+            ),
+            timeout=self.fetch_timeout_seconds,
+        )
 
     def _fetch_okx(self, instrument, interval, limit):
         binding = OkxBarRawBinding(
@@ -222,8 +301,11 @@ class ProviderBarHistorySource:
             subscription_id=f"pass-through:{instrument.identity.instrument_uid}",
             **self._descriptor_fields(instrument),
         )
-        return asyncio.run(
-            self._okx_fetcher(binding, limit=limit, test_provenance=False)
+        return _fetch_off_caller_thread(
+            lambda: asyncio.run(
+                self._okx_fetcher(binding, limit=limit, test_provenance=False)
+            ),
+            timeout=self.fetch_timeout_seconds,
         )
 
     def _context(
@@ -339,3 +421,22 @@ class ProviderBarHistorySource:
             watermark_offset=0,
             data_as_of_ns=data_as_of_ns,
         )
+
+
+class _WindowGuard:
+    """Hold one window lock and forget it when the last holder leaves."""
+
+    def __init__(self, source: "ProviderBarHistorySource", key, lock) -> None:
+        self._source = source
+        self._key = key
+        self._lock = lock
+
+    def __enter__(self):
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self._lock.release()
+        with self._source._inflight_lock:
+            if not self._lock.locked():
+                self._source._inflight.pop(self._key, None)

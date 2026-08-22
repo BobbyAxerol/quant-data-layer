@@ -8417,6 +8417,60 @@ recreating the affected roles, after which the two Spot ingestors can be
 stopped. The acquisition revision bump to 5 will strand the BAR edge checkpoint
 exactly as C.19 recorded; the refresh tool now reports that in its dry run.
 
+#### C.33 Pass-Through Could Not Have Run In Either Role That Serves It
+
+**2026-08-22 status: `FIXED / REGRESSION-TESTED`.**
+
+Enabling `QDL_STABLE_PASS_THROUGH_ENABLED` was supposed to be a flag flip. It
+was not. Before flipping it, the deployed call path was traced rather than
+assumed, and the product was found unable to answer a single OKX request in
+production while passing every test.
+
+`qdl/api_v2/router.py:456` declares `warmup` as `async def` and calls
+`service.warmup(...)` synchronously, so the whole query stack runs on the event
+loop. `ProviderBarHistorySource._fetch_okx` drove its coroutine with
+`asyncio.run`, which refuses to start a loop on a thread that already has one:
+
+```
+RuntimeError: asyncio.run() cannot be called from a running event loop
+```
+
+Reproduced inside the deployed image before any change was made. The stream
+role (`qdl/runtime/stable.py:534`) builds the same stack, so both roles were
+affected.
+
+**Why every test passed.** The tests called `history()` from plain synchronous
+test code, where no loop is running and `asyncio.run` is legal. The tests were
+green because they were run somewhere the product never runs.
+
+Three defects, one cause — the fetch assumed it owned its thread:
+
+1. **OKX unusable.** `asyncio.run` inside the serving loop.
+2. **No bound on a venue round-trip.** An unanswered socket held a query worker
+   for as long as the kernel kept the connection.
+3. **Stampede on a cache miss.** The gRPC role serves on a real thread pool
+   (`QDL_STABLE_MAX_CONCURRENT_RPCS=200`), so every concurrent consumer asking
+   for one bar period sent its own request for a window already in flight.
+
+Fixed together in `qdl/runtime/provider_history.py`: both fetchers now run
+through `_fetch_off_caller_thread` on a daemon thread with a 20s bound, and a
+per-window lock keyed exactly like the closed-bar cache collapses concurrent
+misses into one venue call. There is deliberately **no branch on whether a loop
+is running** — one path, so tests exercise what production executes.
+
+`tests/test_pass_through_event_loop.py` (7 cases) puts the source inside a
+running loop. Verified to fail against the pre-fix code: **5 of 7 red** (4
+errors, 1 failure); the two that pass are the Binance-sync cases, which is the
+shape the defect predicts.
+
+Suite 692 tests, 6 environment skips.
+
+**Method note.** C.13, C.29, C.31 were all "the fetcher asserted a provider
+detail instead of reading it". C.33 is the same error aimed at ourselves: the
+code asserted a property of *its own runtime* — that it owned its thread —
+instead of working regardless. Certifying a data product against live venues
+proves the data is right; it does not prove the product can be served.
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**
