@@ -8025,3 +8025,58 @@ applied to a function and the module failed to import. The same mistake was made
 earlier in the Trading System consumer, which is a pattern worth naming: an
 automated insertion anchored on a class name can land inside a decorated
 definition, and the suite catches it only because something imports the module.
+
+#### C.25 Phase B Status: Not Complete, And Exactly What Remains
+
+**2026-08-22 verdict: `PATH IMPLEMENTED AND TESTED / NEVER EXERCISED AGAINST A PROVIDER / DISABLED IN EVERY DEPLOYED ROLE`.**
+
+Phase B is **not** complete. The pass-through path exists end to end and is
+covered by deterministic tests, but no consumer can reach it, no catalog entry
+uses it, and it has never fetched a bar from a real venue. Calling it complete
+would be the kind of linguistic upgrade rule 42 forbids.
+
+**Delivered and tested (C.18, C.20 to C.24):**
+
+| Slice | What it establishes |
+|---|---|
+| C.18 | An instrument can be declared without a materialised binding |
+| C.20 | A venue window is fetched, canonicalised and returned as a distinct non-authoritative product |
+| C.21 | A binding always wins; the pass-through answers only what none covers |
+| C.22 | Registry and entitlement reach it, under a strictly narrower licence that never authorises execution |
+| C.23 | Windows are shared per closed-bar boundary, which is what makes a wide universe affordable |
+| C.24 | A deployment flag governs the whole product and refuses an ambiguous value |
+
+Evidence: complete network-off suite 659 tests with six environment skips, up
+from 589 at the start of phase B. Trading System 732 pytest cases with zero
+failures. Execution alpha smoke manifest 11 cases. No runtime, image, bundle,
+catalog or deployed configuration changed in any phase B slice.
+
+**Remaining, and why each is blocked rather than merely unfinished:**
+
+1. *Catalog entries for the instruments and intervals the alpha fleet needs.*
+   These must be generated from authentic provider metadata through the C.16
+   process, not hand-edited, and that process is itself unfinished: the
+   generator covers three of the six declared venue families, and neither the
+   demand manifests nor the capture provenance are version controlled. Adding
+   entries by hand would repeat exactly the defect C.16 records.
+
+2. *Real-provider certification.* Every phase B test uses a fake fetcher. The
+   canonicalisation, the interval mapping, the closed-bar boundary arithmetic
+   and the cache have never met a live venue response. That requires network
+   access and an approved runtime step.
+
+3. *Lifting the `1m` gate in the alpha runtime.* Correct to leave closed until
+   the two items above are done. Lifting it earlier would turn a truthful gate
+   into a false one.
+
+**Honest read of the value delivered.** The expensive part of the design is
+settled: what the product is, how it is distinguished from authoritative data,
+who may read it, how it stays inside a rate limit, and how a deployment turns
+it on. What remains is authentic data and the gates that only real data can
+pass. That is a real boundary, not a formality.
+
+**Pre-existing observation, not changed here.** `ConsumerGrade` in
+`qdl/runtime/stable_catalog.py` and `DataProduct` in
+`qdl/runtime/stable_source.py` are imported and unused, and were already so at
+`8277ca1`. They are left alone deliberately: removing them would widen an
+unrelated diff.
