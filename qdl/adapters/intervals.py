@@ -25,14 +25,12 @@ _UNIT_MS = {
 # calendar bars map to the ``utc`` variants and never to the UTC+8 default.
 # Source: upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md, bar size table.
 _OKX_INTRADAY = ("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h")
-# Only the calendar bars whose boundary is reproducible by fixed-duration
-# arithmetic from the epoch. A day boundary is UTC midnight, which epoch modulo
-# reproduces exactly. Multi-day and weekly bars are anchored to a calendar
-# weekday the epoch does not share - epoch week zero begins on a Thursday - so
-# modulo would silently request a misaligned window. They are refused until
-# calendar-aware alignment exists.
-_OKX_CALENDAR_UTC = ("6h", "12h", "1d")
-_OKX_CALENDAR_ANCHORED = ("2d", "3d", "1w")
+# Calendar bars resolve to the utc variants so a canonical day means the same
+# UTC day on every venue. The fetcher no longer computes a boundary from the
+# epoch, so multi-day and weekly bars, whose anchor the epoch does not share,
+# are served by asking the venue for a range and reading the boundaries it
+# returns.
+_OKX_CALENDAR_UTC = ("6h", "12h", "1d", "2d", "3d", "1w")
 
 
 def normalise_interval(interval: str) -> str:
@@ -89,11 +87,6 @@ def okx_bar_size(interval: str) -> str:
         return value[:-1] + value[-1].upper() if value[-1] == "h" else value
     if value in _OKX_CALENDAR_UTC:
         return f"{value[:-1]}{value[-1].upper()}utc"
-    if value in _OKX_CALENDAR_ANCHORED:
-        raise ValueError(
-            f"OKX {interval!r} is anchored to a calendar weekday that epoch "
-            "arithmetic does not reproduce; calendar-aware alignment is required"
-        )
     raise ValueError(f"OKX does not expose a fixed-duration bar for {interval!r}")
 
 

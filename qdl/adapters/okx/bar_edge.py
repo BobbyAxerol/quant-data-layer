@@ -77,9 +77,16 @@ async def fetch_closed_bar_history_raw_envelopes(
         raise ValueError("OKX history limit must be between 1 and 10000")
     observed_ms = int(now_ms if now_ms is not None else time.time() * 1000)
     interval_ms = canonical_interval_ms(binding.interval)
-    closed_boundary_ms = observed_ms // interval_ms * interval_ms
-    start_ms = closed_boundary_ms - limit * interval_ms
-    end_ms = closed_boundary_ms - 1
+    # The venue owns its own bar anchor. A daily bar starts at UTC midnight,
+    # which epoch arithmetic reproduces, but a multi-day or weekly bar is
+    # anchored to a calendar weekday the epoch does not share, so computing a
+    # start from `now // interval * interval` would request a window the venue
+    # never emits. Ask for a generous range instead and let the provider decide
+    # where its boundaries fall, then verify the properties that actually
+    # matter: exactly the requested number of consecutive closed bars, spaced by
+    # exactly one interval.
+    end_ms = observed_ms
+    start_ms = observed_ms - (limit + 2) * interval_ms
     client = history_client or OkxHistoricalClient(OkxRestClient())
     history = await client.candles(
         inst_id=binding.native_symbol,
@@ -87,26 +94,20 @@ async def fetch_closed_bar_history_raw_envelopes(
         start_ms=start_ms,
         end_ms=end_ms,
         price_type="TRADE",
-        max_records=limit,
+        max_records=limit + 3,
         max_pages=max(2, (limit + 299) // 300 + 1),
     )
-    records = history.records
     if history.coverage.status != "FULL":
         raise RuntimeError(
             f"OKX closed-bar history coverage is {history.coverage.status}, not FULL"
         )
-    if len(records) != limit:
+    confirmed = tuple(item for item in history.records if item.confirmed)
+    if len(confirmed) < limit:
         raise RuntimeError(
-            f"OKX closed-bar history is short: requested={limit} observed={len(records)}"
+            "OKX closed-bar history is short: requested="
+            f"{limit} confirmed={len(confirmed)}"
         )
-    if history.coverage.observed_min_ts_ms != start_ms:
-        # Naming the mismatch matters: the previous message reported the row
-        # count for an alignment failure, which read as "5 of 5 is incomplete".
-        raise RuntimeError(
-            "OKX closed-bar history is misaligned with the requested window: "
-            f"requested_start_ms={start_ms} observed_min_ts_ms="
-            f"{history.coverage.observed_min_ts_ms}"
-        )
+    records = tuple(sorted(confirmed, key=lambda item: item.open_ts_ms))[-limit:]
     opens = [item.open_ts_ms for item in records]
     if any(
         current - previous != interval_ms

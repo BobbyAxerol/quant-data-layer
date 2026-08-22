@@ -8330,3 +8330,38 @@ of writing.
 
 Evidence: complete network-off suite 680 tests with six environment skips, up
 from 675 by exactly the five added cases.
+
+#### C.31 OKX Calendar Bars: Stop Guessing The Venue's Anchor
+
+**2026-08-22 status: `CERTIFIED 1h, 1d, 2d, 3d, 1w`:**
+
+C.29 refused OKX `2d`, `3d` and `1w` because fixed-duration modulo from the
+epoch cannot reproduce a calendar-anchored boundary. The refusal was correct;
+the underlying design was not. The fetcher was computing the venue's boundary
+and then asserting the venue agreed with it.
+
+**The fix is to stop making that assertion.** The venue owns its own anchor. The
+fetcher now asks for a generous range ending at the observation time, and reads
+the boundaries the provider returns, then verifies the properties that actually
+matter: exactly the requested number of confirmed bars, sorted, spaced by
+exactly one interval. Anchor knowledge is no longer required, so every calendar
+variant works without the platform encoding a weekday it cannot verify.
+
+Certified live against the venue, five bars each, zero OHLC mismatches:
+
+| Interval | Native bar | Open spacing |
+|---|---|---:|
+| 1h | `1H` | 3,600,000 ms |
+| 1d | `1Dutc` | 86,400,000 ms |
+| 2d | `2Dutc` | 172,800,000 ms |
+| 3d | `3Dutc` | 259,200,000 ms |
+| 1w | `1Wutc` | 604,800,000 ms |
+
+This is the general lesson from the whole interval sequence: three separate
+defects (C.13 the 1m literal, C.29 the epoch modulo, this one) were all the same
+mistake, which is the platform asserting a provider detail instead of reading
+it. The canonicaliser now reads the interval from the frame, and the fetcher now
+reads the boundary from the response.
+
+Evidence: complete network-off suite 680 tests with six environment skips, plus
+five live slices.

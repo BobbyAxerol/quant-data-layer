@@ -101,14 +101,12 @@ class OkxBarSizeTests(unittest.TestCase):
                 self.assertEqual(resolved, expected)
                 self.assertTrue(resolved.endswith("utc"))
 
-    def test_calendar_anchored_bars_are_refused_with_their_reason(self):
-        # 2d, 3d and 1w are anchored to a calendar weekday the epoch does not
-        # share, so fixed-duration arithmetic would request a misaligned window.
-        for interval in ("2d", "3d", "1w"):
+    def test_calendar_anchored_bars_resolve_to_utc_variants(self):
+        # These are served by asking the venue for a range rather than by
+        # computing a boundary the epoch cannot reproduce.
+        for interval, expected in (("2d", "2Dutc"), ("3d", "3Dutc"), ("1w", "1Wutc")):
             with self.subTest(interval=interval):
-                with self.assertRaises(ValueError) as caught:
-                    okx_bar_size(interval)
-                self.assertIn("calendar", str(caught.exception))
+                self.assertEqual(okx_bar_size(interval), expected)
 
     def test_unsupported_bars_fail_closed(self):
         for interval in ("2m", "45m", "8h", "5d", "1M", "1s"):
@@ -174,8 +172,10 @@ class OkxIntervalGenericHistoryTests(unittest.TestCase):
             "1h", limit=3, now_ms=4 * 3_600_000 + 137
         )
         self.assertEqual(seen["bar"], "1H")
-        self.assertEqual(seen["start_ms"], start)
-        self.assertEqual(seen["end_ms"], 4 * 3_600_000 - 1)
+        # The request is a generous range ending at now; the venue decides
+        # where its own boundaries fall inside it.
+        self.assertEqual(seen["end_ms"], 4 * 3_600_000 + 137)
+        self.assertLessEqual(seen["start_ms"], start)
         payloads = [json.loads(item.raw_frame_bytes) for item in envelopes]
         self.assertEqual({item["arg"]["channel"] for item in payloads}, {"candle1H"})
         opens = [int(item["data"][0][0]) for item in payloads]
