@@ -8195,3 +8195,45 @@ growing beyond the pinned set. Complete network-off suite 674 tests with six
 environment skips, up from 669 by exactly the five added cases. The captures
 were the only network access; nothing was written to a provider and no runtime
 changed.
+
+#### C.28 Pass-Through Real-Provider Certification
+
+**2026-08-22 status: `CERTIFIED FOR BINANCE USD-M AND OKX SWAP AT 15m AND 1h / STILL DISABLED IN EVERY DEPLOYED ROLE`:**
+
+Every phase B test used a fake fetcher, so the canonicalisation, the interval
+mapping, the closed-bar boundary arithmetic and the cache had never met a live
+venue response. A bounded read-only run closed that gap, comparing the
+pass-through against V1 over the same window.
+
+Three slices, five bars each, all at intervals that have **never** run in this
+platform before:
+
+| Slice | Bars | Overlapping with V1 | OHLC mismatches | Open spacing |
+|---|---:|---:|---:|---:|
+| Binance USD-M ETHUSDT 1h | 5 | 5 | **0** | 3,600,000 ms |
+| Binance USD-M ETHUSDT 15m | 5 | 5 | **0** | 900,000 ms |
+| OKX Swap ETH-USDT-SWAP 1h | 5 | 5 | **0** | 3,600,000 ms |
+
+Every bar reported `interval` exactly as requested and `is_final=true`, open
+times were spaced by exactly one interval with no gap, and every open, high, low
+and close matched V1's value for the same bar under decimal comparison.
+
+**What this specifically proves, for the first time against a live venue:**
+
+- the OKX native bar-size mapping from C.13 is right in practice: `1h` resolved
+  to `1H` and the venue returned hourly bars, not minutes;
+- the closed-bar boundary arithmetic aligns for intervals above one minute;
+- `canonicalize_okx_bar` reading the interval from the frame channel works on
+  real frames, not only on the fixture that exposed it;
+- the two venues agree with V1 on the same window, so the pass-through is not
+  quietly returning a different series.
+
+**What it does not prove.** Only ETH was exercised, only at 15m and 1h, only
+five bars per slice, and only for the two derivative markets. Daily and weekly
+intervals, which resolve to the OKX `utc` calendar variants, remain uncertified
+and that mapping is still argued from the provider guide rather than observed.
+The cache was exercised incidentally, not measured under load.
+
+Network access was three GETs to each venue and three to the local V1 route.
+Nothing was written to a provider, no runtime, image, catalog or deployed
+configuration changed, and the product remains disabled in every deployed role.
