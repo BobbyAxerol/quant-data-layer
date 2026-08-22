@@ -95,14 +95,20 @@ class OkxBarSizeTests(unittest.TestCase):
             ("6h", "6Hutc"),
             ("12h", "12Hutc"),
             ("1d", "1Dutc"),
-            ("2d", "2Dutc"),
-            ("3d", "3Dutc"),
-            ("1w", "1Wutc"),
         ):
             with self.subTest(interval=interval):
                 resolved = okx_bar_size(interval)
                 self.assertEqual(resolved, expected)
                 self.assertTrue(resolved.endswith("utc"))
+
+    def test_calendar_anchored_bars_are_refused_with_their_reason(self):
+        # 2d, 3d and 1w are anchored to a calendar weekday the epoch does not
+        # share, so fixed-duration arithmetic would request a misaligned window.
+        for interval in ("2d", "3d", "1w"):
+            with self.subTest(interval=interval):
+                with self.assertRaises(ValueError) as caught:
+                    okx_bar_size(interval)
+                self.assertIn("calendar", str(caught.exception))
 
     def test_unsupported_bars_fail_closed(self):
         for interval in ("2m", "45m", "8h", "5d", "1M", "1s"):
@@ -245,7 +251,7 @@ class OkxBarCanonicalisationTests(unittest.TestCase):
         return canonicalize_okx_bar(raw, self.context)
 
     def test_round_trip_between_canonical_and_native_bar_size(self):
-        for interval in ("1m", "5m", "30m", "1h", "4h", "6h", "1d", "1w"):
+        for interval in ("1m", "5m", "30m", "1h", "4h", "6h", "1d"):
             with self.subTest(interval=interval):
                 native = okx_bar_size(interval)
                 self.assertEqual(okx_interval_from_bar_size(native), interval)

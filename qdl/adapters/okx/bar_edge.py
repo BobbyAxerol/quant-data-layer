@@ -91,14 +91,21 @@ async def fetch_closed_bar_history_raw_envelopes(
         max_pages=max(2, (limit + 299) // 300 + 1),
     )
     records = history.records
-    if (
-        history.coverage.status != "FULL"
-        or len(records) != limit
-        or history.coverage.observed_min_ts_ms != start_ms
-    ):
+    if history.coverage.status != "FULL":
         raise RuntimeError(
-            "OKX closed-bar history is incomplete "
-            f"requested={limit} observed={len(records)} coverage={history.coverage.status}"
+            f"OKX closed-bar history coverage is {history.coverage.status}, not FULL"
+        )
+    if len(records) != limit:
+        raise RuntimeError(
+            f"OKX closed-bar history is short: requested={limit} observed={len(records)}"
+        )
+    if history.coverage.observed_min_ts_ms != start_ms:
+        # Naming the mismatch matters: the previous message reported the row
+        # count for an alignment failure, which read as "5 of 5 is incomplete".
+        raise RuntimeError(
+            "OKX closed-bar history is misaligned with the requested window: "
+            f"requested_start_ms={start_ms} observed_min_ts_ms="
+            f"{history.coverage.observed_min_ts_ms}"
         )
     opens = [item.open_ts_ms for item in records]
     if any(

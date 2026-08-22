@@ -176,7 +176,9 @@ class BarHistoryAdapterTests(unittest.TestCase):
             async def candles(self, **_kwargs):
                 return OkxCandleHistory(records[1:], partial)
 
-        with self.assertRaisesRegex(RuntimeError, "incomplete"):
+        # The refusal now names the cause; partial coverage is not a short
+        # window, so the message says which check failed.
+        with self.assertRaisesRegex(RuntimeError, "coverage is PARTIAL"):
             asyncio.run(fetch_okx_history(
                 _okx_binding(),
                 limit=3,

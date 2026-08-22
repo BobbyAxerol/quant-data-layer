@@ -56,9 +56,10 @@ class BinanceBarRawBinding:
 
 def _interval_ms(interval: str) -> int:
     # Duration arithmetic is shared; the venue guard stays local because
-    # Binance klines expose no sub-minute or weekly REST bar here.
-    if not interval or interval[-1] not in {"m", "h", "d"}:
-        raise ValueError("Binance history interval must have a fixed m/h/d duration")
+    # Binance REST klines expose no sub-minute bar. Weekly is a real Binance
+    # interval and was rejected here until a live certification run hit it.
+    if not interval or interval[-1] not in {"m", "h", "d", "w"}:
+        raise ValueError("Binance history interval must have a fixed m/h/d/w duration")
     return canonical_interval_ms(interval)
 
 

@@ -8237,3 +8237,51 @@ The cache was exercised incidentally, not measured under load.
 Network access was three GETs to each venue and three to the local V1 route.
 Nothing was written to a provider, no runtime, image, catalog or deployed
 configuration changed, and the product remains disabled in every deployed role.
+
+#### C.29 Daily And Weekly Certification, And Two Defects It Exposed
+
+**2026-08-22 status: `BINANCE CERTIFIED TO 1w / OKX CERTIFIED TO 1d / OKX MULTI-DAY AND WEEKLY REFUSED`:**
+
+| Slice | Bars | OHLC mismatch | Open spacing | Overlap with V1 |
+|---|---:|---:|---:|---:|
+| Binance USD-M ETHUSDT 1d | 5 | 0 | 86,400,000 ms | 5 of 5 |
+| Binance USD-M ETHUSDT 1w | 5 | 0 | 604,800,000 ms | 5 of 5 |
+| OKX Swap ETH-USDT-SWAP 1d | 5 | 0 | 86,400,000 ms | **0 of 5** |
+
+**Defect 1 - Binance weekly was refused by our own guard.** The venue guard in
+`qdl/adapters/binance/bar_edge.py` accepted only `m/h/d`, so `1w` raised even
+though Binance klines expose it. The guard was preserved unchanged in C.13
+precisely to avoid widening behaviour, and a live run is what showed the
+existing set was too narrow. Now `m/h/d/w`, certified above.
+
+**Defect 2 - OKX daily does not overlap V1 at all, and that is the alignment
+difference made visible.** Zero of five bars share an open time with V1. V1 maps
+`1d` to the OKX `1D` default, which is anchored to a **UTC+8** trading day;
+this platform maps `1d` to `1Dutc`, anchored to **UTC**. Both series are
+internally correct and both are daily, but they are **not interchangeable**.
+
+The C.13 decision stands: canonical `1d` means one UTC day on every venue, so
+Binance and OKX daily bars describe the same period. The consequence must be
+stated to consumers rather than discovered: **V2 OKX daily bars are not the same
+bars V1 returns for OKX**, and any comparison or backfill that mixes the two
+will silently disagree. V1 itself is unchanged and remains the rollback.
+
+**Defect 3 - the weekly boundary arithmetic was wrong and the error hid it.**
+OKX `1w` failed with "incomplete requested=5 observed=5", a message that reports
+a row count for an alignment failure and so reads as nonsense. The real cause is
+that fixed-duration modulo from the epoch does not reproduce a calendar-anchored
+boundary: epoch week zero begins on a Thursday, while the venue anchors its
+weekly bar to a calendar weekday.
+
+Two corrections followed. `okx_bar_size` now serves only the calendar bars whose
+boundary epoch arithmetic reproduces exactly - `6h`, `12h` and `1d` - and
+refuses `2d`, `3d` and `1w` naming the reason, instead of silently requesting a
+misaligned window. The OKX history refusal now separates its three checks, so
+partial coverage, a short window and a misaligned window each say which one
+failed.
+
+**Still uncertified.** OKX `2d`, `3d`, `1w` pending calendar-aware alignment;
+every interval above `1m` on Binance Spot and OKX Spot; and every VN feed.
+
+Evidence: complete network-off suite 675 tests with six environment skips.
+Network access was three GETs per venue and three to the local V1 route.
