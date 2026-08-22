@@ -10,6 +10,7 @@ from typing import Any, Iterable, Mapping
 import yaml
 
 from qdl.adapters.binance_usdm import BinanceDiscovery, parse_exchange_info
+from qdl.adapters.intervals import okx_candle_channel
 from qdl.adapters.okx.instruments import parse_public_instrument
 from qdl.domain.instrument import InstrumentRecord, InstrumentStatus, ProductType
 from qdl.query import ConsumerGrade, FeedType
@@ -22,8 +23,13 @@ _SOURCE_SCHEMA = "qdl.v2.stable-source-bindings.v1"
 _ACQUISITION_SCHEMA = "qdl.v2.stable-acquisition-bindings.v1"
 _SUPPORTED_MARKETS = {
     ("BINANCE", "USDM", "PERPETUAL"),
+    ("BINANCE", "SPOT", "SPOT"),
     ("OKX", "SWAP", "PERPETUAL"),
     ("OKX", "SPOT", "SPOT"),
+}
+_BINANCE_STREAM_URL = {
+    "USDM": "wss://fstream.binance.com/public/stream",
+    "SPOT": "wss://stream.binance.com:9443/stream",
 }
 _SUPPORTED_FEEDS = {FeedType.TRADE, FeedType.QUOTE, FeedType.BAR}
 
@@ -204,10 +210,13 @@ class ProductionCatalogBuilder:
         demand: ProductionDemandManifest,
         binance_usdm: BinanceDiscovery | None,
         okx_rows: Iterable[Mapping[str, str]],
+        binance_spot: BinanceDiscovery | None = None,
         previous_catalog: StableSourceCatalog | None = None,
         metadata_provenance: Mapping[str, str] | None = None,
     ) -> ProductionCatalogBundle:
-        metadata = self._metadata(binance_usdm, okx_rows, demand.demands)
+        metadata = self._metadata(
+            binance_usdm, okx_rows, demand.demands, binance_spot=binance_spot
+        )
         previous = self._previous_records(previous_catalog)
         selected: dict[str, InstrumentRecord] = {}
         bindings: list[dict[str, Any]] = []
@@ -270,10 +279,14 @@ class ProductionCatalogBuilder:
         binance_usdm: BinanceDiscovery | None,
         okx_rows: Iterable[Mapping[str, str]],
         demands: Iterable[ProductionDemand],
+        *,
+        binance_spot: BinanceDiscovery | None = None,
     ) -> dict[tuple[str, str, str], InstrumentRecord]:
         values: list[InstrumentRecord] = []
         if binance_usdm is not None:
             values.extend(binance_usdm.records)
+        if binance_spot is not None:
+            values.extend(binance_spot.records)
         demanded_okx = {
             item.native_symbol
             for item in demands
@@ -402,24 +415,27 @@ class ProductionCatalogBuilder:
     @staticmethod
     def _acquisition(binding_id: str, item: ProductionDemand) -> dict[str, Any]:
         if item.venue == "BINANCE":
+            # The provider kind and the stream endpoint both follow the market:
+            # a Spot demand generated with USD-M kinds would subscribe the wrong
+            # venue endpoint while looking correct in the catalog.
+            family = item.market.lower()
             if item.feed is FeedType.TRADE:
                 mode, kind, channel, sequence = (
-                    "RUST_NATIVE", "binance_usdm_trade",
+                    "RUST_NATIVE", f"binance_{family}_trade",
                     f"{item.native_symbol.lower()}@trade", "MONOTONIC",
                 )
             elif item.feed is FeedType.QUOTE:
                 mode, kind, channel, sequence = (
-                    "RUST_NATIVE", "binance_usdm_bbo",
+                    "RUST_NATIVE", f"binance_{family}_bbo",
                     f"{item.native_symbol.lower()}@bookTicker", "MONOTONIC",
                 )
             else:
                 mode, kind, channel, sequence = (
-                    "PYTHON_REST", "binance_usdm_rest_bar",
+                    "PYTHON_REST", f"binance_{family}_rest_bar",
                     f"rest-klines/{item.interval}", "NONE",
                 )
             websocket = (
-                "wss://fstream.binance.com/public/stream"
-                if mode == "RUST_NATIVE" else None
+                _BINANCE_STREAM_URL[item.market] if mode == "RUST_NATIVE" else None
             )
             business = None
         else:
@@ -428,7 +444,12 @@ class ProductionCatalogBuilder:
             elif item.feed is FeedType.QUOTE:
                 mode, kind, channel, sequence = "RUST_NATIVE", "okx_bbo", "bbo-tbt", "NONE"
             else:
-                mode, kind, channel, sequence = "PYTHON_REST", "okx_bar", "candle1m", "NONE"
+                # Derived from the demanded interval; a literal candle1m here
+                # silently produced a one-minute channel for every interval.
+                mode, kind, channel, sequence = (
+                    "PYTHON_REST", "okx_bar",
+                    okx_candle_channel(item.interval or "1m"), "NONE",
+                )
             websocket = "wss://ws.okx.com:8443/ws/v5/public" if mode == "RUST_NATIVE" else None
             business = "wss://ws.okx.com:8443/ws/v5/business" if mode == "RUST_NATIVE" else None
         return {
