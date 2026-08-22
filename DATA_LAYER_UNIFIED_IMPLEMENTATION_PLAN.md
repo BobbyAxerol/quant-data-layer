@@ -8573,6 +8573,123 @@ was treated as a deployment, not a config edit.
 
 Suite 700 tests, 6 environment skips.
 
+#### C.36 Pass-Through Enabled In The Candidate Deployment
+
+**2026-08-22 status: `DEPLOYED / CERTIFIED AGAINST LIVE VENUES / NO CONSUMER CAN REACH IT`.**
+
+**Image.** `qdl-v2-python:2.0.0-4f411e8a216a`, digest
+`sha256:75ab6244a798b8eff53db11e539c348219e479f12b52fa2950e74fe3790c15da`,
+built from `4f411e8`. The previous image was `sha256:41c135dcf450…` at revision
+`0e6a9a3`, **20 commits behind** — it predated the whole pass-through slice.
+
+**Override.** `pass-through-4f411e8.override.yml` in the candidate bundle,
+superseding `mode-a-closure-0e6a9a3.override.yml`. Every role is pinned by
+digest in the one file.
+
+**Recreated — four roles only:** `query_v2_1`, `query_v2_2`,
+`stream_v2_active`, `stream_v2_passive`. Those four build the query stack, so
+they are the only roles where the flag has any effect, and each got
+`QDL_STABLE_PASS_THROUGH_ENABLED: "true"`.
+
+**Deliberately not recreated:** `projector_v2` and `binance_bar_edge` stay on the
+previous image. `binance_bar_edge` reads
+`/app/config/v2/stable-acquisition-bindings.yaml` **from the image**, which is
+now revision 5 (C.32), while its checkpoint records `acquisition_revision: 4`.
+Recreating it would strand the edge exactly as C.19 recorded. The four roles that
+did move read only the catalog, unchanged at revision 3 — verified in the
+checkpoint (`{"acquisition_revision":4, …, "catalog_revision":3}`) and in the
+repo. Nothing in the Rust core, the ingestors or Kafka was touched.
+
+**Consumer manifests.** `alpha-binance-paper` and `alpha-okx-paper` move to
+revision 3 in the new image. `trading-system-paper` stays at revision 2, and it
+is the only manifest any running consumer authenticates with, so no
+token/manifest mismatch was introduced and no consumer env needed a matching
+bump. `market_data_service` was not touched: `RestartCount 0` before and after.
+
+**Certified against live venues on the deployed image**, driven from inside a
+running event loop:
+
+| Instrument | Interval | Rows | Spacing (ms) | Result |
+|---|---|---:|---:|---|
+| BINANCE USDM BTC-USDT | 15m | 5 | 900 000 | PASS |
+| BINANCE USDM ETH-USDT | 15m | 5 | 900 000 | PASS |
+| OKX SWAP ETH-USDT | 1h | 5 | 3 600 000 | PASS |
+| BINANCE USDM ETH-USDT | 1d | 3 | 86 400 000 | PASS |
+
+Every row: `execution_eligible=False`, `authoritative=False`,
+`source_role=REFERENCE`, `flags=['PROVIDER_PASS_THROUGH']`,
+`cursor=PASS_THROUGH_NO_REPLAY`, `bar_lifecycle=FINAL`. Fetch latency
+0.07–0.11 s. Two negative checks also passed: an `INTERNAL_EXECUTION` purpose is
+refused (`source entitlement or licensing policy denied this data product`), and
+a materialised `1m` requirement does **not** route to the pass-through.
+
+The OKX case is the one that mattered most: it was unable to answer a single
+request before C.33 and is now served from inside a live event loop.
+
+**Data plane intact.** An unauthenticated request to the running `query_v2_1`
+returns `401 UNAUTHENTICATED / workload bearer token is required`.
+
+**Not caused by this rollout.** `market_data_service` logs `DATA_STALE` on the
+BINANCE TRADE slices. First occurrence 07:50 UTC, 34 occurrences before 14:00,
+against a recreate at 14:01 — a pre-existing intermittent condition. The
+recreate itself produced a two-minute `DEPENDENCY_UNAVAILABLE` burst across all
+eight slices while the stream roles restarted; BAR and OKX TRADE slices had
+recovered by 14:03. The trade cache is live: `trade:price:last:binance_usdm:
+BTCUSDT` was 80 ms old when measured.
+
+### The product is enabled and unreachable
+
+Phase B does **not** close here, and the reason is not code.
+
+1. The pass-through grant carries `INTERNAL_ALPHA` and `INTERNAL_RESEARCH`, never
+   `INTERNAL_EXECUTION` — by design, since the product never passed the core.
+2. The candidate bundle holds exactly one consumer identity, `trading-system`,
+   whose manifest declares `purposes: [INTERNAL_EXECUTION]`.
+3. So the only identity that can authenticate is the only purpose that must be
+   refused, and the refusal above is that rule working correctly.
+4. Every alpha runs `DATA_LAYER_CONSUMER_MODE: V1` and holds no V2 identity (C.15).
+
+Adding `INTERNAL_ALPHA` to the trading system's manifest would make a demo pass
+by weakening an execution consumer's declaration of itself. Not done.
+
+**What would close it:** an `INTERNAL_ALPHA` workload identity — mTLS client
+certificate signed by the stable CA plus an RS256 keypair registered in
+`QDL_DATA_JWT_KEYS_JSON` — mounted into one alpha. The manifests are already
+prepared at revision 3. Blocked on the CA private key, which is **not on this
+host**: `cert-material/ca.crt` exists, `ca.key` does not, anywhere under
+`~/.local/state/qdl-v2` or the repo. It is also a credential issuance into a
+running data plane and needs its own approved blast radius.
+
+**Rollback.** Re-run with `mode-a-closure-0e6a9a3.override.yml` and recreate the
+same four roles. That digest is present locally, so rollback does not depend on
+rebuilding from a revision (checklist item 6).
+
+#### C.37 VN Is Blocked On Reachability, Not Only On Session Hours
+
+**2026-08-22 status: `CANNOT BE ATTEMPTED FROM THIS HOST TODAY`.**
+
+C.30 withdrew the false VN advertisement. Certifying it for real was re-checked
+today and the blocker is more concrete than "needs credentials in session hours":
+
+- **Credentials exist.** `DNSE_API_KEY` is set in `/home/bobby/data_layer/.env`.
+  Not a blocker.
+- **Market is closed.** 2026-08-22 is a Saturday; measured 20:34 +07. HOSE does
+  not trade at the weekend. Earliest window is Monday 2026-08-24, 09:00 +07.
+- **The venue is unreachable from this host right now.** DNS resolves
+  `openapi.dnse.com.vn` to `103.151.242.24`, but TCP 443 times out — from a
+  container **and from the host itself**, so this is not container networking.
+  A read-only historical probe (publishing nothing, touching no running role)
+  failed for both `VN30F1M` and `FPT` with `DNSE history transport exhausted
+  attempts=4`.
+- **It was reachable on Friday.** `vn:quote:last:*` in `redis_marketdata` carries
+  `timestamp 1787298322`, about 30.4 hours before the measurement — consistent
+  with Friday's session close, so V1 was serving VN normally until then.
+
+So the historical path could not be certified offline either, which had been the
+plan. The next attempt has to run inside a VN session with reachability
+re-checked first, and `vn_edge_v2` — still behind the `stable-vn` Compose
+profile and still never created — has to be started, which is its own rollout.
+
 ## 20. Derivatives Reference Feeds — Separate Program Definition
 
 **2026-08-22 status: `SCOPED / NOT STARTED / DELIBERATELY OUTSIDE PHASE B`:**
