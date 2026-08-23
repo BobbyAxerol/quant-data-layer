@@ -1010,6 +1010,56 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
                 stale_policy="UNKNOWN",
             )
 
+    async def test_signed_legacy_cursor_maps_to_cursor_expired_after_generation_change(self):
+        generation_handoff = GapFreeHandoff(
+            self.spool,
+            SignedHandoffCursorCodec(
+                {"phase5": b"s" * 32},
+                active_key_id="phase5",
+                generation_id="cache-generation-new",
+            ),
+        )
+        generation_gateway = DurableStreamGateway(
+            handoff=generation_handoff,
+            sink=self.spool,
+            max_buffer_events=2,
+        )
+        service = GrpcMarketDataService(
+            gateway=generation_gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, self.token),
+        )
+        server = create_grpc_server(service, identity_service=self.identity)
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}",
+            allow_insecure_loopback=True,
+            credential_provider=self.credential,
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid,
+            Feed.BAR,
+            Grade.ALPHA,
+            "alpha_binance_v1",
+            interval="1m",
+            warmup_limit=1,
+        )
+        events = transport.subscribe(
+            requirement,
+            consumer_id="alpha-shadow",
+            cursor_token=self.token,
+            max_buffer_events=1,
+        ).__aiter__()
+        try:
+            with self.assertRaises(CursorExpiredError) as raised:
+                await events.__anext__()
+            self.assertEqual(raised.exception.code, "CURSOR_EXPIRED")
+            self.assertFalse(raised.exception.retryable)
+        finally:
+            await transport.close()
+            await server.stop(grace=0)
+
     async def test_signed_cursor_scope_mismatch_fails_closed_without_retry(self):
         service = GrpcMarketDataService(
             gateway=self.gateway,

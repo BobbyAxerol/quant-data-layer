@@ -359,7 +359,9 @@ def build_stable_handoff(
     return GapFreeHandoff(
         spool,
         SignedHandoffCursorCodec(
-            config.cursor_keys, active_key_id=config.active_cursor_key_id
+            config.cursor_keys,
+            active_key_id=config.active_cursor_key_id,
+            generation_id=spool.cache_id,
         ),
         checkpoint_ttl_seconds=config.cursor_ttl_seconds,
     )

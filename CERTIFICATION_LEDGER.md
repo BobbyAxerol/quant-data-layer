@@ -337,3 +337,19 @@ Pinned at: data layer 96d0d19.
 - `stable-crypto-bar-edge.json` is the single stranded checkpoint because it
   pins acquisition revision 4. Apply requires an exact checkpoint backup/move,
   real-provider bootstrap, role recreate and rollback packet. No apply occurred.
+
+
+## C39.4 Generation-Bound Cursor Source Evidence
+
+- Date: 2026-08-23 UTC.
+- Decision: owner-approved signed stable cursor generation boundary.
+- Stable token schema: `qdl.handoff-cursor.v2`, HMAC signed, generation bound
+  to `SQLiteDurableSpool.cache_id`, opaque to all consumers.
+- Compatibility: unbound codecs preserve v1; stable v1 and cross-generation
+  tokens fail as `CURSOR_EXPIRED`; V1 data APIs and public V2 fields do not
+  change.
+- Focused evidence: 62 passed, one skipped.
+- Full current-tree evidence: 706 passed, six skipped, zero failed.
+- Same-image HEAD baseline: 702 passed, six skipped, zero failed.
+- Runtime mutation: none. Production certification: pending immutable paired
+  rollout and demanded-consumer acceptance.

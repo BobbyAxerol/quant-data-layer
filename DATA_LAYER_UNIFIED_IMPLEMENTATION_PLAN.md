@@ -9265,3 +9265,73 @@ closes when the pass-through product is enabled in a deployment and an alpha has
 consumed a non-`1m` interval through it. Until then `basis_arb_binance`,
 `dynamic_grid` and `qqe_ssl_wae_risk` keep their V1 capability routes with
 explicit source audit, which is the behaviour they have today.
+
+
+**C39.4 generation-bound cursor approval - 2026-08-23.**
+
+- Status: `APPROVED / IMPLEMENTATION IN PROGRESS / RUNTIME UNCHANGED`.
+  The owner explicitly approved the signed V2 cursor compatibility boundary,
+  the paired Trading System demanded-slice health change, and the exact
+  bounded recreate packet recorded below.
+- Goal: bind every stable V2 replay token to the durable projection-cache
+  generation without exposing that generation in the public API. Stable
+  runtime will issue a signed opaque `qdl.handoff-cursor.v2`; a validly signed
+  v1 token or a v2 token from a different cache generation must fail as
+  `CURSOR_EXPIRED`, causing the shared SDK to acquire a fresh snapshot and
+  atomically replace its local generation baseline.
+- Compatibility invariant: a codec not configured with a cache generation
+  continues to issue and accept `qdl.handoff-cursor.v1`. V1 HTTP/Redis
+  contracts, query payloads, stream request/response fields and consumer token
+  parsing remain unchanged. Only the stable runtime binds
+  `SQLiteDurableSpool.cache_id` to the codec.
+- Correctness/security gates: same-generation issue/replay/advance; restart
+  with the same durable cache identity; signed legacy and cross-generation
+  expiry; signature tamper, consumer/scope and wall-clock expiry rejection;
+  gRPC `CURSOR_EXPIRED` mapping; SDK fresh warmup/reconnect behavior; focused
+  replay/runtime/SDK tests; full Python and Rust CI-equivalent suites.
+- Approved runtime packet after both repositories pass: refresh acquisition
+  bundle revision 5; backup/move only the stable crypto bar-edge checkpoint;
+  stop the Binance Spot and OKX Spot ingestors; recreate only Binance USD-M
+  and OKX Swap ingestors, `rust_core_3`, `binance_bar_edge`, the five
+  projector/query/stream cache roles, and Trading System
+  `market_data_service`. Kafka, `stable_redis`, all SQLite/volumes, V1 and
+  every other Trading System service are excluded.
+- Rollback: restore the runtime bundle backup and bar-edge checkpoint backup,
+  recreate only the listed roles on their prior immutable images, and stop
+  the new consumer if needed. No cache deletion, Redis flush or authority
+  mutation is approved by this packet.
+- Closure additionally requires real-provider multi-symbol Binance/OKX
+  acceptance, demanded-slice truthful health, bounded resource/lag/growth,
+  execution-disabled alpha V2 smoke, scoped cleanup and explicit evidence in
+  this plan plus the certification ledger. No synthetic payload may be used as
+  production acceptance.
+
+
+**C39.4 source result - 2026-08-23.**
+
+- Status: `SOURCE PASS / RUNTIME UNCHANGED`. Stable replay cursors now carry
+  the durable projection generation inside the HMAC-signed opaque
+  `qdl.handoff-cursor.v2` envelope. The generation is
+  `SQLiteDurableSpool.cache_id`; it is never exposed as an API field and
+  consumers continue treating the token as opaque.
+- A codec without a configured generation retains exact v1 behavior. A stable
+  codec verifies key/signature and consumer/time scope, then maps every signed
+  v1 token or mismatched v2 generation to `CursorExpired`. Same-generation
+  restart and token advancement remain valid. Signature tamper and wrong
+  consumer/scope remain non-retryable invalid-cursor failures.
+- Files changed in this slice:
+  `qdl/replay/handoff.py`, `qdl/runtime/stable.py`,
+  `tests/test_fund_phase4_replay.py` and
+  `tests/test_fund_phase5_stream_sdk.py`, plus this journal and the
+  certification ledger.
+- Focused network-off result: 62 tests passed with one intentional skip. It
+  covers legacy/cross-generation expiry, durable cache-ID wiring,
+  same-generation restart/advance, signature/scope checks, gRPC mapping to
+  `CURSOR_EXPIRED`, and the SDK fresh-snapshot checkpoint replacement path.
+- Full network-off Python result: 706 passed and six intentional skips in
+  32.79s. The exact pre-change HEAD ran in the same disposable image and
+  produced 702 passed/six skipped; the delta is exactly four new passing cases
+  and zero regression. Read-only pytest-cache warnings are test-harness-only.
+- No runtime, provider connection, cursor file, Redis key, SQLite file, Kafka
+  offset, V1 endpoint or consumer was changed. Deployment remains gated on the
+  paired Trading System demanded-slice health slice and final immutable image.

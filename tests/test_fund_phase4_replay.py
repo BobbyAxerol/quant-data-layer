@@ -4,6 +4,7 @@ import hashlib
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from qdl.history import BarRecord, reconcile_history_live
 from qdl.replay import (
@@ -12,7 +13,8 @@ from qdl.replay import (
     ReplayGapError,
     SignedHandoffCursorCodec,
 )
-from qdl.transport import CursorExpired, DurableEvent, SQLiteDurableSpool, SpoolConfig
+from qdl.runtime.stable import build_stable_handoff
+from qdl.transport import Cursor, CursorExpired, DurableEvent, SQLiteDurableSpool, SpoolConfig
 
 
 STREAM = "md.canonical.v2.trade"
@@ -70,6 +72,7 @@ class HandoffTests(unittest.TestCase):
             ),
             clock_ns=clock,
         )
+        self.clock = clock
         self.codec = SignedHandoffCursorCodec(
             {"2026-08": b"x" * 32}, active_key_id="2026-08", clock_ns=clock
         )
@@ -157,6 +160,150 @@ class HandoffTests(unittest.TestCase):
             self.handoff.replay(
                 token=grant.token, consumer_id="alpha-a",
                 stream=STREAM, partition_key=PARTITION,
+            )
+
+    def test_generation_bound_cursor_expires_legacy_and_cross_generation_tokens(self):
+        legacy_grant = self.grant()
+        generation_a = GapFreeHandoff(
+            self.spool,
+            SignedHandoffCursorCodec(
+                {"2026-08": b"x" * 32},
+                active_key_id="2026-08",
+                generation_id="cache-generation-a",
+                clock_ns=self.clock,
+            ),
+            clock_ns=self.clock,
+        )
+        grant_a = generation_a.issue(
+            consumer_id="alpha-a",
+            snapshot_id="snapshot-a",
+            snapshot_watermark=generation_a.capture_watermark(
+                stream=STREAM, partition_key=PARTITION
+            ),
+            ttl_seconds=60,
+        )
+        restarted_same_generation = GapFreeHandoff(
+            self.spool,
+            SignedHandoffCursorCodec(
+                {"2026-08": b"x" * 32},
+                active_key_id="2026-08",
+                generation_id="cache-generation-a",
+                clock_ns=self.clock,
+            ),
+            clock_ns=self.clock,
+        )
+        self.assertEqual(
+            restarted_same_generation.replay(
+                token=grant_a.token,
+                consumer_id="alpha-a",
+                stream=STREAM,
+                partition_key=PARTITION,
+            ),
+            [],
+        )
+        self.spool.append(event(1))
+        advanced = restarted_same_generation.advance_token(
+            token=grant_a.token,
+            consumer_id="alpha-a",
+            cursor=Cursor(STREAM, PARTITION, 1),
+            ttl_seconds=60,
+        )
+        self.assertEqual(
+            restarted_same_generation.resolve_scope(
+                token=advanced.token, consumer_id="alpha-a"
+            ).watermark_offset,
+            1,
+        )
+
+        with self.assertRaisesRegex(CursorExpired, "previous cache generation"):
+            restarted_same_generation.replay(
+                token=legacy_grant.token,
+                consumer_id="alpha-a",
+                stream=STREAM,
+                partition_key=PARTITION,
+            )
+        generation_b = GapFreeHandoff(
+            self.spool,
+            SignedHandoffCursorCodec(
+                {"2026-08": b"x" * 32},
+                active_key_id="2026-08",
+                generation_id="cache-generation-b",
+                clock_ns=self.clock,
+            ),
+            clock_ns=self.clock,
+        )
+        with self.assertRaisesRegex(CursorExpired, "previous cache generation"):
+            generation_b.replay(
+                token=grant_a.token,
+                consumer_id="alpha-a",
+                stream=STREAM,
+                partition_key=PARTITION,
+            )
+
+    def test_stable_handoff_binds_the_durable_spool_cache_identity(self):
+        handoff = build_stable_handoff(
+            SimpleNamespace(
+                cursor_keys={"2026-08": b"x" * 32},
+                active_cursor_key_id="2026-08",
+                cursor_ttl_seconds=60,
+            ),
+            self.spool,
+        )
+        grant = handoff.issue(
+            consumer_id="alpha-a",
+            snapshot_id="snapshot-a",
+            snapshot_watermark=handoff.capture_watermark(
+                stream=STREAM, partition_key=PARTITION
+            ),
+            ttl_seconds=60,
+        )
+        peer = GapFreeHandoff(
+            self.spool,
+            SignedHandoffCursorCodec(
+                {"2026-08": b"x" * 32},
+                active_key_id="2026-08",
+                generation_id=self.spool.cache_id,
+                clock_ns=self.clock,
+            ),
+            clock_ns=self.clock,
+        )
+        self.assertEqual(
+            peer.resolve_scope(token=grant.token, consumer_id="alpha-a").watermark_offset,
+            0,
+        )
+
+    def test_generation_bound_cursor_keeps_signature_and_scope_fail_closed(self):
+        handoff = GapFreeHandoff(
+            self.spool,
+            SignedHandoffCursorCodec(
+                {"2026-08": b"x" * 32},
+                active_key_id="2026-08",
+                generation_id="cache-generation-a",
+                clock_ns=self.clock,
+            ),
+            clock_ns=self.clock,
+        )
+        grant = handoff.issue(
+            consumer_id="alpha-a",
+            snapshot_id="snapshot-a",
+            snapshot_watermark=handoff.capture_watermark(
+                stream=STREAM, partition_key=PARTITION
+            ),
+            ttl_seconds=60,
+        )
+        with self.assertRaisesRegex(ValueError, "signature mismatch"):
+            handoff.replay(
+                token=grant.token[:-1] + ("A" if grant.token[-1] != "A" else "B"),
+                consumer_id="alpha-a",
+                stream=STREAM,
+                partition_key=PARTITION,
+            )
+        with self.assertRaisesRegex(ValueError, "consumer scope mismatch"):
+            handoff.replay(
+                token=grant.token,
+                consumer_id="alpha-b",
+                stream=STREAM,
+                partition_key=PARTITION,
             )
 
 
