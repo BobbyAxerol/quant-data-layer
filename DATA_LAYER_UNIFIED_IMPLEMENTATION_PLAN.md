@@ -9960,3 +9960,61 @@ gate and does not weaken the crypto closure.
   and recreating the original projector/core-003 pair. This capacity packet
   grants no `RUST_PRIMARY` authority. Authority DB/bootstrap/canary/promotion is
   a subsequent bounded mutation after shadow acceptance.
+
+**C40.12 approved rolling capacity packet - 2026-08-23.**
+
+- Status: `CAPACITY DEPLOYED / N-1 SELF-RECOVERY PASS / CONTINUOUS-READY
+  GATE NOT YET PASS / AUTHORITY UNCHANGED`. The operator approved exactly the
+  capacity-only packet recorded in C40.11. A private mode-0600 override passed
+  Compose validation and introduced no secret. It pinned all three projector
+  replicas to immutable Python image
+  `sha256:13fdb777a71fbfeb24321c8f75e7f5df2ba397f822f32091895032304deafea6`
+  and all three Rust shadow replicas to immutable image
+  `sha256:ce7d90fcbe692e07b2a4699f3861193d3660d618ddafea96a8a056676825cf95`.
+- Rolling execution added `projector_v2_2` and `projector_v2_3`, recreated only
+  `projector_v2`, added/recreated only `rust_core` and `rust_core_2`, then
+  recreated only `rust_core_3`. Kafka, stable Redis, every SQLite file and
+  volume, real-provider ingestors, query/stream, V1 and Trading System were not
+  recreated. All three Rust workers reported `RUST_SHADOW`, zero production
+  legacy/public writes and zero quarantine.
+- Stable three-worker evidence is bounded and real-provider-backed. The Rust
+  group assigned all six raw partitions across three consumers and converged
+  from the expected rolling-rebalance spike of 7017 records to 60, then to a
+  final aggregate lag of 46. The projector group assigned all six canonical
+  partitions across three consumers and finished at aggregate lag 56. Final
+  Trading System health was `READY`, market data was `V2_PRIMARY` consumer mode
+  with 8/8 demanded Binance/OKX TRADE/BAR slices ready and zero unhealthy or
+  unreported slice. V1 remained `ok`.
+- The bounded N-1 rehearsal stopped and restored one newly added worker at a
+  time. With `projector_v2_3` stopped, the two remaining workers owned all six
+  partitions at aggregate lag 97 and demanded slices remained `READY 8/8`.
+  With `rust_core_2` stopped, the two remaining workers owned all six raw
+  partitions and converged to aggregate lag 31. One OKX TRADE slice failed
+  closed as `DATA_STALE` during the rebalance/session-timeout window, then the
+  topology recovered without restart to `READY 8/8` after 35 seconds. Both
+  stopped replicas were restored before closure.
+- Rust progress counters recorded 17 duplicate input deliveries across core 1
+  and core 3 during deliberate group rebalances. These were rejected by the
+  in-core event-ID/ordering deduplicator before canonical output and committed
+  with source offsets through the transactional bridge; quarantine remained
+  zero. This is bounded at-least-once redelivery evidence, not permission to
+  relax the zero-duplicate-output contract. Source idempotency/transactional
+  tests remain green; the subsequent live handoff collector must still prove
+  zero semantic mismatch, zero open gap and equal canonical/canary event
+  digests before authority bootstrap.
+- Execution effect remained exactly zero: orders 1179, fills 6094,
+  positions_v2 21 and command_journal 430 before and after. A resource sample
+  measured projectors at 67-71 MiB and 3.65-9.88% CPU, and Rust workers at
+  9.84-44.06 MiB and 2.63-4.11% CPU. No disposable volume, topic, offset,
+  Redis key or test market event was created.
+- Decision gate: this packet proves capacity, partition distribution, bounded
+  lag and eventual N-1 recovery, but it does not satisfy C40.7's stricter
+  continuous-READY requirement because Rust group membership changes expose a
+  30-35 second fail-closed freshness interruption. `RUST_PRIMARY`, authority
+  DB/bootstrap and production-core startup remain forbidden. Before those
+  actions, implement and certify a provider-neutral bounded-rebalance policy
+  (cooperative/static membership or an equivalent fenced handoff), rerun the
+  N-1 test with no demanded-slice disconnect, and collect fresh real-provider
+  twelve-slice canonical/canary parity evidence bound to the C40 image. The
+  approved rollback remains stopping the four added replicas and restoring the
+  retained single-projector/core-003 C39 pair; it has not been invoked.
