@@ -10485,3 +10485,24 @@ gate and does not weaken the crypto closure.
   prove real shared-topic catch-up, cooperative assignment, bounded lag and the
   twelve-slice terminal gap-free handoff before a primary packet may even be
   prepared. No `RUST_PRIMARY` transition is authorized.
+
+
+**C40.28 immutable bounded-scope Rust image gate - 2026-08-23.**
+
+- Status: `IMAGE PASS / PRODUCTION-CORE RECREATE PENDING / RUST_CANARY
+  RETAINED / RUST_PRIMARY FORBIDDEN`. Exact source commit
+  `7c8f318fe25474253cdb3ea99adf7a08ed17e280` produced local immutable image
+  `qdl-v2-rust:2.0.0-7c8f318`, image ID
+  `sha256:ea8423cf3f43270d9aca6727fac86d36d9cfa965898269108d0e3ba1b66e3dd2`.
+  OCI revision/version labels match the commit and release; default image
+  authority remains `RUST_SHADOW`, not primary.
+- A network-disabled, read-only, capability-dropped disposable run confirmed
+  UID/GID `10001:10001` and executable production-core binary SHA-256
+  `32ff4d181c252d77b84a639254c5393a50fdec61ae0da9f34a0e0e0addd577c9`.
+  The disposable container was removed. No runtime service, topic, offset,
+  authority row, cache or volume changed during the image gate.
+- The next bounded mutation may recreate only `production_core_1`,
+  `production_core_2` and `production_core_3` on this exact image. All other
+  services and durable state stay outside blast radius. Any failed worker or
+  publication outside canary/checkpoint topics requires stopping those three
+  members; no `RUST_PRIMARY` transition is authorized.
