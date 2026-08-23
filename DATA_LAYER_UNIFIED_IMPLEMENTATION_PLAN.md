@@ -9900,3 +9900,63 @@ gate and does not weaken the crypto closure.
   execution state was created or changed. The retained source-gate builder is
   still required for the final immutable Rust image gate and is not yet cleanup
   eligible.
+
+**C40.10 immutable candidate and bounded live packet - 2026-08-23.**
+
+- Status: `IMMUTABLE CANDIDATE PASS / SHADOW CAPACITY ROLLOUT READY /
+  AUTHORITY UNCHANGED`. Commit `15a7ab0` produced local immutable image
+  `qdl-v2-rust:2.0.0-15a7ab0`, image ID
+  `sha256:ce7d90fcbe692e07b2a4699f3861193d3660d618ddafea96a8a056676825cf95`.
+  OCI revision/version are `15a7ab0f7bb` / `2.0.0-15a7ab0`, runtime user is
+  `10001:10001`, default authority label remains `RUST_SHADOW`, and the
+  production-core binary is executable. The image was built after complete
+  source certification; no running container uses it yet.
+- Pre-mutation runtime baseline is V1 `ok`, Trading System `READY`, market data
+  `READY` in `V2_PRIMARY` consumer mode with 8/8 demanded Binance/OKX
+  TRADE/BAR slices ready, zero unhealthy/unreported slice. Execution counts are
+  orders 1179, fills 6094, positions_v2 21 and command_journal 430. Existing
+  stable V2 runs one Python projector and one Rust shadow core; Kafka, Redis,
+  query, stream and real-provider ingestors are healthy.
+- First bounded mutation is capacity-only and does not create primary authority:
+  pin the existing immutable Python edge image on three projector replicas and
+  this new Rust candidate on three shadow-core replicas. Preserve one shared
+  consumer group per role, unique client/audit identities, Kafka/Redis/SQLite
+  volumes, provider ingestors, query/stream routes, V1 port 8100 and all Trading
+  System execution services. Accept only converging lag, continuously READY
+  demanded slices and correct N-1 worker behavior.
+- Only after that candidate proves real-provider shadow freshness/parity may the
+  private authority DB/dispatcher be started, exact twelve-slice rows be
+  bootstrapped and canary/handoff CAS packets be applied. The accepted packet
+  must bind this image ID, source scope revision 2, current contract/core
+  manifests, signed SBOM/provenance, a fresh V1 rollback manifest and clean
+  execution-disabled real-provider evidence. DNSE and Spot remain excluded.
+- Capacity rollback stops the two added projector/core replicas and recreates
+  the original single projector/core-003 pair from the retained C39 immutable
+  override. Authority rollback always writes a newer `BLOCKED` then
+  `ROLLBACK_PENDING` revision before restoring Python/V1 routing; it never
+  deletes Kafka, Redis, SQLite, PostgreSQL or evidence. No authority DB volume
+  currently exists, so creation of that durable control-plane volume is deferred
+  until the shadow acceptance gate passes.
+
+**C40.11 runtime approval boundary - 2026-08-23.**
+
+- Status: `RUNTIME MUTATION NOT STARTED / EXACT BLAST-RADIUS APPROVAL
+  REQUIRED`. The rendered C40 Compose stack passed validation and a private
+  mode-0600 override pins only the three projector replicas and the three
+  shadow/three production-core roles to their certified immutable images. It
+  contains no secret.
+- The first rolling command, which would add only `projector_v2_2` and
+  `projector_v2_3` to the live stable V2 shared projector consumer group, was
+  rejected by the runtime safety gate before Docker execution because no exact
+  shared-group topology blast radius had been approved. Post-rejection audit
+  shows only the original `projector_v2` running; no container, group offset,
+  cache, authority row or volume changed.
+- Required operator approval must name this rolling packet: add projector 2/3,
+  recreate projector 1 on the same immutable Python image, add Rust shadow core
+  1/2 and recreate core 3 on image
+  `sha256:ce7d90fcbe692e07b2a4699f3861193d3660d618ddafea96a8a056676825cf95`;
+  preserve all existing Kafka/Redis/SQLite volumes, routes, ingestors, V1 and
+  Trading System services; and allow rollback by stopping the four additions
+  and recreating the original projector/core-003 pair. This capacity packet
+  grants no `RUST_PRIMARY` authority. Authority DB/bootstrap/canary/promotion is
+  a subsequent bounded mutation after shadow acceptance.
