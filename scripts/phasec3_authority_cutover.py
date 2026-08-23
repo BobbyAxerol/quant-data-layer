@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -23,7 +24,7 @@ _STANDARD_SQL = """
 SELECT *
 FROM qdl_transition_authority(
     $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11::uuid, $12::timestamptz, $13, $14
+    $11, $12::uuid, $13::timestamptz, $14, $15
 )
 """
 _HANDOFF_SQL = """
@@ -88,7 +89,7 @@ async def _apply_one(
                 item.new_lease_epoch,
                 item.terminal_watermark,
                 item.prerequisite_bundle_id,
-                item.hold_until,
+                datetime.fromisoformat(item.hold_until) if item.hold_until else None,
                 packet.actor,
                 item.reason,
             )
@@ -107,7 +108,7 @@ async def _apply_one(
                 item.new_lease_epoch,
                 item.terminal_watermark,
                 item.prerequisite_bundle_id,
-                item.hold_until,
+                datetime.fromisoformat(item.hold_until) if item.hold_until else None,
                 packet.actor,
                 item.reason,
             )

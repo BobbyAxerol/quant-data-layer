@@ -9535,3 +9535,204 @@ explicit source audit, which is the behaviour they have today.
   separate exact retention decision.
 - Final redacted packet including cleanup is SHA-256
   `352a1d5f345e3253620bc38d54ef387c2961650c6a3557325f2ae2cdc908c9bb`.
+
+
+### C40 - Global V2 Crypto Rust Authority And Release Closure
+
+**Status:** `APPROVED / PREFLIGHT IN PROGRESS / DNSE EXCLUDED`
+
+**Goal.** Promote every currently approved V2 crypto realtime binding to the
+transactionally fenced Rust production core, keep the Python query/projector/
+SDK/history edge, retain V1 as the tested hot rollback, and close the source and
+release workflow. DNSE remains outside this packet until a reachable valid VN
+market session is certified separately.
+
+**Approved scope and invariants.**
+
+- Authority scope is exactly Binance USD-M BTCUSDT/ETHUSDT and OKX Swap
+  BTC-USDT-SWAP/ETH-USDT-SWAP, each with `TRADE`, `QUOTE` and final `BAR 1m`:
+  twelve bindings total. Binance Spot, OKX Spot, DNSE/HNX/HOSE and all
+  pass-through historical intervals are excluded.
+- The promotion manifest, generated production-core bindings and runtime
+  slices must be the same set. A count-only match is insufficient; exact IDs,
+  venue/market/product/feed/interval and source identities must agree.
+- Authority transitions use the existing PostgreSQL CAS, immutable
+  prerequisite/handoff evidence, transactional outbox, compacted Kafka control
+  topic and per-target Rust fence. No environment flag or duplicate writer may
+  constitute promotion.
+- Each slice follows `RUST_SHADOW -> VALIDATING -> RUST_CANARY -> RUST_PRIMARY`
+  under one approved maintenance packet, internally committed one slice at a
+  time. Any mismatch blocks that slice and stops the packet. V1 port 8100,
+  Kafka data, stable Redis, projection SQLite and Trading System order/risk
+  services are not deleted or reset.
+- Trading System remains `V2_PRIMARY` for the eight demanded TRADE/BAR slices.
+  Query/stream/projector remain Python edges; Rust owns canonical realtime
+  normalization, ordering, deduplication, quarantine and publication authority.
+- Rollback fences Rust under a newer revision, restores the declared V1 route,
+  and preserves all evidence/volumes. DNSE remains V1-only.
+
+**Preflight finding.** The retained promotion scope still selected BTC Spot plus
+BTC derivatives, while acquisition revision 5 serves BTC/ETH derivatives and
+has stopped both Spot ingestors. The stale manifest also produced twelve
+bindings, so a count-only gate could not detect the semantic mismatch. This is
+a production blocker and must be repaired before any authority database or
+production-core worker is started.
+
+**Implementation and test gates.**
+
+1. Advance the promotion-scope revision and replace the stale Spot IDs with the
+   exact BTC/ETH USD-M/Swap set. Add set-level regression tests that compare the
+   promotion manifest, generated core bundle and active acquisition/demand
+   catalog, and prove zero Spot/VN binding.
+2. Confirm or add an idempotent source-owned authority bootstrap command for
+   the exact immutable candidate/prerequisite/slice rows. It must be plan-only
+   by default, require an exact confirmation token, reject existing conflicting
+   state and never interpolate secret values into evidence.
+3. Run focused promotion/catalog/operator tests, full Python and Rust suites,
+   format/Clippy/diff/security checks, deterministic bundle generation and
+   immutable image probes before runtime mutation.
+4. Start only the private authority DB/dispatcher, bootstrap exact rows, persist
+   real-provider evidence, execute validating/canary/primary CAS packets, start
+   production-core workers only at the governed stage, and fence/stop the old
+   shadow canonical writer before first primary output at W+1.
+5. Accept only zero semantic mismatch, open gap, duplicate external effect and
+   quarantine; bounded Kafka/projector lag; advancing Binance/OKX data; all
+   demanded Trading System slices READY; cursor/replay continuity; unchanged
+   execution tables; and a V2 -> V1 -> V2 service-only rollback drill.
+6. Record exact runtime/image/consumer inventory, remove disposable test
+   resources and only demonstrably unreferenced images/cache, commit and push
+   the feature branches. Merge order is feature -> `dev` -> release PR ->
+   `main`; immutable release images and tag must be built from the merged/tag
+   SHA, not from an unmerged worktree.
+
+**Decision boundary.** C40 is complete only when all twelve crypto bindings are
+durably audited as `RUST_PRIMARY`, current consumers pass after promotion,
+rollback is executable, source branches are pushed and the operator has exact
+merge/release instructions. DNSE certification remains the only declared venue
+gate and does not weaken the crypto closure.
+
+**C40.1 exact-scope/bootstrap source result - 2026-08-23.**
+
+- Status: `SOURCE PASS / RUNTIME UNCHANGED`. Promotion scope revision 2 now
+  selects exactly twelve enabled derivative bindings: Binance USD-M and OKX
+  Swap BTC/ETH, each `TRADE`, `QUOTE` and final `BAR 1m`. Both Spot venues and
+  every VN/DNSE binding are absent. The previous count-only regression has
+  been replaced by exact-set equality against the enabled acquisition catalog
+  plus exact venue/market/native-symbol assertions.
+- Added `scripts/phasec40_authority_bootstrap.py`. It is plan-only by default,
+  binds one deterministic prerequisite bundle and twelve initial
+  `RUST_SHADOW` rows to the immutable Rust image, SBOM, contract, acquisition,
+  promotion-scope, production-core manifest, rollback manifest and clean
+  real-provider acceptance. Apply requires the packet-derived confirmation
+  token and admin DSN; identical state is idempotent while any existing bundle
+  or slice conflict aborts the transaction. It records no credentials or raw
+  market payloads.
+- Network-off immutable-image test command ran the C40 bootstrap suite together
+  with deployment and demand/catalog regressions: 31 tests passed, zero failed.
+  Covered deterministic exact scope, zero Spot/VN, stale core manifest, dirty
+  acceptance, packet tamper/expiry, existing bundle-generation contracts and
+  enabled acquisition consistency. The expected argparse usage line and the
+  bounded DNSE queue warning were negative-test output, not failures.
+- No authority database, Kafka topic, container, route, V1 consumer, Trading
+  System execution state or persistent runtime volume changed in this slice.
+  Remaining C40 source work is the real-record terminal handoff packet/tool;
+  runtime bootstrap/canary/primary remains forbidden until that gate and the
+  full Python/Rust checks pass.
+
+**C40.2 live-record handoff operator result - 2026-08-23.**
+
+- Status: `SOURCE PASS / RUNTIME UNCHANGED / PRIMARY LEASE DECISION OPEN`.
+  Added a read-only Kafka collector that captures topic high-watermarks first,
+  scans that fixed `read_committed` window without committing consumer state,
+  validates canonical/raw provenance, reconstructs each logical watermark from
+  the real raw sequence and requires bounded old-canonical/canary payload parity
+  for all twelve slices. Its evidence contains hashes, offsets, counts and
+  lineage only; no provider payload or secret is persisted.
+- Added deterministic cutover tooling for the exact
+  `RUST_SHADOW -> VALIDATING -> RUST_CANARY` CAS packets and for terminal
+  checkpoint plus accepted W/W+1 handoff material. Primary artifacts bind the
+  same candidate, owner/revision/lease/partition epochs, PostgreSQL timestamp
+  precision and the production outbox serializer. Evidence insertion is
+  plan-only by default, confirmation-token guarded, append-only/idempotent and
+  rejects conflicting rows.
+- Focused network-off authority matrix now reports 44 passed, zero failed. It
+  covers fixed-high Kafka collection without checkpoint mutation, invalid
+  overlap bounds, exact 12-slice stage packets, outbox serializer parity,
+  terminal W/W+1, dirty/incomplete evidence rejection, bootstrap/catalog and
+  existing C3 cutover contracts.
+- New decision gate: the current Phase 9.2 Rust fence applies `hold_until` to
+  both canary and established primary writes, while the control plane has no
+  same-state primary renewal transition. With the current one-day bootstrap
+  default this would create a deterministic production outage after one day.
+  Extending the approval duration or making accepted primary authority persist
+  until a higher CAS revision changes the security blast radius. Neither change
+  is silently authorized. Canary may proceed under the bounded window, but
+  PRIMARY remains blocked until the operator explicitly chooses the authority
+  lifetime semantic.
+
+
+**C40.3 full source certification result - 2026-08-23.**
+
+- Status: `SOURCE PASS / RUNTIME UNCHANGED / PRIMARY LIFETIME GATE OPEN`.
+  The complete Python suite ran from the current worktree in the retained
+  immutable Python dependency image with `network none`, a read-only root,
+  dropped capabilities, UID/GID 10001 and bounded writable `/tmp` plus
+  `/app/logs` tmpfs: 724 tests passed, zero failed and six documented
+  conditional integration cases skipped. Two earlier attempts stopped at four
+  import errors because the harness made `/app/logs` unwritable to UID 10001;
+  the corrected unchanged-source run proves those were harness failures rather
+  than domain regressions.
+- A pinned Rust 1.82 builder was rebuilt from the current source. `cargo fmt
+  --all -- --check`, locked workspace Clippy with warnings denied and all 75
+  workspace tests passed with zero failure/skip under network-disabled,
+  capability-dropped disposable execution. The first read-only invocation
+  stopped before compilation because Cargo could not create
+  `/src/target/debug`; rerunning without a host mount in the disposable
+  container supplied only the required ephemeral target directory.
+- This gate covers the exact promotion manifest regression, canonical identity,
+  provider semantics, ordering/dedup/quarantine, handoff/CAS and the new C40
+  operator tools. It does not constitute live Kafka/PostgreSQL, provider
+  canary, consumer or authority evidence. No running container, authority row,
+  route, broker topic, durable volume, V1 service or Trading System execution
+  state changed.
+- The remaining correctness blocker is explicit rather than hidden: a
+  `RUST_PRIMARY` record currently expires at `hold_until`, while no audited
+  same-owner renewal exists. C40 will not promote PRIMARY using a one-day
+  record that deterministically stops publishing. The next source slice must
+  preserve bounded canary approval and either add governed primary renewal or
+  receive an explicit policy decision for persistent primary authority before
+  runtime promotion.
+
+
+**C40.4 disposable PostgreSQL operator-path result - 2026-08-23.**
+
+- Status: `DB APPLY PASS / FIVE OPERATOR DEFECTS REPAIRED / RUNTIME
+  UNCHANGED`. A PostgreSQL 16 instance on a dedicated network and tmpfs volume
+  received all tracked migrations, then the exact twelve-slice bootstrap,
+  `RUST_SHADOW -> VALIDATING -> RUST_CANARY -> RUST_PRIMARY` CAS sequence and
+  twelve terminal checkpoint/handoff pairs. Final disposable state was 12
+  `RUST_PRIMARY`, 36 immutable transition-audit rows, 36 pending outbox rows,
+  12 terminal checkpoints and 12 accepted handoffs; no invalid or expired
+  primary row existed.
+- The real apply path exposed and repaired defects that parse-only tests could
+  not find: direct C40 scripts did not add the repository root to `sys.path`;
+  ISO timestamps were passed as strings to asyncpg `TIMESTAMPTZ`; JSONB
+  evidence was compared as a string against a mapping; the standard cutover SQL
+  omitted the `terminal_watermark` argument and called the 15-argument
+  function with 14 placeholders; bootstrap and terminal replay hard-coded
+  mutation counts. Terminal evidence replay now compares every immutable
+  checkpoint/handoff field, not a six-field subset.
+- Bootstrap first apply inserted 13 rows, exact replay inserted zero, and an
+  injected existing-row conflict failed closed with no partial transaction.
+  Terminal evidence first apply inserted 24 rows and replay inserted zero.
+  Failed timestamp/SQL attempts left zero partial rows. Reapplying every tracked
+  migration after the primary state preserved all counts and authority state.
+- Direct `--help` invocation for all three C40 entrypoints and the focused
+  bootstrap/cutover/collector suite passed 10 tests in the immutable Python
+  dependency image. The post-repair full Python recertification then passed all
+  725 tests with zero failure and six documented conditional skips under the
+  same non-root, network-disabled, read-only harness.
+- Cleanup removed only `qdl_c40_db_smoke`, its dedicated
+  `qdl_c40_db_smoke` network and the two exact `/tmp` artifact paths.
+  No named volume was created; V1, stable V2, Kafka, Redis, Trading System and
+  execution data were never connected to this rehearsal.

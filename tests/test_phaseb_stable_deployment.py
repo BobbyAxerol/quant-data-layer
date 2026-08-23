@@ -111,11 +111,31 @@ class StableDeploymentContractTests(unittest.TestCase):
             with self.subTest(artifact=artifact):
                 self.assertIn(artifact, script)
 
-    def test_initial_authority_scope_is_explicit_and_excludes_dnse(self):
-        expected = set(self.promotion_scope.binding_ids)
+    def test_initial_authority_scope_matches_active_crypto_derivatives_exactly(self):
+        expected = {
+            "binance-usdm-btcusdt-bar-1m",
+            "binance-usdm-btcusdt-quote",
+            "binance-usdm-btcusdt-trade",
+            "binance-usdm-ethusdt-bar-1m",
+            "binance-usdm-ethusdt-quote",
+            "binance-usdm-ethusdt-trade",
+            "okx-swap-btcusdt-bar-1m",
+            "okx-swap-btcusdt-quote",
+            "okx-swap-btcusdt-trade",
+            "okx-swap-eth-usdt-swap-bar-1m",
+            "okx-swap-eth-usdt-swap-quote",
+            "okx-swap-eth-usdt-swap-trade",
+        }
+        self.assertEqual(self.promotion_scope.revision, 2)
         self.assertEqual(set(self.promotion_scope.binding_ids), expected)
-        self.assertEqual(len(expected), 12)
-        self.assertFalse(any("eth" in binding_id for binding_id in expected))
+        self.assertEqual(
+            expected,
+            {
+                item.binding_id
+                for item in self.acquisition.bindings
+                if item.enabled and item.runtime in {"BINANCE", "OKX"}
+            },
+        )
         runtime = self.acquisition.production_core_config(
             catalog=self.catalog,
             raw_authority=self.authority,
@@ -131,10 +151,23 @@ class StableDeploymentContractTests(unittest.TestCase):
                 if item.binding_id in expected
             },
         )
+        core_bindings = runtime["core"]["bindings"]
         self.assertEqual(
-            {item["venue"] for item in runtime["core"]["bindings"]},
-            {"BINANCE", "OKX"},
+            {
+                (item["venue"], item["market"], item["native_symbol"])
+                for item in core_bindings
+            },
+            {
+                ("BINANCE", "USDM", "BTCUSDT"),
+                ("BINANCE", "USDM", "ETHUSDT"),
+                ("OKX", "SWAP", "BTC-USDT-SWAP"),
+                ("OKX", "SWAP", "ETH-USDT-SWAP"),
+            },
         )
+        self.assertFalse(any(
+            item["market"] == "SPOT" or item["venue"] in {"DNSE", "HNX", "HOSE"}
+            for item in core_bindings
+        ))
 
     def test_authority_scope_rejects_unknown_and_duplicate_bindings(self):
         with tempfile.TemporaryDirectory() as directory:
