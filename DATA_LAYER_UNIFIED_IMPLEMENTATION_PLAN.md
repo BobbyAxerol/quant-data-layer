@@ -10149,3 +10149,29 @@ gate and does not weaken the crypto closure.
   orders 1179, fills 6094, positions_v2 21 and command_journal 430. The next
   strict gate is a graceful N-1 stop/restore of one new worker with continuous
   `READY 8/8`; this transition alone grants no `RUST_PRIMARY`.
+
+**C40.17 strict cooperative N-1 acceptance - 2026-08-23.**
+
+- Status: `N-1 CONTINUOUS-READY PASS / WORKER RESTORED / AUTHORITY
+  UNCHANGED`. After the cooperative group had converged, exactly
+  `rust_core_2` was stopped through Compose with a 45-second upper bound.
+  It drained its current transaction, unsubscribed and exited in approximately
+  five seconds with structured event `qdl_realtime_core_stopped` and
+  `reason=SIGTERM`; processed/canonical counters ended at 17983/17886,
+  duplicates 0 and quarantines 0.
+- The two surviving workers immediately owned all six raw partitions. The
+  first bounded N-1 group inspection measured aggregate lag 22. One hundred
+  consecutive one-second Trading System health samples spanning pre-stop,
+  stopped hold and worker restore were all top-level/service `READY`, 8/8
+  demanded slices ready and zero unhealthy slice. There was no
+  `DATA_STALE`, disconnect or health-read failure.
+- The stopped worker was restarted from the same immutable image and rejoined
+  cooperatively. Three workers again own all six partitions; post-restore lag
+  was 125, below the declared 250-record bound. The restored worker reported
+  `RUST_SHADOW`, generation 1, zero production writes and zero quarantine.
+- Execution counts remain orders 1179, fills 6094, positions_v2 21 and
+  command_journal 430. No Kafka topic/offset reset, Redis/SQLite mutation,
+  provider restart, V1/Trading System recreate or volume operation occurred.
+  The continuous-READY defect from C40.12 is closed. `RUST_PRIMARY` remains
+  forbidden until fresh twelve-slice real-provider parity is collected and a
+  separate operator approval is granted.
