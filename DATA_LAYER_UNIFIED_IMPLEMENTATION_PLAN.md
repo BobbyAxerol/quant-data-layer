@@ -10260,3 +10260,75 @@ gate and does not weaken the crypto closure.
   rollback change occurred. The next permitted action is an explicit operator
   decision on the bounded authority canary/handoff packet; this result alone
   does not grant production authority.
+
+
+**C40.20 approved bounded authority canary/handoff packet - 2026-08-23.**
+
+- Status before execution: `OPERATOR APPROVED / RUST_CANARY AND TERMINAL
+  HANDOFF PENDING / RUST_PRIMARY FORBIDDEN`. This packet is governed by
+  `upgrade/quant-data-layer-fund-grade-upgrade-architecture.md` sections 27.3,
+  28.6 and 34.4 plus
+  `docs/runbooks/v2-production-rust-authority-cutover.md`. It is bound to
+  promotion-scope revision 2 and the certified cooperative Rust image
+  `sha256:db240925dff30d4b9deb338dbd8e6e3506cbc8501ee71cff09ff58a247b7bae6`.
+- Approved mutations are bounded to regenerating the private production-core
+  bundle for the exact twelve Binance USD-M/OKX Swap BTC/ETH
+  TRADE/QUOTE/final-BAR-1m bindings; creating the private authority PostgreSQL
+  volume, authority dispatcher and the compacted authority/checkpoint plus
+  isolated canary topics/ACLs; bootstrapping exact immutable `RUST_SHADOW`
+  rows; applying the governed `VALIDATING` and `RUST_CANARY` CAS revisions;
+  and starting the three production-core workers only for the bounded canary.
+- Acceptance freezes immutable Kafka high-watermarks, requires authentic
+  provider lineage, equal canonical/canary payload digests and event counts,
+  zero semantic mismatch, zero open gap, zero quarantine and zero execution
+  mutation for all twelve slices. The canary workers must drain and stop at the
+  accepted terminal watermark W before append-only terminal checkpoint and
+  W/W+1 handoff rows are recorded. A primary cutover packet may be generated
+  for operator review but must not be applied in this task.
+- Invariants: existing shadow canonical writers remain authority; public V2,
+  Legacy V1, Trading System, Kafka data, stable Redis, SQLite, acquisition,
+  projector/query/stream roles and all execution tables/volumes are preserved.
+  No synthetic/test-provenance event may enter stable topics. DNSE and Spot are
+  outside scope. Authority creation, canary writes and handoff evidence must be
+  fully auditable and idempotent.
+- Rollback before any primary transition stops only the three production-core
+  workers and authority dispatcher. A failed canary is fenced by a newer
+  `BLOCKED` revision if a CAS has already reached `RUST_CANARY`; no topic,
+  offset, PostgreSQL row or volume is deleted. The retained V1 and shadow
+  canonical paths continue serving consumers throughout.
+- Decision boundary: this approval does not grant `RUST_PRIMARY`, does not
+  authorize a primary CAS and does not change consumer routing. After terminal
+  gap-free evidence passes, report the exact candidate, W/W+1 packet, runtime
+  health, execution counts and rollback command, then request a separate
+  explicit operator decision for primary authority.
+
+
+**C40.21 production-only revision-2 bundle gate - 2026-08-23.**
+
+- Status: `PASS / PRIVATE BUNDLE READY / AUTHORITY RUNTIME NOT STARTED`.
+  Preflight found the host production-core bundle at promotion-scope revision 1
+  with stale Spot BTC bindings. Applying the broad runtime-refresh tool would
+  also replace live ingestor and shadow-core configs, so it was deliberately
+  rejected as wider than the approved packet.
+- The deterministic production-only builder generated exactly four replacement
+  files from catalog revision 3, acquisition revision 5, promotion-scope
+  revision 2 and partition-plan epoch 1. All three worker configs contain the
+  same exact twelve Binance USD-M/OKX Swap BTC/ETH TRADE/QUOTE/final-BAR-1m
+  bindings, no Spot or DNSE source. Manifest digest is
+  `c908bf0eb60cb52f78340172165efde9e6decfde87310a4bd2d3ed997a091b3e`;
+  worker config digests are `537f7cce94b0`, `80afc3c19065` and
+  `0d2bc8cd28bd`.
+- Only the four inactive production-core files were atomically replaced. The
+  previous revision-1 files are preserved in private rollback directory
+  `/home/bobby/.local/state/qdl-v2/655d2106d01f/bundle/runtime.backup-c40-canary-20260823T082200Z`.
+  Running shadow cores retain their original bind-mounted inodes and were not
+  restarted; no container, topic, DB row, offset, cache, route or volume
+  changed.
+- Focused network-disabled authority bootstrap/cutover/live-handoff,
+  stable-runtime refresh and stable-deployment tests passed 45/45. Exact JSON
+  gates separately verified revision 2, twelve bindings per worker, only
+  Binance/OKX USDM/Swap and only BTC/ETH symbols. The argparse usage line and
+  bounded DNSE queue warning were expected negative-test output.
+- Next gate is idempotent broker topic/ACL bootstrap plus private authority
+  DB/dispatcher creation and exact `RUST_SHADOW` bootstrap. `RUST_PRIMARY`
+  remains forbidden.
