@@ -10123,3 +10123,29 @@ gate and does not weaken the crypto closure.
   Kafka, Redis, SQLite, provider ingestors, projectors, query/stream, V1,
   Trading System and all volumes remain outside the packet. `RUST_PRIMARY`
   remains forbidden.
+
+**C40.16 cooperative all-member runtime transition - 2026-08-23.**
+
+- Status: `SHADOW TRANSITION PASS / N-1 GATE PENDING / AUTHORITY
+  UNCHANGED`. A new private mode-0600 override with SHA-256
+  `4f75f44bb2561295d17a30bcf237add4932da157651e5642e69608d044087db0`
+  pins all six Rust shadow/future-production roles to immutable image
+  `sha256:db240925dff30d4b9deb338dbd8e6e3506cbc8501ee71cff09ff58a247b7bae6`.
+  Compose rendering passed before mutation.
+- The three old eager shadow workers were stopped together and exactly those
+  three services were recreated together. The old image did not understand
+  `SIGTERM`, so this one-time migration stop consumed its 45-second grace
+  period and produced an expected all-member backlog/freshness interruption.
+  No mixed eager/cooperative membership was allowed.
+- All three replacement workers are running the exact new image, report
+  `RUST_SHADOW`, sixteen bindings, generation 1, and zero production
+  public/legacy writes. Their cooperative group owns all six raw partitions.
+  Aggregate lag converged from approximately 8700 to 73; Trading System
+  recovered to `READY` with 8/8 demanded V2 slices ready and zero unhealthy
+  slice. V1 remained `ok`; worker logs showed no panic, transactional error
+  or quarantine.
+- Kafka, Redis, SQLite, provider ingestors, projectors, query/stream, V1,
+  Trading System and all volumes were not recreated. Execution counts remain
+  orders 1179, fills 6094, positions_v2 21 and command_journal 430. The next
+  strict gate is a graceful N-1 stop/restore of one new worker with continuous
+  `READY 8/8`; this transition alone grants no `RUST_PRIMARY`.
