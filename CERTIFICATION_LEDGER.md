@@ -407,3 +407,25 @@ The query contract now preserves the explicit non-replayable cursor only for a
 durable cursor or authority is fabricated. Focused tests passed 83 with one
 intentional skip; full network-off discovery passed 709 with six intentional
 skips. Runtime deployment and the repeated alpha smoke remain pending.
+
+
+### C39.4/C39.5 Final Binance/OKX Acceptance
+
+Final Python source `31c8ca5` and image `sha256:13fdb777a71f...` passed the
+709/6 network-off suite and the real execution-disabled alpha acceptance.
+Binance BTC/ETH 1m and 15m warmups returned 500 FULL rows; both TRADE sessions
+reached replay/live and ACKed. Trading System reports 8/8 demanded Binance/OKX
+slices READY, three Kafka lag samples were 15/10/22, cache identities match,
+quarantine is zero, and a 30-second stable-state window grew by zero bytes.
+Execution DB/Redis counts are unchanged. The exact rollback checkpoint SHA is
+`98aef817697e...`; the redacted final packet SHA is `352a1d5f345e...`. Binance
+and OKX crypto scope passes. DNSE remains `PARTIAL_EXTERNAL`; global Rust
+authority promotion is outside this packet.
+
+
+### C39.4/C39.5 Scoped Cleanup
+
+Removed the two disposable C39 test images and nine exact temporary paths. No
+broad prune or volume deletion occurred; final/rollback images, V1, stable
+state and the checkpoint backup remain. Final packet SHA is
+`352a1d5f345e3253620bc38d54ef387c2961650c6a3557325f2ae2cdc908c9bb`.

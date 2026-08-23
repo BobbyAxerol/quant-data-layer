@@ -9459,3 +9459,79 @@ explicit source audit, which is the behaviour they have today.
   was rerun in the existing disposable test image and passed. Runtime remains on
   image `3066390` until a new immutable artifact is built and the same six-role
   rolling packet plus execution-disabled alpha smoke pass.
+
+
+**C39.4/C39.5 final Binance/OKX acceptance - 2026-08-23.**
+
+- Status: `PASS / BINANCE-OKX CRYPTO SCOPE CERTIFIED / DNSE PARTIAL_EXTERNAL`.
+  Final tested source is `31c8ca57d392de1ba1031479d9f8452c61caba09`;
+  immutable Python image is
+  `sha256:13fdb777a71fbfeb24321c8f75e7f5df2ba397f822f32091895032304deafea6`
+  with matching full OCI revision, version `2.0.0-c39.4` and non-root
+  `qdl:qdl`. Rust remains the already-certified immutable image
+  `sha256:66988ae4254a149447b2a4e5ff6008aa864a4071796934421f5d92dd0248bd76`;
+  no Rust source changed in the final repair.
+- The bundle refresh applied acquisition revision 5, disabled only Binance Spot
+  and OKX Spot acquisition and retained the checkpoint backup inside stable_state
+  at `stable-crypto-bar-edge.json.pre-c39-20260823T021409Z`, SHA-256
+  `98aef817697e603842d378deca8e67b6c5ef887c3cf7bd6b36bbbc86e8ba18e0`.
+  The final repair rolling-recreated only bar edge, active/passive stream,
+  projector and query replicas. Kafka, stable Redis, SQLite, Rust, V1 and all
+  Trading System execution services stayed in place.
+- Real-provider alpha acceptance passed with principal
+  `alpha.binance.paper.stable`, manifest revision 4 and no execution credential:
+  BTCUSDT and ETHUSDT each returned 500/500 `FULL`, final, gap-free, `LIVE` bars
+  at 1m and 15m. Materialized 1m remained authoritative/execution-eligible;
+  15m remained explicitly non-authoritative, non-execution-eligible and
+  `PASS_THROUGH_NO_REPLAY`. Both TRADE sessions observed `REPLAYING -> LIVE`,
+  projected authoritative typed events and durably ACKed one new offset. The
+  disposable container and its cursor/tmp state were removed automatically.
+- Trading System acceptance is truthful: gateway and market-data heartbeat are
+  READY with 8/8 demanded Binance/OKX BTC/ETH TRADE/BAR slices, zero unhealthy
+  or unreported slices. All eight ephemeral cache keys were present; sampled
+  trades were sub-second, all 1m bars were closed and providers were exactly
+  `BINANCE_DIRECT`/`OKX_DIRECT`. Cursor storage contains eight
+  `qdl.handoff-cursor.v2` tokens under one redacted generation hash.
+- Correctness/recovery: query replicas are READY, active stream is READY,
+  passive stream is STANDBY by lease design, V1 health remains `ok`, cache IDs
+  match at `ae7554250ad548e7818559c140728ed4`, SQLite has 123900 events across 18
+  partitions and zero quarantine. Three projector lag samples totalled 15, 10
+  and 22, all below 250. Expected disconnects were logged only during rolling
+  stream replacement; the following three-minute/30-second windows had no new
+  market-data disconnect/error.
+- Execution effect is exactly zero: orders 1179, fills 6094, positions_v2 21
+  and command_journal 430 match the pre-packet baseline; `order.inbound` and
+  `commands.execution.paper` remain length zero. No broker, portfolio, risk or
+  alpha strategy state changed.
+- Resource evidence: a one-shot sample showed Python roles at 40-76 MiB each,
+  Rust roles at 8-68 MiB and market_data_service at 63 MiB. Stable state was
+  294701309 bytes; SQLite 170954752 bytes and WAL 7148232 bytes. All three were
+  byte-identical after 30 seconds, so the high cumulative Docker block-I/O
+  counters did not represent retained disk growth. Host filesystem remained 57%
+  used with 63 GiB free.
+- Redacted acceptance/rollback packet:
+  `/home/bobby/.local/state/qdl-v2/655d2106d01f/rollout-c39-20260823T021409Z/final-acceptance.json`,
+  SHA-256 `352a1d5f345e3253620bc38d54ef387c2961650c6a3557325f2ae2cdc908c9bb`.
+  The original `62202b2` and intermediate `3066390` env/image pair remain the
+  exact rollback chain until operator retention cleanup is separately approved.
+- Remaining boundaries are honest rather than hidden: a 1000-row materialized
+  1m request will refill naturally after the governed 900-second cache rebuild;
+  the certified alpha/runtime requirement is 500 rows and already passes. DNSE
+  remains `PARTIAL_EXTERNAL` pending a reachable valid market session. This
+  packet did not promote the separate global `RUST_SHADOW` authority mode.
+
+
+**C39.4/C39.5 scoped cleanup - 2026-08-23.**
+
+- Removed only two disposable test images (`tradingsystem-test:c39-health-sdk`
+  and `qdl-v2-test:c39-generation`) plus the nine exact C39 temporary
+  file/directory paths. The execution-disabled alpha container was already
+  absent because it ran with `--rm`. No broad image, builder or volume prune
+  was run.
+- Retained final and rollback QDL/Trading System images, the stable Kafka/Redis/
+  SQLite volumes, V1, TLS identities, runtime packet and checkpoint backup.
+  Docker still reports 11.01 GB image and 6.943 GB build-cache reclaimable, but
+  those mixed shared/rollback layers are intentionally not deleted without a
+  separate exact retention decision.
+- Final redacted packet including cleanup is SHA-256
+  `352a1d5f345e3253620bc38d54ef387c2961650c6a3557325f2ae2cdc908c9bb`.
