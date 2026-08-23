@@ -365,3 +365,23 @@ and Rust image
 Both passed network-off executable/import probes. Read-only live preflight
 matched SQLite and Redis cache identities at
 `ae7554250ad548e7818559c140728ed4`; runtime remained unchanged.
+
+
+### C39.4 Non-1m Alpha Contract Finding
+
+The first execution-disabled alpha container was removed after a fail-closed
+15m warmup. No execution effect occurred. Real 1m Binance/OKX acquisition and
+all eight demanded Trading System slices remained healthy. The defect is the
+registered 15m/1h alpha freshness bound of 180 seconds, shorter than the bar
+interval itself. The bounded repair raises only those two interval policies,
+bumps manifest revisions and adds a regression gate; production acceptance is
+still open until the repaired smoke passes.
+
+
+### C39.4 Non-1m Manifest Source Repair
+
+Binance 15m and OKX 1h ALPHA freshness now cover one complete interval plus
+180 seconds, and both manifests are revision 4. Targeted tests passed 35/35;
+the full network-off suite passed 707 with six intentional skips. Two preceding
+collection failures were test tmpfs permission errors and produced no runtime
+mutation. The repaired artifact is not yet deployed at this ledger point.

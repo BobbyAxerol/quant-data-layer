@@ -9363,3 +9363,51 @@ explicit source audit, which is the behaviour they have today.
   `ae7554250ad548e7818559c140728ed4`. Generation-bound tokens therefore remain
   valid across query/stream replicas and expire only after a real cache
   generation change.
+
+
+**C39.4 governed non-1m alpha smoke finding - 2026-08-23.**
+
+- Status: `BOUNDED REPAIR IN PROGRESS / EXECUTION EFFECT ZERO`. The disposable
+  `qdl-c39-alpha-binance-smoke` used the pinned shared alpha SDK, ALPHA mTLS/JWT
+  identity and no Trading System DB, Redis or execution credential. It was
+  removed automatically after a fail-closed warmup response; no order, command,
+  fill or position was created.
+- Live 1m acquisition is healthy: all four Binance/OKX BTC/ETH final BARs keep
+  advancing every minute, Trading System reports eight of eight demanded
+  TRADE/BAR slices READY, and the provider-authentic cache shows sub-second
+  trades plus closed 1m bars inside the 180-second policy. The failed request
+  was the subsequent Binance 15m pass-through warmup.
+- Root cause is a consumer-contract defect: the Binance 15m and OKX 1h alpha
+  requirements inherited the 1m `max_freshness_ms=180000`. A final 15m/1h bar
+  is normally older than three minutes for most of its own interval, so this
+  policy rejects healthy provider data. It must not be bypassed with partial
+  coverage or a relaxed stale policy.
+- Approved-scope bounded repair: set final-bar freshness to one complete
+  interval plus the existing three-minute settlement grace (15m = 1,080,000 ms;
+  1h = 3,780,000 ms), bump both alpha manifests from revision 3 to 4, and add a
+  regression gate requiring every non-1m final BAR policy to cover at least its
+  own interval. Rebuild the immutable Python artifact and recreate only the
+  already-approved Python query/stream/projector/bar-edge roles; Rust, Kafka,
+  Redis, SQLite, V1 and Trading System execution remain untouched.
+
+
+**C39.4 non-1m manifest source repair result - 2026-08-23.**
+
+- Status: `SOURCE PASS / REPAIRED IMAGE NOT YET DEPLOYED`. Binance 15m final
+  BAR freshness is now 1,080,000 ms and OKX 1h is 3,780,000 ms; each includes
+  its full interval plus the existing 180-second settlement grace. Both ALPHA
+  manifests advance from revision 3 to 4. Stale and gap policies remain BLOCK,
+  full coverage and final bars remain mandatory, and execution dependency
+  remains FORBIDDEN.
+- Added a catalog/manifest regression test that fails any registered non-1m
+  ALPHA BAR policy shorter than its own interval. Targeted manifest/catalog
+  result: 35 passed. Full network-off Python result: 707 passed, six intentional
+  skips, zero failures in 32.23 seconds.
+- Two earlier full-suite invocations failed at collection because the read-only
+  test harness did not provide a writable `/app/logs`, then provided a root-only
+  tmpfs to the non-root image user. The corrected bounded tmpfs with mode 1777
+  passed; no product code or runtime security setting was changed for those
+  harness errors.
+- The live runtime still uses Python image `62202b2` at this checkpoint. Build,
+  immutable-image smoke, exact role recreate and the repeated execution-disabled
+  alpha smoke remain required before closure.

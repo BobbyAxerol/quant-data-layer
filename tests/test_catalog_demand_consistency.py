@@ -99,6 +99,34 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
                 unservable.setdefault(key, set()).add(manifest.consumer_id)
         self.assertEqual(unservable, {})
 
+    def test_non_minute_bar_freshness_covers_its_interval(self):
+        interval_ms = {"15m": 15 * 60_000, "1h": 60 * 60_000}
+        checked: list[tuple[str, str]] = []
+        for path in sorted(CONSUMER_DIR.glob("alpha-*-paper.yaml")):
+            manifest = ConsumerManifestLoader.load(path)
+            for requirement in manifest.requirements:
+                if (
+                    requirement.feed.value != "BAR"
+                    or requirement.interval not in interval_ms
+                ):
+                    continue
+                self.assertGreaterEqual(
+                    requirement.max_freshness_ms or 0,
+                    interval_ms[requirement.interval],
+                    f"{manifest.consumer_id}:{requirement.interval} freshness "
+                    "is shorter than its bar interval",
+                )
+                checked.append((manifest.consumer_id, requirement.interval))
+        self.assertEqual(
+            checked,
+            [
+                ("alpha.binance.paper.stable", "15m"),
+                ("alpha.binance.paper.stable", "15m"),
+                ("alpha.okx.paper.stable", "1h"),
+                ("alpha.okx.paper.stable", "1h"),
+            ],
+        )
+
     def test_a_requirement_no_source_can_answer_still_fails(self):
         """Guards the check above from having been weakened into nothing."""
         from dataclasses import replace
