@@ -10506,3 +10506,60 @@ gate and does not weaken the crypto closure.
   services and durable state stay outside blast radius. Any failed worker or
   publication outside canary/checkpoint topics requires stopping those three
   members; no `RUST_PRIMARY` transition is authorized.
+
+
+**C40.29 compacted snapshot restart-recovery gate - 2026-08-23.**
+
+- Status before repair: `IMMUTABLE IMAGE DEPLOYED TO THREE BOUNDED CORES /
+  RESTORE FAILED CLOSED / RUST_CANARY RETAINED / RUST_PRIMARY FORBIDDEN`.
+  Compose rendering proved only the three production-core images changed; all
+  three replacements ran the exact certified image and then stopped before raw
+  consumption with `compacted snapshot did not reach captured high
+  watermarks`. Authority remains twelve `RUST_CANARY` rows, 24/24 outbox rows
+  are `PUBLISHED`, and terminal checkpoint/handoff tables remain empty. V1 is
+  `ok`; no primary/public/legacy publication occurred.
+- Root cause is the compacted-snapshot completion criterion, not authority or
+  provider data. The reader captures Kafka high watermarks but removes a
+  partition only after receiving a record exactly at `high - 1`. Compaction,
+  tombstones or aborted transactional offsets may leave no visible record at
+  that physical offset even after a `read_committed` consumer has advanced to
+  the captured end. The current reader then waits until its deadline and labels
+  a transient/recoverable snapshot condition as non-retryable configuration.
+- Approved repair: preserve the immutable captured high-watermark boundary but
+  declare a partition complete when the consumer next-position is strictly
+  beyond its captured terminal offset. This must never infer completion from
+  wall time or missing polls. Snapshot deadline exhaustion becomes an explicit
+  retryable transport condition handled by the existing bounded backoff;
+  malformed compacted records, invalid keys/UTF-8, missing authority, identity
+  mismatch and fencing remain non-retryable. Tests must cover compacted offset
+  holes, incomplete positions, timeout retry taxonomy and exact record
+  selection, followed by complete Rust gates and immutable-image certification.
+- Runtime retry remains limited to the three stopped production-core services.
+  All V1/V2 data services, Kafka brokers, Redis, projectors, ingestors, Trading
+  System, authority rows, topics and volumes are outside blast radius. No
+  `RUST_PRIMARY` action is permitted.
+
+
+**C40.30 compacted snapshot source certification - 2026-08-23.**
+
+- Status: `SOURCE PASS / REPLACEMENT IMAGE PENDING / THREE CORES STOPPED /
+  RUST_PRIMARY FORBIDDEN`. The compacted reader now compares each assigned
+  partition's next consumer position against the immutable terminal offset
+  captured before reading. It therefore closes physical offset holes only after
+  `read_committed` consumption has advanced beyond the captured bound; unknown,
+  beginning and not-yet-reached positions remain incomplete.
+- Deadline exhaustion is represented by `SnapshotTimeout` and classified as
+  retryable by the existing exponential backoff. Kafka/configuration, malformed
+  record, missing field, invalid offset/UTF-8 and authority fencing taxonomy is
+  unchanged and remains fail-closed where previously required.
+- Targeted snapshot/scope tests passed 18/18. Complete locked Rust gates passed:
+  format check, all-target Clippy with warnings denied, and 87/87 workspace
+  tests. New cases prove compacted holes, unresolved positions, retry taxonomy,
+  offset-only/mixed-scope transactions and exact raw authority identity. Tests
+  ran network-off in the pinned Rust 1.82 builder. The labeled target-cache
+  volume was removed; all three failed production-core containers remain
+  stopped and no durable runtime state changed during source certification.
+- Next gate is a replacement immutable image from this exact source and the same
+  three-service-only recreate. Runtime acceptance must pass restore, real raw
+  catch-up, cooperative assignment and terminal gap-free handoff; no primary
+  packet may be applied.

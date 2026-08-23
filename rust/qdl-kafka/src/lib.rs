@@ -162,6 +162,7 @@ pub enum KafkaTransportError {
     InvalidOffset(i64),
     InvalidUtf8(&'static str),
     Fencing(String),
+    SnapshotTimeout(String),
 }
 
 impl KafkaTransportError {
@@ -178,7 +179,7 @@ impl KafkaTransportError {
             {
                 RetryClass::Capacity
             }
-            Self::Kafka(_) | Self::Delivery(_) => RetryClass::Retryable,
+            Self::Kafka(_) | Self::Delivery(_) | Self::SnapshotTimeout(_) => RetryClass::Retryable,
         }
     }
 }
@@ -193,6 +194,9 @@ impl Display for KafkaTransportError {
             Self::InvalidOffset(offset) => write!(formatter, "invalid Kafka offset: {offset}"),
             Self::InvalidUtf8(field) => write!(formatter, "Kafka {field} is not UTF-8"),
             Self::Fencing(message) => write!(formatter, "Kafka sink fencing rejected: {message}"),
+            Self::SnapshotTimeout(message) => {
+                write!(formatter, "Kafka compacted snapshot timed out: {message}")
+            }
         }
     }
 }
@@ -1005,6 +1009,18 @@ mod tests {
         let error = config.validate().expect_err("missing TLS must fail");
         assert!(matches!(error, KafkaTransportError::Configuration(_)));
         assert_eq!(error.retry_class(), RetryClass::NonRetryable);
+    }
+
+    #[test]
+    fn compacted_snapshot_timeout_is_retryable_without_weakening_config_errors() {
+        let timeout = KafkaTransportError::SnapshotTimeout(
+            "captured high watermarks were not reached".into(),
+        );
+        assert_eq!(timeout.retry_class(), RetryClass::Retryable);
+        assert_eq!(
+            KafkaTransportError::Configuration("invalid topic".into()).retry_class(),
+            RetryClass::NonRetryable
+        );
     }
 
     #[test]

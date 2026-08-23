@@ -206,6 +206,31 @@ pub struct KafkaCompactedSnapshotReader {
     config: KafkaTransportConfig,
 }
 
+fn retire_reached_snapshot_partitions(
+    remaining: &mut BTreeMap<(String, i32), i64>,
+    positions: &TopicPartitionList,
+) -> Result<(), KafkaTransportError> {
+    let completed = remaining
+        .iter()
+        .filter_map(|((topic, partition), terminal_offset)| {
+            let position = positions.find_partition(topic, *partition)?;
+            if let Err(error) = position.error() {
+                return Some(Err(KafkaTransportError::Kafka(error)));
+            }
+            match position.offset() {
+                Offset::Offset(next_offset) if next_offset > *terminal_offset => {
+                    Some(Ok((topic.clone(), *partition)))
+                }
+                _ => None,
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for identity in completed {
+        remaining.remove(&identity);
+    }
+    Ok(())
+}
+
 impl KafkaCompactedSnapshotReader {
     pub fn new(config: KafkaTransportConfig) -> Result<Self, KafkaTransportError> {
         config.validate()?;
@@ -258,9 +283,13 @@ impl KafkaCompactedSnapshotReader {
         let deadline = Instant::now() + self.config.request_timeout;
         let mut latest: HashMap<(String, String), CompactedKafkaRecord> = HashMap::new();
         while !remaining.is_empty() {
+            retire_reached_snapshot_partitions(&mut remaining, &consumer.position()?)?;
+            if remaining.is_empty() {
+                break;
+            }
             if Instant::now() >= deadline {
-                return Err(KafkaTransportError::Configuration(
-                    "compacted snapshot did not reach captured high watermarks".into(),
+                return Err(KafkaTransportError::SnapshotTimeout(
+                    "captured high watermarks were not reached before the deadline".into(),
                 ));
             }
             let Some(result) = consumer.poll(Duration::from_millis(100)) else {
@@ -761,6 +790,41 @@ mod tests {
             target_checkpoints: "checkpoints".into(),
             authority_control: "authority".into(),
         }
+    }
+
+    #[test]
+    fn snapshot_completion_uses_next_position_across_compacted_offset_holes() {
+        let mut remaining = BTreeMap::from([
+            (("authority".into(), 0), 5),
+            (("checkpoints".into(), 1), 12),
+        ]);
+        let mut positions = TopicPartitionList::new();
+        positions
+            .add_partition_offset("authority", 0, Offset::Offset(6))
+            .unwrap();
+        positions
+            .add_partition_offset("checkpoints", 1, Offset::Offset(12))
+            .unwrap();
+
+        retire_reached_snapshot_partitions(&mut remaining, &positions).unwrap();
+        assert_eq!(remaining, BTreeMap::from([(("checkpoints".into(), 1), 12)]));
+
+        positions
+            .set_partition_offset("checkpoints", 1, Offset::Offset(13))
+            .unwrap();
+        retire_reached_snapshot_partitions(&mut remaining, &positions).unwrap();
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn unresolved_snapshot_positions_never_infer_completion() {
+        let mut remaining = BTreeMap::from([(("authority".into(), 0), 5)]);
+        let mut positions = TopicPartitionList::new();
+        positions
+            .add_partition_offset("authority", 0, Offset::Beginning)
+            .unwrap();
+        retire_reached_snapshot_partitions(&mut remaining, &positions).unwrap();
+        assert_eq!(remaining.len(), 1);
     }
 
     #[test]
