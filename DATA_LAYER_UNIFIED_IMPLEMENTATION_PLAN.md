@@ -10102,3 +10102,24 @@ gate and does not weaken the crypto closure.
   and the all-three-member transition packet is executed. V1, Trading System,
   stable V2 data and authority remain unchanged; `RUST_PRIMARY` is still
   forbidden.
+
+**C40.15 immutable cooperative image gate - 2026-08-23.**
+
+- Status: `IMAGE CERTIFIED / RUNTIME TRANSITION PENDING / AUTHORITY
+  UNCHANGED`. Commit `c7f3c34f` was built with
+  `Dockerfile.phase8-rust` as `qdl-v2-rust:2.0.0-c7f3c34`; the immutable
+  manifest-list image ID is
+  `sha256:db240925dff30d4b9deb338dbd8e6e3506cbc8501ee71cff09ff58a247b7bae6`.
+  OCI revision/version labels are `c7f3c34f` and `2.0.0-c7f3c34`.
+- Image inspection and a network-disabled, read-only disposable-container
+  gate confirm runtime UID/GID `10001:10001` and executable
+  `qdl-realtime-core`, `qdl-production-core` and
+  `qdl-native-raw-ingestor` binaries. The disposable container was removed;
+  no topic, offset, cache, database row or runtime service changed.
+- The next bounded packet must stop and recreate all three Rust shadow members
+  together on this exact image because eager and cooperative assignors cannot
+  coexist. The retained rollback image is
+  `sha256:ce7d90fcbe692e07b2a4699f3861193d3660d618ddafea96a8a056676825cf95`.
+  Kafka, Redis, SQLite, provider ingestors, projectors, query/stream, V1,
+  Trading System and all volumes remain outside the packet. `RUST_PRIMARY`
+  remains forbidden.
