@@ -28,15 +28,10 @@ MAX_ACCEPTED_LAG = 250
 REPLAY_LOOKBACK_SECONDS = 15 * 60
 MAX_REPLAY_BOOTSTRAP_RECORDS = 1_000_000
 REQUIRED_BOUNDED_LAG_SAMPLES = 3
-STOP_SERVICES = (
-    "projector_v2",
-    "query_v2_1",
-    "query_v2_2",
-    "stream_v2_active",
-    "stream_v2_passive",
-)
+PROJECTOR_SERVICES = ("projector_v2", "projector_v2_2", "projector_v2_3")
 STREAM_SERVICES = ("stream_v2_active", "stream_v2_passive")
 QUERY_SERVICES = ("query_v2_1", "query_v2_2")
+STOP_SERVICES = (*PROJECTOR_SERVICES, *QUERY_SERVICES, *STREAM_SERVICES)
 CACHE_FILES = (
     "/var/lib/qdl-stable/shared/canonical-cache.sqlite3",
     "/var/lib/qdl-stable/shared/canonical-cache.sqlite3-wal",
@@ -97,7 +92,7 @@ def rebuild_plan(env_file: Path) -> dict[str, object]:
         },
         "start_order": [
             list(STREAM_SERVICES),
-            ["projector_v2"],
+            list(PROJECTOR_SERVICES),
             list(QUERY_SERVICES),
         ],
         "touches_v1": False,
@@ -238,17 +233,27 @@ def _parse_sha256sum(output: str) -> str:
 
 
 def _assert_projector_catalog_matches_source(env_file: Path) -> dict[str, str]:
-    container = _compose(
-        env_file, "ps", "-q", "--all", "projector_v2"
-    ).stdout.strip()
-    if not container or "\n" in container:
-        raise RuntimeError("stable projector container identity is unavailable or ambiguous")
-    image = _run(
-        ["docker", "inspect", "--format", "{{.Image}}", container],
+    containers = tuple(filter(None, _compose(
+        env_file, "ps", "-q", "--all", *PROJECTOR_SERVICES
+    ).stdout.splitlines()))
+    if len(containers) != len(PROJECTOR_SERVICES):
+        raise RuntimeError(
+            "stable projector container identities are unavailable or incomplete"
+        )
+    images = tuple(filter(None, _run(
+        ["docker", "inspect", "--format", "{{.Image}}", *containers],
         timeout=30,
-    ).stdout.strip()
-    if not image.startswith("sha256:") or len(image) != 71:
-        raise RuntimeError("stable projector image is not an immutable SHA-256 ID")
+    ).stdout.splitlines()))
+    if (
+        len(images) != len(PROJECTOR_SERVICES)
+        or len(set(images)) != 1
+        or not images[0].startswith("sha256:")
+        or len(images[0]) != 71
+    ):
+        raise RuntimeError(
+            "stable projector replicas do not share one immutable SHA-256 image"
+        )
+    image = images[0]
     observed = _parse_sha256sum(_run(
         [
             "docker", "run", "--rm", "--network", "none", "--read-only",
@@ -319,22 +324,28 @@ def _wait_projector_ready(env_file: Path, deadline: float) -> None:
         "import urllib.request;"
         "urllib.request.urlopen('http://127.0.0.1:8230/health/ready',timeout=2)"
     )
-    while time.monotonic() < deadline:
-        result = _compose(
-            env_file,
-            "exec",
-            "-T",
-            "projector_v2",
-            "python",
-            "-c",
-            probe,
-            timeout=15,
-            check=False,
+    pending = set(PROJECTOR_SERVICES)
+    while pending and time.monotonic() < deadline:
+        for service in tuple(sorted(pending)):
+            result = _compose(
+                env_file,
+                "exec",
+                "-T",
+                service,
+                "python",
+                "-c",
+                probe,
+                timeout=15,
+                check=False,
+            )
+            if result.returncode == 0:
+                pending.remove(service)
+        if pending:
+            time.sleep(2)
+    if pending:
+        raise TimeoutError(
+            f"stable projector replicas did not become ready: {sorted(pending)}"
         )
-        if result.returncode == 0:
-            return
-        time.sleep(2)
-    raise TimeoutError("stable projector did not become ready")
 
 
 def lag_sample_acceptable(total_lag: int, partitions: int) -> bool:
@@ -438,7 +449,7 @@ def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, obje
         ssl_context=ssl_context,
     )
 
-    _start_services(env_file, "projector_v2")
+    _start_services(env_file, *PROJECTOR_SERVICES)
     lag = _wait_bounded_lag(env_file, deadline)
     _wait_projector_ready(env_file, deadline)
 

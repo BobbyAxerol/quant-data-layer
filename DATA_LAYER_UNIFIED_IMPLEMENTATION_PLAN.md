@@ -9765,3 +9765,81 @@ gate and does not weaken the crypto closure.
   may be created with a one-day `hold_until` that later stops all writes, and no
   persistent-primary semantic may be introduced without the recorded operator
   decision required by C40.2/C40.3.
+
+
+**C40.6 demanded TRADE recurrence and capacity diagnosis - 2026-08-23.**
+
+- Status: `ROOT CAUSE REFINED / AUTHORITY UNCHANGED / CAPACITY FIX REQUIRED`.
+  Timestamped consumer evidence showed all four Binance/OKX TRADE slices
+  failing closed from 04:45Z through 04:52Z, recovering, then disconnecting
+  again at 04:59Z. This recurrence disproves the narrower interpretation that
+  the incident was only the one-time projector cache hydration window.
+- A second TLS-authenticated read-only Kafka sample immediately after the
+  recurrence measured 1431 raw records of Rust-core lag: 1212 on partition 4,
+  180 on partition 5, 32 on partition 2 and 7 on partition 0. Provider
+  ingestors reported no disconnect/error and the projector remained close to
+  its canonical head. The strict consumer freshness guard therefore rejected
+  genuinely delayed canonical TRADE events and did not write them into Trading
+  System market cache.
+- Runtime topology explains the burst sensitivity: only
+  `qdl-v2-stable-core-003` is running. Replica 001 and 002 exited with code 137
+  on old image `15d7425e2fe9`; replica 003 uses current image `66988ae4254a`.
+  The three immutable core configs contain the same bindings and differ only by
+  `shard_id`/transactional producer identity, so the shared six-partition group
+  is currently operating at one-third of its designed worker count.
+- C40 must not promote this underprovisioned shape. The immutable candidate must
+  start all three production-core workers on one fenced consumer group, prove
+  partition distribution, bounded lag/freshness during authentic burst, zero
+  duplicate/quarantine/semantic mismatch, and continued correctness after one
+  worker is deliberately stopped and restored. Failure of any demanded slice
+  blocks promotion and leaves V1 rollback intact.
+
+
+**C40.7 canonical-tail and projector bottleneck refinement - 2026-08-23.**
+
+- Status: `ROOT CAUSE IS PYTHON EDGE CAPACITY / SOURCE DATA FRESH / FIX
+  APPROVED IN C40 SCOPE`. A no-commit, `read_committed` canonical Kafka tail
+  audit decoded the real provider envelopes inside an existing mTLS workload.
+  At read time BTC/ETH Binance USD-M and OKX Swap TRADE events were only 77-101
+  ms old by source timestamp and 49-74 ms old by Data Layer receive timestamp.
+  Thus provider clocks, acquisition and Rust canonical normalization were fresh.
+- In the same window the single stable projector group accumulated 30854
+  canonical records of lag (2390/5033/1/10722/4919/7789 by partition), while
+  Trading System rejected delayed stream output. The previous C40.6 one-worker
+  Rust observation remains a capacity defect, but it is not the downstream
+  stale root cause: the dominant bottleneck is the lone Python compatibility/
+  cache projector behind the fresh Rust canonical topic.
+- The source fix is an explicit three-replica projector topology using one Kafka
+  group, unique workload/client/audit identities, the existing active/passive
+  stream gateway, shared durable spool and idempotent Redis projection. Recovery
+  tooling must stop/start the complete projector set. Contract, cursor, event
+  bytes and public endpoints remain unchanged; no second projection authority
+  or cross-group duplicate writer is introduced.
+- Acceptance requires static exact-topology tests, multi-replica partition and
+  duplicate/idempotency tests, a bounded authentic-rate runtime sample with
+  projector lag converging below the declared gate, all eight demanded slices
+  continuously ready, and a one-projector-loss/rejoin rehearsal. Host headroom
+  is sufficient at this preflight sample (15 GiB total, 8.6 GiB available;
+  current projector about 70 MiB), but measured resource evidence remains
+  mandatory before promotion.
+
+
+**C40.8 three-projector source implementation - 2026-08-23.**
+
+- Status: `SOURCE PASS / RUNTIME UNCHANGED / CAPACITY EVIDENCE PENDING`.
+  Stable Compose now defines three non-root, read-only projector replicas with
+  unique instance, Kafka client and audit identities, one
+  `stable-projector-v1` group, the same mTLS workload identity, shared stable
+  state and no ingress port. The recovery command stops, image-verifies,
+  restarts and readiness-checks the complete replica set; incomplete or mixed
+  immutable images fail before cache deletion or Redis reset.
+- The current private env plus source Compose rendered successfully without
+  mutation. Targeted syntax checks passed. Network-off immutable-image tests
+  reported 37 topology/recovery tests passed and 43 projector, spool, replay,
+  idempotency and checkpoint-recovery tests passed with four documented
+  conditional skips. Expected CLI usage and injected checkpoint/queue warnings
+  were negative-test evidence, not failures.
+- No running projector, Rust core, Kafka group, consumer route, cache, authority
+  row or durable volume changed. Therefore this is not yet authentic-rate or
+  failover certification. The immutable candidate runtime must still prove the
+  lag/freshness and one-worker-loss gates from C40.7 before primary promotion.

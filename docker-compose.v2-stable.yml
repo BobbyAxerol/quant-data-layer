@@ -340,6 +340,66 @@ services:
       stream_v2_active: {condition: service_started}
       stream_v2_passive: {condition: service_started}
 
+  projector_v2_2:
+    <<: *python
+    command: [python, -m, app.entrypoints.projector_v2_stable]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-projector-2
+      QDL_STABLE_CONSUMER_GROUP: stable-projector-v1
+      QDL_STABLE_HTTP_PORT: "8230"
+      QDL_STABLE_GRPC_PORT: "8231"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-2-audit.jsonl
+      QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-2
+      QDL_STABLE_KAFKA_RAW_TOPICS: md.raw.stable.v1
+      QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
+      QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
+      QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
+    volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
+    depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
+      stable_state_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+      stable_redis: {condition: service_healthy}
+      stream_v2_active: {condition: service_started}
+      stream_v2_passive: {condition: service_started}
+
+  projector_v2_3:
+    <<: *python
+    command: [python, -m, app.entrypoints.projector_v2_stable]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-projector-3
+      QDL_STABLE_CONSUMER_GROUP: stable-projector-v1
+      QDL_STABLE_HTTP_PORT: "8230"
+      QDL_STABLE_GRPC_PORT: "8231"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-3-audit.jsonl
+      QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-3
+      QDL_STABLE_KAFKA_RAW_TOPICS: md.raw.stable.v1
+      QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
+      QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
+      QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
+    volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
+    depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
+      stable_state_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+      stable_redis: {condition: service_healthy}
+      stream_v2_active: {condition: service_started}
+      stream_v2_passive: {condition: service_started}
+
   authority_outbox_v2:
     <<: *python
     profiles: [stable-authority]

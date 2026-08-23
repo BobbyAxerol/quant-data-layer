@@ -15,6 +15,7 @@ from scripts.rebuild_v2_stable_projection_cache import (
     MAX_ACCEPTED_LAG,
     PROJECT_NAME,
     PROJECTOR_GROUP,
+    PROJECTOR_SERVICES,
     QUERY_SERVICES,
     MAX_REPLAY_BOOTSTRAP_RECORDS,
     REPLAY_LOOKBACK_SECONDS,
@@ -61,7 +62,7 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         )
         self.assertEqual(
             plan["start_order"],
-            [list(STREAM_SERVICES), ["projector_v2"], list(QUERY_SERVICES)],
+            [list(STREAM_SERVICES), list(PROJECTOR_SERVICES), list(QUERY_SERVICES)],
         )
         self.assertFalse(plan["touches_v1"])
         self.assertFalse(plan["apply"])
@@ -131,9 +132,12 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         expected = __import__("hashlib").sha256(
             (Path(__file__).parents[1] / "config/v2/stable-source-bindings.yaml").read_bytes()
         ).hexdigest()
+        image = "sha256:" + "a" * 64
         completed = [
-            subprocess.CompletedProcess([], 0, "container-id\n", ""),
-            subprocess.CompletedProcess([], 0, "sha256:" + "a" * 64 + "\n", ""),
+            subprocess.CompletedProcess(
+                [], 0, "container-1\ncontainer-2\ncontainer-3\n", ""
+            ),
+            subprocess.CompletedProcess([], 0, (image + "\n") * 3, ""),
             subprocess.CompletedProcess([], 0, expected + "  /app/catalog.yaml\n", ""),
         ]
         with patch(
@@ -148,10 +152,35 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         self.assertEqual(result["source_catalog_sha256"], expected)
         self.assertEqual(result["image_id"], "sha256:" + "a" * 64)
 
+    def test_projector_catalog_preflight_rejects_incomplete_or_mixed_replicas(self):
+        image_a = "sha256:" + "a" * 64
+        image_b = "sha256:" + "b" * 64
+        cases = (
+            ("container-1\n", None, "identities are unavailable or incomplete"),
+            (
+                "container-1\ncontainer-2\ncontainer-3\n",
+                f"{image_a}\n{image_a}\n{image_b}\n",
+                "do not share one immutable",
+            ),
+        )
+        for containers, images, message in cases:
+            with self.subTest(message=message), patch(
+                "scripts.rebuild_v2_stable_projection_cache._compose",
+                return_value=subprocess.CompletedProcess([], 0, containers, ""),
+            ), patch(
+                "scripts.rebuild_v2_stable_projection_cache._run",
+                return_value=subprocess.CompletedProcess([], 0, images or "", ""),
+            ):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    _assert_projector_catalog_matches_source(Path("/tmp/stable.env"))
+
     def test_projector_catalog_preflight_rejects_drift(self):
+        image = "sha256:" + "a" * 64
         completed = [
-            subprocess.CompletedProcess([], 0, "container-id\n", ""),
-            subprocess.CompletedProcess([], 0, "sha256:" + "a" * 64 + "\n", ""),
+            subprocess.CompletedProcess(
+                [], 0, "container-1\ncontainer-2\ncontainer-3\n", ""
+            ),
+            subprocess.CompletedProcess([], 0, (image + "\n") * 3, ""),
             subprocess.CompletedProcess([], 0, "b" * 64 + "  /app/catalog.yaml\n", ""),
         ]
         with patch(

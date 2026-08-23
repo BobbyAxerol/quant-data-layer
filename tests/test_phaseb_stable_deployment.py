@@ -890,8 +890,31 @@ class StableComposeAndBundleTests(unittest.TestCase):
             self.assertTrue(
                 all(str(port).startswith("127.0.0.1:") for port in services[name]["ports"])
             )
-        self.assertNotIn("ports", services["projector_v2"])
-        self.assertEqual(services["projector_v2"]["networks"], ["stable_internal"])
+        projector_names = ("projector_v2", "projector_v2_2", "projector_v2_3")
+        for name in projector_names:
+            self.assertNotIn("ports", services[name])
+            self.assertEqual(services[name]["networks"], ["stable_internal"])
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_STABLE_CONSUMER_GROUP"]
+                for name in projector_names
+            },
+            {"stable-projector-v1"},
+        )
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_STABLE_KAFKA_CLIENT_ID"]
+                for name in projector_names
+            },
+            {"stable-projector-1", "stable-projector-2", "stable-projector-3"},
+        )
+        self.assertEqual(
+            len({
+                services[name]["environment"]["QDL_STABLE_AUDIT_PATH"]
+                for name in projector_names
+            }),
+            len(projector_names),
+        )
         self.assertEqual(
             compose["x-kafka-env"]["KAFKA_MIN_INSYNC_REPLICAS"], 2
         )
@@ -905,8 +928,9 @@ class StableComposeAndBundleTests(unittest.TestCase):
         kafka_tmpfs = compose["x-kafka"]["tmpfs"]
         self.assertEqual(kafka_tmpfs, ["/tmp:rw,nosuid,nodev,exec,size=32m"])
         self.assertNotIn("noexec", kafka_tmpfs[0])
-        self.assertIn("stable_tls:/stable-certs:ro", services["projector_v2"]["volumes"])
-        self.assertNotIn("/certs:ro", " ".join(services["projector_v2"]["volumes"]))
+        for name in projector_names:
+            self.assertIn("stable_tls:/stable-certs:ro", services[name]["volumes"])
+            self.assertNotIn("/certs:ro", " ".join(services[name]["volumes"]))
         bar_edge = services["binance_bar_edge"]
         self.assertEqual(
             bar_edge["environment"]["QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS"],
@@ -923,7 +947,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
         )
         for name in (
             "query_v2_1", "query_v2_2", "stream_v2_active",
-            "stream_v2_passive", "projector_v2",
+            "stream_v2_passive", *projector_names,
         ):
             with self.subTest(service=name):
                 self.assertEqual(services[name]["user"], "10001:10001")
@@ -950,8 +974,8 @@ class StableComposeAndBundleTests(unittest.TestCase):
             },
         )
         for name in (
-            "kafka1", "kafka2", "kafka3", "stable_redis", "projector_v2",
-            "rust_core", "rust_core_2", "rust_core_3",
+            "kafka1", "kafka2", "kafka3", "stable_redis",
+            *projector_names, "rust_core", "rust_core_2", "rust_core_3",
         ):
             self.assertNotIn("stable_consumer", services[name]["networks"])
         self.assertEqual(
