@@ -10175,3 +10175,88 @@ gate and does not weaken the crypto closure.
   The continuous-READY defect from C40.12 is closed. `RUST_PRIMARY` remains
   forbidden until fresh twelve-slice real-provider parity is collected and a
   separate operator approval is granted.
+
+**C40.18 twelve-slice live parity topology correction - 2026-08-23.**
+
+- Status before implementation: `APPROVED TASK / ORACLE COLLECTOR PENDING /
+  AUTHORITY UNCHANGED`. Runtime inspection shows the stable shadow core is the
+  only canonical normalizer and writes internal `md.canonical.v2`; the Python
+  projector is a query/cache projection consumer, not a second canonical
+  writer. No `md.canary.canonical.v2` or
+  `qdl.target-checkpoint.v1` topic exists because production/canary authority
+  core startup has not been approved.
+- Therefore the existing C40 handoff collector remains reserved for the later
+  authority canary/handoff packet and must not be run against absent or stale
+  topics. The pre-primary live parity gate will use an immutable bounded tail of
+  current `read_committed` canonical records, require inline validated
+  `RawProviderEnvelope` provenance with `test_provenance=false`, rebuild each
+  event through the independent Python canonicalizer, and compare deterministic
+  protobuf bytes against Rust output.
+- Scope is exactly promotion-scope revision 2: twelve Binance USD-M and OKX
+  Swap BTC/ETH TRADE, QUOTE and final BAR 1m bindings. Every slice must meet the
+  declared sample floor, preserve provider/catalog/session/authority/raw-capture
+  identity, and report zero byte mismatch. Evidence stores only offsets,
+  counts, hashes and provenance; no provider payload or credential is retained.
+- Source gates require focused unit tests for all six venue/feed canonicalizer
+  paths, exact-scope enforcement, mutation rejection and bounded high-watermark
+  scanning, plus impacted C40 tests and lint. Live execution uses the stable
+  projector mTLS identity read-only, a unique non-committing consumer group and
+  immutable Kafka high-watermarks. It must not create topics, commit offsets,
+  write Redis/SQLite/PostgreSQL or publish a synthetic event.
+- This oracle parity closes the live Rust-vs-Python semantic gate but does not
+  replace terminal canary checkpoint/handoff evidence. `RUST_PRIMARY`,
+  authority DB/bootstrap and production-core startup remain forbidden until
+  this parity passes and the operator separately approves the exact authority
+  packet.
+
+**C40.19 cooperative closure and live semantic parity - 2026-08-23.**
+
+- Status: `N-1 PASS / TWELVE-SLICE LIVE PARITY PASS / AUTHORITY
+  UNCHANGED`. The new read-only collector
+  `scripts/phasec40_collect_live_core_parity.py` freezes canonical Kafka
+  high-watermarks, starts no earlier than the certified candidate deployment,
+  uses `read_committed` with manual assignment and no offset store/commit,
+  retains only a bounded sample, validates inline authentic
+  `RawProviderEnvelope` lineage, then compares deterministic protobuf bytes
+  against the independent Python canonicalizers.
+- Focused source coverage passes all six active crypto provider/feed paths:
+  Binance USD-M and OKX Swap TRADE, QUOTE and BAR; it also proves exact
+  twelve-binding scope, bounded windows, test-provenance rejection, canonical
+  mutation rejection and that the existing terminal handoff collector remains
+  unchanged. The final impacted suite passed 36/36 tests in a network-disabled,
+  source-read-only disposable container.
+- Failed attempts were fail-closed and are retained here for audit. The first
+  live attempt used a unique group lacking ACL and stopped with
+  `GROUP_AUTHORIZATION_FAILED` before reading. The next 250k- and
+  100k-record-per-partition terminal scans timed out without evidence because
+  reading every terminal record was unnecessarily expensive. The corrected
+  collector uses the ACL-approved `stable-projector-v1` identity/group only
+  with manual assignment, seeks by candidate deployment timestamp and exits
+  when all sample floors are met. A subsequent successful scan initially could
+  not write its root-owned disposable volume; no evidence was accepted until
+  the volume was scoped to UID 10001 and the complete collector reran.
+- Final hashes-only evidence is
+  `upgrade/evidence/c40-cooperative-live-parity.json`, SHA-256
+  `c9cd75c1813613086c60300a6d5b66ade603fd9c420b22b6f54741f6f5501fba`.
+  It is bound to source commit `c7f3c34f`, immutable image
+  `sha256:db240925dff30d4b9deb338dbd8e6e3506cbc8501ee71cff09ff58a247b7bae6`,
+  deployment time 1787469659369240158 ns, promotion scope revision 2 and
+  authentic provider provenance. The bounded scan consumed 70687 records and
+  stopped after collecting 8 samples for each of 12 slices: 96 comparisons,
+  zero semantic mismatch, zero invalid provenance and zero production
+  mutation. Every retained raw receipt is at or after candidate deployment.
+- Post-collector runtime remains healthy. Three cooperative Rust members own all
+  six raw partitions at aggregate lag 28; three projector members own all six
+  canonical partitions at aggregate lag 77. Trading System is `READY`,
+  `V2_PRIMARY` consumer mode has 8/8 demanded slices ready and zero unhealthy
+  slice, and V1 is `ok`. Execution counts remain orders 1179, fills 6094,
+  positions_v2 21 and command_journal 430. No alpha container was active.
+  Every parity container and the sole disposable evidence volume was removed.
+- Decision boundary: the bounded/cooperative rebalance defect and pre-primary
+  live Rust-vs-Python semantic parity gate are closed. Terminal
+  canary-checkpoint/gap-free handoff is deliberately marked not evaluated
+  because its topics and production authority core do not exist yet. No
+  `RUST_PRIMARY` CAS, authority DB/bootstrap, production-core start or V1
+  rollback change occurred. The next permitted action is an explicit operator
+  decision on the bounded authority canary/handoff packet; this result alone
+  does not grant production authority.
