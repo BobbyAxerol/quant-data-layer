@@ -5109,6 +5109,16 @@ Production authorization is distinct from rehearsal. It requires:
 - accepted terminal/handoff records for the exact slice;
 - explicit operator, ticket, blast-radius and hold-window approval.
 
+The hold window governs canary publication and the instant at which an accepted
+handoff may be committed. It is not a renewable writer lease after that CAS.
+Once the handoff has been accepted and the durable authority record is
+`RUST_PRIMARY`, that owner remains authoritative across wall-clock hold expiry
+and process restart until a strictly newer CAS revision fences it as `BLOCKED`
+or `ROLLBACK_PENDING`. A formally restored `PYTHON_PRIMARY` follows the same
+revision-governed lifetime. Recovery still fails closed until every authorized
+durable target watermark is reconstructed; canary writers still stop at
+`hold_until`; and an expired handoff can never be accepted retroactively.
+
 The isolated harness uses authentic frozen provider frames and replicated
 test-only topics to model final/public/legacy projections. Those topic names can
 never equal production destinations. It tests `N-1/N/N+1`, off-by-one, gap,

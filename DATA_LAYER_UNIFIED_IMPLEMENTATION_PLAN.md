@@ -9843,3 +9843,60 @@ gate and does not weaken the crypto closure.
   row or durable volume changed. Therefore this is not yet authentic-rate or
   failover certification. The immutable candidate runtime must still prove the
   lag/freshness and one-worker-loss gates from C40.7 before primary promotion.
+
+**C40.9 authority-lifetime decision and implementation gate - 2026-08-23.**
+
+- Status: `SOURCE CERTIFIED / RUNTIME UNCHANGED / PRIMARY RUNTIME PACKET
+  PENDING`. The operator explicitly defined `hold_until` as the bounded
+  canary and handoff-acceptance window. A handoff presented before
+  `approved_at` or at/after its expiry remains rejected.
+- Once that exact handoff is accepted by the persistent CAS and the authority
+  record becomes `RUST_PRIMARY`, wall-clock expiry no longer revokes an
+  established writer. Authority persists across process restart until a newer
+  CAS revision changes the slice to `BLOCKED` or `ROLLBACK_PENDING`. The same
+  revision-governed lifetime applies to a formally handed-off
+  `PYTHON_PRIMARY` rollback owner. Canary publication remains strictly bounded
+  by `approved_at <= now < hold_until`.
+- Invariants retained: exact owner/revision/lease/partition-plan and sink target
+  identity, durable per-target watermark restoration after primary restart,
+  contiguous W+1 publication, accepted-handoff digest binding, and stale-writer
+  fencing by the newer revision. This decision changes no public API, provider
+  contract, event bytes, authority schema, database migration or runtime route.
+- Required source gates before runtime mutation: expired canary rejection;
+  expired handoff rejection; established Rust/Python primary publication after
+  historical hold expiry; restart/recovery after expiry; and immediate fencing
+  of old primary contexts after newer `BLOCKED` or `ROLLBACK_PENDING` records.
+  Run focused Rust tests, format, Clippy with warnings denied, the complete Rust
+  workspace suite and impacted Python authority/control tests. Record exact
+  results here before building a new immutable candidate.
+- Rollback for this source slice is the previous immutable Rust image/commit.
+  Production authority is unchanged until the separately approved C40 runtime
+  packet starts; V1 and DNSE are untouched. The already-certified and pushed
+  branch through `45c147e` contains only the preceding projector-capacity
+  slice; this lifetime change requires its own tested commit and separate push
+  authorization.
+- Implemented the approved policy in `Phase92AuthorityFence`: only
+  `RUST_CANARY` publication evaluates the active wall-clock hold. Established
+  `RUST_PRIMARY` and formal `PYTHON_PRIMARY` publication instead remain fenced
+  by exact authority identity and the latest CAS revision. Primary authority
+  and control events now also bind their approver, approval timestamp and
+  historical hold expiry exactly to the accepted handoff. No schema or public
+  bytes changed.
+- Focused Phase 9.2 Rust tests passed 14/14. New cases prove active/expired
+  canary behavior, expired handoff rejection, post-expiry Rust primary writes,
+  restart recovery of all three independent targets, newer `BLOCKED` and
+  `ROLLBACK_PENDING` fencing, post-expiry Python rollback authority and exact
+  handoff-approval binding.
+- Rust source certification passed: `cargo fmt --all -- --check`, workspace
+  Clippy with `-D warnings`, and all 79 workspace tests. The impacted Python
+  authority/control matrix passed 32/32, followed by the complete Python suite
+  at 726 passed, zero failed and six documented conditional skips. The first
+  full Python attempt produced four import errors only because the disposable
+  harness mounted `/src/logs` while the logging contract uses `/app/logs`; the
+  unchanged-source rerun with the correct non-root tmpfs passed completely.
+- Every test container used `--rm`, network-off execution, read-only source and
+  ephemeral tmpfs. No test container, volume, database row, Kafka offset/topic,
+  Redis key, authority record, provider route, V1 service or Trading System
+  execution state was created or changed. The retained source-gate builder is
+  still required for the final immutable Rust image gate and is not yet cleanup
+  eligible.

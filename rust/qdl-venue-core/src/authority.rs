@@ -716,6 +716,9 @@ impl Phase92AuthorityControlEvent {
                 || authority.start_watermark != handoff.terminal_watermark
                 || authority.terminal_watermark != Some(handoff.terminal_watermark)
                 || authority.handoff_digest.as_deref() != Some(handoff_digest.as_str())
+                || authority.approved_by.as_deref() != Some(handoff.approved_by.as_str())
+                || authority.approved_at_ns != Some(handoff.approved_at_ns)
+                || authority.hold_until_ns != Some(handoff.expires_at_ns)
             {
                 return Err("primary authority record does not bind accepted handoff".into());
             }
@@ -842,6 +845,9 @@ impl Phase92AuthorityFence {
             || record.terminal_watermark != Some(handoff.terminal_watermark)
             || record.previous_owner_id.as_deref() != Some(handoff.old_owner_id.as_str())
             || record.handoff_digest.as_deref() != Some(handoff.digest()?.as_str())
+            || record.approved_by.as_deref() != Some(handoff.approved_by.as_str())
+            || record.approved_at_ns != Some(handoff.approved_at_ns)
+            || record.hold_until_ns != Some(handoff.expires_at_ns)
         {
             return Err("Phase 9.2 authority CAS/handoff binding failed".into());
         }
@@ -954,12 +960,7 @@ impl Phase92AuthorityFence {
         if !target_allowed {
             return Err("sink target is not permitted by Phase 9.2 authority".into());
         }
-        if matches!(
-            current.state,
-            Phase92AuthorityState::RustCanary
-                | Phase92AuthorityState::RustPrimary
-                | Phase92AuthorityState::PythonPrimary
-        ) {
+        if current.state == Phase92AuthorityState::RustCanary {
             let approved_at = current
                 .approved_at_ns
                 .ok_or_else(|| "authority approval is missing".to_owned())?;
@@ -1649,6 +1650,164 @@ mod phase92_tests {
         assert!(recovered
             .permits(&publication(&rust_primary, SinkTarget::PublicV2, 121), 2)
             .is_err());
+    }
+
+    #[test]
+    fn canary_and_handoff_windows_expire_but_accepted_primary_persists() {
+        let canary_record = canary();
+        let canary_publication = publication(&canary_record, SinkTarget::CanaryCanonical, 90);
+        let mut canary_fence = Phase92AuthorityFence::default();
+        canary_fence.apply(canary_record.clone()).unwrap();
+        assert!(canary_fence.permits(&canary_publication, 9_999).is_ok());
+        assert!(canary_fence
+            .permits(&canary_publication, 10_000)
+            .is_err_and(|error| error.contains("approval window is not active")));
+
+        let terminal = checkpoint("python-primary", 7, 11, 100);
+        let accepted = handoff(
+            &terminal,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        let rust_primary = primary(&terminal, &accepted);
+        assert!(canary_fence
+            .apply_handoff(&terminal, &accepted, rust_primary.clone(), 10_000)
+            .is_err_and(|error| error.contains("handoff approval window is not active")));
+
+        let mut accepted_fence = Phase92AuthorityFence::default();
+        accepted_fence.apply(canary_record).unwrap();
+        accepted_fence
+            .apply_handoff(&terminal, &accepted, rust_primary.clone(), 2)
+            .unwrap();
+        assert!(accepted_fence
+            .permits(
+                &publication(&rust_primary, SinkTarget::PrimaryCanonical, 101),
+                20_000,
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn restarted_primary_recovers_after_historical_hold_expiry_and_newer_revision_fences_it() {
+        let terminal = checkpoint("python-primary", 7, 11, 100);
+        let accepted = handoff(
+            &terminal,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        let rust_primary = primary(&terminal, &accepted);
+        let mut recovered = Phase92AuthorityFence::default();
+        recovered.apply(rust_primary.clone()).unwrap();
+
+        for target in [
+            SinkTarget::PrimaryCanonical,
+            SinkTarget::PublicV2,
+            SinkTarget::LegacyV1,
+        ] {
+            let restored = publication(&rust_primary, target, 120);
+            assert!(recovered
+                .permits(&restored, 20_000)
+                .is_err_and(|error| error.contains("recovery is required")));
+            recovered.restore_committed_watermark(&restored).unwrap();
+            assert!(recovered
+                .permits(&publication(&rust_primary, target, 121), 20_000)
+                .is_ok());
+        }
+
+        let stale_primary_context = publication(&rust_primary, SinkTarget::PrimaryCanonical, 121);
+        let mut blocked = rust_primary.clone();
+        blocked.state = Phase92AuthorityState::Blocked;
+        blocked.authority_revision += 1;
+        blocked.public_write_allowed = false;
+        blocked.legacy_write_allowed = false;
+        recovered.apply(blocked.clone()).unwrap();
+        assert!(recovered.permits(&stale_primary_context, 20_000).is_err());
+
+        let mut rollback_pending = blocked;
+        rollback_pending.state = Phase92AuthorityState::RollbackPending;
+        rollback_pending.authority_revision += 1;
+        recovered.apply(rollback_pending.clone()).unwrap();
+        assert!(recovered
+            .permits(
+                &publication(
+                    &rollback_pending,
+                    SinkTarget::PrimaryCanonical,
+                    rollback_pending.start_watermark + 1,
+                ),
+                20_000,
+            )
+            .is_err_and(|error| error.contains("sink target is not permitted")));
+    }
+
+    #[test]
+    fn python_rollback_primary_persists_after_historical_hold_expiry() {
+        let initial_checkpoint = checkpoint("python-primary", 7, 11, 100);
+        let to_rust = handoff(
+            &initial_checkpoint,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        let rust_primary = primary(&initial_checkpoint, &to_rust);
+        let mut fence = Phase92AuthorityFence::default();
+        fence.apply(canary()).unwrap();
+        fence
+            .apply_handoff(&initial_checkpoint, &to_rust, rust_primary.clone(), 2)
+            .unwrap();
+
+        let mut blocked = rust_primary.clone();
+        blocked.state = Phase92AuthorityState::Blocked;
+        blocked.authority_revision += 1;
+        blocked.public_write_allowed = false;
+        blocked.legacy_write_allowed = false;
+        fence.apply(blocked.clone()).unwrap();
+        let mut pending = blocked;
+        pending.state = Phase92AuthorityState::RollbackPending;
+        pending.authority_revision += 1;
+        fence.apply(pending.clone()).unwrap();
+
+        let rollback_checkpoint = checkpoint(
+            "rust-primary",
+            pending.authority_revision,
+            pending.lease_epoch,
+            120,
+        );
+        let to_python = handoff(
+            &rollback_checkpoint,
+            Phase92HandoffDirection::RustToPython,
+            "python-rollback",
+            Phase92AuthorityState::PythonPrimary,
+        );
+        let python_primary = primary(&rollback_checkpoint, &to_python);
+        fence
+            .apply_handoff(&rollback_checkpoint, &to_python, python_primary.clone(), 2)
+            .unwrap();
+        assert!(fence
+            .permits(
+                &publication(&python_primary, SinkTarget::PrimaryCanonical, 121),
+                20_000,
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn primary_authority_must_bind_the_exact_handoff_approval() {
+        let terminal = checkpoint("python-primary", 7, 11, 100);
+        let accepted = handoff(
+            &terminal,
+            Phase92HandoffDirection::PythonToRust,
+            "rust-primary",
+            Phase92AuthorityState::RustPrimary,
+        );
+        let mut mismatched_primary = primary(&terminal, &accepted);
+        mismatched_primary.hold_until_ns = Some(9_999);
+        let mut fence = Phase92AuthorityFence::default();
+        fence.apply(canary()).unwrap();
+        assert!(fence
+            .apply_handoff(&terminal, &accepted, mismatched_primary, 2)
+            .is_err_and(|error| error.contains("CAS/handoff binding failed")));
     }
 
     #[test]
