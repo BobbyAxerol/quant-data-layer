@@ -9411,3 +9411,51 @@ explicit source audit, which is the behaviour they have today.
 - The live runtime still uses Python image `62202b2` at this checkpoint. Build,
   immutable-image smoke, exact role recreate and the repeated execution-disabled
   alpha smoke remain required before closure.
+
+
+**C39.4 pass-through no-replay cursor finding - 2026-08-23.**
+
+- Status: `FAIL CLOSED / IN-SCOPE REPAIR REQUIRED / EXECUTION EFFECT ZERO`.
+  The manifest-repair image `3066390` passed its immutable network-off probe
+  and replaced only the six already-approved Python edge/cache roles. Kafka,
+  stable Redis, SQLite, Rust, V1 and Trading System execution were not
+  restarted. The repeated disposable alpha smoke was removed automatically and
+  had no execution credential or order effect.
+- The 15m warmup now passes its corrected freshness policy but the query role
+  returns an internal error while binding the response cursor. Root cause:
+  provider pass-through history deliberately carries the explicit
+  `PASS_THROUGH_NO_REPLAY` sentinel and watermark zero because it has no
+  canonical Kafka binding. `StableConsumerCursorIssuer` nevertheless attempted
+  to issue a signed replay token and failed catalog lookup for the unmaterialized
+  15m requirement.
+- Correct domain rule: a `FRESH_SNAPSHOT` response with the explicit
+  non-replayable sentinel and zero watermark must remain non-resumable. It must
+  not receive a fabricated durable cursor, authority or execution eligibility.
+  All materialized responses continue receiving generation-bound signed cursors;
+  any inconsistent sentinel/recovery/watermark combination fails closed.
+- Required gate: add focused item/history preservation and malformed sentinel
+  tests, API/pass-through coverage, full network-off Python regression, rebuild
+  one immutable Python image, rolling-recreate only the same six approved Python
+  roles, then repeat the execution-disabled alpha 1m/15m warmup plus TRADE
+  replay-to-live/ACK smoke. No additional blast radius is authorized.
+
+
+**C39.4 no-replay cursor source result - 2026-08-23.**
+
+- Status: `SOURCE PASS / IMMUTABLE DEPLOYMENT PENDING`. The generic query
+  contract now owns one explicit non-replayable cursor sentinel. Provider
+  pass-through keeps the public `PASS_THROUGH_NO_REPLAY` value as a compatibility
+  alias. `StableConsumerCursorIssuer` preserves it only for `FRESH_SNAPSHOT`
+  with watermark zero and never calls the durable handoff issuer; malformed
+  recovery/watermark combinations fail closed. Materialized item/history paths
+  and generation-bound signed cursors are unchanged.
+- Focused domain/API/catalog result: 83 passed, one intentional skip. Full
+  network-off Python discovery: 709 passed, six intentional environment skips,
+  zero failures in 33.52 seconds. Coverage includes item and history preservation,
+  no fabricated handoff call, inconsistent sentinel rejection, existing signed
+  consumer-bound replay, pass-through history invariants and API contracts.
+- One first focused invocation used the production runtime image, which correctly
+  contains no pytest dependency. It made no runtime mutation; the same command
+  was rerun in the existing disposable test image and passed. Runtime remains on
+  image `3066390` until a new immutable artifact is built and the same six-role
+  rolling packet plus execution-disabled alpha smoke pass.

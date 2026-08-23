@@ -49,6 +49,7 @@ from qdl.query.results import (
     CoverageStatus,
     HistoryResult,
     MarketDataItem,
+    NON_REPLAYABLE_STREAM_CURSOR,
     QualityMetadata,
     SourceMetadata,
 )
@@ -70,7 +71,7 @@ def pass_through_source_id(instrument_uid: str) -> str:
 PASS_THROUGH_QUALITY_FLAG = "PROVIDER_PASS_THROUGH"
 # A pass-through window is re-fetched, never resumed, so it must not hand a
 # consumer anything that looks like a durable replay position.
-PASS_THROUGH_STREAM_CURSOR = "PASS_THROUGH_NO_REPLAY"
+PASS_THROUGH_STREAM_CURSOR = NON_REPLAYABLE_STREAM_CURSOR
 _SUPPORTED = {
     ("BINANCE", "USDM"): "binance",
     ("BINANCE", "SPOT"): "binance",

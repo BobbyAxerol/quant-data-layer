@@ -23,9 +23,11 @@ from qdl.query import (
     InstrumentQuery,
     MarketDataItem,
     QualityMetadata,
+    RecoveryPolicy,
     SourceMetadata,
     V2QueryService,
 )
+from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR
 from qdl.replay import GapFreeHandoff
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.stream import GrpcSnapshot
@@ -470,6 +472,10 @@ class StableConsumerCursorIssuer:
         *,
         consumer_id: str,
     ) -> MarketDataItem:
+        if self._preserve_non_replayable(
+            requirement, cursor=item.cursor, offset=item.watermark_offset
+        ):
+            return item
         snapshot_id = self._snapshot_id(requirement, item.watermark_offset)
         token = self._issue(
             requirement, consumer_id, snapshot_id, item.watermark_offset
@@ -483,6 +489,12 @@ class StableConsumerCursorIssuer:
         *,
         consumer_id: str,
     ) -> HistoryResult:
+        if self._preserve_non_replayable(
+            requirement,
+            cursor=history.stream_cursor,
+            offset=history.watermark_offset,
+        ):
+            return history
         token = self._issue(
             requirement,
             consumer_id,
@@ -497,6 +509,18 @@ class StableConsumerCursorIssuer:
                 for item in history.items
             ),
         )
+
+    @staticmethod
+    def _preserve_non_replayable(
+        requirement: DataRequirement, *, cursor: str | None, offset: int
+    ) -> bool:
+        if cursor != NON_REPLAYABLE_STREAM_CURSOR:
+            return False
+        if requirement.recovery is not RecoveryPolicy.FRESH_SNAPSHOT or offset != 0:
+            raise ValueError(
+                "non-replayable cursor requires FRESH_SNAPSHOT and zero watermark"
+            )
+        return True
 
     def _issue(
         self,

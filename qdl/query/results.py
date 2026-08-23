@@ -8,6 +8,11 @@ from qdl.query.contracts import CoverageStatus, DataRequirement, FeedType
 from qdl.query.lifecycle import BarLifecycle
 
 
+# A fresh provider snapshot has no durable canonical-log position to resume.
+# Keeping one contract sentinel prevents edge adapters from fabricating a cursor.
+NON_REPLAYABLE_STREAM_CURSOR = "PASS_THROUGH_NO_REPLAY"
+
+
 @dataclass(frozen=True)
 class SourceMetadata:
     venue: str

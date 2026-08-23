@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 
 from qdl.adapters.binance.bar_edge import BinanceBarRawBinding
 from qdl.query.contracts import (
@@ -19,6 +21,7 @@ from qdl.runtime.provider_history import (
 )
 from qdl.query.results import CoverageStatus
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_source import StableConsumerCursorIssuer
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
@@ -187,6 +190,38 @@ class PassThroughHistoryResultTests(ProviderPassThroughTests):
         for item in result.items:
             self.assertEqual(item.cursor, PASS_THROUGH_STREAM_CURSOR)
             self.assertEqual(item.watermark_offset, 0)
+
+    def test_cursor_issuer_preserves_explicit_no_replay_history_and_item(self):
+        handoff = Mock()
+        issuer = StableConsumerCursorIssuer(handoff, self.catalog, ttl_seconds=60)
+        requirement = _requirement(BINANCE_ETH)
+        result = self._result()
+
+        self.assertIs(
+            issuer.bind_history(requirement, result, consumer_id="alpha-test"),
+            result,
+        )
+        self.assertIs(
+            issuer.bind_item(requirement, result.items[-1], consumer_id="alpha-test"),
+            result.items[-1],
+        )
+        handoff.issue.assert_not_called()
+
+    def test_cursor_issuer_rejects_an_inconsistent_no_replay_sentinel(self):
+        issuer = StableConsumerCursorIssuer(Mock(), self.catalog, ttl_seconds=60)
+        result = self._result()
+        with self.assertRaisesRegex(ValueError, "FRESH_SNAPSHOT and zero watermark"):
+            issuer.bind_history(
+                _requirement(BINANCE_ETH),
+                replace(result, watermark_offset=1),
+                consumer_id="alpha-test",
+            )
+        with self.assertRaisesRegex(ValueError, "FRESH_SNAPSHOT and zero watermark"):
+            issuer.bind_item(
+                replace(_requirement(BINANCE_ETH), recovery=RecoveryPolicy.SNAPSHOT_AND_REPLAY),
+                result.items[-1],
+                consumer_id="alpha-test",
+            )
 
     def test_the_snapshot_id_is_deterministic_for_the_same_window(self):
         first = self._result()

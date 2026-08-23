@@ -385,3 +385,25 @@ Binance 15m and OKX 1h ALPHA freshness now cover one complete interval plus
 the full network-off suite passed 707 with six intentional skips. Two preceding
 collection failures were test tmpfs permission errors and produced no runtime
 mutation. The repaired artifact is not yet deployed at this ledger point.
+
+
+### C39.4 Pass-Through No-Replay Cursor Finding
+
+The repaired Python edge image was rolled through only the six approved Python
+roles. The repeated execution-disabled alpha smoke then failed closed on the
+15m provider pass-through because the cursor issuer tried to sign a canonical
+replay token for an interval with no materialized binding. The response already
+carried the intentional `PASS_THROUGH_NO_REPLAY` sentinel and watermark zero.
+The in-scope correction must preserve that explicit non-replayable contract,
+fail inconsistent sentinel states, retain signed generation-bound cursors for
+materialized paths and repeat the complete bounded alpha smoke. Kafka, Redis,
+SQLite, Rust, V1 and execution state remain outside this repair.
+
+
+### C39.4 No-Replay Cursor Source Result
+
+The query contract now preserves the explicit non-replayable cursor only for a
+`FRESH_SNAPSHOT` response at watermark zero and rejects inconsistent states. No
+durable cursor or authority is fabricated. Focused tests passed 83 with one
+intentional skip; full network-off discovery passed 709 with six intentional
+skips. Runtime deployment and the repeated alpha smoke remain pending.
