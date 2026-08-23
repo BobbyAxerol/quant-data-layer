@@ -9736,3 +9736,32 @@ gate and does not weaken the crypto closure.
   `qdl_c40_db_smoke` network and the two exact `/tmp` artifact paths.
   No named volume was created; V1, stable V2, Kafka, Redis, Trading System and
   execution data were never connected to this rehearsal.
+
+**C40.5 read-only live runtime preflight - 2026-08-23.**
+
+- Status: `CURRENT DATA READY / AUTHORITY UNCHANGED / TRANSIENT RECOVERY GAP
+  IDENTIFIED`. The existing `RUST_SHADOW` core and stable projector were
+  inspected through disposable TLS-authenticated Kafka admin containers. The
+  Rust group had aggregate lag 17 records over the six raw partitions and the
+  projector group had aggregate lag 46 records over the six canonical
+  partitions. Both ephemeral admin containers removed themselves; no offset,
+  topic, cache, route, authority row or production volume was mutated.
+- The four demanded crypto TRADE subscriptions had repeatedly failed closed
+  with `DATA_STALE` while the rebuilt projector replayed historical canonical
+  records into the shared stream/cache path. Once that bounded replay reached
+  the live edge, Trading System recovered without restart to `READY`, with all
+  eight demanded Binance/OKX TRADE/BAR slices ready and zero unhealthy slice.
+  The aggregate Trading System health was also `READY`; execution table/state
+  mutation remained outside this read-only check.
+- This distinguishes provider loss from recovery behavior: both ingestors and
+  the Rust core were advancing and near the Kafka head, while the consumer was
+  correctly rejecting old provider event timestamps emitted during cache
+  hydration. A health-green sample does not erase the recovery gap. C40 runtime
+  acceptance must prove that a cache/restart rehearsal hydrates durable state
+  without presenting historical replay as live demanded data, or otherwise
+  fences subscriptions until the live handoff point. It must then hold repeated
+  bounded lag/freshness samples with no demanded-slice disconnect.
+- The separate primary-lifetime decision remains open. No production primary
+  may be created with a one-day `hold_until` that later stops all writes, and no
+  persistent-primary semantic may be introduced without the recorded operator
+  decision required by C40.2/C40.3.
