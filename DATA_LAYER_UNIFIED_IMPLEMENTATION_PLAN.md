@@ -10563,3 +10563,21 @@ gate and does not weaken the crypto closure.
   three-service-only recreate. Runtime acceptance must pass restore, real raw
   catch-up, cooperative assignment and terminal gap-free handoff; no primary
   packet may be applied.
+
+
+**C40.31 immutable snapshot-recovery image gate - 2026-08-23.**
+
+- Status: `IMAGE PASS / THREE-CORE RETRY PENDING / RUST_CANARY RETAINED /
+  RUST_PRIMARY FORBIDDEN`. Exact commit
+  `aba8bac74435941247044b25f5a2d121a62499d2` produced local image
+  `qdl-v2-rust:2.0.0-aba8bac`, image ID
+  `sha256:3b357264e868d5f3f84a7ee672526fb121792f9c1ba246416d24ce773ec50259`.
+  OCI revision/version labels are exact and image-default authority remains
+  `RUST_SHADOW`.
+- Network-disabled, read-only, capability-dropped inspection confirmed runtime
+  UID/GID `10001:10001` and production-core binary SHA-256
+  `5ce956f70f2d3fc736f3044d27d6cd637130396f15af621ea3977f03dc09dfa3`.
+  No disposable container remains and no runtime state changed.
+- The next mutation remains exactly a no-dependency recreate of the three
+  stopped production cores. The previous two immutable Rust images are retained
+  until live recovery passes. No `RUST_PRIMARY` transition is authorized.
