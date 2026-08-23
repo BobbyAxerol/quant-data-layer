@@ -10417,3 +10417,71 @@ gate and does not weaken the crypto closure.
   live recovery of the twelve attempt-8 `PENDING` rows to twelve durable
   `PUBLISHED` ACKs. The first repair image is not runtime-eligible and will be
   removed after the replacement is certified.
+
+
+**C40.26 bounded shared-raw scope repair gate - 2026-08-23.**
+
+- Status before repair: `RUST_CANARY CAS PASS / PRODUCTION CORES STOPPED /
+  TERMINAL HANDOFF PENDING / RUST_PRIMARY FORBIDDEN`. The exact twelve-slice
+  authority bundle reached `RUST_CANARY` revision 3, lease epoch 2, and all 24
+  VALIDATING/CANARY authority outbox events received durable Kafka ACKs. After
+  startup, production-core members encountered valid historical provider
+  envelopes on the shared raw topics whose subscription IDs are outside the
+  revision-2 Binance USD-M/OKX Swap promotion scope. The runtime treated that
+  normal shared-bus condition as fatal (`raw event has no approved production
+  slice binding`), so all three members were stopped before any terminal
+  handoff or primary decision.
+- Approved repair semantics: a protobuf-valid raw envelope with no configured
+  production binding is an explicit `ignored_out_of_scope` input. Its source
+  offset must be committed in the same Kafka transaction, including a batch
+  containing only ignored inputs, without publishing canonical data, target
+  progress or checkpoints. A malformed envelope, a configured subscription
+  with mismatched raw authority/lease/partition-plan identity, missing slice
+  authority, or forbidden authority state remains fail-closed. Mixed batches
+  publish/checkpoint only approved inputs while atomically committing all
+  source offsets. A structured bounded counter must expose ignored inputs.
+- Source gates: exact classification tests; transaction validation proving an
+  offset-only commit is accepted only with no outputs/progress; mixed-scope
+  behavior; malformed and configured-identity mismatch rejection; restart and
+  committed-offset recovery; Rust fmt, Clippy with warnings denied and full
+  workspace tests. Runtime gate: build a new immutable non-root Rust image,
+  recreate only the three stopped production-core members, verify cooperative
+  assignment and bounded lag, then collect the twelve-slice real-provider
+  canary/checkpoint handoff through terminal watermark `W` with zero gap,
+  duplicate, provenance or semantic mismatch.
+- Invariants and rollback: Kafka, Redis, SQLite, ingestors, Python projectors,
+  query/stream, V1, Trading System and every volume remain untouched. No
+  primary canonical/public/legacy output is permitted. On failure, stop the
+  three production-core members and retain the durable `RUST_CANARY` control,
+  canary records and checkpoints for audit. This gate may prepare but must not
+  apply a `RUST_PRIMARY` CAS; primary still requires a separate operator
+  approval after accepted terminal handoff evidence.
+
+
+**C40.27 bounded shared-raw source certification - 2026-08-23.**
+
+- Status: `SOURCE PASS / IMMUTABLE IMAGE PENDING / RUST_CANARY RETAINED /
+  RUST_PRIMARY FORBIDDEN`. `qdl-production-core` now decodes every raw envelope
+  first, processes only an exact configured subscription binding and counts a
+  protobuf-valid unbound envelope as `ignored_out_of_scope`. Configured raw
+  acquisition identity remains strict on authority revision, lease epoch and
+  partition-plan epoch; malformed protobuf, missing slice authority and
+  forbidden authority state still stop the generation fail-closed.
+- The Phase 9.2 Kafka bridge now accepts an input/time-valid offset-only
+  transaction only when both output and target progress are empty. It still
+  rejects output without exact target progress. Therefore an all-out-of-scope
+  batch advances its cooperative consumer offsets atomically with no canonical
+  record or checkpoint, while a mixed batch publishes/checkpoints only approved
+  inputs and commits every source offset in the same transaction.
+- Targeted `qdl-kafka` tests passed 15/15. Complete locked Rust workspace gates
+  passed: format check, Clippy for all targets with warnings denied, and 84/84
+  tests. Coverage includes exact/unbound classification, offset-only validation,
+  mixed-scope progress, configured identity mismatch, topic/target fencing,
+  authority recovery and normalizer decisions. Tests ran network-off in the
+  pinned Rust 1.82 builder. The sole labeled target-cache volume was removed;
+  no source-test container, volume, topic, offset or runtime mutation remains.
+- Next gate is an immutable non-root Rust image from this exact source, followed
+  by recreation of only the three stopped production-core members. Runtime must
+  prove real shared-topic catch-up, cooperative assignment, bounded lag and the
+  twelve-slice terminal gap-free handoff before a primary packet may even be
+  prepared. No `RUST_PRIMARY` transition is authorized.

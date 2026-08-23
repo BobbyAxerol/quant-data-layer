@@ -335,6 +335,13 @@ async fn watch_authority(
     }
 }
 
+fn approved_binding<'a>(
+    raw: &RawProviderEnvelope,
+    bindings: &'a HashMap<String, RuntimeSliceBinding>,
+) -> Option<&'a RuntimeSliceBinding> {
+    bindings.get(&raw.subscription_id)
+}
+
 fn validate_raw_authority(
     raw: &RawProviderEnvelope,
     binding: &RuntimeSliceBinding,
@@ -420,6 +427,7 @@ async fn run_generation(
     let mut quarantines = 0_u64;
     let mut duplicates = 0_u64;
     let mut filtered = 0_u64;
+    let mut ignored_out_of_scope = 0_u64;
     let mut batches = 0_u64;
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -459,9 +467,10 @@ async fn run_generation(
         let mut local_next: HashMap<(String, String, SinkTarget), u64> = HashMap::new();
         for input in &inputs {
             let raw = RawProviderEnvelope::decode(input.record.payload.as_slice())?;
-            let binding = binding_by_subscription
-                .get(&raw.subscription_id)
-                .ok_or("raw event has no approved production slice binding")?;
+            let Some(binding) = approved_binding(&raw, &binding_by_subscription) else {
+                ignored_out_of_scope = ignored_out_of_scope.saturating_add(1);
+                continue;
+            };
             validate_raw_authority(&raw, binding)?;
             let authority = bridge
                 .current_authority(&binding.slice_id)
@@ -549,6 +558,7 @@ async fn run_generation(
                     "quarantines": quarantines,
                     "duplicates": duplicates,
                     "filtered": filtered,
+                    "ignored_out_of_scope": ignored_out_of_scope,
                     "batches": batches,
                 }))?
             );
@@ -566,6 +576,7 @@ async fn run_generation(
             "quarantines": quarantines,
             "duplicates": duplicates,
             "filtered": filtered,
+            "ignored_out_of_scope": ignored_out_of_scope,
             "batches": batches,
             "reason": stop_reason,
         }))?
@@ -639,6 +650,33 @@ mod tests {
             ..canonical
         };
         assert!(decision(&ambiguous).is_err());
+    }
+
+    #[test]
+    fn shared_raw_scope_accepts_exact_binding_and_ignores_valid_unbound_envelope() {
+        let binding = RuntimeSliceBinding {
+            subscription_id: "binance-btc-trade".into(),
+            slice_id: "production/binance/usdm/perpetual/trade/plan-1/btcusdt".into(),
+            shard_id: "btcusdt-trade".into(),
+            raw_authority_revision: 1,
+            raw_lease_epoch: 2,
+            raw_partition_plan_epoch: 3,
+        };
+        let bindings = HashMap::from([(binding.subscription_id.clone(), binding)]);
+        let approved = RawProviderEnvelope {
+            subscription_id: "binance-btc-trade".into(),
+            ..Default::default()
+        };
+        let out_of_scope = RawProviderEnvelope {
+            subscription_id: "binance-spot-sol-trade".into(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            approved_binding(&approved, &bindings).map(|value| value.slice_id.as_str()),
+            Some("production/binance/usdm/perpetual/trade/plan-1/btcusdt")
+        );
+        assert!(approved_binding(&out_of_scope, &bindings).is_none());
     }
 
     #[test]

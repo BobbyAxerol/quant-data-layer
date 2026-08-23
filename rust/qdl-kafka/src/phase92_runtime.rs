@@ -337,6 +337,68 @@ pub struct Phase92TransactionalKafkaBridge {
     request_timeout: Duration,
 }
 
+fn validate_commit_shape(
+    topics: &Phase92TransactionalTopics,
+    inputs: &[TransactionalKafkaInput],
+    outputs: &[Phase92TransactionalOutput],
+    progress: &[Phase92Progress],
+    now_ns: i64,
+) -> Result<(), KafkaTransportError> {
+    if inputs.is_empty() || now_ns <= 0 {
+        return Err(KafkaTransportError::Configuration(
+            "Phase 9.2 transaction requires input and time".into(),
+        ));
+    }
+    if progress.is_empty() && !outputs.is_empty() {
+        return Err(KafkaTransportError::Fencing(
+            "Phase 9.2 transaction cannot publish output without target progress".into(),
+        ));
+    }
+    if inputs
+        .iter()
+        .any(|input| !topics.raw_inputs.contains(&input.cursor.stream))
+    {
+        return Err(KafkaTransportError::Fencing(
+            "Phase 9.2 transaction input is outside raw topics".into(),
+        ));
+    }
+    let mut progress_identities = HashSet::new();
+    for item in progress {
+        let identity = (
+            item.publication.slice_id.clone(),
+            item.publication.shard_id.clone(),
+            item.publication.target,
+            item.publication.source_watermark,
+        );
+        if !progress_identities.insert(identity) {
+            return Err(KafkaTransportError::Fencing(
+                "Phase 9.2 transaction has duplicate target progress".into(),
+            ));
+        }
+        if item.source_event_id.is_empty()
+            || !inputs.iter().any(|input| {
+                input.cursor == item.source_cursor && input.record.event_id == item.source_event_id
+            })
+        {
+            return Err(KafkaTransportError::Fencing(
+                "Phase 9.2 progress has no exact matching raw input".into(),
+            ));
+        }
+    }
+    for output in outputs {
+        if !topics.permits_output(output.publication.target, &output.record.stream)
+            || !progress
+                .iter()
+                .any(|item| item.publication == output.publication)
+        {
+            return Err(KafkaTransportError::Fencing(
+                "Phase 9.2 output target/topic/progress binding failed".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl Phase92TransactionalKafkaBridge {
     pub fn new(
         config: &KafkaTransportConfig,
@@ -487,56 +549,7 @@ impl Phase92TransactionalKafkaBridge {
         progress: &[Phase92Progress],
         now_ns: i64,
     ) -> Result<Phase92CommitResult, KafkaTransportError> {
-        if inputs.is_empty() || progress.is_empty() || now_ns <= 0 {
-            return Err(KafkaTransportError::Configuration(
-                "Phase 9.2 transaction requires input, progress and time".into(),
-            ));
-        }
-        if inputs
-            .iter()
-            .any(|input| !self.topics.raw_inputs.contains(&input.cursor.stream))
-        {
-            return Err(KafkaTransportError::Fencing(
-                "Phase 9.2 transaction input is outside raw topics".into(),
-            ));
-        }
-        let mut progress_identities = HashSet::new();
-        for item in progress {
-            let identity = (
-                item.publication.slice_id.clone(),
-                item.publication.shard_id.clone(),
-                item.publication.target,
-                item.publication.source_watermark,
-            );
-            if !progress_identities.insert(identity) {
-                return Err(KafkaTransportError::Fencing(
-                    "Phase 9.2 transaction has duplicate target progress".into(),
-                ));
-            }
-            if item.source_event_id.is_empty()
-                || !inputs.iter().any(|input| {
-                    input.cursor == item.source_cursor
-                        && input.record.event_id == item.source_event_id
-                })
-            {
-                return Err(KafkaTransportError::Fencing(
-                    "Phase 9.2 progress has no exact matching raw input".into(),
-                ));
-            }
-        }
-        for output in outputs {
-            if !self
-                .topics
-                .permits_output(output.publication.target, &output.record.stream)
-                || !progress
-                    .iter()
-                    .any(|item| item.publication == output.publication)
-            {
-                return Err(KafkaTransportError::Fencing(
-                    "Phase 9.2 output target/topic/progress binding failed".into(),
-                ));
-            }
-        }
+        validate_commit_shape(&self.topics, inputs, outputs, progress, now_ns)?;
 
         let mut fences = self.fences.lock().await;
         let mut next_fences = fences.clone();
@@ -762,6 +775,82 @@ mod tests {
         let mut duplicate = values;
         duplicate.public_v2 = "canonical".into();
         assert!(duplicate.validate().is_err());
+    }
+
+    fn input(key: &str, offset: u64, event_id: u8) -> TransactionalKafkaInput {
+        TransactionalKafkaInput {
+            record: DurableRecord {
+                stream: "raw".into(),
+                partition_key: key.into(),
+                event_id: vec![event_id],
+                payload: vec![2],
+                accepted_at_ns: 1,
+            },
+            cursor: Cursor {
+                stream: "raw".into(),
+                transport_partition: 0,
+                partition_key: key.into(),
+                offset,
+            },
+        }
+    }
+
+    fn publication() -> Phase92PublicationContext {
+        Phase92PublicationContext {
+            slice_id: "production/binance/usdm/perpetual/trade/plan-1/btcusdt".into(),
+            owner_id: "rust-canary".into(),
+            authority_revision: 3,
+            shard_id: "core-1".into(),
+            lease_epoch: 2,
+            partition_plan_epoch: 1,
+            source_watermark: 8,
+            target: SinkTarget::CanaryCanonical,
+        }
+    }
+
+    #[test]
+    fn offset_only_transaction_shape_requires_input_and_forbids_outputs() {
+        let values = topics();
+        assert!(
+            validate_commit_shape(&values, &[input("outside-scope", 7, 1)], &[], &[], 1,).is_ok()
+        );
+        assert!(validate_commit_shape(&values, &[], &[], &[], 1).is_err());
+
+        let output = Phase92TransactionalOutput {
+            record: DurableRecord {
+                stream: "canary".into(),
+                partition_key: "bounded".into(),
+                event_id: vec![3],
+                payload: vec![4],
+                accepted_at_ns: 1,
+            },
+            publication: publication(),
+            raw_provider_envelope: None,
+        };
+        assert!(
+            validate_commit_shape(&values, &[input("outside-scope", 7, 1)], &[output], &[], 1,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn mixed_scope_shape_allows_progress_for_only_the_approved_input() {
+        let values = topics();
+        let approved = input("approved", 8, 2);
+        let progress = Phase92Progress {
+            publication: publication(),
+            decision: Phase92Decision::Filtered,
+            source_cursor: approved.cursor.clone(),
+            source_event_id: approved.record.event_id.clone(),
+        };
+        assert!(validate_commit_shape(
+            &values,
+            &[input("outside-scope", 7, 1), approved],
+            &[],
+            &[progress],
+            1,
+        )
+        .is_ok());
     }
 
     #[test]
