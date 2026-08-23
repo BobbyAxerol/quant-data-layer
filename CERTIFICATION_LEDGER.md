@@ -353,3 +353,15 @@ Pinned at: data layer 96d0d19.
 - Same-image HEAD baseline: 702 passed, six skipped, zero failed.
 - Runtime mutation: none. Production certification: pending immutable paired
   rollout and demanded-consumer acceptance.
+
+
+### C39.4 Immutable Artifact Evidence
+
+Exact source `62202b2d11e2607c6211f6cc1764d18969160c6d` was built as
+Python image
+`sha256:d4a97938fd6da1b226d5a6db2f51a42047c6aab811c511bdad3541d2c6a2016d`
+and Rust image
+`sha256:66988ae4254a149447b2a4e5ff6008aa864a4071796934421f5d92dd0248bd76`.
+Both passed network-off executable/import probes. Read-only live preflight
+matched SQLite and Redis cache identities at
+`ae7554250ad548e7818559c140728ed4`; runtime remained unchanged.

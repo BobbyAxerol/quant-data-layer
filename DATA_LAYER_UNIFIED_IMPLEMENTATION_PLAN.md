@@ -9335,3 +9335,31 @@ explicit source audit, which is the behaviour they have today.
 - No runtime, provider connection, cursor file, Redis key, SQLite file, Kafka
   offset, V1 endpoint or consumer was changed. Deployment remains gated on the
   paired Trading System demanded-slice health slice and final immutable image.
+
+
+**C39.4 immutable artifact gate - 2026-08-23.**
+
+- Status: `ARTIFACT PASS / RUNTIME UNCHANGED`. Built the exact tested Data
+  Layer source commit `62202b2d11e2607c6211f6cc1764d18969160c6d` as
+  `qdl-v2-python:2.0.0-62202b2` (image ID
+  `sha256:d4a97938fd6da1b226d5a6db2f51a42047c6aab811c511bdad3541d2c6a2016d`)
+  and `qdl-v2-rust:2.0.0-62202b2` (image ID
+  `sha256:66988ae4254a149447b2a4e5ff6008aa864a4071796934421f5d92dd0248bd76`).
+  OCI revision/version labels are `62202b2d...` / `2.0.0-c39.4`; Python runs
+  as `qdl:qdl` and Rust as UID/GID `10001:10001`.
+- Network-off immutable-image probes passed for the stable Python runtime and
+  signed cursor codec, plus the Rust `qdl-venue-core-certify` executable. Two
+  initial Python probe commands referenced obsolete/nonexistent helper names
+  and failed before the corrected module/symbol probe passed; this was a probe
+  typo only, with no image or runtime mutation.
+- The source gate behind these artifacts remains 706 Python tests passed/six
+  intentional skips and the already certified Rust format, clippy and workspace
+  suites. The paired Trading System immutable artifact is recorded in its
+  Section 51.10 journal. No compose project, volume, Kafka offset, Redis key,
+  SQLite file, provider connection or V1 consumer changed during this gate.
+- Read-only deployment preflight proved all five cache roles share
+  `/var/lib/qdl-stable/shared/canonical-cache.sqlite3`; its cache ID and the
+  Redis projection-cache identity are both
+  `ae7554250ad548e7818559c140728ed4`. Generation-bound tokens therefore remain
+  valid across query/stream replicas and expire only after a real cache
+  generation change.
