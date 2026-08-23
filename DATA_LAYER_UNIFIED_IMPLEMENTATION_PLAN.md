@@ -10581,3 +10581,60 @@ gate and does not weaken the crypto closure.
 - The next mutation remains exactly a no-dependency recreate of the three
   stopped production cores. The previous two immutable Rust images are retained
   until live recovery passes. No `RUST_PRIMARY` transition is authorized.
+
+
+**C40.32 bounded canary offset-seed gate - 2026-08-23.**
+
+- Status before seed: `RESTORE PASS / SHARED-SCOPE PASS / UNBOUNDED REPLAY
+  STOPPED / RUST_CANARY RETAINED / RUST_PRIMARY FORBIDDEN`. All three exact
+  replacement cores reconstructed compacted authority/checkpoints and processed
+  mixed shared-topic input without crash. Structured progress exposed approved
+  canonical records and explicit `ignored_out_of_scope`; V1 stayed `ok` and
+  Trading System returned `READY`.
+- A new production consumer group had no committed deployment offset, so Kafka
+  correctly applied its fail-safe `earliest` policy. That began replaying the
+  full retained raw log (approximately 16 million records of lag) into the
+  isolated canary/checkpoint topics, which violates this packet's bounded
+  canary resource envelope even though it cannot affect public/legacy output.
+  Broker CPU reached approximately 45-52 percent per replica. All three workers
+  were therefore gracefully stopped through the approved rollback path and
+  exited zero after transaction drain/unsubscribe.
+- With no active group member, the Kafka reset dry-run freezes a new bounded
+  start at current raw log ends: partitions 0-5 respectively
+  `16883463,1796640,14441583,0,24272881,8578021` at observation time. The next
+  proposed mutation, requiring separate explicit operator approval, is an
+  execute-to-latest reset for only `qdl-v2-production-core-v1-phase92-raw`,
+  recording Kafka's exact returned
+  offsets, then restarting only the same three cores. This skips historical
+  replay only for the isolated canary group; it does not delete or alter raw
+  records, authority state, canonical consumers or another group's offsets.
+- Acceptance restarts the canary at the executed immutable boundary, waits for
+  fresh authentic events, requires all six partition assignments and bounded
+  near-zero lag, then collects exact twelve-slice overlap/checkpoints. Existing
+  accidental canary history is retained for audit and excluded by deployment/
+  watermark bounds. No topic cleanup or `RUST_PRIMARY` transition is permitted.
+
+
+**C40.33 isolated canary offset decision gate - 2026-08-23.**
+
+- Status: `EXPLICIT OFFSET APPROVAL REQUIRED / NO MUTATION / THREE CORES
+  STOPPED / RUST_PRIMARY FORBIDDEN`. The attempted combined reset/start command
+  was rejected by the safety gate before process creation because the previous
+  approval did not explicitly name durable consumer-group offset replacement.
+  Read-only verification confirms all three cores remain graceful exit 0 and
+  the group's committed offsets are unchanged.
+- Requested blast radius: while the group has zero active members, reset only
+  group `qdl-v2-production-core-v1-phase92-raw`, topic `md.raw.stable.v1`,
+  partitions 0-5, from recorded offsets
+  `14547646,1607374,11731222,unset,16712346,5332908` to the log-end offsets
+  returned by the execution-time `--to-latest --execute`; then start only
+  `production_core_1..3` from immutable image
+  `sha256:3b357264e868d5f3f84a7ee672526fb121792f9c1ba246416d24ce773ec50259`.
+  This intentionally skips unread historical input for this isolated canary
+  group only. Raw records, all other consumer groups, authority rows, stable
+  outputs, Redis/SQLite and execution state remain unchanged.
+- Rollback stops the same three cores and may restore the recorded group offsets
+  with a separately reviewed exact per-partition reset packet. Already-written
+  isolated canary/checkpoint records remain audit evidence and are not deleted.
+  No action is legal until the operator explicitly approves this exact durable
+  offset reset; this gate does not request or grant `RUST_PRIMARY`.
