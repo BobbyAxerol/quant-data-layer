@@ -25,7 +25,8 @@ use qdl_core::okx::{
 };
 use qdl_core::transport::{DurableRecord, RetryClass};
 use qdl_kafka::{
-    FencedKafkaSink, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, PendingKafkaAppend,
+    shutdown_signal, FencedKafkaSink, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
+    PendingKafkaAppend,
 };
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use qdl_venue_core::backpressure::DeliveryClass;
@@ -1198,8 +1199,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let stopped = Arc::new(AtomicBool::new(false));
     let stop_signal = stopped.clone();
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            stop_signal.store(true, Ordering::Release);
+        match shutdown_signal().await {
+            Ok(signal) => {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "event": "qdl_native_raw_ingestor_shutdown_requested",
+                        "reason": signal.as_str(),
+                    }))
+                    .unwrap_or_else(|_| {
+                        "{\"event\":\"qdl_native_raw_ingestor_shutdown_requested\"}".into()
+                    })
+                );
+                stop_signal.store(true, Ordering::Release);
+            }
+            Err(error) => {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "event": "qdl_native_raw_ingestor_signal_error",
+                        "error": error.to_string(),
+                    }))
+                    .unwrap_or_else(|_| {
+                        "{\"event\":\"qdl_native_raw_ingestor_signal_error\"}".into()
+                    })
+                );
+            }
         }
     });
     println!(

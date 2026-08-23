@@ -3109,6 +3109,26 @@ Mọi event vẫn chứa component/schema/normalizer version cần thiết để
 - Commit/checkpoint sau idempotent output boundary.
 - Support replay to shadow namespace/table.
 
+#### Rust consumer-group shutdown/rebalance policy
+
+- Long-running Rust consumers handle both `SIGINT` and Docker/Kubernetes
+  `SIGTERM`, finish the in-flight transactional batch, commit output and input
+  offset atomically, then unsubscribe before process exit.
+- Transactional Rust data-core consumers use only
+  `partition.assignment.strategy=cooperative-sticky` under the classic group
+  protocol. Eager and cooperative assignors are never mixed in one live group;
+  assignor migration is an all-members bounded packet with V1 rollback intact.
+- Core workers remain dynamic members for N-1 availability. Static membership is
+  not used for these workers because librdkafka intentionally retains a closed
+  static member assignment until session timeout, delaying deliberate N-1
+  redistribution.
+- Every Rust workload has a stop grace period greater than the maximum Kafka
+  transaction/request timeout. Forced kill, session-timeout recovery, duplicate
+  input redelivery and demanded-slice freshness are explicit rollout metrics.
+- Acceptance requires no visible duplicate/gap, zero quarantine or semantic
+  mismatch, bounded lag and no demanded-slice disconnect when one worker is
+  gracefully stopped and restored.
+
 #### Schema/config
 
 - Deploy reader support trước writer emission.

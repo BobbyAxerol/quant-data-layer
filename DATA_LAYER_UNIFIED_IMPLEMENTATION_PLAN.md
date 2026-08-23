@@ -10018,3 +10018,87 @@ gate and does not weaken the crypto closure.
   twelve-slice canonical/canary parity evidence bound to the C40 image. The
   approved rollback remains stopping the four added replicas and restoring the
   retained single-projector/core-003 C39 pair; it has not been invoked.
+
+**C40.13 bounded cooperative rebalance closure - 2026-08-23.**
+
+- Status before implementation: `APPROVED / SOURCE AND SHADOW RUNTIME WORK
+  PENDING / AUTHORITY UNCHANGED`. Governing design remains
+  `upgrade/quant-data-layer-fund-grade-upgrade-architecture.md` sections 27.3,
+  28.6 and 34.4. Scope is provider-neutral Kafka consumer lifecycle behavior;
+  public V1/V2 contracts, event bytes, instrument identity, source authority and
+  provider adapters must not change.
+- Root cause is explicit in the current runtime: Docker sends `SIGTERM`, while
+  realtime and production Rust cores only await `tokio::signal::ctrl_c()`.
+  Docker therefore waits the stop grace period and kills the process; the eager
+  Kafka group retains the dead member until session expiry. During that window
+  committed input is safely replayed and deduplicated, but demanded TRADE
+  freshness fails closed for 30-35 seconds. This is correct loss prevention but
+  fails the continuous-READY availability gate.
+- Approved source slice: add one shared portable shutdown future that handles
+  `SIGINT` and Unix `SIGTERM`; drain/commit the current transaction before
+  leaving; explicitly unsubscribe the consumer; use
+  `partition.assignment.strategy=cooperative-sticky` for transactional Rust
+  group consumers; preserve manual offsets, `read_committed`, idempotent
+  producer, atomic output-plus-offset commit, fencing and retry semantics.
+  Static membership is intentionally excluded: librdkafka static members do
+  not leave on close and would retain an intentionally stopped N-1 partition
+  until session timeout.
+- Source gates: exact config/unit tests for cooperative assignment; shutdown
+  reason/unit coverage; focused Kafka/realtime/production-core tests; Rust fmt,
+  Clippy with warnings denied and full workspace tests; impacted Python C40 and
+  stable-topology tests; immutable non-root image metadata/binary gate. No
+  provider-generated or synthetic record may enter production topics.
+- Runtime packet after source certification: transition all three
+  `qdl-v2-stable-core-v1` Rust shadow members together to the new immutable
+  image because eager and cooperative assignors cannot be mixed. Preserve
+  Kafka, Redis, SQLite, ingestors, projectors, query/stream, V1, Trading System
+  and every volume. Verify six-partition distribution, bounded lag, zero
+  quarantine/visible duplicate, `READY 8/8`, then stop and restore exactly one
+  Rust worker and require no demanded-slice disconnect.
+- Real-provider parity gate after N-1: run the read-only C40 collector for the
+  exact twelve Binance USD-M/OKX Swap TRADE/QUOTE/BAR bindings with immutable
+  high-watermarks, `read_committed`, raw lineage, equal event-ID/digest
+  overlap, zero semantic mismatch and zero open gap. Evidence must bind the new
+  image and execution-table counts must remain unchanged.
+- Rollback recreates the three currently retained `ce7d90fcbe69` Rust shadow
+  workers and does not delete topics, offsets, caches or volumes. No authority
+  DB/bootstrap, production-core startup or `RUST_PRIMARY` transition is
+  permitted by this closure. Promotion requires a separate operator decision
+  after every gate above passes.
+
+**C40.14 cooperative rebalance source certification - 2026-08-23.**
+
+- Status: `SOURCE CERTIFIED / RUNTIME UNCHANGED / IMMUTABLE IMAGE PENDING`.
+  Shared Rust Kafka consumers now use the classic group protocol with only the
+  `cooperative-sticky` assignor, manual offset storage/commit and
+  `read_committed`. No static `group.instance.id` is configured. Both shadow
+  and Phase 9.2 production transactional bridges expose explicit unsubscribe
+  after their current output-plus-source-offset transaction commits.
+- Realtime and future production cores now await one persistent portable
+  shutdown future, recognize `SIGINT` and Unix `SIGTERM`, record a structured
+  stop reason, then unsubscribe. Native Binance/OKX ingestors reuse the same
+  signal primitive without changing acquisition, sequence, backpressure or
+  provider behavior. The stable Rust Compose anchor grants 45 seconds for
+  transaction drain, exceeding the configured 30-second Kafka request/
+  transaction timeout.
+- Exact source tests cover cooperative/manual/dynamic consumer policy, the
+  absence of static membership, signal labels, six core-role stop-grace
+  inheritance, transactional topics/headers, authority decisions, provider
+  delivery classes and deterministic canonicalization. Focused
+  `qdl-kafka --all-targets` tests passed 19/19. Impacted Python stable
+  deployment/projector tests passed 29/29. The first Python command used the
+  slim runtime image and stopped before collection because that production
+  image intentionally lacks pytest; the corrected unchanged-source
+  `unittest` run passed and this was not a product failure.
+- Complete source gates passed: `cargo fmt --all -- --check`, workspace Clippy
+  with `-D warnings`, and all 81 Rust workspace tests. All containers were
+  network-off, source-read-only and `--rm`. The single named target-cache
+  volume `qdl_c40_rebalance_target` was removed after the gates; no test
+  topic, market record, offset, Redis key, database row or production volume
+  was created or mutated.
+- Runtime remains on image
+  `sha256:ce7d90fcbe692e07b2a4699f3861193d3660d618ddafea96a8a056676825cf95`
+  and eager group behavior until an immutable image from this commit is built
+  and the all-three-member transition packet is executed. V1, Trading System,
+  stable V2 data and authority remain unchanged; `RUST_PRIMARY` is still
+  forbidden.

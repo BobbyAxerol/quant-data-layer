@@ -103,6 +103,7 @@ x-rust: &rust
   image: ${QDL_STABLE_RUST_IMAGE:?set immutable QDL_STABLE_RUST_IMAGE}
   user: "10001:10001"
   restart: "no"
+  stop_grace_period: 45s
   read_only: true
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]

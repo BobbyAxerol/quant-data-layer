@@ -3,6 +3,7 @@
 pub mod phase92_runtime;
 
 use std::fmt::{Display, Formatter};
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 
@@ -24,6 +25,43 @@ use rdkafka::util::Timeout;
 
 const EVENT_ID_HEADER: &str = "qdl-event-id";
 const RAW_ENVELOPE_HEADER: &str = "qdl-raw-provider-envelope";
+const COOPERATIVE_ASSIGNMENT_STRATEGY: &str = "cooperative-sticky";
+const CONSUMER_GROUP_PROTOCOL: &str = "classic";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShutdownSignal {
+    Interrupt,
+    Terminate,
+}
+
+impl ShutdownSignal {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Interrupt => "SIGINT",
+            Self::Terminate => "SIGTERM",
+        }
+    }
+}
+
+pub async fn shutdown_signal() -> io::Result<ShutdownSignal> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                result?;
+                Ok(ShutdownSignal::Interrupt)
+            }
+            _ = terminate.recv() => Ok(ShutdownSignal::Terminate),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
+        Ok(ShutdownSignal::Interrupt)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KafkaTlsConfig {
@@ -98,6 +136,20 @@ impl KafkaTransportConfig {
             config.set("ssl.key.password", password);
         }
         Ok(config)
+    }
+
+    pub(crate) fn configure_group_consumer(&self, config: &mut ClientConfig) {
+        config
+            .set("group.id", &self.group_id)
+            .set("group.protocol", CONSUMER_GROUP_PROTOCOL)
+            .set(
+                "partition.assignment.strategy",
+                COOPERATIVE_ASSIGNMENT_STRATEGY,
+            )
+            .set("enable.auto.commit", "false")
+            .set("enable.auto.offset.store", "false")
+            .set("auto.offset.reset", "earliest")
+            .set("isolation.level", "read_committed");
     }
 }
 
@@ -602,12 +654,7 @@ impl TransactionalKafkaBridge {
             ));
         }
         let mut consumer_config = config.client_config()?;
-        consumer_config
-            .set("group.id", &config.group_id)
-            .set("enable.auto.commit", "false")
-            .set("enable.auto.offset.store", "false")
-            .set("auto.offset.reset", "earliest")
-            .set("isolation.level", "read_committed");
+        config.configure_group_consumer(&mut consumer_config);
         let consumer: StreamConsumer = consumer_config.create()?;
         let raw_topics: Vec<&str> = topics.raw_inputs.iter().map(String::as_str).collect();
         consumer.subscribe(&raw_topics)?;
@@ -648,6 +695,10 @@ impl TransactionalKafkaBridge {
             .await
             .apply(record)
             .map_err(KafkaTransportError::Fencing)
+    }
+
+    pub fn unsubscribe(&self) {
+        self.consumer.unsubscribe();
     }
 
     pub async fn next(&self) -> Result<TransactionalKafkaInput, KafkaTransportError> {
@@ -817,12 +868,7 @@ impl KafkaEventSource {
             ));
         }
         let mut client = config.client_config()?;
-        client
-            .set("group.id", &config.group_id)
-            .set("enable.auto.commit", "false")
-            .set("enable.auto.offset.store", "false")
-            .set("auto.offset.reset", "earliest")
-            .set("isolation.level", "read_committed");
+        config.configure_group_consumer(&mut client);
         let consumer: StreamConsumer = client.create()?;
         consumer.subscribe(topics)?;
         Ok(Self { consumer })
@@ -883,13 +929,49 @@ impl KafkaEventSource {
 mod tests {
     use super::{
         transactional_output_headers, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
-        Phase92SinkTopics, Phase9SinkTopics, TransactionalShadowTopics, EVENT_ID_HEADER,
+        Phase92SinkTopics, Phase9SinkTopics, ShutdownSignal, TransactionalShadowTopics,
+        CONSUMER_GROUP_PROTOCOL, COOPERATIVE_ASSIGNMENT_STRATEGY, EVENT_ID_HEADER,
         RAW_ENVELOPE_HEADER,
     };
     use qdl_core::transport::RetryClass;
     use qdl_venue_core::authority::SinkTarget;
+    use rdkafka::config::ClientConfig;
     use rdkafka::message::Headers;
     use std::time::Duration;
+
+    #[test]
+    fn consumer_group_policy_is_cooperative_manual_and_dynamic() {
+        let config = KafkaTransportConfig {
+            bootstrap_servers: "kafka:9092".into(),
+            client_id: "qdl-core-001".into(),
+            group_id: "qdl-core-v1".into(),
+            request_timeout: Duration::from_secs(5),
+            tls: KafkaTlsConfig {
+                ca_location: "/not-read/ca".into(),
+                certificate_location: "/not-read/cert".into(),
+                key_location: "/not-read/key".into(),
+                key_password: None,
+            },
+        };
+        let mut client = ClientConfig::new();
+        config.configure_group_consumer(&mut client);
+        assert_eq!(client.get("group.id"), Some("qdl-core-v1"));
+        assert_eq!(
+            client.get("partition.assignment.strategy"),
+            Some(COOPERATIVE_ASSIGNMENT_STRATEGY)
+        );
+        assert_eq!(client.get("group.protocol"), Some(CONSUMER_GROUP_PROTOCOL));
+        assert_eq!(client.get("enable.auto.commit"), Some("false"));
+        assert_eq!(client.get("enable.auto.offset.store"), Some("false"));
+        assert_eq!(client.get("isolation.level"), Some("read_committed"));
+        assert_eq!(client.get("group.instance.id"), None);
+    }
+
+    #[test]
+    fn shutdown_signal_labels_are_stable_for_structured_logs() {
+        assert_eq!(ShutdownSignal::Interrupt.as_str(), "SIGINT");
+        assert_eq!(ShutdownSignal::Terminate.as_str(), "SIGTERM");
+    }
 
     #[test]
     fn transactional_headers_preserve_private_raw_lineage() {

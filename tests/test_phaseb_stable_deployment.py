@@ -1033,6 +1033,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                     services[name]["entrypoint"],
                     ["/usr/local/bin/qdl-realtime-core"],
                 )
+                self.assertEqual(services[name]["stop_grace_period"], "45s")
                 self.assertIn("stable_tls:/stable-certs:ro", services[name]["volumes"])
 
         authority_db = services["stable_authority_db"]
@@ -1082,6 +1083,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 )
                 self.assertEqual(services[name]["user"], "10001:10001")
                 self.assertTrue(services[name]["read_only"])
+                self.assertEqual(services[name]["stop_grace_period"], "45s")
                 self.assertNotIn("ports", services[name])
 
     def test_candidate_bundle_uses_image_ids_and_never_records_secret_values(self):

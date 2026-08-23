@@ -350,12 +350,7 @@ impl Phase92TransactionalKafkaBridge {
             ));
         }
         let mut consumer_config = config.client_config()?;
-        consumer_config
-            .set("group.id", &config.group_id)
-            .set("enable.auto.commit", "false")
-            .set("enable.auto.offset.store", "false")
-            .set("auto.offset.reset", "earliest")
-            .set("isolation.level", "read_committed");
+        config.configure_group_consumer(&mut consumer_config);
         let consumer: StreamConsumer = consumer_config.create()?;
         let raw_topics: Vec<&str> = topics.raw_inputs.iter().map(String::as_str).collect();
         consumer.subscribe(&raw_topics)?;
@@ -439,6 +434,10 @@ impl Phase92TransactionalKafkaBridge {
             })?
             .next_watermark(shard_id, target)
             .map_err(KafkaTransportError::Fencing)
+    }
+
+    pub fn unsubscribe(&self) {
+        self.consumer.unsubscribe();
     }
 
     pub async fn next(&self) -> Result<TransactionalKafkaInput, KafkaTransportError> {

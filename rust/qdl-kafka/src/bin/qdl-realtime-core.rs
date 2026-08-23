@@ -8,8 +8,8 @@ use qdl_contracts::qdl::provider::v1::RawProviderEnvelope;
 use qdl_core::backoff::BackoffPolicy;
 use qdl_core::transport::RetryClass;
 use qdl_kafka::{
-    KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, TransactionalKafkaBridge,
-    TransactionalKafkaOutput, TransactionalShadowTopics,
+    shutdown_signal, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
+    TransactionalKafkaBridge, TransactionalKafkaOutput, TransactionalShadowTopics,
 };
 use qdl_realtime_core::{RealtimeCore, RealtimeCoreConfig};
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
@@ -128,13 +128,15 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
     let mut duplicates = 0_u64;
     let mut filtered = 0_u64;
     let mut batches = 0_u64;
-    'service: loop {
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
+    let stop_reason = 'service: loop {
         if config.max_events > 0 && processed >= config.max_events {
-            break;
+            break 'service "MAX_EVENTS";
         }
         let first = tokio::select! {
             result = bridge.next() => result?,
-            _ = tokio::signal::ctrl_c() => break 'service,
+            result = &mut shutdown => break 'service result?.as_str(),
         };
         let mut inputs = vec![first];
         while inputs.len() < config.batch_size
@@ -210,7 +212,8 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
                 }))?
             );
         }
-    }
+    };
+    bridge.unsubscribe();
     println!(
         "{}",
         serde_json::to_string(&json!({
@@ -222,6 +225,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
             "duplicates": duplicates,
             "filtered": filtered,
             "batches": batches,
+            "reason": stop_reason,
         }))?
     );
     Ok(())

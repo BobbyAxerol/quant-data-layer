@@ -13,7 +13,9 @@ use qdl_kafka::phase92_runtime::{
     KafkaCompactedSnapshotReader, Phase92Decision, Phase92Progress, Phase92TargetCheckpoint,
     Phase92TransactionalKafkaBridge, Phase92TransactionalOutput, Phase92TransactionalTopics,
 };
-use qdl_kafka::{KafkaEventSource, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError};
+use qdl_kafka::{
+    shutdown_signal, KafkaEventSource, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
+};
 use qdl_realtime_core::{ProcessBatch, RealtimeCore, RealtimeCoreConfig};
 use qdl_venue_core::authority::{
     Phase92AuthorityControlEvent, Phase92AuthorityState, Phase92PublicationContext, SinkTarget,
@@ -419,15 +421,16 @@ async fn run_generation(
     let mut duplicates = 0_u64;
     let mut filtered = 0_u64;
     let mut batches = 0_u64;
-    'service: loop {
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
+    let stop_reason = 'service: loop {
         if config.max_events > 0 && processed >= config.max_events {
-            break;
+            break 'service "MAX_EVENTS";
         }
         let first = tokio::select! {
             result = bridge.next() => result?,
-            result = tokio::signal::ctrl_c() => {
-                result?;
-                break 'service;
+            result = &mut shutdown => {
+                break 'service result?.as_str();
             }
             result = &mut authority_task => {
                 return match result {
@@ -550,7 +553,8 @@ async fn run_generation(
                 }))?
             );
         }
-    }
+    };
+    bridge.unsubscribe();
     authority_task.abort();
     println!(
         "{}",
@@ -563,6 +567,7 @@ async fn run_generation(
             "duplicates": duplicates,
             "filtered": filtered,
             "batches": batches,
+            "reason": stop_reason,
         }))?
     );
     Ok(())
