@@ -10332,3 +10332,52 @@ gate and does not weaken the crypto closure.
 - Next gate is idempotent broker topic/ACL bootstrap plus private authority
   DB/dispatcher creation and exact `RUST_SHADOW` bootstrap. `RUST_PRIMARY`
   remains forbidden.
+
+
+**C40.22 live dispatcher defect and fail-closed repair gate - 2026-08-23.**
+
+- Status before repair: `VALIDATING CAS APPLIED / DISPATCHER FAILED CLOSED /
+  CANARY NOT APPLIED`. The private authority DB is healthy and the exact
+  bootstrap replay was idempotent: one prerequisite bundle, twelve
+  `RUST_SHADOW` rows and zero terminal/handoff row. The exact validating packet
+  advanced all twelve slices to revision 2 `VALIDATING` and created twelve
+  immutable audit/outbox rows.
+- Live dispatcher startup exposed a repository projection defect: the
+  PostgreSQL claim function returns the full outbox row including `attempts`,
+  but `AsyncpgAuthorityOutboxRepository.claim()` selected only
+  `event_id,payload` and then indexed `row["attempts"]`. The process exited on
+  `KeyError` after the rows were durably claimed as `DISPATCHING`; no authority
+  event was published and no canary CAS or production-core startup occurred.
+- Approved in-scope repair is to include `attempts` in the repository SELECT and
+  add an async repository-boundary regression that verifies the exact selected
+  columns plus attempt mapping. Existing two-minute lock timeout must reclaim
+  the rows through the normal function; no manual outbox status mutation is
+  permitted. Build and pin a new immutable Python image, recreate only
+  `authority_outbox_v2`, and require all twelve rows `PUBLISHED` with durable
+  Kafka ACKs before CANARY.
+- The rejected persistent DSN/HOME override attempts made no file or runtime
+  mutation. Admin tools now use a labeled disposable read-only packet volume
+  under the image-native UID 10001; it will be removed after the packet. The
+  authority DB volume and append-only audit evidence are retained. `RUST_PRIMARY`
+  remains forbidden.
+
+
+**C40.23 dispatcher source repair certification - 2026-08-23.**
+
+- Status: `SOURCE PASS / IMMUTABLE IMAGE PENDING / CANARY NOT APPLIED`.
+  `AsyncpgAuthorityOutboxRepository.claim()` now projects
+  `event_id,payload,attempts` from the least-privilege claim function, matching
+  the mapper and the durable retry/backoff contract. No migration, payload
+  schema, authority state machine or public contract changed.
+- A new async repository-boundary regression captures the exact SQL projection,
+  arguments and mapped attempt count. The corrected focused dispatcher,
+  authority-runtime, cutover-packet, bootstrap, terminal-handoff and live
+  collector suite passed 21/21 in a network-disabled, read-only, non-root
+  container. The preceding command named a nonexistent test module and ended
+  with one loader error after 18 valid tests; it was a harness naming error,
+  then the unchanged source passed with the correct module name.
+- Runtime is intentionally fail-closed at twelve revision-2 `VALIDATING` rows.
+  Twelve outbox rows remain durably `DISPATCHING` after the old dispatcher
+  exited; normal two-minute lock expiry will reclaim them. No manual row update,
+  canary CAS, production-core start or primary action occurred. The next gate is
+  an immutable Python image from this commit and dispatcher-only recreate.

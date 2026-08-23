@@ -328,7 +328,7 @@ class AsyncpgAuthorityOutboxRepository:
 
     async def claim(self, lock_owner: str, limit: int) -> list[ClaimedAuthorityEvent]:
         rows = await self._pool.fetch(
-            "SELECT event_id, payload FROM qdl_claim_authority_outbox($1, $2)",
+            "SELECT event_id, payload, attempts FROM qdl_claim_authority_outbox($1, $2)",
             lock_owner, limit,
         )
         return [

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import unittest
 
 from qdl.control.authority_outbox import (
+    AsyncpgAuthorityOutboxRepository,
     AuthorityOutboxDispatcher,
     BrokerAck,
     ClaimedAuthorityEvent,
@@ -202,7 +203,28 @@ class _Publisher:
         return BrokerAck("qdl.authority.v1", 0, 12)
 
 
+class _AsyncpgPool:
+    def __init__(self):
+        self.query = ""
+        self.arguments = ()
+
+    async def fetch(self, query, *arguments):
+        self.query = query
+        self.arguments = arguments
+        return [{"event_id": EVENT_ID, "payload": outbox_payload(), "attempts": 3}]
+
+
 class AuthorityOutboxDispatcherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_asyncpg_claim_projects_and_maps_attempts(self):
+        pool = _AsyncpgPool()
+        repository = AsyncpgAuthorityOutboxRepository(pool)
+        claimed = await repository.claim("dispatcher-1", 7)
+        self.assertIn("event_id, payload, attempts", pool.query)
+        self.assertEqual(pool.arguments, ("dispatcher-1", 7))
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(claimed[0].event_id, EVENT_ID)
+        self.assertEqual(claimed[0].attempts, 3)
+
     async def test_ack_completes_and_failure_is_retried_without_false_publish(self):
         repository = _Repository(outbox_payload())
         publisher = _Publisher()
