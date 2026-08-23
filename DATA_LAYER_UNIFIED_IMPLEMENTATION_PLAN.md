@@ -10381,3 +10381,39 @@ gate and does not weaken the crypto closure.
   exited; normal two-minute lock expiry will reclaim them. No manual row update,
   canary CAS, production-core start or primary action occurred. The next gate is
   an immutable Python image from this commit and dispatcher-only recreate.
+
+
+**C40.24 JSONB decode boundary repair gate - 2026-08-23.**
+
+- Status before repair: `DISPATCHER STOPPED / VALIDATING PRESERVED / CANARY
+  NOT APPLIED`. The first immutable repair image successfully reclaimed the
+  twelve rows through the normal lock timeout, proving the `attempts` projection
+  fix. It then exposed a second repository-boundary defect: asyncpg returns the
+  JSONB payload as text under the current pool codec, while the serializer
+  requires a mapping. All rows retried fail-closed with the same bounded error;
+  no Kafka ACK was recorded.
+- The dispatcher was stopped alone before the retry ceiling. Rows are durably
+  `PENDING` at attempt 8; no manual status edit occurred. Docker needed SIGKILL
+  after the ten-second stop timeout because this Python dispatcher has no
+  graceful signal loop, but there was no claimed row at stop time.
+- Approved repair decodes JSON text exactly once, requires a JSON object and
+  rejects arrays/scalars/invalid values before publication. Regression coverage
+  must prove native mapping compatibility, text JSONB decoding and non-object
+  rejection. Rebuild/recreate only the dispatcher and require twelve durable
+  Kafka ACKs before any CANARY CAS. `RUST_PRIMARY` remains forbidden.
+
+
+**C40.25 JSONB repository certification - 2026-08-23.**
+
+- Status: `SOURCE PASS / DISPATCHER RUNTIME PENDING / CANARY NOT APPLIED`.
+  Repository claims now accept asyncpg JSONB text or an already-decoded mapping,
+  parse text once and require an object before constructing a claimed event.
+  Invalid arrays/scalars fail before broker publication.
+- The focused network-disabled authority suite again passed 21/21, now covering
+  exact attempts projection, mapping compatibility, JSONB text decoding,
+  non-object rejection, durable ACK/retry, CAS packets, bootstrap and terminal
+  handoff. No runtime or DB mutation occurred during this source test.
+- Next gate is a second immutable Python image, dispatcher-only recreate and
+  live recovery of the twelve attempt-8 `PENDING` rows to twelve durable
+  `PUBLISHED` ACKs. The first repair image is not runtime-eligible and will be
+  removed after the replacement is certified.

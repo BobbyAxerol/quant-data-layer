@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import unittest
 
 from qdl.control.authority_outbox import (
@@ -204,14 +205,15 @@ class _Publisher:
 
 
 class _AsyncpgPool:
-    def __init__(self):
+    def __init__(self, payload=None):
         self.query = ""
         self.arguments = ()
+        self.payload = outbox_payload() if payload is None else payload
 
     async def fetch(self, query, *arguments):
         self.query = query
         self.arguments = arguments
-        return [{"event_id": EVENT_ID, "payload": outbox_payload(), "attempts": 3}]
+        return [{"event_id": EVENT_ID, "payload": self.payload, "attempts": 3}]
 
 
 class AuthorityOutboxDispatcherTests(unittest.IsolatedAsyncioTestCase):
@@ -224,6 +226,21 @@ class AuthorityOutboxDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(claimed), 1)
         self.assertEqual(claimed[0].event_id, EVENT_ID)
         self.assertEqual(claimed[0].attempts, 3)
+
+        text_pool = _AsyncpgPool(json.dumps(outbox_payload()))
+        text_claimed = await AsyncpgAuthorityOutboxRepository(text_pool).claim(
+            "dispatcher-2", 1
+        )
+        self.assertEqual(
+            text_claimed[0].payload["schema"],
+            "qdl.authority-outbox-event.v1",
+        )
+
+        invalid_pool = _AsyncpgPool("[]")
+        with self.assertRaisesRegex(ValueError, "JSON object"):
+            await AsyncpgAuthorityOutboxRepository(invalid_pool).claim(
+                "dispatcher-3", 1
+            )
 
     async def test_ack_completes_and_failure_is_retried_without_false_publish(self):
         repository = _Repository(outbox_payload())
