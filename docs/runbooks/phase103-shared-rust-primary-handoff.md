@@ -30,7 +30,9 @@ The operator must have a newly generated, unexpired review packet from
 3. the `RUST_PRIMARY` authority revision and configuration revision;
 4. all 13 V2 service names listed below;
 5. a 300-second acceptance window; and
-6. the packet SHA256 and confirmation token.
+6. the packet SHA256 and confirmation token; and
+7. the embedded Trading System route-lock SHA256 for its named
+   `market_data` consumer.
 
 The separate approval must quote those values and explicitly allow only the
 following blast radius:
@@ -100,6 +102,29 @@ The second command must print `status=PASS`. It verifies packet expiry,
 SHA256 image format, authority/route binding, the exact topic/ACL/acceptance
 scope, host runtime directory, exact file set and every file digest. It is
 not an authorization or runtime health result.
+
+Before an approved Trading System `market_data` recreate, verify the two
+candidate artifacts against the packet's `trading_system_handoff.route_lock`.
+They must match exactly; a matching service name alone is insufficient:
+
+```bash
+export QDL_TRADING_SYSTEM_SOURCE_ROOT=/home/bobby/<reviewed-trading-system-checkout>
+export QDL_TRADING_SYSTEM_IMAGE='sha256:<approved-trading-system-image>'
+
+sha256sum \
+  "$QDL_TRADING_SYSTEM_SOURCE_ROOT/config/_config/data_layer_v2_routes.yaml" \
+  "$QDL_TRADING_SYSTEM_SOURCE_ROOT/docker-compose.data-layer-v2-primary.yml"
+
+docker run --rm --entrypoint sha256sum "$QDL_TRADING_SYSTEM_IMAGE" \
+  /app/config/_config/data_layer_v2_routes.yaml \
+  /app/docker-compose.data-layer-v2-primary.yml
+```
+
+The first and second pair of hashes must agree with the route-lock values in
+the validated packet: route revision `2`, exactly the eight BTC/ETH
+Binance-USD-M/OKX-Swap TRADE/final-BAR-1m identities, and no wildcard. This is
+a read-only artifact check; it neither recreates Trading System nor changes a
+consumer route.
 
 Before approval, render Compose with the six non-secret values copied exactly
 from `compose_environment` in the validated packet. The packet values override

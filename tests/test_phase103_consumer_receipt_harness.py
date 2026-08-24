@@ -128,6 +128,9 @@ class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
             "  python -B scripts/phase103_consumer_receipt_acceptance.py",
             runbook,
         )
+        self.assertIn("trading_system_handoff.route_lock", runbook)
+        self.assertIn("QDL_TRADING_SYSTEM_SOURCE_ROOT", runbook)
+        self.assertIn("docker run --rm --entrypoint sha256sum", runbook)
 
 
 if __name__ == "__main__":

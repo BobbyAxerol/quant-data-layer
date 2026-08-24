@@ -12959,6 +12959,88 @@ MUTATION`).**
   no source, service, image, route, authority, provider, Kafka, Redis,
   PostgreSQL, alpha or order state changed.
 
+**Phase 10.3 packet-bound Trading System route-lock slice - 2026-08-24
+(`IN PROGRESS / SOURCE ONLY / RUNTIME UNCHANGED`).**
+
+- **Goal:** close the route-artifact gap from the preceding audit without
+  creating a second topology or changing a running consumer. The sealed
+  shared-primary packet will carry one non-secret lock for the exact Trading
+  System `market_data` V2 artifact: route manifest revision `2`, its SHA-256,
+  the matching market-data-only Compose override SHA-256, and the eight
+  currently bridge-consumed BTC/ETH Binance USD-M and OKX Swap TRADE/final
+  BAR-1m identities.
+- **Inputs:** the independently committed Trading System source slice
+  `fix/phase103-demanded-routes` commit `81bfe85` has route manifest SHA-256
+  `b4376881b71853fc514ed70198cb52040aa0af3a8ad3f283bbab6fa2a2900e9f` and
+  Compose override SHA-256
+  `68e1ae602216063e4468d4354af3e57e4ead8ae6984b661e8b83cd576835478e`.
+  The lock is a cross-repository content contract, not a new runtime manifest:
+  the later Trading System image/recreate packet must prove those embedded
+  files hash to the sealed values.
+- **Invariants:** no wildcard; QUOTE remains governed Data Layer surface but
+  is omitted because the current Trading System bridge does not project it;
+  unmatched Binance retains V1 compatibility, unmatched/failed OKX blocks and
+  DNSE remains V1-only. The lock may name only
+  `trading-system.paper.stable` / `market_data`; it may not add a consumer,
+  symbol, feed, image, service, topic, ACL, offset, authority or deployment
+  operation.
+- **Test/rollback gates:** strict lock schema, exact identity/fallback and
+  content-digest checks; packet/body/runtime-manifest tamper rejection;
+  route-lock inclusion in the receipt preflight/runbook; existing Phase 10.3
+  packet/broker/receipt tests; read-only/no-network regression; and
+  `git diff --check`. A malformed or mismatched external artifact rejects the
+  packet before any broker/service action. Rollback stays V1 plus stop only the
+  13 named V2 services; this slice itself has no runtime mutation.
+
+**Phase 10.3 packet-bound Trading System route-lock result - 2026-08-24
+(`SOURCE/PREFLIGHT PASS / RUNTIME HANDOFF PENDING`).**
+
+- Added the one non-secret cross-repository lock at
+  `config/v2/phase103-trading-system-market-data-route-lock.yaml`. It pins the
+  independently committed Trading System artifacts by content, not branch
+  name: route manifest SHA-256
+  `b4376881b71853fc514ed70198cb52040aa0af3a8ad3f283bbab6fa2a2900e9f` and
+  Compose override SHA-256
+  `68e1ae602216063e4468d4354af3e57e4ead8ae6984b661e8b83cd576835478e`.
+  The lock validates only `trading-system.paper.stable` / `market_data`, the
+  exact eight current TRADE/final-BAR-1m identities, route revision `2`, V1
+  fallback for unmatched Binance and `BLOCK` for unmatched OKX.
+- The sealed handoff packet and generated runtime manifest now both carry the
+  lock plus a canonical lock digest. Because this is a mandatory packet field,
+  the internal review-packet schema advanced from
+  `qdl.v2.shared-primary-handoff-packet.v1` to `.v2`; all old short-lived
+  review packets fail closed and must not be reused. No public API, SDK, market
+  event, consumer manifest, runtime role, topic, ACL or authority schema
+  changed.
+- The operator runbook now requires a read-only `sha256sum` comparison of the
+  reviewed Trading System source and its immutable candidate image before the
+  named `market_data` service can be recreated. A matching service name or
+  `V2_PRIMARY` environment flag alone is explicitly insufficient.
+- **Tests actually run:** host `py_compile` and `git diff --check` passed;
+  immutable `qdl-v2-python@sha256:90c96b9c4418525ec6e505e7debcb9e957eeaded90f2e9ddc8730`,
+  source read-only and `--network none`, passed the Phase 10.3 packet/receipt/
+  broker/raw-scope/stable-deployment regression `58/58`. The expected
+  historical argparse and fenced-DNSE negative-path diagnostics were test
+  assertions; exit status was `0`. A disposable packet generator -> host
+  validator smoke passed `REVIEW_REQUIRED` then `PASS`, sealed `13` services,
+  `12` crypto bindings and route-lock digest
+  `b9e980a954cd2fecce3376f7bcb2202e764ffb5e8ce14574a00c1754346fffee`.
+  Its `/tmp` packet directory was removed. The pinned Trading System source
+  artifacts were re-hashed read-only and matched the lock exactly.
+- The immutable QDL runtime image intentionally has no Ruff executable and the
+  host has no project lint runner, so no lint claim is made for this slice;
+  compile, strict contract tests, packet validation and `git diff --check`
+  are the recorded evidence. No image was built; no Docker service, provider,
+  Kafka topic/offset/ACL, Redis/SQLite/PostgreSQL state, authority, V1 route,
+  Trading System, alpha or order state changed.
+- **Remaining exact decision gate:** build one immutable Trading System image
+  containing the locked artifacts, generate a fresh unexpired Phase 10.3
+  packet, then obtain explicit approval for the already-defined 13 V2 roles,
+  nine broker create-or-verify/ACL actions and one named `market_data`
+  recreation with a 300-second no-order receipt/fallback acceptance. No
+  `RUST_PRIMARY` runtime CAS, service recreation or consumer route change is
+  authorized by this source/preflight result.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 

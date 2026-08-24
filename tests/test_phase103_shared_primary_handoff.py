@@ -202,6 +202,17 @@ class SharedPrimaryPacketTests(unittest.TestCase):
                 list(_ALLOWED_SERVICE_ORDER),
             )
             self.assertEqual(packet["acceptance"]["crypto_binding_count"], 12)
+            handoff = packet["trading_system_handoff"]
+            lock = handoff["route_lock"]
+            self.assertEqual(lock["consumer_id"], "trading-system.paper.stable")
+            self.assertEqual(lock["service"], "market_data")
+            self.assertEqual(lock["route_manifest"]["revision"], 2)
+            self.assertEqual(len(lock["route_manifest"]["identities"]), 8)
+            self.assertEqual(
+                lock["compose_override"]["okx_symbols"],
+                ["BTC-USDT-SWAP", "ETH-USDT-SWAP"],
+            )
+            self.assertEqual(len(handoff["route_lock_sha256"]), 64)
             self.assertTrue((output / "shared-primary-handoff-packet.json").is_file())
             runtime = output / "runtime"
             self.assertEqual(
@@ -259,6 +270,14 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             self.reseal(bad_acl)
             with self.assertRaisesRegex(ValueError, "ACL scope"):
                 validate_shared_primary_packet(bad_acl)
+
+            bad_handoff = copy.deepcopy(packet)
+            bad_handoff["trading_system_handoff"]["route_lock"]["route_manifest"][
+                "identities"
+            ][0]["native_symbol"] = "SOLUSDT"
+            self.reseal(bad_handoff)
+            with self.assertRaisesRegex(ValueError, "route scope"):
+                validate_shared_primary_packet(bad_handoff)
 
             with self.assertRaisesRegex(FileExistsError, "must be empty"):
                 self.packet(root / "packet")

@@ -17,6 +17,8 @@ import time
 from typing import Any, Mapping
 import uuid
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -52,10 +54,14 @@ from scripts.phase103_packet_contract import (
     sha256 as _sha256,
     validate_prepared_shared_primary_bundle,
     validate_shared_primary_packet,
+    validate_trading_system_handoff_lock,
 )
 
 
 RUNTIME_MANIFEST_SCHEMA = "qdl.v2.shared-primary-runtime-bundle.v1"
+TRADING_SYSTEM_HANDOFF_LOCK_PATH = (
+    ROOT / "config/v2/phase103-trading-system-market-data-route-lock.yaml"
+)
 
 
 def _validate_runtime_files(
@@ -93,6 +99,7 @@ def _runtime_manifest(
     authority: Mapping[str, Any],
     runtime_digests: Mapping[str, str],
     sealed_route: Mapping[str, Any],
+    trading_system_handoff: Mapping[str, Any],
     source_commit: str,
     python_image_digest: str,
 ) -> dict[str, Any]:
@@ -108,7 +115,30 @@ def _runtime_manifest(
         "core_worker_count": STABLE_CORE_WORKER_COUNT,
         "runtime_files": dict(runtime_digests),
         "sealed_consumer_route": dict(sealed_route),
+        "trading_system_handoff": dict(trading_system_handoff),
         "forbidden_topology_tokens": ["production_core", "per_symbol"],
+    }
+
+
+def _trading_system_handoff() -> dict[str, Any]:
+    """Load the sealed non-secret cross-repository route artifact lock."""
+    if (
+        not TRADING_SYSTEM_HANDOFF_LOCK_PATH.is_file()
+        or TRADING_SYSTEM_HANDOFF_LOCK_PATH.is_symlink()
+    ):
+        raise ValueError("Trading System handoff lock is unavailable")
+    try:
+        payload = yaml.safe_load(
+            TRADING_SYSTEM_HANDOFF_LOCK_PATH.read_text(encoding="utf-8")
+        )
+    except yaml.YAMLError as error:
+        raise ValueError("Trading System handoff lock is unreadable") from error
+    if not isinstance(payload, dict):
+        raise ValueError("Trading System handoff lock is invalid")
+    validate_trading_system_handoff_lock(payload)
+    return {
+        "route_lock": payload,
+        "route_lock_sha256": _sha256(payload),
     }
 
 
@@ -174,6 +204,7 @@ def prepare_shared_primary_packet(
     )
     sealed_route = route_plan.seal(authority)
     drill = primary_fallback_return_drill(route_plan)
+    trading_system_handoff = _trading_system_handoff()
     route_path = runtime_dir / "consumer-route-primary.json"
     route_path.write_bytes(_canonical_bytes(sealed_route) + b"\n")
     route_path.chmod(0o644)
@@ -182,6 +213,7 @@ def prepare_shared_primary_packet(
         authority=authority,
         runtime_digests=runtime_digests,
         sealed_route=sealed_route,
+        trading_system_handoff=trading_system_handoff,
         source_commit=source_commit,
         python_image_digest=python_image_digest,
     )
@@ -220,6 +252,7 @@ def prepare_shared_primary_packet(
             "sealed_route": sealed_route,
             "fallback_return_drill": drill,
         },
+        "trading_system_handoff": trading_system_handoff,
         "deployment": {
             "topic": dict(_REALTIME_RAW_TOPIC),
             "acl_intent": dict(_ACL_INTENT),
@@ -284,6 +317,7 @@ def main() -> int:
         "production_mutations": 0,
         "service_count": len(packet["deployment"]["services"]),
         "crypto_binding_count": packet["acceptance"]["crypto_binding_count"],
+        "trading_system_route_lock_sha256": packet["trading_system_handoff"]["route_lock_sha256"],
     }, sort_keys=True))
     return 0
 

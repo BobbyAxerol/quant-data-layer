@@ -16,7 +16,7 @@ from typing import Any, Mapping
 import uuid
 
 
-SCHEMA = "qdl.v2.shared-primary-handoff-packet.v1"
+SCHEMA = "qdl.v2.shared-primary-handoff-packet.v2"
 SHARED_REALTIME_CORE_GROUP_ID = "qdl-v2-realtime-core-v2"
 SHARED_REALTIME_CORE_ID_PREFIX = "qdl-v2-realtime-core"
 ALLOWED_SERVICE_ORDER = (
@@ -94,6 +94,20 @@ REQUIRED_CRYPTO_EVIDENCE = (
     "cpu_ram_io",
     "fallback_count",
 )
+TRADING_SYSTEM_HANDOFF_LOCK_SCHEMA = "qdl.v2.external-consumer-route-lock.v1"
+TRADING_SYSTEM_HANDOFF_CONSUMER_ID = "trading-system.paper.stable"
+TRADING_SYSTEM_HANDOFF_SERVICE = "market_data"
+TRADING_SYSTEM_ROUTE_MANIFEST_SCHEMA = "trading-system.data-layer-v2-routes.v1"
+TRADING_SYSTEM_ROUTE_IDENTITIES = (
+    ("BINANCE", "USDM", "PERPETUAL", "BTCUSDT", "TRADE", None, "V1"),
+    ("BINANCE", "USDM", "PERPETUAL", "BTCUSDT", "BAR", "1m", "V1"),
+    ("BINANCE", "USDM", "PERPETUAL", "ETHUSDT", "TRADE", None, "V1"),
+    ("BINANCE", "USDM", "PERPETUAL", "ETHUSDT", "BAR", "1m", "V1"),
+    ("OKX", "SWAP", "PERPETUAL", "BTC-USDT-SWAP", "TRADE", None, "BLOCK"),
+    ("OKX", "SWAP", "PERPETUAL", "BTC-USDT-SWAP", "BAR", "1m", "BLOCK"),
+    ("OKX", "SWAP", "PERPETUAL", "ETH-USDT-SWAP", "TRADE", None, "BLOCK"),
+    ("OKX", "SWAP", "PERPETUAL", "ETH-USDT-SWAP", "BAR", "1m", "BLOCK"),
+)
 _PACKET_IDENTITY_FIELDS = {
     "packet_id",
     "packet_sha256",
@@ -126,6 +140,92 @@ def require_sha256(value: object, *, field: str) -> None:
         or any(char not in "0123456789abcdef" for char in value.removeprefix("sha256:"))
     ):
         raise ValueError(f"{field} must be an immutable sha256 image digest")
+
+
+def _require_digest(value: object, *, field: str) -> None:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(char not in "0123456789abcdef" for char in value)
+    ):
+        raise ValueError(f"{field} must be a lowercase sha256 digest")
+
+
+def validate_trading_system_handoff_lock(lock: Mapping[str, Any]) -> None:
+    """Validate the one external market-data route lock embedded in a packet."""
+    expected = {
+        "schema", "consumer_id", "service", "repository", "route_manifest",
+        "compose_override",
+    }
+    if (
+        not isinstance(lock, Mapping)
+        or set(lock) != expected
+        or lock.get("schema") != TRADING_SYSTEM_HANDOFF_LOCK_SCHEMA
+        or lock.get("consumer_id") != TRADING_SYSTEM_HANDOFF_CONSUMER_ID
+        or lock.get("service") != TRADING_SYSTEM_HANDOFF_SERVICE
+        or lock.get("repository") != "BobbyAxerol/ExecutorBroker"
+    ):
+        raise ValueError("Trading System handoff lock identity is invalid")
+    route = lock.get("route_manifest")
+    if not isinstance(route, Mapping) or set(route) != {
+        "path", "schema", "revision", "sha256", "identities",
+    }:
+        raise ValueError("Trading System handoff route lock is invalid")
+    if (
+        route.get("path") != "config/_config/data_layer_v2_routes.yaml"
+        or route.get("schema") != TRADING_SYSTEM_ROUTE_MANIFEST_SCHEMA
+        or route.get("revision") != 2
+    ):
+        raise ValueError("Trading System handoff route revision is invalid")
+    _require_digest(route.get("sha256"), field="Trading System route manifest")
+    identities = route.get("identities")
+    if not isinstance(identities, list):
+        raise ValueError("Trading System handoff route identities are invalid")
+    actual_identities = tuple(
+        (
+            item.get("venue"),
+            item.get("market"),
+            item.get("product"),
+            item.get("native_symbol"),
+            item.get("feed"),
+            item.get("interval"),
+            item.get("fallback"),
+        )
+        for item in identities
+        if isinstance(item, Mapping)
+        and set(item) == {
+            "venue", "market", "product", "native_symbol", "feed",
+            "interval", "fallback",
+        }
+    )
+    if actual_identities != TRADING_SYSTEM_ROUTE_IDENTITIES:
+        raise ValueError("Trading System handoff route scope is invalid")
+    compose = lock.get("compose_override")
+    if not isinstance(compose, Mapping) or set(compose) != {
+        "path", "sha256", "binance_symbols", "okx_symbols",
+    }:
+        raise ValueError("Trading System handoff Compose lock is invalid")
+    if (
+        compose.get("path") != "docker-compose.data-layer-v2-primary.yml"
+        or tuple(compose.get("binance_symbols", ())) != ("BTCUSDT", "ETHUSDT")
+        or tuple(compose.get("okx_symbols", ()))
+        != ("BTC-USDT-SWAP", "ETH-USDT-SWAP")
+    ):
+        raise ValueError("Trading System handoff Compose scope is invalid")
+    _require_digest(compose.get("sha256"), field="Trading System Compose override")
+
+
+def validate_trading_system_handoff(handoff: Mapping[str, Any]) -> None:
+    if not isinstance(handoff, Mapping) or set(handoff) != {
+        "route_lock", "route_lock_sha256",
+    }:
+        raise ValueError("Trading System handoff packet fields are invalid")
+    lock = handoff.get("route_lock")
+    if not isinstance(lock, Mapping):
+        raise ValueError("Trading System handoff route lock is invalid")
+    validate_trading_system_handoff_lock(lock)
+    if handoff.get("route_lock_sha256") != sha256(dict(lock)):
+        raise ValueError("Trading System handoff route lock digest is invalid")
 
 
 def require_host_runtime_dir(path: Path) -> Path:
@@ -186,8 +286,8 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
         "schema", "packet_id", "packet_sha256", "confirmation_token",
         "issued_at_ns", "expires_at_ns", "actor", "change_ticket",
         "apply_requested", "production_mutations", "authority", "runtime_bundle",
-        "consumer_route", "deployment", "acceptance", "compose_environment",
-        "rollback",
+        "consumer_route", "trading_system_handoff", "deployment", "acceptance",
+        "compose_environment", "rollback",
     }
     if set(packet) != expected or packet.get("schema") != SCHEMA:
         raise ValueError("shared primary packet schema/fields are invalid")
@@ -206,6 +306,10 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
         raise ValueError("shared primary packet requires RUST_PRIMARY authority")
     if packet.get("apply_requested") is not False or packet.get("production_mutations") != 0:
         raise ValueError("shared primary packet is review-only before explicit approval")
+    handoff = packet.get("trading_system_handoff")
+    if not isinstance(handoff, Mapping):
+        raise ValueError("shared primary packet Trading System handoff is invalid")
+    validate_trading_system_handoff(handoff)
     runtime_bundle = packet["runtime_bundle"]
     if not isinstance(runtime_bundle, dict) or set(runtime_bundle) != {
         "sha256", "manifest_sha256", "rust_image_digest", "python_image_digest",
@@ -374,6 +478,7 @@ def validate_prepared_shared_primary_bundle(
     if (
         manifest.get("authority_sha256") != sha256(authority)
         or manifest.get("sealed_consumer_route") != route
+        or manifest.get("trading_system_handoff") != packet["trading_system_handoff"]
         or manifest.get("runtime_files") != manifest_files
     ):
         raise ValueError("shared primary runtime manifest differs from the packet")

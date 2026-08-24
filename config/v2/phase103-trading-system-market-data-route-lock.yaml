@@ -1,0 +1,75 @@
+schema: qdl.v2.external-consumer-route-lock.v1
+consumer_id: trading-system.paper.stable
+service: market_data
+repository: BobbyAxerol/ExecutorBroker
+route_manifest:
+  path: config/_config/data_layer_v2_routes.yaml
+  schema: trading-system.data-layer-v2-routes.v1
+  revision: 2
+  sha256: b4376881b71853fc514ed70198cb52040aa0af3a8ad3f283bbab6fa2a2900e9f
+  identities:
+    - venue: BINANCE
+      market: USDM
+      product: PERPETUAL
+      native_symbol: BTCUSDT
+      feed: TRADE
+      interval: null
+      fallback: V1
+    - venue: BINANCE
+      market: USDM
+      product: PERPETUAL
+      native_symbol: BTCUSDT
+      feed: BAR
+      interval: 1m
+      fallback: V1
+    - venue: BINANCE
+      market: USDM
+      product: PERPETUAL
+      native_symbol: ETHUSDT
+      feed: TRADE
+      interval: null
+      fallback: V1
+    - venue: BINANCE
+      market: USDM
+      product: PERPETUAL
+      native_symbol: ETHUSDT
+      feed: BAR
+      interval: 1m
+      fallback: V1
+    - venue: OKX
+      market: SWAP
+      product: PERPETUAL
+      native_symbol: BTC-USDT-SWAP
+      feed: TRADE
+      interval: null
+      fallback: BLOCK
+    - venue: OKX
+      market: SWAP
+      product: PERPETUAL
+      native_symbol: BTC-USDT-SWAP
+      feed: BAR
+      interval: 1m
+      fallback: BLOCK
+    - venue: OKX
+      market: SWAP
+      product: PERPETUAL
+      native_symbol: ETH-USDT-SWAP
+      feed: TRADE
+      interval: null
+      fallback: BLOCK
+    - venue: OKX
+      market: SWAP
+      product: PERPETUAL
+      native_symbol: ETH-USDT-SWAP
+      feed: BAR
+      interval: 1m
+      fallback: BLOCK
+compose_override:
+  path: docker-compose.data-layer-v2-primary.yml
+  sha256: 68e1ae602216063e4468d4354af3e57e4ead8ae6984b661e8b83cd576835478e
+  binance_symbols:
+    - BTCUSDT
+    - ETHUSDT
+  okx_symbols:
+    - BTC-USDT-SWAP
+    - ETH-USDT-SWAP
