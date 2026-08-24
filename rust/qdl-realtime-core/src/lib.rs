@@ -112,11 +112,17 @@ impl RealtimeCoreConfig {
             ));
         }
         let mut keys = HashSet::new();
+        let mut source_ids = HashSet::new();
         for binding in &self.bindings {
             binding.validate()?;
             if !keys.insert(binding.key()) {
                 return Err(CoreError::Configuration(
                     "duplicate realtime core binding".into(),
+                ));
+            }
+            if !source_ids.insert(binding.source_id.clone()) {
+                return Err(CoreError::Configuration(
+                    "duplicate realtime core source ID".into(),
                 ));
             }
         }
@@ -1080,5 +1086,45 @@ mod tests {
             permissive.process(unknown, 10),
             Err(CoreError::UnknownBinding)
         );
+    }
+
+    #[test]
+    fn duplicate_source_ids_are_rejected_before_runtime_scope_routing() {
+        let first = binding((
+            "BINANCE_DIRECT",
+            "BINANCE",
+            "USDM",
+            "PERPETUAL",
+            "BTCUSDT",
+            "trade",
+            "binance_usdm_trade",
+            "PRIMARY",
+            SequencePolicy::Monotonic,
+        ));
+        let mut second = binding((
+            "BINANCE_DIRECT",
+            "BINANCE",
+            "USDM",
+            "PERPETUAL",
+            "BTCUSDT",
+            "bookTicker",
+            "binance_usdm_bbo",
+            "PRIMARY",
+            SequencePolicy::Monotonic,
+        ));
+        second.source_id = first.source_id.clone();
+
+        let result = RealtimeCore::new(RealtimeCoreConfig {
+            canonical_stream: "qdl.test.canonical.v2".into(),
+            quarantine_stream: "qdl.test.quarantine.v1".into(),
+            allow_test_provenance: true,
+            dedup_capacity: 16,
+            bindings: vec![first, second],
+        });
+
+        assert!(matches!(
+            result,
+            Err(CoreError::Configuration(message)) if message == "duplicate realtime core source ID"
+        ));
     }
 }

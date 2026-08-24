@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::collections::HashSet;
 use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -97,8 +98,25 @@ fn retryable_runtime_error(error: &RuntimeError) -> bool {
         .is_some_and(|value| should_retry_transport(value.retry_class()))
 }
 
+fn approved_subscription_scope(config: &RuntimeConfig) -> HashSet<String> {
+    config
+        .core
+        .bindings
+        .iter()
+        .map(|binding| binding.source_id.clone())
+        .collect()
+}
+
+fn is_approved_subscription(
+    raw: &RawProviderEnvelope,
+    approved_subscriptions: &HashSet<String>,
+) -> bool {
+    approved_subscriptions.contains(&raw.subscription_id)
+}
+
 async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), RuntimeError> {
     let mut core = RealtimeCore::new(config.core.clone())?;
+    let approved_subscriptions = approved_subscription_scope(config);
     let bridge = TransactionalKafkaBridge::new(
         &kafka_config()?,
         TransactionalShadowTopics {
@@ -116,6 +134,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
             "authority": "RUST_SHADOW",
             "generation": generation,
             "bindings": config.core.bindings.len(),
+            "approved_subscriptions": approved_subscriptions.len(),
             "batch_size": config.batch_size,
             "production_public_writes": 0,
             "production_legacy_writes": 0,
@@ -127,6 +146,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
     let mut quarantines = 0_u64;
     let mut duplicates = 0_u64;
     let mut filtered = 0_u64;
+    let mut ignored_out_of_scope = 0_u64;
     let mut batches = 0_u64;
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -155,6 +175,10 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
         let mut outputs = vec![];
         for input in &inputs {
             let raw = RawProviderEnvelope::decode(input.record.payload.as_slice())?;
+            if !is_approved_subscription(&raw, &approved_subscriptions) {
+                ignored_out_of_scope = ignored_out_of_scope.saturating_add(1);
+                continue;
+            }
             if raw.authority_revision != config.authority.revision {
                 return Err("raw authority revision does not match runtime authority".into());
             }
@@ -208,6 +232,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
                     "quarantines": quarantines,
                     "duplicates": duplicates,
                     "filtered": filtered,
+                    "ignored_out_of_scope": ignored_out_of_scope,
                     "batches": batches,
                 }))?
             );
@@ -224,6 +249,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
             "quarantines": quarantines,
             "duplicates": duplicates,
             "filtered": filtered,
+            "ignored_out_of_scope": ignored_out_of_scope,
             "batches": batches,
             "reason": stop_reason,
         }))?
@@ -281,5 +307,21 @@ mod tests {
         assert!(should_retry_transport(RetryClass::Retryable));
         assert!(should_retry_transport(RetryClass::Capacity));
         assert!(!should_retry_transport(RetryClass::NonRetryable));
+    }
+
+    #[test]
+    fn shared_raw_scope_accepts_only_exact_subscription_ids() {
+        let approved_subscriptions = HashSet::from(["dnse-vn30f1m-trade-stable-001".to_owned()]);
+        let approved = RawProviderEnvelope {
+            subscription_id: "dnse-vn30f1m-trade-stable-001".into(),
+            ..Default::default()
+        };
+        let foreign = RawProviderEnvelope {
+            subscription_id: "binance-usdm-btcusdt-trade-stable-001".into(),
+            ..Default::default()
+        };
+
+        assert!(is_approved_subscription(&approved, &approved_subscriptions));
+        assert!(!is_approved_subscription(&foreign, &approved_subscriptions));
     }
 }

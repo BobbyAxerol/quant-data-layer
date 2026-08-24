@@ -11005,3 +11005,58 @@ live migration or authority transition is part of R0.
   lineage; verify `0700` root, `0600` env and `0644` runtime JSON, then run a
   non-root generic-core start/stop preflight before attempting the approved
   three-replica rolling fence. The old two bundles remain immutable evidence.
+
+**R1 shared-raw scope-fence finding - 2026-08-24 (in progress).**
+
+- The corrected final bundle passed non-root bind-read preflight, but its first
+  generic `rust_core` correctly surfaced a second fail-closed defect:
+  `qdl_realtime_core_started` reported four remaining DNSE bindings, then
+  exited `UnknownBinding` on a valid Binance/OKX record from the shared
+  `md.raw.stable.v1` topic. The first replica was restored immediately; all
+  three old generic cores are running on `db240...` and no authority row,
+  cursor, offset, output topic, cache or V1 route changed.
+- This is an architecture bug, not a data-quality failure. Excluding promoted
+  bindings from generic config must cause transactionally committed
+  **out-of-scope filtering** by exact raw `subscription_id`, before core
+  canonicalization, not a fatal unknown-binding parse. The Phase 9.2
+  production core already implements the same shared-raw scope behavior.
+- Required in-scope Rust repair: validate unique generic source IDs, construct
+  an exact approved-subscription set once per generation, ignore only decoded
+  raw envelopes whose subscription is outside that set, preserve malformed or
+  in-scope semantic failures as fail-closed, commit filtered records in the
+  existing transaction, and expose `ignored_out_of_scope` separately from
+  normalizer `filtered`. Add direct Rust tests and rebuild a new immutable
+  candidate. The present `7e270...` candidate and all three unstarted R1
+  bundles remain audit evidence and are not eligible for authority promotion.
+
+**R1 shared-raw scope-fence source repair - 2026-08-24.**
+
+- Status: `SOURCE CERTIFIED / RUNTIME UNCHANGED / NEW IMMUTABLE IMAGE REQUIRED`.
+  The generic `qdl-realtime-core` now derives one exact approved raw-subscription
+  set from its configured binding `source_id`s at generation start. A decoded
+  envelope outside that set is deliberately output-free but is committed with
+  its input in the existing Kafka transaction; it increments
+  `ignored_out_of_scope`. An in-scope envelope still requires the configured
+  authority revision and follows the unchanged fail-closed normalizer path.
+  This is the same shared-topic routing boundary already used by
+  `qdl-production-core`; it never turns malformed bytes or in-scope semantic
+  defects into success.
+- `RealtimeCoreConfig` now rejects duplicate binding `source_id`s before a
+  runtime can construct an ambiguous scope. Structured start/progress/stop logs
+  expose both `approved_subscriptions` and `ignored_out_of_scope`, separately
+  from normalizer-level `filtered`; no public V1/V2 contract changed.
+- Tests actually passed in disposable, network-isolated containers: Rust
+  `cargo fmt --check`, workspace Clippy with `-D warnings`, and full locked
+  workspace tests (`1 + 16 + 18 + 6 + 3 + 2 + 2 + 13 + 31` unit tests plus
+  doc-tests, all pass). The pinned immutable Python image
+  `qdl-v2-python:2.0.0-31c8ca5` then passed the focused stable/R1 bundle and
+  checkpoint matrix `39/39`. The first host attempt was not counted: it lacked
+  project dependencies; the first read-only image attempt was not counted
+  either because it intentionally had no writable `/tmp`. Re-running with an
+  isolated `/tmp` tmpfs passed without modifying host dependencies or runtime.
+- Cleanup: every test container used `--rm`; Rust compilation used container
+  tmpfs and the Python suite used only an ephemeral tmpfs. No Kafka offset,
+  topic, Redis, authority DB row, cache, V1/Trading System service or active
+  generic-core image changed. The old `7e270...` candidate and prior R1 bundles
+  remain immutable audit evidence; they cannot be promoted. Next gate is a
+  commit, fresh immutable Rust image and fresh generation-bound R1 bundle.
