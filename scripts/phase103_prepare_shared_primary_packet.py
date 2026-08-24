@@ -78,6 +78,45 @@ _COMPOSE_ENVIRONMENT_KEYS = (
     "QDL_STABLE_AUTHORITY_REVISION",
     "QDL_CONFIG_REVISION",
 )
+_CORE_RUNTIME_FILES = frozenset({
+    "authority.json",
+    "core.json",
+    "core-002.json",
+    "core-003.json",
+    "ingestor-binance-usdm.json",
+    "ingestor-okx-swap.json",
+})
+_PACKET_RUNTIME_FILES = _CORE_RUNTIME_FILES | {
+    "consumer-route-primary.json",
+    "shared-primary-runtime-manifest.json",
+}
+_REALTIME_RAW_TOPIC = {
+    "name": "md.raw.realtime.v2",
+    "partitions": 6,
+    "replication_factor": 3,
+    "min_insync_replicas": 2,
+    "operation": "CREATE_OR_VERIFY_ONLY",
+}
+_ACL_INTENT = {
+    "producer": "phase8-producer",
+    "core": "phase8-core",
+    "core_group_id": SHARED_REALTIME_CORE_GROUP_ID,
+    "core_transactional_id_prefix": f"{SHARED_REALTIME_CORE_ID_PREFIX}-",
+}
+_CONDITIONAL_VN_SERVICE_METADATA = {
+    "name": _CONDITIONAL_VN_SERVICE,
+    "requires": "verified_in_session_provider_admission",
+}
+_REQUIRED_CRYPTO_EVIDENCE = (
+    "freshness",
+    "gap_count",
+    "reconnect_count",
+    "canonical_lag",
+    "projector_lag",
+    "consumer_receive_lag",
+    "cpu_ram_io",
+    "fallback_count",
+)
 _PACKET_IDENTITY_FIELDS = {
     "packet_id",
     "packet_sha256",
@@ -110,8 +149,14 @@ def _file_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _require_sha256(value: str, *, field: str) -> None:
-    if not value.startswith("sha256:") or len(value) != 71:
+def _require_sha256(value: object, *, field: str) -> None:
+    if (
+        not isinstance(value, str)
+        or not value.startswith("sha256:")
+        or len(value) != 71
+    ):
+        raise ValueError(f"{field} must be an immutable sha256 image digest")
+    if any(char not in "0123456789abcdef" for char in value.removeprefix("sha256:")):
         raise ValueError(f"{field} must be an immutable sha256 image digest")
 
 
@@ -126,8 +171,6 @@ def _require_host_runtime_dir(path: Path) -> Path:
     if not path.is_absolute() or path.name != "runtime" or ".." in path.parts:
         raise ValueError("host_runtime_dir must be an absolute runtime directory")
     return path
-    if any(char not in "0123456789abcdef" for char in value.removeprefix("sha256:")):
-        raise ValueError(f"{field} must be an immutable sha256 image digest")
 
 
 def _validate_runtime_files(
@@ -135,14 +178,7 @@ def _validate_runtime_files(
     *,
     authority: Mapping[str, Any],
 ) -> dict[str, str]:
-    expected = {
-        "authority.json",
-        "core.json",
-        "core-002.json",
-        "core-003.json",
-        "ingestor-binance-usdm.json",
-        "ingestor-okx-swap.json",
-    }
+    expected = _CORE_RUNTIME_FILES
     actual = {item.name for item in runtime_dir.iterdir() if item.is_file()}
     if actual != expected:
         raise ValueError("shared primary runtime bundle files differ from the fixed topology")
@@ -216,7 +252,7 @@ def prepare_shared_primary_packet(
     if now_ns <= 0:
         raise ValueError("issued_at_ns must be positive")
 
-    output_dir.mkdir(parents=True, mode=0o700)
+    output_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     runtime_dir = output_dir / "runtime"
     compose_runtime_dir = _require_host_runtime_dir(
         runtime_dir if host_runtime_dir is None else host_runtime_dir
@@ -300,37 +336,14 @@ def prepare_shared_primary_packet(
             "fallback_return_drill": drill,
         },
         "deployment": {
-            "topic": {
-                "name": "md.raw.realtime.v2",
-                "partitions": 6,
-                "replication_factor": 3,
-                "min_insync_replicas": 2,
-                "operation": "CREATE_OR_VERIFY_ONLY",
-            },
-            "acl_intent": {
-                "producer": "phase8-producer",
-                "core": "phase8-core",
-                "core_group_id": SHARED_REALTIME_CORE_GROUP_ID,
-                "core_transactional_id_prefix": f"{SHARED_REALTIME_CORE_ID_PREFIX}-",
-            },
+            "topic": dict(_REALTIME_RAW_TOPIC),
+            "acl_intent": dict(_ACL_INTENT),
             "services": list(_ALLOWED_SERVICE_ORDER),
-            "conditional_vn_service": {
-                "name": _CONDITIONAL_VN_SERVICE,
-                "requires": "verified_in_session_provider_admission",
-            },
+            "conditional_vn_service": dict(_CONDITIONAL_VN_SERVICE_METADATA),
         },
         "acceptance": {
             "crypto_binding_count": len(scope.binding_ids),
-            "required_crypto_evidence": [
-                "freshness",
-                "gap_count",
-                "reconnect_count",
-                "canonical_lag",
-                "projector_lag",
-                "consumer_receive_lag",
-                "cpu_ram_io",
-                "fallback_count",
-            ],
+            "required_crypto_evidence": list(_REQUIRED_CRYPTO_EVIDENCE),
             "observation_seconds": observation_seconds,
             "v1_fallback_return_required": True,
             "vn_primary_requires_in_session_evidence": True,
@@ -388,14 +401,42 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
     runtime_bundle = packet["runtime_bundle"]
     if not isinstance(runtime_bundle, dict):
         raise ValueError("shared primary packet runtime bundle is invalid")
+    if set(runtime_bundle) != {
+        "sha256", "manifest_sha256", "rust_image_digest", "python_image_digest",
+        "core_group_id", "core_transactional_id_prefix", "files",
+    }:
+        raise ValueError("shared primary packet runtime bundle fields are invalid")
     rust_image_digest = runtime_bundle.get("rust_image_digest")
     python_image_digest = runtime_bundle.get("python_image_digest")
-    if not isinstance(rust_image_digest, str) or not isinstance(python_image_digest, str):
-        raise ValueError("shared primary packet image digests are invalid")
     _require_sha256(rust_image_digest, field="rust_image_digest")
     _require_sha256(python_image_digest, field="python_image_digest")
     if rust_image_digest != authority.get("candidate_image_digest"):
         raise ValueError("shared primary packet Rust image differs from authority")
+    files = runtime_bundle.get("files")
+    if (
+        not isinstance(files, dict)
+        or set(files) != _PACKET_RUNTIME_FILES
+        or any(
+            not isinstance(name, str) or not isinstance(digest, str)
+            for name, digest in files.items()
+        )
+    ):
+        raise ValueError("shared primary packet runtime files are invalid")
+    if any(
+        len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest)
+        for digest in files.values()
+    ):
+        raise ValueError("shared primary packet runtime file digest is invalid")
+    if runtime_bundle.get("sha256") != _sha256({"files": files}):
+        raise ValueError("shared primary packet runtime bundle digest is invalid")
+    if runtime_bundle.get("manifest_sha256") != files["shared-primary-runtime-manifest.json"]:
+        raise ValueError("shared primary packet runtime manifest digest is invalid")
+    if (
+        runtime_bundle.get("core_group_id") != SHARED_REALTIME_CORE_GROUP_ID
+        or runtime_bundle.get("core_transactional_id_prefix")
+        != f"{SHARED_REALTIME_CORE_ID_PREFIX}-"
+    ):
+        raise ValueError("shared primary packet core identity is invalid")
     compose_environment = packet["compose_environment"]
     if (
         not isinstance(compose_environment, dict)
@@ -420,6 +461,14 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
     rollback = packet["rollback"]
     if not isinstance(deployment, dict) or not isinstance(rollback, dict):
         raise ValueError("shared primary packet deployment/rollback is invalid")
+    if set(deployment) != {"topic", "acl_intent", "services", "conditional_vn_service"}:
+        raise ValueError("shared primary packet deployment fields are invalid")
+    if deployment.get("topic") != _REALTIME_RAW_TOPIC:
+        raise ValueError("shared primary packet topic scope differs from the fixed plan")
+    if deployment.get("acl_intent") != _ACL_INTENT:
+        raise ValueError("shared primary packet ACL scope differs from the fixed plan")
+    if deployment.get("conditional_vn_service") != _CONDITIONAL_VN_SERVICE_METADATA:
+        raise ValueError("shared primary packet VN condition differs from the fixed plan")
     services = deployment.get("services")
     if services != list(_ALLOWED_SERVICE_ORDER):
         raise ValueError("shared primary packet service topology differs from the fixed plan")
@@ -431,6 +480,21 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
         raise ValueError("shared primary packet rollback must stop only named V2 services")
     if rollback.get("forbidden_operations") != list(_FORBIDDEN_OPERATIONS):
         raise ValueError("shared primary packet rollback protections differ from the plan")
+    acceptance = packet["acceptance"]
+    if not isinstance(acceptance, dict) or set(acceptance) != {
+        "crypto_binding_count", "required_crypto_evidence", "observation_seconds",
+        "v1_fallback_return_required", "vn_primary_requires_in_session_evidence",
+    }:
+        raise ValueError("shared primary packet acceptance fields are invalid")
+    if (
+        acceptance.get("crypto_binding_count") != 12
+        or acceptance.get("required_crypto_evidence") != list(_REQUIRED_CRYPTO_EVIDENCE)
+        or not isinstance(acceptance.get("observation_seconds"), int)
+        or not 60 <= acceptance["observation_seconds"] <= 1_800
+        or acceptance.get("v1_fallback_return_required") is not True
+        or acceptance.get("vn_primary_requires_in_session_evidence") is not True
+    ):
+        raise ValueError("shared primary packet acceptance scope is invalid")
     route = packet["consumer_route"]
     if not isinstance(route, dict) or not isinstance(route.get("sealed_route"), dict):
         raise ValueError("shared primary packet route is invalid")
@@ -456,6 +520,71 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
         if isinstance(item, dict)
     ):
         raise ValueError("shared primary packet route drill does not prove fallback return")
+
+
+def validate_prepared_shared_primary_bundle(
+    packet: Mapping[str, Any],
+    *,
+    runtime_dir: Path,
+    now_ns: int | None = None,
+) -> dict[str, Any]:
+    """Read-only host-side verification of a sealed packet and its bundle."""
+    validate_shared_primary_packet(packet)
+    now = time.time_ns() if now_ns is None else now_ns
+    issued_at_ns = packet.get("issued_at_ns")
+    expires_at_ns = packet.get("expires_at_ns")
+    if (
+        not isinstance(issued_at_ns, int)
+        or not isinstance(expires_at_ns, int)
+        or expires_at_ns != issued_at_ns + 1_800_000_000_000
+        or now < issued_at_ns
+        or now >= expires_at_ns
+    ):
+        raise ValueError("shared primary packet is not within its approved time window")
+    declared_runtime_dir = Path(packet["compose_environment"]["QDL_STABLE_RUNTIME_DIR"])
+    if (
+        not runtime_dir.is_absolute()
+        or runtime_dir.absolute() != declared_runtime_dir.absolute()
+        or runtime_dir.is_symlink()
+        or not runtime_dir.is_dir()
+    ):
+        raise ValueError("shared primary runtime directory does not match the packet")
+    files = packet["runtime_bundle"]["files"]
+    actual = {item.name for item in runtime_dir.iterdir()}
+    if actual != set(files):
+        raise ValueError("shared primary runtime file set differs from the packet")
+    for name, expected_digest in files.items():
+        path = runtime_dir / name
+        if path.is_symlink() or not path.is_file() or _file_digest(path) != expected_digest:
+            raise ValueError(f"shared primary runtime file digest mismatch: {name}")
+    authority = json.loads((runtime_dir / "authority.json").read_text(encoding="utf-8"))
+    route = json.loads((runtime_dir / "consumer-route-primary.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (runtime_dir / "shared-primary-runtime-manifest.json").read_text(encoding="utf-8")
+    )
+    if authority != packet["authority"]:
+        raise ValueError("shared primary runtime authority differs from the packet")
+    if route != packet["consumer_route"]["sealed_route"]:
+        raise ValueError("shared primary runtime consumer route differs from the packet")
+    manifest_files = {
+        name: digest
+        for name, digest in files.items()
+        if name != "shared-primary-runtime-manifest.json"
+    }
+    if (
+        manifest.get("authority_sha256") != _sha256(authority)
+        or manifest.get("sealed_consumer_route") != route
+        or manifest.get("runtime_files") != manifest_files
+    ):
+        raise ValueError("shared primary runtime manifest differs from the packet")
+    return {
+        "status": "PASS",
+        "packet_sha256": packet["packet_sha256"],
+        "runtime_bundle_sha256": packet["runtime_bundle"]["sha256"],
+        "runtime_file_count": len(files),
+        "authority_mode": authority["mode"],
+        "read_only": True,
+    }
 
 
 def main() -> int:

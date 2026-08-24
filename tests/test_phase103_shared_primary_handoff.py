@@ -22,6 +22,7 @@ from qdl.runtime.stable_deployment import (
 from scripts.phase103_prepare_shared_primary_packet import (
     _ALLOWED_SERVICE_ORDER,
     prepare_shared_primary_packet,
+    validate_prepared_shared_primary_bundle,
     validate_shared_primary_packet,
 )
 
@@ -247,8 +248,32 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Compose environment differs"):
                 validate_shared_primary_packet(bad_environment)
 
+            bad_topic = copy.deepcopy(packet)
+            bad_topic["deployment"]["topic"]["partitions"] = 7
+            self.reseal(bad_topic)
+            with self.assertRaisesRegex(ValueError, "topic scope"):
+                validate_shared_primary_packet(bad_topic)
+
+            bad_acl = copy.deepcopy(packet)
+            bad_acl["deployment"]["acl_intent"]["core"] = "phase8-consumer"
+            self.reseal(bad_acl)
+            with self.assertRaisesRegex(ValueError, "ACL scope"):
+                validate_shared_primary_packet(bad_acl)
+
             with self.assertRaisesRegex(FileExistsError, "must be empty"):
                 self.packet(root / "packet")
+
+    def test_packet_accepts_a_precreated_empty_output_directory(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-phase103-packet-") as directory:
+            output = Path(directory) / "empty"
+            output.mkdir()
+            packet = self.packet(output, host_runtime_dir=output / "runtime")
+            self.assertTrue((output / "shared-primary-handoff-packet.json").is_file())
+            validate_prepared_shared_primary_bundle(
+                packet,
+                runtime_dir=output / "runtime",
+                now_ns=1_800_000_000_000_000_001,
+            )
 
     def test_packet_requires_bounded_observation_window_and_immutable_image(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phase103-packet-") as directory:
@@ -285,6 +310,17 @@ class SharedPrimaryPacketTests(unittest.TestCase):
                     observation_seconds=300,
                     issued_at_ns=1_800_000_000_000_000_000,
                 )
+            with self.assertRaisesRegex(ValueError, "rust_image_digest"):
+                prepare_shared_primary_packet(
+                    output_dir=Path(directory) / "bad-rust-hex",
+                    rust_image_digest="sha256:" + "z" * 64,
+                    python_image_digest="sha256:" + "c" * 64,
+                    source_commit="0123456789abcdef",
+                    actor="BobbyAxerol",
+                    change_ticket="QDL-PHASE103-TEST",
+                    observation_seconds=300,
+                    issued_at_ns=1_800_000_000_000_000_000,
+                )
             with self.assertRaisesRegex(ValueError, "host_runtime_dir"):
                 prepare_shared_primary_packet(
                     output_dir=Path(directory) / "bad-host-runtime-dir",
@@ -296,6 +332,40 @@ class SharedPrimaryPacketTests(unittest.TestCase):
                     observation_seconds=300,
                     issued_at_ns=1_800_000_000_000_000_000,
                     host_runtime_dir=Path("runtime"),
+                )
+
+    def test_prepared_bundle_rejects_tamper_extra_files_and_expiry(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-phase103-packet-") as directory:
+            output = Path(directory) / "packet"
+            packet = self.packet(output, host_runtime_dir=output / "runtime")
+            runtime = output / "runtime"
+            bundle = validate_prepared_shared_primary_bundle(
+                packet,
+                runtime_dir=runtime,
+                now_ns=1_800_000_000_000_000_001,
+            )
+            self.assertEqual(bundle["status"], "PASS")
+            self.assertEqual(bundle["runtime_file_count"], 8)
+            with self.assertRaisesRegex(ValueError, "approved time window"):
+                validate_prepared_shared_primary_bundle(
+                    packet,
+                    runtime_dir=runtime,
+                    now_ns=packet["expires_at_ns"],
+                )
+            (runtime / "unexpected.json").write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "file set"):
+                validate_prepared_shared_primary_bundle(
+                    packet,
+                    runtime_dir=runtime,
+                    now_ns=1_800_000_000_000_000_001,
+                )
+            (runtime / "unexpected.json").unlink()
+            (runtime / "authority.json").write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "file digest mismatch"):
+                validate_prepared_shared_primary_bundle(
+                    packet,
+                    runtime_dir=runtime,
+                    now_ns=1_800_000_000_000_000_001,
                 )
 
 

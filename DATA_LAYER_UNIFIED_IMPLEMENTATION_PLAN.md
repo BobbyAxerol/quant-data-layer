@@ -12601,6 +12601,66 @@ RUNTIME PACKET PENDING`).**
   a separate explicit approval containing the generated packet SHA/token,
   current stable env path, all 13 V2 service names, 300-second observation and
   the stop-only V1 rollback.
+- **Preflight correctness addition:** the offline packet validator must reject
+  non-hex image IDs, altered topic/ACL/acceptance scope, expired packet use,
+  symlink/extra/missing runtime files and every runtime-file digest mismatch.
+  A small read-only CLI may verify those conditions on the host before the
+  operator approves a mutation; it may not invoke Docker, Kafka, Redis,
+  PostgreSQL, provider endpoints or a consumer route.
+- **Bounded apply-helper addition:** because the historical stable broker
+  bootstrap grants and creates a larger Phase-9 scope, add one small
+  Phase-10.3-specific helper that defaults to an offline review and can act
+  only with `--apply --confirm <packet token>`. Its allowlist is the one raw
+  topic and exact producer/core ACL intents sealed in the packet. It must have
+  no offset/reset/delete/flush/service action and unit tests must inspect its
+  emitted broker commands before it is documented for an operator packet.
+- **CLI usability invariant:** a pre-created empty packet directory is valid;
+  only a non-empty directory is rejected. The review-only CLI smoke must cover
+  prepare, host bundle validation and broker-scope dry-run using a disposable
+  tmpfs directory before this slice is committed.
+- **Final apply-order invariant:** the helper must create-or-verify and
+  describe the sealed raw topic *before* it grants any ACL. A pre-existing
+  topic with mismatched policy therefore fails without expanding permissions.
+
+**Phase 10.3 exact shared-primary handoff preflight checkpoint - 2026-08-24
+(`SOURCE/PREFLIGHT PASS / RUNTIME CUTOVER PENDING`).**
+
+- Added the concise operator procedure at
+  `docs/runbooks/phase103-shared-rust-primary-handoff.md`. It replaces the
+  obsolete `production_core_*` flow for this handoff: one V2 raw topic, exact
+  producer/core ACLs, the fixed 13-service list, 300-second acceptance, V1
+  fallback plus stop-only rollback. It explicitly excludes offset operations,
+  deletion, flushes, V1 restart, alpha/order mutation and VN primary.
+- Hardened `phase103_prepare_shared_primary_packet.py`: immutable image IDs
+  are full lowercase SHA256 values; packet validation seals its exact runtime
+  file set/digests, topic, ACL intent, conditional VN exclusion and acceptance
+  scope. The new read-only host validator rejects expired packets, path drift,
+  symlinks, extra/missing/tampered files and manifest/route/authority mismatch.
+  A pre-created empty output directory is now accepted as documented; a
+  non-empty one still fails closed.
+- Added `phase103_validate_shared_primary_packet.py` (offline packet/bundle
+  validation) and `phase103_apply_shared_primary_broker_scope.py`. The latter
+  defaults to review-only; its only apply path requires the exact sealed token
+  and has exactly nine create-or-verify/ACL actions. It has no service,
+  offset/reset/delete/flush/V1/consumer-route command path. It describes and
+  validates the raw topic immediately after create-or-verify, before granting
+  any ACL; a pre-existing policy mismatch therefore leaves permissions intact.
+- **Tests actually run:** immutable `qdl-v2-python:2.0.0-7b7388348615`,
+  `--network none`, read-only root filesystem and tmpfs only: targeted packet
+  and broker-scope suites `11/11`; related deployment/release/realtime matrix
+  `60/60`; CLI prepare -> validate -> broker dry-run smoke passed. Host
+  `py_compile` for all three scripts and `git diff --check` passed. The test
+  containers were removed automatically; temporary packet/state lived only in
+  container tmpfs. Existing negative-path test diagnostics about
+  `build_production_core_bundle.py` arguments and a fenced DNSE queue were
+  emitted but the suite exited `0`; neither is part of this handoff path.
+- **No runtime mutation:** no Docker service, image, Kafka topic/offset/ACL,
+  Redis/SQLite/PostgreSQL state, authority record, V1 route, Trading System,
+  alpha or provider state changed. The remaining Phase 10.3 decision gate is
+  an explicit operator approval of a newly generated unexpired packet with its
+  SHA/token, stable env path, exact 13 V2 services, 300-second observation and
+  V1 stop-only rollback. Only after its measured acceptance can 10.3 be marked
+  runtime certified.
 
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
