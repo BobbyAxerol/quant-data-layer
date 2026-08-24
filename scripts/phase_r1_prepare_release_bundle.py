@@ -238,6 +238,7 @@ def prepare_release_bundle(
     source_env: Path,
     group_id: str | None = None,
     key_factory: Callable[[int], str] = secrets.token_hex,
+    generation_factory: Callable[[int], str] = secrets.token_hex,
     clock: Callable[[], int] = time.time_ns,
 ) -> dict[str, object]:
     source = source_bundle.resolve()
@@ -270,10 +271,15 @@ def prepare_release_bundle(
     if missing:
         raise ValueError("source bundle is missing required stable env values: " + ",".join(missing))
     image_suffix = rust_image_id.removeprefix("sha256:")[:12]
-    effective_group = group_id or f"qdl-v2-production-core-r1-{image_suffix}"
+    generation_nonce = generation_factory(6)
+    if not isinstance(generation_nonce, str) or not re.fullmatch(r"[0-9a-f]{12}", generation_nonce):
+        raise ValueError("R1 generation factory must produce 96-bit lowercase hex")
+    effective_group = group_id or (
+        f"qdl-v2-production-core-r1-{image_suffix}-{generation_nonce}"
+    )
     if not _GROUP.fullmatch(effective_group) or effective_group.endswith("-phase92-raw"):
         raise ValueError("R1 bootstrap group ID is invalid")
-    key_id = f"phase92-r1-{image_suffix}"
+    key_id = f"phase92-r1-{image_suffix}-{generation_nonce}"
     key = key_factory(32)
     if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key):
         raise ValueError("R1 bootstrap key factory must produce 256-bit lowercase hex")
@@ -328,6 +334,7 @@ def prepare_release_bundle(
         "previous_env_rust_image_digest": env["QDL_STABLE_RUST_IMAGE"],
         "bootstrap_group_id": effective_group,
         "bootstrap_key_id": key_id,
+        "bootstrap_generation_nonce": generation_nonce,
         "bootstrap_key_sha256": hashlib.sha256(key.encode("ascii")).hexdigest(),
         "promotion_binding_count": len(scope.binding_ids),
         "promotion_scope_digest": scope.digest(),

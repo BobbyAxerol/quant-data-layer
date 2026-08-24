@@ -10971,3 +10971,37 @@ live migration or authority transition is part of R0.
   bundle with the same immutable Rust image but new signing group/key is
   required before retrying the physical fence; a fresh reference/admission and
   bootstrap packet will bind that new bundle. No authority state changed.
+
+**R1 retry-generation identity finding - 2026-08-24 (in progress).**
+
+- The first repaired private bundle correctly has public runtime JSON `0644`,
+  but its default Phase 9.2 group/key ID is still derived solely from the Rust
+  image suffix. Retrying the same immutable image therefore reused the group
+  name of the earlier failed, never-started bundle. There are no committed
+  offsets or issued cursor for that old group, so no durable replay occurred;
+  nevertheless reuse violates the R0 generation-bound retry invariant.
+- Required repair: derive the default production group and signing key ID from
+  both immutable image suffix and one invocation generation nonce, bind that
+  nonce into runtime/authority material, and test two same-image release
+  attempts produce disjoint group/key identities. Preserve both pre-authority
+  bundles as evidence; create a new third sealed bundle after the source gate.
+  No existing group is reset, reused or deleted.
+
+**R1 retry-generation source repair - 2026-08-24.**
+
+- Status: `SOURCE CERTIFIED / FRESH BUNDLE PENDING / AUTHORITY UNCHANGED`.
+  `phase_r1_prepare_release_bundle.py` now derives default Phase 9.2 group and
+  key IDs from the immutable image suffix plus a cryptographically generated
+  96-bit lowercase-hex release-generation nonce. The nonce is recorded in the
+  non-secret release manifest; the actual signing key remains private. An
+  explicit operator-supplied group is still validated, but retries cannot
+  silently share the default group.
+- Regression coverage creates two same-image/same-clock bundles and proves
+  group ID, key ID, key digest and generation nonce all differ. The impacted
+  isolated R1 suite passed `58` tests, including the prior runtime-permission,
+  scope exclusion, no-secret and C3/cursor/rollover guards. `py_compile` and
+  `git diff --check` passed.
+- Next gate: build a third sealed R1 bundle from the retained active source
+  lineage; verify `0700` root, `0600` env and `0644` runtime JSON, then run a
+  non-root generic-core start/stop preflight before attempting the approved
+  three-replica rolling fence. The old two bundles remain immutable evidence.

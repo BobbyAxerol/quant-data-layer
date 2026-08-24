@@ -71,6 +71,7 @@ class R1ReleaseBundleTests(unittest.TestCase):
                 apply=False,
                 source_env=source / "stable.env.active",
                 key_factory=lambda _: "f" * 64,
+                generation_factory=lambda _: "1" * 12,
                 clock=lambda: 123,
             )
             self.assertEqual(result["status"], "DRY_RUN")
@@ -96,6 +97,7 @@ class R1ReleaseBundleTests(unittest.TestCase):
                 apply=True,
                 source_env=source / "stable.env.active",
                 key_factory=lambda _: "f" * 64,
+                generation_factory=lambda _: "1" * 12,
                 clock=lambda: 123,
             )
             self.assertEqual(result["status"], "APPLIED")
@@ -111,7 +113,10 @@ class R1ReleaseBundleTests(unittest.TestCase):
             self.assertEqual(values["QDL_STABLE_CORE_CERT_DIR"], str(output / "identities-rotate-test/core"))
             self.assertEqual(values["QDL_STABLE_CERT_DIR"], str(output / "cert-material-rotate-test"))
             self.assertNotIn("QDL_STABLE_COMPOSE_OVERRIDE", values)
-            self.assertEqual(values["QDL_PHASE92_BOOTSTRAP_GROUP_ID"], "qdl-v2-production-core-r1-cccccccccccc")
+            self.assertEqual(
+                values["QDL_PHASE92_BOOTSTRAP_GROUP_ID"],
+                "qdl-v2-production-core-r1-cccccccccccc-111111111111",
+            )
             self.assertTrue((output / "identities/core/client.crt").is_file())
             self.assertTrue((output / "identities-rotate-test/core/client.crt").is_file())
             self.assertTrue((output / "cert-material-rotate-test/ca.crt").is_file())
@@ -125,6 +130,7 @@ class R1ReleaseBundleTests(unittest.TestCase):
             self.assertEqual(set(runtime_modes.values()), {"0o644"})
             manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
             self.assertFalse(manifest["secret_values_recorded"])
+            self.assertEqual(manifest["bootstrap_generation_nonce"], "111111111111")
             self.assertEqual(manifest["source_commit"], SOURCE_COMMIT)
             self.assertEqual(manifest["rollback_rust_image_digest"], ROLLBACK_RUST_IMAGE)
             self.assertNotIn("legacy-password", json.dumps(manifest, sort_keys=True))
@@ -144,6 +150,31 @@ class R1ReleaseBundleTests(unittest.TestCase):
             )
             self.assertEqual(len(production_ids), len(scope.binding_ids))
             self.assertTrue(generic_ids.isdisjoint(production_ids))
+
+    def test_same_image_retries_receive_disjoint_generation_bound_group_and_key(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = self._source_bundle(root)
+            first = prepare_release_bundle(
+                source_bundle=source, output_bundle=root / "release-one",
+                rust_image_id=RUST_IMAGE, rollback_rust_image_id=ROLLBACK_RUST_IMAGE,
+                source_commit=SOURCE_COMMIT, apply=True,
+                source_env=source / "stable.env.active",
+                key_factory=lambda _: "a" * 64,
+                generation_factory=lambda _: "1" * 12, clock=lambda: 123,
+            )
+            second = prepare_release_bundle(
+                source_bundle=source, output_bundle=root / "release-two",
+                rust_image_id=RUST_IMAGE, rollback_rust_image_id=ROLLBACK_RUST_IMAGE,
+                source_commit=SOURCE_COMMIT, apply=True,
+                source_env=source / "stable.env.active",
+                key_factory=lambda _: "b" * 64,
+                generation_factory=lambda _: "2" * 12, clock=lambda: 123,
+            )
+            self.assertNotEqual(first["bootstrap_group_id"], second["bootstrap_group_id"])
+            self.assertNotEqual(first["bootstrap_key_id"], second["bootstrap_key_id"])
+            self.assertNotEqual(first["bootstrap_key_sha256"], second["bootstrap_key_sha256"])
+            self.assertNotEqual(first["bootstrap_generation_nonce"], second["bootstrap_generation_nonce"])
 
     def test_source_env_is_required_and_must_remain_in_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
