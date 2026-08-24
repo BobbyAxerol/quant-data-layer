@@ -13109,6 +13109,46 @@ CUTOVER PENDING`).**
   require query/stream/projector/edge startup to report it. This changes no
   endpoint, data contract or topology; it prevents false audit attribution.
 
+**Phase 10.3 fresh shared-primary packet and cross-repository preflight -
+2026-08-24 (`REVIEW READY / NOT APPLIED`).**
+
+- Generated a new short-lived review-only packet from Data Layer commit
+  `964cc45` because every earlier packet had expired. The host validator passed
+  the packet with schema `qdl.v2.shared-primary-handoff-packet.v2`, exactly
+  eight runtime files, authority `RUST_PRIMARY`, `12` crypto bindings and `13`
+  named V2 roles. Its immutable packet SHA-256 is
+  `8451dd98fdbc2a848b256f209c25177c49ecef38583a3943d841047e1fa9f824`; it
+  expires after the sealed thirty-minute review interval and is not edited or
+  reusable after expiry.
+- Re-verified the non-secret cross-repository route lock before any named
+  Trading System recreation. The reviewed Trading System source and its one
+  immutable candidate image (`tradingsystem-image:sha-81bfe8541e14`, image ID
+  `sha256:42d41023f78122135f6d1ab7090011bc115983f6f7e464a13a7ad9d98e66febb`)
+  both contain route manifest SHA-256
+  `b4376881b71853fc514ed70198cb52040aa0af3a8ad3f283bbab6fa2a2900e9f` and
+  market-data Compose override SHA-256
+  `68e1ae602216063e4468d4354af3e57e4ead8ae6984b661e8b83cd576835478e`.
+  This proves the candidate is the exact bounded BTC/ETH Binance USD-M and OKX
+  Swap route set, with no wildcard expansion.
+- Rendered `docker-compose.v2-stable.yml` successfully using the existing
+  secret-bearing stable environment plus only the packet's six sealed,
+  non-secret substitutions (runtime directory, two immutable image digests,
+  authority mode/revision and config revision). The render was local only; it
+  did not contact the Docker daemon or create/recreate a service.
+- **Runtime remains unchanged:** the active V1 Data Layer and Trading System
+  remain up; the observed V2 plane is still the prior shadow deployment. No
+  Kafka topic/ACL/offset, Redis/SQLite/PostgreSQL state, provider subscription,
+  authority record, consumer route, alpha state, order state, service or
+  volume changed. The candidate image was built once in the preceding bounded
+  source slice; this review generated no new runtime image.
+- **Remaining decision gate:** a fresh explicit approval is still required
+  before the helper may create-or-verify the one raw topic and its nine bounded
+  broker/ACL actions, before exactly the sealed 13 V2 roles and the one named
+  Trading System `market_data` service are recreated, and before the
+  300-second no-order receipt/fallback acceptance may run. Failure rolls the
+  route back to the frozen V1 revision and stops only those named V2 roles;
+  it never resets offsets, flushes state, deletes data or restarts V1.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,
