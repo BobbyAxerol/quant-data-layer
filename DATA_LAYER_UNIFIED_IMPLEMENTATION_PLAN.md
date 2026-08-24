@@ -11331,3 +11331,58 @@ live migration or authority transition is part of R0.
 
 - Implemented private output preparation in the collector: it creates a missing direct evidence parent at 0700, refuses an existing report before Kafka work begins, and sets accepted evidence to 0640. No runtime public contract or Rust candidate binary changed.
 - Focused network-isolated Python regression passed 24/24 across C40 live core parity, R1 admission/release/rollover and Phase 9.2 cursor contracts. The next collector attempt will use a fresh qdl-r1-reference-parity group and the same authentic C40 timestamp; the failed no-output attempt remains only journaled diagnostic evidence.
+
+
+**R1 e364 candidate rollover CAS execution - 2026-08-24.**
+
+- Packet `3fbfd0219f49306bff0c5c3800715e3fc0c4c4991de68ab29476769a7a6dda4a` was dry-run and applied for candidate image `sha256:e3640be4cfbf7d101fb393daba43e3359d6af3b94e56fec87f725ec34d7d85f5` / candidate digest `0eb750bdce0771bb9631a8bd17e0ca53dc80db3c488adeb63146c8e3260d1a3f`.
+- Result: one new prerequisite bundle plus twelve append-only rollover/audit/outbox records; the 12 selected rows remained `BLOCKED` and advanced from revision `12`/lease `4` to revision `13`/lease `5`. Apply reported `production_mutations=13` and `kafka_offset_mutations=0`.
+- No Kafka topic/offset operation, Redis/SQLite mutation, V1/Trading System/generic-core/DNSE/Spot change or production_core start occurred.
+
+
+**R1 e364 C3 REVALIDATE pre-apply - 2026-08-24.**
+
+- Operator-approved R0/R1/R2 scope permits this exact control-plane transition only. Packet `fe97f339b805c6e9c70907d0677645f94f9ec3173b2a4eaf336a8166bf38f97c` dry-run parsed successfully from the fresh sealed e364 bundle: 12 Binance USD-M/OKX Swap TRADE/QUOTE/BAR slices, `BLOCKED@revision 13/lease 5` to `VALIDATING@revision 14/lease 5`, owner unchanged, candidate `0eb750bdce07`.
+- Invariants before apply: V1 compact health is `ok` with Binance trade/kline flags true; all production_core replicas remain stopped; C3 apply is restricted to 12 authority CAS/outbox mutations. It must not reset/seek/commit Kafka offsets, mutate Kafka topics, Redis/SQLite, V1, Trading System, generic scope-fenced cores, DNSE/Spot or start a production core.
+- Rollback boundary: a CAS/expiry failure stops this sequence before canary; V1 remains the hot fallback.
+
+
+**R1 e364 C3 REVALIDATE execution - 2026-08-24.**
+
+- Applied exact reviewed packet `fe97f339b805c6e9c70907d0677645f94f9ec3173b2a4eaf336a8166bf38f97c`. All 12 selected Binance USD-M/OKX Swap TRADE/QUOTE/BAR slices transitioned only from `BLOCKED@revision 13/lease 5` to `VALIDATING@revision 14/lease 5`; owner remains `qdl-v2-rust-canary` and candidate provenance remains `0eb750bdce07`.
+- Apply evidence: `production_mutations=12`; all returned rows match `VALIDATING`, revision `14`, lease `5`. No production_core was started. No Kafka offset/topic operation, Redis/SQLite mutation, V1/Trading System/generic-core/DNSE/Spot change occurred.
+- Next gate: generate and dry-run a fresh exact C3 CANARY packet from these revision-14 rows. It remains output-fenced until a fresh signed tail cursor and rolling real-provider runtime acceptance pass.
+
+
+**R1 canary-window observation - 2026-08-24 (not adopted as source scope).**
+
+- Fresh CANARY packet preparation from the valid `VALIDATING@revision 14/lease 5` rows succeeded, but its inherited immutable hold window ended at `2026-08-24T08:28:23Z`, leaving about five minutes. The packet remains un-applied evidence; no authority or runtime mutation followed.
+- This observation does **not** authorize or require a new `BLOCK_VALIDATING` feature, a per-retry authority ceremony, a new image, or a new bundle. The simplified V2 operating rules below are authoritative: preserve V1 rollback, retain evidence, and use one reviewed manifest/config route when a real demanded-slice acceptance run is scheduled.
+- No source code, Kafka reset/seek/commit, Redis/SQLite/V1/Trading System/generic-core/DNSE/Spot mutation or production_core start was performed from this observation.
+
+
+**V2 delivery simplification and DNSE live check - 2026-08-24.**
+
+- Operator rule: Data Layer V2 is judged first by its ability to provide real,
+  stable, scalable trading data. Rust is the shared canonical ingest/
+  normalization/stream core for Binance, OKX and VN; Python is limited to vendor
+  adapter, public endpoint/SDK compatibility and explicit fallback roles.
+- Certification covers every demanded manifest slice, not a BTC-only proxy. It
+  measures real-provider freshness, sequence/gap, reconnect/resync, lag,
+  CPU/RAM/I/O and real consumer behavior. V2 query/stream promotion is a
+  versioned manifest route; V1 remains automatic rollback until accepted.
+- Keep control plane minimal: scoped writer/leader lease, deterministic event
+  identity, durable watermark and explicit V1 rollback. A new retry does not
+  require a new image/bundle ceremony unless binary, contract/schema or durable
+  routing identity changed.
+- Read-only DNSE check at 2026-08-24 15:35 +07 found the VN session closed.
+  `fresh=true` preload for VN30F1M 1m timed out after 12 seconds. Cache-only
+  reads returned eight rows, but the final 1m/15m bars were 2026-08-18 14:29
+  / 14:15 +07, therefore stale and not execution-eligible. The V2 DNSE
+  canonical bindings/capabilities exist, but `vn_edge_v2` is not running and
+  has no in-session real-provider certification. No service was started or
+  restarted after close; this is an open VN runtime issue, not a V2 acceptance.
+- Current R1 authority remains `VALIDATING` for the twelve crypto slices;
+  no production Rust core was started and no V1/consumer route changed by this
+  documentation/test slice. Future action must use the simplified rules above,
+  not invent a per-retry authority ceremony.

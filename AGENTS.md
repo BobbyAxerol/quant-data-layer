@@ -61,3 +61,27 @@ stricter workspace rules but may not weaken this file.
 
 33. Working updates explain what is being checked or changed and why. Final reports state: implemented scope, domain behavior, tests/evidence, runtime impact, cleanup, remaining decision gates, commit/branch, and the next permitted step.
 34. Do not hide blockers or overstate readiness. Distinguish `implemented`, `tested locally`, `shadow-certified`, `production-ready`, and `production-authoritative` explicitly.
+
+
+## V2 Delivery And Rollout Rules
+
+35. The Rust core is the provider-neutral canonical ingest/normalization/streaming
+    core for Binance, OKX and VN venues. Python owns vendor SDK edges, public
+    endpoint/SDK compatibility and explicitly declared fallback adapters only.
+36. A real-provider certification covers every currently demanded slice in the
+    manifest across its approved venues; a BTC-only smoke never certifies a
+    multi-symbol or multi-venue route.
+37. V2 query/stream is introduced behind versioned consumer routing. V1 stays an
+    automatic, observable rollback route until the consumer manifest promotes
+    V2_PRIMARY; alpha-facing contracts remain stable.
+38. Acceptance measures real-provider freshness, sequence/gap behavior,
+    reconnect/resync, lag, bounded CPU/RAM/I/O and actual consumer behavior.
+    Synthetic data is limited to deterministic unit/contract tests.
+39. Primary routing changes only through a reviewed manifest/config revision with
+    an explicit V1 rollback revision. Do not use ad-hoc environment toggles as
+    authority.
+40. Authority fencing stays minimal and reusable: one scoped writer/leader lease,
+    deterministic idempotency/event identity, durable watermarks and an explicit
+    rollback route. Do not create a new image, bundle or ceremony for a retry
+    unless the binary, contract/schema, or durable routing identity actually
+    changed.
