@@ -10835,17 +10835,26 @@ live migration or authority transition is part of R0.
   blocked until this evidence is real, current and exact.
 - R1 bundle invariant: `phaseb_prepare_stable_candidate.py` is forbidden for
   the active authority DB because it creates new DB credentials/identities.
-  `phase_r1_prepare_release_bundle.py` must instead copy the current sealed
-  identity bundle into a new private directory, preserve all existing DB/MTLS
-  values, generate only a fresh Phase 9.2 key/group, atomically write fresh
-  runtime JSON and prove the generic core excludes the promoted twelve.
-- **R1 release-bundle source sub-slice - 2026-08-24:** implemented the
-  review-first clone tool with an output-must-not-exist guard, source read-only
-  invariant, mode `0600` env, atomic staging rename and secret-free manifest.
-  It copies only sealed `identities/`, regenerates runtime/ from the current
-  catalog/acquisition/scope and rewrites only bundle-local path variables plus
-  the immutable Rust image and new bootstrap key/group. Focused isolated tests
-  prove dry run leaves source/output untouched, apply preserves legacy DB and
-  ingest values without recording them, binds the new key/group, and keeps the
-  generic binding set disjoint from the production twelve. No real bundle or
-  runtime has been touched by this source sub-slice.
+  `phase_r1_prepare_release_bundle.py` must instead require the explicit active
+  env (including rotated identity lineage) from inside the current bundle, copy
+  every referenced `identities*` and `cert-material*` directory into a new
+  private directory, rewrite those bundle-local paths, preserve all existing
+  DB/MTLS values, clear historical Compose overrides,
+  generate only a fresh Phase 9.2 key/group, atomically write fresh runtime
+  JSON and prove the generic core excludes the promoted twelve.
+- **R1 release-bundle source sub-slice - 2026-08-24:** `SOURCE CERTIFIED /
+  RUNTIME UNCHANGED`. The review-first clone tool now requires an explicit
+  active source env, refuses an env outside the source bundle, preserves the
+  active DB/ingest/JWT values without recording them, atomically writes a
+  mode-`0600` output, regenerates only bundle-local runtime JSON plus the new
+  Phase 9.2 key/group, and clears historical C39/C40 Compose overrides. It
+  copies/re-hashes every `identities*` and `cert-material*` directory retained
+  by the source bundle, rewrites only declared copied-material paths, and fails
+  closed if a bundle-local reference would point outside that sealed material.
+  External Kafka TLS remains an unchanged external mount by design. Focused
+  test plus the impacted R0/R1/R2 contract matrix passed `90 passed, 1
+  documented isolated-Redis skip`; `phase_r1_candidate_rollover_smoke.sh`
+  passed with idempotent rollover and direct provenance rewrite rejection.
+  `py_compile` and `git diff --check` passed. No real bundle, database, Kafka,
+  Redis, service or V1/Trading System runtime has been touched by this source
+  sub-slice.

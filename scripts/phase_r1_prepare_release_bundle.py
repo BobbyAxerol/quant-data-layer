@@ -3,9 +3,10 @@
 
 ``phaseb_prepare_stable_candidate.py`` mints a new authority database
 credential and workload identities, so it cannot prepare a canary against the
-already-running authority control plane. This tool copies only existing sealed
-identity material into a new private release directory, writes fresh runtime
-JSON for one immutable Rust image, and creates a new Phase 9.2 signing
+already-running authority control plane. This tool requires the explicit active
+env, copies only its sealed bundle-local identity/certificate material into a
+new private release directory, writes fresh runtime JSON for one immutable Rust
+image, and creates a new Phase 9.2 signing
 key/group. It never changes the source bundle, database, Kafka, Redis, or a
 running Compose service.
 """
@@ -52,6 +53,7 @@ _REQUIRED_ENV = frozenset((
     "QDL_STABLE_CORE_CERT_DIR",
 ))
 _BUNDLE_PATH_ENV = frozenset((
+    "QDL_STABLE_CERT_DIR",
     "QDL_STABLE_PROJECTOR_CERT_DIR",
     "QDL_STABLE_AUTHORITY_CERT_DIR",
     "QDL_STABLE_CORE_CERT_DIR",
@@ -63,6 +65,7 @@ _BUNDLE_PATH_ENV = frozenset((
     "QDL_STABLE_ALPHA_BINANCE_CERT_DIR",
     "QDL_STABLE_ALPHA_BINANCE_JWT_PRIVATE_KEY",
 ))
+_MATERIAL_PREFIXES = ("identities", "cert-material")
 
 
 def _parse_env(path: Path) -> tuple[list[str], dict[str, str]]:
@@ -92,7 +95,7 @@ def _render_env_value(value: str) -> str:
     return value
 
 
-def _rewrite_env(lines: list[str], overrides: dict[str, str]) -> str:
+def _rewrite_env(lines: list[str], overrides: dict[str, str | None]) -> str:
     pending = dict(overrides)
     rendered: list[str] = []
     for line in lines:
@@ -102,11 +105,14 @@ def _rewrite_env(lines: list[str], overrides: dict[str, str]) -> str:
             continue
         key = stripped.split("=", 1)[0]
         if key in pending:
-            rendered.append(f"{key}={_render_env_value(pending.pop(key))}")
+            replacement = pending.pop(key)
+            if replacement is not None:
+                rendered.append(f"{key}={_render_env_value(replacement)}")
         else:
             rendered.append(line)
     for key in sorted(pending):
-        rendered.append(f"{key}={_render_env_value(pending[key])}")
+        if pending[key] is not None:
+            rendered.append(f"{key}={_render_env_value(pending[key] or '')}")
     return "\n".join(rendered) + "\n"
 
 
@@ -114,26 +120,51 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _tree_sha256(path: Path) -> str:
+def _material_dirs(source: Path) -> tuple[Path, ...]:
+    result = tuple(sorted(
+        item for item in source.iterdir()
+        if item.is_dir() and item.name.startswith(_MATERIAL_PREFIXES)
+    ))
+    if not result or not (source / "identities").is_dir():
+        raise FileNotFoundError("source bundle must retain identities/ material")
+    return result
+
+
+def _material_tree_sha256(source: Path, directories: tuple[Path, ...]) -> str:
     digest = hashlib.sha256()
-    for item in sorted(path.rglob("*")):
-        if not item.is_file():
-            continue
-        relative = item.relative_to(path).as_posix().encode("utf-8")
-        digest.update(len(relative).to_bytes(4, "big"))
-        digest.update(relative)
-        content = item.read_bytes()
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
+    for directory in directories:
+        root = directory.relative_to(source).as_posix().encode("utf-8")
+        digest.update(len(root).to_bytes(4, "big"))
+        digest.update(root)
+        for item in sorted(directory.rglob("*")):
+            if not item.is_file():
+                continue
+            relative = item.relative_to(source).as_posix().encode("utf-8")
+            digest.update(len(relative).to_bytes(4, "big"))
+            digest.update(relative)
+            content = item.read_bytes()
+            digest.update(len(content).to_bytes(8, "big"))
+            digest.update(content)
     return digest.hexdigest()
 
 
-def _relative_to_bundle(value: str, *, source: Path, output: Path) -> str:
+def _relative_to_bundle(
+    value: str,
+    *,
+    source: Path,
+    output: Path,
+    material_names: frozenset[str],
+    variable_name: str,
+) -> str:
     candidate = Path(value)
     try:
         relative = candidate.resolve(strict=False).relative_to(source)
     except ValueError:
         return value
+    if not relative.parts or relative.parts[0] not in material_names:
+        raise ValueError(
+            f"R1 bundle-local path for {variable_name} is not sealed release material"
+        )
     return str(output / relative)
 
 
@@ -151,6 +182,7 @@ def prepare_release_bundle(
     output_bundle: Path,
     rust_image_id: str,
     apply: bool,
+    source_env: Path,
     group_id: str | None = None,
     key_factory: Callable[[int], str] = secrets.token_hex,
     clock: Callable[[], int] = time.time_ns,
@@ -159,6 +191,15 @@ def prepare_release_bundle(
     output = output_bundle.resolve()
     if source == output or not (source / "stable.env").is_file() or not (source / "identities").is_dir():
         raise FileNotFoundError("source bundle must contain stable.env and identities/ and differ from output")
+    if source_env is None:
+        raise ValueError("R1 source env must be explicitly provided")
+    env_path = source_env.resolve()
+    try:
+        env_path.relative_to(source)
+    except ValueError as error:
+        raise ValueError("R1 source env must remain inside the source bundle") from error
+    if not env_path.is_file():
+        raise FileNotFoundError(f"R1 source env is unavailable: {env_path}")
     if output.exists():
         raise FileExistsError("R1 output bundle already exists; refusing to overwrite it")
     if not output.parent.is_dir():
@@ -166,7 +207,8 @@ def prepare_release_bundle(
     if not _DIGEST.fullmatch(rust_image_id):
         raise ValueError("R1 Rust image must be an immutable sha256 digest")
 
-    lines, env = _parse_env(source / "stable.env")
+    lines, env = _parse_env(env_path)
+    material_dirs = _material_dirs(source)
     missing = sorted(name for name in _REQUIRED_ENV if not env.get(name, "").strip())
     if missing:
         raise ValueError("source bundle is missing required stable env values: " + ",".join(missing))
@@ -199,17 +241,29 @@ def prepare_release_bundle(
         "QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON": json.dumps({key_id: key}, separators=(",", ":")),
         "QDL_PHASE92_BOOTSTRAP_CURSOR_ACTIVE_KEY_ID": key_id,
         "QDL_PHASE92_BOOTSTRAP_GROUP_ID": effective_group,
+        # A release starts from explicit current env/image selection. Retaining
+        # a historical c39/c40 override would silently re-pin stale images.
+        "QDL_STABLE_COMPOSE_OVERRIDE": None,
     }
+    material_names = frozenset(item.name for item in material_dirs)
     for name in _BUNDLE_PATH_ENV:
         if value := env.get(name):
-            overrides[name] = _relative_to_bundle(value, source=source, output=output)
+            overrides[name] = _relative_to_bundle(
+                value,
+                source=source,
+                output=output,
+                material_names=material_names,
+                variable_name=name,
+            )
 
     result: dict[str, object] = {
         "schema": "qdl.r1.release-bundle.v1",
         "status": "APPLIED" if apply else "DRY_RUN",
         "source_bundle": str(source),
-        "source_env_sha256": _sha256(source / "stable.env"),
-        "source_identities_sha256": _tree_sha256(source / "identities"),
+        "source_env": str(env_path.relative_to(source)),
+        "source_env_sha256": _sha256(env_path),
+        "source_material_sha256": _material_tree_sha256(source, material_dirs),
+        "source_material_directories": [item.name for item in material_dirs],
         "output_bundle": str(output),
         "rust_image_digest": rust_image_id,
         "previous_rust_image_digest": env["QDL_STABLE_RUST_IMAGE"],
@@ -229,7 +283,8 @@ def prepare_release_bundle(
     old_umask = os.umask(0o077)
     try:
         staging.mkdir(mode=0o700)
-        shutil.copytree(source / "identities", staging / "identities")
+        for directory in material_dirs:
+            shutil.copytree(directory, staging / directory.name)
         runtime = staging / "runtime"
         runtime.mkdir(mode=0o700)
         write_stable_runtime_bundle(
@@ -267,6 +322,7 @@ def main() -> int:
     parser.add_argument("--source-bundle", type=Path, required=True)
     parser.add_argument("--output-bundle", type=Path, required=True)
     parser.add_argument("--rust-image-id", required=True)
+    parser.add_argument("--source-env", type=Path, required=True, help="explicit active env file inside source bundle")
     parser.add_argument("--group-id")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--confirm")
@@ -277,6 +333,7 @@ def main() -> int:
         source_bundle=args.source_bundle,
         output_bundle=args.output_bundle,
         rust_image_id=args.rust_image_id,
+        source_env=args.source_env,
         group_id=args.group_id,
         apply=args.apply,
     )

@@ -69,13 +69,19 @@ No V1, Kafka, Redis, authority row, or runtime bundle changes occur in R0.
 ```bash
 python scripts/phase_r1_prepare_release_bundle.py \
   --source-bundle "$QDL_CURRENT_RELEASE_ROOT" \
+  --source-env "$QDL_ACTIVE_ENV_WITH_ROTATED_IDENTITIES" \
   --output-bundle "$QDL_R1_RELEASE_ROOT" \
   --rust-image-id "$QDL_R1_RUST_IMAGE" \
   --apply --confirm PREPARE_QDL_R1_RELEASE_BUNDLE
 ```
 
-   The generic-core bundle must exclude the twelve promoted bindings and each
-   production-core config must mount `production-bootstrap.json` read-only.
+   `--source-env` is mandatory and must name the actual active env inside the
+   source bundle. The clone carries every referenced `identities*` and
+   `cert-material*` lineage directory, rewrites those bundle-local paths, and
+   removes historical Compose overrides so an old C39/C40 image cannot be
+   silently reintroduced. The generic-core bundle must exclude the twelve
+   promoted bindings and each production-core config must mount
+   `production-bootstrap.json` read-only.
 4. Build a fresh C40-compatible bootstrap candidate packet from the new image,
    current catalog/acquisition/scope, SBOM, rollback manifest, and a current
    clean real-provider acceptance report. This writes a packet only.
