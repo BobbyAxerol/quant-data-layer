@@ -12,7 +12,6 @@ import argparse
 import asyncio
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import sys
 import time
@@ -24,6 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from qdl.control.authority_rollover import CandidateRolloverPacket
+from qdl.control.operator_env import require_control_admin_dsn
 from qdl.control.cutover_packet import AuthorityCutoverPacket
 from scripts.phasec40_prepare_cutover import (
     TERMINAL_SCHEMA,
@@ -44,12 +44,6 @@ WHERE slice_id = ANY($1::text[])
 ORDER BY slice_id
 """
 
-
-def _required_dsn() -> str:
-    value = os.environ.get("QDL_CONTROL_ADMIN_DSN", "").strip()
-    if not value:
-        raise RuntimeError("QDL_CONTROL_ADMIN_DSN is required")
-    return value
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -295,7 +289,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     rollover = CandidateRolloverPacket.parse(_load_json(args.rollover_packet))
-    rows = asyncio.run(_rows(_required_dsn(), sorted(item.slice_id for item in rollover.rollovers)))
+    rows = asyncio.run(_rows(require_control_admin_dsn(), sorted(item.slice_id for item in rollover.rollovers)))
     terminal, primary = prepare_primary_packets(
         rollover=rollover,
         live=_load_json(args.live_evidence),

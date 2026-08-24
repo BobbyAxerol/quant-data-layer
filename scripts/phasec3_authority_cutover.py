@@ -5,11 +5,11 @@ import argparse
 import asyncio
 from datetime import datetime
 import json
-import os
 from pathlib import Path
 from typing import Any
 
 from qdl.control.cutover_packet import AuthorityCutoverPacket, CutoverSlice
+from qdl.control.operator_env import require_control_admin_dsn
 
 
 _CURRENT_SQL = """
@@ -35,12 +35,6 @@ FROM qdl_transition_authority_v2(
 )
 """
 
-
-def required(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise RuntimeError(f"required environment variable is missing: {name}")
-    return value
 
 
 def _assert_current(
@@ -157,7 +151,7 @@ def main() -> int:
             "authority cutover confirmation token differs from immutable packet"
         )
     results = asyncio.run(
-        apply_packet(packet, required("QDL_CONTROL_ADMIN_DSN"))
+        apply_packet(packet, require_control_admin_dsn())
     )
     print(json.dumps({
         **plan,

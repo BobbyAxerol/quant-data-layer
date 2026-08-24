@@ -8,7 +8,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
-import os
 from pathlib import Path
 import sys
 import time
@@ -22,6 +21,7 @@ if str(ROOT) not in sys.path:
 
 from qdl.control.authority_outbox import _checkpoint, _digest, _timestamp_ns
 from qdl.control.cutover_packet import AuthorityCutoverPacket
+from qdl.control.operator_env import require_control_admin_dsn
 
 
 BOOTSTRAP_SCHEMA = "qdl.c40.authority-bootstrap-packet.v1"
@@ -532,10 +532,7 @@ def main() -> int:
         return 0
     if args.confirm != token:
         raise RuntimeError("terminal handoff confirmation token differs from packet")
-    dsn = os.environ.get("QDL_CONTROL_ADMIN_DSN", "").strip()
-    if not dsn:
-        raise RuntimeError("QDL_CONTROL_ADMIN_DSN is required for apply")
-    result = asyncio.run(apply_terminal(packet, dsn))
+    result = asyncio.run(apply_terminal(packet, require_control_admin_dsn()))
     print(json.dumps({
         "status": "PASS", "confirmation_token": token, **result,
     }, sort_keys=True))

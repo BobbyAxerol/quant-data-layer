@@ -14,7 +14,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
-import os
 from pathlib import Path
 import sys
 import time
@@ -26,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from qdl.control.operator_env import require_control_admin_dsn
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
     AuthorityPromotionScope,
@@ -561,10 +561,7 @@ def main() -> int:
         return 0
     if args.confirm != plan["confirmation_token"]:
         raise RuntimeError("bootstrap confirmation token differs from packet")
-    dsn = os.environ.get("QDL_CONTROL_ADMIN_DSN", "").strip()
-    if not dsn:
-        raise RuntimeError("QDL_CONTROL_ADMIN_DSN is required for apply")
-    result = asyncio.run(apply_packet(packet, dsn))
+    result = asyncio.run(apply_packet(packet, require_control_admin_dsn()))
     print(json.dumps({**plan, **result}, sort_keys=True))
     return 0
 

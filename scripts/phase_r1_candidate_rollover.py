@@ -7,7 +7,6 @@ import argparse
 import asyncio
 from datetime import datetime
 import json
-import os
 from pathlib import Path
 import sys
 from typing import Any, Mapping
@@ -17,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from qdl.control.authority_rollover import CandidateRolloverPacket, prepare_rollover_packet
+from qdl.control.operator_env import require_control_admin_dsn
 
 
 _CURRENT_SQL = """
@@ -42,12 +42,6 @@ SELECT * FROM qdl_rollover_authority_candidate(
 )
 """
 
-
-def _required_dsn() -> str:
-    value = os.environ.get("QDL_CONTROL_ADMIN_DSN", "").strip()
-    if not value:
-        raise RuntimeError("QDL_CONTROL_ADMIN_DSN is required")
-    return value
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -187,7 +181,7 @@ def main() -> int:
     if args.command == "prepare":
         bootstrap = _load_json(args.bootstrap)
         slice_ids = [str(item["slice_id"]) for item in bootstrap.get("slices", [])]
-        rows = asyncio.run(read_current_rows(_required_dsn(), slice_ids))
+        rows = asyncio.run(read_current_rows(require_control_admin_dsn(), slice_ids))
         packet = prepare_rollover_packet(
             bootstrap, rows, actor=args.actor, change_ticket=args.change_ticket,
             ttl_seconds=args.ttl_seconds,
@@ -204,7 +198,7 @@ def main() -> int:
         return 0
     if args.confirm != parsed.confirmation_token:
         raise RuntimeError("candidate rollover confirmation token differs from packet")
-    result = asyncio.run(apply_packet(parsed, _required_dsn()))
+    result = asyncio.run(apply_packet(parsed, require_control_admin_dsn()))
     print(json.dumps({**plan, **result, "apply_requested": True}, sort_keys=True))
     return 0
 
