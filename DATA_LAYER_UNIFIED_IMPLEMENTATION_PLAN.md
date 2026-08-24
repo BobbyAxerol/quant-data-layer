@@ -10734,6 +10734,15 @@ live migration or authority transition is part of R0.
 
 ### R1 - Bounded Real Canary
 
+- **Physical-fence ordering:** the existing generic `rust_core` reads a static
+  `authority.json`/core binding configuration; its C40 database row is audit
+  and control-plane state, not a live process kill-switch. R1 must first
+  collect reference parity, then rolling-recreate only `rust_core*` from the
+  new generic bundle that excludes exactly the promoted twelve. This creates a
+  deliberate canary-only absence for those twelve while V1 stays authoritative.
+  Verify the physical exclusion before C40 becomes `BLOCKED`; otherwise a
+  blocked DB row could coexist with a stale physical writer. Only then
+  terminalize C40, rollover, revalidate and start `production_core_*`.
 - **Precondition:** R0 gates pass and generic Rust writer excludes all twelve
   promoted bindings.
 - **Action:** terminalize C40 attempt without deleting evidence; issue a fresh

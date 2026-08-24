@@ -109,10 +109,17 @@ python scripts/phase_r1_prepare_precanary_admission.py \
    authority database only after its dry-run/checksum matches the reviewed
    commit. It is additive and has no V1 table/data mutation.
 
-## R1.2 - Terminalize C40, Rollover, Revalidate And Canary
+## R1.2 - Physical Fence, Terminalize C40, Rollover, Revalidate And Canary
 
 All packets are first generated/read-only, inspected, and only then applied
-with their printed confirmation token. These paths never reset Kafka.
+with their printed confirmation token. These paths never reset Kafka. The
+currently running generic core has static runtime authority; therefore an
+authority DB `BLOCKED` row alone does not stop that old process. Capture the
+reference parity first, then rolling-recreate only `rust_core`, `rust_core_2`
+and `rust_core_3` from the R1 bundle so their generic configs exclude the
+promoted twelve. Verify the exclusion before issuing the C40 block packet. This
+is intentionally fail-closed for the twelve canary slices; V1 remains the
+public fallback during the short handoff window.
 
 ```bash
 # 1. C40 canary -> BLOCKED. The bootstrap file identifies exactly 12 slices.
