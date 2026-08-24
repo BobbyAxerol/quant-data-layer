@@ -118,6 +118,38 @@ class CandidateRolloverPacketTests(unittest.TestCase):
             for item in parsed.rollovers
         ))
 
+    def test_rollover_expiry_is_clamped_to_parent_approval(self) -> None:
+        issued_at = NOW + 1_000_000_000
+        packet = prepare_rollover_packet(
+            self.bootstrap,
+            self.current_rows,
+            actor="operator@example",
+            change_ticket="QDL-R1-TTL",
+            issued_at_ns=issued_at,
+            ttl_seconds=86_400,
+        )
+        self.assertEqual(
+            packet["expires_at_ns"],
+            NOW + 86_400 * 1_000_000_000,
+        )
+        self.assertLess(
+            packet["expires_at_ns"],
+            issued_at + 86_400 * 1_000_000_000,
+        )
+        CandidateRolloverPacket.parse(packet, now_ns=issued_at)
+
+    def test_rollover_rejects_parent_approval_with_under_minute_remaining(self) -> None:
+        issued_at = NOW + 86_400 * 1_000_000_000 - 30 * 1_000_000_000
+        with self.assertRaisesRegex(ValueError, "too close to expiry"):
+            prepare_rollover_packet(
+                self.bootstrap,
+                self.current_rows,
+                actor="operator@example",
+                change_ticket="QDL-R1-TTL",
+                issued_at_ns=issued_at,
+                ttl_seconds=60,
+            )
+
     def test_tampered_provenance_and_semantic_drift_fail_closed(self) -> None:
         packet = prepare_rollover_packet(
             self.bootstrap,

@@ -363,6 +363,18 @@ def prepare_rollover_packet(
             "new_lease_epoch": expected_lease + 1,
             "new_provenance": provenance,
         })
+    parent_expires_at_ns = _iso_timestamp_ns(
+        bootstrap["prerequisite_bundle"]["expires_at"],
+        "bootstrap prerequisite expiry",
+    )
+    expires_at_ns = min(
+        now + ttl_seconds * 1_000_000_000,
+        parent_expires_at_ns,
+    )
+    if expires_at_ns - now < 60 * 1_000_000_000:
+        raise ValueError(
+            "candidate rollover prerequisite approval is too close to expiry"
+        )
     packet = {
         "schema": SCHEMA,
         "packet_id": str(uuid.uuid5(
@@ -370,7 +382,7 @@ def prepare_rollover_packet(
             f"qdl-r1-rollover-packet:{candidate_digest}:{','.join(item['rollover_id'] for item in rollovers)}",
         )),
         "issued_at_ns": now,
-        "expires_at_ns": now + ttl_seconds * 1_000_000_000,
+        "expires_at_ns": expires_at_ns,
         "actor": actor,
         "change_ticket": change_ticket,
         "candidate": dict(bootstrap["candidate"]),
