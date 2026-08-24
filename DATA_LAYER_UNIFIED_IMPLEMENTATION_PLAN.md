@@ -12662,6 +12662,30 @@ RUNTIME PACKET PENDING`).**
   V1 stop-only rollback. Only after its measured acceptance can 10.3 be marked
   runtime certified.
 
+**Phase 10.3 current review packet - 2026-08-24 (`REVIEW READY / NOT
+APPLIED`).**
+
+- Generated and read-only validated the fresh packet at
+  `/home/bobby/.local/state/qdl-v2/phase103-shared-primary-7b7388348615-20260824T192338Z/`.
+  It is valid from `2026-08-24T19:23:39Z` through
+  `2026-08-24T19:53:39Z`, has SHA256
+  `69845562b17541cc783e72b85595ff76f991f672685076c8b209f3cd552663ba`,
+  token `APPLY_QDL_PHASE103_69845562b17541cc`, Rust image
+  `sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`
+  and Python image
+  `sha256:90c96b9c4418525ec6e505e7debcb7dfc8addbcb9e957eeaded90f2e9ddc8730`.
+- It seals `RUST_PRIMARY` revision `1`, config revision
+  `phase103-shared-primary-r1`, one `md.raw.realtime.v2` six-partition RF=3
+  topic and exactly the 13 named V2 services in the runbook. The current
+  running V2 core remains read-only observed as `RUST_SHADOW` on
+  `md.raw.stable.v1`; V1 remains untouched.
+- Packet generation used the verified immutable image provenance commit
+  `7b7388348615ba37c4a8d63b1f560fbdad91e658`, a network-disabled/read-only
+  temporary container and only the new nonsecret packet directory. The packet
+  validator passed; no Docker service, Kafka, Redis, database, authority or
+  consumer route was changed. If approval arrives after expiry, generate a new
+  packet rather than editing or reusing this one.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 
