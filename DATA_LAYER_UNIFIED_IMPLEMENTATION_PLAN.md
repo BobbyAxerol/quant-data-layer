@@ -191,6 +191,11 @@ These rules apply to all phases.
 | 7 | V2 public beta and consumer canary | Publish a protected read-only V2 surface and validate real consumer behavior without changing authority | `COMPLETE (BETA-GO READ-ONLY)` |
 | 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `COMPLETE (8.0-8.3; RUST_SHADOW only)` |
 | 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
+| 10.1 | Universal demand contract and runtime topology | Replace fixed reference slices with one capability-truthful demand manifest and one shared Rust canonical core | `COMPLETE (SOURCE/ISOLATED; DARK; NO RUNTIME CUTOVER)` |
+| 10.2 | Universal warmup, history and batch handoff | Serve strategy-defined historical windows quickly, exactly and safely for every supported venue, instrument and interval | `PROPOSED - AWAITING APPROVAL` |
+| 10.3 | Rust-primary realtime execution data plane | Make Rust the primary canonical TRADE, QUOTE and BAR source for the complete demanded universe, with V1 as observable fallback | `PROPOSED - AWAITING APPROVAL` |
+| 10.4 | Microstructure and alternative-data products | Add execution-grade order book, reference metrics and multi-instrument derivatives data behind the same contracts | `PROPOSED - AWAITING APPROVAL` |
+| 10.5 | Consumer cutover, certification and release | Move Trading System and alpha SDK routes to V2 primary by manifest, retain V1 rollback and publish stable V2 | `PROPOSED - AWAITING APPROVAL` |
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
 
@@ -11386,3 +11391,500 @@ live migration or authority transition is part of R0.
   no production Rust core was started and no V1/consumer route changed by this
   documentation/test slice. Future action must use the simplified rules above,
   not invent a per-retry authority ceremony.
+
+
+
+## 21. Phase 10 - V2 Primary Universal Market Data Program
+
+**Status:** `ACTIVE - 10.1 COMPLETE (SOURCE/ISOLATED; DARK); 10.2-10.5 PENDING`
+
+### 21.1 Decision And Scope
+
+This is the five-phase delivery plan for the actual V2 product objective: one
+provider-neutral Data Layer that can serve every declared alpha and Trading
+System market-data need reliably, rather than a narrow BTC reference canary.
+It replaces the *future execution sequence* of the static Phase 9 reference
+slice program. It does not delete, reinterpret or promote any previous Phase
+9 evidence, candidate image, authority row, cursor or rollback asset.
+
+The target state is deliberately simple:
+
+```text
+Consumer requirement manifest
+  -> shared warmup and subscription planner
+  -> venue acquisition adapters
+       Binance and OKX native Rust WebSocket and REST edges
+       DNSE and future VN vendor edge, then authenticated raw envelope
+  -> one shared Rust canonical core and durable event log
+  -> Python V2 query, stream, SDK and compatibility projection
+  -> Trading System and alpha SDK use V2_PRIMARY by manifest
+  -> V1 remains a measured, automatic rollback route
+```
+
+A service replica is never created per symbol, interval, strategy or alpha.
+One logical acquisition/core deployment owns a dynamic demand registry. It
+uses internal connection shards only when capacity measurement requires them;
+partitioning is by venue, market, instrument and feed, not by a manually
+created container for every slice. A bounded test set such as BTC or twelve
+slices is evidence only and never the production universe definition.
+
+### 21.2 Product Invariants
+
+1. **Rust is the primary common core.** It owns raw validation, native
+   Binance and OKX high-rate decoding, canonical normalization, exact decimal
+   and quantity units, deterministic event identity, ordering, deduplication,
+   gap state, backpressure, watermarks and durable publication. Python remains
+   the V2 HTTP and gRPC surface, SDK, history planner, control plane,
+   compatibility projector and vendor-SDK edge where a venue requires one.
+2. **Demand is declarative and capability truthful.** Every consumer declares
+   the instrument or universe, feed, interval, warmup, freshness, depth and
+   execution intent it needs. Unsupported venue capabilities fail closed with
+   a typed reason; the platform never fabricates a quote, book, final bar or
+   metric.
+3. **V2 is primary by a versioned consumer manifest, not a hidden switch.**
+   After the applicable phase gate passes, a consumer reads V2 first. A
+   compatible V1 fallback is automatic but observable with a reason, age and
+   counter. Fallback must not silently convert a stale or non-execution-grade
+   result into an execution-grade result.
+4. **One source of finality.** A final native provider bar is retained as
+   native. A non-native interval is resampled only from complete final
+   canonical constituent bars and carries resample provenance. An in-progress
+   bar may never overwrite a final or corrected bar.
+5. **Control plane remains minimal.** One scoped writer lease per ownership
+   group, deterministic idempotent event IDs, durable watermarks and one
+   explicit rollback revision are sufficient. Retries, reconnects and ordinary
+   demand changes do not require a new image, sealed bundle or authority
+   ceremony.
+6. **All production acceptance uses real provider data.** Fixtures are used
+   for deterministic fault tests only. A live claim covers every demanded
+   slice in the tested manifest, not a BTC proxy. Tests leave no order,
+   portfolio, production Redis, Kafka-offset or shared-state residue.
+
+### 21.3 Common Requirement Model And Service Classes
+
+`DataRequirement` becomes the only route from alpha SDK or Trading System to
+the V2 planner. Its versioned schema must include at minimum:
+
+- consumer identity, purpose (`EXECUTION`, `ALPHA`, `RESEARCH`,
+  `OBSERVABILITY`), priority and TTL;
+- venue, provider, market/product type, canonical instrument selector and
+  universe selector (`explicit`, approved JSON registry/segment, continuous
+  contract rule or capability query);
+- feed class (`TRADE`, `BBO`, `BAR`, `BOOK_SNAPSHOT`, `BOOK_DELTA`,
+  `FUNDING`, `OPEN_INTEREST`, `LONG_SHORT`, `TAKER_FLOW`, `BASIS`,
+  `MARK_PRICE`, `INDEX_PRICE`), requested interval, depth and lifecycle;
+- warmup bars or time range, final-bar requirement, allowed native/resampled
+  source, maximum data age, gap policy, fallback policy and execution-grade
+  intent;
+- batch budget, concurrency/rate class and a stable configuration revision.
+
+The planner resolves this against the instrument/capability registry, merges
+compatible requests, creates or releases subscriptions by TTL, and records the
+resolved demand revision. It is the only component allowed to decide that a
+source connection is needed. Historical warmup, real-time stream and latest
+state share the same resolved identity and quality contract.
+
+**Phase 10.1 activation - 2026-08-24 (`IN PROGRESS / SOURCE AND ISOLATED TEST ONLY`).**
+
+- **Approved scope:** implement the versioned universal-demand contract,
+  selector resolver, expiring lease lifecycle, capability resolution, dynamic
+  subscription/shard plan and demanded-slice readiness. This is a source and
+  isolated-test phase; it does not start, restart, recreate or reconfigure
+  V1/V2 runtime roles, change authority, consume Kafka production offsets,
+  flush Redis/SQLite, alter alpha configuration or submit an order.
+- **Guides and invariants:** follow the provider-neutral contract and role split
+  in [architecture sections 6, 8-12, 18 and 20-23](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md), the
+  V2 delivery rules at the top of this journal, and the exact Phase 10.1 scope
+  below. V1 public routes/SDK/Redis payloads remain unchanged. A static
+  BTC/twelve-slice fixture can validate code but never certifies the demanded
+  universe.
+- **Implementation boundary:** reuse and converge the existing V2
+  `DataRequirement`, catalog/acquisition bindings and Rust core binding model;
+  do not create a parallel alpha-specific registry. The new internal manifest
+  must resolve a versioned universe selector to stable instrument IDs, then
+  yield one deduplicated dynamic acquisition plan. Connection shards are data
+  in that plan, not Compose services.
+- **Required gates:** generated Python/Rust contract parity; exact
+  decimal/unit/identity and selector tests; duplicate/priority/TTL/release and
+  unsupported-capability tests; deterministic multi-venue dynamic
+  subscription/reconnect/generation tests; resource test proving growing
+  symbols changes internal shards only; V1 golden regression. A bounded
+  real-provider admission is read-only and can only claim crypto/VN slices
+  actually observed; VN primary eligibility remains blocked outside an open,
+  authenticated provider session.
+- **Rollback:** discard the new manifest revision or leave it dark. No runtime
+  state needs migration and no durable data is deleted.
+
+### 21.4 Phase 10.1 - Universal Demand Contract And Runtime Topology
+
+**Goal:** Replace fixed Binance/OKX reference bindings with a provider-neutral,
+manifest-driven demanded universe and make one shared Rust core capable of
+owning all approved Binance, OKX and VN raw envelopes.
+
+**Implementation scope:**
+
+1. Freeze `DataRequirement`, `ResolvedRequirement`, `DemandLease` and
+   `FeedCapability` schemas in Protobuf, Python and Rust. Preserve V1 public
+   routes and payloads unchanged.
+2. Add universe selectors backed by an approved symbols JSON or instrument
+   registry revision. Do not place long mutable symbol lists in Compose or
+   create per-symbol code paths. A selector expansion is auditable by hash,
+   count and resolved instrument IDs.
+3. Refactor acquisition ownership so one Rust canonical-core role consumes
+   every in-scope provider raw envelope. Binance and OKX native adapters share
+   that role; DNSE/vnstock Python adapters publish authenticated raw envelopes
+   into it. Retire the conceptual split between a generic DNSE-only core and a
+   separate crypto production core after the replacement has passed.
+4. Implement dynamic subscribe, unsubscribe, shard rebalance and reconnect
+   scheduling inside each venue adapter. Shard count is a measured capacity
+   parameter, never an alpha-level container count. Connection, subscription,
+   sequence and resync state remains isolated per provider session.
+5. Expose demanded-slice readiness: `requested`, `connecting`, `warming`,
+   `live`, `degraded`, `market_closed`, `unsupported` and `expired`. Broad
+   telemetry never makes an unrelated execution demand unhealthy.
+
+**Required tests and evidence:**
+
+- generated Python/Rust schema parity, exact decimal/unit, alias/expiry,
+  selector expansion, duplicate lease, TTL release, priority conflict and
+  capability rejection tests;
+- deterministic dynamic-subscription tests for multi-symbol Binance, OKX and
+  VN fixtures, including reconnect, source-generation rollover, duplicate,
+  out-of-order and empty-universe behavior;
+- one bounded real-provider read-only admission for **all currently demanded**
+  Binance and OKX slices, plus VN during an open session. `MARKET_CLOSED` is
+  accepted only with correct calendar state, never as fresh market data;
+- resource evidence proving that expanding symbols changes subscriptions and
+  internal shards but does not create a new service/image per symbol;
+- V1 OpenAPI, Redis and alpha SDK v1 golden suites remain unchanged.
+
+**Exit gate:** the runtime can resolve every declared demand to one truthful
+capability and one canonical identity, Rust can accept it through the shared
+core, all demand state transitions are observable, and no V1 route/runtime is
+changed. VN remains excluded from primary eligibility until its in-session
+provider gate passes.
+
+**Rollback:** disable the new manifest revision and leave current V1 bindings
+and V2 reference topology intact. No Kafka reset, shared Redis flush, data
+removal or alpha restart is permitted.
+
+**Implementation checkpoint 1 - 2026-08-24 (`PASS / SOURCE-ONLY`).**
+
+- Added the provider-neutral `qdl.demand.v1` Protobuf control-plane contract
+  and generated Python/Rust bindings. It is intentionally distinct from
+  `qdl.query.v2`: demand is unresolved consumer intent; query remains the
+  resolved read contract already exposed by V2.
+- Added strict universe registry/manifest parsing, catalog + capability
+  resolution, deterministic per-instrument resolved identities, priority/
+  lease deduplication, expiry/reactivation and fail-closed lifecycle
+  transitions. `BINANCE/SPOT` now has its own capability profile rather than
+  inheriting USD-M semantics; current Binance, OKX and VN capabilities remain
+  provider/market scoped.
+- Added a pure dynamic topology planner. A 500-symbol test produces three
+  internal shards and one logical `BINANCE/USDM` role; no container, image or
+  service is created per symbol. A demand revision rebinding is explicit even
+  when a shard membership hash is unchanged.
+- Existing stable-acquisition config can now render a selected demand binding
+  set into a fixed core worker group. This is a source-level bridge only:
+  Phase 10.3 applies dynamic adapter subscriptions to runtime after separate
+  approval.
+- Evidence actually run: `docker run --rm --network none --read-only ...
+  qdl-v2-python:2.0.0-7a5aef6 python -m unittest
+  tests.test_phase10_universal_demand -v` -> **10 passed**, 0 failed in
+  0.099s. The container had no network, source was mounted read-only and no
+  V1/V2 service, authority, Kafka offset, Redis, SQLite or alpha state changed.
+- Remaining for Phase 10.1 closure: generated-contract lint/breaking checks,
+  Rust contract/core regression, existing V1/V2 compatibility regression and
+  a bounded read-only real-provider admission. VN can only be marked
+  `MARKET_CLOSED` outside an authenticated open session; it cannot be called
+  fresh/live on this evidence.
+
+**Implementation checkpoint 2 / Phase 10.1 closure - 2026-08-24 (`PASS /
+SOURCE-ONLY / NO CUTOVER`).**
+
+- Corrected the in-scope VN identity defect found by the multi-venue compiler:
+  catalog, universe selector and capability lookup now agree on
+  `HNX/VN_DERIVATIVES/FUTURE`. The example universal manifest selects only the
+  catalog-provisioned `core` segment; liquid BNB/SOL entries remain declared in
+  the registry but are never silently treated as provisioned.
+- Closed Python/Rust validation parity: Rust now rejects malformed nonempty
+  universe SHA-256 bytes and freshness bounds that Python already rejected.
+  Resolved requirement identity now represents instrument/feed/interval/source
+  policy, not whichever consumer happened to sort first. Lease reactivation
+  after expiry is explicit and lifecycle transitions cannot jump continuity
+  states.
+- Deterministic evidence: demand unit/contract suite **11 passed**; Buf format,
+  lint and breaking against Phase 1 + Phase 7 baselines passed; Rust format and
+  clippy with `-D warnings` passed; `qdl-contracts` **2 passed** and
+  `qdl-venue-core` **34 passed**. Existing catalog/deployment/V2 API/stream/SDK
+  regression passed **75 tests**. V1 OpenAPI/client/demand/stream/alpha cases
+  were rerun in isolated containers; the only initial failure was read-only
+  creation of `/app/logs/app.log`. With that directory provided as disposable
+  container tmpfs, the affected OpenAPI/control-plane suite passed **7 tests**.
+  The final combined isolated regression gate then passed **138 tests** across
+  demand, V1 OpenAPI/client, catalog/deployment, durable transport, stream
+  supervision, V2 API/stream/SDK and alpha-facing behavior.
+- Bounded real-provider evidence: the new read-only diagnostic validated all
+  **18 currently declared Binance/OKX crypto slices** (Spot/USDM/Swap BTC and
+  ETH where declared; TRADE, QUOTE, final BAR 1m). It reported
+  `REAL_PROVIDER_READ_ONLY`, 18/18 pass, 0 writes and stored no raw provider
+  payload. Full evidence and exact command boundaries are in
+  [PHASE10_1_IMPLEMENTATION_REPORT.md](upgrade/evidence/PHASE10_1_IMPLEMENTATION_REPORT.md).
+- Runtime/cleanup evidence: all test containers used `--rm`; source was
+  read-only except Buf generation and the approved source files. No V1/V2
+  runtime role, Kafka offset/topic, Redis/SQLite state, authority, database,
+  alpha configuration or provider payload was mutated.
+- **Decision:** Phase 10.1 is complete as a dark source/control-plane
+  foundation. It does **not** claim live dynamic subscriptions, V2 primary,
+  reconnect/resync certification or consumer migration. VN remains outside
+  primary eligibility until an open-session authenticated provider admission.
+  The next allowed implementation phase is 10.2, not a runtime cutover.
+
+### 21.5 Phase 10.2 - Universal Warmup, History And Batch Handoff
+
+**Goal:** Let every strategy request the exact historical window it needs,
+across many symbols and intervals, without stale-bar regressions, serial REST
+storms or a dependence on a special alpha wrapper.
+
+**Implementation scope:**
+
+1. Add V2 warmup and batch planning behind the resolved demand contract. The
+   public V2 SDK accepts a per-strategy warmup specification; it does not hard
+   code a common bar count or universe.
+2. Coalesce compatible requests by provider endpoint, venue, product, interval
+   and time range. Use bounded chunking, per-provider token budgets,
+   singleflight for identical work, deadline propagation, jittered retry,
+   `Retry-After`, circuit state and explicit partial-result errors. A batch
+   never hides missing symbols or substitutes data from another contract.
+3. Use the provider native interval where it exists. Otherwise create an exact
+   V2 resampled bar only from final canonical base bars, with a full constituent
+   watermark. At a bar boundary, query the latest already closed candle first;
+   append one new final bar FIFO and then release the alpha computation.
+4. Keep warmup storage bounded by declared horizon and product semantics.
+   Provider history is fetched on demand and cached with provenance, age and
+   watermark; it is not an excuse to persist an unbounded copy of venue data on
+   the execution host.
+5. Add latest-state recovery for order submission consumers. A `latest` price,
+   BBO or mark reference must carry source time, receive time, quality and
+   freshness validation. Data Layer supplies the fact; Trading System owns
+   limit, stop, OCO and execution decisions.
+
+**Required tests and evidence:**
+
+- golden batch tests for native and resampled intervals, time zone/session
+  boundaries, final-bar cutoff, FIFO maximum length, missing symbol, partial
+  provider page, rate limit, timeout, retry, cache-cold and cache-gap cases;
+- deterministic concurrency tests for overlapping multi-symbol requests,
+  singleflight, cancellation and provider budget fairness;
+- bounded authentic REST warmup across every demanded Binance/OKX symbol and
+  interval, plus VN in session, comparing V2 output with provider bytes and
+  canonical lineage rather than generated values;
+- alpha-SDK integration tests proving warmup -> append latest closed bar ->
+  strategy callback runs once per closed bar and never enters one bar late;
+- measure p50/p95 warmup latency, source request count, cache hit rate,
+  provider 429/5xx handling, CPU/RSS and no incomplete result labelled `OK`.
+
+**Exit gate:** V2 can warm every active consumer universe through one SDK/API
+contract, return a complete or explicitly failed result, and hand a final bar
+to live logic with no silent stale fallback. V1 history remains a monitored
+fallback until consumer migration.
+
+**Rollback:** set the consumer manifest to V1 history only or V2 read-only
+shadow. Clear only disposable V2 warmup test keys after evidence capture; do
+not delete shared provider cache, historical data or consumer state.
+
+### 21.6 Phase 10.3 - Rust-Primary Realtime Execution Data Plane
+
+**Goal:** Make V2 Rust the primary real-time source for every demanded
+Binance/OKX/VN TRADE, BBO/QUOTE and final BAR feed, while V1 stays available as
+a fast, observable fallback rather than a second primary implementation.
+
+**Implementation scope:**
+
+1. Activate the shared Rust core from Phase 10.1 as the primary canonical
+   writer for the full resolved demand manifest. A fixed replica group scales
+   by partition and measured load; a symbol or interval never creates a
+   container or image.
+2. Implement venue-native dynamic WebSocket acquisition for Binance and OKX:
+   subscription ACK correlation, session generation, heartbeat, bounded
+   reconnect backoff, resubscribe, continuity check and resnapshot when the
+   advertised feed requires it. VN uses a bounded vendor edge but follows the
+   same raw-envelope/core path.
+3. Publish canonical TRADE, BBO/QUOTE and final BAR events durably with
+   deterministic event IDs, per-key ordering, gap/watermark state and explicit
+   quality transitions. Latest BBO may coalesce; trade, final bar, correction,
+   gap and authority-transition events may not be silently dropped.
+4. Feed V2 query/stream/projector from canonical Rust output. Route alpha SDK
+   and Trading System market-data reads through `V2_PRIMARY` manifests with a
+   typed `V1_FALLBACK` decision only when V2 fails a compatible readiness or
+   freshness gate. Record every fallback with reason, source age and consumer.
+5. Make execution-grade health demand-specific. An alpha that needs ETHUSDT
+   5m must not be blocked by an unused broad-universe feed; an actually stale
+   demanded price or final bar must fail closed for execution eligibility.
+
+**Required tests and evidence:**
+
+- full Python/Rust canonical parity on recorded Binance, OKX and VN real
+  provider envelopes for every demanded symbol/feed/interval; exact identity,
+  decimals, units, timestamps, finality, ordering and provenance must match;
+- controlled disconnect, reconnect, duplicate, delayed event, sequence gap,
+  resubscribe and restart/replay tests with zero unexplained loss or duplicate
+  canonical external publication;
+- bounded live acceptance for all demanded Binance and OKX slices and VN during
+  an open session. Capture freshness, gap count, reconnect count, canonical and
+  projector lag, consumer receive lag, CPU, RAM, Kafka/Redis bytes and fallback
+  count for a defined observation window;
+- real Trading System paper market-data adapter and representative alpha SDK
+  consumers receive V2 snapshots, cursor replay and live updates without a
+  direct venue connection. No order submission is included in this phase;
+- explicit rollback drill changes only one manifest revision to V1 fallback and
+  proves consumer recovery without data deletion or broker offset reset.
+
+**Exit gate:** all approved demanded real-time slices are Rust-primary and
+consumer-visible through V2, their quality/freshness is truthful, V1 fallback
+works and is observable, and the measured resource budget is stable. A venue
+with no in-session evidence stays capability-present but not `V2_PRIMARY`.
+
+**Rollback:** apply the pre-reviewed V1 fallback manifest revision, retain
+canonical Kafka evidence and stop only the affected V2 acquisition/core
+workers if required. Do not mutate V1, reset Kafka offsets, flush Redis or
+rewrite alpha configuration.
+
+### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
+
+**Goal:** Give future alpha families including basis arbitrage, reactive grid,
+limit/conditional execution and multi-symbol strategies one correct, reusable
+source for order book and provider reference data without moving execution
+logic into Data Layer.
+
+**Implementation scope:**
+
+1. Add typed V2 canonical products for provider-sourced funding rate, open
+   interest, long/short ratios, taker flow, mark/index price and contract
+   metadata. Every product declares sampling cadence, observation versus event
+   semantics, provider lineage, unit, freshness and gap policy. Derived basis
+   has explicit input instruments and formula provenance; provider-native basis
+   retains provider lineage.
+2. Build a generic reference-data batch wrapper for Binance and OKX, including
+   dated/continuous futures where each provider supports them. Use bounded
+   REST chunking and cache policy from Phase 10.2. A missing historical metric
+   remains missing, not zero.
+3. Activate an L2 book state machine only for an approved depth profile. It
+   combines snapshot plus delta, sequence or checksum validation, depth
+   truncation policy, resync, reset and book-generation provenance. Initial
+   scope may be BTC/ETH or a declared arb universe, but the implementation is
+   selector-driven and reusable for any supported instrument.
+4. Expose snapshot, replay and live book/reference reads through V2 SDK/query
+   with exact decimals and explicit freshness. Latest trade, BBO, book and
+   mark price support Trading System price validation for limit/stop/OCO; Data
+   Layer never decides placement, cancellation, bracket lifecycle or risk.
+5. Register capability truth per venue: Binance/OKX can differ in depth,
+   checksum and historical metric availability; VN never impersonates crypto
+   book semantics. Future Deribit/options fit the same products and capability
+   registry rather than a venue fork.
+
+**Required tests and evidence:**
+
+- contract/golden tests for every metric type, quantity/notional units,
+  sampling gap, missing value, dated contract alias and continuous-contract
+  rollover;
+- deterministic book tests for snapshot-plus-delta continuity, duplicate,
+  out-of-order, checksum mismatch, disconnect, resync, depth truncation and
+  source-generation reset;
+- bounded authentic Binance and OKX metric smoke for the complete declared
+  arb/dynamic-grid demand, and real L2 capture/replay for the declared book
+  universe. Test provenance must record raw frame hashes and source session;
+- integration tests show a multi-symbol alpha can request batch warmup,
+  reference metrics and book data concurrently without cross-symbol mixing or
+  blocking unrelated TRADE/BAR consumers;
+- measure data age, resync time, book gap/recovery count, batch latency,
+  event/cache growth and resource use under the target depth/universe.
+
+**Exit gate:** all advertised products have truthful capability, lineage, unit,
+freshness and recovery behavior; order-book and metric consumers receive no
+fabricated or silently stale values; multi-symbol/arbitrage requirements run
+through the common V2 path.
+
+**Rollback:** remove only the affected feed capability from the next manifest
+revision and use its V1/reference fallback where contract-compatible. Retain
+canonical evidence for audit; no historical or order state is deleted.
+
+### 21.8 Phase 10.5 - Consumer Cutover, Certification And Stable V2 Release
+
+**Goal:** Promote V2 to the operational default for Trading System and alpha
+SDK while keeping V1 as a tested rollback route, then publish one clean,
+maintainable stable release topology.
+
+**Implementation scope:**
+
+1. Add a single versioned consumer-routing manifest. It maps each consumer to
+   required data products, demand revision, `V2_PRIMARY` route and exact V1
+   fallback revision. Alpha source code calls shared SDK methods; it does not
+   gain venue-specific V2 branches or direct sockets.
+2. Migrate in bounded groups: monitoring, Trading System market-data adapter,
+   paper alpha SDK consumers, then approved sandbox/live-read consumers. Each
+   group completes warmup, replay, reconnect and live read acceptance before
+   the next group. No alpha order execution changes merely because its data
+   route changed.
+3. Make operator health report demanded-slice readiness, V2 freshness/gap,
+   fallback rate/reason, consumer lag and resource budgets. A top-level green
+   health state may not hide a degraded demanded execution slice.
+4. Freeze stable V2 API/SDK docs, provider capability matrix, runbooks,
+   manifests, rollback command and a compact acceptance ledger. Consolidate
+   obsolete experimental images/containers only after the stable route has
+   passed and with an exact named cleanup list; retain V1 and one known-good V2
+   rollback image.
+5. Release `2.0.0` only when the manifest-controlled V2 primary path is proven
+   for the real demanded universe and the remaining VN external provider gate
+   is either accepted in-session or explicitly excluded from the release
+   capability matrix.
+
+**Required tests and evidence:**
+
+- V1 compatibility/OpenAPI/Redis golden suite, V2 SDK contract suite,
+  consumer-manifest validation and migration-idempotency tests;
+- end-to-end paper data cycles for Trading System and all representative alpha
+  families: single-symbol, portfolio/multi-symbol, grid/reactive,
+  bracket/conditional price validation and basis/arb. Test accounts and scoped
+  data are reset or terminalized after evidence;
+- V2 primary plus forced V1 fallback plus return-to-V2 tests for each consumer
+  class. Verify no direct venue connection, no silently changed sizing/signal
+  input and no stale execution-grade value;
+- resource and reliability soak for the full demanded manifest: freshness,
+  gap, reconnect, durable/projector/consumer lag, CPU/RAM, Redis/Kafka/disk
+  growth, cache rebuild and bounded failure recovery;
+- release rehearsal from immutable images and versioned manifests, followed by
+  an exact cleanup report. No broad prune, offset reset, flush or data deletion
+  is part of acceptance.
+
+**Exit gate:** V2 and the Rust core are the primary market-data path for every
+approved consumer/demand in the routing manifest, V1 rollback has passed,
+public V1 remains compatible, all real-provider and consumer gates pass, and
+operational documentation/evidence identify every excluded capability honestly.
+This is the first point at which V2 can be called a stable production release.
+
+**Rollback:** switch the affected consumers to the previously frozen V1
+fallback manifest revision, preserve V2 Kafka/cursor evidence, and stop only
+V2 workers named in the approved deployment packet. The rollback does not
+rewrite alpha logic, delete durable data, modify order state or restart V1.
+
+### 21.9 Program-Wide Test, Cleanup And Approval Gates
+
+Every Phase 10 implementation slice must record in this journal before code
+changes: its exact manifest, services/images/ports/topics/consumer groups,
+real-provider scope, expected business behavior, test matrix, resource budget,
+rollback revision and cleanup scope. After each coherent slice it records the
+actual commands/tests, pass/fail/skip counts, compact metrics, real-provider
+provenance, runtime mutation and exact cleanup result.
+
+No Phase 10 phase begins until the operator approves that phase. Approval for a
+phase does not authorize later phases, consumer cutover, authority promotion,
+Kafka offset manipulation, Redis/SQLite flush, V1 restart or an alpha order
+submission. A newly discovered defect is fixed inside the approved phase only
+when it is necessary to meet that phase exit gate; any new architecture,
+provider-cost or business-semantics decision returns for approval.
+
+**Current decision boundary:** this section is a plan only. No Rust primary
+route, V2 consumer route, DNSE service, source code, image, container, Kafka
+state, Redis state, database row or alpha configuration has changed because of
+it.

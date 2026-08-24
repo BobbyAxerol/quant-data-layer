@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 
 import yaml
@@ -370,12 +370,25 @@ class StableAcquisitionPlan:
         authority: Mapping[str, Any],
         max_events: int = 0,
         max_runtime_seconds: int = 0,
+        binding_ids: frozenset[str] | None = None,
     ) -> dict[str, dict[str, Any]]:
         self._validate_authority(authority)
         source_by_id = {item.binding_id: item for item in catalog.bindings}
+        enabled_ids = {item.binding_id for item in self.bindings if item.enabled}
+        selected_ids = enabled_ids if binding_ids is None else frozenset(binding_ids)
+        unknown_ids = selected_ids - set(source_by_id)
+        if unknown_ids:
+            raise ValueError("native ingestor selection contains unknown bindings")
+        disabled_ids = selected_ids - enabled_ids
+        if disabled_ids:
+            raise ValueError("native ingestor selection contains disabled bindings")
         grouped: dict[tuple[str, str], list[StableAcquisitionBinding]] = {}
         for acquisition in self.bindings:
-            if acquisition.enabled and acquisition.mode == "RUST_NATIVE":
+            if (
+                acquisition.binding_id in selected_ids
+                and acquisition.enabled
+                and acquisition.mode == "RUST_NATIVE"
+            ):
                 source = source_by_id[acquisition.binding_id]
                 grouped.setdefault(
                     (acquisition.runtime, source.instrument.identity.market), []
@@ -430,6 +443,48 @@ class StableAcquisitionPlan:
                 "bindings": bindings,
             }
         return result
+
+    def demand_runtime_configs(
+        self,
+        *,
+        catalog: StableSourceCatalog,
+        authority: Mapping[str, Any],
+        binding_ids: Iterable[str],
+        worker_count: int = STABLE_CORE_WORKER_COUNT,
+    ) -> dict[str, Any]:
+        """Build one shared-core topology for a resolved demand revision.
+
+        The returned `ingestors` map is keyed only by venue/market. Symbols are
+        subscription data inside each role and never turn into Compose services.
+        """
+        self._validate_authority(authority)
+        selected_ids = frozenset(str(value) for value in binding_ids)
+        known_ids = {item.binding_id for item in catalog.bindings}
+        if not selected_ids or not selected_ids.issubset(known_ids):
+            raise ValueError("demand runtime selection is empty or contains unknown bindings")
+        if not 1 <= worker_count <= STABLE_CORE_WORKER_COUNT:
+            raise ValueError("demand runtime worker count is outside topology bound")
+        core = tuple(
+            self.core_config(
+                catalog=catalog,
+                authority=authority,
+                worker_index=worker_index,
+                binding_ids=selected_ids,
+            )
+            for worker_index in range(1, worker_count + 1)
+        )
+        ingestors = self.native_ingestor_configs(
+            catalog=catalog,
+            authority=authority,
+            binding_ids=selected_ids,
+        )
+        return {
+            "schema": "qdl.v2.universal-demand-runtime-config.v1",
+            "demand_binding_count": len(selected_ids),
+            "core_worker_count": worker_count,
+            "core": core,
+            "ingestors": ingestors,
+        }
 
     @staticmethod
     def _validate_authority(authority: Mapping[str, Any]) -> None:

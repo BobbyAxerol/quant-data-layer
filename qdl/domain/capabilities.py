@@ -163,6 +163,36 @@ def binance_usdm_capabilities() -> VenueCapabilityProfile:
     )
 
 
+def binance_spot_capabilities() -> VenueCapabilityProfile:
+    """Spot uses the same public market-data contract, not the USD-M profile."""
+    return VenueCapabilityProfile(
+        provider="BINANCE_DIRECT",
+        venue="BINANCE",
+        market="SPOT",
+        region_profile="GLOBAL",
+        legal_entity="BINANCE_GLOBAL",
+        account_tier="PUBLIC",
+        timestamp_precision="MILLISECOND",
+        rate_limit_model="REQUEST_WEIGHT_PLUS_IP",
+        source_authority="PRIMARY",
+        feeds={
+            "instrument": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True),
+            "trade": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True, live=True, resubscribe=True),
+            "bbo": FeedCapability(CapabilityAvailability.AVAILABLE, live=True, resubscribe=True),
+            "bar": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True, live=True, resubscribe=True),
+            "l2": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                live=True,
+                snapshot=True,
+                delta=True,
+                sequence=True,
+                resubscribe=True,
+                resnapshot_on_gap=True,
+            ),
+        },
+    )
+
+
 def dnse_capabilities() -> VenueCapabilityProfile:
     return VenueCapabilityProfile(
         provider="DNSE",
