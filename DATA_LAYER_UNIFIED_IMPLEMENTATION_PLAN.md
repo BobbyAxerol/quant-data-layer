@@ -12583,6 +12583,25 @@ RUNTIME PACKET PENDING`).**
   offline packet metadata only; no service, topic, ACL, authority, V1 route,
   cache, Trading System or alpha state changed.
 
+**Phase 10.3 exact shared-primary handoff runbook slice - 2026-08-24
+(`IN PROGRESS / DOCUMENTATION AND PREFLIGHT ONLY`).**
+
+- **Goal:** replace the obsolete Phase-9 production-core ceremony with one
+  operator-facing, exact packet procedure for the existing shared Rust core.
+  It must specify preflight, the one V2 raw topic and least privilege ACL
+  scope, named service order, 300-second real-data acceptance, consumer
+  receipt/fallback evidence and stop-only V1 rollback.
+- **Invariant:** the procedure may not include `docker compose down`, `-v`,
+  Kafka offset reset/seek/delete, Redis/SQLite flush, V1 restart, alpha config
+  rewrite, `production_core_*`, per-symbol resources or a broad broker
+  bootstrap. It must create/verify only `md.raw.realtime.v2` and apply only
+  the producer/core permissions necessary for the fixed shared topology.
+- **Decision boundary:** publishing the runbook and dry-rendering the packet
+  is source/preflight work only. The actual topic/ACL/service actions require
+  a separate explicit approval containing the generated packet SHA/token,
+  current stable env path, all 13 V2 service names, 300-second observation and
+  the stop-only V1 rollback.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 
