@@ -1395,6 +1395,15 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             self.assertFalse(manifest["writes_current_v1_redis"])
             with self.assertRaisesRegex(ValueError, "Kafka/stream dependencies"):
                 StableRuntimeConfig.from_environment("projector_v2", values)
+            values.update({
+                "QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS": "kafka1:9092",
+                "QDL_STABLE_KAFKA_CLIENT_ID": "canonical-only-projector",
+                "QDL_STABLE_KAFKA_CANONICAL_TOPIC": "md.canonical.v2",
+                "QDL_STABLE_KAFKA_CERT_ROOT": str(root),
+                "QDL_STABLE_STREAM_INGEST_URLS_JSON": '["https://stream_v2_active:8200"]',
+            })
+            projector = StableRuntimeConfig.from_environment("projector_v2", values)
+            self.assertEqual(projector.kafka_raw_topics, ())
             values["QDL_STABLE_AUTHORITY_MODE"] = "PRIMARY"
             with self.assertRaisesRegex(ValueError, "must remain RUST_SHADOW"):
                 StableRuntimeConfig.from_environment("query_v2", values)

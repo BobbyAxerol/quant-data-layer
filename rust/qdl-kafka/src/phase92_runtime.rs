@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::future::try_join_all;
 use qdl_core::transport::{AppendResult, Cursor, DurableRecord};
@@ -7,14 +8,19 @@ use qdl_venue_core::authority::{
     Phase92AuthorityControlEvent, Phase92AuthorityFence, Phase92AuthorityRecord,
     Phase92PublicationContext, SinkTarget,
 };
-use rdkafka::consumer::{BaseConsumer, Consumer, StreamConsumer};
+use rdkafka::client::ClientContext;
+use rdkafka::consumer::{
+    BaseConsumer, Consumer, ConsumerContext, RebalanceProtocol, StreamConsumer,
+};
 use rdkafka::message::{Header, Headers, Message, OwnedHeaders};
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
+use rdkafka::types::RDKafkaRespErr;
 use rdkafka::util::Timeout;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::phase92_bootstrap::{Phase92BootstrapAssignment, Phase92BootstrapPayload};
 use super::{
     transactional_output_headers, KafkaTransportConfig, KafkaTransportError,
     TransactionalKafkaInput, EVENT_ID_HEADER,
@@ -358,9 +364,199 @@ pub struct Phase92CommitResult {
     pub checkpoints: Vec<AppendResult>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Phase92BootstrapStatus {
+    NotRequired,
+    Pending,
+    ResumeStored,
+    Seeded,
+    Failed,
+}
+
+struct Phase92BootstrapConsumerContext {
+    cursor: Option<Phase92BootstrapPayload>,
+    status: Mutex<Phase92BootstrapStatus>,
+    failure: Mutex<Option<String>>,
+    request_timeout: Duration,
+}
+
+impl Phase92BootstrapConsumerContext {
+    fn permissive(request_timeout: Duration) -> Self {
+        Self {
+            cursor: None,
+            status: Mutex::new(Phase92BootstrapStatus::NotRequired),
+            failure: Mutex::new(None),
+            request_timeout,
+        }
+    }
+
+    fn signed(cursor: Phase92BootstrapPayload, request_timeout: Duration) -> Self {
+        Self {
+            cursor: Some(cursor),
+            status: Mutex::new(Phase92BootstrapStatus::Pending),
+            failure: Mutex::new(None),
+            request_timeout,
+        }
+    }
+
+    fn status(&self) -> Phase92BootstrapStatus {
+        self.status
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or(Phase92BootstrapStatus::Failed)
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.failure
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_else(|_| Some("Phase 9.2 bootstrap failure state lock is poisoned".into()))
+    }
+
+    fn fail(&self, error: impl Into<String>) {
+        let message = error.into();
+        if let Ok(mut failure) = self.failure.lock() {
+            *failure = Some(message);
+        }
+        if let Ok(mut status) = self.status.lock() {
+            *status = Phase92BootstrapStatus::Failed;
+        }
+    }
+
+    fn set_status(&self, status: Phase92BootstrapStatus) {
+        if let Ok(mut current) = self.status.lock() {
+            *current = status;
+        } else {
+            self.fail("Phase 9.2 bootstrap status lock is poisoned");
+        }
+    }
+
+    fn prepare_assignment(
+        &self,
+        consumer: &BaseConsumer<Self>,
+        assignment: &mut TopicPartitionList,
+    ) -> Result<(), KafkaTransportError> {
+        let Some(cursor) = &self.cursor else {
+            return Ok(());
+        };
+        let assigned = assignment
+            .elements()
+            .iter()
+            .map(|item| (item.topic().to_owned(), item.partition()))
+            .collect::<Vec<_>>();
+        let committed = consumer.committed_offsets(
+            assignment.clone(),
+            Timeout::After(self.request_timeout.min(Duration::from_secs(2))),
+        )?;
+        let mut offsets = BTreeMap::new();
+        for item in committed.elements() {
+            let offset = match item.offset() {
+                Offset::Offset(value) if value >= 0 => Some(
+                    u64::try_from(value).map_err(|_| KafkaTransportError::InvalidOffset(value))?,
+                ),
+                Offset::Invalid => None,
+                value => {
+                    return Err(KafkaTransportError::Fencing(format!(
+                        "Phase 9.2 committed offset is not concrete for {}[{}]: {value:?}",
+                        item.topic(),
+                        item.partition(),
+                    )));
+                }
+            };
+            offsets.insert((item.topic().to_owned(), item.partition()), offset);
+        }
+        let now_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| {
+                KafkaTransportError::Configuration(format!(
+                    "Phase 9.2 bootstrap clock is before Unix epoch: {error}"
+                ))
+            })?
+            .as_nanos()
+            .try_into()
+            .map_err(|_| {
+                KafkaTransportError::Configuration(
+                    "Phase 9.2 bootstrap clock does not fit signed cursor range".into(),
+                )
+            })?;
+        match cursor.decide_assignment(&assigned, &offsets, now_ns)? {
+            Phase92BootstrapAssignment::ResumeStored => {
+                self.set_status(Phase92BootstrapStatus::ResumeStored);
+            }
+            Phase92BootstrapAssignment::SeedMissing(values) => {
+                for ((topic, partition), offset) in values {
+                    assignment.set_partition_offset(
+                        &topic,
+                        partition,
+                        Offset::Offset(
+                            i64::try_from(offset)
+                                .map_err(|_| KafkaTransportError::InvalidOffset(i64::MAX))?,
+                        ),
+                    )?;
+                }
+                self.set_status(Phase92BootstrapStatus::Seeded);
+            }
+        }
+        Ok(())
+    }
+
+    fn complete_assignment(
+        &self,
+        consumer: &BaseConsumer<Self>,
+        assignment: &TopicPartitionList,
+    ) -> Result<(), KafkaTransportError> {
+        match consumer.rebalance_protocol() {
+            RebalanceProtocol::Cooperative => consumer.incremental_assign(assignment)?,
+            RebalanceProtocol::Eager | RebalanceProtocol::None => consumer.assign(assignment)?,
+        }
+        Ok(())
+    }
+
+    fn complete_revocation(
+        &self,
+        consumer: &BaseConsumer<Self>,
+        assignment: &TopicPartitionList,
+    ) -> Result<(), KafkaTransportError> {
+        match consumer.rebalance_protocol() {
+            RebalanceProtocol::Cooperative => consumer.incremental_unassign(assignment)?,
+            RebalanceProtocol::Eager | RebalanceProtocol::None => consumer.unassign()?,
+        }
+        Ok(())
+    }
+}
+
+impl ClientContext for Phase92BootstrapConsumerContext {}
+
+impl ConsumerContext for Phase92BootstrapConsumerContext {
+    fn rebalance(
+        &self,
+        consumer: &BaseConsumer<Self>,
+        error: RDKafkaRespErr,
+        assignment: &mut TopicPartitionList,
+    ) {
+        let result = match error {
+            RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS => self
+                .prepare_assignment(consumer, assignment)
+                .and_then(|()| self.complete_assignment(consumer, assignment)),
+            RDKafkaRespErr::RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS => {
+                self.complete_revocation(consumer, assignment)
+            }
+            _ => Err(KafkaTransportError::Fencing(
+                "Phase 9.2 Kafka consumer received an unexpected rebalance event".into(),
+            )),
+        };
+        if let Err(error) = result {
+            self.fail(error.to_string());
+        }
+    }
+}
+
+type Phase92StreamConsumer = StreamConsumer<Phase92BootstrapConsumerContext>;
+
 pub struct Phase92TransactionalKafkaBridge {
     producer: FutureProducer,
-    consumer: StreamConsumer,
+    consumer: Phase92StreamConsumer,
     fences: tokio::sync::Mutex<HashMap<String, Phase92AuthorityFence>>,
     topics: Phase92TransactionalTopics,
     request_timeout: Duration,
@@ -434,15 +630,42 @@ impl Phase92TransactionalKafkaBridge {
         topics: Phase92TransactionalTopics,
         transactional_id: &str,
     ) -> Result<Self, KafkaTransportError> {
+        Self::new_inner(config, topics, transactional_id, None)
+    }
+
+    pub fn new_with_signed_bootstrap(
+        config: &KafkaTransportConfig,
+        topics: Phase92TransactionalTopics,
+        transactional_id: &str,
+        bootstrap: Phase92BootstrapPayload,
+    ) -> Result<Self, KafkaTransportError> {
+        Self::new_inner(config, topics, transactional_id, Some(bootstrap))
+    }
+
+    fn new_inner(
+        config: &KafkaTransportConfig,
+        topics: Phase92TransactionalTopics,
+        transactional_id: &str,
+        bootstrap: Option<Phase92BootstrapPayload>,
+    ) -> Result<Self, KafkaTransportError> {
         topics.validate()?;
         if transactional_id.trim().is_empty() {
             return Err(KafkaTransportError::Configuration(
                 "Phase 9.2 transactional.id must not be empty".into(),
             ));
         }
+        let strict_bootstrap = bootstrap.is_some();
+        let context = bootstrap.map_or_else(
+            || Phase92BootstrapConsumerContext::permissive(config.request_timeout),
+            |cursor| Phase92BootstrapConsumerContext::signed(cursor, config.request_timeout),
+        );
         let mut consumer_config = config.client_config()?;
-        config.configure_group_consumer(&mut consumer_config);
-        let consumer: StreamConsumer = consumer_config.create()?;
+        if strict_bootstrap {
+            config.configure_group_consumer_fail_closed(&mut consumer_config);
+        } else {
+            config.configure_group_consumer(&mut consumer_config);
+        }
+        let consumer: Phase92StreamConsumer = consumer_config.create_with_context(context)?;
         let raw_topics: Vec<&str> = topics.raw_inputs.iter().map(String::as_str).collect();
         consumer.subscribe(&raw_topics)?;
 
@@ -471,6 +694,17 @@ impl Phase92TransactionalKafkaBridge {
             topics,
             request_timeout: config.request_timeout,
         })
+    }
+
+    pub fn bootstrap_status(&self) -> Phase92BootstrapStatus {
+        self.consumer.context().status()
+    }
+
+    fn bootstrap_failure(&self) -> Result<(), KafkaTransportError> {
+        if let Some(message) = self.consumer.context().failure() {
+            return Err(KafkaTransportError::Fencing(message));
+        }
+        Ok(())
     }
 
     pub async fn apply_authority_event(
@@ -532,7 +766,16 @@ impl Phase92TransactionalKafkaBridge {
     }
 
     pub async fn next(&self) -> Result<TransactionalKafkaInput, KafkaTransportError> {
-        let message = self.consumer.recv().await?;
+        let message = loop {
+            self.bootstrap_failure()?;
+            match tokio::time::timeout(Duration::from_millis(250), self.consumer.recv()).await {
+                Ok(result) => {
+                    self.bootstrap_failure()?;
+                    break result?;
+                }
+                Err(_) => continue,
+            }
+        };
         let payload = message
             .payload()
             .ok_or(KafkaTransportError::MissingField("payload"))?

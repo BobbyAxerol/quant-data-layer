@@ -128,6 +128,7 @@ def prepare_candidate(
         catalog=catalog,
         acquisition=acquisition,
         authority=authority,
+        promotion_scope=promotion_scope,
     )
     bundle_digests.update(write_production_core_bundle(
         runtime_dir,
@@ -164,6 +165,7 @@ def prepare_candidate(
     ).hexdigest()
     ingest_secret = secrets.token_urlsafe(48)
     cursor_secret = secrets.token_urlsafe(48)
+    phase92_bootstrap_secret = secrets.token_hex(32)
     control_db_password = secrets.token_urlsafe(32)
     dispatcher_db_password = secrets.token_urlsafe(32)
     trading_system_jwt_public_key = (
@@ -181,6 +183,11 @@ def prepare_candidate(
         "QDL_STABLE_CURSOR_KEYS_JSON": json.dumps(
             {"stable-k1": cursor_secret}, separators=(",", ":")
         ),
+        "QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON": json.dumps(
+            {"phase92-k1": phase92_bootstrap_secret}, separators=(",", ":")
+        ),
+        "QDL_PHASE92_BOOTSTRAP_CURSOR_ACTIVE_KEY_ID": "phase92-k1",
+        "QDL_PHASE92_BOOTSTRAP_GROUP_ID": "qdl-v2-production-core-r1-canary-0001",
         "QDL_STABLE_JWT_KEYS_JSON": json.dumps(
             {
                 "stable-trading-system-rs256-v1": trading_system_jwt_public_key,

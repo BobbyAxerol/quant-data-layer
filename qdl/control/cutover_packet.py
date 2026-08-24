@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 _SCHEMA = "qdl.c3.authority-cutover-packet.v1"
 _PAIRS = {
     "SHADOW_VALIDATE": ("RUST_SHADOW", "VALIDATING"),
+    "REVALIDATE": ("BLOCKED", "VALIDATING"),
     "CANARY": ("VALIDATING", "RUST_CANARY"),
     "PRIMARY": ("RUST_CANARY", "RUST_PRIMARY"),
     "BLOCK_CANARY": ("RUST_CANARY", "BLOCKED"),
@@ -20,6 +21,7 @@ _PAIRS = {
 }
 _HANDOFF_STAGES = {"PRIMARY", "PYTHON_RESTORE"}
 _ACTIVE_STAGES = {"CANARY", "PRIMARY"}
+_CLEAN_EVIDENCE_STAGES = _ACTIVE_STAGES | {"SHADOW_VALIDATE", "REVALIDATE"}
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -210,17 +212,28 @@ class AuthorityCutoverPacket:
             },
             "cutover evidence",
         )
-        if (
-            evidence["provider_provenance"] != "REAL"
-            or any(
-                int(evidence[name]) != 0
+        evidence_counts = {}
+        try:
+            evidence_counts = {
+                name: int(evidence[name])
                 for name in (
                     "semantic_mismatches", "open_gaps",
                     "duplicate_external_effects", "consumer_errors",
                 )
-            )
+            }
+        except (TypeError, ValueError) as error:
+            raise ValueError("cutover evidence counts are invalid") from error
+        if raw["stage"] in _CLEAN_EVIDENCE_STAGES:
+            if (
+                evidence["provider_provenance"] != "REAL"
+                or any(value != 0 for value in evidence_counts.values())
+            ):
+                raise ValueError("cutover evidence is not clean/authentic")
+        elif (
+            evidence["provider_provenance"] not in {"REAL", "UNKNOWN"}
+            or any(value < 0 for value in evidence_counts.values())
         ):
-            raise ValueError("cutover evidence is not clean/authentic")
+            raise ValueError("block/rollback cutover evidence is invalid")
         values = raw["slices"]
         if not isinstance(values, list) or not 1 <= len(values) <= 32:
             raise ValueError("cutover packet requires 1..32 slices")

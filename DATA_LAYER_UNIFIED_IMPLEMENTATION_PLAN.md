@@ -10638,3 +10638,170 @@ gate and does not weaken the crypto closure.
   isolated canary/checkpoint records remain audit evidence and are not deleted.
   No action is legal until the operator explicitly approves this exact durable
   offset reset; this gate does not request or grant `RUST_PRIMARY`.
+
+
+## R0-R2 Rust Authority Convergence Closure - Approved 2026-08-24
+
+**Status:** `R0 IN PROGRESS / R1-R2 PENDING / V1 ROLLBACK RETAINED / RUNTIME
+UNCHANGED`.
+
+The operator explicitly approved R0, R1 and R2. This replaces the unsafe
+C40.32 manual-offset proposal. The C40 attempt is immutable audit evidence and
+will be terminalized, never deleted. This closure follows Phase 9 of the
+[fund-grade guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md):
+one fenced canonical writer per promoted slice, real-provider provenance,
+exact V1/V2 compatibility and a reversible V1 route.
+
+### R0 - Rust Authority Convergence
+
+- **Goal:** `qdl-production-core` becomes the only future canonical authority
+  for the twelve approved Binance USD-M / OKX Swap bindings. Python consumes
+  canonical Kafka to build Redis/V1/V2 projection/API/SDK only; it must not
+  normalize raw provider input for a Rust-owned slice. `rust_core` becomes a
+  temporary shadow/non-promoted role and is excluded from the twelve bindings
+  before primary handoff.
+- **Signed cursor invariant:** each production-core generation has a signed,
+  generation-bound per-partition tail cursor bound to exact group, raw topic,
+  promotion scope digest, candidate digest and plan epoch. Active CANARY or
+  PRIMARY without valid key/signature/scope/partition cursor fails closed.
+  This path uses Kafka `auto.offset.reset=error`, never implicit `earliest` or
+  `latest`.
+- **Bootstrap semantics:** a fresh or partially assigned group may seed only
+  exact *uncommitted* partitions explicitly covered by a valid, unexpired
+  signed cursor during cooperative assignment. A complete committed group
+  resumes only stored offsets at or after that cursor; a stored offset before
+  the signed tail, missing cursor coverage, unknown partition, expired cursor
+  that is still needed, scope drift or signature failure fails closed. Restart
+  cannot create historic replay merely by recreating a process.
+- **Projection:** Rust's transactional canonical output carries private raw
+  lineage. Python canonical projection must fail closed if it is absent, while
+  preserving exact V1 payload parity. The obsolete raw-topic environment
+  requirement is removed.
+- **Scope/tests:** Rust cursor codec and assignment policy; control-plane
+  issuer; bundle/compose role boundaries; non-promoted shadow selection;
+  image retention policy; malformed/expired/wrong binding cursor, no-earliest,
+  replay, fencing, canonical/V1/V2 parity and compatibility tests. No runtime,
+  V1 endpoint/schema, Kafka topic, Redis cache or authority-row mutation in R0.
+- **Rollback:** source-only R0 can be discarded. Later runtime rollback stops
+  only `production_core_*` and restores the prior bundle/image; V1 remains
+  intact.
+- **Candidate lifecycle invariant:** an authority row binds an immutable image
+  and candidate digest. A newer Rust image cannot reuse or overwrite that
+  identity. After old C40 evidence is terminalized, R1 must use one append-only,
+  compare-and-swap candidate rollover from `BLOCKED` only: retain the old C40
+  row/audit/outbox, record old/new candidate and image provenance, create a new
+  still-`BLOCKED` revision with a strictly newer lease, then revalidate and
+  canary. Keeping the rollover state `BLOCKED` ensures the new candidate cannot
+  write until the normal `BLOCKED -> VALIDATING -> RUST_CANARY` C3 transitions
+  are durably published. Direct `UPDATE`, delete, reuse of the old candidate
+  digest or manual
+  Kafka offset reset is forbidden.
+
+**R0 implementation slice 1 - bootstrap contract and Kafka consumer fencing
+(in progress).** Source changes are limited to `rust/qdl-kafka`, the stable
+runtime bundle/compose renderer and tests. The cursor uses an operator-managed
+HMAC keyring from runtime secret material; no key, cursor or provider payload is
+committed. The bridge must retain cooperative rebalancing and use
+`auto.offset.reset=error` only in the signed production-core path. Test gate:
+malformed/signature/scope/expiry/partition/stale-offset rejection, exact
+uncommitted-partition seed, normal stored-offset resume, Clippy/test workspace
+and Python bundle-contract tests. No Docker service, Kafka consumer offset,
+Redis, database or authority mutation is part of this slice.
+
+**R0 implementation slice 2 - immutable candidate rollover primitive
+(in progress).** Read-only preflight found the twelve C40 rows at
+`RUST_CANARY` revision `3`, lease `2`, candidate
+`5ae3f290cb4f28b5ee1450776b03c07fd8c173e236ab19991b29c4e7cf02817e`
+and generic-core image
+`sha256:db240925dff30d4b9deb338dbd8e6e3506cbc8501ee71cff09ff58a247b7bae6`.
+R0 source changes require a new immutable Rust image and therefore a new
+candidate digest. Add only an additive PostgreSQL migration/function and
+operator packet tool: first C40 moves `RUST_CANARY -> BLOCKED` through the
+existing C3 CAS; then an exact `BLOCKED` CAS may atomically insert a new
+candidate bundle, update only the current slice provenance while preserving
+its `BLOCKED` state at a new revision/lease, append immutable candidate-rollover
+and authority-transition evidence, and enqueue its durable authority event.
+The existing C3 state machine then revalidates it before `RUST_CANARY`. Every
+expected
+state/revision/owner/lease/plan/candidate and every new provenance digest is
+validated; direct update/delete and active-state rollover fail closed. Tests
+cover idempotency, stale/tampered preconditions, append-only records, outbox
+serialization and unchanged V1. A `BLOCK_CANARY`/`BLOCK_PRIMARY` packet may
+carry `UNKNOWN` provenance and non-negative diagnostic counts so a suspected
+or incomplete canary can always be fenced; promotion and revalidation remain
+strictly `REAL` with zero mismatch/gap/duplicate/consumer-error evidence. No
+live migration or authority transition is part of R0.
+
+### R1 - Bounded Real Canary
+
+- **Precondition:** R0 gates pass and generic Rust writer excludes all twelve
+  promoted bindings.
+- **Action:** terminalize C40 attempt without deleting evidence; issue a fresh
+  control-plane signed tail cursor from Kafka high-watermark reads for a fresh
+  generation-bound group; start only three production-core replicas for 5-10
+  minutes of real Binance/OKX data. No manual Kafka offset reset.
+- **Acceptance:** signed start, zero historic replay, zero semantic/provenance/
+  gap/duplicate mismatch, contiguous watermarks, bounded resource/lag, healthy
+  Trading System and SDK. Output is canary/checkpoint only; primary/public/V1
+  writes stay zero.
+- **Rollback:** stop those three cores and retain evidence/cursor/checkpoints.
+
+### R2 - Primary Handoff
+
+- **Precondition:** R1 terminal watermark `W` accepted for every slice.
+- **Action:** fence generic Rust/Python raw writer only for the selected twelve
+  bindings, retain their non-promoted scope, apply existing CAS
+  `RUST_CANARY -> RUST_PRIMARY`, then keep Python as canonical projection/API.
+  No public endpoint or alpha SDK schema changes.
+- **Acceptance:** exactly one Rust canonical authority per promoted slice,
+  first primary watermark `W + 1`, V1 fallback and Trading System demanded
+  slices pass, and rollback can fence Rust/restore V1 without deletion.
+- **Decision boundary:** any R0/R1 failure blocks R2. Image cleanup retains the
+  active image, one tested rollback image and one candidate per role; only
+  reference-audited disposable images/cache may be removed.
+
+**R0 source closure - 2026-08-24.**
+
+- Status: `SOURCE CERTIFIED / RUNTIME UNCHANGED / R1 PENDING`. The signed
+  bootstrap cursor is implemented in `qdl-kafka` and is HMAC-SHA256 bound to
+  group, generation, raw topic set, promotion scope, candidate, plan epoch and
+  exact topic/partition tail offsets. The production-core path is cooperative,
+  uses `auto.offset.reset=error`, permits only a signed seed of uncommitted
+  assigned partitions, and fences stale stored offsets, expired/tampered scope,
+  missing partitions and rebalance failures before receive/commit.
+- Python supplies only the sealed control-plane issuer and review-first
+  `--apply --confirm` writer. It observes metadata/high-watermarks/committed
+  offsets, never invokes a Kafka group reset/seek and writes no cursor during
+  dry run. The stable projector consumes canonical-only records and fails
+  closed on missing embedded raw lineage; generic `rust_core` bundle generation
+  excludes the twelve promoted bindings.
+- Added additive migration `0011_authority_candidate_rollover.sql`: candidate
+  image/provenance can change only through an append-only, exact `BLOCKED` CAS;
+  old C40 candidate/audit/outbox evidence is retained. New R1/R2 packet tools
+  bind all twelve slice identities, revisions, leases, image, contract,
+  rollback route, terminal checkpoint and W+1 primary handoff. A block uses
+  `UNKNOWN` evidence only to fence an unsafe old canary; all revalidate/canary/
+  primary paths require `REAL` with zero mismatch/gap/duplicate/error.
+- Compose compatibility was corrected: absent signed-cursor variables no
+  longer prevent rendering non-authority profiles. `qdl-production-core` still
+  rejects empty group/keyring before it can subscribe. This protects the
+  currently running V2 topology until the isolated R1 bundle supplies both
+  values.
+- Tests actually passed: isolated Python contract suite `87 passed, 1 known
+  Redis-isolation skip`; Rust `cargo fmt --check`, warnings-denied Clippy and
+  full workspace tests passed in a disposable container; existing C3 authority
+  DB smoke passed; new `scripts/phase_r1_candidate_rollover_smoke.sh` passed
+  against tmpfs PostgreSQL, proving idempotent rollover, direct provenance
+  rewrite rejection and one immutable audit/outbox row. `py_compile`, `bash
+  -n`, `git diff --check` and current-bundle Compose rendering passed.
+- Cleanup/evidence: all named disposable Rust/PostgreSQL containers and the
+  temporary SQL fixture were removed. No V1 endpoint/schema, Kafka topic or
+  offset, Redis, live authority row, V2 runtime bundle, Trading System, alpha
+  or production-volume mutation occurred. The only observed test-harness race
+  (`pg_isready` before entrypoint migrations completed) was fixed by waiting
+  for `qdl_authority_slices`; it is now covered in the tracked smoke script.
+- Remaining decision gate: R1 must build a new immutable image and fresh
+  isolated bundle, then terminalize the old C40 `RUST_CANARY` through C3,
+  apply migration 0011, rollover from `BLOCKED`, revalidate/canary and issue a
+  signed fresh-group tail cursor. Any failed gate stops the three
+  `production_core_*` only; V1 remains the rollback route.

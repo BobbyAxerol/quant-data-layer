@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
-from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from qdl.runtime.stable_deployment import AuthorityPromotionScope, StableAcquisitionPlan
 from scripts.refresh_stable_runtime_bundle import PRESERVED, refresh
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,15 +115,35 @@ class StableRuntimeRefreshTests(unittest.TestCase):
             backup = Path(str(result["backup_dir"]))
             self.assertTrue((backup / "stale-core.json").is_file())
 
-    def test_core_carries_the_whole_catalog_while_production_core_honours_the_scope(self):
+    def test_generic_core_excludes_the_production_scope_and_bundle_binds_bootstrap(self):
         with tempfile.TemporaryDirectory() as raw:
             bundle = self._bundle(Path(raw))
             result = self._refresh(bundle, apply=True)
+            generic = json.loads((bundle / "runtime/core.json").read_text())
             production = json.loads(
                 (bundle / "runtime/production-core-001.json").read_text()
             )
+            generic_subscriptions = {
+                item["source_id"] for item in generic["core"]["bindings"]
+            }
+            production_subscriptions = {
+                item["subscription_id"] for item in production["slices"]
+            }
+            scope = AuthorityPromotionScope.load(
+                PROMOTION_SCOPE_PATH,
+                catalog=StableSourceCatalog.load(CATALOG_PATH),
+            )
             self.assertEqual(
                 len(production["slices"]), result["promotion_binding_count"]
+            )
+            self.assertTrue(generic_subscriptions.isdisjoint(production_subscriptions))
+            self.assertEqual(len(production_subscriptions), len(scope.binding_ids))
+            self.assertEqual(
+                production["promotion_scope_digest"], scope.digest()
+            )
+            self.assertEqual(production["partition_plan_epoch"], 1)
+            self.assertEqual(
+                production["bootstrap_cursor_path"], "/runtime/production-bootstrap.json"
             )
             manifest = json.loads(
                 (bundle / "runtime/production-core-manifest.json").read_text()

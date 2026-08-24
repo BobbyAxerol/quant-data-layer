@@ -189,7 +189,11 @@ def refresh(
     before = _digests(runtime_dir)
     try:
         write_stable_runtime_bundle(
-            staging, catalog=catalog, acquisition=acquisition, authority=authority
+            staging,
+            catalog=catalog,
+            acquisition=acquisition,
+            authority=authority,
+            promotion_scope=promotion_scope,
         )
         write_production_core_bundle(
             staging,

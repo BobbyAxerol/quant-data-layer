@@ -1085,6 +1085,11 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertTrue(services[name]["read_only"])
                 self.assertEqual(services[name]["stop_grace_period"], "45s")
                 self.assertNotIn("ports", services[name])
+                self.assertIn(
+                    "QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON",
+                    services[name]["environment"],
+                )
+                self.assertIn("production-bootstrap.json", " ".join(services[name]["volumes"]))
 
     def test_candidate_bundle_uses_image_ids_and_never_records_secret_values(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phaseb-cert-") as cert_directory:
@@ -1144,6 +1149,13 @@ class StableComposeAndBundleTests(unittest.TestCase):
                     {item["venue"] for item in production["core"]["bindings"]},
                     {"BINANCE", "OKX"},
                 )
+                generic = json.loads((output / "runtime/core.json").read_text())
+                self.assertTrue(
+                    {
+                        item["source_id"] for item in generic["core"]["bindings"]
+                    }.isdisjoint({item["subscription_id"] for item in production["slices"]})
+                )
+                self.assertEqual(production["bootstrap_cursor_path"], "/runtime/production-bootstrap.json")
                 self.assertEqual((output / "stable.env").stat().st_mode & 0o777, 0o600)
                 env_text = (output / "stable.env").read_text()
                 self.assertIn("QDL_STABLE_CERT_DIR=/host/qdl/certs", env_text)
@@ -1162,6 +1174,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertIn(
                     "stable-alpha-binance-rs256-v1", env_text
                 )
+                self.assertIn("QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON", env_text)
                 self.assertIn(
                     "QDL_STABLE_ALPHA_BINANCE_CERT_DIR="
                     "/host/qdl/candidate/identities/alpha-binance",

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod phase92_bootstrap;
 pub mod phase92_runtime;
 
 use std::fmt::{Display, Formatter};
@@ -139,6 +140,18 @@ impl KafkaTransportConfig {
     }
 
     pub(crate) fn configure_group_consumer(&self, config: &mut ClientConfig) {
+        self.configure_group_consumer_with_offset_reset(config, "earliest");
+    }
+
+    pub(crate) fn configure_group_consumer_fail_closed(&self, config: &mut ClientConfig) {
+        self.configure_group_consumer_with_offset_reset(config, "error");
+    }
+
+    fn configure_group_consumer_with_offset_reset(
+        &self,
+        config: &mut ClientConfig,
+        offset_reset: &str,
+    ) {
         config
             .set("group.id", &self.group_id)
             .set("group.protocol", CONSUMER_GROUP_PROTOCOL)
@@ -148,7 +161,7 @@ impl KafkaTransportConfig {
             )
             .set("enable.auto.commit", "false")
             .set("enable.auto.offset.store", "false")
-            .set("auto.offset.reset", "earliest")
+            .set("auto.offset.reset", offset_reset)
             .set("isolation.level", "read_committed");
     }
 }

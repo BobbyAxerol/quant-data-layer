@@ -537,6 +537,7 @@ dependencies = [
  "qdl-realtime-core",
  "qdl-venue-core",
  "rdkafka",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

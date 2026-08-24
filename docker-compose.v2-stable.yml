@@ -323,7 +323,6 @@ services:
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-1-audit.jsonl
       QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-1
-      QDL_STABLE_KAFKA_RAW_TOPICS: md.raw.stable.v1
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
       QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
       QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
@@ -353,7 +352,6 @@ services:
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-2-audit.jsonl
       QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-2
-      QDL_STABLE_KAFKA_RAW_TOPICS: md.raw.stable.v1
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
       QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
       QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
@@ -383,7 +381,6 @@ services:
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-3-audit.jsonl
       QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-3
-      QDL_STABLE_KAFKA_RAW_TOPICS: md.raw.stable.v1
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
       QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
       QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
@@ -485,10 +482,15 @@ services:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
       QDL_KAFKA_CLIENT_ID: qdl-v2-production-core-001
-      QDL_KAFKA_GROUP_ID: qdl-v2-production-core-v1
+      # Keep ordinary stable-topology renders compatible before the optional
+      # authority profile is provisioned. qdl-production-core itself rejects
+      # an empty group/keyring before it can subscribe or commit an offset.
+      QDL_KAFKA_GROUP_ID: ${QDL_PHASE92_BOOTSTRAP_GROUP_ID:-}
+      QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON: ${QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON:-}
     volumes:
       - stable_tls:/stable-certs:ro
       - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-core-001.json:/runtime/production-core-001.json:ro"
+      - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-bootstrap.json:/runtime/production-bootstrap.json:ro"
     depends_on:
       authority_outbox_v2: {condition: service_healthy}
       stable_tls_init: {condition: service_completed_successfully}
@@ -505,10 +507,12 @@ services:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
       QDL_KAFKA_CLIENT_ID: qdl-v2-production-core-002
-      QDL_KAFKA_GROUP_ID: qdl-v2-production-core-v1
+      QDL_KAFKA_GROUP_ID: ${QDL_PHASE92_BOOTSTRAP_GROUP_ID:-}
+      QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON: ${QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON:-}
     volumes:
       - stable_tls:/stable-certs:ro
       - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-core-002.json:/runtime/production-core-002.json:ro"
+      - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-bootstrap.json:/runtime/production-bootstrap.json:ro"
     depends_on:
       authority_outbox_v2: {condition: service_healthy}
       stable_tls_init: {condition: service_completed_successfully}
@@ -525,10 +529,12 @@ services:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
       QDL_KAFKA_CLIENT_ID: qdl-v2-production-core-003
-      QDL_KAFKA_GROUP_ID: qdl-v2-production-core-v1
+      QDL_KAFKA_GROUP_ID: ${QDL_PHASE92_BOOTSTRAP_GROUP_ID:-}
+      QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON: ${QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON:-}
     volumes:
       - stable_tls:/stable-certs:ro
       - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-core-003.json:/runtime/production-core-003.json:ro"
+      - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-bootstrap.json:/runtime/production-bootstrap.json:ro"
     depends_on:
       authority_outbox_v2: {condition: service_healthy}
       stable_tls_init: {condition: service_completed_successfully}

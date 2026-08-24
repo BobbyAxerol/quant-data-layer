@@ -21,6 +21,7 @@ indexmap = "=2.7.1"
 jobserver = "=0.1.32"
 prost = "0.13.5"
 proc-macro-crate = "=3.3.0"
+ring = "=0.17.14"
 qdl-contracts = { path = "rust/qdl-contracts", version = "=0.1.0" }
 qdl-core = { path = "rust/qdl-core", version = "=0.1.0" }
 rdkafka = { version = "=0.39.0", features = ["cmake-build", "ssl", "zstd"] }

@@ -9,6 +9,9 @@ use prost::Message;
 use qdl_contracts::qdl::provider::v1::RawProviderEnvelope;
 use qdl_core::backoff::BackoffPolicy;
 use qdl_core::transport::RetryClass;
+use qdl_kafka::phase92_bootstrap::{
+    Phase92BootstrapPayload, Phase92BootstrapScope, Phase92SignedBootstrapCursor,
+};
 use qdl_kafka::phase92_runtime::{
     KafkaCompactedSnapshotReader, Phase92Decision, Phase92Progress, Phase92TargetCheckpoint,
     Phase92TransactionalKafkaBridge, Phase92TransactionalOutput, Phase92TransactionalTopics,
@@ -56,6 +59,9 @@ struct ProductionRuntimeConfig {
     topics: ProductionTopicConfig,
     slices: Vec<RuntimeSliceBinding>,
     transactional_id: String,
+    promotion_scope_digest: String,
+    partition_plan_epoch: u64,
+    bootstrap_cursor_path: String,
     batch_size: usize,
     batch_wait_ms: u64,
     max_events: u64,
@@ -95,6 +101,10 @@ impl ProductionRuntimeConfig {
             .validate()
             .map_err(|error| error.to_string())?;
         if self.transactional_id.trim().is_empty()
+            || !lower_sha256(&self.promotion_scope_digest)
+            || self.partition_plan_epoch == 0
+            || !self.bootstrap_cursor_path.starts_with("/runtime/")
+            || self.bootstrap_cursor_path.len() <= "/runtime/".len()
             || self.slices.is_empty()
             || self.batch_size == 0
             || self.batch_size > 1_000
@@ -108,6 +118,9 @@ impl ProductionRuntimeConfig {
         let mut slices = HashSet::new();
         for binding in &self.slices {
             binding.validate()?;
+            if binding.raw_partition_plan_epoch != self.partition_plan_epoch {
+                return Err("production runtime raw/bundle partition plan epochs differ".into());
+            }
             if !subscriptions.insert(binding.subscription_id.clone())
                 || !slices.insert(binding.slice_id.clone())
             {
@@ -126,6 +139,58 @@ impl ProductionRuntimeConfig {
             .map(|binding| (binding.subscription_id.clone(), binding))
             .collect()
     }
+
+    fn bootstrap_scope(&self, kafka: &KafkaTransportConfig) -> Phase92BootstrapScope {
+        Phase92BootstrapScope {
+            consumer_group_id: kafka.group_id.clone(),
+            raw_topics: self.topics.raw_inputs.clone(),
+            promotion_scope_digest: self.promotion_scope_digest.clone(),
+            // The token's candidate is cross-checked against reconstructed
+            // authority below. It cannot be baked into this bundle without a
+            // circular dependency on the authority packet/manifest.
+            candidate_digest: None,
+            partition_plan_epoch: self.partition_plan_epoch,
+        }
+    }
+
+    fn load_signed_bootstrap(
+        &self,
+        kafka: &KafkaTransportConfig,
+    ) -> Result<Phase92BootstrapPayload, RuntimeError> {
+        let keyring = required("QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON")?;
+        Ok(Phase92SignedBootstrapCursor::load_and_verify(
+            &self.bootstrap_cursor_path,
+            &keyring,
+            &self.bootstrap_scope(kafka),
+        )?)
+    }
+
+    async fn validate_bootstrap_authority(
+        &self,
+        bridge: &Phase92TransactionalKafkaBridge,
+        bootstrap: &Phase92BootstrapPayload,
+    ) -> Result<(), RuntimeError> {
+        for binding in &self.slices {
+            let authority = bridge
+                .current_authority(&binding.slice_id)
+                .await
+                .ok_or("production bootstrap authority disappeared")?;
+            if authority.slice_id != binding.slice_id
+                || authority.partition_plan_epoch != self.partition_plan_epoch
+                || authority.candidate_digest != bootstrap.candidate_digest
+            {
+                return Err("signed bootstrap cursor differs from restored authority".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+fn lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value.bytes().all(|byte| {
+            byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit())
+        })
 }
 
 type RuntimeError = Box<dyn std::error::Error + Send + Sync>;
@@ -392,12 +457,18 @@ async fn run_generation(
     generation: u64,
 ) -> Result<(), RuntimeError> {
     let mut core = RealtimeCore::new(config.core.clone())?;
-    let bridge = Arc::new(Phase92TransactionalKafkaBridge::new(
-        &kafka_config("phase92-raw")?,
+    let raw_kafka = kafka_config("phase92-raw")?;
+    let bootstrap = config.load_signed_bootstrap(&raw_kafka)?;
+    let bridge = Arc::new(Phase92TransactionalKafkaBridge::new_with_signed_bootstrap(
+        &raw_kafka,
         config.topics(),
         &config.transactional_id,
+        bootstrap.clone(),
     )?);
     restore_authority(&bridge, config).await?;
+    config
+        .validate_bootstrap_authority(&bridge, &bootstrap)
+        .await?;
     let binding_by_subscription = config.bindings();
     let allowed_slices: HashSet<_> = config
         .slices
@@ -419,6 +490,9 @@ async fn run_generation(
             "bindings": config.core.bindings.len(),
             "authority_reconstructed": true,
             "target_watermarks_reconstructed": true,
+            "bootstrap_cursor_id": bootstrap.cursor_id,
+            "bootstrap_generation": bootstrap.generation,
+            "bootstrap_status": bridge.bootstrap_status(),
         }))?
     );
 
@@ -560,6 +634,7 @@ async fn run_generation(
                     "filtered": filtered,
                     "ignored_out_of_scope": ignored_out_of_scope,
                     "batches": batches,
+                    "bootstrap_status": bridge.bootstrap_status(),
                 }))?
             );
         }

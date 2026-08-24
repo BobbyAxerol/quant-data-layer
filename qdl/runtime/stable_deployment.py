@@ -243,6 +243,7 @@ class StableAcquisitionPlan:
         max_events: int = 0,
         worker_index: int = 1,
         binding_ids: frozenset[str] | None = None,
+        excluded_binding_ids: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
         self._validate_authority(authority)
         if not 1 <= worker_index <= STABLE_CORE_WORKER_COUNT:
@@ -255,6 +256,7 @@ class StableAcquisitionPlan:
             item.binding_id for item in self.bindings if item.enabled
         )
         selected_ids = acquired if binding_ids is None else frozenset(binding_ids) & acquired
+        selected_ids = selected_ids - frozenset(excluded_binding_ids)
         if not selected_ids or not selected_ids.issubset(source_by_id):
             raise ValueError("stable core binding selection is empty or unknown")
         bindings = []
@@ -352,6 +354,9 @@ class StableAcquisitionPlan:
             },
             "slices": slices,
             "transactional_id": f"qdl-v2-production-core-{worker_index:03d}",
+            "promotion_scope_digest": promotion_scope.digest(),
+            "partition_plan_epoch": partition_plan_epoch,
+            "bootstrap_cursor_path": "/runtime/production-bootstrap.json",
             "batch_size": 128,
             "batch_wait_ms": 10,
             "max_events": 0,
@@ -521,8 +526,12 @@ def write_stable_runtime_bundle(
     catalog: StableSourceCatalog,
     acquisition: StableAcquisitionPlan,
     authority: Mapping[str, Any],
+    promotion_scope: AuthorityPromotionScope | None = None,
 ) -> dict[str, str]:
     destination.mkdir(parents=True, exist_ok=True)
+    excluded_binding_ids = (
+        frozenset(promotion_scope.binding_ids) if promotion_scope is not None else frozenset()
+    )
     payloads = {
         "authority.json": dict(authority),
         **{
@@ -531,6 +540,7 @@ def write_stable_runtime_bundle(
                     catalog=catalog,
                     authority=authority,
                     worker_index=worker_index,
+                    excluded_binding_ids=excluded_binding_ids,
                 )
             for worker_index in range(1, STABLE_CORE_WORKER_COUNT + 1)
         },

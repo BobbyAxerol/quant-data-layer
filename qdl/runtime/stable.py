@@ -186,7 +186,7 @@ class StableRuntimeConfig:
             if not all((
                 self.kafka_bootstrap_servers, self.kafka_client_id,
                 self.kafka_canonical_topic, self.kafka_cert_root,
-            )) or not self.kafka_raw_topics or not self.stream_ingest_urls:
+            )) or not self.stream_ingest_urls:
                 raise ValueError("stable projector Kafka/stream dependencies are required")
 
     @classmethod
