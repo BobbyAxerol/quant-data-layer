@@ -59,20 +59,41 @@ cd /home/bobby/data_layer
 
 export QDL_PACKET_DIR=/home/bobby/.local/state/qdl-v2/phase103-shared-primary-$(date -u +%Y%m%dT%H%M%SZ)
 export QDL_RUNTIME_DIR="$QDL_PACKET_DIR/runtime"
+export QDL_STABLE_PYTHON_IMAGE_DIGEST='sha256:<approved-python-image-id>'
+export QDL_STABLE_PYTHON_IMAGE_REF="qdl-v2-python@${QDL_STABLE_PYTHON_IMAGE_DIGEST}"
+export QDL_STABLE_RUST_IMAGE_DIGEST='sha256:<approved-rust-image-id>'
+export QDL_SOURCE_COMMIT='<commit-used-to-build-those-images>'
 
-python -B scripts/phase103_prepare_shared_primary_packet.py \
-  --output-dir "$QDL_PACKET_DIR" \
-  --host-runtime-dir "$QDL_RUNTIME_DIR" \
-  --rust-image-digest 'sha256:<approved-rust-image-id>' \
-  --python-image-digest 'sha256:<approved-python-image-id>' \
-  --source-commit '<commit-used-to-build-those-images>' \
-  --actor BobbyAxerol \
-  --change-ticket QDL-PHASE103-HANDOFF \
-  --observation-seconds 300
+umask 077
+mkdir "$QDL_PACKET_DIR"
 
-python -B scripts/phase103_validate_shared_primary_packet.py \
-  --packet "$QDL_PACKET_DIR/shared-primary-handoff-packet.json" \
-  --runtime-dir "$QDL_RUNTIME_DIR"
+docker run --rm --read-only --network none \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD:/workspace:ro" \
+  -v "$QDL_PACKET_DIR:$QDL_PACKET_DIR" \
+  -w /workspace \
+  "$QDL_STABLE_PYTHON_IMAGE_REF" \
+  python -B scripts/phase103_prepare_shared_primary_packet.py \
+    --output-dir "$QDL_PACKET_DIR" \
+    --host-runtime-dir "$QDL_RUNTIME_DIR" \
+    --rust-image-digest "$QDL_STABLE_RUST_IMAGE_DIGEST" \
+    --python-image-digest "$QDL_STABLE_PYTHON_IMAGE_DIGEST" \
+    --source-commit "$QDL_SOURCE_COMMIT" \
+    --actor BobbyAxerol \
+    --change-ticket QDL-PHASE103-HANDOFF \
+    --observation-seconds 300
+
+docker run --rm --read-only --network none \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD:/workspace:ro" \
+  -v "$QDL_PACKET_DIR:$QDL_PACKET_DIR:ro" \
+  -w /workspace \
+  "$QDL_STABLE_PYTHON_IMAGE_REF" \
+  python -B scripts/phase103_validate_shared_primary_packet.py \
+    --packet "$QDL_PACKET_DIR/shared-primary-handoff-packet.json" \
+    --runtime-dir "$QDL_RUNTIME_DIR"
 ```
 
 The second command must print `status=PASS`. It verifies packet expiry,
@@ -107,12 +128,12 @@ After the separate approval only, use the bounded helper. Its default is still
 review-only; `--apply` needs the exact token from the sealed packet.
 
 ```bash
-python -B scripts/phase103_apply_shared_primary_broker_scope.py \
+python3 -B scripts/phase103_apply_shared_primary_broker_scope.py \
   --packet "$QDL_PACKET_DIR/shared-primary-handoff-packet.json" \
   --runtime-dir "$QDL_RUNTIME_DIR" \
   --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env
 
-python -B scripts/phase103_apply_shared_primary_broker_scope.py \
+python3 -B scripts/phase103_apply_shared_primary_broker_scope.py \
   --apply \
   --confirm 'APPLY_QDL_PHASE103_<packet-prefix>' \
   --packet "$QDL_PACKET_DIR/shared-primary-handoff-packet.json" \

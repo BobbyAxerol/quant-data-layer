@@ -12,6 +12,19 @@ from scripts.phase103_consumer_receipt_acceptance import (
 )
 from scripts.phase103_prepare_shared_primary_packet import (
     prepare_shared_primary_packet,
+    validate_prepared_shared_primary_bundle as generator_bundle_validator,
+)
+from scripts.phase103_apply_shared_primary_broker_scope import (
+    validate_prepared_shared_primary_bundle as broker_bundle_validator,
+)
+from scripts.phase103_packet_contract import (
+    SHARED_REALTIME_CORE_GROUP_ID,
+    SHARED_REALTIME_CORE_ID_PREFIX,
+    validate_prepared_shared_primary_bundle as contract_bundle_validator,
+)
+from qdl.runtime.stable_deployment import (
+    SHARED_REALTIME_CORE_GROUP_ID as DEPLOYMENT_CORE_GROUP_ID,
+    SHARED_REALTIME_CORE_ID_PREFIX as DEPLOYMENT_CORE_ID_PREFIX,
 )
 
 
@@ -85,6 +98,36 @@ class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
         )
         self.assertIn('--runtime-dir "$QDL_RUNTIME_DIR"', runbook)
         self.assertNotIn("--handoff-packet /packet/", runbook)
+
+    def test_packet_contract_identity_matches_runtime_deployment(self):
+        self.assertEqual(SHARED_REALTIME_CORE_GROUP_ID, DEPLOYMENT_CORE_GROUP_ID)
+        self.assertEqual(SHARED_REALTIME_CORE_ID_PREFIX, DEPLOYMENT_CORE_ID_PREFIX)
+
+    def test_packet_validation_has_one_contract_source_of_truth(self):
+        self.assertIs(generator_bundle_validator, contract_bundle_validator)
+        self.assertIs(broker_bundle_validator, contract_bundle_validator)
+
+    def test_runbook_uses_immutable_image_for_packet_preflight(self):
+        runbook = (
+            ROOT / "docs/runbooks/phase103-shared-rust-primary-handoff.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn('export QDL_STABLE_PYTHON_IMAGE_REF=', runbook)
+        self.assertIn('docker run --rm --read-only --network none', runbook)
+        self.assertIn('-v "$QDL_PACKET_DIR:$QDL_PACKET_DIR"', runbook)
+        for script in (
+            "phase103_prepare_shared_primary_packet.py",
+            "phase103_validate_shared_primary_packet.py",
+        ):
+            self.assertIn(f"python -B scripts/{script}", runbook)
+            self.assertNotIn(f"python3 -B scripts/{script}", runbook)
+        self.assertIn(
+            "python3 -B scripts/phase103_apply_shared_primary_broker_scope.py",
+            runbook,
+        )
+        self.assertIn(
+            "  python -B scripts/phase103_consumer_receipt_acceptance.py",
+            runbook,
+        )
 
 
 if __name__ == "__main__":

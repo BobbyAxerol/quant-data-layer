@@ -12892,6 +12892,42 @@ MUTATION`).**
   source/runbook correction neither grants `RUST_PRIMARY` nor certifies the
   currently stale runtime route.
 
+**Implementation slice 10.3 host preflight interpreter portability -
+2026-08-24 (`SOURCE/RUNBOOK PASS / RUNTIME HANDOFF PENDING`).**
+
+- **Finding:** this host intentionally provides `python3` but no `python`
+  executable. The review/validate/broker preflight commands in the shared
+  handoff runbook are host-side commands, so their `python -B` spelling fails
+  before packet validation. The disposable SDK acceptance command executes
+  inside the sealed Python image and may retain that image's `python` entry
+  point.
+- **Implementation:** the QDL-dependent packet *generator* now runs only in
+  the already-built immutable Python image with read-only source, `--network
+  none`, a private output mount and the host path preserved exactly. The
+  packet *validator* and broker-scope helper now share
+  `scripts/phase103_packet_contract.py`, a stdlib-only sealed-contract module;
+  `python3` on the host can therefore validate the bundle and render the nine
+  broker intents before it ever invokes Docker Compose. Generator, validator
+  and helper are test-locked to that single validation function; the fixed
+  core group/id constants are parity-tested against runtime deployment code.
+- **Tests actually run:** host `py_compile`, direct clean-host contract import,
+  validator/helper `--help`, and immutable read-only/no-network targeted suite
+  `24/24` passed. A real disposable operator smoke generated a 12-binding,
+  13-service review packet in the pinned image; host validator returned
+  `PASS` with eight runtime files, and host broker helper returned
+  `REVIEW_REQUIRED` with exactly nine allowlisted commands and `0` mutations.
+  Its temporary packet, reports and empty env fixture were removed. The broader
+  immutable read-only/no-network Phase 10.3 scope, raw-lineage, broker-scope,
+  handoff and stable-deployment regression passed `58/58`; the expected
+  negative-path argparse/DNSE-fence diagnostics were assertions and the suite
+  exited `0`. No service, image build, Kafka topic/offset/ACL,
+  Redis/SQLite/PostgreSQL state, route, authority, V1, Trading System, alpha
+  or provider state changed.
+- **Remaining gate unchanged:** only a fresh packet plus separately approved
+  bounded broker/service/consumer handoff can execute the nine broker actions
+  and recreate the named roles. This portability repair itself grants neither
+  `RUST_PRIMARY` nor a consumer-route change.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 
