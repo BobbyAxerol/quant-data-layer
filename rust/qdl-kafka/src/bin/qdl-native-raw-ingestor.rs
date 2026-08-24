@@ -178,8 +178,10 @@ fn partition_binance_bindings(
 impl IngestorConfig {
     fn validate(&self) -> Result<(), String> {
         self.authority.validate()?;
-        if self.authority.mode != AuthorityMode::RustShadow
-            || self.websocket_url.trim().is_empty()
+        if !matches!(
+            self.authority.mode,
+            AuthorityMode::RustShadow | AuthorityMode::RustPrimary
+        ) || self.websocket_url.trim().is_empty()
             || !self.websocket_url.starts_with("wss://")
             || self.raw_stream.trim().is_empty()
             || self.shard_id.trim().is_empty()
@@ -197,7 +199,9 @@ impl IngestorConfig {
             || self.latest_state_flush_ms > 1_000
             || self.bindings.is_empty()
         {
-            return Err("native raw ingestor config is invalid or not RUST_SHADOW".into());
+            return Err(
+                "native raw ingestor config is invalid or not a shared Rust authority".into(),
+            );
         }
         let generation_path = Path::new(&self.generation_state_path);
         if !generation_path.is_absolute()
@@ -377,12 +381,19 @@ impl RawPublisher {
     }
 
     fn publication(&self) -> PublicationContext {
+        let target = match self.authority.mode {
+            AuthorityMode::RustShadow => SinkTarget::ShadowRaw,
+            AuthorityMode::RustPrimary => SinkTarget::PrimaryRaw,
+            AuthorityMode::RustCanary => {
+                unreachable!("validated native raw ingestor cannot run RUST_CANARY")
+            }
+        };
         PublicationContext {
             slice_id: self.authority.slice_id.clone(),
             authority_revision: self.authority.revision,
             shard_id: self.shard_id.clone(),
             lease_epoch: self.lease_epoch,
-            target: SinkTarget::ShadowRaw,
+            target,
         }
     }
 

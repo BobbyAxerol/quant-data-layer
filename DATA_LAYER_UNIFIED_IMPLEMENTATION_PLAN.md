@@ -12281,6 +12281,81 @@ RUNTIME PACKET PENDING`).**
   observation gates and manifest-only V1 rollback; it must be approved before
   execution.
 
+**Shared-core primary-mode simplification - 2026-08-24 (`APPROVED SOURCE
+SCOPE / NO RUNTIME MUTATION`).**
+
+- **Root cause:** the current `qdl-realtime-core` binary and the shared
+  `AuthorityRecord` reject every mode except `RUST_SHADOW`, and its
+  transactional topic guard permits only `SHADOW_*` output targets. The
+  separate historical `qdl-production-core` Phase-9.2 topology can express a
+  primary handoff, but it creates an unnecessary second binary/config/consumer
+  group for the same provider-neutral canonical transformation. It is not the
+  intended Phase 10.3 runtime topology.
+- **Approved simplification:** extend the existing shared Rust core, its one
+  authority record and its existing transactional bridge to support exactly
+  `RUST_SHADOW` and `RUST_PRIMARY`. In primary mode, native Rust and bounded
+  Python provider edges may publish only `PRIMARY_RAW` into the one dedicated
+  `md.raw.realtime.v2` ingress; the shared core may publish only
+  `PRIMARY_CANONICAL` to `md.canonical.v2` and `PRIMARY_QUARANTINE` to the
+  existing durable quarantine topic. `PUBLIC_V2` and `LEGACY_V1` remain
+  forbidden output targets: query/stream consume canonical data and V1 is a
+  separate observable fallback route.
+- **Identity and topology invariant:** promotion uses one clean fixed core
+  group/transactional-id namespace (`qdl-v2-realtime-core-v2` /
+  `qdl-v2-realtime-core-*`) for the dedicated topic. It is a one-time runtime
+  identity change, not a reset: no existing group offset is changed, and no
+  symbol, interval, venue or retry creates a topic, image, service or worker.
+  The old `qdl-v2-stable-core-v1` group and legacy raw topic remain untouched
+  rollback evidence until a later approved cleanup.
+- **Required source gates:** authority target matrix must fail closed across
+  shadow/primary modes; native and Python provider edges must reject an
+  unsupported authority; strict primary scope must quarantine malformed,
+  unknown, stale-authority and test-provenance raw envelopes with preserved
+  lineage; generated bundle/compose/bootstrap ACL tests must prove one V2 raw
+  topic, all enabled demand bindings and the one new fixed group. Run Rust
+  format/clippy/unit, Python contract/deployment/edge regression and a bounded
+  replay oracle. No runtime topic, ACL, image, service, authority control row,
+  offset, Redis/SQLite data, V1 route or alpha config may change in this source
+  slice.
+- **Runtime decision boundary:** a later single approved packet may create the
+  dedicated topic/ACLs, seal a regenerated bundle, build one Rust image and
+  rolling-recreate only the named V2 ingress/core/projector/query/stream roles.
+  It must first prove every demanded Binance/OKX binding, and DNSE only during
+  an open session, with manifest-only V1 fallback. It must never reset offsets,
+  flush state or start the obsolete `production_core_*` topology.
+
+**Shared-core primary authority source checkpoint - 2026-08-24 (`SOURCE PASS /
+DEPLOYMENT CONFIGURATION NEXT`).**
+
+- Added the minimal internal authority vocabulary: `RUST_PRIMARY`,
+  `PRIMARY_RAW`, `PRIMARY_CANONICAL` and `PRIMARY_QUARANTINE`. The ordinary
+  shared `AuthorityFence` permits exactly those three targets in primary mode;
+  it continues to reject every shadow, canary, public-V2 and legacy-V1 target.
+  Existing Phase-9/Phase-9.2 adapters explicitly reject the new shared-core
+  targets, preventing accidental cross-topology publication.
+- `qdl-native-raw-ingestor` now chooses raw target from the validated shared
+  authority. `qdl-realtime-core` chooses canonical/quarantine targets from the
+  same authority and reports the actual authority mode in structured startup
+  output. Both still reject `RUST_CANARY`; no hidden permissive mode or direct
+  public/legacy write path was introduced.
+- The existing transactional input/output bridge retains its source-compatible
+  type and atomic Kafka transaction. Its private canonical and quarantine
+  streams are now target-bound for either shadow or primary mode, while raw,
+  canary, public and legacy targets remain forbidden at that bridge boundary.
+- **Rust source gates passed:** `cargo fmt --check`; `cargo clippy -- -D
+  warnings`; and `cargo test --locked --quiet -p qdl-venue-core -p qdl-kafka
+  -p qdl-realtime-core` under the network-disabled, read-only
+  `qdl-c40-rust-builder:source-gate`. The packages reported 85 passing unit
+  cases, zero failures. The test-only Cargo target was the existing disposable
+  `/tmp/qdl-phase103-cargo-target`; no service, image, Kafka topic/offset,
+  Redis/SQLite state, authority control record, V1 route or alpha config
+  changed.
+- **Next slice:** make the Python provider-edge validators, generated runtime
+  bundle, fixed `qdl-v2-realtime-core-v2` identity and bootstrap ACL intent
+  agree with this authority contract; then run the full Python/Rust
+  deployment/parity matrix. Runtime promotion remains unperformed and needs
+  its explicit bounded packet.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,

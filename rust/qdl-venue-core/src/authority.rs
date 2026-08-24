@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum AuthorityMode {
     RustShadow,
     RustCanary,
+    RustPrimary,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -16,7 +17,9 @@ pub enum SinkTarget {
     ShadowCanonical,
     ShadowQuarantine,
     CanaryCanonical,
+    PrimaryRaw,
     PrimaryCanonical,
+    PrimaryQuarantine,
     PublicV2,
     LegacyV1,
 }
@@ -143,6 +146,14 @@ impl AuthorityFence {
                     | SinkTarget::ShadowCanonical
                     | SinkTarget::ShadowQuarantine
                     | SinkTarget::CanaryCanonical
+            ),
+            // Rust primary owns the private canonical execution plane. Query
+            // and stream project from it; V1 is a separate fallback route.
+            AuthorityMode::RustPrimary => matches!(
+                context.target,
+                SinkTarget::PrimaryRaw
+                    | SinkTarget::PrimaryCanonical
+                    | SinkTarget::PrimaryQuarantine
             ),
         };
         if !allowed {
@@ -1066,7 +1077,7 @@ mod tests {
     }
 
     #[test]
-    fn shadow_canary_shadow_never_grants_public_or_legacy_target() {
+    fn authority_modes_bind_exact_private_targets() {
         let mut fence = AuthorityFence::default();
         fence.apply(record(1, AuthorityMode::RustShadow)).unwrap();
         assert!(fence
@@ -1085,6 +1096,20 @@ mod tests {
         fence.apply(record(3, AuthorityMode::RustShadow)).unwrap();
         assert!(fence
             .permits(&publication(3, 3, SinkTarget::CanaryCanonical))
+            .is_err());
+        fence.apply(record(4, AuthorityMode::RustPrimary)).unwrap();
+        for target in [
+            SinkTarget::PrimaryRaw,
+            SinkTarget::PrimaryCanonical,
+            SinkTarget::PrimaryQuarantine,
+        ] {
+            assert!(fence.permits(&publication(4, 4, target)).is_ok());
+        }
+        assert!(fence
+            .permits(&publication(4, 4, SinkTarget::ShadowCanonical))
+            .is_err());
+        assert!(fence
+            .permits(&publication(4, 4, SinkTarget::PublicV2))
             .is_err());
     }
 

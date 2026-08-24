@@ -76,9 +76,11 @@ impl Phase92TransactionalTopics {
             }
             SinkTarget::PublicV2 => stream == self.public_v2,
             SinkTarget::LegacyV1 => stream == self.legacy_v1,
-            SinkTarget::ShadowRaw | SinkTarget::ShadowCanonical | SinkTarget::ShadowQuarantine => {
-                false
-            }
+            SinkTarget::ShadowRaw
+            | SinkTarget::ShadowCanonical
+            | SinkTarget::ShadowQuarantine
+            | SinkTarget::PrimaryRaw
+            | SinkTarget::PrimaryQuarantine => false,
         }
     }
 }
@@ -191,7 +193,9 @@ fn target_name(target: SinkTarget) -> &'static str {
         SinkTarget::ShadowCanonical => "SHADOW_CANONICAL",
         SinkTarget::ShadowQuarantine => "SHADOW_QUARANTINE",
         SinkTarget::CanaryCanonical => "CANARY_CANONICAL",
+        SinkTarget::PrimaryRaw => "PRIMARY_RAW",
         SinkTarget::PrimaryCanonical => "PRIMARY_CANONICAL",
+        SinkTarget::PrimaryQuarantine => "PRIMARY_QUARANTINE",
         SinkTarget::PublicV2 => "PUBLIC_V2",
         SinkTarget::LegacyV1 => "LEGACY_V1",
     }

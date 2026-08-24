@@ -322,7 +322,11 @@ impl Phase9SinkTopics {
             SinkTarget::ShadowCanonical => stream == self.shadow_canonical,
             SinkTarget::ShadowQuarantine => stream == self.shadow_quarantine,
             SinkTarget::CanaryCanonical => stream == self.canary_canonical,
-            SinkTarget::PrimaryCanonical | SinkTarget::PublicV2 | SinkTarget::LegacyV1 => false,
+            SinkTarget::PrimaryRaw
+            | SinkTarget::PrimaryCanonical
+            | SinkTarget::PrimaryQuarantine
+            | SinkTarget::PublicV2
+            | SinkTarget::LegacyV1 => false,
         }
     }
 }
@@ -417,7 +421,9 @@ impl Phase92SinkTopics {
             SinkTarget::ShadowRaw
             | SinkTarget::ShadowCanonical
             | SinkTarget::ShadowQuarantine
-            | SinkTarget::CanaryCanonical => false,
+            | SinkTarget::CanaryCanonical
+            | SinkTarget::PrimaryRaw
+            | SinkTarget::PrimaryQuarantine => false,
         }
     }
 }
@@ -628,11 +634,13 @@ impl TransactionalShadowTopics {
 
     fn permits(&self, target: SinkTarget, stream: &str) -> bool {
         match target {
-            SinkTarget::ShadowCanonical => stream == self.canonical,
-            SinkTarget::ShadowQuarantine => stream == self.quarantine,
+            SinkTarget::ShadowCanonical | SinkTarget::PrimaryCanonical => stream == self.canonical,
+            SinkTarget::ShadowQuarantine | SinkTarget::PrimaryQuarantine => {
+                stream == self.quarantine
+            }
             SinkTarget::ShadowRaw
+            | SinkTarget::PrimaryRaw
             | SinkTarget::CanaryCanonical
-            | SinkTarget::PrimaryCanonical
             | SinkTarget::PublicV2
             | SinkTarget::LegacyV1 => false,
         }
@@ -670,6 +678,8 @@ fn transactional_output_headers(
 /// Kafka consume-transform-produce boundary. Output records and the next raw
 /// consumer offset commit atomically, so a process crash cannot acknowledge raw
 /// input without its canonical/quarantine result or duplicate committed output.
+/// The historic type name remains for source compatibility; the authority fence
+/// binds these private streams to either shadow or primary publication targets.
 pub struct TransactionalKafkaBridge {
     producer: FutureProducer,
     consumer: StreamConsumer,
@@ -1138,7 +1148,10 @@ mod tests {
         topics.validate().unwrap();
         assert!(topics.permits(SinkTarget::ShadowCanonical, &topics.canonical));
         assert!(topics.permits(SinkTarget::ShadowQuarantine, &topics.quarantine));
+        assert!(topics.permits(SinkTarget::PrimaryCanonical, &topics.canonical));
+        assert!(topics.permits(SinkTarget::PrimaryQuarantine, &topics.quarantine));
         assert!(!topics.permits(SinkTarget::PublicV2, &topics.canonical));
+        assert!(!topics.permits(SinkTarget::PrimaryRaw, &topics.canonical));
         let duplicate = TransactionalShadowTopics {
             raw_inputs: vec!["same".into()],
             canonical: "same".into(),

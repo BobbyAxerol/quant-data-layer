@@ -37,8 +37,10 @@ impl RuntimeConfig {
     fn validate(&self) -> Result<(), String> {
         self.core.validate().map_err(|error| error.to_string())?;
         self.authority.validate()?;
-        if self.authority.mode != AuthorityMode::RustShadow
-            || self.raw_topics.is_empty()
+        if !matches!(
+            self.authority.mode,
+            AuthorityMode::RustShadow | AuthorityMode::RustPrimary
+        ) || self.raw_topics.is_empty()
             || self.raw_topics.iter().any(|topic| topic.trim().is_empty())
             || self.shard_id.trim().is_empty()
             || self.transactional_id.trim().is_empty()
@@ -48,7 +50,9 @@ impl RuntimeConfig {
             || self.batch_wait_ms > 1_000
             || self.metrics_every_batches == 0
         {
-            return Err("realtime-core runtime config is invalid or not RUST_SHADOW".into());
+            return Err(
+                "realtime-core runtime config is invalid or not a shared Rust authority".into(),
+            );
         }
         Ok(())
     }
@@ -138,9 +142,30 @@ fn strict_quarantine_reason(error: &CoreError) -> Option<(QuarantineReason, &'st
     }
 }
 
+fn output_targets(mode: AuthorityMode) -> Result<(SinkTarget, SinkTarget), String> {
+    match mode {
+        AuthorityMode::RustShadow => {
+            Ok((SinkTarget::ShadowCanonical, SinkTarget::ShadowQuarantine))
+        }
+        AuthorityMode::RustPrimary => {
+            Ok((SinkTarget::PrimaryCanonical, SinkTarget::PrimaryQuarantine))
+        }
+        AuthorityMode::RustCanary => Err("shared realtime core cannot run RUST_CANARY".into()),
+    }
+}
+
+fn authority_mode_name(mode: AuthorityMode) -> &'static str {
+    match mode {
+        AuthorityMode::RustShadow => "RUST_SHADOW",
+        AuthorityMode::RustCanary => "RUST_CANARY",
+        AuthorityMode::RustPrimary => "RUST_PRIMARY",
+    }
+}
+
 async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), RuntimeError> {
     let mut core = RealtimeCore::new(config.core.clone())?;
     let approved_subscriptions = approved_subscription_scope(config);
+    let (canonical_target, quarantine_target) = output_targets(config.authority.mode)?;
     let bridge = TransactionalKafkaBridge::new(
         &kafka_config()?,
         TransactionalShadowTopics {
@@ -155,13 +180,13 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
         "{}",
         serde_json::to_string(&json!({
             "event": "qdl_realtime_core_started",
-            "authority": "RUST_SHADOW",
+            "authority": authority_mode_name(config.authority.mode),
             "generation": generation,
             "bindings": config.core.bindings.len(),
             "approved_subscriptions": approved_subscriptions.len(),
             "batch_size": config.batch_size,
-            "production_public_writes": 0,
-            "production_legacy_writes": 0,
+            "public_writes": 0,
+            "legacy_writes": 0,
         }))?
     );
 
@@ -254,7 +279,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
                         authority_revision: raw.authority_revision,
                         shard_id: config.shard_id.clone(),
                         lease_epoch: raw.lease_epoch,
-                        target: SinkTarget::ShadowCanonical,
+                        target: canonical_target,
                     },
                     raw_provider_envelope: Some(input.record.payload.clone()),
                 });
@@ -267,7 +292,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
                         authority_revision: raw.authority_revision,
                         shard_id: config.shard_id.clone(),
                         lease_epoch: raw.lease_epoch,
-                        target: SinkTarget::ShadowQuarantine,
+                        target: quarantine_target,
                     },
                     raw_provider_envelope: None,
                 });
@@ -402,5 +427,18 @@ mod tests {
             strict_quarantine_reason(&CoreError::Configuration("bad config".into())),
             None,
         );
+    }
+
+    #[test]
+    fn shared_core_binds_private_outputs_to_authority_mode() {
+        assert_eq!(
+            output_targets(AuthorityMode::RustShadow).unwrap(),
+            (SinkTarget::ShadowCanonical, SinkTarget::ShadowQuarantine),
+        );
+        assert_eq!(
+            output_targets(AuthorityMode::RustPrimary).unwrap(),
+            (SinkTarget::PrimaryCanonical, SinkTarget::PrimaryQuarantine),
+        );
+        assert!(output_targets(AuthorityMode::RustCanary).is_err());
     }
 }
