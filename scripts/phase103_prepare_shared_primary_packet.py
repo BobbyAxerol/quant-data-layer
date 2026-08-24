@@ -76,6 +76,7 @@ _COMPOSE_ENVIRONMENT_KEYS = (
     "QDL_STABLE_RUST_IMAGE",
     "QDL_STABLE_AUTHORITY_MODE",
     "QDL_STABLE_AUTHORITY_REVISION",
+    "QDL_CONFIG_REVISION",
 )
 _PACKET_IDENTITY_FIELDS = {
     "packet_id",
@@ -274,6 +275,7 @@ def prepare_shared_primary_packet(
         "QDL_STABLE_RUST_IMAGE": rust_image_digest,
         "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
         "QDL_STABLE_AUTHORITY_REVISION": str(authority["revision"]),
+        "QDL_CONFIG_REVISION": f"phase103-shared-primary-r{authority['revision']}",
     }
     packet_body = {
         "schema": SCHEMA,
@@ -410,6 +412,8 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
         or compose_environment["QDL_STABLE_AUTHORITY_MODE"] != "RUST_PRIMARY"
         or compose_environment["QDL_STABLE_AUTHORITY_REVISION"]
         != str(authority["revision"])
+        or compose_environment["QDL_CONFIG_REVISION"]
+        != f"phase103-shared-primary-r{authority['revision']}"
     ):
         raise ValueError("shared primary packet Compose environment differs from authority")
     deployment = packet["deployment"]

@@ -12569,6 +12569,20 @@ RUNTIME PACKET PENDING`).**
   mutations. No source image was rebuilt because this repair changes only the
   offline packet generator, not any runtime binary.
 
+**Phase 10.3 sealed configuration-revision checkpoint - 2026-08-24
+(`SOURCE/PACKAGING PASS / RUNTIME CUTOVER PENDING`).**
+
+- Changed the stable Compose anchor to accept `QDL_CONFIG_REVISION` with the
+  previous `phase-b-stable-1` retained as default. The generated primary packet
+  now seals `phase103-shared-primary-r1` beside the authority mode/revision,
+  images and host runtime path, and rejects any altered value. Existing V1 and
+  old V2 env files remain render-compatible without a new variable.
+- **Tests actually run:** `git diff --check` and host `py_compile` passed;
+  the immutable-Python no-network Phase 10.3 route/packet/deployment regression
+  passed `19/19`. No runtime image was rebuilt because this is host Compose and
+  offline packet metadata only; no service, topic, ACL, authority, V1 route,
+  cache, Trading System or alpha state changed.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 
@@ -12629,6 +12643,13 @@ CUTOVER PENDING`).**
   seal the latter into the packet, reject ambiguous/relative values and prove
   a Docker-generated packet renders the exact host path. The invalid
   review-only packet is retained as evidence and is not eligible for apply.
+- **Config-revision observability repair in the same source slice:** the stable
+  Compose anchor still labels all roles `phase-b-stable-1`, which would make a
+  valid Rust-primary authority report an obsolete configuration generation.
+  Preserve that value as a backward-compatible default for old env files, but
+  let the sealed packet supply an explicit Phase 10.3 config revision and
+  require query/stream/projector/edge startup to report it. This changes no
+  endpoint, data contract or topology; it prevents false audit attribution.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 

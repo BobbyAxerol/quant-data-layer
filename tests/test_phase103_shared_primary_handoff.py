@@ -186,6 +186,7 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             )
             self.assertEqual(environment["QDL_STABLE_AUTHORITY_MODE"], "RUST_PRIMARY")
             self.assertEqual(environment["QDL_STABLE_AUTHORITY_REVISION"], "1")
+            self.assertEqual(environment["QDL_CONFIG_REVISION"], "phase103-shared-primary-r1")
             self.assertEqual(
                 packet["deployment"]["services"],
                 list(_ALLOWED_SERVICE_ORDER),
