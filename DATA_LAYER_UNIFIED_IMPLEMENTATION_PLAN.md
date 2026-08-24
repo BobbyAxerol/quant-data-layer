@@ -12690,6 +12690,35 @@ APPLIED`).**
   passed. This was a local configuration render only: it did not contact the
   Docker daemon, recreate a service or expose a secret value.
 
+**Phase 10.3 runtime-route drift audit - 2026-08-24 (`FAIL CLOSED / NO
+MUTATION`).**
+
+- A bounded read-only audit found that the currently running V2 role set is
+  still the old shadow deployment, not the sealed review packet: the three
+  `rust_core` replicas use the prior Rust image/config and report
+  `RUST_SHADOW` while consuming the legacy raw route. Their bounded progress
+  evidence has `canonical=0` with all observed legacy records rejected as
+  out-of-scope. Query mTLS `/health/dependencies` is `READY`, but correctly
+  reports `authority_manifest=RUST_SHADOW`; that is component reachability,
+  not realtime execution-data readiness.
+- Separately, the existing Trading System `market_data_service` was already
+  configured as `V2_PRIMARY` before this audit. Its current heartbeat is
+  truthfully `DEGRADED`: all eight declared Binance USD-M/OKX Swap TRADE and
+  final-BAR demanded slices are stale, with `ready_v2_slices=0`. This is not
+  consumer acceptance and must not be presented as a V2 primary cutover.
+  The observed route/config mismatch is fail-closed at the market-data health
+  boundary; this audit did not submit an order or alter any V1/V2 process,
+  Kafka topic/offset/ACL, Redis/SQLite/PostgreSQL record, credential, alpha or
+  provider state.
+- **Required correction path:** the eventual bounded packet must first put the
+  shared V2 data plane on the sealed `RUST_PRIMARY` topic/scope, then recreate
+  only the named Trading System `market_data` consumer with its governed V2
+  overlay and demonstrate fresh receipt. Until that separate approval, the
+  current stale V2 consumer must remain explicitly `DEGRADED`; no health
+  endpoint may infer execution readiness from process liveness or mTLS alone.
+  A controlled fallback/return proof remains a route-manifest/SDK test, not an
+  ad-hoc broad service restart.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 
