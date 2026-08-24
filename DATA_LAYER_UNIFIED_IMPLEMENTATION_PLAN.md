@@ -12928,6 +12928,37 @@ MUTATION`).**
   and recreate the named roles. This portability repair itself grants neither
   `RUST_PRIMARY` nor a consumer-route change.
 
+**Phase 10.3 Trading System demanded-slice route audit - 2026-08-24
+(`FAIL CLOSED / SOURCE ALIGNMENT REQUIRED`).**
+
+- A read-only inspection found the currently running `market_data_service`
+  image (`sha256:ea5064…201d9dd`, source revision `d88790d…1f47`) already has
+  `MARKET_DATA_DATA_LAYER_CONSUMER_MODE=V2_PRIMARY`, but its image-bundled
+  route revision `2` uses `native_symbol: "*"` for every Binance USD-M and OKX
+  Swap TRADE/BAR request. In contrast, the sealed Phase 10.3 authority packet
+  and governed consumer manifest cover only the current 12 Binance USD-M/OKX
+  Swap BTC/ETH realtime bindings. The old V2 cores confirm the issue in
+  practice by continuously reporting `canonical=0` and `ignored_out_of_scope`
+  growth.
+- This is a real consumer-domain mismatch, not a Data Layer provider failure:
+  a wildcard V2 route can claim a symbol is primary even though the bounded
+  primary manifest has never acquired/certified it. The current
+  `market_data_service` must therefore remain `DEGRADED` and is explicitly
+  excluded from the handoff packet until its route configuration is generated
+  from the sealed consumer/demand manifest.
+- **Required in-scope correction before runtime apply:** create a versioned,
+  packet-bound Trading System route artifact that resolves V2 only for the
+  exact sealed product identities; every other request must take its declared
+  compatible V1 fallback or be `BLOCKED`. Add a route-to-packet parity test and
+  include the artifact digest plus the one named `market_data` consumer recreate
+  in the final packet/runbook. This changes no public endpoint, alpha code,
+  provider subscription, broker topic or running service before a separate
+  approval. It makes the eventual V2 route truthful rather than widening it.
+- **Evidence:** Data Layer consumer manifest/promotion scope, the embedded
+  Trading System route SHA-256 and container environment/mounts were read only;
+  no source, service, image, route, authority, provider, Kafka, Redis,
+  PostgreSQL, alpha or order state changed.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 
