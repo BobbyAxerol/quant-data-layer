@@ -10805,3 +10805,47 @@ live migration or authority transition is part of R0.
   apply migration 0011, rollover from `BLOCKED`, revalidate/canary and issue a
   signed fresh-group tail cursor. Any failed gate stops the three
   `production_core_*` only; V1 remains the rollback route.
+
+**R1 execution packet - 2026-08-24 (approved, in progress).**
+
+- Operator approval covers exactly: build/test the R0 commit, create a fresh
+  private R1 bundle, terminalize the twelve old C40 `RUST_CANARY` rows through
+  C3, apply additive migration 0011, perform the append-only `BLOCKED`
+  candidate rollover, revalidate/canary the same twelve Binance USD-M and OKX
+  Swap bindings, issue a signed fresh-group tail cursor, run a bounded
+  real-provider canary and proceed to R2 only if every acceptance gate passes.
+- Explicit exclusions: no manual Kafka group reset/seek, no topic deletion,
+  no Redis flush, no V1/8100 restart, no Trading System restart, no DNSE/Spot
+  cutover, no authority data deletion and no public V1/V2 contract change.
+  The active generic Rust image `sha256:db240925dff30d4b9deb338dbd8e6e3506cbc8501ee71cff09ff58a247b7bae6`
+  and V1 stay available as rollback. A failed R1 stops only
+  `production_core_1..3`; any generic-core bundle change is rolled back by
+  restoring the prior release bundle and recreating only `rust_core*`.
+- Exact preflight facts: authority DB currently reports all twelve selected
+  C40 slices at `RUST_CANARY`, revision `3`, lease `2`, candidate
+  `5ae3f290cb4f28b5ee1450776b03c07fd8c173e236ab19991b29c4e7cf02817e` and
+  the generic-core image above. `production_core_1..3` are stopped. This
+  historical state is terminalized for audit rather than reused or overwritten.
+- Runtime gates: image label/digest and non-root binary verification; fresh
+  bundle excludes exactly twelve generic bindings; migration checksum/role
+  preflight; C3/rollover dry-run packet review; authority-outbox Kafka ACK;
+  signed cursor dry-run then explicit issuance; 5-10 minute twelve-slice
+  real-provider parity and checkpoint collection with zero mismatch/gap/
+  duplicate/error; bounded CPU/RAM/lag and V1/Trading System health. R2 is
+  blocked until this evidence is real, current and exact.
+- R1 bundle invariant: `phaseb_prepare_stable_candidate.py` is forbidden for
+  the active authority DB because it creates new DB credentials/identities.
+  `phase_r1_prepare_release_bundle.py` must instead copy the current sealed
+  identity bundle into a new private directory, preserve all existing DB/MTLS
+  values, generate only a fresh Phase 9.2 key/group, atomically write fresh
+  runtime JSON and prove the generic core excludes the promoted twelve.
+- **R1 release-bundle source sub-slice - 2026-08-24:** implemented the
+  review-first clone tool with an output-must-not-exist guard, source read-only
+  invariant, mode `0600` env, atomic staging rename and secret-free manifest.
+  It copies only sealed `identities/`, regenerates runtime/ from the current
+  catalog/acquisition/scope and rewrites only bundle-local path variables plus
+  the immutable Rust image and new bootstrap key/group. Focused isolated tests
+  prove dry run leaves source/output untouched, apply preserves legacy DB and
+  ingest values without recording them, binds the new key/group, and keeps the
+  generic binding set disjoint from the production twelve. No real bundle or
+  runtime has been touched by this source sub-slice.

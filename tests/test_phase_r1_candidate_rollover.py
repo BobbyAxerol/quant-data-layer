@@ -308,6 +308,7 @@ class CandidateRolloverPacketTests(unittest.TestCase):
     def test_operator_entrypoint_supports_help(self) -> None:
         for name in (
             "phase_r1_candidate_rollover.py",
+            "phase_r1_prepare_release_bundle.py",
             "phase_r1_prepare_transition.py",
             "phase_r2_prepare_primary.py",
         ):

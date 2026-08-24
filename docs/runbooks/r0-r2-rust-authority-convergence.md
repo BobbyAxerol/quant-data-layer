@@ -60,7 +60,20 @@ No V1, Kafka, Redis, authority row, or runtime bundle changes occur in R0.
 1. Commit the reviewed R0 source on its feature branch.
 2. Build a new immutable Rust image from that commit and retain the current
    active generic-core image as rollback.
-3. Generate a new stable runtime bundle under a new private release directory.
+3. Clone the active bundle to a new private release directory with the R1
+   bundle tool. Do not use `phaseb_prepare_stable_candidate.py`: it rotates
+   authority DB credentials and workload identities. This tool preserves those
+   values, creates only a new signed-bootstrap key/group, and writes new
+   generic/production-core runtime JSON.
+
+```bash
+python scripts/phase_r1_prepare_release_bundle.py \
+  --source-bundle "$QDL_CURRENT_RELEASE_ROOT" \
+  --output-bundle "$QDL_R1_RELEASE_ROOT" \
+  --rust-image-id "$QDL_R1_RUST_IMAGE" \
+  --apply --confirm PREPARE_QDL_R1_RELEASE_BUNDLE
+```
+
    The generic-core bundle must exclude the twelve promoted bindings and each
    production-core config must mount `production-bootstrap.json` read-only.
 4. Build a fresh C40-compatible bootstrap candidate packet from the new image,
