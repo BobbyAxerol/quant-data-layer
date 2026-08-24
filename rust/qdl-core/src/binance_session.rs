@@ -40,8 +40,14 @@ pub fn subscription_command(
     .map_err(|error| error.to_string())
 }
 
-pub fn parse_subscription_reply(frame: &str, expected_id: u64) -> Result<(), String> {
+/// Returns `true` only for the requested control reply. A provider data frame
+/// may race the ACK on a full-duplex socket; the caller must retain it until
+/// the subscription is confirmed instead of decoding it as a malformed ACK.
+pub fn parse_subscription_reply(frame: &str, expected_id: u64) -> Result<bool, String> {
     let raw: serde_json::Value = serde_json::from_str(frame).map_err(|error| error.to_string())?;
+    if raw.get("id").is_none() {
+        return Ok(false);
+    }
     let value: SubscriptionReply =
         serde_json::from_value(raw.clone()).map_err(|error| error.to_string())?;
     if value.id != expected_id {
@@ -56,7 +62,7 @@ pub fn parse_subscription_reply(frame: &str, expected_id: u64) -> Result<(), Str
     if raw.get("result") != Some(&serde_json::Value::Null) {
         return Err("Binance subscription ACK has unexpected result".into());
     }
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -71,7 +77,12 @@ mod tests {
             command,
             r#"{"method":"SUBSCRIBE","params":["btcusdt@trade","ethusdt@trade"],"id":7}"#
         );
-        parse_subscription_reply(r#"{"result":null,"id":7}"#, 7).unwrap();
+        assert!(parse_subscription_reply(r#"{"result":null,"id":7}"#, 7).unwrap());
+        assert!(!parse_subscription_reply(
+            r#"{"e":"trade","s":"BTCUSDT","t":1,"p":"1","q":"1","T":1,"m":false}"#,
+            7,
+        )
+        .unwrap());
         assert!(parse_subscription_reply(r#"{"result":null,"id":8}"#, 7).is_err());
     }
 

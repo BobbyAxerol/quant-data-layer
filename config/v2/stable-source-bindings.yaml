@@ -200,7 +200,7 @@ bindings:
     source_role: PRIMARY
     source_policy_id: crypto_primary_v2
     authoritative: true
-    adapter_version: binance-rest/2.0.0
+    adapter_version: binance-usdm/2.0.0
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 180000
@@ -251,7 +251,7 @@ bindings:
     source_role: PRIMARY
     source_policy_id: crypto_primary_v2
     authoritative: true
-    adapter_version: binance-rest/2.0.0
+    adapter_version: binance-spot/2.0.0
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 180000
@@ -438,7 +438,7 @@ bindings:
     source_role: PRIMARY
     source_policy_id: crypto_primary_v2
     authoritative: true
-    adapter_version: binance-rest/2.0.0
+    adapter_version: binance-usdm/2.0.0
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 180000

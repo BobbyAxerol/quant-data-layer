@@ -20,7 +20,12 @@ STABLE_CORE_WORKER_COUNT = 3
 _PROVIDER_KINDS = {
     ("BINANCE", "TRADE"): frozenset({"binance_usdm_trade", "binance_spot_trade"}),
     ("BINANCE", "QUOTE"): frozenset({"binance_usdm_bbo", "binance_spot_bbo"}),
-    ("BINANCE", "BAR"): frozenset({"binance_usdm_rest_bar", "binance_spot_rest_bar"}),
+    ("BINANCE", "BAR"): frozenset({
+        "binance_usdm_bar",
+        "binance_spot_bar",
+        "binance_usdm_rest_bar",
+        "binance_spot_rest_bar",
+    }),
     ("OKX", "TRADE"): frozenset({"okx_trade"}),
     ("OKX", "QUOTE"): frozenset({"okx_bbo"}),
     ("OKX", "BAR"): frozenset({"okx_bar"}),
@@ -124,6 +129,8 @@ class StableAcquisitionBinding:
                 raise ValueError("Rust native acquisition supports Binance/OKX only")
             if self.runtime != source.instrument.identity.venue:
                 raise ValueError("Rust runtime differs from stable venue")
+            if self.provider_kind.endswith("_rest_bar"):
+                raise ValueError("Rust native acquisition cannot use a REST BAR provider kind")
             self._require_wss(self.websocket_url)
             if self.runtime == "OKX":
                 self._require_wss(self.business_websocket_url)
@@ -139,6 +146,10 @@ class StableAcquisitionBinding:
                     "Python REST acquisition is reserved for venue-owned BAR "
                     "without WebSocket"
                 )
+            if self.runtime == "BINANCE" and self.provider_kind not in {
+                "binance_usdm_rest_bar", "binance_spot_rest_bar",
+            }:
+                raise ValueError("Binance Python REST BAR needs a REST provider kind")
         elif (
             source.instrument.identity.venue not in {"HNX", "HOSE"}
             or self.runtime != "DNSE"

@@ -87,6 +87,49 @@ pub fn decode_combined(raw_frame: String) -> Result<ProviderFrame, String> {
     })
 }
 
+fn native_stream(decoded: &Value) -> Result<String, String> {
+    let symbol = decoded
+        .get("s")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Binance native frame missing symbol".to_owned())?
+        .to_ascii_lowercase();
+    let stream = match decoded.get("e").and_then(Value::as_str) {
+        Some("trade") => format!("{symbol}@trade"),
+        Some("bookTicker") => format!("{symbol}@bookTicker"),
+        Some("kline") => {
+            let interval = decoded
+                .get("k")
+                .and_then(Value::as_object)
+                .and_then(|value| value.get("i"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "Binance native kline frame missing interval".to_owned())?;
+            format!("{symbol}@kline_{interval}")
+        }
+        Some(other) => return Err(format!("unsupported Binance native event: {other}")),
+        None => return Err("Binance native frame missing event type".into()),
+    };
+    validate_stream(&stream)?;
+    Ok(stream)
+}
+
+/// Decode either a legacy combined stream frame or a direct frame received
+/// after a control-protocol subscription. Keeping this at the venue boundary
+/// lets the canonical core remain provider-envelope-only.
+pub fn decode_subscribed(raw_frame: String) -> Result<ProviderFrame, String> {
+    let decoded: Value = serde_json::from_str(&raw_frame).map_err(|error| error.to_string())?;
+    if decoded.get("stream").is_some() || decoded.get("data").is_some() {
+        return decode_combined(raw_frame);
+    }
+    let stream = native_stream(&decoded)?;
+    Ok(ProviderFrame {
+        stream,
+        data: decoded,
+        raw_frame,
+    })
+}
+
 pub fn canonicalize_frame(
     frame: &ProviderFrame,
     mut context: TradeContext,
@@ -136,7 +179,9 @@ pub fn exchange_info_has_active_symbol(payload: &Value, symbol: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{combined_url, decode_combined, exchange_info_has_active_symbol};
+    use super::{
+        combined_url, decode_combined, decode_subscribed, exchange_info_has_active_symbol,
+    };
     use serde_json::json;
 
     #[test]
@@ -155,5 +200,18 @@ mod tests {
         assert!(decode_combined(r#"{"stream":"x"}"#.into()).is_err());
         let info = json!({"symbols": [{"symbol": "BTCUSDT", "status": "CLOSE"}]});
         assert!(!exchange_info_has_active_symbol(&info, "BTCUSDT"));
+    }
+
+    #[test]
+    fn native_frames_keep_channel_identity() {
+        let trade = decode_subscribed(
+            r#"{"e":"trade","s":"BTCUSDT","t":1,"p":"1","q":"2","T":3,"m":false}"#.into(),
+        )
+        .unwrap();
+        assert_eq!(trade.stream, "btcusdt@trade");
+        let bar =
+            decode_subscribed(r#"{"e":"kline","s":"BTCUSDT","k":{"i":"1m","x":true}}"#.into())
+                .unwrap();
+        assert_eq!(bar.stream, "btcusdt@kline_1m");
     }
 }

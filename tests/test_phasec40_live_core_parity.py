@@ -58,22 +58,23 @@ class C40LiveCoreParityTests(unittest.TestCase):
         fixture = json.loads((FIXTURES / fixture_name).read_text())
         binding = self.bindings[binding_id]
         acquisition = self.acquisitions[binding_id]
-        provider_payload = fixture["raw"]
-        if acquisition.provider_kind.startswith("binance_") and (
-            acquisition.provider_kind != "binance_usdm_rest_bar"
-        ):
-            provider_payload = {
-                "stream": acquisition.native_channel,
-                "data": provider_payload,
-            }
+        provider_payload = json.loads(json.dumps(fixture["raw"]))
+        native_symbol = binding.instrument.native_symbol
+        if acquisition.provider_kind.startswith("binance_"):
+            provider_payload["s"] = native_symbol
+            if isinstance(provider_payload.get("k"), dict):
+                provider_payload["k"]["s"] = native_symbol
         elif acquisition.provider_kind == "okx_trade":
+            provider_payload["instId"] = native_symbol
             provider_payload = {
                 "arg": {
                     "channel": "trades",
-                    "instId": binding.instrument.native_symbol,
+                    "instId": native_symbol,
                 },
                 "data": [provider_payload],
             }
+        elif isinstance(provider_payload.get("arg"), dict):
+            provider_payload["arg"]["instId"] = native_symbol
         raw_bytes = json.dumps(
             provider_payload,
             sort_keys=True,
@@ -121,7 +122,7 @@ class C40LiveCoreParityTests(unittest.TestCase):
         )
         return binding, acquisition, sample
 
-    def test_all_six_crypto_provider_paths_match_exact_bytes(self) -> None:
+    def test_all_twelve_demanded_crypto_provider_paths_match_exact_bytes(self) -> None:
         cases = (
             (
                 "binance-usdm-btcusdt-trade",
@@ -133,7 +134,7 @@ class C40LiveCoreParityTests(unittest.TestCase):
             ),
             (
                 "binance-usdm-btcusdt-bar-1m",
-                "binance_usdm_rest_bar.json",
+                "binance_usdm_bar.json",
             ),
             (
                 "okx-swap-btcusdt-trade",
@@ -145,6 +146,30 @@ class C40LiveCoreParityTests(unittest.TestCase):
             ),
             (
                 "okx-swap-btcusdt-bar-1m",
+                "okx_bar.json",
+            ),
+            (
+                "binance-usdm-ethusdt-trade",
+                "binance_usdm_trade.json",
+            ),
+            (
+                "binance-usdm-ethusdt-quote",
+                "binance_usdm_bbo.json",
+            ),
+            (
+                "binance-usdm-ethusdt-bar-1m",
+                "binance_usdm_bar.json",
+            ),
+            (
+                "okx-swap-eth-usdt-swap-trade",
+                "okx_trade.json",
+            ),
+            (
+                "okx-swap-eth-usdt-swap-quote",
+                "okx_bbo.json",
+            ),
+            (
+                "okx-swap-eth-usdt-swap-bar-1m",
                 "okx_bar.json",
             ),
         )

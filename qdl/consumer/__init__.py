@@ -17,6 +17,15 @@ from qdl.consumer.manifest import (
     MigrationState,
     UsageTelemetry,
 )
+from qdl.consumer.realtime_route import (
+    RealtimeRoute,
+    RealtimeRouteDecision,
+    RealtimeSliceHealth,
+    RealtimeSliceObservation,
+    evaluate_realtime_health,
+    requirement_key,
+    select_realtime_route,
+)
 
 if TYPE_CHECKING:
     from qdl.consumer.shadow import ManifestShadowConsumer, ShadowObservation
@@ -35,6 +44,13 @@ __all__ = [
     "ManifestShadowConsumer",
     "ShadowObservation",
     "UsageTelemetry",
+    "RealtimeRoute",
+    "RealtimeRouteDecision",
+    "RealtimeSliceHealth",
+    "RealtimeSliceObservation",
+    "evaluate_realtime_health",
+    "requirement_key",
+    "select_realtime_route",
 ]
 
 

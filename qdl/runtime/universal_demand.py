@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from qdl.demand import (
     DemandLeaseRegistry,
@@ -32,6 +32,49 @@ class DemandedSliceReadiness:
     provisioned: bool
     execution_eligible: bool
     reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RealtimeDemandObservation:
+    """Runtime facts for exactly one resolved demand slice.
+
+    The observation intentionally carries only bounded operational metadata,
+    not provider payload bytes. A broad-universe issue cannot contaminate a
+    different requirement because callers must key observations by the
+    resolved requirement ID.
+    """
+
+    available: bool
+    source_age_ms: int | None
+    receive_age_ms: int | None
+    gap_count: int
+    reconnect_count: int
+    final_bar_available: bool = True
+    market_closed: bool = False
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("source_age_ms", self.source_age_ms),
+            ("receive_age_ms", self.receive_age_ms),
+        ):
+            if value is not None and value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if self.gap_count < 0 or self.reconnect_count < 0:
+            raise ValueError("gap_count and reconnect_count must be non-negative")
+        if self.market_closed and self.available:
+            raise ValueError("market-closed demand cannot claim live availability")
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedDemandedSliceReadiness:
+    requirement_id: str
+    state: str
+    execution_eligible: bool
+    reason: str | None
+    source_age_ms: int | None
+    receive_age_ms: int | None
+    gap_count: int
+    reconnect_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +115,63 @@ class UniversalDemandRuntimePlan:
             if resolved.requirement.execution_grade
         ]
         return bool(execution_items) and all(item.execution_eligible for item in execution_items)
+
+    def assess_realtime(
+        self,
+        observations: Mapping[str, RealtimeDemandObservation],
+    ) -> tuple[ObservedDemandedSliceReadiness, ...]:
+        """Evaluate health per resolved slice without broad-universe coupling."""
+        expected = {item.requirement_id for item in self.resolved}
+        if set(observations) != expected:
+            raise ValueError("realtime observations differ from resolved demand")
+        static = {item.requirement_id: item for item in self.readiness}
+        result = []
+        for resolved in self.resolved:
+            requirement_id = resolved.requirement_id
+            observation = observations[requirement_id]
+            baseline = static[requirement_id]
+            requirement = resolved.requirement
+            state = "READY"
+            reason = None
+            if resolved.state is not DemandState.LIVE:
+                state = resolved.state.value
+                reason = baseline.reason or "demand is not live"
+            elif observation.market_closed:
+                state = "MARKET_CLOSED"
+                reason = "market session is closed for this demanded slice"
+            elif not observation.available:
+                state = "NOT_READY"
+                reason = "canonical source is not available for this demanded slice"
+            elif requirement.require_final_bars and not observation.final_bar_available:
+                state = "NOT_READY"
+                reason = "latest BAR is not final for this demanded slice"
+            elif observation.gap_count:
+                state = "GAP"
+                reason = "canonical source has an unresolved gap for this demanded slice"
+            elif observation.source_age_ms is None:
+                state = "STALE"
+                reason = "canonical source age is unavailable"
+            elif (
+                requirement.max_freshness_ms is not None
+                and observation.source_age_ms > requirement.max_freshness_ms
+            ):
+                state = "STALE"
+                reason = "canonical source exceeds demanded freshness"
+            result.append(
+                ObservedDemandedSliceReadiness(
+                    requirement_id=requirement_id,
+                    state=state,
+                    execution_eligible=(
+                        baseline.execution_eligible and state == "READY"
+                    ),
+                    reason=reason,
+                    source_age_ms=observation.source_age_ms,
+                    receive_age_ms=observation.receive_age_ms,
+                    gap_count=observation.gap_count,
+                    reconnect_count=observation.reconnect_count,
+                )
+            )
+        return tuple(result)
 
     def canonical_payload(self) -> dict:
         return {

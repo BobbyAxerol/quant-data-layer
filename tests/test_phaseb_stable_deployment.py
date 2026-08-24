@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from dataclasses import replace
 import io
 import json
 import tempfile
@@ -54,6 +55,38 @@ class StableDeploymentContractTests(unittest.TestCase):
             contract=ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto",
             partition_plan=ACQUISITION_PATH.read_bytes(),
             effective_at_ns=time.time_ns(),
+        )
+
+    def _legacy_rest_bar_fallback(self) -> StableAcquisitionPlan:
+        """Build an explicit test-only REST fallback plan.
+
+        Production's resolved demand is Rust-native. These focused tests retain
+        the old poller recovery contract only to prove that an operator can
+        declare a bounded fallback without reintroducing it as the default.
+        """
+        rest_kind = {
+            "binance_usdm_bar": "binance_usdm_rest_bar",
+            "binance_spot_bar": "binance_spot_rest_bar",
+            "okx_bar": "okx_bar",
+        }
+        return StableAcquisitionPlan(
+            schema=self.acquisition.schema,
+            revision=self.acquisition.revision,
+            raw_topic=self.acquisition.raw_topic,
+            canonical_topic=self.acquisition.canonical_topic,
+            quarantine_topic=self.acquisition.quarantine_topic,
+            bindings=tuple(
+                replace(
+                    item,
+                    mode="PYTHON_REST",
+                    provider_kind=rest_kind[item.provider_kind],
+                    websocket_url=None,
+                    business_websocket_url=None,
+                )
+                if item.provider_kind in rest_kind
+                else item
+                for item in self.acquisition.bindings
+            ),
         )
 
     def test_c39_acceptance_matrix_covers_btc_and_eth_on_both_venues(self):
@@ -191,16 +224,16 @@ class StableDeploymentContractTests(unittest.TestCase):
     def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
         self.assertEqual(len(self.catalog.bindings), 22)
         self.assertEqual(len(self.acquisition.bindings), 22)
-        self.assertEqual(self.acquisition.revision, 5)
+        self.assertEqual(self.acquisition.revision, 7)
         modes = {item.mode for item in self.acquisition.bindings}
-        self.assertEqual(modes, {"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
+        self.assertEqual(modes, {"RUST_NATIVE", "PYTHON_VENDOR_SDK"})
         native = self.acquisition.native_ingestor_configs(
             catalog=self.catalog, authority=self.authority
         )
         # Spot is disabled by configuration, so no role is generated for it
         # while its capability stays declared in the catalog.
         self.assertEqual(set(native), {"binance-usdm", "okx-swap"})
-        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 8)
+        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 12)
         self.assertTrue(all(item["authority"]["mode"] == "RUST_SHADOW" for item in native.values()))
         self.assertEqual(
             {
@@ -208,14 +241,7 @@ class StableDeploymentContractTests(unittest.TestCase):
                 for item in self.acquisition.bindings
                 if item.mode == "PYTHON_REST"
             },
-            {
-                "binance-usdm-btcusdt-bar-1m",
-                "binance-spot-btcusdt-bar-1m",
-                "binance-usdm-ethusdt-bar-1m",
-                "okx-swap-btcusdt-bar-1m",
-                "okx-swap-eth-usdt-swap-bar-1m",
-                "okx-spot-btcusdt-bar-1m",
-            },
+            set(),
         )
         self.assertEqual(
             {item["max_inflight_publishes"] for item in native.values()}, {512}
@@ -245,7 +271,11 @@ class StableDeploymentContractTests(unittest.TestCase):
         }
         self.assertEqual(
             delivery_by_feed,
-            {"TRADE": "LOSSLESS", "QUOTE": "LATEST_STATE"},
+            {
+                "TRADE": "LOSSLESS",
+                "QUOTE": "LATEST_STATE",
+                "BAR": "LOSSLESS",
+            },
         )
         okx_bbo = {
             item.binding_id: item.sequence_policy
@@ -361,7 +391,7 @@ class StableDeploymentContractTests(unittest.TestCase):
                 STABLE_CORE_WORKER_COUNT,
             )
 
-    def test_binance_bar_edge_publishes_each_closed_bar_once(self):
+    def test_native_bar_primary_does_not_start_python_rest_poller(self):
         class Publisher:
             def __init__(self):
                 self.batches = []
@@ -388,27 +418,21 @@ class StableDeploymentContractTests(unittest.TestCase):
             publisher=publisher,
             clock=lambda: 120.0,
         )
-        binance_count = len(edge.bindings)
-        okx_count = len(edge.okx_bindings)
-        total_count = binance_count + okx_count
+        self.assertFalse(edge._rest_fallback_active)
+        self.assertEqual(edge.bindings, ())
+        self.assertEqual(edge.okx_bindings, ())
         with patch(
             "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
-            side_effect=[Envelope("BINANCE", 60_000)] * (binance_count * 2),
+            side_effect=AssertionError("native BAR must not start REST polling"),
         ) as binance_latest, patch(
             "qdl.runtime.stable_bar_edge.fetch_okx_latest",
-            side_effect=[Envelope("OKX", 60_000)] * (okx_count * 2),
+            side_effect=AssertionError("native BAR must not start REST polling"),
         ) as okx_latest:
-            self.assertEqual(edge.run_cycle(), total_count)
             self.assertEqual(edge.run_cycle(), 0)
-        self.assertEqual([len(batch) for batch in publisher.batches], [total_count])
-        self.assertEqual(
-            {call.kwargs["now_ms"] for call in binance_latest.call_args_list},
-            {110_000},
-        )
-        self.assertEqual(
-            {call.kwargs["now_ms"] for call in okx_latest.call_args_list},
-            {110_000},
-        )
+            self.assertEqual(edge.run_cycle(), 0)
+        self.assertEqual(publisher.batches, [])
+        binance_latest.assert_not_called()
+        okx_latest.assert_not_called()
 
     def test_bar_edge_retries_complete_catchup_after_kafka_ack_failure(self):
         class Publisher:
@@ -442,7 +466,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         publisher = Publisher()
         edge = StableBinanceBarEdge(
             catalog=self.catalog,
-            acquisition=self.acquisition,
+            acquisition=self._legacy_rest_bar_fallback(),
             authority=self.authority,
             publisher=publisher,
             clock=lambda: 240.0,
@@ -522,7 +546,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         publisher = Publisher()
         edge = StableBinanceBarEdge(
             catalog=self.catalog,
-            acquisition=self.acquisition,
+            acquisition=self._legacy_rest_bar_fallback(),
             authority=self.authority,
             publisher=publisher,
             clock=lambda: 240.0,

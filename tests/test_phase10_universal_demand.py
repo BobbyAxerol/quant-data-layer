@@ -24,7 +24,12 @@ from qdl.demand import (
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
-from qdl.runtime.universal_demand import UniversalDemandPlanner
+from qdl.runtime.universal_demand import (
+    DemandedSliceReadiness,
+    RealtimeDemandObservation,
+    UniversalDemandPlanner,
+    UniversalDemandRuntimePlan,
+)
 from scripts.phase10_real_provider_admission import (
     DemandSlice as ProviderDemandSlice,
     _load_slices as load_provider_slices,
@@ -246,6 +251,52 @@ class UniversalDemandTests(unittest.TestCase):
                 demand_revision=9,
             )[0]
             self.assertEqual(item.requirement_id, alpha_only.requirement_id)
+
+    def test_runtime_health_is_per_demanded_slice_not_broad_universe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = self._registry(Path(directory))
+            requirement = self._requirement(
+                consumer_id="trading-system.execution",
+                purpose=DemandPurpose.EXECUTION,
+                feed=DemandFeed.TRADE,
+            )
+            resolved = DemandResolver(
+                catalog=self.catalog, universes=registry
+            ).resolve_requirement(requirement, demand_revision=10)
+            live = tuple(replace(item, state=DemandState.LIVE) for item in resolved)
+            topology = DemandTopologyPlanner(
+                max_subscriptions_per_connection=200
+            ).build(live, demand_revision=10)
+            readiness = tuple(UniversalDemandPlanner._readiness(item) for item in live)
+            plan = UniversalDemandRuntimePlan(
+                schema="qdl.v2.universal-demand-runtime-plan.v1",
+                demand_revision=10,
+                manifest_sha256="a" * 64,
+                universe_registry_sha256=registry.sha256,
+                catalog_revision=self.catalog.catalog_revision,
+                resolved=live,
+                topology=topology,
+                readiness=readiness,
+            )
+            observations = {
+                item.requirement_id: RealtimeDemandObservation(
+                    available=True,
+                    source_age_ms=(100 if item.native_symbol == "BTCUSDT" else 15_001),
+                    receive_age_ms=100,
+                    gap_count=0,
+                    reconnect_count=1,
+                )
+                for item in live
+            }
+            health = {item.requirement_id: item for item in plan.assess_realtime(observations)}
+            btc = next(item for item in live if item.native_symbol == "BTCUSDT")
+            eth = next(item for item in live if item.native_symbol == "ETHUSDT")
+            self.assertEqual(health[btc.requirement_id].state, "READY")
+            self.assertTrue(health[btc.requirement_id].execution_eligible)
+            self.assertEqual(health[eth.requirement_id].state, "STALE")
+            self.assertFalse(health[eth.requirement_id].execution_eligible)
+            with self.assertRaisesRegex(ValueError, "differ from resolved demand"):
+                plan.assess_realtime({})
 
     def test_binance_spot_catalog_binding_resolves_through_its_own_capability_profile(self):
         with tempfile.TemporaryDirectory() as directory:

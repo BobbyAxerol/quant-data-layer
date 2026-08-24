@@ -28,8 +28,11 @@ _SUPPORTED_MARKETS = {
     ("OKX", "SPOT", "SPOT"),
 }
 _BINANCE_STREAM_URL = {
-    "USDM": "wss://fstream.binance.com/public/stream",
-    "SPOT": "wss://stream.binance.com:9443/stream",
+    # One venue/market worker uses Binance's documented control endpoint and
+    # subscribes the resolved demand dynamically. Symbols never become
+    # containers or URL-specific combined-stream shards.
+    "USDM": "wss://fstream.binance.com/ws",
+    "SPOT": "wss://stream.binance.com:9443/ws",
 }
 _SUPPORTED_FEEDS = {FeedType.TRADE, FeedType.QUOTE, FeedType.BAR}
 
@@ -379,9 +382,7 @@ class ProductionCatalogBuilder:
         else:
             stale_after_ms = 180_000
         adapter = (
-            "binance-rest/2.0.0"
-            if item.venue == "BINANCE" and item.feed is FeedType.BAR
-            else "binance-usdm/2.0.0"
+            f"binance-{item.market.lower()}/2.0.0"
             if item.venue == "BINANCE"
             else "okx-v5/2.0.0"
         )
@@ -431,8 +432,8 @@ class ProductionCatalogBuilder:
                 )
             else:
                 mode, kind, channel, sequence = (
-                    "PYTHON_REST", f"binance_{family}_rest_bar",
-                    f"rest-klines/{item.interval}", "NONE",
+                    "RUST_NATIVE", f"binance_{family}_bar",
+                    f"{item.native_symbol.lower()}@kline_{item.interval}", "NONE",
                 )
             websocket = (
                 _BINANCE_STREAM_URL[item.market] if mode == "RUST_NATIVE" else None
@@ -445,9 +446,9 @@ class ProductionCatalogBuilder:
                 mode, kind, channel, sequence = "RUST_NATIVE", "okx_bbo", "bbo-tbt", "NONE"
             else:
                 # Derived from the demanded interval; a literal candle1m here
-                # silently produced a one-minute channel for every interval.
+                # would silently produce a one-minute channel for every interval.
                 mode, kind, channel, sequence = (
-                    "PYTHON_REST", "okx_bar",
+                    "RUST_NATIVE", "okx_bar",
                     okx_candle_channel(item.interval or "1m"), "NONE",
                 )
             websocket = "wss://ws.okx.com:8443/ws/v5/public" if mode == "RUST_NATIVE" else None

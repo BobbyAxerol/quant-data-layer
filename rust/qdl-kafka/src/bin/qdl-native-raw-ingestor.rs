@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::future::Future;
@@ -19,9 +19,15 @@ use qdl_contracts::qdl::provider::v1::{
     CaptureBoundary, RawProviderEnvelope, TransportCompression, TransportProtocol,
 };
 use qdl_core::backoff::BackoffPolicy;
-use qdl_core::binance::decode_combined;
+use qdl_core::binance::{decode_subscribed, validate_stream as validate_binance_stream};
+use qdl_core::binance_session::{
+    parse_subscription_reply as parse_binance_subscription_reply,
+    subscription_command as binance_subscription_command,
+};
 use qdl_core::okx::{
-    parse_subscription_ack, subscription_command, ControlRequestBudget, OkxService, OkxSubscription,
+    parse_subscription_ack as parse_okx_subscription_ack,
+    subscription_command as okx_subscription_command, ControlRequestBudget, OkxService,
+    OkxSubscription,
 };
 use qdl_core::transport::{DurableRecord, RetryClass};
 use qdl_kafka::{
@@ -98,18 +104,19 @@ impl RawBinding {
             return Err("raw binding feed/delivery class is invalid".into());
         }
         match runtime {
-            ProviderRuntime::Binance
-                if self.venue != "BINANCE" || !matches!(self.market.as_str(), "USDM" | "SPOT") =>
-            {
-                Err("Binance raw binding identity is invalid".into())
+            ProviderRuntime::Binance => {
+                if self.venue != "BINANCE" || !matches!(self.market.as_str(), "USDM" | "SPOT") {
+                    return Err("Binance raw binding identity is invalid".into());
+                }
+                validate_binance_stream(&self.native_channel)?;
             }
-            ProviderRuntime::Okx
-                if self.venue != "OKX" || !matches!(self.market.as_str(), "SWAP" | "SPOT") =>
-            {
-                Err("OKX raw binding identity is invalid".into())
+            ProviderRuntime::Okx => {
+                if self.venue != "OKX" || !matches!(self.market.as_str(), "SWAP" | "SPOT") {
+                    return Err("OKX raw binding identity is invalid".into());
+                }
             }
-            _ => Ok(()),
         }
+        Ok(())
     }
 }
 
@@ -188,6 +195,11 @@ impl IngestorConfig {
             if !business.starts_with("wss://") {
                 return Err("OKX business WebSocket URL must use wss".into());
             }
+        }
+        if self.runtime == ProviderRuntime::Binance
+            && !self.websocket_url.trim_end_matches('/').ends_with("/ws")
+        {
+            return Err("Binance native WebSocket URL must use the control /ws endpoint".into());
         }
         let mut keys = std::collections::HashSet::new();
         for binding in &self.bindings {
@@ -419,6 +431,76 @@ struct PendingRawFrame {
     received_at_ns: i64,
 }
 
+fn pending_binance_frame(
+    bindings: &HashMap<String, RawBinding>,
+    session_id: &str,
+    generation: u64,
+    raw_text: String,
+    received_at_ns: i64,
+) -> Result<PendingRawFrame, std::io::Error> {
+    let decoded = decode_subscribed(raw_text.clone())
+        .map_err(|error| std::io::Error::new(ErrorKind::InvalidData, error))?;
+    let binding = bindings.get(&decoded.stream).cloned().ok_or_else(|| {
+        std::io::Error::new(
+            ErrorKind::InvalidData,
+            "Binance frame has no approved binding",
+        )
+    })?;
+    Ok(PendingRawFrame {
+        binding,
+        session_id: session_id.into(),
+        generation,
+        raw_frame: raw_text.into_bytes(),
+        received_at_ns,
+    })
+}
+
+fn pending_okx_frame(
+    bindings: &HashMap<String, RawBinding>,
+    session_id: &str,
+    generation: u64,
+    raw_text: String,
+    received_at_ns: i64,
+) -> Result<PendingRawFrame, std::io::Error> {
+    let payload: Value = serde_json::from_str(&raw_text)
+        .map_err(|error| std::io::Error::new(ErrorKind::InvalidData, error))?;
+    if payload.get("event").is_some() {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "OKX control frame cannot be published as provider data",
+        ));
+    }
+    let argument = payload
+        .get("arg")
+        .and_then(Value::as_object)
+        .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidData, "OKX data arg is missing"))?;
+    let channel = argument
+        .get("channel")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            std::io::Error::new(ErrorKind::InvalidData, "OKX data channel is missing")
+        })?;
+    let instrument = argument
+        .get("instId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            std::io::Error::new(ErrorKind::InvalidData, "OKX data instrument is missing")
+        })?;
+    let binding = bindings
+        .get(&format!("{channel}|{instrument}"))
+        .cloned()
+        .ok_or_else(|| {
+            std::io::Error::new(ErrorKind::InvalidData, "OKX frame has no approved binding")
+        })?;
+    Ok(PendingRawFrame {
+        binding,
+        session_id: session_id.into(),
+        generation,
+        raw_frame: raw_text.into_bytes(),
+        received_at_ns,
+    })
+}
+
 #[derive(Default)]
 struct LatestStateBuffer {
     frames: BTreeMap<String, PendingRawFrame>,
@@ -483,6 +565,39 @@ async fn enqueue_lossless_frame(
             Err(error)
         }
     }
+}
+
+struct PendingPublishWindow<'a> {
+    publisher: &'a RawPublisher,
+    latest: &'a mut LatestStateBuffer,
+    inflight: &'a mut FuturesUnordered<RawPublishFuture>,
+    accepted: &'a AtomicU64,
+    coalesced_latest: &'a AtomicU64,
+    max_events: u64,
+    max_inflight: usize,
+    stopped: &'a AtomicBool,
+}
+
+async fn publish_pending_frame(
+    frame: PendingRawFrame,
+    window: &mut PendingPublishWindow<'_>,
+) -> Result<bool, KafkaTransportError> {
+    if frame.binding.delivery_class == DeliveryClass::LatestState {
+        if window.latest.push(frame) {
+            window.coalesced_latest.fetch_add(1, Ordering::AcqRel);
+        }
+        return Ok(true);
+    }
+    enqueue_lossless_frame(
+        frame,
+        window.publisher,
+        window.inflight,
+        window.accepted,
+        window.max_events,
+        window.max_inflight,
+        window.stopped,
+    )
+    .await
 }
 
 async fn flush_latest_concurrent(
@@ -559,11 +674,8 @@ async fn run_binance_connection(
         .into_iter()
         .map(|binding| (binding.native_channel.clone(), binding))
         .collect();
-    let streams = bindings.keys().cloned().collect::<Vec<_>>().join("/");
-    let url = format!(
-        "{}?streams={streams}",
-        config.websocket_url.trim_end_matches('?')
-    );
+    let streams = bindings.keys().cloned().collect::<Vec<_>>();
+    let url = config.websocket_url.clone();
     let publisher = RawPublisher::new(&config, &format!("binance-{shard_index:03}"))?;
     let backoff = BackoffPolicy {
         initial_ms: 250,
@@ -579,6 +691,42 @@ async fn run_binance_connection(
         let generation = next_connection_generation(Path::new(&generation_path))?;
         match connect_async(&url).await {
             Ok((mut socket, _)) => {
+                socket
+                    .send(Message::Text(binance_subscription_command(
+                        generation, true, &streams,
+                    )?))
+                    .await?;
+                let mut acknowledged = false;
+                let mut pre_ack_frames = VecDeque::new();
+                while !acknowledged {
+                    let message = tokio::time::timeout(Duration::from_secs(10), socket.next())
+                        .await
+                        .map_err(|_| "Binance subscription ACK timed out")?
+                        .ok_or("Binance socket closed before subscription ACK")??;
+                    match message {
+                        Message::Ping(payload) => {
+                            socket.send(Message::Pong(payload)).await?;
+                        }
+                        Message::Pong(_) => {}
+                        Message::Text(payload) => {
+                            if parse_binance_subscription_reply(payload.as_ref(), generation)? {
+                                acknowledged = true;
+                            } else {
+                                if pre_ack_frames.len() >= config.max_inflight_publishes {
+                                    return Err(
+                                        "Binance pre-ACK frame buffer exceeded durable publish bound"
+                                            .into(),
+                                    );
+                                }
+                                pre_ack_frames.push_back((payload.to_string(), now_ns()?));
+                            }
+                        }
+                        Message::Close(_) => {
+                            return Err("Binance socket closed before subscription ACK".into());
+                        }
+                        _ => {}
+                    }
+                }
                 let session_id = format!(
                     "binance-{}-{shard_index:03}-{generation}-{}",
                     config.market_name(),
@@ -592,7 +740,35 @@ async fn run_binance_connection(
                 latest_tick.tick().await;
                 let mut disconnected = false;
                 let mut publish_error = None;
-                while !should_stop(&stopped, &accepted, config.max_events, expires) {
+                let mut exhausted = false;
+                while let Some((raw_text, received_at_ns)) = pre_ack_frames.pop_front() {
+                    let frame = pending_binance_frame(
+                        &bindings,
+                        &session_id,
+                        generation,
+                        raw_text,
+                        received_at_ns,
+                    )?;
+                    if !publish_pending_frame(
+                        frame,
+                        &mut PendingPublishWindow {
+                            publisher: &publisher,
+                            latest: &mut latest,
+                            inflight: &mut inflight,
+                            accepted: &accepted,
+                            coalesced_latest: &coalesced_latest,
+                            max_events: config.max_events,
+                            max_inflight: config.max_inflight_publishes,
+                            stopped: &stopped,
+                        },
+                    )
+                    .await?
+                    {
+                        exhausted = true;
+                        break;
+                    }
+                }
+                while !exhausted && !should_stop(&stopped, &accepted, config.max_events, expires) {
                     if inflight.len() >= config.max_inflight_publishes {
                         match inflight.next().await {
                             Some(Ok(())) => {
@@ -608,7 +784,12 @@ async fn run_binance_connection(
                             }
                         }
                     }
-                    let message = tokio::select! {
+                    let read = tokio::time::timeout(
+                        Duration::from_secs(config.heartbeat_seconds),
+                        socket.next(),
+                    );
+                    tokio::pin!(read);
+                    let outcome = tokio::select! {
                         biased;
                         _ = latest_tick.tick(), if !latest.is_empty() => {
                             if !flush_latest_concurrent(
@@ -625,7 +806,7 @@ async fn run_binance_connection(
                             failures = 0;
                             continue;
                         }
-                        message = socket.next() => message,
+                        result = &mut read => Some(result),
                         completed = inflight.next(), if !inflight.is_empty() => {
                             match completed {
                                 Some(Ok(())) => {
@@ -642,9 +823,9 @@ async fn run_binance_connection(
                             }
                         }
                     };
-                    let message = match message {
-                        Some(Ok(message)) => message,
-                        Some(Err(error)) => {
+                    let message = match outcome.expect("Binance read outcome is present") {
+                        Ok(Some(Ok(message))) => message,
+                        Ok(Some(Err(error))) => {
                             failures = failures.saturating_add(1);
                             eprintln!(
                                 "{}",
@@ -659,7 +840,7 @@ async fn run_binance_connection(
                             disconnected = true;
                             break;
                         }
-                        None => {
+                        Ok(None) => {
                             failures = failures.saturating_add(1);
                             eprintln!(
                                 "{}",
@@ -674,41 +855,67 @@ async fn run_binance_connection(
                             disconnected = true;
                             break;
                         }
+                        Err(_) => {
+                            socket.send(Message::Ping(Vec::new())).await?;
+                            match tokio::time::timeout(
+                                Duration::from_secs(config.heartbeat_seconds),
+                                socket.next(),
+                            )
+                            .await
+                            {
+                                Ok(Some(Ok(Message::Pong(_)))) => continue,
+                                Ok(Some(Ok(message))) => message,
+                                _ => {
+                                    failures = failures.saturating_add(1);
+                                    eprintln!(
+                                        "{}",
+                                        serde_json::to_string(&json!({
+                                            "event": "qdl_native_session_heartbeat_failed",
+                                            "runtime": "BINANCE",
+                                            "attempt": failures,
+                                            "generation": generation,
+                                        }))?
+                                    );
+                                    disconnected = true;
+                                    break;
+                                }
+                            }
+                        }
                     };
                     if let Message::Ping(payload) = message {
                         socket.send(Message::Pong(payload)).await?;
                         continue;
                     }
+                    if matches!(message, Message::Pong(_)) {
+                        continue;
+                    }
+                    if matches!(message, Message::Close(_)) {
+                        disconnected = true;
+                        break;
+                    }
                     if !message.is_text() {
                         continue;
                     }
                     let raw_text = message.into_text()?.to_string();
-                    let frame = decode_combined(raw_text.clone())?;
-                    let binding = bindings
-                        .get(&frame.stream)
-                        .ok_or("Binance frame has no approved binding")?
-                        .clone();
-                    let frame = PendingRawFrame {
-                        binding,
-                        session_id: session_id.clone(),
+                    let frame = pending_binance_frame(
+                        &bindings,
+                        &session_id,
                         generation,
-                        raw_frame: raw_text.into_bytes(),
-                        received_at_ns: now_ns()?,
-                    };
-                    if frame.binding.delivery_class == DeliveryClass::LatestState {
-                        if latest.push(frame) {
-                            coalesced_latest.fetch_add(1, Ordering::AcqRel);
-                        }
-                        continue;
-                    }
-                    if !enqueue_lossless_frame(
+                        raw_text,
+                        now_ns()?,
+                    )?;
+                    if !publish_pending_frame(
                         frame,
-                        &publisher,
-                        &mut inflight,
-                        &accepted,
-                        config.max_events,
-                        config.max_inflight_publishes,
-                        &stopped,
+                        &mut PendingPublishWindow {
+                            publisher: &publisher,
+                            latest: &mut latest,
+                            inflight: &mut inflight,
+                            accepted: &accepted,
+                            coalesced_latest: &coalesced_latest,
+                            max_events: config.max_events,
+                            max_inflight: config.max_inflight_publishes,
+                            stopped: &stopped,
+                        },
                     )
                     .await?
                     {
@@ -869,25 +1076,11 @@ async fn run_okx_service(
                 let command_id = generation.to_string();
                 budget.permit(now_ns()?)?;
                 writer
-                    .send(Message::Text(subscription_command(
+                    .send(Message::Text(okx_subscription_command(
                         &command_id,
                         &subscriptions,
                     )?))
                     .await?;
-                let mut pending = subscriptions
-                    .iter()
-                    .map(|item| (item.channel.clone(), item.inst_id.clone()))
-                    .collect::<Vec<_>>();
-                while !pending.is_empty() {
-                    let message = tokio::time::timeout(Duration::from_secs(10), reader.next())
-                        .await
-                        .map_err(|_| "OKX subscription ACK timed out")?
-                        .ok_or("OKX socket closed before subscription ACK")??;
-                    if message.is_text() {
-                        let payload: Value = serde_json::from_str(message.to_text()?)?;
-                        parse_subscription_ack(&payload, &command_id, &mut pending)?;
-                    }
-                }
                 let session_id = format!(
                     "okx-{}-{shard_index:03}-{generation}-{}",
                     match service {
@@ -896,6 +1089,47 @@ async fn run_okx_service(
                     },
                     now_ns()?
                 );
+                let mut pending = subscriptions
+                    .iter()
+                    .map(|item| (item.channel.clone(), item.inst_id.clone()))
+                    .collect::<Vec<_>>();
+                let mut pre_ack_frames = VecDeque::new();
+                while !pending.is_empty() {
+                    let message = tokio::time::timeout(Duration::from_secs(10), reader.next())
+                        .await
+                        .map_err(|_| "OKX subscription ACK timed out")?
+                        .ok_or("OKX socket closed before subscription ACK")??;
+                    match message {
+                        Message::Ping(payload) => {
+                            writer.send(Message::Pong(payload)).await?;
+                        }
+                        Message::Pong(_) => {}
+                        Message::Text(payload) => {
+                            let raw_text = payload.to_string();
+                            let decoded: Value = serde_json::from_str(&raw_text)?;
+                            if parse_okx_subscription_ack(&decoded, &command_id, &mut pending)? {
+                                continue;
+                            }
+                            if pre_ack_frames.len() >= config.max_inflight_publishes {
+                                return Err(
+                                    "OKX pre-ACK frame buffer exceeded durable publish bound"
+                                        .into(),
+                                );
+                            }
+                            pre_ack_frames.push_back(pending_okx_frame(
+                                &binding_map,
+                                &session_id,
+                                generation,
+                                raw_text,
+                                now_ns()?,
+                            )?);
+                        }
+                        Message::Close(_) => {
+                            return Err("OKX socket closed before subscription ACK".into());
+                        }
+                        _ => {}
+                    }
+                }
                 let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
                 let mut latest = LatestStateBuffer::default();
                 let mut latest_tick =
@@ -904,7 +1138,28 @@ async fn run_okx_service(
                 latest_tick.tick().await;
                 let mut disconnected = false;
                 let mut publish_error = None;
-                while !should_stop(&stopped, &accepted, config.max_events, expires) {
+                let mut exhausted = false;
+                while let Some(frame) = pre_ack_frames.pop_front() {
+                    if !publish_pending_frame(
+                        frame,
+                        &mut PendingPublishWindow {
+                            publisher: &publisher,
+                            latest: &mut latest,
+                            inflight: &mut inflight,
+                            accepted: &accepted,
+                            coalesced_latest: &coalesced_latest,
+                            max_events: config.max_events,
+                            max_inflight: config.max_inflight_publishes,
+                            stopped: &stopped,
+                        },
+                    )
+                    .await?
+                    {
+                        exhausted = true;
+                        break;
+                    }
+                }
+                while !exhausted && !should_stop(&stopped, &accepted, config.max_events, expires) {
                     if inflight.len() >= config.max_inflight_publishes {
                         match inflight.next().await {
                             Some(Ok(())) => {
@@ -1001,42 +1256,25 @@ async fn run_okx_service(
                     if payload.get("event").is_some() {
                         return Err("unexpected OKX control event after subscription".into());
                     }
-                    let argument = payload
-                        .get("arg")
-                        .and_then(Value::as_object)
-                        .ok_or("OKX data arg is missing")?;
-                    let channel = argument
-                        .get("channel")
-                        .and_then(Value::as_str)
-                        .ok_or("OKX data channel is missing")?;
-                    let instrument = argument
-                        .get("instId")
-                        .and_then(Value::as_str)
-                        .ok_or("OKX data instrument is missing")?;
-                    let binding = binding_map
-                        .get(&format!("{channel}|{instrument}"))
-                        .ok_or("OKX frame has no approved binding")?;
-                    let frame = PendingRawFrame {
-                        binding: binding.clone(),
-                        session_id: session_id.clone(),
+                    let frame = pending_okx_frame(
+                        &binding_map,
+                        &session_id,
                         generation,
-                        raw_frame: raw_text.into_bytes(),
-                        received_at_ns: now_ns()?,
-                    };
-                    if frame.binding.delivery_class == DeliveryClass::LatestState {
-                        if latest.push(frame) {
-                            coalesced_latest.fetch_add(1, Ordering::AcqRel);
-                        }
-                        continue;
-                    }
-                    if !enqueue_lossless_frame(
+                        raw_text,
+                        now_ns()?,
+                    )?;
+                    if !publish_pending_frame(
                         frame,
-                        &publisher,
-                        &mut inflight,
-                        &accepted,
-                        config.max_events,
-                        config.max_inflight_publishes,
-                        &stopped,
+                        &mut PendingPublishWindow {
+                            publisher: &publisher,
+                            latest: &mut latest,
+                            inflight: &mut inflight,
+                            accepted: &accepted,
+                            coalesced_latest: &coalesced_latest,
+                            max_events: config.max_events,
+                            max_inflight: config.max_inflight_publishes,
+                            stopped: &stopped,
+                        },
                     )
                     .await?
                     {
@@ -1317,9 +1555,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        next_connection_generation, partition_bindings, DeliveryClass, LatestStateBuffer,
-        PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
+        next_connection_generation, partition_bindings, pending_binance_frame, pending_okx_frame,
+        DeliveryClass, LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
     };
+    use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
 
@@ -1344,7 +1583,7 @@ mod tests {
             native_channel: match feed {
                 RawFeed::Trade => "btcusdt@trade",
                 RawFeed::Quote => "btcusdt@bookTicker",
-                RawFeed::Bar => "candle1m",
+                RawFeed::Bar => "btcusdt@kline_1m",
             }
             .into(),
             subscription_id: "test-source".into(),
@@ -1436,6 +1675,65 @@ mod tests {
         assert_eq!(values[0].raw_frame, br#"{"u":2}"#);
         assert_eq!(values[0].received_at_ns, 20);
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn pre_ack_binance_frame_retains_direct_channel_or_fails_closed() {
+        let binding = binding(RawFeed::Trade, DeliveryClass::Lossless);
+        let bindings = HashMap::from([(binding.native_channel.clone(), binding)]);
+        let frame = pending_binance_frame(
+            &bindings,
+            "session-1",
+            7,
+            r#"{"e":"trade","s":"BTCUSDT","t":1,"p":"1","q":"2","T":3,"m":false}"#.into(),
+            10,
+        )
+        .unwrap();
+        assert_eq!(frame.binding.native_channel, "btcusdt@trade");
+        assert_eq!(frame.session_id, "session-1");
+        assert_eq!(frame.generation, 7);
+
+        let error = pending_binance_frame(
+            &bindings,
+            "session-1",
+            7,
+            r#"{"e":"trade","s":"ETHUSDT","t":1,"p":"1","q":"2","T":3,"m":false}"#.into(),
+            11,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn pre_ack_okx_frame_retains_approved_binding_or_fails_closed() {
+        let mut binding = binding(RawFeed::Trade, DeliveryClass::Lossless);
+        binding.provider = "OKX_DIRECT".into();
+        binding.venue = "OKX".into();
+        binding.market = "SWAP".into();
+        binding.native_symbol = "BTC-USDT-SWAP".into();
+        binding.native_channel = "trades".into();
+        let bindings = HashMap::from([(binding.key(), binding)]);
+        let frame = pending_okx_frame(
+            &bindings,
+            "session-1",
+            7,
+            r#"{"arg":{"channel":"trades","instId":"BTC-USDT-SWAP"},"data":[{"instId":"BTC-USDT-SWAP","tradeId":"1"}]}"#.into(),
+            10,
+        )
+        .unwrap();
+        assert_eq!(frame.binding.native_channel, "trades");
+        assert_eq!(frame.session_id, "session-1");
+        assert_eq!(frame.generation, 7);
+
+        let error = pending_okx_frame(
+            &bindings,
+            "session-1",
+            7,
+            r#"{"arg":{"channel":"trades","instId":"ETH-USDT-SWAP"},"data":[{"instId":"ETH-USDT-SWAP","tradeId":"1"}]}"#.into(),
+            11,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

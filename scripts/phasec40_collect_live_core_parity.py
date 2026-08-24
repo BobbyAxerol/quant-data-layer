@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
 
 from qdl.canonical.market import (
     canonicalize_binance_usdm_bbo,
-    canonicalize_binance_usdm_rest_bar,
+    canonicalize_binance_usdm_bar,
     canonicalize_okx_bar,
     canonicalize_okx_bbo,
 )
@@ -52,7 +52,7 @@ SUPPORTED_KINDS = frozenset(
     {
         "binance_usdm_trade",
         "binance_usdm_bbo",
-        "binance_usdm_rest_bar",
+        "binance_usdm_bar",
         "okx_trade",
         "okx_bbo",
         "okx_bar",
@@ -294,7 +294,7 @@ def _canonicalize(
     dispatch = {
         "binance_usdm_trade": canonicalize_binance_usdm_trade,
         "binance_usdm_bbo": canonicalize_binance_usdm_bbo,
-        "binance_usdm_rest_bar": canonicalize_binance_usdm_rest_bar,
+        "binance_usdm_bar": canonicalize_binance_usdm_bar,
         "okx_trade": canonicalize_okx_trade,
         "okx_bbo": canonicalize_okx_bbo,
         "okx_bar": canonicalize_okx_bar,

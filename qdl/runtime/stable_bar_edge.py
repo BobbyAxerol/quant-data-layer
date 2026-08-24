@@ -122,10 +122,6 @@ class StableBinanceBarEdge:
             source.binding_id
             for source, _acquisition in self.bindings + self.okx_bindings
         }
-        if not expected:
-            raise ValueError(
-                "stable crypto BAR edge requires at least one REST BAR binding"
-            )
         if owned != expected:
             raise ValueError(
                 "stable crypto BAR edge does not serve every configured REST BAR "
@@ -137,7 +133,15 @@ class StableBinanceBarEdge:
             or authority.get("legacy_write_allowed") is not False
         ):
             raise ValueError("stable crypto BAR edge requires shadow authority")
-        self._restore_state()
+        # Rust-native BAR feeds are the Phase 10.3 primary path. Keep this
+        # legacy edge constructible for an explicitly configured REST fallback,
+        # but do not create a synthetic polling workload when the resolved
+        # manifest contains no REST BAR binding.
+        self._rest_fallback_active = bool(expected)
+        if self._rest_fallback_active:
+            self._restore_state()
+        else:
+            self._history_bootstrapped = True
 
     @property
     def _binding_ids(self) -> tuple[str, ...]:
@@ -334,6 +338,8 @@ class StableBinanceBarEdge:
         )
 
     def bootstrap_history(self) -> int:
+        if not self._rest_fallback_active:
+            return 0
         if self._history_bootstrapped:
             return 0
         observed_ms = self._settled_observed_ms()
@@ -453,6 +459,8 @@ class StableBinanceBarEdge:
         return tuple(zip(values, opens, strict=True))
 
     def run_cycle(self) -> int:
+        if not self._rest_fallback_active:
+            return 0
         observed_ms = self._settled_observed_ms()
         latest = []
         for source, acquisition in self.bindings:
@@ -503,6 +511,11 @@ class StableBinanceBarEdge:
         return len(acknowledgements)
 
     def run_forever(self) -> None:
+        if not self._rest_fallback_active:
+            logger.info("stable crypto BAR REST edge idle; Rust native BAR owns the active demand")
+            while not self._stopped.wait(60.0):
+                pass
+            return
         failures = 0
         while not self._stopped.is_set():
             now = self.clock()

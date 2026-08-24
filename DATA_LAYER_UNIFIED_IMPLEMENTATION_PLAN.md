@@ -192,8 +192,8 @@ These rules apply to all phases.
 | 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `COMPLETE (8.0-8.3; RUST_SHADOW only)` |
 | 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
 | 10.1 | Universal demand contract and runtime topology | Replace fixed reference slices with one capability-truthful demand manifest and one shared Rust canonical core | `COMPLETE (SOURCE/ISOLATED; DARK; NO RUNTIME CUTOVER)` |
-| 10.2 | Universal warmup, history and batch handoff | Serve strategy-defined historical windows quickly, exactly and safely for every supported venue, instrument and interval | `IN PROGRESS (SOURCE/ISOLATED; NO RUNTIME CUTOVER)` |
-| 10.3 | Rust-primary realtime execution data plane | Make Rust the primary canonical TRADE, QUOTE and BAR source for the complete demanded universe, with V1 as observable fallback | `PROPOSED - AWAITING APPROVAL` |
+| 10.2 | Universal warmup, history and batch handoff | Serve strategy-defined historical windows quickly, exactly and safely for every supported venue, instrument and interval | `COMPLETE (SOURCE/ISOLATED; NO RUNTIME CUTOVER; VN IN-SESSION EXTERNAL GATE)` |
+| 10.3 | Rust-primary realtime execution data plane | Make Rust the primary canonical TRADE, QUOTE and BAR source for the complete demanded universe, with V1 as observable fallback | `IN PROGRESS (SOURCE/ISOLATED; NO RUNTIME CUTOVER)` |
 | 10.4 | Microstructure and alternative-data products | Add execution-grade order book, reference metrics and multi-instrument derivatives data behind the same contracts | `PROPOSED - AWAITING APPROVAL` |
 | 10.5 | Consumer cutover, certification and release | Move Trading System and alpha SDK routes to V2 primary by manifest, retain V1 rollback and publish stable V2 | `PROPOSED - AWAITING APPROVAL` |
 
@@ -11834,6 +11834,49 @@ fallback until consumer migration.
 shadow. Clear only disposable V2 warmup test keys after evidence capture; do
 not delete shared provider cache, historical data or consumer state.
 
+**Phase 10.3 activation - 2026-08-24 (`IN PROGRESS / SOURCE AND ISOLATED
+TEST ONLY`).**
+
+- **Approved scope:** implement and certify the shared Rust-primary realtime
+  execution data plane for the complete resolved demand manifest: Binance/OKX
+  native raw acquisition semantics, bounded VN raw-edge parity, canonical
+  TRADE/BBO/final-BAR publication, demand-specific readiness, typed observable
+  V1 fallback and representative V2 consumer behavior. This is not a blanket
+  runtime-authority/cutover approval: no active V1/V2 service, Kafka offset,
+  Redis/SQLite state, authority control record, alpha configuration or order
+  path may change until a separate packet names the exact services, manifest
+  revision, observation window and rollback revision.
+- **Guides and invariants:** follow architecture sections 8-14, 18, 22-25,
+  28-30 and 42; retain V1 routes and public payloads unchanged. Rust owns one
+  provider-neutral canonical core and fixed worker group, never a per-symbol
+  image/container. Python remains only provider edge/compatibility/query/SDK
+  surface. Production/shadow source bytes must be provider-native or durable
+  raw replay; synthetic frames are deterministic test provenance only.
+- **Correctness gates:** deterministic IDs, exact decimal/unit/timestamp,
+  source/session/lease provenance, final-BAR policy, per-key ordering,
+  duplicate suppression, explicit gap/quality transition and no loss of
+  TRADE/final-BAR/correction/authority records. BBO may coalesce only after a
+  durable canonical ACK.
+- **Evidence gates:** full Python/Rust recorded-envelope parity across all
+  declared Binance/OKX/VN feed kinds; controlled ACK/reconnect/resubscribe,
+  delayed/duplicate/gap/restart-replay; demand-specific freshness/readiness;
+  V2 SDK plus Trading System paper adapter receipt without direct venue access;
+  a manifest-only V1 fallback/return drill; then bounded real-provider
+  acceptance for every demanded Binance/OKX slice and VN during a verified open
+  session. Record compact freshness/gap/reconnect/lag/resource/fallback data.
+- **Rollback and cleanup:** source rollback is the preceding commit. Any later
+  runtime packet may apply only the pre-reviewed V1 fallback manifest revision
+  and stop named V2 workers. It must not reset offsets, flush Redis, delete
+  durable evidence, mutate V1 or rewrite alpha configuration. Isolated test
+  containers/state use exact namespaces and are removed after capture.
+- **Preflight finding (2026-08-24):** the current source catalog had already
+  selected native final-BAR acquisition for Binance/OKX, while the capability
+  matrix still described Binance BAR as a Python REST edge. Phase 10.3 must
+  make those declarations agree and prove direct-control WebSocket ACK,
+  heartbeat/reconnect, replay and per-demand routing before any authority or
+  consumer-route change. This is an in-scope correctness fix; it creates no
+  extra service/image topology and does not authorize a runtime mutation.
+
 ### 21.6 Phase 10.3 - Rust-Primary Realtime Execution Data Plane
 
 **Goal:** Make V2 Rust the primary real-time source for every demanded
@@ -11890,6 +11933,67 @@ with no in-session evidence stays capability-present but not `V2_PRIMARY`.
 canonical Kafka evidence and stop only the affected V2 acquisition/core
 workers if required. Do not mutate V1, reset Kafka offsets, flush Redis or
 rewrite alpha configuration.
+
+**Implementation slice 10.3-A - 2026-08-24 (`IN PROGRESS / READ-ONLY
+PROVIDER ADMISSION`).**
+
+- **Exact scope:** add one bounded WebSocket admission verifier for the enabled
+  `RUST_NATIVE` Binance USD-M and OKX Swap bindings resolved from
+  `stable-acquisition-bindings.yaml`. It must subscribe dynamically per
+  `(venue, market)` role, correlate every ACK, retain the fact that data can
+  precede an ACK, require one authentic TRADE, BBO and final 1m BAR for every
+  selected binding, and make one intentional reconnect/resubscribe without
+  creating a per-symbol process, image or container.
+- **Safety boundary:** the verifier is a client of public provider WebSockets
+  only. It does not instantiate a Kafka producer, projector, Redis client,
+  Data Layer runtime role, consumer group or authority record; it emits
+  bounded hashes/ages/counts to stdout or an explicitly supplied disposable
+  evidence path. Disabled zero-demand Spot bindings and a closed VN session
+  remain excluded from this crypto admission rather than being silently
+  represented as healthy.
+- **Required evidence:** deterministic parser/ACK/pre-ACK/duplicate/finality
+  tests run network-isolated; the later real-provider invocation is bounded,
+  read-only and records all selected binding IDs, source age, reconnect count,
+  timeout and payload hashes. Existing Rust native-ingestor and V2 SDK
+  regression remains mandatory before this slice is journaled `PASS`.
+- **Decision boundary:** this evidence certifies provider protocol admission
+  only. It neither grants `RUST_PRIMARY` nor changes a consumer route; those
+  operational actions remain Phase 10.5 packets with named services and an
+  explicit V1 rollback revision.
+
+**Implementation checkpoint 10.3-A - 2026-08-24 (`SOURCE PASS / REAL-PROVIDER
+ADMISSION PENDING`).**
+
+- Implemented the bounded direct WebSocket admission client for the exact 12
+  enabled Rust-native crypto bindings: Binance USD-M and OKX Swap, BTC/ETH,
+  `TRADE` + BBO/QUOTE + final `BAR 1m`. It derives scope from the governed
+  acquisition manifest, opens one socket per provider role rather than per
+  symbol, correlates every ACK, accepts data-before-ACK through a bounded
+  buffer, checks final-bar semantics and makes one intentional reconnect.
+- Implemented the supporting Rust-native acquisition/routing source slice:
+  dynamic role-level subscriptions, direct Binance/OKX ACK and frame handling,
+  bounded latest-quote coalescing only after durable ACK, lossless trade/final
+  bar delivery, per-demand health, explicit V2-primary/V1-fallback routing and
+  native-bar suppression of the Python REST poller. Catalog, capability and
+  acquisition declarations now agree on the active Rust-native paths.
+- A real Binance status frame exposed a verifier-only bug during admission:
+  the verifier treated an exact non-canonical zero `trade` status frame as a
+  fill. It now mirrors the existing Rust-core predicate exactly
+  (`e=trade,p=0,q=0,X=NA,st` JSON integer `1`) and records it as bounded
+  filtered-status evidence. Every other zero/malformed trade still fails
+  closed. This did not change Rust canonical semantics.
+- **Network-isolated Python matrix passed:** `122/122` in `3.351s`, covering
+  stable deployment/catalog/demand, history handoff, V2 routing, provider
+  admission, SDK snapshot/stream/recovery, Binance/OKX/VN canonical contracts,
+  capabilities and disabled acquisition. **Strict Rust gate passed:**
+  `cargo fmt --check`; `cargo clippy -D warnings` for `qdl-core`,
+  `qdl-realtime-core`, `qdl-kafka`; `63/63` unit tests. All test containers
+  were `--network none`, read-only and removed on exit.
+- **No runtime mutation:** no service, image, Kafka topic/offset, Redis/SQLite
+  state, authority, consumer route, V1 route, alpha configuration or provider
+  data was changed. The next required evidence is the verifier against public
+  provider WebSockets, followed separately by DNSE during a verified
+  market-open session; neither result grants `RUST_PRIMARY`.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 

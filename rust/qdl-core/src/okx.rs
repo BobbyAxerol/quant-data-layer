@@ -266,6 +266,15 @@ mod tests {
             &mut pending
         )
         .is_err());
+        assert!(!parse_subscription_ack(
+            &json!({"arg":{"channel":"trades","instId":"BTC-USDT-SWAP"},"data":[{
+                "instId":"BTC-USDT-SWAP","tradeId":"1"
+            }]}),
+            "7",
+            &mut pending,
+        )
+        .unwrap());
+        assert_eq!(pending.len(), 1);
     }
 
     #[test]

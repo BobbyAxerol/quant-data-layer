@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 import tempfile
 import time
@@ -35,6 +36,36 @@ from qdl.runtime.stable_deployment import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _legacy_rest_bar_fallback(
+    acquisition: StableAcquisitionPlan,
+) -> StableAcquisitionPlan:
+    """Make an explicit test-only REST fallback plan for edge recovery tests."""
+    rest_kind = {
+        "binance_usdm_bar": "binance_usdm_rest_bar",
+        "binance_spot_bar": "binance_spot_rest_bar",
+        "okx_bar": "okx_bar",
+    }
+    return StableAcquisitionPlan(
+        schema=acquisition.schema,
+        revision=acquisition.revision,
+        raw_topic=acquisition.raw_topic,
+        canonical_topic=acquisition.canonical_topic,
+        quarantine_topic=acquisition.quarantine_topic,
+        bindings=tuple(
+            replace(
+                item,
+                mode="PYTHON_REST",
+                provider_kind=rest_kind[item.provider_kind],
+                websocket_url=None,
+                business_websocket_url=None,
+            )
+            if item.provider_kind in rest_kind
+            else item
+            for item in acquisition.bindings
+        ),
+    )
 
 
 def _binance_binding() -> BinanceBarRawBinding:
@@ -239,6 +270,7 @@ class StableBarBootstrapTests(unittest.TestCase):
         self.acquisition = StableAcquisitionPlan.load(
             self.acquisition_path, catalog=self.catalog
         )
+        self.acquisition = _legacy_rest_bar_fallback(self.acquisition)
         self.authority = stable_authority_record(
             rust_image_digest="a" * 64,
             capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
@@ -502,7 +534,7 @@ class BarEdgeDeploymentShapeTests(unittest.TestCase):
         )
 
     def test_binance_branch_carries_bar_bindings_only(self):
-        edge = self._edge(self.catalog, self.acquisition)
+        edge = self._edge(self.catalog, _legacy_rest_bar_fallback(self.acquisition))
         self.assertTrue(edge.bindings)
         for source, acquisition in edge.bindings:
             self.assertEqual(source.feed.value, "BAR")
@@ -513,6 +545,7 @@ class BarEdgeDeploymentShapeTests(unittest.TestCase):
             catalog, acquisition = self._reduced(
                 Path(raw), {("BINANCE", "USDM"), ("OKX", "SWAP")}
             )
+            acquisition = _legacy_rest_bar_fallback(acquisition)
             markets = {
                 item.instrument.identity.market for item in catalog.bindings
             }
@@ -529,6 +562,6 @@ class BarEdgeDeploymentShapeTests(unittest.TestCase):
     def test_a_deployment_with_one_venue_is_accepted(self):
         with tempfile.TemporaryDirectory() as raw:
             catalog, acquisition = self._reduced(Path(raw), {("BINANCE", "USDM")})
-            edge = self._edge(catalog, acquisition)
+            edge = self._edge(catalog, _legacy_rest_bar_fallback(acquisition))
             self.assertTrue(edge.bindings)
             self.assertEqual(edge.okx_bindings, ())
