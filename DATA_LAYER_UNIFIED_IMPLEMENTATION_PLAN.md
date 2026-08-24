@@ -12100,6 +12100,66 @@ REAL-PROVIDER ADMISSION PENDING`).**
   Its result remains read-only evidence only; a passing probe does not itself
   grant `RUST_PRIMARY` or authorize a runtime recreate.
 
+**Provider-admission measurement correction - 2026-08-24 (`IN PROGRESS /
+VERIFIER ONLY`).**
+
+- The first mixed-transport public probe reached the complete route but failed
+  on `binance-usdm-btcusdt-quote age_ms=18702`. This is a verifier freshness
+  bug, not a provider or runtime data finding: it compared the first received
+  quote timestamp with the wall clock at the end of concurrent multi-lane
+  admission. A valid early frame can therefore be falsely labelled stale while
+  another final-BAR lane completes.
+- Approved in-scope correction: record an observed/capture timestamp on every
+  bounded frame and evaluate source-to-capture freshness at that capture
+  boundary. Preserve the end-to-end elapsed metric separately. The verifier
+  must still fail closed for actual provider lag, missing requested binding,
+  non-final BAR, incorrect transport, ACK/reconnect failure or invalid native
+  row. No runtime, route, authority or provider mutation is permitted.
+- The corrected re-probe passed the freshness boundary but failed the generic
+  `demanded BAR never arrived as final` gate. Before any acquisition policy is
+  considered, extend that bounded failure with its declared binding ID and
+  transport only; retain the strict final-BAR gate and do not infer a provider
+  defect from an anonymous verifier message.
+- Root cause is now verified in the admission verifier: `_SessionAccumulator`
+  retained finality internally to complete the first OKX session, but its
+  emitted evidence retained only the latest frame per binding. A subsequent
+  provisional update could overwrite the visible final flag, producing a false
+  `okx-swap-btcusdt-bar-1m` failure even though a final provider BAR was
+  observed. Correct the evidence schema to carry the bounded final-binding set
+  independently of the latest-frame digest, and add an out-of-order
+  final-then-provisional test. This preserves both strict finality and accurate
+  provider observation; it does not change acquisition, runtime or authority.
+
+**Mixed-transport provider admission checkpoint - 2026-08-24 (`PASS /
+RUNTIME CUTOVER NOT AUTHORIZED`).**
+
+- Corrected the verifier freshness calculation to evaluate source-to-capture
+  age when each provider frame is received, rather than at the end of a
+  concurrent multi-lane probe. Corrected final-BAR evidence to retain the
+  bounded set of bindings that observed finality even when a later provisional
+  frame is the latest frame digest. Unit coverage includes both regressions;
+  no freshness/finality gate was relaxed.
+- Bounded public-provider admission passed all active crypto bindings:
+  `12/12` provider-authentic slices, with ten `RUST_NATIVE` WebSocket paths
+  (Binance TRADE/BBO; OKX TRADE/BBO/final BAR) and two
+  `PYTHON_REST` Binance final-BAR recovery paths. The probe recorded `16` ACKs,
+  `4` intentional reconnect roles, `4` pre-ACK frames, `198` accepted provider
+  frames, `36.442s` elapsed, `0.188884s` process CPU and `69832 KiB` peak RSS.
+  Binance REST BAR source-to-capture ages were about `25s`; crypto WebSocket
+  paths were `0-29ms`. Output retained only binding IDs, counters, ages and
+  SHA-256 frame hashes; it wrote no raw provider data.
+- **Regression gates passed:** network-isolated Python `127/127` in `3.307s`;
+  Rust `cargo fmt --check`, `clippy -D warnings` and `64/64` unit tests across
+  `qdl-core`, `qdl-realtime-core` and `qdl-kafka`. Test containers were
+  read-only and removed on exit; the Rust target cache was the existing
+  disposable `/tmp/qdl-phase103-cargo-target` cache only.
+- **Status boundary:** Binance and OKX protocol admission is now certified for
+  the current 12-slice manifest. This is not a V2 runtime deploy, consumer
+  migration, authority promotion or V1 removal. VN remains `UNEXERCISED` until
+  a verified open-session read-only admission; V2 consumer receipt, manifest
+  fallback/return drill and a separately approved bounded runtime packet remain
+  required Phase 10.3 exit gates.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,

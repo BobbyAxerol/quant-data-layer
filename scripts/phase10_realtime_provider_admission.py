@@ -71,6 +71,7 @@ class FrameObservation:
     source_time_ms: int
     frame_sha256: str
     final_bar: bool
+    observed_at_ms: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +84,7 @@ class SessionEvidence:
     observations: tuple[FrameObservation, ...]
     filtered_status_frames: int = 0
     transport: str = "WEBSOCKET"
+    final_bar_binding_ids: tuple[str, ...] = ()
 
 
 class _SessionAccumulator:
@@ -132,6 +134,7 @@ class _SessionAccumulator:
                 for binding_id in sorted(self._observations)
             ),
             filtered_status_frames=filtered_status_frames,
+            final_bar_binding_ids=tuple(sorted(self._final_bar_ids)),
         )
 
 
@@ -378,6 +381,7 @@ def parse_binance_data(
         source_time_ms=source_time_ms,
         frame_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         final_bar=final_bar,
+        observed_at_ms=time.time_ns() // 1_000_000,
     )
 
 
@@ -434,6 +438,7 @@ def parse_binance_rest_bar(
         source_time_ms=close_time_ms,
         frame_sha256=hashlib.sha256(raw_frame_bytes).hexdigest(),
         final_bar=True,
+        observed_at_ms=observed_ms,
     )
 
 
@@ -503,6 +508,7 @@ def parse_okx_data(
         source_time_ms=source_time_ms,
         frame_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         final_bar=final_bar,
+        observed_at_ms=time.time_ns() // 1_000_000,
     )
 
 
@@ -649,11 +655,12 @@ async def _binance_rest_bar_session(
             raise ProviderAdmissionError("Binance REST BAR capture is not JSON") from error
         if not isinstance(payload, Mapping):
             raise ProviderAdmissionError("Binance REST BAR capture is not an object")
+        observed_ms = time.time_ns() // 1_000_000
         return parse_binance_rest_bar(
             payload,
             binding=binding,
             raw_frame_bytes=bytes(envelope.raw_frame_bytes),
-            observed_ms=time.time_ns() // 1_000_000,
+            observed_ms=observed_ms,
         )
 
     observations = tuple(await asyncio.gather(*(fetch(item) for item in bindings)))
@@ -766,6 +773,7 @@ def _render_report(
     by_binding: dict[str, list[FrameObservation]] = {item.binding_id: [] for item in bindings}
     session_seen: dict[str, int] = {item.binding_id: 0 for item in bindings}
     transports: dict[str, set[str]] = {item.binding_id: set() for item in bindings}
+    final_bar_ids: set[str] = set()
     for session in sessions:
         seen_here = {item.binding_id for item in session.observations}
         for binding_id in seen_here:
@@ -773,7 +781,10 @@ def _render_report(
             transports[binding_id].add(session.transport)
         for observation in session.observations:
             by_binding[observation.binding_id].append(observation)
-    now_ms = time.time_ns() // 1_000_000
+        final_bar_ids.update(session.final_bar_binding_ids)
+    declared_bar_ids = {item.binding_id for item in bindings if item.feed == "BAR"}
+    if not final_bar_ids <= declared_bar_ids:
+        raise ProviderAdmissionError("session finality references a non-BAR binding")
     values: list[dict[str, Any]] = []
     for binding in bindings:
         observations = by_binding[binding.binding_id]
@@ -788,11 +799,18 @@ def _render_report(
             )
         if transports[binding.binding_id] != {expected_transport}:
             raise ProviderAdmissionError("provider transport differs from declared acquisition mode")
-        final_bar_seen = any(item.final_bar for item in observations)
+        final_bar_seen = (
+            binding.binding_id in final_bar_ids
+            or any(item.final_bar for item in observations)
+        )
         if binding.feed == "BAR" and not final_bar_seen:
-            raise ProviderAdmissionError("demanded BAR never arrived as final")
+            raise ProviderAdmissionError(
+                "demanded BAR never arrived as final "
+                f"binding={binding.binding_id} transport={expected_transport}"
+            )
         latest = observations[-1]
-        age_ms = max(0, now_ms - latest.source_time_ms)
+        capture_ms = latest.observed_at_ms or (time.time_ns() // 1_000_000)
+        age_ms = max(0, capture_ms - latest.source_time_ms)
         if age_ms > binding.stale_after_ms:
             raise ProviderAdmissionError(
                 f"demanded binding is stale binding={binding.binding_id} age_ms={age_ms}"
@@ -807,7 +825,8 @@ def _render_report(
                 "interval": binding.interval,
                 "acquisition_mode": binding.mode,
                 "transport": expected_transport,
-                "source_age_ms": age_ms,
+                "source_to_capture_age_ms": age_ms,
+                "capture_time_ms": capture_ms,
                 "session_observations": session_seen[binding.binding_id],
                 "final_bar_observed": final_bar_seen,
                 "last_frame_sha256": latest.frame_sha256,

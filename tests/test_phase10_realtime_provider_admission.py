@@ -178,6 +178,17 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
             tuple(sorted(item.binding_id for item in bars)),
         )
 
+    def test_session_evidence_preserves_finality_when_newer_provisional_frame_arrives(self):
+        binding = next(item for item in self.bindings if item.feed == "BAR")
+        accumulator = admission._SessionAccumulator((binding,))
+        accumulator.add(admission.FrameObservation(binding.binding_id, 1, "a" * 64, True))
+        accumulator.add(admission.FrameObservation(binding.binding_id, 2, "b" * 64, False))
+        evidence = accumulator.evidence(
+            role="test", generation=1, ack_count=1, pre_ack_frames=0
+        )
+        self.assertFalse(evidence.observations[0].final_bar)
+        self.assertEqual(evidence.final_bar_binding_ids, (binding.binding_id,))
+
     def test_okx_request_id_is_short_alphanumeric_and_role_bound(self):
         self.assertEqual(
             admission.okx_request_id(role="OKX:SWAP:PUBLIC", generation=12),
