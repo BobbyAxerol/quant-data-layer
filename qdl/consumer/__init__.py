@@ -5,6 +5,9 @@ from typing import TYPE_CHECKING, Any
 from qdl.consumer.stable import (
     StableConsumerMigration,
     StableConsumerMigrationPlan,
+    StablePrimaryConsumerRoute,
+    StablePrimaryConsumerRoutePlan,
+    primary_fallback_return_drill,
 )
 from qdl.consumer.manifest import (
     ConsumerManifest,
@@ -41,6 +44,9 @@ __all__ = [
     "MigrationState",
     "StableConsumerMigration",
     "StableConsumerMigrationPlan",
+    "StablePrimaryConsumerRoute",
+    "StablePrimaryConsumerRoutePlan",
+    "primary_fallback_return_drill",
     "ManifestShadowConsumer",
     "ShadowObservation",
     "UsageTelemetry",

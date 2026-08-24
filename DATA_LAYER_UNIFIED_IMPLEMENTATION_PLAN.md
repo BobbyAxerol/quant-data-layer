@@ -12428,6 +12428,69 @@ RUNTIME PACKET PENDING`).**
   It must not activate the obsolete `production_core_*` profile or create a
   second data-plane topology.
 
+**Primary consumer-route and shared-core handoff packet slice - 2026-08-24
+(`SOURCE PASS / RUNTIME PACKET PENDING`).**
+
+- **Goal:** bind the generated `RUST_PRIMARY` authority record to a reviewed
+  per-consumer `V2_PRIMARY` route plan and its exact `V1` fallback revision,
+  then emit one review-only deployment packet for the existing shared V2
+  topology. This is the final source gate before any separately approved
+  runtime action.
+- **Invariants:** the route plan is versioned, immutable by digest and covers
+  only registered stable consumers; each requirement continues to make a typed
+  readiness decision at read time. A `V2_PRIMARY -> V1_FALLBACK -> V2_PRIMARY`
+  drill must retain the same requirement identity, units, final-bar semantics
+  and bounded audit record. The packet may name only the dedicated realtime
+  topic, its exact ACL intent, generated runtime bundle, fixed native
+  ingress/core/projector/query/stream roles and one V1 rollback revision. It
+  must reject `production_core_*`, per-symbol resources, offset resets, topic
+  deletion, Redis/SQLite flushes, V1 restarts and alpha configuration changes.
+- **Verification plan:** deterministic route/return tests for every governed
+  consumer and requirement; malformed/mismatched authority, candidate,
+  bundle, route and rollback validation; packet identity/topology/forbidden
+  mutation tests; then the existing isolated Python/Rust deployment/parity
+  matrix. Generated packet output is review evidence only and records no
+  secret or provider payload.
+- **Implementation and isolated evidence (2026-08-24):** added the governed
+  `qdl.v2.shared-primary-consumer-route.v1` route plan for the five registered
+  stable consumer classes (monitoring, Binance/OKX/VN alpha paper and Trading
+  System paper). Every loaded consumer manifest must retain SDK V2 plus exact
+  `V1` rollback compatibility; each requirement is rejected unless the V2
+  catalog or an explicitly eligible provider pass-through can serve it. The
+  new sealed route records the resolved manifest identity/revision/digests and
+  can bind only to a generated `RUST_PRIMARY` authority record.
+- Added a deterministic, test-proven `V2_PRIMARY -> V1_FALLBACK ->
+  V2_PRIMARY` return drill for every governed requirement. It is explicitly
+  test provenance only: it verifies route selection, identity and fallback
+  semantics without contacting a provider or changing a consumer route.
+- Added `scripts/phase103_prepare_shared_primary_packet.py`, a review-only
+  generator for exactly one shared-core runtime bundle and packet. It emits
+  the generated authority record, fixed three-core/native Binance/OKX edge
+  configs, consumer route seal and digest manifest; it refuses obsolete
+  `production_core_*` topology, per-symbol resources, public/V1 writes,
+  offset manipulation, topic deletion, cache deletion/flush, V1 restart and
+  alpha configuration change. The generator has no apply mode and performs no
+  Docker, Kafka, Redis, PostgreSQL, provider or consumer I/O.
+- **Tests actually run (all isolated; source mounted read-only; network
+  disabled; no runtime mutation):**
+  - `docker run ... qdl-v2-python:2.0.0-7a5aef6 python -B -m unittest -q
+    tests.test_phase103_shared_primary_handoff
+    tests.test_phaseb_stable_release tests.test_phase10_realtime_route` ->
+    `19 passed`, `0 failed`.
+  - `docker run ... qdl-c40-rust-builder:source-gate cargo fmt --check` ->
+    pass; `cargo test --locked --quiet -p qdl-venue-core -p qdl-kafka -p
+    qdl-realtime-core` -> `85 passed`, `0 failed`; `cargo clippy --locked
+    --quiet -p qdl-venue-core -p qdl-kafka -p qdl-realtime-core -- -D
+    warnings` -> pass.
+  - `git diff --check` -> pass. Test packet directories are temporary test
+    fixtures and are removed with their containers; no image, container,
+    topic, offset, Redis/SQLite state, authority record, V1 service, Trading
+    System or alpha state changed.
+- **Decision boundary:** no runtime packet is executed in this slice. A later
+  operator approval must supply its exact immutable image/bundle digests,
+  named services, observation duration and V1 manifest revision before topic
+  or ACL creation, service recreation or consumer route activation.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,

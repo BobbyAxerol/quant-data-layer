@@ -1,0 +1,21 @@
+schema: qdl.v2.shared-primary-consumer-route.v1
+revision: 1
+contract_version: 2.0.0
+target_route: V2_PRIMARY
+rollback_route: V1
+consumers:
+- manifest: /app/consumers/stable/monitoring-multivenue.yaml
+  consumer_id: monitoring.multivenue.stable
+  v1_compatible: true
+- manifest: /app/consumers/stable/alpha-binance-paper.yaml
+  consumer_id: alpha.binance.paper.stable
+  v1_compatible: true
+- manifest: /app/consumers/stable/alpha-okx-paper.yaml
+  consumer_id: alpha.okx.paper.stable
+  v1_compatible: true
+- manifest: /app/consumers/stable/alpha-vn-paper.yaml
+  consumer_id: alpha.vn.paper.stable
+  v1_compatible: true
+- manifest: /app/consumers/stable/trading-system-paper.yaml
+  consumer_id: trading-system.paper.stable
+  v1_compatible: true
