@@ -70,6 +70,18 @@ _FORBIDDEN_OPERATIONS = (
     "per_symbol_image",
     "per_symbol_topic",
 )
+_COMPOSE_ENVIRONMENT_KEYS = (
+    "QDL_STABLE_RUNTIME_DIR",
+    "QDL_STABLE_PYTHON_IMAGE",
+    "QDL_STABLE_RUST_IMAGE",
+    "QDL_STABLE_AUTHORITY_MODE",
+    "QDL_STABLE_AUTHORITY_REVISION",
+)
+_PACKET_IDENTITY_FIELDS = {
+    "packet_id",
+    "packet_sha256",
+    "confirmation_token",
+}
 
 
 def _canonical_bytes(value: Mapping[str, Any] | list[Any]) -> bytes:
@@ -83,6 +95,14 @@ def _canonical_bytes(value: Mapping[str, Any] | list[Any]) -> bytes:
 
 def _sha256(value: Mapping[str, Any] | list[Any]) -> str:
     return hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def _packet_body(packet: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in packet.items()
+        if key not in _PACKET_IDENTITY_FIELDS
+    }
 
 
 def _file_digest(path: Path) -> str:
@@ -231,22 +251,15 @@ def prepare_shared_primary_packet(
     manifest_path.chmod(0o644)
     runtime_digests[manifest_path.name] = _file_digest(manifest_path)
     bundle_digest = _sha256({"files": runtime_digests})
-    packet_seed = {
-        "schema": SCHEMA,
-        "source_commit": source_commit,
-        "authority_sha256": _sha256(authority),
-        "bundle_sha256": bundle_digest,
-        "python_image_digest": python_image_digest,
-        "actor": actor,
-        "change_ticket": change_ticket,
-        "issued_at_ns": now_ns,
+    compose_environment = {
+        "QDL_STABLE_RUNTIME_DIR": str(runtime_dir),
+        "QDL_STABLE_PYTHON_IMAGE": python_image_digest,
+        "QDL_STABLE_RUST_IMAGE": rust_image_digest,
+        "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
+        "QDL_STABLE_AUTHORITY_REVISION": str(authority["revision"]),
     }
-    packet_digest = _sha256(packet_seed)
-    packet = {
+    packet_body = {
         "schema": SCHEMA,
-        "packet_id": str(uuid.uuid5(uuid.NAMESPACE_URL, packet_digest)),
-        "packet_sha256": packet_digest,
-        "confirmation_token": f"APPLY_QDL_PHASE103_{packet_digest[:16]}",
         "issued_at_ns": now_ns,
         "expires_at_ns": now_ns + 1_800_000_000_000,
         "actor": actor,
@@ -303,12 +316,20 @@ def prepare_shared_primary_packet(
             "v1_fallback_return_required": True,
             "vn_primary_requires_in_session_evidence": True,
         },
+        "compose_environment": compose_environment,
         "rollback": {
             "consumer_route": "V1",
             "stop_only_services": list(_ALLOWED_SERVICE_ORDER),
             "retained_evidence": ["kafka_canonical", "kafka_raw", "cursor", "audit"],
             "forbidden_operations": list(_FORBIDDEN_OPERATIONS),
         },
+    }
+    packet_digest = _sha256(packet_body)
+    packet = {
+        "packet_id": str(uuid.uuid5(uuid.NAMESPACE_URL, packet_digest)),
+        "packet_sha256": packet_digest,
+        "confirmation_token": f"APPLY_QDL_PHASE103_{packet_digest[:16]}",
+        **packet_body,
     }
     validate_shared_primary_packet(packet)
     packet_path = output_dir / "shared-primary-handoff-packet.json"
@@ -323,10 +344,18 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
         "schema", "packet_id", "packet_sha256", "confirmation_token",
         "issued_at_ns", "expires_at_ns", "actor", "change_ticket",
         "apply_requested", "production_mutations", "authority", "runtime_bundle",
-        "consumer_route", "deployment", "acceptance", "rollback",
+        "consumer_route", "deployment", "acceptance", "compose_environment",
+        "rollback",
     }
     if set(packet) != expected or packet.get("schema") != SCHEMA:
         raise ValueError("shared primary packet schema/fields are invalid")
+    packet_digest = _sha256(_packet_body(packet))
+    if (
+        packet.get("packet_sha256") != packet_digest
+        or packet.get("packet_id") != str(uuid.uuid5(uuid.NAMESPACE_URL, packet_digest))
+        or packet.get("confirmation_token") != f"APPLY_QDL_PHASE103_{packet_digest[:16]}"
+    ):
+        raise ValueError("shared primary packet integrity is invalid")
     authority = packet["authority"]
     if not isinstance(authority, dict):
         raise ValueError("shared primary packet authority is invalid")
@@ -348,6 +377,24 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
     _require_sha256(python_image_digest, field="python_image_digest")
     if rust_image_digest != authority.get("candidate_image_digest"):
         raise ValueError("shared primary packet Rust image differs from authority")
+    compose_environment = packet["compose_environment"]
+    if (
+        not isinstance(compose_environment, dict)
+        or set(compose_environment) != set(_COMPOSE_ENVIRONMENT_KEYS)
+        or not all(isinstance(value, str) and value for value in compose_environment.values())
+    ):
+        raise ValueError("shared primary packet Compose environment is invalid")
+    runtime_path = Path(compose_environment["QDL_STABLE_RUNTIME_DIR"])
+    if not runtime_path.is_absolute() or runtime_path.name != "runtime":
+        raise ValueError("shared primary packet runtime directory is invalid")
+    if (
+        compose_environment["QDL_STABLE_PYTHON_IMAGE"] != python_image_digest
+        or compose_environment["QDL_STABLE_RUST_IMAGE"] != rust_image_digest
+        or compose_environment["QDL_STABLE_AUTHORITY_MODE"] != "RUST_PRIMARY"
+        or compose_environment["QDL_STABLE_AUTHORITY_REVISION"]
+        != str(authority["revision"])
+    ):
+        raise ValueError("shared primary packet Compose environment differs from authority")
     deployment = packet["deployment"]
     rollback = packet["rollback"]
     if not isinstance(deployment, dict) or not isinstance(rollback, dict):

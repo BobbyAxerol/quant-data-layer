@@ -12524,6 +12524,29 @@ RUNTIME PACKET PENDING`).**
   and stop-only/V1-manifest rollback. It must not use the historical
   `production_core_*` profile.
 
+**Phase 10.3 sealed Compose-overlay and packet-integrity checkpoint -
+2026-08-24 (`SOURCE/PACKAGING PASS / RUNTIME CUTOVER PENDING`).**
+
+- The review packet now carries exactly five non-secret Compose substitutions:
+  private runtime directory, immutable Python image ID, immutable Rust image
+  ID, `RUST_PRIMARY` mode and the sealed authority revision. Its validator
+  rejects missing, unknown, malformed or authority/image-mismatched keys.
+  The existing private stable env remains the only source of certificate/DSN
+  references; it is neither read into the packet nor copied.
+- Packet identity now derives from canonical SHA-256 of the complete body,
+  including service topology, topic/ACL intent, acceptance, Compose overlay
+  and rollback fields. Packet UUID and confirmation token derive from the same
+  checksum. Tests prove both accidental tampering and a deliberately resealed
+  forbidden topology/route/environment fail closed at the appropriate gate.
+- **Tests actually run:** host `py_compile` and `git diff --check` passed;
+  read-only/no-network immutable-Python regression passed `19/19`; tmpfs-only
+  packet generation passed with `status=REVIEW_REQUIRED`, `12` crypto bindings,
+  `13` fixed services and zero production mutations. The prior Compose render
+  of the existing secret env plus the sealed values
+  (`runtime/image/mode/revision`) passed `docker compose config -q`; no Compose
+  create/up/restart command ran. No runtime resource, topic, ACL, authority,
+  V1 route, secret, Trading System or alpha state changed.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 
@@ -12559,6 +12582,23 @@ CUTOVER PENDING`).**
   contract tests for omission/malformed values. This does not change a public
   contract or runtime; it makes the later approved packet auditable and
   rollback-safe.
+- **Second packet correctness repair before runtime review:** the sealed
+  `authority.json` correctly owns `RUST_PRIMARY` mode/revision, but Compose
+  also needs those values and the new bundle/image paths as explicit
+  non-secret substitutions. A packet that omits them makes a valid bundle fail
+  at `docker compose config` or risks manual operator reconstruction. Add an
+  exact `compose_environment` record to the packet, reject unknown/missing
+  keys and prove that the existing secret-bearing stable env plus only this
+  sealed non-secret overlay renders successfully. No secret is copied into the
+  packet or committed.
+- **Packet-integrity repair in the same slice:** the first packet checksum was
+  derived from a small identity seed rather than the complete packet body. It
+  could detect a wrong source/image/bundle but did not cryptographically bind
+  every deployment, acceptance and rollback field. Replace it with a canonical
+  SHA-256 over the complete review body, with packet UUID and confirmation
+  token derived from that digest; validation must recompute it before trusting
+  any field. This is a deterministic integrity checksum, not a substitute for
+  the later operator approval or authority CAS.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 

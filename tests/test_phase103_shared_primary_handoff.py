@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 import yaml
@@ -130,6 +132,20 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             issued_at_ns=1_800_000_000_000_000_000,
         )
 
+    @staticmethod
+    def reseal(packet: dict[str, object]) -> None:
+        body = {
+            key: value
+            for key, value in packet.items()
+            if key not in {"packet_id", "packet_sha256", "confirmation_token"}
+        }
+        digest = hashlib.sha256(
+            json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        packet["packet_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, digest))
+        packet["packet_sha256"] = digest
+        packet["confirmation_token"] = f"APPLY_QDL_PHASE103_{digest[:16]}"
+
     def test_packet_uses_one_shared_topology_and_has_review_only_rollback(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phase103-packet-") as directory:
             output = Path(directory) / "packet"
@@ -146,6 +162,18 @@ class SharedPrimaryPacketTests(unittest.TestCase):
                 packet["runtime_bundle"]["python_image_digest"],
                 "sha256:" + "c" * 64,
             )
+            environment = packet["compose_environment"]
+            self.assertTrue(environment["QDL_STABLE_RUNTIME_DIR"].endswith("/runtime"))
+            self.assertEqual(
+                environment["QDL_STABLE_PYTHON_IMAGE"],
+                "sha256:" + "c" * 64,
+            )
+            self.assertEqual(
+                environment["QDL_STABLE_RUST_IMAGE"],
+                "sha256:" + "b" * 64,
+            )
+            self.assertEqual(environment["QDL_STABLE_AUTHORITY_MODE"], "RUST_PRIMARY")
+            self.assertEqual(environment["QDL_STABLE_AUTHORITY_REVISION"], "1")
             self.assertEqual(
                 packet["deployment"]["services"],
                 list(_ALLOWED_SERVICE_ORDER),
@@ -186,13 +214,25 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             packet = self.packet(root / "packet")
             obsolete = copy.deepcopy(packet)
             obsolete["deployment"]["services"].append("production_core_1")
+            with self.assertRaisesRegex(ValueError, "packet integrity"):
+                validate_shared_primary_packet(obsolete)
+            self.reseal(obsolete)
             with self.assertRaisesRegex(ValueError, "service topology"):
                 validate_shared_primary_packet(obsolete)
 
             bad_route = copy.deepcopy(packet)
             bad_route["consumer_route"]["sealed_route"]["authority_mode"] = "RUST_SHADOW"
+            with self.assertRaisesRegex(ValueError, "packet integrity"):
+                validate_shared_primary_packet(bad_route)
+            self.reseal(bad_route)
             with self.assertRaisesRegex(ValueError, "route is not bound"):
                 validate_shared_primary_packet(bad_route)
+
+            bad_environment = copy.deepcopy(packet)
+            bad_environment["compose_environment"]["QDL_STABLE_AUTHORITY_MODE"] = "RUST_SHADOW"
+            self.reseal(bad_environment)
+            with self.assertRaisesRegex(ValueError, "Compose environment differs"):
+                validate_shared_primary_packet(bad_environment)
 
             with self.assertRaisesRegex(FileExistsError, "must be empty"):
                 self.packet(root / "packet")
