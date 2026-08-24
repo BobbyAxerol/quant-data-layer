@@ -12867,6 +12867,31 @@ MUTATION`).**
   10.3 runtime-certified or starting Phase 10.4. VN still needs its separate
   open-session provider admission.
 
+**Implementation checkpoint 10.3 sealed host-path receipt invocation -
+2026-08-24 (`SOURCE/RUNBOOK PASS / RUNTIME HANDOFF PENDING`).**
+
+- A review-only packet validation exposed an intended fail-closed invariant:
+  the packet seals the *host* runtime directory, so mounting its packet
+  directory at an arbitrary container path (`/packet`) makes validation reject
+  the probe before SDK I/O. The validator was deliberately not relaxed.
+- Corrected only the disposable acceptance-runner mount in
+  `docs/runbooks/phase103-shared-rust-primary-handoff.md`: it now binds
+  `$QDL_PACKET_DIR` to the identical in-container host path and passes the
+  packet/runtime coordinates exactly as sealed. The runner remains read-only,
+  ephemeral and contains no service, broker, provider or execution action.
+- Added a static runbook regression test that rejects the former `/packet/...`
+  coordinates, preventing a future documentation edit from silently breaking
+  a valid packet. **Tests actually run:** immutable
+  `qdl-v2-python@sha256:90c96b9c4418525ec6e505e7debcb7dfc8addbcb9e957eeaded90f2e9ddc8730`,
+  source read-only and `--network none`: Phase 10.3 consumer scope, receipt
+  harness and handoff suite `21/21` passed. No runtime service, image, Kafka,
+  Redis, database, authority, route, V1 consumer, Trading System, alpha or
+  provider state changed.
+- **Remaining gate unchanged:** a freshly generated unexpired packet and its
+  separately approved bounded runtime handoff are still mandatory. This
+  source/runbook correction neither grants `RUST_PRIMARY` nor certifies the
+  currently stale runtime route.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 

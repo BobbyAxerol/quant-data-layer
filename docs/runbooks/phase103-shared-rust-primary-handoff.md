@@ -201,12 +201,12 @@ docker run --rm --read-only \
   --network executor_network \
   -v "$PWD:/workspace:ro" \
   -v "$QDL_RELEASE_ROOT:/bundle:ro" \
-  -v "$QDL_PACKET_DIR:/packet:ro" \
+  -v "$QDL_PACKET_DIR:$QDL_PACKET_DIR:ro" \
   -w /workspace \
   "$QDL_STABLE_PYTHON_IMAGE" \
   python -B scripts/phase103_consumer_receipt_acceptance.py \
-    --handoff-packet /packet/shared-primary-handoff-packet.json \
-    --runtime-dir /packet/runtime \
+    --handoff-packet "$QDL_PACKET_DIR/shared-primary-handoff-packet.json" \
+    --runtime-dir "$QDL_RUNTIME_DIR" \
     --primary-url https://query_v2_1:8200 \
     --secondary-url https://query_v2_2:8200 \
     --grpc-target qdl-v2-stream-a:8210,qdl-v2-stream-b:8210 \

@@ -15,6 +15,9 @@ from scripts.phase103_prepare_shared_primary_packet import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
     def test_parser_requires_the_sealed_handoff_coordinates(self):
         parsed = parser().parse_args(
@@ -70,6 +73,18 @@ class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
             packet_path.write_text("{}", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "packet"):
                 _validated_packet(packet_path, root / "packet" / "runtime")
+
+    def test_runbook_preserves_the_sealed_host_runtime_path_inside_probe(self):
+        runbook = (
+            ROOT / "docs/runbooks/phase103-shared-rust-primary-handoff.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn('-v "$QDL_PACKET_DIR:$QDL_PACKET_DIR:ro"', runbook)
+        self.assertIn(
+            '--handoff-packet "$QDL_PACKET_DIR/shared-primary-handoff-packet.json"',
+            runbook,
+        )
+        self.assertIn('--runtime-dir "$QDL_RUNTIME_DIR"', runbook)
+        self.assertNotIn("--handoff-packet /packet/", runbook)
 
 
 if __name__ == "__main__":
