@@ -44,6 +44,19 @@ REQUIRED_EVIDENCE = {
     "consumer_errors",
     "execution_state_changed",
 }
+R1_PRECANARY_SCHEMA = "qdl.r1.pre-canary-admission.v1"
+R1_PRECANARY_FIELDS = {
+    "schema", "status", "issued_at_ns", "expires_at_ns", "provider_provenance",
+    "production_mutations", "execution_state_changed", "semantic_mismatches",
+    "open_gaps", "duplicate_external_effects", "consumer_errors",
+    "candidate_runtime_parity_status", "candidate_source_commit",
+    "candidate_image_digest", "candidate_image_inspect_sha256",
+    "rollback_rust_image_digest", "promotion_scope_digest", "contract_sha256",
+    "partition_plan_sha256", "release_artifact_sha256", "sbom_sha256",
+    "rollback_manifest_sha256", "reference_runtime_image_digest",
+    "reference_source_commit", "reference_parity_sha256",
+    "reference_captured_at_ns", "sample_count",
+}
 
 
 def _encoded(value: Mapping[str, Any]) -> bytes:
@@ -77,9 +90,65 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _validate_acceptance(
-    value: Mapping[str, Any], *, rust_image_digest: str
+def _validate_r1_precanary_admission(
+    value: Mapping[str, Any], *, rust_image_digest: str, now_ns: int
 ) -> dict[str, Any]:
+    if set(value) != R1_PRECANARY_FIELDS or value.get("schema") != R1_PRECANARY_SCHEMA:
+        raise ValueError("R1 pre-canary admission schema/fields are invalid")
+    issued = int(value.get("issued_at_ns", 0))
+    expires = int(value.get("expires_at_ns", 0))
+    if not issued <= now_ns < expires or expires - issued > 7_200_000_000_000:
+        raise ValueError("R1 pre-canary admission window is inactive")
+    reference_captured = int(value.get("reference_captured_at_ns", 0))
+    if reference_captured <= 0 or reference_captured > now_ns or now_ns - reference_captured > 1_800_000_000_000:
+        raise ValueError("R1 pre-canary reference parity is stale")
+    if (
+        value.get("status") != "PASS"
+        or value.get("provider_provenance") != "REAL"
+        or int(value.get("production_mutations", -1)) != 0
+        or value.get("execution_state_changed") is not False
+        or value.get("candidate_runtime_parity_status") != "PENDING_R1_CANARY"
+        or value.get("candidate_image_digest") != rust_image_digest
+        or value.get("reference_runtime_image_digest") == rust_image_digest
+        or int(value.get("sample_count", 0)) < 96
+        or any(int(value.get(name, -1)) != 0 for name in (
+            "semantic_mismatches", "open_gaps", "duplicate_external_effects", "consumer_errors",
+        ))
+    ):
+        raise ValueError("R1 pre-canary admission is not clean/candidate-bound")
+    for name in (
+        "candidate_image_inspect_sha256", "release_artifact_sha256", "sbom_sha256",
+        "rollback_manifest_sha256", "reference_parity_sha256", "promotion_scope_digest",
+        "contract_sha256", "partition_plan_sha256",
+    ):
+        candidate = str(value.get(name, ""))
+        if len(candidate) != 64 or any(char not in "0123456789abcdef" for char in candidate):
+            raise ValueError(f"R1 pre-canary admission digest is invalid: {name}")
+    for name in ("candidate_source_commit", "reference_source_commit"):
+        candidate = str(value.get(name, ""))
+        if not 7 <= len(candidate) <= 64 or any(char not in "0123456789abcdef" for char in candidate):
+            raise ValueError(f"R1 pre-canary admission source commit is invalid: {name}")
+    for name in ("rollback_rust_image_digest", "reference_runtime_image_digest"):
+        candidate = str(value.get(name, ""))
+        if not candidate.startswith("sha256:") or len(candidate) != 71 or any(char not in "0123456789abcdef" for char in candidate[7:]):
+            raise ValueError(f"R1 pre-canary admission image digest is invalid: {name}")
+    return {
+        "provider_provenance": "REAL",
+        "semantic_mismatches": 0,
+        "open_gaps": 0,
+        "duplicate_external_effects": 0,
+        "consumer_errors": 0,
+        "execution_state_changed": False,
+    }
+
+
+def _validate_acceptance(
+    value: Mapping[str, Any], *, rust_image_digest: str, now_ns: int
+) -> dict[str, Any]:
+    if value.get("schema") == R1_PRECANARY_SCHEMA:
+        return _validate_r1_precanary_admission(
+            value, rust_image_digest=rust_image_digest, now_ns=now_ns
+        )
     # C39 uses a larger report schema. Bind only the narrow, immutable facts
     # that authorize this bootstrap; never copy credentials or raw payloads.
     if value.get("schema") == "qdl.c39.final-acceptance.v1":
@@ -196,12 +265,12 @@ def prepare_packet(
     }
     if set(scope.binding_ids) != active_crypto:
         raise ValueError("promotion scope differs from active Binance/OKX bindings")
-    evidence = _validate_acceptance(
-        _load_json(acceptance_path), rust_image_digest=image_digest
-    )
     issued_ns = time.time_ns() if issued_at_ns is None else int(issued_at_ns)
     if issued_ns <= 0:
         raise ValueError("bootstrap issued time must be positive")
+    evidence = _validate_acceptance(
+        _load_json(acceptance_path), rust_image_digest=image_digest, now_ns=issued_ns
+    )
     issued = datetime.fromtimestamp(issued_ns / 1_000_000_000, timezone.utc)
     expires = issued + timedelta(seconds=validity_seconds)
     candidate = {

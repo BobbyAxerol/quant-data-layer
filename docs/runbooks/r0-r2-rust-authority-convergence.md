@@ -72,6 +72,8 @@ python scripts/phase_r1_prepare_release_bundle.py \
   --source-env "$QDL_ACTIVE_ENV_WITH_ROTATED_IDENTITIES" \
   --output-bundle "$QDL_R1_RELEASE_ROOT" \
   --rust-image-id "$QDL_R1_RUST_IMAGE" \
+  --rollback-rust-image-id "$QDL_ACTIVE_RUST_IMAGE" \
+  --source-commit "$QDL_R1_SOURCE_COMMIT" \
   --apply --confirm PREPARE_QDL_R1_RELEASE_BUNDLE
 ```
 
@@ -82,10 +84,28 @@ python scripts/phase_r1_prepare_release_bundle.py \
    silently reintroduced. The generic-core bundle must exclude the twelve
    promoted bindings and each production-core config must mount
    `production-bootstrap.json` read-only.
-4. Build a fresh C40-compatible bootstrap candidate packet from the new image,
-   current catalog/acquisition/scope, SBOM, rollback manifest, and a current
-   clean real-provider acceptance report. This writes a packet only.
-5. Apply migration `0011_authority_candidate_rollover.sql` to the isolated
+4. Collect fresh read-only twelve-slice reference parity from the currently
+   running fenced Rust image, then create a typed R1 pre-canary admission bound
+   to that reference, the new image inspect/revision, and the new R1 release
+   artifact. This evidence is deliberately `PENDING_R1_CANARY`: it proves
+   current provider/contract health and candidate provenance, not candidate
+   runtime output. It is valid for the bounded canary only and never for R2.
+
+```bash
+python scripts/phase_r1_prepare_precanary_admission.py \
+  --release-artifact "$QDL_R1_RELEASE_ROOT/release/artifact-manifest.json" \
+  --reference-parity "$QDL_R1_RELEASE_ROOT/review/reference-live-parity.json" \
+  --candidate-image-id "$QDL_R1_RUST_IMAGE" \
+  --output "$QDL_R1_RELEASE_ROOT/review/precanary-admission.json"
+```
+
+5. Build a fresh C40-compatible bootstrap candidate packet from the R1
+   runtime production-core manifest, new SBOM/rollback artifacts and that typed
+   admission. This writes a packet only. The admission expires quickly and
+   fails closed on a stale reference, wrong image/commit, non-root image,
+   candidate/rollback image reuse, incomplete 12-slice parity, or any dirty
+   count.
+6. Apply migration `0011_authority_candidate_rollover.sql` to the isolated
    authority database only after its dry-run/checksum matches the reviewed
    commit. It is additive and has no V1 table/data mutation.
 

@@ -10842,6 +10842,20 @@ live migration or authority transition is part of R0.
   DB/MTLS values, clear historical Compose overrides,
   generate only a fresh Phase 9.2 key/group, atomically write fresh runtime
   JSON and prove the generic core excludes the promoted twelve.
+- **R1 admission/provenance refinement - 2026-08-24:** `SOURCE IMPLEMENTED /
+  RUNTIME UNCHANGED`. A candidate has no real output before the canary, so R1
+  now has a typed `qdl.r1.pre-canary-admission.v1` rather than relabeling old
+  C40 output as parity from the new image. It binds a fresh twelve-slice,
+  read-only real-provider reference report to the new image inspect/revision,
+  source commit, sealed R1 release artifact, SBOM and V1 rollback artifact;
+  candidate runtime status remains explicitly `PENDING_R1_CANARY`. The C40
+  bootstrap accepts this schema only while fresh, exact, clean and
+  candidate-bound. It can authorize `RUST_CANARY` only; R2 still needs actual
+  new-image terminal/handoff evidence. The full impacted R0/R1/R2 contract
+  matrix passed `94 passed, 1 documented isolated-Redis skip`; both independent
+  PostgreSQL/CAS smoke scripts passed; CLI import/help passed in the immutable
+  Python image. Tests reject dirty, mislabeled, same-image and stale input. No
+  runtime changed.
 - **R1 release-bundle source sub-slice - 2026-08-24:** `SOURCE CERTIFIED /
   RUNTIME UNCHANGED`. The review-first clone tool now requires an explicit
   active source env, refuses an env outside the source bundle, preserves the

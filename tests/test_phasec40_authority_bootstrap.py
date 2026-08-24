@@ -144,6 +144,45 @@ class C40AuthorityBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "C39 final acceptance"):
             self.packet()
 
+    def test_r1_precanary_admission_is_strict_and_cannot_claim_live_candidate_parity(self):
+        acceptance = self.root / "acceptance.json"
+        target = "sha256:" + "a" * 64
+        admission = {
+            "schema": "qdl.r1.pre-canary-admission.v1",
+            "status": "PASS",
+            "issued_at_ns": NOW - 1,
+            "expires_at_ns": NOW + 1_000_000_000,
+            "provider_provenance": "REAL",
+            "production_mutations": 0,
+            "execution_state_changed": False,
+            "semantic_mismatches": 0,
+            "open_gaps": 0,
+            "duplicate_external_effects": 0,
+            "consumer_errors": 0,
+            "candidate_runtime_parity_status": "PENDING_R1_CANARY",
+            "candidate_source_commit": "abcdef123456",
+            "candidate_image_digest": target,
+            "candidate_image_inspect_sha256": "1" * 64,
+            "rollback_rust_image_digest": "sha256:" + "b" * 64,
+            "promotion_scope_digest": "2" * 64,
+            "contract_sha256": "3" * 64,
+            "partition_plan_sha256": "4" * 64,
+            "release_artifact_sha256": "5" * 64,
+            "sbom_sha256": "6" * 64,
+            "rollback_manifest_sha256": "7" * 64,
+            "reference_runtime_image_digest": "sha256:" + "c" * 64,
+            "reference_source_commit": "c7f3c34f",
+            "reference_parity_sha256": "8" * 64,
+            "reference_captured_at_ns": NOW - 2,
+            "sample_count": 96,
+        }
+        acceptance.write_text(json.dumps(admission), encoding="utf-8")
+        self.assertEqual(len(self.packet()["slices"]), 12)
+        admission["reference_runtime_image_digest"] = target
+        acceptance.write_text(json.dumps(admission), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "candidate-bound"):
+            self.packet()
+
     def test_stale_manifest_and_dirty_acceptance_fail_closed(self):
         manifest_path = self.root / "production-core-manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

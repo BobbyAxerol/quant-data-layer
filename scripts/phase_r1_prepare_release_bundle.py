@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from qdl.certification.release import build_spdx
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
     AuthorityPromotionScope,
@@ -42,6 +43,7 @@ from qdl.runtime.stable_deployment import (
 
 CONFIRM = "PREPARE_QDL_R1_RELEASE_BUNDLE"
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_SOURCE_COMMIT = re.compile(r"[0-9a-f]{7,64}\Z")
 _GROUP = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,180}\Z")
 _REQUIRED_ENV = frozenset((
     "QDL_STABLE_RUST_IMAGE",
@@ -176,11 +178,62 @@ def _runtime_digests(runtime: Path) -> dict[str, str]:
     }
 
 
+def _write_release_artifacts(
+    release: Path,
+    *,
+    rust_image_id: str,
+    rollback_rust_image_id: str,
+    source_commit: str,
+    promotion_scope_digest: str,
+) -> dict[str, str]:
+    release.mkdir(mode=0o700)
+    sbom = release / "sbom.spdx.json"
+    sbom.write_text(
+        json.dumps(
+            build_spdx(ROOT, release=f"qdl-r1-{rust_image_id.removeprefix('sha256:')[:12]}"),
+            indent=2,
+            sort_keys=True,
+        ) + "\n",
+        encoding="utf-8",
+    )
+    rollback = release / "rollback-manifest.json"
+    rollback.write_text(json.dumps({
+        "schema": "qdl.r1.v1-fallback-manifest.v1",
+        "candidate_rust_image_digest": rust_image_id,
+        "rollback_rust_image_digest": rollback_rust_image_id,
+        "rollback_route": "V1",
+        "rollback_action": "stop production_core_1..3; block Rust authority with a new exact CAS packet",
+        "kafka_offset_reset_permitted": False,
+        "destructive_actions": [],
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest = release / "artifact-manifest.json"
+    manifest.write_text(json.dumps({
+        "schema": "qdl.r1.release-artifact-manifest.v1",
+        "status": "PRE_CANARY",
+        "source_commit": source_commit,
+        "rust_image_digest": rust_image_id,
+        "rollback_rust_image_digest": rollback_rust_image_id,
+        "promotion_scope_digest": promotion_scope_digest,
+        "contract_sha256": _sha256(ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto"),
+        "partition_plan_sha256": _sha256(ROOT / "config/v2/stable-acquisition-bindings.yaml"),
+        "sbom_sha256": _sha256(sbom),
+        "rollback_manifest_sha256": _sha256(rollback),
+        "public_write_allowed": False,
+        "legacy_write_allowed": False,
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        item.relative_to(release.parent).as_posix(): _sha256(item)
+        for item in (sbom, rollback, manifest)
+    }
+
+
 def prepare_release_bundle(
     *,
     source_bundle: Path,
     output_bundle: Path,
     rust_image_id: str,
+    rollback_rust_image_id: str,
+    source_commit: str,
     apply: bool,
     source_env: Path,
     group_id: str | None = None,
@@ -204,8 +257,12 @@ def prepare_release_bundle(
         raise FileExistsError("R1 output bundle already exists; refusing to overwrite it")
     if not output.parent.is_dir():
         raise FileNotFoundError(f"R1 output parent does not exist: {output.parent}")
-    if not _DIGEST.fullmatch(rust_image_id):
-        raise ValueError("R1 Rust image must be an immutable sha256 digest")
+    if not _DIGEST.fullmatch(rust_image_id) or not _DIGEST.fullmatch(rollback_rust_image_id):
+        raise ValueError("R1 Rust candidate/rollback images must be immutable sha256 digests")
+    if rollback_rust_image_id == rust_image_id:
+        raise ValueError("R1 rollback image must differ from the candidate image")
+    if not _SOURCE_COMMIT.fullmatch(source_commit):
+        raise ValueError("R1 source commit must be a hexadecimal Git revision")
 
     lines, env = _parse_env(env_path)
     material_dirs = _material_dirs(source)
@@ -266,7 +323,9 @@ def prepare_release_bundle(
         "source_material_directories": [item.name for item in material_dirs],
         "output_bundle": str(output),
         "rust_image_digest": rust_image_id,
-        "previous_rust_image_digest": env["QDL_STABLE_RUST_IMAGE"],
+        "rollback_rust_image_digest": rollback_rust_image_id,
+        "source_commit": source_commit,
+        "previous_env_rust_image_digest": env["QDL_STABLE_RUST_IMAGE"],
         "bootstrap_group_id": effective_group,
         "bootstrap_key_id": key_id,
         "bootstrap_key_sha256": hashlib.sha256(key.encode("ascii")).hexdigest(),
@@ -302,9 +361,16 @@ def prepare_release_bundle(
             raw_authority=authority,
             partition_plan_epoch=1,
         )
+        result["runtime_digests"] = _runtime_digests(runtime)
+        result["release_artifact_digests"] = _write_release_artifacts(
+            staging / "release",
+            rust_image_id=rust_image_id,
+            rollback_rust_image_id=rollback_rust_image_id,
+            source_commit=source_commit,
+            promotion_scope_digest=scope.digest(),
+        )
         (staging / "stable.env").write_text(_rewrite_env(lines, overrides), encoding="utf-8")
         (staging / "stable.env").chmod(0o600)
-        result["runtime_digests"] = _runtime_digests(runtime)
         manifest = staging / "release-manifest.json"
         manifest.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         manifest.chmod(0o640)
@@ -322,6 +388,8 @@ def main() -> int:
     parser.add_argument("--source-bundle", type=Path, required=True)
     parser.add_argument("--output-bundle", type=Path, required=True)
     parser.add_argument("--rust-image-id", required=True)
+    parser.add_argument("--rollback-rust-image-id", required=True)
+    parser.add_argument("--source-commit", required=True)
     parser.add_argument("--source-env", type=Path, required=True, help="explicit active env file inside source bundle")
     parser.add_argument("--group-id")
     parser.add_argument("--apply", action="store_true")
@@ -333,6 +401,8 @@ def main() -> int:
         source_bundle=args.source_bundle,
         output_bundle=args.output_bundle,
         rust_image_id=args.rust_image_id,
+        rollback_rust_image_id=args.rollback_rust_image_id,
+        source_commit=args.source_commit,
         source_env=args.source_env,
         group_id=args.group_id,
         apply=args.apply,

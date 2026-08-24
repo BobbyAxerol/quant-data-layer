@@ -12,6 +12,8 @@ from scripts.phase_r1_prepare_release_bundle import prepare_release_bundle
 
 ROOT = Path(__file__).resolve().parents[1]
 RUST_IMAGE = "sha256:" + "c" * 64
+ROLLBACK_RUST_IMAGE = "sha256:" + "d" * 64
+SOURCE_COMMIT = "abcdef123456"
 
 
 class R1ReleaseBundleTests(unittest.TestCase):
@@ -64,6 +66,8 @@ class R1ReleaseBundleTests(unittest.TestCase):
                 source_bundle=source,
                 output_bundle=root / "release",
                 rust_image_id=RUST_IMAGE,
+                rollback_rust_image_id=ROLLBACK_RUST_IMAGE,
+                source_commit=SOURCE_COMMIT,
                 apply=False,
                 source_env=source / "stable.env.active",
                 key_factory=lambda _: "f" * 64,
@@ -87,6 +91,8 @@ class R1ReleaseBundleTests(unittest.TestCase):
                 source_bundle=source,
                 output_bundle=output,
                 rust_image_id=RUST_IMAGE,
+                rollback_rust_image_id=ROLLBACK_RUST_IMAGE,
+                source_commit=SOURCE_COMMIT,
                 apply=True,
                 source_env=source / "stable.env.active",
                 key_factory=lambda _: "f" * 64,
@@ -112,7 +118,15 @@ class R1ReleaseBundleTests(unittest.TestCase):
             self.assertEqual(oct((output / "stable.env").stat().st_mode & 0o777), "0o600")
             manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
             self.assertFalse(manifest["secret_values_recorded"])
+            self.assertEqual(manifest["source_commit"], SOURCE_COMMIT)
+            self.assertEqual(manifest["rollback_rust_image_digest"], ROLLBACK_RUST_IMAGE)
             self.assertNotIn("legacy-password", json.dumps(manifest, sort_keys=True))
+            artifact = json.loads((output / "release/artifact-manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(artifact["rust_image_digest"], RUST_IMAGE)
+            self.assertEqual(artifact["rollback_rust_image_digest"], ROLLBACK_RUST_IMAGE)
+            self.assertEqual(artifact["source_commit"], SOURCE_COMMIT)
+            self.assertTrue((output / "release/sbom.spdx.json").is_file())
+            self.assertTrue((output / "release/rollback-manifest.json").is_file())
             generic = json.loads((output / "runtime/core.json").read_text(encoding="utf-8"))
             production = json.loads((output / "runtime/production-core-001.json").read_text(encoding="utf-8"))
             generic_ids = {item["source_id"] for item in generic["core"]["bindings"]}
@@ -133,6 +147,8 @@ class R1ReleaseBundleTests(unittest.TestCase):
                     source_bundle=source,
                     output_bundle=root / "release",
                     rust_image_id=RUST_IMAGE,
+                    rollback_rust_image_id=ROLLBACK_RUST_IMAGE,
+                    source_commit=SOURCE_COMMIT,
                     apply=False,
                     source_env=None,
                 )
@@ -141,6 +157,8 @@ class R1ReleaseBundleTests(unittest.TestCase):
                     source_bundle=source,
                     output_bundle=root / "release",
                     rust_image_id=RUST_IMAGE,
+                    rollback_rust_image_id=ROLLBACK_RUST_IMAGE,
+                    source_commit=SOURCE_COMMIT,
                     apply=False,
                     source_env=root / "outside.env",
                 )
@@ -155,6 +173,8 @@ class R1ReleaseBundleTests(unittest.TestCase):
                     source_bundle=source,
                     output_bundle=root / "release",
                     rust_image_id=RUST_IMAGE,
+                    rollback_rust_image_id=ROLLBACK_RUST_IMAGE,
+                    source_commit=SOURCE_COMMIT,
                     apply=False,
                     source_env=invalid,
                 )
