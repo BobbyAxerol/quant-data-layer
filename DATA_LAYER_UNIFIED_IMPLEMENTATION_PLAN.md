@@ -12791,6 +12791,82 @@ MUTATION`).**
   receipt against the active slice before the Trading System is recreated;
   the source contract alone does not certify the stale running route.
 
+**Implementation slice 10.3 executable consumer-receipt harness - 2026-08-24
+(`APPROVED SOURCE SCOPE / NO RUNTIME MUTATION`).**
+
+- **Goal:** turn the committed manifest scope into one bounded SDK executable,
+  not a second runtime or a per-symbol test topology. The harness will build
+  typed SDK requirements directly from the governed `DataRequirement`, use
+  the two workload identities separately, and retain only compact product
+  fingerprints, offsets and timings.
+- **Domain checks:** durable `TRADE`/`QUOTE` use V2 snapshot plus live stream
+  ACK/resume; durable final `BAR 1m` uses warmup against both query replicas
+  and deterministic final-bar fingerprints. Live-changing trade/quote
+  snapshots are compared for typed identity/source/quality compatibility, not
+  byte equality across sequential replicas. Alpha `BAR 15m`
+  `FRESH_SNAPSHOT` gets bounded query-only validation and is explicitly
+  prohibited from stream/resume authority.
+- **Safety/cleanup:** the runner creates a private `0700` temporary cursor
+  directory unless an explicitly empty disposable directory is supplied,
+  deletes cursor checkpoints on exit, performs no provider connection, broker
+  write, service lifecycle action, route mutation or order action, and emits
+  no raw payload, bearer token, certificate/private-key content or cursor
+  token. The actual invocation remains blocked behind the sealed runtime
+  packet; source tests use deterministic local fakes only.
+- **Test gates:** requirement enum/field parity, durable/pass-through method
+  selection, decimal/finality/identity/quality validation, feed-appropriate
+  replica comparison, cursor monotonicity and evidence redaction. Any
+  malformed decimal, stale/gapped/incomplete quality, source-policy/identity
+  mismatch, non-final bar, non-authoritative durable data, pass-through stream
+  attempt or non-increasing resumed cursor fails closed.
+
+**Implementation checkpoint 10.3 executable consumer-receipt harness -
+2026-08-24 (`SOURCE/CONTRACT PASS / RUNTIME HANDOFF PENDING`).**
+
+- Added `scripts/phase103_consumer_receipt_acceptance.py`. It loads only the
+  two governed manifests through the committed Phase 10.3 scope resolver,
+  validates a still-unexpired sealed `RUST_PRIMARY` handoff packet before any
+  SDK I/O, creates separate mTLS/JWT workload clients for Trading System and
+  alpha, and never constructs a provider, Gateway or execution client.
+- Durable `TRADE`/`QUOTE` execute typed V2 primary/secondary snapshots plus
+  stream `ACK -> cursor resume`; final `BAR 1m` executes bounded warmup on both
+  query replicas and requires the whole immutable final-bar window hash to
+  agree. Sequential trade/quote reads instead validate governed identity,
+  source and quality while retaining separate content hashes because market
+  state can legitimately advance between replicas. The two alpha `BAR 15m`
+  `FRESH_SNAPSHOT` windows are query-only; any attempt to give them durable
+  stream/replay authority fails closed.
+- `qdl.certification.phase103_consumer_acceptance` now validates typed SDK
+  mapping, canonical decimal coefficient/scale/text equality, venue/provider
+  lineage, source role, finality, OHLC/BBO/trade invariants, freshness, gap,
+  execution eligibility, content hashes and strict resumed offsets. Evidence
+  includes only governed identity, hashes, offsets and timings. It contains no
+  price/quantity payload, raw frame, JWT, certificate/private-key material or
+  cursor token.
+- Cursor state uses a new `0700` disposable directory per invocation and is
+  removed on both success and failure; an existing supplied path is rejected
+  rather than recursively cleaned. The runbook now has the one packet-bound,
+  removable `docker run --rm` procedure with exact query replicas and stream
+  aliases. It is an acceptance client only, not a new service/image topology.
+- **Tests actually run:** source `py_compile`; immutable
+  `qdl-v2-python@sha256:90c96b9c4418525ec6e505e7debcb7dfc8addbcb9e957eeaded90f2e9ddc8730`,
+  source read-only, `--network none`: `30/30` targeted Phase 10.3 scope,
+  harness, raw-scope, broker-scope and handoff tests; `46/46` related stable
+  deployment/public-SDK regressions. The harness tests cover packet
+  tamper/expiry rejection before SDK I/O, new-only cursor cleanup, parser
+  coordinates, enum/field parity, provider/pass-through authority semantics,
+  invalid decimal, stale/gap, provider mismatch, final-bar divergence, live
+  trade advancement, cursor monotonicity and evidence redaction. No runtime
+  service, Docker image, Kafka topic/offset/ACL, Redis/SQLite/PostgreSQL state,
+  authority, route, V1, Trading System, alpha or provider was mutated.
+- **Exact remaining gate:** generate a fresh packet from the currently
+  committed source/image SHA, obtain explicit approval for the sealed broker
+  scope plus exact 13 V2 service recreates and the named `market_data` V2
+  consumer recreate, then run this harness during its 300-second window.
+  Only a `PASS` result with fresh full crypto receipt permits marking Phase
+  10.3 runtime-certified or starting Phase 10.4. VN still needs its separate
+  open-session provider admission.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 

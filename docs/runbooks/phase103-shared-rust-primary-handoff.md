@@ -180,6 +180,68 @@ Capture only bounded aggregate evidence and hashes:
 VN remains capability-present but excluded from V2 primary until its own
 in-session provider admission passes.
 
+### Governed Trading System And Alpha SDK Receipt
+
+Run this once, inside the same 300-second approved handoff window, after the
+three cores, edges, projectors, query replicas and stream replicas have become
+ready. It is a disposable SDK client, not an alpha/container restart and not
+an execution action. It connects only to V2 query/stream aliases, validates
+the sealed packet before any SDK request, and deletes its local cursor
+directory before it exits.
+
+```bash
+cd /home/bobby/data_layer
+
+export QDL_RELEASE_ROOT=/home/bobby/.local/state/qdl-v2/<approved-stable-release>
+export QDL_PACKET_DIR=/home/bobby/.local/state/qdl-v2/<approved-phase103-packet>
+export QDL_RUNTIME_DIR="$QDL_PACKET_DIR/runtime"
+
+docker run --rm --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --network executor_network \
+  -v "$PWD:/workspace:ro" \
+  -v "$QDL_RELEASE_ROOT:/bundle:ro" \
+  -v "$QDL_PACKET_DIR:/packet:ro" \
+  -w /workspace \
+  "$QDL_STABLE_PYTHON_IMAGE" \
+  python -B scripts/phase103_consumer_receipt_acceptance.py \
+    --handoff-packet /packet/shared-primary-handoff-packet.json \
+    --runtime-dir /packet/runtime \
+    --primary-url https://query_v2_1:8200 \
+    --secondary-url https://query_v2_2:8200 \
+    --grpc-target qdl-v2-stream-a:8210,qdl-v2-stream-b:8210 \
+    --tls-ca-file /bundle/identities/trading-system/ca.crt \
+    --trading-tls-certificate-file /bundle/identities/trading-system/client.crt \
+    --trading-tls-private-key-file /bundle/identities/trading-system/client.key \
+    --trading-jwt-private-key-file /bundle/identities/trading-system-jwt/private.key \
+    --trading-jwt-key-id stable-trading-system-rs256-v1 \
+    --alpha-tls-certificate-file /bundle/identities/alpha-binance/client.crt \
+    --alpha-tls-private-key-file /bundle/identities/alpha-binance/client.key \
+    --alpha-jwt-private-key-file /bundle/identities/alpha-binance-jwt/private.key \
+    --alpha-jwt-key-id stable-alpha-binance-rs256-v1 \
+    --timeout-seconds 15 --concurrency 4
+```
+
+The one JSON result must be `status=PASS`, have `expected_authority=RUST_PRIMARY`,
+match the sealed `packet_sha256`, report exactly `18` products (`16` durable,
+`2` pass-through) and no payload/cursor/secret values. It proves:
+
+- `trading-system.paper.stable` receives the full declared Binance USD-M and
+  OKX Swap `TRADE`/`QUOTE`/final `BAR 1m` surface through V2;
+- `alpha.binance.paper.stable` receives its durable products plus explicit
+  `BAR 15m` provider pass-through without falsely claiming durable replay;
+- durable products complete snapshot/warmup, stream ACK and cursor-resume;
+- immutable final `BAR 1m` content agrees between query replicas, while live
+  TRADE/QUOTE are compared for governed typed identity/quality rather than
+  unstable byte equality; and
+- no direct provider connection, Gateway request or order submission occurs.
+
+Do not redirect the result into a source-controlled file. Retain only its
+bounded hash/offset/latency summary under the approved evidence location. A
+failure is a fail-closed handoff failure: preserve compact evidence, apply the
+pre-reviewed V1 route only if needed, and stop only the 13 approved V2
+services. Do not reset broker offsets, delete data, flush caches or restart V1.
+
 ## Rollback
 
 If any acceptance gate fails, preserve Kafka/cursor/audit evidence, apply only

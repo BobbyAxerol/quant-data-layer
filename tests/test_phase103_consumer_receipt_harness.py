@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+from pathlib import Path
+import tempfile
+import time
+import unittest
+
+from scripts.phase103_consumer_receipt_acceptance import (
+    _cursor_directory,
+    _validated_packet,
+    parser,
+)
+from scripts.phase103_prepare_shared_primary_packet import (
+    prepare_shared_primary_packet,
+)
+
+
+class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
+    def test_parser_requires_the_sealed_handoff_coordinates(self):
+        parsed = parser().parse_args(
+            [
+                "--primary-url", "https://query-a",
+                "--secondary-url", "https://query-b",
+                "--grpc-target", "stream-a:8210,stream-b:8210",
+                "--handoff-packet", "/tmp/packet.json",
+                "--runtime-dir", "/tmp/runtime",
+                "--tls-ca-file", "/tmp/ca.crt",
+                "--trading-tls-certificate-file", "/tmp/trading.crt",
+                "--trading-tls-private-key-file", "/tmp/trading.key",
+                "--trading-jwt-private-key-file", "/tmp/trading-jwt.key",
+                "--trading-jwt-key-id", "trading-key",
+                "--alpha-tls-certificate-file", "/tmp/alpha.crt",
+                "--alpha-tls-private-key-file", "/tmp/alpha.key",
+                "--alpha-jwt-private-key-file", "/tmp/alpha-jwt.key",
+                "--alpha-jwt-key-id", "alpha-key",
+            ]
+        )
+        self.assertEqual(parsed.handoff_packet, Path("/tmp/packet.json"))
+        self.assertEqual(parsed.runtime_dir, Path("/tmp/runtime"))
+
+    def test_cursor_directory_is_new_private_and_removed(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-phase103-receipt-") as directory:
+            path = Path(directory) / "cursor-state"
+            with _cursor_directory(str(path)) as state:
+                self.assertTrue(state.is_dir())
+                state.joinpath("cursor.json").write_text("sensitive", encoding="utf-8")
+            self.assertFalse(path.exists())
+            path.mkdir()
+            with self.assertRaisesRegex(ValueError, "must not already exist"):
+                with _cursor_directory(str(path)):
+                    pass
+
+    def test_harness_rejects_an_expired_or_tampered_packet_before_sdk_io(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-phase103-receipt-") as directory:
+            root = Path(directory)
+            packet = prepare_shared_primary_packet(
+                output_dir=root / "packet",
+                host_runtime_dir=root / "packet" / "runtime",
+                rust_image_digest="sha256:" + "b" * 64,
+                python_image_digest="sha256:" + "c" * 64,
+                source_commit="0123456789abcdef",
+                actor="BobbyAxerol",
+                change_ticket="QDL-PHASE103-HARNESS-TEST",
+                observation_seconds=300,
+                issued_at_ns=time.time_ns(),
+            )
+            packet_path = root / "packet" / "shared-primary-handoff-packet.json"
+            validated = _validated_packet(packet_path, root / "packet" / "runtime")
+            self.assertEqual(validated["packet_sha256"], packet["packet_sha256"])
+            packet_path.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "packet"):
+                _validated_packet(packet_path, root / "packet" / "runtime")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -11,9 +11,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from qdl.consumer.manifest import ConsumerManifest, ConsumerManifestLoader
 from qdl.query import DataRequirement, FeedType, RecoveryPolicy
@@ -306,3 +307,233 @@ def build_consumer_acceptance_scope(
         products=tuple(products),
         excluded=tuple(excluded),
     )
+
+
+def sdk_requirement(product: AcceptanceProduct):
+    """Map one governed domain requirement to the public SDK without loss.
+
+    Importing the SDK at this narrow boundary preserves the service-domain
+    module's provider neutrality while ensuring the operator probe exercises
+    the exact public client contract used by Trading System and alpha code.
+    """
+    from qdl_sdk import (
+        BarRevisionPolicy as SdkBarRevisionPolicy,
+        DataRequirement as SdkDataRequirement,
+        Feed as SdkFeed,
+        GapPolicy as SdkGapPolicy,
+        Grade,
+        RecoveryPolicy as SdkRecoveryPolicy,
+        StalePolicy as SdkStalePolicy,
+    )
+
+    item = product.requirement
+    return SdkDataRequirement(
+        instrument_uid=item.instrument_uid,
+        feed=SdkFeed(item.feed.value),
+        consumer_grade=Grade(item.consumer_grade.value),
+        source_policy_id=item.source_policy_id,
+        interval=item.interval,
+        warmup_limit=item.warmup_limit,
+        max_freshness_ms=item.max_freshness_ms,
+        require_full_coverage=item.require_full_coverage,
+        require_final_bars=item.require_final_bars,
+        stale_policy=SdkStalePolicy(item.stale_policy.value),
+        gap_policy=SdkGapPolicy(item.gap_policy.value),
+        recovery=SdkRecoveryPolicy(item.recovery.value),
+        bar_revision_policy=SdkBarRevisionPolicy(item.bar_revision_policy.value),
+    )
+
+
+def _decimal_value(value) -> Decimal:
+    """Verify that the public decimal's text and coefficient/scale agree."""
+    try:
+        text = Decimal(str(value.source_text))
+        coefficient = Decimal(str(value.coefficient)).scaleb(-int(value.scale))
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError("V2 receipt contains an invalid canonical decimal") from error
+    if not text.is_finite() or text != coefficient:
+        raise ValueError("V2 receipt decimal text and coefficient/scale disagree")
+    return text
+
+
+def content_fingerprint(view) -> str:
+    """Hash content that must agree between replicas, never retain payload."""
+    payload = view.payload.model_dump(mode="json")
+    value = {
+        "instrument_uid": view.instrument_uid,
+        "instrument_id": view.instrument_id,
+        "feed": view.feed.value,
+        "interval": view.interval,
+        "revision": view.revision,
+        "payload": payload,
+        "provider": view.source.provider,
+        "source_id": view.source.source_id,
+        "source_role": view.source.source_role,
+        "authoritative": view.source.authoritative,
+        "policy_id": view.quality.policy_id,
+    }
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_payload(product: AcceptanceProduct, view) -> None:
+    payload = view.payload
+    feed = product.feed
+    if feed is FeedType.TRADE:
+        if _decimal_value(payload.price) <= 0 or _decimal_value(payload.quantity) <= 0:
+            raise ValueError("V2 TRADE receipt contains a non-positive price or quantity")
+        if not payload.native_trade_id:
+            raise ValueError("V2 TRADE receipt has no native trade identity")
+        return
+    if feed is FeedType.QUOTE:
+        bid_price = _decimal_value(payload.bid_price)
+        ask_price = _decimal_value(payload.ask_price)
+        if (
+            bid_price <= 0
+            or ask_price <= 0
+            or bid_price > ask_price
+            or _decimal_value(payload.bid_quantity) < 0
+            or _decimal_value(payload.ask_quantity) < 0
+        ):
+            raise ValueError("V2 QUOTE receipt violates best-bid/best-offer invariants")
+        return
+    if feed is FeedType.BAR:
+        open_price = _decimal_value(payload.open)
+        high_price = _decimal_value(payload.high)
+        low_price = _decimal_value(payload.low)
+        close_price = _decimal_value(payload.close)
+        volume = _decimal_value(payload.volume)
+        if (
+            low_price <= 0
+            or volume < 0
+            or not low_price <= open_price <= high_price
+            or not low_price <= close_price <= high_price
+        ):
+            raise ValueError("V2 BAR receipt violates OHLCV domain invariants")
+        if product.requirement.require_final_bars and payload.lifecycle.value not in {
+            "FINAL",
+            "REVISED",
+        }:
+            raise ValueError("V2 BAR receipt is not final")
+        return
+    raise ValueError("Phase 10.3 receipt received an unsupported feed")
+
+
+def validate_product_view(product: AcceptanceProduct, view) -> None:
+    """Fail closed unless one typed V2 result satisfies its governed product."""
+    if (
+        view.instrument_uid != product.instrument_uid
+        or view.instrument_id != product.instrument_id
+        or view.feed.value != product.feed.value
+        or view.interval != product.interval
+        or view.quality.policy_id != product.source_policy_id
+    ):
+        raise ValueError("V2 receipt identity, feed, interval or policy mismatches demand")
+    if view.quality.gap_open or not view.quality.complete:
+        raise ValueError("V2 receipt has an unresolved gap or incomplete coverage")
+    max_freshness_ms = product.requirement.max_freshness_ms
+    if max_freshness_ms is not None and view.quality.freshness_ms > max_freshness_ms:
+        raise ValueError("V2 receipt exceeds the governed freshness bound")
+    if product.delivery is DeliveryClass.DURABLE:
+        if (
+            view.source.venue != product.venue
+            or view.source.provider != product.provider
+            or view.source.source_role != "PRIMARY"
+            or not view.source.authoritative
+            or view.quality.state != "LIVE"
+        ):
+            raise ValueError("durable V2 receipt is not authoritative and live")
+        if (
+            product.requirement.consumer_grade.value == "EXECUTION"
+            and not view.quality.execution_eligible
+        ):
+            raise ValueError("execution-grade durable V2 receipt is not eligible")
+    elif product.delivery is DeliveryClass.PROVIDER_PASS_THROUGH:
+        if (
+            view.source.authoritative
+            or view.quality.execution_eligible
+            or product.feed is not FeedType.BAR
+            or product.requirement.recovery is not RecoveryPolicy.FRESH_SNAPSHOT
+        ):
+            raise ValueError("provider pass-through receipt has invalid authority semantics")
+    else:  # pragma: no cover - protected by DeliveryClass and scope construction.
+        raise ValueError("V2 receipt has an unknown delivery class")
+    _validate_payload(product, view)
+
+
+def validate_replica_views(
+    product: AcceptanceProduct,
+    primary_view,
+    secondary_view,
+) -> tuple[str, str]:
+    """Validate two typed query results without assuming live ticks are equal.
+
+    A final BAR is immutable at its declared revision, so its canonical content
+    hash must agree exactly. TRADE/QUOTE snapshots may advance between the two
+    bounded requests; only their governed typed identity and quality contract
+    must agree, while each content hash is recorded independently.
+    """
+    validate_product_view(product, primary_view)
+    validate_product_view(product, secondary_view)
+    primary_hash = content_fingerprint(primary_view)
+    secondary_hash = content_fingerprint(secondary_view)
+    if product.feed is FeedType.BAR and primary_hash != secondary_hash:
+        raise ValueError("V2 query replicas diverged on a final BAR revision")
+    return primary_hash, secondary_hash
+
+
+def validate_resume_offsets(*, acknowledged_offset: int, resumed_offset: int) -> None:
+    """A resumed durable stream must move forward, never replay stale state."""
+    if acknowledged_offset < 0 or resumed_offset <= acknowledged_offset:
+        raise ValueError("V2 stream cursor resume is not strictly increasing")
+
+
+def compact_receipt_evidence(
+    product: AcceptanceProduct,
+    *,
+    primary_hash: str,
+    secondary_hash: str | None,
+    primary_latency_ms: float,
+    secondary_latency_ms: float | None = None,
+    acknowledged_offset: int | None = None,
+    resumed_offset: int | None = None,
+) -> dict[str, object]:
+    """Return audit-safe evidence; hash content and cursors rather than expose them."""
+    if len(primary_hash) != 64 or (secondary_hash is not None and len(secondary_hash) != 64):
+        raise ValueError("V2 receipt fingerprint is invalid")
+    if primary_latency_ms < 0 or (secondary_latency_ms is not None and secondary_latency_ms < 0):
+        raise ValueError("V2 receipt latency is invalid")
+    if (acknowledged_offset is None) != (resumed_offset is None):
+        raise ValueError("V2 receipt resume evidence is incomplete")
+    if acknowledged_offset is not None:
+        assert resumed_offset is not None
+        validate_resume_offsets(
+            acknowledged_offset=acknowledged_offset,
+            resumed_offset=resumed_offset,
+        )
+    evidence = product.evidence()
+    evidence.update(
+        {
+            "primary_content_sha256": primary_hash,
+            "secondary_content_sha256": secondary_hash,
+            "primary_latency_ms": round(primary_latency_ms, 3),
+            "secondary_latency_ms": (
+                round(secondary_latency_ms, 3)
+                if secondary_latency_ms is not None
+                else None
+            ),
+            "acknowledged_offset": acknowledged_offset,
+            "resumed_offset": resumed_offset,
+        }
+    )
+    return evidence
+
+
+def warmup_content_fingerprint(rows: Sequence[object]) -> str:
+    """Hash ordered immutable final-BAR rows for a cross-replica warmup check."""
+    if not rows:
+        raise ValueError("V2 BAR warmup is empty")
+    values = [content_fingerprint(item) for item in rows]
+    return hashlib.sha256(
+        json.dumps(values, separators=(",", ":")).encode()
+    ).hexdigest()
