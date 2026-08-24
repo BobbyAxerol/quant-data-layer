@@ -97,6 +97,12 @@ class _SessionAccumulator:
             return False
         return not require_final_bars or self._bar_ids <= self._final_bar_ids
 
+    def missing_binding_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._expected - set(self._observations)))
+
+    def missing_final_bar_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._bar_ids - self._final_bar_ids))
+
     def evidence(
         self,
         *,
@@ -445,7 +451,13 @@ async def _binance_session(
                     pre_ack_frames=pre_ack_count,
                     filtered_status_frames=filtered_status_frames,
                 )
-    raise ProviderAdmissionError("Binance session did not satisfy all demanded bindings before deadline")
+    raise ProviderAdmissionError(
+        "Binance session did not satisfy all demanded bindings before deadline "
+        f"acknowledged={acknowledged} events={accumulator.event_count} "
+        f"pre_ack_frames={pre_ack_count} filtered_status_frames={filtered_status_frames} "
+        f"missing_bindings={','.join(accumulator.missing_binding_ids()) or 'none'} "
+        f"missing_final_bars={','.join(accumulator.missing_final_bar_ids()) or 'none'}"
+    )
 
 
 async def _okx_session(

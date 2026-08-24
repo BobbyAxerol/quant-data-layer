@@ -124,6 +124,24 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
         accumulator.add(admission.FrameObservation(bars[1].binding_id, 2, "c" * 64, True))
         self.assertTrue(accumulator.complete(require_final_bars=True))
 
+    def test_session_accumulator_reports_only_bounded_missing_binding_diagnostics(self):
+        bars = tuple(item for item in self.bindings if item.feed == "BAR")[:2]
+        accumulator = admission._SessionAccumulator(bars)
+        self.assertEqual(
+            accumulator.missing_binding_ids(),
+            tuple(sorted(item.binding_id for item in bars)),
+        )
+        self.assertEqual(
+            accumulator.missing_final_bar_ids(),
+            tuple(sorted(item.binding_id for item in bars)),
+        )
+        accumulator.add(admission.FrameObservation(bars[0].binding_id, 1, "a" * 64, False))
+        self.assertEqual(accumulator.missing_binding_ids(), (bars[1].binding_id,))
+        self.assertEqual(
+            accumulator.missing_final_bar_ids(),
+            tuple(sorted(item.binding_id for item in bars)),
+        )
+
     def test_okx_request_id_is_short_alphanumeric_and_role_bound(self):
         self.assertEqual(
             admission.okx_request_id(role="OKX:SWAP:PUBLIC", generation=12),

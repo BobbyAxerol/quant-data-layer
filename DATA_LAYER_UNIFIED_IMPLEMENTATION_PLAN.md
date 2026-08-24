@@ -11995,6 +11995,18 @@ ADMISSION PENDING`).**
   provider WebSockets, followed separately by DNSE during a verified
   market-open session; neither result grants `RUST_PRIMARY`.
 
+**Admission probe diagnostic checkpoint - 2026-08-24 (`IN PROGRESS`).**
+
+- The first bounded public Binance/OKX probe did **not** pass: it reached the
+  Binance deadline without satisfying the complete demand set. Its generic
+  error was deliberately not accepted as certification, and it caused no
+  runtime or provider mutation.
+- Added bounded deadline diagnostics that report only ACK state, accepted and
+  pre-ACK counts, filtered-status count and missing declared binding IDs/final
+  bar IDs; no frame body, credentials or unbounded log is emitted. The
+  diagnostic unit suite passed `8/8` network-isolated. Re-run the same
+  read-only provider probe before any conclusion or route change.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,
