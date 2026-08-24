@@ -12064,6 +12064,42 @@ IN-SCOPE CORRECTION`).**
   revision. No source data, endpoint schema, consumer contract or deployment
   is changed in this decision record itself.
 
+**Binance REST BAR recovery source checkpoint - 2026-08-24 (`SOURCE PASS /
+REAL-PROVIDER ADMISSION PENDING`).**
+
+- Raised the governed acquisition revision from `7` to `8`: active Binance
+  USD-M `BTCUSDT` and `ETHUSDT` final `BAR 1m` now declare
+  `PYTHON_REST/binance_usdm_rest_bar/rest-klines/1m`; their TRADE and QUOTE
+  bindings remain `RUST_NATIVE`. The capability matrix is now truthful about
+  the provider edge while retaining `qdl-rust-realtime-core` as canonical
+  core. Catalog generation applies the same explicit recovery policy to a
+  future reviewed Binance BAR demand, so regeneration cannot silently restore
+  an uncertified WebSocket BAR path.
+- Extended the bounded read-only Phase 10.3 admission verifier to cover all
+  twelve enabled crypto bindings across their declared transport: ten native
+  WebSocket TRADE/BBO/final-BAR bindings and two Binance provider-authentic
+  REST final-BAR bindings. REST admission verifies HTTP capture provenance,
+  native symbol/interval, fully closed boundary, exact decimal fields and
+  bounded raw-frame hash; it starts no Kafka producer, projector, consumer,
+  Data Layer role or authority control record. WebSocket bindings still require
+  ACK, data-before-ACK safety and intentional reconnect/resubscribe.
+- Extended the C40 Python-oracle parity collector for
+  `binance_usdm_rest_bar`, including HTTP capture provenance. The all-twelve
+  fixture matrix continues to compare exact canonical bytes, identity,
+  timestamp, decimal, finality and raw-lineage semantics; no synthetic data is
+  admitted outside deterministic test provenance.
+- **Network-isolated source matrix passed:** `83/83` in `2.478s` using the
+  read-only `qdl-v2-python:2.0.0-7a5aef6` container with `--network none`,
+  covering admission routing/parsing, REST recovery, stable deployment and
+  BAR bootstrap/retry/ACK, C40 all-twelve parity, catalog regeneration,
+  capability coverage and disabled acquisition. The container was removed on
+  exit; no image, service, Kafka/Redis/SQLite state, V1 consumer, authority or
+  alpha configuration changed.
+- **Remaining gate:** execute the bounded public-provider probe against the
+  new mixed transport plan and then rerun the broader Python/Rust regression.
+  Its result remains read-only evidence only; a passing probe does not itself
+  grant `RUST_PRIMARY` or authorize a runtime recreate.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,

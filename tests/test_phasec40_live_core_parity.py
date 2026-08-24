@@ -60,10 +60,16 @@ class C40LiveCoreParityTests(unittest.TestCase):
         acquisition = self.acquisitions[binding_id]
         provider_payload = json.loads(json.dumps(fixture["raw"]))
         native_symbol = binding.instrument.native_symbol
-        if acquisition.provider_kind.startswith("binance_"):
+        if acquisition.provider_kind in {
+            "binance_usdm_trade",
+            "binance_usdm_bbo",
+            "binance_usdm_bar",
+        }:
             provider_payload["s"] = native_symbol
             if isinstance(provider_payload.get("k"), dict):
                 provider_payload["k"]["s"] = native_symbol
+        elif acquisition.provider_kind == "binance_usdm_rest_bar":
+            provider_payload["symbol"] = native_symbol
         elif acquisition.provider_kind == "okx_trade":
             provider_payload["instId"] = native_symbol
             provider_payload = {
@@ -96,7 +102,11 @@ class C40LiveCoreParityTests(unittest.TestCase):
             authority_revision=self.catalog.authority_revision,
             partition_plan_epoch=1,
             received_at_ns=received_at_ns,
-            transport_protocol=raw_provider_pb2.TRANSPORT_PROTOCOL_WEBSOCKET,
+            transport_protocol=(
+                raw_provider_pb2.TRANSPORT_PROTOCOL_HTTP
+                if acquisition.provider_kind == "binance_usdm_rest_bar"
+                else raw_provider_pb2.TRANSPORT_PROTOCOL_WEBSOCKET
+            ),
             transport_compression=raw_provider_pb2.TRANSPORT_COMPRESSION_NONE,
             capture_boundary=raw_provider_pb2.CAPTURE_BOUNDARY_POST_DECOMPRESSION,
             raw_frame_bytes=raw_bytes,
@@ -134,7 +144,7 @@ class C40LiveCoreParityTests(unittest.TestCase):
             ),
             (
                 "binance-usdm-btcusdt-bar-1m",
-                "binance_usdm_bar.json",
+                "binance_usdm_rest_bar.json",
             ),
             (
                 "okx-swap-btcusdt-trade",
@@ -158,7 +168,7 @@ class C40LiveCoreParityTests(unittest.TestCase):
             ),
             (
                 "binance-usdm-ethusdt-bar-1m",
-                "binance_usdm_bar.json",
+                "binance_usdm_rest_bar.json",
             ),
             (
                 "okx-swap-eth-usdt-swap-trade",

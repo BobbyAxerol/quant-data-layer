@@ -18,10 +18,16 @@ SPEC.loader.exec_module(admission)
 class RealtimeProviderAdmissionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.bindings = admission.load_active_native_bindings()
-        cls.by_key = {(item.native_channel, item.native_symbol): item for item in cls.bindings}
+        cls.bindings = admission.load_active_provider_bindings()
+        cls.native_bindings = tuple(
+            item for item in cls.bindings if item.mode == "RUST_NATIVE"
+        )
+        cls.by_key = {
+            (item.native_channel, item.native_symbol): item
+            for item in cls.native_bindings
+        }
 
-    def test_active_native_scope_is_all_enabled_binance_usdm_and_okx_swap_bindings(self):
+    def test_active_provider_scope_is_all_enabled_binance_usdm_and_okx_swap_bindings(self):
         self.assertEqual(len(self.bindings), 12)
         self.assertEqual(
             {item.binding_id for item in self.bindings},
@@ -42,6 +48,17 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
         )
         self.assertEqual({item.venue for item in self.bindings}, {"BINANCE", "OKX"})
         self.assertEqual({item.market for item in self.bindings}, {"USDM", "SWAP"})
+        self.assertEqual(
+            {
+                item.binding_id
+                for item in self.bindings
+                if item.mode == "PYTHON_REST"
+            },
+            {
+                "binance-usdm-btcusdt-bar-1m",
+                "binance-usdm-ethusdt-bar-1m",
+            },
+        )
 
     def test_binance_native_frames_preserve_binding_identity_and_finality(self):
         trade = admission.parse_binance_data(
@@ -52,22 +69,41 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
             '{"e":"bookTicker","s":"BTCUSDT","b":"1","B":"2","a":"3","A":"4","E":1001}',
             bindings=self.by_key,
         )
-        final_bar = admission.parse_binance_data(
-            '{"e":"kline","s":"ETHUSDT","k":{"i":"1m","o":"1","h":"3","l":"1","c":"2","v":"0","T":1060,"x":true}}',
-            bindings=self.by_key,
-        )
-        provisional_bar = admission.parse_binance_data(
-            '{"e":"kline","s":"BTCUSDT","k":{"i":"1m","o":"1","h":"3","l":"1","c":"2","v":"0","T":1060,"x":false}}',
-            bindings=self.by_key,
-        )
         self.assertEqual(trade.binding_id, "binance-usdm-ethusdt-trade")
         self.assertEqual(quote.binding_id, "binance-usdm-btcusdt-quote")
-        self.assertTrue(final_bar.final_bar)
-        self.assertFalse(provisional_bar.final_bar)
         with self.assertRaisesRegex(admission.ProviderAdmissionError, "matching active binding"):
             admission.parse_binance_data(
                 '{"e":"trade","s":"SOLUSDT","p":"1","q":"1","T":1}',
                 bindings=self.by_key,
+            )
+
+    def test_binance_rest_bar_requires_a_final_native_closed_row(self):
+        binding = next(
+            item
+            for item in self.bindings
+            if item.binding_id == "binance-usdm-ethusdt-bar-1m"
+        )
+        payload = {
+            "symbol": "ETHUSDT",
+            "interval": "1m",
+            "bar_origin": "VENUE_NATIVE",
+            "row": [1000, "1", "3", "1", "2", "0", 60_999, "0", 0, "0", "0"],
+        }
+        observation = admission.parse_binance_rest_bar(
+            payload,
+            binding=binding,
+            raw_frame_bytes=b'{}',
+            observed_ms=61_000,
+        )
+        self.assertEqual(observation.binding_id, binding.binding_id)
+        self.assertEqual(observation.source_time_ms, 60_999)
+        self.assertTrue(observation.final_bar)
+        with self.assertRaisesRegex(admission.ProviderAdmissionError, "not closed"):
+            admission.parse_binance_rest_bar(
+                payload,
+                binding=binding,
+                raw_frame_bytes=b'{}',
+                observed_ms=60_999,
             )
 
     def test_binance_zero_trade_status_filter_is_exact_and_other_zero_trades_fail_closed(self):
@@ -155,17 +191,9 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
             admission.okx_request_id(role="OKX:SWAP:OTHER", generation=1)
 
     def test_binance_feed_lanes_are_complete_and_request_ids_are_role_bound(self):
-        binance = tuple(item for item in self.bindings if item.venue == "BINANCE")
+        binance = tuple(item for item in self.native_bindings if item.venue == "BINANCE")
         lanes = admission.binance_admission_lanes(binance)
-        self.assertEqual({name: len(items) for name, items in lanes.items()}, {"BAR": 2, "TRADE": 2, "QUOTE": 2})
-        self.assertEqual(
-            [item.feed for item in lanes["BAR"]],
-            ["BAR", "BAR"],
-        )
-        self.assertEqual(
-            admission.binance_request_id(role="BINANCE:USDM:BAR", generation=12),
-            10_121,
-        )
+        self.assertEqual({name: len(items) for name, items in lanes.items()}, {"BAR": 0, "TRADE": 2, "QUOTE": 2})
         self.assertEqual(
             admission.binance_request_id(role="BINANCE:USDM:QUOTE", generation=12),
             10_123,
@@ -174,10 +202,10 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
             admission.binance_request_id(role="BINANCE:USDM:FLOW", generation=1)
 
     def test_report_rejects_missing_reconnect_or_stale_binding(self):
-        binding = self.bindings[0]
+        binding = next(item for item in self.bindings if item.mode == "RUST_NATIVE")
         fresh = admission.FrameObservation(binding.binding_id, 10_000_000_000_000, "a" * 64, False)
         session = admission.SessionEvidence("BINANCE:USDM", 1, 1, 0, 1, (fresh,))
-        with self.assertRaisesRegex(admission.ProviderAdmissionError, "reconnect/resubscribe"):
+        with self.assertRaisesRegex(admission.ProviderAdmissionError, "recovery/reconnect"):
             admission._render_report(
                 bindings=(binding,),
                 sessions=(session,),
@@ -185,6 +213,24 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
                 cpu_seconds=0.1,
                 max_rss_kib=1,
             )
+
+    def test_report_accepts_one_http_recovery_for_each_rest_bar(self):
+        binding = next(item for item in self.bindings if item.mode == "PYTHON_REST")
+        fresh = admission.FrameObservation(
+            binding.binding_id, 10_000_000_000_000, "b" * 64, True
+        )
+        session = admission.SessionEvidence(
+            "BINANCE:USDM:REST_BAR", 1, 0, 0, 1, (fresh,), transport="HTTP"
+        )
+        report = admission._render_report(
+            bindings=(binding,),
+            sessions=(session,),
+            elapsed_seconds=1.0,
+            cpu_seconds=0.1,
+            max_rss_kib=1,
+        )
+        self.assertEqual(report["rest_closed_bar_recovery_count"], 1)
+        self.assertEqual(report["bindings"][0]["transport"], "HTTP")
 
 
 if __name__ == "__main__":

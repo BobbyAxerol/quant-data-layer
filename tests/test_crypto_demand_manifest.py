@@ -136,6 +136,15 @@ class AcquisitionRecipeTests(unittest.TestCase):
         self.assertEqual(result["provider_kind"], "binance_usdm_trade")
         self.assertIn("fstream.binance.com", result["websocket_url"])
 
+    def test_binance_bar_uses_provider_rest_recovery_without_changing_rust_core(self):
+        result = ProductionCatalogBuilder._acquisition(
+            "b", self._demand("USDM", FeedType.BAR, interval="15m")
+        )
+        self.assertEqual(result["mode"], "PYTHON_REST")
+        self.assertEqual(result["provider_kind"], "binance_usdm_rest_bar")
+        self.assertEqual(result["native_channel"], "rest-klines/15m")
+        self.assertIsNone(result["websocket_url"])
+
     def test_the_okx_bar_channel_follows_the_demanded_interval(self):
         minute = ProductionCatalogBuilder._acquisition(
             "b", self._demand("SWAP", FeedType.BAR, interval="1m", venue="OKX")

@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 from qdl.canonical.market import (
     canonicalize_binance_usdm_bbo,
     canonicalize_binance_usdm_bar,
+    canonicalize_binance_usdm_rest_bar,
     canonicalize_okx_bar,
     canonicalize_okx_bbo,
 )
@@ -53,6 +54,7 @@ SUPPORTED_KINDS = frozenset(
         "binance_usdm_trade",
         "binance_usdm_bbo",
         "binance_usdm_bar",
+        "binance_usdm_rest_bar",
         "okx_trade",
         "okx_bbo",
         "okx_bar",
@@ -271,7 +273,11 @@ def _provider_frames(
 ) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(raw_payload, Mapping):
         raise ValueError("provider frame must be a JSON object")
-    if acquisition.provider_kind.startswith("binance_"):
+    if acquisition.provider_kind in {
+        "binance_usdm_trade",
+        "binance_usdm_bbo",
+        "binance_usdm_bar",
+    }:
         value = raw_payload.get("data", raw_payload)
         if not isinstance(value, Mapping):
             raise ValueError("Binance provider data must be an object")
@@ -295,6 +301,7 @@ def _canonicalize(
         "binance_usdm_trade": canonicalize_binance_usdm_trade,
         "binance_usdm_bbo": canonicalize_binance_usdm_bbo,
         "binance_usdm_bar": canonicalize_binance_usdm_bar,
+        "binance_usdm_rest_bar": canonicalize_binance_usdm_rest_bar,
         "okx_trade": canonicalize_okx_trade,
         "okx_bbo": canonicalize_okx_bbo,
         "okx_bar": canonicalize_okx_bar,

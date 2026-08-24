@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-capability-matrix.v2
-revision: 4
+revision: 5
 public_contract_version: 2.0.0
 realtime_core_target: RUST
 python_role: OUTER_AND_VENDOR_ACQUISITION_EDGE
@@ -14,7 +14,7 @@ capabilities:
     feed_adapters:
       TRADE: qdl-rust-binance-json
       BBO: qdl-rust-binance-json
-      BAR: qdl-rust-binance-json
+      BAR: qdl-python-binance-rest-bar-edge@2.0.0
     canonical_core: qdl-rust-realtime-core
     feeds: [TRADE, BBO, BAR]
     certification: BOUNDED_REAL_PROVIDER_SHADOW
@@ -25,7 +25,7 @@ capabilities:
     feed_adapters:
       TRADE: qdl-rust-binance-json
       BBO: qdl-rust-binance-json
-      BAR: qdl-rust-binance-json
+      BAR: qdl-python-binance-rest-bar-edge@2.0.0
     canonical_core: qdl-rust-realtime-core
     feeds: [TRADE, BBO, BAR]
     certification: BOUNDED_REAL_PROVIDER_SHADOW

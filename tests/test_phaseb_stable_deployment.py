@@ -60,9 +60,9 @@ class StableDeploymentContractTests(unittest.TestCase):
     def _legacy_rest_bar_fallback(self) -> StableAcquisitionPlan:
         """Build an explicit test-only REST fallback plan.
 
-        Production's resolved demand is Rust-native. These focused tests retain
-        the old poller recovery contract only to prove that an operator can
-        declare a bounded fallback without reintroducing it as the default.
+        Production uses bounded Binance REST BAR recovery and native OKX BAR.
+        This focused matrix also proves a fully REST-declared recovery plan
+        without changing the production topology.
         """
         rest_kind = {
             "binance_usdm_bar": "binance_usdm_rest_bar",
@@ -87,6 +87,33 @@ class StableDeploymentContractTests(unittest.TestCase):
                 else item
                 for item in self.acquisition.bindings
             ),
+        )
+
+    def _all_native_bar_plan(self) -> StableAcquisitionPlan:
+        """Build a native-only BAR plan to preserve the no-poller guard test."""
+        sources = {item.binding_id: item for item in self.catalog.bindings}
+
+        def native(item):
+            if item.provider_kind != "binance_usdm_rest_bar":
+                return item
+            source = sources[item.binding_id]
+            return replace(
+                item,
+                mode="RUST_NATIVE",
+                provider_kind="binance_usdm_bar",
+                native_channel=(
+                    f"{source.instrument.native_symbol.lower()}@kline_{source.interval}"
+                ),
+                websocket_url="wss://fstream.binance.com/ws",
+            )
+
+        return StableAcquisitionPlan(
+            schema=self.acquisition.schema,
+            revision=self.acquisition.revision,
+            raw_topic=self.acquisition.raw_topic,
+            canonical_topic=self.acquisition.canonical_topic,
+            quarantine_topic=self.acquisition.quarantine_topic,
+            bindings=tuple(native(item) for item in self.acquisition.bindings),
         )
 
     def test_c39_acceptance_matrix_covers_btc_and_eth_on_both_venues(self):
@@ -224,16 +251,16 @@ class StableDeploymentContractTests(unittest.TestCase):
     def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
         self.assertEqual(len(self.catalog.bindings), 22)
         self.assertEqual(len(self.acquisition.bindings), 22)
-        self.assertEqual(self.acquisition.revision, 7)
+        self.assertEqual(self.acquisition.revision, 8)
         modes = {item.mode for item in self.acquisition.bindings}
-        self.assertEqual(modes, {"RUST_NATIVE", "PYTHON_VENDOR_SDK"})
+        self.assertEqual(modes, {"PYTHON_REST", "RUST_NATIVE", "PYTHON_VENDOR_SDK"})
         native = self.acquisition.native_ingestor_configs(
             catalog=self.catalog, authority=self.authority
         )
         # Spot is disabled by configuration, so no role is generated for it
         # while its capability stays declared in the catalog.
         self.assertEqual(set(native), {"binance-usdm", "okx-swap"})
-        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 12)
+        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 10)
         self.assertTrue(all(item["authority"]["mode"] == "RUST_SHADOW" for item in native.values()))
         self.assertEqual(
             {
@@ -241,7 +268,10 @@ class StableDeploymentContractTests(unittest.TestCase):
                 for item in self.acquisition.bindings
                 if item.mode == "PYTHON_REST"
             },
-            set(),
+            {
+                "binance-usdm-btcusdt-bar-1m",
+                "binance-usdm-ethusdt-bar-1m",
+            },
         )
         self.assertEqual(
             {item["max_inflight_publishes"] for item in native.values()}, {512}
@@ -413,7 +443,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         publisher = Publisher()
         edge = StableBinanceBarEdge(
             catalog=self.catalog,
-            acquisition=self.acquisition,
+            acquisition=self._all_native_bar_plan(),
             authority=self.authority,
             publisher=publisher,
             clock=lambda: 120.0,

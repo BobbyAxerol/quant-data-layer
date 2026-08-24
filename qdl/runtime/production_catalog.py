@@ -431,9 +431,16 @@ class ProductionCatalogBuilder:
                     f"{item.native_symbol.lower()}@bookTicker", "MONOTONIC",
                 )
             else:
+                # The current provider/host certification proves direct Binance
+                # trade and BBO, but not final kline delivery after a valid WS
+                # ACK.  Keep provider REST at the outer edge for every generated
+                # Binance BAR demand; it writes the same V2 raw envelope and the
+                # Rust core remains the only canonical/replay/query authority.
+                # A reviewed manifest revision can re-enable a native BAR lane
+                # after fresh final-bar admission evidence.
                 mode, kind, channel, sequence = (
-                    "RUST_NATIVE", f"binance_{family}_bar",
-                    f"{item.native_symbol.lower()}@kline_{item.interval}", "NONE",
+                    "PYTHON_REST", f"binance_{family}_rest_bar",
+                    f"rest-klines/{item.interval}", "NONE",
                 )
             websocket = (
                 _BINANCE_STREAM_URL[item.market] if mode == "RUST_NATIVE" else None

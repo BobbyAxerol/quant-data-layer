@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Bounded, read-only native WebSocket admission for active Phase 10.3 feeds.
+"""Bounded, read-only provider admission for active Phase 10.3 feeds.
 
-This verifier intentionally talks only to the public Binance/OKX WebSocket
-edges. It exercises the exact direct-control protocol used by the Rust native
-ingestor without starting a producer, a projector, a consumer group, or any
-Data Layer service. Its output contains bounded metadata and frame hashes, not
-raw market data.
+This verifier intentionally talks only to public provider edges. It exercises
+the direct-control WebSocket protocol used by the Rust native ingestor and the
+approved Binance REST closed-BAR recovery edge without starting a producer, a
+projector, a consumer group, or any Data Layer service. Its output contains
+bounded metadata and frame hashes, not raw market data.
 """
 from __future__ import annotations
 
@@ -22,6 +22,13 @@ from typing import Any, Iterable, Mapping
 
 from websockets.asyncio.client import connect
 
+from qdl.adapters.binance import (
+    BinanceBarRawBinding,
+    fetch_latest_closed_bar_raw_envelope,
+)
+from qdl.adapters.intervals import canonical_interval_ms
+from qdl.provider.v1 import raw_provider_pb2
+from qdl.raw.envelope import validate_raw_envelope
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 
@@ -49,6 +56,7 @@ class NativeBinding:
     feed: str
     interval: str | None
     stale_after_ms: int
+    mode: str
     websocket_url: str
     business_websocket_url: str | None
 
@@ -74,6 +82,7 @@ class SessionEvidence:
     event_count: int
     observations: tuple[FrameObservation, ...]
     filtered_status_frames: int = 0
+    transport: str = "WEBSOCKET"
 
 
 class _SessionAccumulator:
@@ -163,25 +172,40 @@ def _payload(raw: str | bytes) -> tuple[str, Mapping[str, Any]]:
     return raw, payload
 
 
-def load_active_native_bindings(
+def load_active_provider_bindings(
     *,
     catalog_path: Path = DEFAULT_CATALOG_PATH,
     acquisition_path: Path = DEFAULT_ACQUISITION_PATH,
 ) -> tuple[NativeBinding, ...]:
-    """Resolve only enabled native bindings from the governed stable manifest."""
+    """Resolve every enabled crypto binding exercised by Phase 10.3.
+
+    `RUST_NATIVE` bindings are read from direct provider WebSockets.  A
+    `PYTHON_REST` binding is allowed only for a Binance final BAR and remains a
+    provider edge: its captured raw envelope is still normalized by the Rust
+    canonical core in the real deployment.
+    """
     catalog = StableSourceCatalog.load(catalog_path)
     acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
     sources = {item.binding_id: item for item in catalog.bindings}
     values: list[NativeBinding] = []
     for item in acquisition.bindings:
-        if not item.enabled or item.mode != "RUST_NATIVE":
+        if not item.enabled or item.mode not in {"RUST_NATIVE", "PYTHON_REST"}:
             continue
         source = sources[item.binding_id]
         identity = source.instrument.identity
         if item.runtime not in {"BINANCE", "OKX"}:
-            raise ProviderAdmissionError("unexpected non-crypto Rust-native runtime")
+            raise ProviderAdmissionError("unexpected non-crypto provider runtime")
         if identity.venue != item.runtime:
-            raise ProviderAdmissionError("native runtime and catalog venue differ")
+            raise ProviderAdmissionError("provider runtime and catalog venue differ")
+        if item.mode == "PYTHON_REST" and not (
+            item.runtime == "BINANCE"
+            and source.feed.value == "BAR"
+            and item.provider_kind in {
+                "binance_usdm_rest_bar",
+                "binance_spot_rest_bar",
+            }
+        ):
+            raise ProviderAdmissionError("Phase 10.3 REST acquisition is only Binance final BAR")
         values.append(
             NativeBinding(
                 binding_id=item.binding_id,
@@ -193,18 +217,35 @@ def load_active_native_bindings(
                 feed=source.feed.value,
                 interval=source.interval,
                 stale_after_ms=source.stale_after_ms,
+                mode=item.mode,
                 websocket_url=item.websocket_url or "",
                 business_websocket_url=item.business_websocket_url,
             )
         )
     result = tuple(sorted(values, key=lambda item: item.binding_id))
     if not result or len(result) > _MAX_BINDINGS:
-        raise ProviderAdmissionError("active Rust-native binding count is outside admission bound")
+        raise ProviderAdmissionError("active provider binding count is outside admission bound")
     if {item.venue for item in result} != {"BINANCE", "OKX"}:
-        raise ProviderAdmissionError("active native demand must include Binance and OKX")
+        raise ProviderAdmissionError("active provider demand must include Binance and OKX")
     if any(item.market not in {"USDM", "SWAP"} for item in result):
-        raise ProviderAdmissionError("disabled Spot capability leaked into active native demand")
+        raise ProviderAdmissionError("disabled Spot capability leaked into active provider demand")
     return result
+
+
+def load_active_native_bindings(
+    *,
+    catalog_path: Path = DEFAULT_CATALOG_PATH,
+    acquisition_path: Path = DEFAULT_ACQUISITION_PATH,
+) -> tuple[NativeBinding, ...]:
+    """Compatibility helper for checks concerned only with native sockets."""
+    return tuple(
+        item
+        for item in load_active_provider_bindings(
+            catalog_path=catalog_path,
+            acquisition_path=acquisition_path,
+        )
+        if item.mode == "RUST_NATIVE"
+    )
 
 
 def _binding_lookup(bindings: Iterable[NativeBinding]) -> dict[tuple[str, str], NativeBinding]:
@@ -244,13 +285,18 @@ def binance_admission_lanes(
     bindings: tuple[NativeBinding, ...],
 ) -> dict[str, tuple[NativeBinding, ...]]:
     """Split one Binance worker into deterministic feed lanes, never symbols."""
-    if any(item.venue != "BINANCE" or item.market != "USDM" for item in bindings):
+    if any(
+        item.venue != "BINANCE"
+        or item.market != "USDM"
+        or item.mode != "RUST_NATIVE"
+        for item in bindings
+    ):
         raise ProviderAdmissionError("Binance admission lane identity is invalid")
     lanes = {
         feed: tuple(item for item in bindings if item.feed == feed)
         for feed in ("BAR", "TRADE", "QUOTE")
     }
-    if not all(lanes.values()) or sum(len(items) for items in lanes.values()) != len(bindings):
+    if sum(len(items) for items in lanes.values()) != len(bindings):
         raise ProviderAdmissionError("Binance admission lanes are incomplete or ambiguous")
     return lanes
 
@@ -332,6 +378,62 @@ def parse_binance_data(
         source_time_ms=source_time_ms,
         frame_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         final_bar=final_bar,
+    )
+
+
+def parse_binance_rest_bar(
+    payload: Mapping[str, Any],
+    *,
+    binding: NativeBinding,
+    raw_frame_bytes: bytes,
+    observed_ms: int,
+) -> FrameObservation:
+    """Validate one provider-authentic, fully closed Binance REST BAR.
+
+    The caller has already verified the signed raw capture envelope.  This
+    parser deliberately checks the native row again because this evidence is
+    the admission boundary that permits the Python provider edge to hand raw
+    bytes to the Rust canonical core.
+    """
+    if (
+        binding.mode != "PYTHON_REST"
+        or binding.venue != "BINANCE"
+        or binding.feed != "BAR"
+        or binding.interval is None
+        or binding.native_channel != f"rest-klines/{binding.interval}"
+    ):
+        raise ProviderAdmissionError("Binance REST BAR binding identity is invalid")
+    if str(payload.get("symbol") or "").upper() != binding.native_symbol:
+        raise ProviderAdmissionError("Binance REST BAR symbol differs from binding")
+    if str(payload.get("interval") or "") != binding.interval:
+        raise ProviderAdmissionError("Binance REST BAR interval differs from binding")
+    if str(payload.get("bar_origin") or "").upper() != "VENUE_NATIVE":
+        raise ProviderAdmissionError("Binance REST BAR must be venue-native")
+    row = payload.get("row")
+    if not isinstance(row, list) or len(row) < 11:
+        raise ProviderAdmissionError("Binance REST BAR row is incomplete")
+    open_time_ms = _timestamp_ms(row[0], "Binance REST BAR open time")
+    close_time_ms = _timestamp_ms(row[6], "Binance REST BAR close time")
+    if close_time_ms >= observed_ms:
+        raise ProviderAdmissionError("Binance REST BAR is not closed at observation time")
+    interval_ms = canonical_interval_ms(binding.interval)
+    if close_time_ms != open_time_ms + interval_ms - 1:
+        raise ProviderAdmissionError("Binance REST BAR boundary differs from interval")
+    for index, label in ((1, "open"), (2, "high"), (3, "low"), (4, "close")):
+        _positive_decimal(row[index], f"Binance REST BAR {label}")
+    _positive_decimal(row[5], "Binance REST BAR base volume", allow_zero=True)
+    _positive_decimal(row[7], "Binance REST BAR quote volume", allow_zero=True)
+    try:
+        trade_count = int(str(row[8]))
+    except (TypeError, ValueError) as error:
+        raise ProviderAdmissionError("Binance REST BAR trade count is invalid") from error
+    if trade_count < 0:
+        raise ProviderAdmissionError("Binance REST BAR trade count is negative")
+    return FrameObservation(
+        binding_id=binding.binding_id,
+        source_time_ms=close_time_ms,
+        frame_sha256=hashlib.sha256(raw_frame_bytes).hexdigest(),
+        final_bar=True,
     )
 
 
@@ -488,6 +590,86 @@ async def _binance_session(
     )
 
 
+def _binance_rest_bar_binding(binding: NativeBinding) -> BinanceBarRawBinding:
+    if binding.interval is None:
+        raise ProviderAdmissionError("Binance REST BAR interval is missing")
+    return BinanceBarRawBinding(
+        market=binding.market,
+        product_type=binding.product_type,
+        native_symbol=binding.native_symbol,
+        interval=binding.interval,
+        subscription_id=f"phase10-admission-{binding.binding_id}",
+        source_session_id=f"phase10-admission-{binding.binding_id}",
+        connection_generation=1,
+        lease_epoch=1,
+        authority_revision=1,
+        partition_plan_epoch=1,
+        adapter_version="qdl-phase10-provider-admission/1.0.0",
+        config_revision=1,
+        instrument_catalog_revision=1,
+    )
+
+
+async def _binance_rest_bar_session(
+    bindings: tuple[NativeBinding, ...],
+) -> tuple[SessionEvidence, ...]:
+    """Read each approved REST BAR once; no producer or runtime is started."""
+    if not bindings:
+        raise ProviderAdmissionError("Binance REST BAR session has no bindings")
+    if any(
+        item.mode != "PYTHON_REST"
+        or item.venue != "BINANCE"
+        or item.market != "USDM"
+        or item.feed != "BAR"
+        for item in bindings
+    ):
+        raise ProviderAdmissionError("Binance REST BAR session scope is invalid")
+
+    async def fetch(binding: NativeBinding) -> FrameObservation:
+        envelope = await asyncio.to_thread(
+            fetch_latest_closed_bar_raw_envelope,
+            _binance_rest_bar_binding(binding),
+            attempts=4,
+            test_provenance=False,
+        )
+        validate_raw_envelope(envelope)
+        if (
+            envelope.transport_protocol != raw_provider_pb2.TRANSPORT_PROTOCOL_HTTP
+            or envelope.venue != "BINANCE"
+            or envelope.market != binding.market
+            or envelope.product_type != binding.product_type
+            or envelope.native_symbol != binding.native_symbol
+            or envelope.native_channel != binding.native_channel
+            or envelope.test_provenance
+        ):
+            raise ProviderAdmissionError("Binance REST BAR raw capture provenance differs")
+        try:
+            payload = json.loads(bytes(envelope.raw_frame_bytes))
+        except (TypeError, json.JSONDecodeError) as error:
+            raise ProviderAdmissionError("Binance REST BAR capture is not JSON") from error
+        if not isinstance(payload, Mapping):
+            raise ProviderAdmissionError("Binance REST BAR capture is not an object")
+        return parse_binance_rest_bar(
+            payload,
+            binding=binding,
+            raw_frame_bytes=bytes(envelope.raw_frame_bytes),
+            observed_ms=time.time_ns() // 1_000_000,
+        )
+
+    observations = tuple(await asyncio.gather(*(fetch(item) for item in bindings)))
+    return (
+        SessionEvidence(
+            role="BINANCE:USDM:REST_BAR",
+            generation=1,
+            ack_count=0,
+            pre_ack_frames=0,
+            event_count=len(observations),
+            observations=observations,
+            transport="HTTP",
+        ),
+    )
+
+
 async def _okx_session(
     bindings: tuple[NativeBinding, ...],
     *,
@@ -583,18 +765,29 @@ def _render_report(
 ) -> dict[str, Any]:
     by_binding: dict[str, list[FrameObservation]] = {item.binding_id: [] for item in bindings}
     session_seen: dict[str, int] = {item.binding_id: 0 for item in bindings}
+    transports: dict[str, set[str]] = {item.binding_id: set() for item in bindings}
     for session in sessions:
         seen_here = {item.binding_id for item in session.observations}
         for binding_id in seen_here:
             session_seen[binding_id] += 1
+            transports[binding_id].add(session.transport)
         for observation in session.observations:
             by_binding[observation.binding_id].append(observation)
     now_ms = time.time_ns() // 1_000_000
     values: list[dict[str, Any]] = []
     for binding in bindings:
         observations = by_binding[binding.binding_id]
-        if len(observations) < 2 or session_seen[binding.binding_id] != 2:
-            raise ProviderAdmissionError("reconnect/resubscribe missed a demanded binding")
+        expected_sessions = 1 if binding.mode == "PYTHON_REST" else 2
+        expected_transport = "HTTP" if binding.mode == "PYTHON_REST" else "WEBSOCKET"
+        if (
+            len(observations) < expected_sessions
+            or session_seen[binding.binding_id] != expected_sessions
+        ):
+            raise ProviderAdmissionError(
+                "provider recovery/reconnect missed a demanded binding"
+            )
+        if transports[binding.binding_id] != {expected_transport}:
+            raise ProviderAdmissionError("provider transport differs from declared acquisition mode")
         final_bar_seen = any(item.final_bar for item in observations)
         if binding.feed == "BAR" and not final_bar_seen:
             raise ProviderAdmissionError("demanded BAR never arrived as final")
@@ -612,6 +805,8 @@ def _render_report(
                 "native_symbol": binding.native_symbol,
                 "feed": binding.feed,
                 "interval": binding.interval,
+                "acquisition_mode": binding.mode,
+                "transport": expected_transport,
                 "source_age_ms": age_ms,
                 "session_observations": session_seen[binding.binding_id],
                 "final_bar_observed": final_bar_seen,
@@ -621,11 +816,23 @@ def _render_report(
     return {
         "schema": "qdl.phase10.realtime-provider-admission.v1",
         "status": "PASS",
-        "provenance": "REAL_PROVIDER_WEBSOCKET_READ_ONLY",
+        "provenance": "REAL_PROVIDER_DIRECT_READ_ONLY",
         "binding_count": len(values),
         "bindings": values,
         "session_count": len(sessions),
-        "intentional_reconnect_count": len({item.role for item in sessions}),
+        "websocket_binding_count": sum(
+            item.mode == "RUST_NATIVE" for item in bindings
+        ),
+        "rest_closed_bar_recovery_count": sum(
+            item.mode == "PYTHON_REST" for item in bindings
+        ),
+        "intentional_reconnect_count": len(
+            {
+                item.role
+                for item in sessions
+                if item.transport == "WEBSOCKET"
+            }
+        ),
         "ack_count": sum(item.ack_count for item in sessions),
         "pre_ack_frame_count": sum(item.pre_ack_frames for item in sessions),
         "accepted_provider_frame_count": sum(item.event_count for item in sessions),
@@ -650,38 +857,51 @@ async def run(
 ) -> dict[str, Any]:
     if not 65.0 <= timeout_seconds <= 120.0:
         raise ProviderAdmissionError("timeout_seconds must be between 65 and 120")
-    bindings = load_active_native_bindings(
+    bindings = load_active_provider_bindings(
         catalog_path=catalog_path,
         acquisition_path=acquisition_path,
     )
-    binance = tuple(item for item in bindings if item.venue == "BINANCE")
+    binance_native = tuple(
+        item
+        for item in bindings
+        if item.venue == "BINANCE" and item.mode == "RUST_NATIVE"
+    )
+    binance_rest = tuple(
+        item
+        for item in bindings
+        if item.venue == "BINANCE" and item.mode == "PYTHON_REST"
+    )
     okx = tuple(item for item in bindings if item.venue == "OKX")
-    binance_lanes = binance_admission_lanes(binance)
+    if any(item.mode != "RUST_NATIVE" for item in okx):
+        raise ProviderAdmissionError("Phase 10.3 OKX scope must be Rust-native")
+    binance_lanes = binance_admission_lanes(binance_native)
     okx_public = tuple(item for item in okx if item.feed in {"TRADE", "QUOTE"})
     okx_business = tuple(item for item in okx if item.feed == "BAR")
+    binance_trade_symbols = {
+        item.native_symbol for item in binance_lanes["TRADE"]
+    }
+    binance_quote_symbols = {
+        item.native_symbol for item in binance_lanes["QUOTE"]
+    }
+    binance_bar_symbols = {item.native_symbol for item in binance_rest}
+    okx_public_symbols = {item.native_symbol for item in okx_public}
+    okx_bar_symbols = {item.native_symbol for item in okx_business}
     if (
-        len(binance_lanes["BAR"]) != 2
-        or len(binance_lanes["TRADE"]) != 2
-        or len(binance_lanes["QUOTE"]) != 2
-        or len(okx_public) != 4
-        or len(okx_business) != 2
+        binance_lanes["BAR"]
+        or not binance_trade_symbols
+        or binance_trade_symbols != binance_quote_symbols
+        or binance_trade_symbols != binance_bar_symbols
+        or any(item.feed != "BAR" for item in binance_rest)
+        or not okx_public_symbols
+        or okx_public_symbols != okx_bar_symbols
     ):
-        raise ProviderAdmissionError("active native role composition differs from Phase 10.3 demand")
+        raise ProviderAdmissionError("active provider role composition differs from Phase 10.3 demand")
     public_urls = {item.websocket_url for item in okx_public}
     business_urls = {item.business_websocket_url for item in okx_business}
     if len(public_urls) != 1 or len(business_urls) != 1 or None in business_urls:
         raise ProviderAdmissionError("OKX active bindings disagree on public/business WebSocket URLs")
     started_wall = time.monotonic()
     started_cpu = time.process_time()
-    binance_bar_task = _two_session_probe(
-        lambda **kwargs: _binance_session(
-            binance_lanes["BAR"],
-            role="BINANCE:USDM:BAR",
-            timeout_seconds=timeout_seconds,
-            **kwargs,
-        ),
-        first_requires_final_bars=True,
-    )
     binance_trade_task = _two_session_probe(
         lambda **kwargs: _binance_session(
             binance_lanes["TRADE"],
@@ -720,19 +940,19 @@ async def run(
         ),
         first_requires_final_bars=True,
     )
-    binance_bar_sessions, binance_trade_sessions, binance_quote_sessions, public_sessions, business_sessions = await asyncio.gather(
-        binance_bar_task,
+    binance_trade_sessions, binance_quote_sessions, rest_bar_sessions, public_sessions, business_sessions = await asyncio.gather(
         binance_trade_task,
         binance_quote_task,
+        _binance_rest_bar_session(binance_rest),
         public_task,
         business_task,
     )
     return _render_report(
         bindings=bindings,
         sessions=(
-            binance_bar_sessions
-            + binance_trade_sessions
+            binance_trade_sessions
             + binance_quote_sessions
+            + rest_bar_sessions
             + public_sessions
             + business_sessions
         ),
