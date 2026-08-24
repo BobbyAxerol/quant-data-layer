@@ -12160,6 +12160,63 @@ RUNTIME CUTOVER NOT AUTHORIZED`).**
   fallback/return drill and a separately approved bounded runtime packet remain
   required Phase 10.3 exit gates.
 
+**Rust-primary ingress topology correction - 2026-08-24 (`APPROVED SOURCE
+SCOPE / NO RUNTIME MUTATION`).**
+
+- **Observed runtime fact:** the current V2 Rust-core replicas consume the
+  legacy shared raw topic `md.raw.stable.v1`. Read-only progress evidence shows
+  `canonical=0` while `ignored_out_of_scope` grows, so the existing topic does
+  not prove that the currently demanded native providers reach the Rust
+  canonical writer. A subscription-id filter is useful defence in depth, but
+  it is not a replacement for a bounded ingress boundary.
+- **Approved correction:** introduce one versioned, dedicated V2 realtime raw
+  topic, `md.raw.realtime.v2`, shared by every approved venue/market binding
+  and partitioned by the normal ingress key. Native Rust Binance/OKX workers
+  and bounded Python provider edges (Binance REST BAR and DNSE vendor edge)
+  write this one topic; the fixed Rust core group reads only this topic. Symbols
+  and intervals remain dynamic subscription data, never services, images or
+  topics. Existing `md.raw.stable.v1`, V1 routes, canonical public contracts,
+  Kafka offsets and runtime services remain untouched until a separately
+  approved packet.
+- **Scope integrity invariant:** the new core configuration is strict. An
+  undeclared or identity-mismatched raw envelope must be durably quarantined
+  with explicit fencing evidence, not silently ignored or canonicalized. The
+  legacy shared-topic mode remains only for the prior isolated topology and is
+  not eligible for Rust-primary promotion.
+- **Implementation and test gates:** add a bounded read-only tail inspector
+  which records aggregate subscription/binding counts and hashes only; update
+  catalog/acquisition/bootstrap generation and ACL intent for the dedicated
+  topic; add deterministic tests for topic separation, strict quarantine and
+  worker/producer scope. Run the complete network-isolated Python/Rust matrix.
+  A later runtime packet must create the named topic, apply its producer/core
+  ACLs, recreate only named V2 ingress/core/projector/query roles, prove every
+  demanded slice, and provide a manifest-only V1 rollback. It may not reset
+  Kafka offsets, flush Redis/SQLite, alter V1, or change alpha configuration.
+
+**Raw-ingress scope inspector checkpoint - 2026-08-24 (`SOURCE PASS /
+READ-ONLY RUNTIME EVIDENCE PENDING`).**
+
+- Added `scripts/phase103_inspect_realtime_raw_scope.py`: a read-only Kafka
+  tail inspector that snapshots per-partition high-watermarks, scans only a
+  bounded tail using an ephemeral non-committing group, and emits aggregate
+  binding counters, offsets and SHA-256 unknown-subscription identifiers only.
+  It refuses an override of the governed acquisition raw topic and does not
+  disclose raw provider frames, credentials or payloads.
+- The inspector validates source binding identity, authority/catalog revisions
+  and non-test provenance. It reports malformed, out-of-scope, identity,
+  revision and test-provenance counts separately; `--require-all-bindings`
+  fails closed when a declared enabled binding does not appear in the bounded
+  live tail.
+- **Isolated tests passed:** `6/6` targeted unit cases in the existing
+  `qdl-v2-python:2.0.0-7a5aef6` container with `--network none`, `--read-only`
+  and tmpfs bytecode cache. They cover accepted declared data, missing declared
+  data, unknown scope hashed-only reporting, identity/revision mismatch,
+  malformed bytes and rejected test provenance. `compileall` passed under the
+  same boundary. No Kafka client, runtime service, offset, Redis/SQLite state
+  or provider was contacted. `ruff` is intentionally absent from this runtime
+  image, so lint remains covered by the repository CI environment rather than
+  being misreported as locally passed.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,
