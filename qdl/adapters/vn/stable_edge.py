@@ -22,7 +22,10 @@ from qdl.adapters.vn import (
     build_dnse_trade_raw_envelope,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
-from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from qdl.runtime.stable_deployment import (
+    StableAcquisitionPlan,
+    validate_shared_authority_record,
+)
 from qdl.transport.kafka_raw import KafkaRawPublisher, KafkaRawPublisherConfig
 
 
@@ -56,12 +59,7 @@ class StableDnseVendorEdge:
             raise ValueError("stable DNSE history lookback must be between 1 and 87 days")
         if not 1 <= history_attempts <= 8:
             raise ValueError("stable DNSE history attempts must be between 1 and 8")
-        if (
-            authority.get("mode") != "RUST_SHADOW"
-            or authority.get("public_write_allowed") is not False
-            or authority.get("legacy_write_allowed") is not False
-        ):
-            raise ValueError("stable DNSE edge requires shadow authority")
+        validate_shared_authority_record(authority)
         self.catalog = catalog
         self.acquisition = acquisition
         self.authority = authority

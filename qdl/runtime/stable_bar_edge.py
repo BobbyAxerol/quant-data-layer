@@ -24,6 +24,7 @@ from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.runtime.stable_deployment import (
     StableAcquisitionBinding,
     StableAcquisitionPlan,
+    validate_shared_authority_record,
 )
 from qdl.transport.kafka_raw import KafkaRawPublisher, KafkaRawPublisherConfig
 
@@ -127,12 +128,7 @@ class StableBinanceBarEdge:
                 "stable crypto BAR edge does not serve every configured REST BAR "
                 "binding: " + ",".join(sorted(expected - owned))
             )
-        if (
-            authority.get("mode") != "RUST_SHADOW"
-            or authority.get("public_write_allowed") is not False
-            or authority.get("legacy_write_allowed") is not False
-        ):
-            raise ValueError("stable crypto BAR edge requires shadow authority")
+        validate_shared_authority_record(authority)
         # Rust-native BAR feeds are the Phase 10.3 primary path. Keep this
         # legacy edge constructible for an explicitly configured REST fallback,
         # but do not create a synthetic polling workload when the resolved

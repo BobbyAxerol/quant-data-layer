@@ -31,6 +31,7 @@ from qdl.runtime.readiness import (
     MeasuredRuntimeReadiness,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_deployment import validate_shared_authority_record
 from qdl.runtime.stable_ingest import (
     StableHttpCanonicalSink,
     install_stable_canonical_ingest,
@@ -79,6 +80,36 @@ def _env_flag(
     if value in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"{name} must be a boolean flag, got {raw!r}")
+
+
+def _load_runtime_authority(env: Mapping[str, str]) -> Mapping[str, object]:
+    """Load the generated authority record and reject env-only authority drift."""
+    runtime_dir = env.get("QDL_STABLE_RUNTIME_DIR", "").strip()
+    if not runtime_dir:
+        raise ValueError("QDL_STABLE_RUNTIME_DIR is required for authority validation")
+    path = Path(runtime_dir) / "authority.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("stable runtime authority record is unreadable") from error
+    if not isinstance(payload, dict):
+        raise ValueError("stable runtime authority record must be an object")
+    validate_shared_authority_record(payload)
+
+    configured_mode = env.get("QDL_STABLE_AUTHORITY_MODE")
+    if configured_mode is not None and configured_mode != payload["mode"]:
+        raise ValueError("stable runtime authority mode differs from generated record")
+    configured_revision = env.get("QDL_STABLE_AUTHORITY_REVISION")
+    if configured_revision is not None:
+        try:
+            revision = int(configured_revision)
+        except ValueError as error:
+            raise ValueError("stable runtime authority revision is invalid") from error
+        if revision != payload["revision"]:
+            raise ValueError(
+                "stable runtime authority revision differs from generated record"
+            )
+    return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,8 +162,8 @@ class StableRuntimeConfig:
     def __post_init__(self) -> None:
         if self.role not in {"query_v2", "stream_v2", "projector_v2"}:
             raise ValueError("stable role is invalid")
-        if self.authority_mode != "RUST_SHADOW":
-            raise ValueError("Phase B stable runtime must remain RUST_SHADOW")
+        if self.authority_mode not in {"RUST_SHADOW", "RUST_PRIMARY"}:
+            raise ValueError("stable runtime authority mode is unsupported")
         if not all((
             self.instance_id, self.environment, self.config_revision,
             self.redis_url, self.redis_prefix, self.consumer_group,
@@ -194,6 +225,7 @@ class StableRuntimeConfig:
         cls, role: str, values: Mapping[str, str] | None = None
     ) -> "StableRuntimeConfig":
         env = os.environ if values is None else values
+        authority = _load_runtime_authority(env)
         cursor_raw = json.loads(env["QDL_STABLE_CURSOR_KEYS_JSON"])
         if not isinstance(cursor_raw, dict) or not cursor_raw:
             raise ValueError("QDL_STABLE_CURSOR_KEYS_JSON must be a non-empty object")
@@ -212,8 +244,8 @@ class StableRuntimeConfig:
             instance_id=instance_id,
             environment=env.get("QDL_ENVIRONMENT", "paper").lower(),
             config_revision=env["QDL_CONFIG_REVISION"],
-            authority_mode=env.get("QDL_STABLE_AUTHORITY_MODE", "RUST_SHADOW"),
-            authority_revision=int(env["QDL_STABLE_AUTHORITY_REVISION"]),
+            authority_mode=str(authority["mode"]),
+            authority_revision=int(authority["revision"]),
             schema_digest=env["QDL_STABLE_SCHEMA_DIGEST"],
             state_dir=state_dir,
             durable_state_dir=Path(env.get(

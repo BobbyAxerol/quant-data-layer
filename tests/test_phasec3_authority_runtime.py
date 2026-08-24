@@ -14,6 +14,10 @@ from scripts.phaseb_bootstrap_stable_broker import (
 )
 from scripts.phasec40_collect_live_core_parity import _require_r1_reference_group
 from scripts.run_authority_outbox_dispatcher import write_health
+from qdl.runtime.stable_deployment import (
+    SHARED_REALTIME_CORE_GROUP_ID,
+    SHARED_REALTIME_CORE_ID_PREFIX,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +57,7 @@ class AuthorityRuntimeContractTests(unittest.TestCase):
         for invalid in (
             "qdl-r1-reference-parity-",
             "qdl-v2-stable-core-v1",
+            SHARED_REALTIME_CORE_GROUP_ID,
             "qdl-c40-handoff-audit",
         ):
             with self.assertRaisesRegex(ValueError, "isolated"):
@@ -77,6 +82,13 @@ class AuthorityRuntimeContractTests(unittest.TestCase):
 
         acl_calls = [arguments for executable, arguments in calls if executable == "kafka-acls.sh"]
         self.assertEqual(report["status"], "PASS")
+        self.assertIn(
+            (
+                "--add", "--allow-principal", "User:phase8-core", "--operation", "READ",
+                "--group", SHARED_REALTIME_CORE_GROUP_ID,
+            ),
+            acl_calls,
+        )
         self.assertIn(
             (
                 "--add", "--allow-principal", "User:phase8-core", "--operation", "READ",
@@ -122,6 +134,15 @@ class AuthorityRuntimeContractTests(unittest.TestCase):
             acl_calls,
         )
         self.assertFalse(any("*" in arguments for arguments in acl_calls))
+        self.assertIn(
+            (
+                "--add", "--allow-principal", "User:phase8-core",
+                "--operation", "WRITE", "--operation", "DESCRIBE",
+                "--transactional-id", SHARED_REALTIME_CORE_ID_PREFIX + "-",
+                "--resource-pattern-type", "prefixed",
+            ),
+            acl_calls,
+        )
 
     def test_dispatcher_role_is_function_scoped_and_not_table_writer(self):
         migration = (

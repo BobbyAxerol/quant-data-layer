@@ -12356,8 +12356,8 @@ DEPLOYMENT CONFIGURATION NEXT`).**
   deployment/parity matrix. Runtime promotion remains unperformed and needs
   its explicit bounded packet.
 
-**Primary bundle and edge configuration slice - 2026-08-24 (`IN PROGRESS /
-SOURCE ONLY`).**
+**Primary bundle and edge configuration slice - 2026-08-24 (`SOURCE PASS /
+RUNTIME UNCHANGED`).**
 
 - **Scope:** make one generated shared authority record (`RUST_SHADOW` or
   `RUST_PRIMARY`, never an ad-hoc env override) flow consistently through the
@@ -12377,6 +12377,56 @@ SOURCE ONLY`).**
   topic/group/transaction ACL intent; source/catalog/demand parity. Then run the
   network-isolated Python matrix and the Rust matrix already specified above.
   No runtime state or provider interaction is permitted.
+
+**Shared primary bundle and edge source checkpoint - 2026-08-24 (`SOURCE PASS /
+RUNTIME PACKET PENDING`).**
+
+- One generated `authority.json` is now the authoritative non-secret record
+  for every shared V2 role. It accepts exactly `RUST_SHADOW` or `RUST_PRIMARY`,
+  requires a valid identity/revision/image/config digest tuple and retains
+  `public_write_allowed=false` plus `legacy_write_allowed=false` in both modes.
+  `QDL_STABLE_AUTHORITY_MODE` and revision are now generated Compose
+  cross-checks only: a missing, malformed or mismatched mounted record fails
+  query, stream and projector startup before any consumer activity. An env-only
+  primary toggle is therefore impossible.
+- The same validated record now enters the shared Rust core, native
+  Binance/OKX ingestors, bounded Python Binance REST BAR and DNSE raw edges.
+  A generated `RUST_PRIMARY` bundle was proven to contain the same record in
+  every core/ingestor config, retain `md.raw.realtime.v2` as its only ingress
+  and construct both Python edge families without granting direct public or V1
+  output. This remains raw-provider-edge -> Rust canonical core; Python does
+  not become a canonical writer.
+- The fixed core identity is deliberately one clean group
+  `qdl-v2-realtime-core-v2` with three transactional/client identities
+  `qdl-v2-realtime-core-001..003`. It replaces only the previously unused V2
+  stable-core identity in source configuration; the legacy group, legacy raw
+  topic, Phase-9.2 production-core profile and all deployed offsets/resources
+  remain untouched. Broker bootstrap source grants that exact group and
+  transactional prefix. No per-symbol process, image, topic or group was
+  introduced.
+- Query/stream/projector roles now mount only the generated runtime directory
+  read-only and verify the record at construction. Candidate-bundle generation
+  writes the cross-check mode/revision from the generated shadow record rather
+  than Compose literals, allowing a later approved sealed primary bundle to use
+  the exact same flow.
+- **Verification:** network-disabled, read-only Python matrix passed `232/232`,
+  with one intentional disposable-Redis integration skip. It covered demand,
+  catalog, provider-admission, stable bundle/compose, Python edge construction,
+  V2 route/recovery, strict raw scope, Binance/OKX/VN contracts and broker ACL
+  intent. `docker compose --env-file /tmp/qdl-phase103-compose.env -f
+  docker-compose.v2-stable.yml config -q` passed using a temporary test-only
+  env file which was removed immediately. The pre-existing Rust primary-core
+  matrix remains `85/85` with `cargo fmt --check` and `clippy -D warnings`
+  passing under network-disabled/read-only Docker. No provider call, image
+  build, service/container, Kafka topic/offset, Redis/SQLite state, authority
+  CAS, V1 route or alpha configuration changed.
+- **Next decision boundary:** source now has one correctly fenced primary
+  topology, but runtime remains shadow/unchanged. The next slice must prove the
+  consumer manifest and V1 fallback-return drill against the sealed generated
+  record, then prepare a single bounded runtime packet with named V2 roles,
+  exact runtime bundle/image digests and a stop-only/manifest-revision rollback.
+  It must not activate the obsolete `production_core_*` profile or create a
+  second data-plane topology.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 

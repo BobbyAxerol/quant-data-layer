@@ -18,6 +18,9 @@ _SEQUENCE_POLICIES = frozenset({"NONE", "MONOTONIC", "CONTIGUOUS"})
 STABLE_TOPIC_PARTITIONS = 6
 STABLE_CORE_WORKER_COUNT = 3
 V2_REALTIME_RAW_TOPIC = "md.raw.realtime.v2"
+SHARED_REALTIME_CORE_GROUP_ID = "qdl-v2-realtime-core-v2"
+SHARED_REALTIME_CORE_ID_PREFIX = "qdl-v2-realtime-core"
+_SHARED_AUTHORITY_MODES = frozenset({"RUST_SHADOW", "RUST_PRIMARY"})
 _PROVIDER_KINDS = {
     ("BINANCE", "TRADE"): frozenset({"binance_usdm_trade", "binance_spot_trade"}),
     ("BINANCE", "QUOTE"): frozenset({"binance_usdm_bbo", "binance_spot_bbo"}),
@@ -35,6 +38,48 @@ _PROVIDER_KINDS = {
     ("HOSE", "TRADE"): frozenset({"dnse_trade"}),
     ("HOSE", "BAR"): frozenset({"dnse_bar"}),
 }
+
+
+def validate_shared_authority_record(authority: Mapping[str, Any]) -> None:
+    """Validate the one generated authority record used by every V2 role.
+
+    The record is intentionally non-secret and mounted read-only.  Runtime
+    environment values may describe the expected record, but they cannot grant
+    authority independently from this bounded, generated contract.
+    """
+    digest = str(authority.get("candidate_image_digest", ""))
+    digest_fields = (
+        "capability_manifest_digest",
+        "contract_digest",
+        "partition_plan_digest",
+    )
+    revision = authority.get("revision")
+    effective_at_ns = authority.get("effective_at_ns")
+    if (
+        authority.get("schema") != "qdl.authority-record.v1"
+        or not isinstance(authority.get("slice_id"), str)
+        or not authority["slice_id"].strip()
+        or not isinstance(revision, int)
+        or isinstance(revision, bool)
+        or revision < 1
+        or authority.get("mode") not in _SHARED_AUTHORITY_MODES
+        or authority.get("public_write_allowed") is not False
+        or authority.get("legacy_write_allowed") is not False
+        or not digest.startswith("sha256:")
+        or len(digest) != 71
+        or any(value not in "0123456789abcdef" for value in digest.removeprefix("sha256:"))
+        or any(
+            len(str(authority.get(field, ""))) != 64
+            or any(value not in "0123456789abcdef" for value in str(authority.get(field, "")))
+            for field in digest_fields
+        )
+        or not isinstance(authority.get("approved_by"), str)
+        or not authority["approved_by"].strip()
+        or not isinstance(effective_at_ns, int)
+        or isinstance(effective_at_ns, bool)
+        or effective_at_ns <= 0
+    ):
+        raise ValueError("stable authority is not an isolated shared Rust authority record")
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,8 +353,8 @@ class StableAcquisitionPlan:
             # of quietly skipping it and masking a topology/config error.
             "strict_subscription_scope": self.raw_topic == V2_REALTIME_RAW_TOPIC,
             "authority": dict(authority),
-            "shard_id": f"qdl-v2-stable-core-{worker_index:03d}",
-            "transactional_id": f"qdl-v2-stable-core-{worker_index:03d}",
+            "shard_id": f"{SHARED_REALTIME_CORE_ID_PREFIX}-{worker_index:03d}",
+            "transactional_id": f"{SHARED_REALTIME_CORE_ID_PREFIX}-{worker_index:03d}",
             "batch_size": 256,
             "batch_wait_ms": 25,
             "max_events": max_events,
@@ -504,15 +549,7 @@ class StableAcquisitionPlan:
 
     @staticmethod
     def _validate_authority(authority: Mapping[str, Any]) -> None:
-        digest = str(authority.get("candidate_image_digest", ""))
-        if (
-            authority.get("mode") != "RUST_SHADOW"
-            or authority.get("public_write_allowed") is not False
-            or authority.get("legacy_write_allowed") is not False
-            or not digest.startswith("sha256:")
-            or len(digest) != 71
-        ):
-            raise ValueError("stable authority is not an isolated Rust shadow record")
+        validate_shared_authority_record(authority)
 
 
 RUNTIME_CONFIG_MODE = 0o644
@@ -578,24 +615,39 @@ def stable_authority_record(
     contract: Path,
     partition_plan: bytes,
     effective_at_ns: int,
+    mode: str = "RUST_SHADOW",
+    revision: int = 1,
+    slice_id: str | None = None,
+    approved_by: str = "phase-b-isolated-stable-candidate",
 ) -> dict[str, Any]:
     digest = rust_image_digest.removeprefix("sha256:")
     if len(digest) != 64 or any(value not in "0123456789abcdef" for value in digest):
         raise ValueError("stable Rust image digest must be SHA-256")
     if effective_at_ns <= 0:
         raise ValueError("stable authority effective time must be positive")
+    if mode not in _SHARED_AUTHORITY_MODES:
+        raise ValueError("stable authority mode is unsupported")
+    if revision < 1:
+        raise ValueError("stable authority revision must be positive")
+    resolved_slice_id = (
+        slice_id
+        if slice_id is not None
+        else "qdl-v2-stable-multivenue-shadow"
+    )
+    if not resolved_slice_id or not approved_by:
+        raise ValueError("stable authority identity is incomplete")
     return {
         "schema": "qdl.authority-record.v1",
-        "slice_id": "qdl-v2-stable-multivenue-shadow",
-        "revision": 1,
-        "mode": "RUST_SHADOW",
+        "slice_id": resolved_slice_id,
+        "revision": revision,
+        "mode": mode,
         "candidate_image_digest": f"sha256:{digest}",
         "capability_manifest_digest": hashlib.sha256(capability_manifest.read_bytes()).hexdigest(),
         "contract_digest": hashlib.sha256(contract.read_bytes()).hexdigest(),
         "partition_plan_digest": hashlib.sha256(partition_plan).hexdigest(),
         "public_write_allowed": False,
         "legacy_write_allowed": False,
-        "approved_by": "phase-b-isolated-stable-candidate",
+        "approved_by": approved_by,
         "effective_at_ns": effective_at_ns,
     }
 

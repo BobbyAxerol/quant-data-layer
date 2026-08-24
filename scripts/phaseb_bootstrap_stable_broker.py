@@ -6,6 +6,11 @@ import json
 import subprocess
 from pathlib import Path
 
+from qdl.runtime.stable_deployment import (
+    SHARED_REALTIME_CORE_GROUP_ID,
+    SHARED_REALTIME_CORE_ID_PREFIX,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "docker-compose.v2-stable.yml"
@@ -117,7 +122,7 @@ def bootstrap(env_file: Path) -> dict[str, object]:
         add_acl(env_file, "phase8-core", operations, ("--topic", topic))
     add_acl(
         env_file, "phase8-core", ("READ",),
-        ("--group", "qdl-v2-stable-core-v1"),
+        ("--group", SHARED_REALTIME_CORE_GROUP_ID),
     )
     for topic in ("qdl.authority.v1", "qdl.target-checkpoint.v1"):
         add_acl(
@@ -157,7 +162,7 @@ def bootstrap(env_file: Path) -> dict[str, object]:
         )
     add_acl(env_file, "phase8-core", ("IdempotentWrite",), ("--cluster",))
     for transactional_prefix in (
-        "qdl-v2-stable-core-", "qdl-v2-production-core-"
+        SHARED_REALTIME_CORE_ID_PREFIX + "-", "qdl-v2-production-core-"
     ):
         add_acl(
             env_file, "phase8-core", ("WRITE", "DESCRIBE"),

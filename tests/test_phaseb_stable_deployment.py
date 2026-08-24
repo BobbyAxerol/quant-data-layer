@@ -26,6 +26,8 @@ from scripts.phasec1_isolated_consumer_acceptance import (
 )
 
 from qdl.runtime.stable_deployment import (
+    SHARED_REALTIME_CORE_GROUP_ID,
+    SHARED_REALTIME_CORE_ID_PREFIX,
     STABLE_CORE_WORKER_COUNT,
     AuthorityPromotionScope,
     StableAcquisitionPlan,
@@ -368,7 +370,11 @@ class StableDeploymentContractTests(unittest.TestCase):
         ]
         self.assertEqual(
             {item["transactional_id"] for item in workers},
-            {"qdl-v2-stable-core-001", "qdl-v2-stable-core-002", "qdl-v2-stable-core-003"},
+            {
+                "qdl-v2-realtime-core-001",
+                "qdl-v2-realtime-core-002",
+                "qdl-v2-realtime-core-003",
+            },
         )
         self.assertEqual(
             {item["shard_id"] for item in workers},
@@ -915,7 +921,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             no_ack.bootstrap_history()
         self.assertEqual(no_ack._last_bar, {})
 
-    def test_missing_binding_wrong_provider_kind_and_primary_authority_fail_closed(self):
+    def test_missing_binding_wrong_provider_kind_and_invalid_primary_authority_fail_closed(self):
         payload = yaml.safe_load(ACQUISITION_PATH.read_text(encoding="utf-8"))
         missing = copy.deepcopy(payload)
         missing["bindings"].pop()
@@ -945,8 +951,67 @@ class StableDeploymentContractTests(unittest.TestCase):
         primary = copy.deepcopy(self.authority)
         primary["mode"] = "RUST_PRIMARY"
         primary["public_write_allowed"] = True
-        with self.assertRaisesRegex(ValueError, "not an isolated Rust shadow"):
+        with self.assertRaisesRegex(ValueError, "not an isolated shared Rust"):
             self.acquisition.core_config(catalog=self.catalog, authority=primary)
+
+    def test_generated_primary_authority_builds_every_shared_runtime_role(self):
+        primary = stable_authority_record(
+            rust_image_digest="d" * 64,
+            capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
+            contract=ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto",
+            partition_plan=ACQUISITION_PATH.read_bytes(),
+            effective_at_ns=time.time_ns(),
+            mode="RUST_PRIMARY",
+            revision=2,
+            slice_id="qdl-v2-stable-multivenue",
+            approved_by="phase10.3-primary-bundle-test",
+        )
+        workers = [
+            self.acquisition.core_config(
+                catalog=self.catalog, authority=primary, worker_index=index
+            )
+            for index in range(1, STABLE_CORE_WORKER_COUNT + 1)
+        ]
+        self.assertEqual(
+            {item["shard_id"] for item in workers},
+            {
+                f"{SHARED_REALTIME_CORE_ID_PREFIX}-001",
+                f"{SHARED_REALTIME_CORE_ID_PREFIX}-002",
+                f"{SHARED_REALTIME_CORE_ID_PREFIX}-003",
+            },
+        )
+        self.assertTrue(all(item["authority"] == primary for item in workers))
+        self.assertTrue(all(
+            item["authority"] == primary
+            for item in self.acquisition.native_ingestor_configs(
+                catalog=self.catalog, authority=primary
+            ).values()
+        ))
+        with tempfile.TemporaryDirectory(prefix="qdl-phase103-primary-") as directory:
+            digests = write_stable_runtime_bundle(
+                Path(directory),
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=primary,
+            )
+            self.assertIn("authority.json", digests)
+            generated = json.loads(
+                (Path(directory) / "core.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(generated["authority"], primary)
+            self.assertEqual(generated["raw_topics"], ["md.raw.realtime.v2"])
+        StableBinanceBarEdge(
+            catalog=self.catalog,
+            acquisition=self._all_native_bar_plan(),
+            authority=primary,
+            publisher=object(),
+        )
+        StableDnseVendorEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=primary,
+            publisher=object(),
+        )
 
 
 class StableComposeAndBundleTests(unittest.TestCase):
@@ -1101,9 +1166,9 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 for name in core_names
             },
             {
-                "qdl-v2-stable-core-001",
-                "qdl-v2-stable-core-002",
-                "qdl-v2-stable-core-003",
+                "qdl-v2-realtime-core-001",
+                "qdl-v2-realtime-core-002",
+                "qdl-v2-realtime-core-003",
             },
         )
         self.assertEqual(
@@ -1111,7 +1176,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 services[name]["environment"]["QDL_KAFKA_GROUP_ID"]
                 for name in core_names
             },
-            {"qdl-v2-stable-core-v1"},
+            {SHARED_REALTIME_CORE_GROUP_ID},
         )
         for name in core_names:
             with self.subTest(service=name):
@@ -1121,6 +1186,19 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 )
                 self.assertEqual(services[name]["stop_grace_period"], "45s")
                 self.assertIn("stable_tls:/stable-certs:ro", services[name]["volumes"])
+
+        authority_mount = (
+            "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro"
+        )
+        for name in (
+            "query_v2_1", "query_v2_2", "stream_v2_active", "stream_v2_passive",
+            "projector_v2", "projector_v2_2", "projector_v2_3",
+        ):
+            with self.subTest(authority_reader=name):
+                self.assertEqual(
+                    services[name]["environment"]["QDL_STABLE_RUNTIME_DIR"], "/runtime"
+                )
+                self.assertIn(authority_mount, services[name]["volumes"])
 
         authority_db = services["stable_authority_db"]
         self.assertEqual(authority_db["profiles"], ["stable-authority"])
@@ -1222,6 +1300,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                     )
                 self.assertFalse(manifest["cutover_authorized"])
                 self.assertFalse(manifest["secret_values_recorded"])
+                self.assertEqual(manifest["authority"], "RUST_SHADOW")
                 self.assertEqual(manifest["consumer_count"], 6)
                 self.assertEqual(manifest["workload_identity_count"], 5)
                 self.assertEqual(manifest["authority_promotion_binding_count"], 12)
@@ -1245,6 +1324,8 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertEqual((output / "stable.env").stat().st_mode & 0o777, 0o600)
                 env_text = (output / "stable.env").read_text()
                 self.assertIn("QDL_STABLE_CERT_DIR=/host/qdl/certs", env_text)
+                self.assertIn("QDL_STABLE_AUTHORITY_MODE=RUST_SHADOW", env_text)
+                self.assertIn("QDL_STABLE_AUTHORITY_REVISION=1", env_text)
                 self.assertIn("QDL_STABLE_CONSUMER_NETWORK=executor_network", env_text)
                 self.assertIn(
                     "QDL_STABLE_RUNTIME_DIR=/host/qdl/candidate/runtime", env_text

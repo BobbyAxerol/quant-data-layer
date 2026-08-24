@@ -57,9 +57,12 @@ x-kafka: &kafka
 x-stable-env: &stable-env
   QDL_ENVIRONMENT: paper
   QDL_CONFIG_REVISION: phase-b-stable-1
-  QDL_STABLE_AUTHORITY_MODE: RUST_SHADOW
-  QDL_STABLE_AUTHORITY_REVISION: "1"
+  QDL_STABLE_AUTHORITY_MODE: ${QDL_STABLE_AUTHORITY_MODE:?set QDL_STABLE_AUTHORITY_MODE}
+  QDL_STABLE_AUTHORITY_REVISION: ${QDL_STABLE_AUTHORITY_REVISION:?set QDL_STABLE_AUTHORITY_REVISION}
   QDL_STABLE_SCHEMA_DIGEST: ${QDL_STABLE_SCHEMA_DIGEST:?set QDL_STABLE_SCHEMA_DIGEST}
+  # Authority comes from the generated read-only record. These two values are
+  # only startup cross-checks and must match authority.json exactly.
+  QDL_STABLE_RUNTIME_DIR: /runtime
   QDL_STABLE_STATE_DIR: /var/lib/qdl-stable/runtime
   QDL_STABLE_DURABLE_STATE_DIR: /var/lib/qdl-stable/shared
   QDL_STABLE_SOURCE_BINDINGS: /app/config/v2/stable-source-bindings.yaml
@@ -94,7 +97,10 @@ x-python: &python
   cap_drop: [ALL]
   networks: [stable_internal]
   tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=64m"]
-  volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
+  volumes:
+    - stable_state:/var/lib/qdl-stable
+    - stable_tls:/stable-certs:ro
+    - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
   environment: {<<: *stable-env}
   mem_limit: 512m
   cpus: 0.75
@@ -329,7 +335,10 @@ services:
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
-    volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
+    volumes:
+      - stable_state:/var/lib/qdl-stable
+      - stable_tls:/stable-certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
@@ -358,7 +367,10 @@ services:
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
-    volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
+    volumes:
+      - stable_state:/var/lib/qdl-stable
+      - stable_tls:/stable-certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
@@ -387,7 +399,10 @@ services:
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
-    volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
+    volumes:
+      - stable_state:/var/lib/qdl-stable
+      - stable_tls:/stable-certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
@@ -432,8 +447,8 @@ services:
     environment:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
-      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core-001
-      QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
+      QDL_KAFKA_CLIENT_ID: qdl-v2-realtime-core-001
+      QDL_KAFKA_GROUP_ID: qdl-v2-realtime-core-v2
     volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core.json:/runtime/core.json:ro"]
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
@@ -448,8 +463,8 @@ services:
     environment:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
-      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core-002
-      QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
+      QDL_KAFKA_CLIENT_ID: qdl-v2-realtime-core-002
+      QDL_KAFKA_GROUP_ID: qdl-v2-realtime-core-v2
     volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core-002.json:/runtime/core-002.json:ro"]
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
@@ -464,8 +479,8 @@ services:
     environment:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
-      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core-003
-      QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
+      QDL_KAFKA_CLIENT_ID: qdl-v2-realtime-core-003
+      QDL_KAFKA_GROUP_ID: qdl-v2-realtime-core-v2
     volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core-003.json:/runtime/core-003.json:ro"]
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}

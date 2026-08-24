@@ -1428,11 +1428,28 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
     def environment(self, root):
         for name in ("ca.crt", "workload.crt", "workload.key"):
             (root / name).write_text("test", encoding="utf-8")
+        runtime = root / "runtime"
+        runtime.mkdir()
+        (runtime / "authority.json").write_text(json.dumps({
+            "schema": "qdl.authority-record.v1",
+            "slice_id": "qdl-v2-stable-multivenue-test",
+            "revision": 1,
+            "mode": "RUST_SHADOW",
+            "candidate_image_digest": "sha256:" + "a" * 64,
+            "capability_manifest_digest": "b" * 64,
+            "contract_digest": "c" * 64,
+            "partition_plan_digest": "d" * 64,
+            "public_write_allowed": False,
+            "legacy_write_allowed": False,
+            "approved_by": "stable-runtime-boundary-test",
+            "effective_at_ns": 1,
+        }), encoding="utf-8")
         return {
             "QDL_ENVIRONMENT": "paper",
             "QDL_CONFIG_REVISION": "phase-b-test-1",
             "QDL_STABLE_AUTHORITY_MODE": "RUST_SHADOW",
             "QDL_STABLE_AUTHORITY_REVISION": "1",
+            "QDL_STABLE_RUNTIME_DIR": str(runtime),
             "QDL_STABLE_SCHEMA_DIGEST": "e" * 64,
             "QDL_STABLE_STATE_DIR": str(root / "state"),
             "QDL_STABLE_DURABLE_STATE_DIR": str(root / "durable"),
@@ -1491,8 +1508,19 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             })
             projector = StableRuntimeConfig.from_environment("projector_v2", values)
             self.assertEqual(projector.kafka_raw_topics, ())
-            values["QDL_STABLE_AUTHORITY_MODE"] = "PRIMARY"
-            with self.assertRaisesRegex(ValueError, "must remain RUST_SHADOW"):
+            authority_path = Path(values["QDL_STABLE_RUNTIME_DIR"]) / "authority.json"
+            primary = json.loads(authority_path.read_text(encoding="utf-8"))
+            primary.update({"mode": "RUST_PRIMARY", "revision": 2})
+            authority_path.write_text(json.dumps(primary), encoding="utf-8")
+            values.update({
+                "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
+                "QDL_STABLE_AUTHORITY_REVISION": "2",
+            })
+            primary_config = StableRuntimeConfig.from_environment("query_v2", values)
+            self.assertEqual(primary_config.authority_mode, "RUST_PRIMARY")
+            self.assertEqual(primary_config.authority_revision, 2)
+            values["QDL_STABLE_AUTHORITY_MODE"] = "RUST_SHADOW"
+            with self.assertRaisesRegex(ValueError, "differs from generated record"):
                 StableRuntimeConfig.from_environment("query_v2", values)
 
 

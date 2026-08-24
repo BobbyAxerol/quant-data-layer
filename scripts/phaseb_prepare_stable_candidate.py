@@ -177,6 +177,10 @@ def prepare_candidate(
     compose_cert_dir = (host_cert_dir or cert_dir).resolve()
     compose_output_dir = (host_output_dir or output_dir).resolve()
     values = {
+        # Compose carries these only as read-only cross-checks against the
+        # generated authority.json mounted by every V2 runtime role.
+        "QDL_STABLE_AUTHORITY_MODE": str(authority["mode"]),
+        "QDL_STABLE_AUTHORITY_REVISION": str(authority["revision"]),
         "QDL_STABLE_SCHEMA_DIGEST": schema_digest,
         "QDL_STABLE_CONSUMER_NETWORK": consumer_network,
         "QDL_STABLE_INTERNAL_INGEST_SECRET": ingest_secret,
@@ -246,7 +250,7 @@ def prepare_candidate(
     manifest = {
         "schema": "qdl.v2.stable-candidate-bundle.v1",
         "contract_version": "2.0.0",
-        "authority": "RUST_SHADOW",
+        "authority": authority["mode"],
         "cutover_authorized": False,
         "rust_image_id": rust_digest,
         "python_image_id": python_digest,
