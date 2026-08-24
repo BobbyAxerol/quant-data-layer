@@ -29,6 +29,25 @@ const RAW_ENVELOPE_HEADER: &str = "qdl-raw-provider-envelope";
 const COOPERATIVE_ASSIGNMENT_STRATEGY: &str = "cooperative-sticky";
 const CONSUMER_GROUP_PROTOCOL: &str = "classic";
 
+// Keep every consumer/producer instance bounded inside its cgroup. Durable Kafka
+// offsets provide backpressure/recovery; unbounded librdkafka local queues do not.
+const KAFKA_QUEUE_MAX_KBYTES: &str = "8192";
+const KAFKA_FETCH_MAX_BYTES: &str = "4194304";
+const KAFKA_MAX_PARTITION_FETCH_BYTES: &str = "1048576";
+const KAFKA_PRODUCER_QUEUE_MAX_MESSAGES: &str = "4096";
+
+fn configure_bounded_client_memory(config: &mut ClientConfig) {
+    config
+        .set("queued.max.messages.kbytes", KAFKA_QUEUE_MAX_KBYTES)
+        .set("fetch.max.bytes", KAFKA_FETCH_MAX_BYTES)
+        .set("max.partition.fetch.bytes", KAFKA_MAX_PARTITION_FETCH_BYTES)
+        .set("queue.buffering.max.kbytes", KAFKA_QUEUE_MAX_KBYTES)
+        .set(
+            "queue.buffering.max.messages",
+            KAFKA_PRODUCER_QUEUE_MAX_MESSAGES,
+        );
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShutdownSignal {
     Interrupt,
@@ -133,6 +152,7 @@ impl KafkaTransportConfig {
             .set("ssl.endpoint.identification.algorithm", "https")
             .set("socket.timeout.ms", &timeout_ms)
             .set("request.timeout.ms", &timeout_ms);
+        configure_bounded_client_memory(&mut config);
         if let Some(password) = &self.tls.key_password {
             config.set("ssl.key.password", password);
         }
@@ -945,9 +965,11 @@ impl KafkaEventSource {
 #[cfg(test)]
 mod tests {
     use super::{
-        transactional_output_headers, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
-        Phase92SinkTopics, Phase9SinkTopics, ShutdownSignal, TransactionalShadowTopics,
-        CONSUMER_GROUP_PROTOCOL, COOPERATIVE_ASSIGNMENT_STRATEGY, EVENT_ID_HEADER,
+        configure_bounded_client_memory, transactional_output_headers, KafkaTlsConfig,
+        KafkaTransportConfig, KafkaTransportError, Phase92SinkTopics, Phase9SinkTopics,
+        ShutdownSignal, TransactionalShadowTopics, CONSUMER_GROUP_PROTOCOL,
+        COOPERATIVE_ASSIGNMENT_STRATEGY, EVENT_ID_HEADER, KAFKA_FETCH_MAX_BYTES,
+        KAFKA_MAX_PARTITION_FETCH_BYTES, KAFKA_PRODUCER_QUEUE_MAX_MESSAGES, KAFKA_QUEUE_MAX_KBYTES,
         RAW_ENVELOPE_HEADER,
     };
     use qdl_core::transport::RetryClass;
@@ -982,6 +1004,29 @@ mod tests {
         assert_eq!(client.get("enable.auto.offset.store"), Some("false"));
         assert_eq!(client.get("isolation.level"), Some("read_committed"));
         assert_eq!(client.get("group.instance.id"), None);
+    }
+
+    #[test]
+    fn client_memory_policy_is_explicitly_bounded() {
+        let mut client = ClientConfig::new();
+        configure_bounded_client_memory(&mut client);
+        assert_eq!(
+            client.get("queued.max.messages.kbytes"),
+            Some(KAFKA_QUEUE_MAX_KBYTES)
+        );
+        assert_eq!(client.get("fetch.max.bytes"), Some(KAFKA_FETCH_MAX_BYTES));
+        assert_eq!(
+            client.get("max.partition.fetch.bytes"),
+            Some(KAFKA_MAX_PARTITION_FETCH_BYTES)
+        );
+        assert_eq!(
+            client.get("queue.buffering.max.kbytes"),
+            Some(KAFKA_QUEUE_MAX_KBYTES)
+        );
+        assert_eq!(
+            client.get("queue.buffering.max.messages"),
+            Some(KAFKA_PRODUCER_QUEUE_MAX_MESSAGES)
+        );
     }
 
     #[test]

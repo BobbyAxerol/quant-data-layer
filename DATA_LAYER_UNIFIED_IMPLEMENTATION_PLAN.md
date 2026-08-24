@@ -11197,3 +11197,27 @@ live migration or authority transition is part of R0.
   direct regression test and a UID `10001` bind-read preflight, then atomically
   re-issue the same fresh-group cursor. Do not hand-chown the existing cursor
   or start production cores before that source gate passes.
+
+
+**R1 bounded Kafka-memory canary failure - 2026-08-24 (in progress).**
+
+- The cursor repair passed and the exact 12-slice canary control event reached
+  `RUST_CANARY@revision 7/lease 3`, but a simultaneous start of the three
+  `production_core_*` replicas failed acceptance: core 1 and core 3 were
+  cgroup OOM-killed (`exit 137`, `OOMKilled=true`) after roughly three seconds.
+  Core 2 reached signed bootstrap restoration and was then stopped as the
+  bounded R1 rollback. No R2 transition, public/V1 write, offset reset or V1
+  restart occurred.
+- Root cause is a real Rust transport-capacity gap: each core uses raw
+  consumer, transactional producer, authority watcher and compacted recovery
+  clients, while shared `KafkaTransportConfig` left librdkafka queue/fetch and
+  producer-buffer ceilings at unbounded defaults. Three cold recoveries under
+  the deliberate `256MiB` cgroup bound are therefore not safe. Host available
+  memory is not the issue; this is per-container cgroup enforcement.
+- Required in-scope repair: fence this failed canary through a new C3
+  `RUST_CANARY -> BLOCKED` packet, then introduce explicit bounded consumer
+  queue/fetch and producer queue ceilings in the Rust transport contract with
+  strict unit coverage. Build a new immutable Rust image/candidate/bundle,
+  re-run fresh reference admission, and start the three production cores
+  **rolling** (next replica only after the prior recovery/steady-state resource
+  gate passes). Generic scope-fenced cores and V1 remain untouched.
