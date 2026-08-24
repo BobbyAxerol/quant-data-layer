@@ -12042,6 +12042,28 @@ PENDING`).**
   semantics and bounded diagnostics. The same public-provider re-probe remains
   mandatory before this correction can be certified.
 
+**Provider-authentic Binance BAR recovery decision - 2026-08-24 (`APPROVED
+IN-SCOPE CORRECTION`).**
+
+- The lane-isolated BAR probe received zero frames after a valid ACK. This
+  exactly reproduces the pre-existing Phase 9.0-A host/provider finding:
+  `@kline`, aggregate-trade and mark-price subscriptions are connected but
+  produce no valid data, while Binance REST closed bars are provider-authentic
+  and available. WebSocket BAR therefore remains capability-present but
+  degraded; it cannot be declared ready or used as execution authority.
+- Active Binance final-BAR acquisition will use the already tested bounded
+  `PYTHON_REST` provider edge (`rest-klines/<interval>`, fully closed rows,
+  retry/backoff/contiguous catch-up/Kafka ACK) only. It writes raw
+  provider-authentic envelopes into the same V2 raw topic; the Rust core
+  remains the sole canonical/replay/query/stream authority. This matches the
+  program boundary of Rust core plus provider-specific outer adapters and does
+  not fall back to V1.
+- The existing Rust BAR lane isolation stays implemented and tested as dormant
+  capability protection. Re-enabling native Binance BAR later requires a fresh
+  provider admission proving valid final frames, then a reviewed manifest
+  revision. No source data, endpoint schema, consumer contract or deployment
+  is changed in this decision record itself.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,
