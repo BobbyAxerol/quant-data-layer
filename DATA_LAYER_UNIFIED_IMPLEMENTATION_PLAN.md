@@ -13135,6 +13135,13 @@ CUTOVER PENDING`).**
   non-secret substitutions (runtime directory, two immutable image digests,
   authority mode/revision and config revision). The render was local only; it
   did not contact the Docker daemon or create/recreate a service.
+- Ran the broker helper once in its default review-only mode against this
+  packet. It returned `REVIEW_REQUIRED`, `9` exact idempotent commands and
+  `0` production mutations: one create-or-verify of
+  `md.raw.realtime.v2` and eight narrowly scoped producer/core ACL grants.
+  Its explicit forbidden surface contains offset reset/seek, topic deletion,
+  Redis flush, SQLite deletion, service start and V1 restart, so none can be
+  reached through this packet helper.
 - **Runtime remains unchanged:** the active V1 Data Layer and Trading System
   remain up; the observed V2 plane is still the prior shadow deployment. No
   Kafka topic/ACL/offset, Redis/SQLite/PostgreSQL state, provider subscription,
