@@ -139,6 +139,7 @@ def _runtime_manifest(
     runtime_digests: Mapping[str, str],
     sealed_route: Mapping[str, Any],
     source_commit: str,
+    python_image_digest: str,
 ) -> dict[str, Any]:
     return {
         "schema": RUNTIME_MANIFEST_SCHEMA,
@@ -146,6 +147,7 @@ def _runtime_manifest(
         "authority_sha256": _sha256(dict(authority)),
         "authority_mode": "RUST_PRIMARY",
         "candidate_image_digest": str(authority["candidate_image_digest"]),
+        "python_image_digest": python_image_digest,
         "core_group_id": SHARED_REALTIME_CORE_GROUP_ID,
         "core_transactional_id_prefix": f"{SHARED_REALTIME_CORE_ID_PREFIX}-",
         "core_worker_count": STABLE_CORE_WORKER_COUNT,
@@ -159,6 +161,7 @@ def prepare_shared_primary_packet(
     *,
     output_dir: Path,
     rust_image_digest: str,
+    python_image_digest: str,
     source_commit: str,
     actor: str,
     change_ticket: str,
@@ -169,6 +172,7 @@ def prepare_shared_primary_packet(
     if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError("shared primary output directory must be empty")
     _require_sha256(rust_image_digest, field="rust_image_digest")
+    _require_sha256(python_image_digest, field="python_image_digest")
     if not source_commit.strip() or not actor.strip() or not change_ticket.strip():
         raise ValueError("source commit, actor and change ticket are required")
     if not 60 <= observation_seconds <= 1_800:
@@ -220,6 +224,7 @@ def prepare_shared_primary_packet(
         runtime_digests=runtime_digests,
         sealed_route=sealed_route,
         source_commit=source_commit,
+        python_image_digest=python_image_digest,
     )
     manifest_path = runtime_dir / "shared-primary-runtime-manifest.json"
     manifest_path.write_bytes(_canonical_bytes(manifest) + b"\n")
@@ -231,6 +236,7 @@ def prepare_shared_primary_packet(
         "source_commit": source_commit,
         "authority_sha256": _sha256(authority),
         "bundle_sha256": bundle_digest,
+        "python_image_digest": python_image_digest,
         "actor": actor,
         "change_ticket": change_ticket,
         "issued_at_ns": now_ns,
@@ -251,6 +257,8 @@ def prepare_shared_primary_packet(
         "runtime_bundle": {
             "sha256": bundle_digest,
             "manifest_sha256": _file_digest(manifest_path),
+            "rust_image_digest": rust_image_digest,
+            "python_image_digest": python_image_digest,
             "core_group_id": SHARED_REALTIME_CORE_GROUP_ID,
             "core_transactional_id_prefix": f"{SHARED_REALTIME_CORE_ID_PREFIX}-",
             "files": runtime_digests,
@@ -329,6 +337,17 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
         raise ValueError("shared primary packet requires RUST_PRIMARY authority")
     if packet.get("apply_requested") is not False or packet.get("production_mutations") != 0:
         raise ValueError("shared primary packet is review-only before explicit approval")
+    runtime_bundle = packet["runtime_bundle"]
+    if not isinstance(runtime_bundle, dict):
+        raise ValueError("shared primary packet runtime bundle is invalid")
+    rust_image_digest = runtime_bundle.get("rust_image_digest")
+    python_image_digest = runtime_bundle.get("python_image_digest")
+    if not isinstance(rust_image_digest, str) or not isinstance(python_image_digest, str):
+        raise ValueError("shared primary packet image digests are invalid")
+    _require_sha256(rust_image_digest, field="rust_image_digest")
+    _require_sha256(python_image_digest, field="python_image_digest")
+    if rust_image_digest != authority.get("candidate_image_digest"):
+        raise ValueError("shared primary packet Rust image differs from authority")
     deployment = packet["deployment"]
     rollback = packet["rollback"]
     if not isinstance(deployment, dict) or not isinstance(rollback, dict):
@@ -375,6 +394,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--rust-image-digest", required=True)
+    parser.add_argument("--python-image-digest", required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--actor", required=True)
     parser.add_argument("--change-ticket", required=True)
@@ -383,6 +403,7 @@ def main() -> int:
     packet = prepare_shared_primary_packet(
         output_dir=args.output_dir,
         rust_image_digest=args.rust_image_digest,
+        python_image_digest=args.python_image_digest,
         source_commit=args.source_commit,
         actor=args.actor,
         change_ticket=args.change_ticket,

@@ -12491,6 +12491,39 @@ RUNTIME PACKET PENDING`).**
   named services, observation duration and V1 manifest revision before topic
   or ACL creation, service recreation or consumer route activation.
 
+**Phase 10.3 immutable artifact and packet-image binding checkpoint -
+2026-08-24 (`SOURCE/PACKAGING PASS / RUNTIME CUTOVER PENDING`).**
+
+- Built exactly the two runtime artifacts required by the shared topology from
+  source commit `7b7388348615ba37c4a8d63b1f560fbdad91e658`: Python
+  `qdl-v2-python:2.0.0-7b7388348615` / image ID
+  `sha256:90c96b9c4418525ec6e505e7debcb7dfc8addbcb9e957eeaded90f2e9ddc8730`
+  and Rust `qdl-v2-rust:2.0.0-7b7388348615` / image ID
+  `sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`.
+  Their OCI revision labels equal that commit. No per-symbol, per-venue or
+  retry image was built; V1 and all existing running images remain unchanged.
+- Corrected the review packet schema so it binds both immutable image IDs.
+  Rust remains the authority candidate in `authority.json`; the packet/runtime
+  manifest also requires `python_image_digest` for the named provider-edge,
+  projector, query and stream roles. Omission, malformed digest or a Rust
+  digest that differs from the authority record now fails before any packet is
+  written. This closes the artifact-audit/rollback ambiguity found during
+  preflight.
+- **Tests actually run:** the newly built Python image, with source mounted
+  read-only and network disabled, passed the Phase 10.3 packet/route/deployment
+  regression `19/19`. A tmpfs-only packet generator smoke using the two exact
+  image IDs passed with `status=REVIEW_REQUIRED`, `13` fixed V2 services,
+  `12` crypto bindings and `production_mutations=0`; its output disappeared
+  when the disposable container exited. `git diff --check` passed. No runtime
+  bundle was mounted, no service restarted, no topic/ACL/offset/authority,
+  cache, V1 route, Trading System or alpha state was changed.
+- **Next boundary:** generate the same sealed packet into a fresh private
+  operator directory, validate a Compose render against it and request one
+  exact runtime approval. The future packet must name only the 13 shared V2
+  roles, `md.raw.realtime.v2`, its ACL intent, a 300-second acceptance window
+  and stop-only/V1-manifest rollback. It must not use the historical
+  `production_core_*` profile.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 
@@ -12517,6 +12550,15 @@ CUTOVER PENDING`).**
   packet bound to those digests; run it only in isolated acceptance before any
   service/topic/authority mutation. No per-symbol image, container, topic or
   worker is permitted.
+- **In-scope packet correctness repair before bundle generation:** the initial
+  review-only packet bound only the Rust canonical-core digest. That is
+  insufficient because the named `projector/query/stream` roles are Python
+  binaries and a rollback must identify both runtime artifacts. Require an
+  immutable `python_image_digest` in the generated runtime manifest and
+  packet, validate it fail-closed together with the Rust digest, and add
+  contract tests for omission/malformed values. This does not change a public
+  contract or runtime; it makes the later approved packet auditable and
+  rollback-safe.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 

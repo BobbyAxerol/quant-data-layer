@@ -122,6 +122,7 @@ class SharedPrimaryPacketTests(unittest.TestCase):
         return prepare_shared_primary_packet(
             output_dir=output_dir,
             rust_image_digest="sha256:" + "b" * 64,
+            python_image_digest="sha256:" + "c" * 64,
             source_commit="0123456789abcdef",
             actor="BobbyAxerol",
             change_ticket="QDL-PHASE103-TEST",
@@ -137,6 +138,14 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             self.assertFalse(packet["apply_requested"])
             self.assertEqual(packet["production_mutations"], 0)
             self.assertEqual(packet["authority"]["mode"], "RUST_PRIMARY")
+            self.assertEqual(
+                packet["runtime_bundle"]["rust_image_digest"],
+                "sha256:" + "b" * 64,
+            )
+            self.assertEqual(
+                packet["runtime_bundle"]["python_image_digest"],
+                "sha256:" + "c" * 64,
+            )
             self.assertEqual(
                 packet["deployment"]["services"],
                 list(_ALLOWED_SERVICE_ORDER),
@@ -194,6 +203,7 @@ class SharedPrimaryPacketTests(unittest.TestCase):
                 prepare_shared_primary_packet(
                     output_dir=Path(directory) / "bad-image",
                     rust_image_digest="qdl-v2-rust:latest",
+                    python_image_digest="sha256:" + "c" * 64,
                     source_commit="0123456789abcdef",
                     actor="BobbyAxerol",
                     change_ticket="QDL-PHASE103-TEST",
@@ -204,10 +214,22 @@ class SharedPrimaryPacketTests(unittest.TestCase):
                 prepare_shared_primary_packet(
                     output_dir=Path(directory) / "bad-window",
                     rust_image_digest="sha256:" + "b" * 64,
+                    python_image_digest="sha256:" + "c" * 64,
                     source_commit="0123456789abcdef",
                     actor="BobbyAxerol",
                     change_ticket="QDL-PHASE103-TEST",
                     observation_seconds=59,
+                    issued_at_ns=1_800_000_000_000_000_000,
+                )
+            with self.assertRaisesRegex(ValueError, "python_image_digest"):
+                prepare_shared_primary_packet(
+                    output_dir=Path(directory) / "bad-python-image",
+                    rust_image_digest="sha256:" + "b" * 64,
+                    python_image_digest="qdl-v2-python:latest",
+                    source_commit="0123456789abcdef",
+                    actor="BobbyAxerol",
+                    change_ticket="QDL-PHASE103-TEST",
+                    observation_seconds=300,
                     issued_at_ns=1_800_000_000_000_000_000,
                 )
 
