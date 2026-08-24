@@ -226,7 +226,31 @@ class DataPlaneAccess:
                 "PERMISSION_DENIED",
                 "data requirement is outside the registered consumer manifest",
             )
-        if requirement.warmup_limit > self.manifest.quotas.max_warmup_rows:
+        warmup = requirement.warmup_specification
+        requested_rows = requirement.warmup_limit
+        if warmup is not None and warmup.rows is not None:
+            requested_rows = warmup.rows
+        elif warmup is not None and warmup.time_range is not None:
+            if not requirement.interval:
+                raise DataPlaneAccessError(
+                    "QUOTA_EXCEEDED",
+                    "time-range warmup requires an interval",
+                    status_code=429,
+                )
+            from qdl.adapters.intervals import canonical_interval_ms
+
+            duration_ns = (
+                warmup.time_range.end_time_ns - warmup.time_range.start_time_ns
+            )
+            interval_ns = canonical_interval_ms(requirement.interval) * 1_000_000
+            if duration_ns % interval_ns:
+                raise DataPlaneAccessError(
+                    "QUOTA_EXCEEDED",
+                    "time-range warmup is not aligned to the interval",
+                    status_code=429,
+                )
+            requested_rows = duration_ns // interval_ns
+        if requested_rows > self.manifest.quotas.max_warmup_rows:
             raise DataPlaneAccessError(
                 "QUOTA_EXCEEDED",
                 "warmup limit exceeds the registered consumer quota",

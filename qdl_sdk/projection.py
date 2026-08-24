@@ -355,6 +355,7 @@ def market_data_view_from_stream(
             "feed": feed.value,
             "interval": interval,
             "observed_at_ns": observed_at_ns,
+            "received_at_ns": max(1, int(envelope.received_at_ns)),
             "revision": revision,
             "payload": payload,
             "source": {

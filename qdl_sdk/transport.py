@@ -47,6 +47,31 @@ class RestQueryTransport:
         )
         return self._decode(response)
 
+    async def warmup_batch(
+        self,
+        requirements: Sequence[DataRequirement],
+        *,
+        consumer_id: str,
+        require_all: bool,
+    ) -> dict:
+        values = tuple(requirements)
+        if not values:
+            raise ValueError("warmup batch cannot be empty")
+        grades = {item.consumer_grade for item in values}
+        if len(grades) != 1:
+            raise ValueError("one warmup batch cannot mix consumer grades")
+        headers = await self._identity_headers(next(iter(grades)), consumer_id)
+        response = await self._client.post(
+            "/v2/market-data/warmup:batch",
+            json={
+                "consumer_id": consumer_id,
+                "require_all": require_all,
+                "requirements": [item.to_mapping() for item in values],
+            },
+            headers=headers,
+        )
+        return self._decode(response)
+
     async def snapshot(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
         headers = await self._headers(requirement, consumer_id)
         params = requirement.query_params()

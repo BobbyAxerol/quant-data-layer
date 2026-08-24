@@ -64,6 +64,66 @@ async with client.warmup_then_stream(
             handle_control(item)
 ```
 
+## Universal BAR warmup and closed-bar handoff
+
+BAR consumers declare either an exact row count or an exact half-open time
+range. They also declare whether the service may resample a non-native interval
+from complete final constituents. The server never silently changes the
+instrument, interval, horizon or source policy.
+
+```python
+from qdl_sdk import (
+    ClosedBarHandoff,
+    DataRequirement,
+    Feed,
+    Grade,
+    IntervalSourcePolicy,
+    RecoveryPolicy,
+    WarmupSpecification,
+)
+
+requirement = DataRequirement(
+    instrument_uid=instrument.instrument_uid,
+    feed=Feed.BAR,
+    consumer_grade=Grade.ALPHA,
+    source_policy_id="crypto_primary_v2",
+    interval="15m",
+    recovery=RecoveryPolicy.FRESH_SNAPSHOT,
+    warmup=WarmupSpecification(
+        rows=700,
+        interval_source_policy=(
+            IntervalSourcePolicy.NATIVE_OR_EXACT_RESAMPLE
+        ),
+        max_cache_age_ms=60_000,
+        deadline_ms=20_000,
+    ),
+)
+
+warmup = await client.warmup(requirement)
+handoff = ClosedBarHandoff.from_warmup(
+    warmup,
+    interval="15m",
+    maxlen=700,
+)
+
+# `latest_closed_bar` comes from the same typed V2 BAR contract. A new final
+# bar is appended FIFO before the strategy callback runs, with no extra-bar lag.
+await handoff.append_closed(latest_closed_bar, release=recompute_strategy)
+```
+
+For a portfolio or universe, call `client.warmup_batch(requirements)`. The SDK
+chunks transport requests without serializing every symbol, preserves input
+order and cardinality, and validates every item. `require_all=True` is the
+default and mandatory for execution-grade requirements; one missing, stale,
+gapped or partial item fails the aggregate request. Alpha-grade diagnostic
+callers may set `require_all=False`, but must inspect each typed problem and may
+not treat the partial batch as execution-ready.
+
+`ClosedBarHandoff` keeps exactly the newest `maxlen` final/revised bars. A
+duplicate bar is ignored, a higher revision replaces the same boundary without
+re-running the strategy, and a gap or late bar fails closed so the caller can
+recover history before continuing.
+
 ## Migration safety
 
 - Existing V1 methods remain delegated by `V1CompatibilityFacade` without

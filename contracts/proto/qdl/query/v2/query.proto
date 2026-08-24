@@ -52,6 +52,27 @@ enum BarRevisionPolicy {
   BAR_REVISION_POLICY_EMIT_REVISIONS = 3;
 }
 
+enum IntervalSourcePolicy {
+  INTERVAL_SOURCE_POLICY_UNSPECIFIED = 0;
+  INTERVAL_SOURCE_POLICY_NATIVE_ONLY = 1;
+  INTERVAL_SOURCE_POLICY_NATIVE_OR_EXACT_RESAMPLE = 2;
+}
+
+message WarmupTimeRange {
+  int64 start_time_ns = 1;
+  int64 end_time_ns = 2;
+}
+
+message WarmupSpecification {
+  oneof horizon {
+    uint32 rows = 1;
+    WarmupTimeRange time_range = 2;
+  }
+  IntervalSourcePolicy interval_source_policy = 3;
+  uint32 max_cache_age_ms = 4;
+  uint32 deadline_ms = 5;
+}
+
 message DataRequirement {
   string instrument_uid = 1;
   string feed = 2 [deprecated = true];
@@ -72,6 +93,7 @@ message DataRequirement {
   GapPolicy gap_policy_type = 23;
   RecoveryPolicy recovery_policy = 24;
   BarRevisionPolicy revision_policy = 25;
+  WarmupSpecification warmup = 26;
 }
 
 message SubscribeRequest {

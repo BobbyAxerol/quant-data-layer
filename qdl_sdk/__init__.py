@@ -11,8 +11,10 @@ from qdl_sdk.credentials import (
 )
 from qdl_sdk.cursor import CursorCheckpoint, FileCursorStore, MemoryCursorStore
 from qdl_sdk.errors import DataLayerError
+from qdl_sdk.handoff import ClosedBarHandoff
 from qdl_sdk.models import (
     BarRevisionPolicy,
+    BatchResponse,
     ControlEvent,
     DataRequirement,
     Feed,
@@ -21,6 +23,7 @@ from qdl_sdk.models import (
     InstrumentPageResponse,
     InstrumentResponse,
     InstrumentView,
+    IntervalSourcePolicy,
     MarketDataView,
     QuantityUnit,
     RecoveryPolicy,
@@ -29,6 +32,8 @@ from qdl_sdk.models import (
     StreamEvent,
     TradeIdentityKind,
     WarmupResponse,
+    WarmupSpecification,
+    WarmupTimeRange,
 )
 from qdl_sdk.projection import market_data_view_from_stream
 from qdl_sdk.transport import GrpcStreamTransport, RestQueryTransport
@@ -39,7 +44,9 @@ __all__ = [
     "__version__",
     "AsyncDataLayerClient",
     "BarRevisionPolicy",
+    "BatchResponse",
     "CallbackCredentialProvider",
+    "ClosedBarHandoff",
     "CursorCheckpoint",
     "ControlEvent",
     "CredentialProvider",
@@ -54,6 +61,7 @@ __all__ = [
     "InstrumentPageResponse",
     "InstrumentResponse",
     "InstrumentView",
+    "IntervalSourcePolicy",
     "MemoryCursorStore",
     "MarketDataView",
     "market_data_view_from_stream",
@@ -67,6 +75,8 @@ __all__ = [
     "StreamEvent",
     "TradeIdentityKind",
     "WarmupResponse",
+    "WarmupSpecification",
+    "WarmupTimeRange",
     "WorkloadTlsConfig",
     "V1CompatibilityFacade",
     "WarmupStreamSession",

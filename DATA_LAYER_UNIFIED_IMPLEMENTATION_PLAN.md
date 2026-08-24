@@ -192,7 +192,7 @@ These rules apply to all phases.
 | 8 | Multi-venue Rust realtime core and reference slice | Build one provider-neutral Rust core for all venues and prove it with cross-venue conformance plus a Binance USD-M reference shadow | `COMPLETE (8.0-8.3; RUST_SHADOW only)` |
 | 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
 | 10.1 | Universal demand contract and runtime topology | Replace fixed reference slices with one capability-truthful demand manifest and one shared Rust canonical core | `COMPLETE (SOURCE/ISOLATED; DARK; NO RUNTIME CUTOVER)` |
-| 10.2 | Universal warmup, history and batch handoff | Serve strategy-defined historical windows quickly, exactly and safely for every supported venue, instrument and interval | `PROPOSED - AWAITING APPROVAL` |
+| 10.2 | Universal warmup, history and batch handoff | Serve strategy-defined historical windows quickly, exactly and safely for every supported venue, instrument and interval | `IN PROGRESS (SOURCE/ISOLATED; NO RUNTIME CUTOVER)` |
 | 10.3 | Rust-primary realtime execution data plane | Make Rust the primary canonical TRADE, QUOTE and BAR source for the complete demanded universe, with V1 as observable fallback | `PROPOSED - AWAITING APPROVAL` |
 | 10.4 | Microstructure and alternative-data products | Add execution-grade order book, reference metrics and multi-instrument derivatives data behind the same contracts | `PROPOSED - AWAITING APPROVAL` |
 | 10.5 | Consumer cutover, certification and release | Move Trading System and alpha SDK routes to V2 primary by manifest, retain V1 rollback and publish stable V2 | `PROPOSED - AWAITING APPROVAL` |
@@ -11645,6 +11645,147 @@ SOURCE-ONLY / NO CUTOVER`).**
 **Goal:** Let every strategy request the exact historical window it needs,
 across many symbols and intervals, without stale-bar regressions, serial REST
 storms or a dependence on a special alpha wrapper.
+
+**Closure - 2026-08-24 (`IMPLEMENTATION COMPLETE / SOURCE AND ISOLATED
+CERTIFIED / NO CUTOVER`).**
+
+- **Approved scope:** complete the provider-neutral V2 warmup/history contract,
+  typed SDK batch surface, bounded concurrent planner, exact final-bar/FIFO
+  handoff, provider-aware request budgets, retries, cache and explicit partial
+  failures. Reuse the existing V2 query/API/SDK and provider adapters; do not
+  create a new service, image, topic, Redis namespace or per-symbol runtime.
+- **Guides and invariants:** follow architecture sections 15-17, 37-38 and the
+  Phase 10 product invariants above. Provider bytes or durable canonical bytes
+  are the only production/shadow source. Fixtures are deterministic test input
+  only. V1 routes, payloads, Redis keys and active consumers remain unchanged.
+- **Correctness gates:** exact instrument/interval/time-window identity; closed
+  and consecutive bars only; native interval preference; exact final-only
+  resampling with constituent lineage; no incomplete response labelled `OK`;
+  per-item error identity in partial batches; and one callback per newly closed
+  bar without a one-bar delay.
+- **Reliability gates:** bounded chunking and concurrency, identical-work
+  singleflight, cancellation/deadline propagation, provider fairness,
+  `Retry-After`/jittered retry and circuit state. Cache identity includes the
+  closed-bar boundary and requested data semantics, remains bounded and cannot
+  turn stale/partial data into execution-grade data.
+- **Evidence gates:** deterministic unit/contract/parity/fault tests; V1/V2
+  compatibility regression; bounded read-only Binance/OKX real-provider test
+  for every currently demanded BAR slice and interval; VN is accepted only
+  from an authenticated open session and otherwise remains an explicit gate.
+  Record p50/p95, source calls, cache hits, 429/5xx behavior and bounded
+  process resources without writing raw provider payloads to evidence.
+- **Runtime boundary and rollback:** source and isolated tests only. No running
+  V1/V2 role, authority, Kafka offset, Redis/SQLite state, alpha config or
+  consumer route may change. Rollback is the preceding commit; disposable test
+  state is removed by container `--rm` or an exact test namespace.
+
+**Implementation journal - checkpoint 10.2-A (2026-08-24).**
+
+- Added the provider-neutral typed warmup contract for exact row-count or
+  half-open time-range requests, native-only or exact-resample source policy,
+  bounded cache age and per-request deadline. Legacy `warmup_limit` remains
+  wire-compatible and retains its previous requirement identity.
+- Added deterministic planning by provider/venue/product/interval/window,
+  bounded chunks, provider token budgets and provider-scoped singleflight;
+  retry honors `Retry-After` with bounded jitter and opens a scoped circuit on
+  repeated provider failures.
+- Added exact final-only resampling with constituent lineage, volume-unit and
+  source-identity checks, plus bounded FIFO handoff that releases one strategy
+  callback immediately for each newly closed bar. Provider close timestamps
+  retain provider precision; exact coverage is proven by
+  `last_open + interval == requested_end`.
+- Added typed V2 API, gRPC and Python SDK fields and generated Python/Rust
+  bindings. Query routing can fall back from an incomplete/stale stable spool
+  to a compatible provider history source, but cannot label a partial result
+  `FULL` or silently substitute a different interval/source policy.
+- Isolated focused command (read-only source, no network, disposable tmpfs):
+  `python -m unittest tests.test_phase10_universal_warmup` passed **23/23** in
+  **0.387 seconds**. Cases currently cover typed/legacy contracts, planning,
+  native and exact-resampled provider history, >1000-row pagination, explicit
+  range boundaries, singleflight, retry/circuit/deadline/cancellation,
+  session-aware gaps, FIFO and SDK warmup-to-stream handoff. No runtime or
+  provider state was changed.
+- **Checkpoint status:** focused correctness slice passed; Phase 10.2 remains
+  `IN PROGRESS` until compatibility/golden/Rust tests, batch failure semantics,
+  bounded real-provider admission and resource evidence are complete.
+- **Checkpoint 10.2-B regression (2026-08-24):** the combined isolated
+  warmup/demand/canary/stable-query/V2-API/SDK bundle passed **111 tests** with
+  **1 declared infrastructure skip** in **6.806 seconds**. The first run found
+  one real empty-input defect in the stable gap scanner: a BAR binding with no
+  retained rows attempted to index an empty expected-open list. The scanner now
+  returns only any explicit sequence gaps for that empty binding, while the new
+  VN exact-range case still proves that the lunch break is allowed and a
+  missing in-session bar is reported `PARTIAL` with one open gap. Three stale
+  test-fixture defects (an out-of-schema protobuf assignment, a missing JSON
+  import and a cutoff fixture that accidentally exercised pagination) were
+  corrected without changing runtime semantics. No service or shared state was
+  touched; the container mounted source read-only and used disposable tmpfs.
+- **Checkpoint 10.2-C bounded real-provider admission (2026-08-24):** added a
+  read-only admission that resolves the production demand manifest through the
+  stable catalog and invokes the same provider history/canonicalization path as
+  V2. Its deterministic contract suite passed **35/35**. The real run then
+  passed **6/6 demanded BAR slices** and **30/30 final 1m bars**: Binance Spot
+  BTCUSDT, Binance USD-M BTCUSDT/ETHUSDT, OKX Spot BTC-USDT and OKX Swap
+  BTC-USDT-SWAP/ETH-USDT-SWAP. Raw-provider hash lineage and typed V2 window
+  boundaries matched for every slice; only aggregate hashes/metrics were
+  emitted and no raw payload was persisted. Measured p50/p95 were
+  **94.962/109.549 ms**, process CPU **0.104 s**, max RSS **76,512 KiB**, six
+  actual provider calls, six cache hits, zero retry/circuit rejection and zero
+  provider 429/5xx/failure. `production_writes=0`; the disposable container was
+  removed automatically. VN was outside its authenticated open session at
+  **21:07 +07**, so it remains the explicit in-session external evidence gate
+  required by this phase rather than being inferred from closed-market data.
+- **Checkpoint 10.2-D completion audit (2026-08-24, in progress):** the final
+  requirement-by-requirement review found that planner/executor budgets were
+  applied per logical warmup window, while a 10,000-row window may issue many
+  provider REST pages. The remaining in-scope fix is therefore to enforce the
+  provider token budget, concurrency bound and request deadline at every
+  physical page fetch, and to expose bounded aggregate wait/source metrics.
+  Deterministic tests must prove page-level throttling and fail-closed deadline
+  exhaustion before the full regression/evidence gate is rerun. This changes
+  neither the public contract nor runtime topology; no service restart,
+  consumer route, provider credential or shared cache is authorized.
+  The page-level implementation now consumes one token and one bounded
+  concurrency slot per physical Binance/OKX REST page, propagates the request
+  deadline through singleflight waiting and each fetch timeout, and reports
+  aggregate provider wait count/time. The focused Phase 10.2 suite passed
+  **38/38 tests** in **0.798 seconds**, including deterministic two-page
+  throttling and a typed `RATE_LIMITED` deadline refusal with no hidden sleep
+  or partial success. Full compatibility and regression gates remain pending.
+- **Checkpoint 10.2-E final closure (2026-08-24):** completion review also
+  corrected timeout ownership and telemetry accuracy. A provider socket that
+  outlives its caller now retains its concurrency slot until its worker exits,
+  reports retryable `SOURCE_UNAVAILABLE` and cannot create hidden worker growth.
+  Single REST warmup/history calls use the same non-blocking bounded
+  retry/circuit executor as batch items. Small-sample p50/p95 now use
+  nearest-rank calculation so a slow tail sample is not omitted.
+- Final focused Phase 10.2 tests passed **41/41**; targeted API/provider tests
+  passed **56/56**; the complete isolated Python suite passed **812 tests** with
+  **6 declared environment-dependent skips** and zero failure. Frozen V1/V2
+  OpenAPI compatibility, Buf format/lint/breaking checks, generated bindings,
+  strict Rust clippy and **100 Rust tests** passed. The standalone SDK wheel
+  imported outside the repository and has SHA-256
+  `9211485f1db927118cefa5c79b1fe2f87c7f3b9257288e32997f4b8d39d3d578`.
+- Final read-only real-provider admission passed **6/6 currently demanded BAR
+  slices** and **30/30 final bars** across Binance Spot/USD-M and OKX
+  Spot/Swap. Nearest-rank p50/p95 were **97.040/137.834 ms**, process CPU
+  **0.113 s**, max RSS **76,616 KiB**, with six provider calls, six cache hits,
+  zero retry/circuit rejection, zero 429/5xx/failure, zero production writes
+  and no raw payload persistence.
+- Consumer operation and handoff semantics are documented in `qdl_sdk/README.md`
+  and `DATA_LAYER_SERVICE_ACCESS_GUIDE.md`. The complete requirement/evidence
+  ledger is
+  [PHASE10_2_IMPLEMENTATION_REPORT.md](upgrade/evidence/PHASE10_2_IMPLEMENTATION_REPORT.md).
+  No runtime role, V1 route, authority, Kafka/Redis/SQLite state, alpha config
+  or provider credential changed. A current authenticated DNSE open-session
+  admission remains an explicit external production-promotion gate; historical
+  evidence or closed-market fixtures were not relabelled as that gate.
+- Exact cleanup removed `/tmp/qdl-phase10-rust-target`,
+  `/tmp/qdl-phase10-sdk`, `/tmp/qdl-phase10-sdk-site` and
+  `/tmp/qdl-phase10-openapi`. The first user-level removal exposed
+  container-owned files and was completed with `sudo` against only those four
+  paths. Follow-up checks found no `qdl-phase10-*` temporary path, container or
+  Docker volume. No image prune or shared-state cleanup was performed.
 
 **Implementation scope:**
 

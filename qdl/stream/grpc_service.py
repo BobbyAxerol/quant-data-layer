@@ -77,7 +77,7 @@ def requirement_from_proto(value: query_pb2.DataRequirement) -> DataRequirement:
             raise ValueError(f"{prefix.lower()} cannot be UNSPECIFIED")
         return name.removeprefix(prefix)
 
-    return DataRequirement.from_mapping({
+    mapping = {
         "instrument_uid": value.instrument_uid,
         "feed": enum_value(value.feed_type, query_pb2.FeedType, "FEED_TYPE_"),
         "interval": value.interval or None,
@@ -103,7 +103,34 @@ def requirement_from_proto(value: query_pb2.DataRequirement) -> DataRequirement:
             query_pb2.BarRevisionPolicy,
             "BAR_REVISION_POLICY_",
         ),
-    })
+    }
+    if value.HasField("warmup"):
+        horizon = value.warmup.WhichOneof("horizon")
+        if horizon is None:
+            raise ValueError("warmup horizon is required")
+        if (
+            value.warmup.interval_source_policy
+            == query_pb2.INTERVAL_SOURCE_POLICY_UNSPECIFIED
+        ):
+            raise ValueError("warmup interval source policy is required")
+        warmup = {
+            "rows": value.warmup.rows if horizon == "rows" else None,
+            "time_range": (
+                {
+                    "start_time_ns": value.warmup.time_range.start_time_ns,
+                    "end_time_ns": value.warmup.time_range.end_time_ns,
+                }
+                if horizon == "time_range"
+                else None
+            ),
+            "interval_source_policy": query_pb2.IntervalSourcePolicy.Name(
+                value.warmup.interval_source_policy
+            ).removeprefix("INTERVAL_SOURCE_POLICY_"),
+            "max_cache_age_ms": value.warmup.max_cache_age_ms,
+            "deadline_ms": value.warmup.deadline_ms,
+        }
+        mapping["warmup"] = warmup
+    return DataRequirement.from_mapping(mapping)
 
 
 class GrpcMarketDataService:
@@ -270,7 +297,7 @@ class GrpcMarketDataService:
             request_access.access.require_consumer(request.consumer_id)
             request_access.access.require_permission(
                 DataPlanePermission.HISTORY_READ
-                if requirement.warmup_limit > 0
+                if requirement.warmup_specification is not None
                 else DataPlanePermission.SNAPSHOT_READ
             )
             request_access.access.require_requirement(requirement)

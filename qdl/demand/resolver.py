@@ -33,6 +33,11 @@ from qdl.domain.capabilities import (
     okx_global_capabilities,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.warmup.contracts import (
+    IntervalSourcePolicy,
+    WarmupSpecification,
+    WarmupTimeRange,
+)
 
 
 _UNIVERSE_SCHEMA = "qdl.v2.universe-registry.v1"
@@ -434,11 +439,24 @@ class DemandResolver:
                 for item in values
                 if item.requirement.max_freshness_ms is not None
             ]
+            explicit_warmup = any(
+                item.requirement.warmup is not None for item in values
+            )
+            merged_warmup = (
+                DemandResolver._merge_warmup(values) if explicit_warmup else None
+            )
             effective = replace(
                 first.requirement,
                 consumer_id=first.requirement.consumer_id,
                 purpose=purpose,
-                warmup_limit=max(item.requirement.warmup_limit for item in values),
+                warmup_limit=(
+                    merged_warmup.rows
+                    if merged_warmup is not None and merged_warmup.rows is not None
+                    else 0
+                    if merged_warmup is not None
+                    else max(item.requirement.warmup_limit for item in values)
+                ),
+                warmup=merged_warmup,
                 max_freshness_ms=min(freshness) if freshness else None,
                 priority=min(item.requirement.priority for item in values),
                 ttl_seconds=max(item.requirement.ttl_seconds for item in values),
@@ -471,6 +489,51 @@ class DemandResolver:
                 )
             )
         return tuple(merged)
+
+    @staticmethod
+    def _merge_warmup(values: list[ResolvedRequirement]) -> WarmupSpecification:
+        specifications = tuple(
+            item.requirement.warmup_specification
+            for item in values
+            if item.requirement.warmup_specification is not None
+        )
+        if not specifications:
+            raise ValueError("explicit warmup merge has no warmup specification")
+        row_horizons = tuple(item for item in specifications if item.rows is not None)
+        range_horizons = tuple(
+            item for item in specifications if item.time_range is not None
+        )
+        if row_horizons and range_horizons:
+            raise ValueError(
+                "resolved demand cannot merge row and time-range warmup horizons"
+            )
+        source_policy = (
+            IntervalSourcePolicy.NATIVE_ONLY
+            if any(
+                item.interval_source_policy is IntervalSourcePolicy.NATIVE_ONLY
+                for item in specifications
+            )
+            else IntervalSourcePolicy.NATIVE_OR_EXACT_RESAMPLE
+        )
+        common = {
+            "interval_source_policy": source_policy,
+            "max_cache_age_ms": min(item.max_cache_age_ms for item in specifications),
+            "deadline_ms": min(item.deadline_ms for item in specifications),
+        }
+        if row_horizons:
+            return WarmupSpecification(
+                rows=max(int(item.rows or 0) for item in row_horizons),
+                **common,
+            )
+        ranges = tuple(item.time_range for item in range_horizons)
+        assert all(item is not None for item in ranges)
+        return WarmupSpecification(
+            time_range=WarmupTimeRange(
+                min(item.start_time_ns for item in ranges if item is not None),
+                max(item.end_time_ns for item in ranges if item is not None),
+            ),
+            **common,
+        )
 
 
 class DemandLeaseRegistry:

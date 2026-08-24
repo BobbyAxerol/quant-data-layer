@@ -92,6 +92,16 @@
               }
             ]
           },
+          "resample_lineage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResampleLineageView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "revision": {
             "minimum": 0.0,
             "title": "Revision",
@@ -837,6 +847,14 @@
         "title": "InstrumentView",
         "type": "object"
       },
+      "IntervalSourcePolicy": {
+        "enum": [
+          "NATIVE_ONLY",
+          "NATIVE_OR_EXACT_RESAMPLE"
+        ],
+        "title": "IntervalSourcePolicy",
+        "type": "string"
+      },
       "MarkIndexPricePayload": {
         "additionalProperties": false,
         "properties": {
@@ -957,6 +975,18 @@
           },
           "quality": {
             "$ref": "#/components/schemas/QualityView"
+          },
+          "received_at_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received At Ns"
           },
           "revision": {
             "minimum": 0.0,
@@ -1384,6 +1414,16 @@
             "$ref": "#/components/schemas/StalePolicy",
             "default": "BLOCK"
           },
+          "warmup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WarmupSpecification"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "warmup_limit": {
             "default": 0,
             "maximum": 10000.0,
@@ -1399,6 +1439,46 @@
           "source_policy_id"
         ],
         "title": "RequirementModel",
+        "type": "object"
+      },
+      "ResampleLineageView": {
+        "additionalProperties": false,
+        "properties": {
+          "base_interval": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Base Interval",
+            "type": "string"
+          },
+          "constituent_count": {
+            "minimum": 1.0,
+            "title": "Constituent Count",
+            "type": "integer"
+          },
+          "constituent_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Constituent Sha256",
+            "type": "string"
+          },
+          "first_watermark": {
+            "minimum": 0.0,
+            "title": "First Watermark",
+            "type": "integer"
+          },
+          "last_watermark": {
+            "minimum": 0.0,
+            "title": "Last Watermark",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_interval",
+          "constituent_count",
+          "first_watermark",
+          "last_watermark",
+          "constituent_sha256"
+        ],
+        "title": "ResampleLineageView",
         "type": "object"
       },
       "SnapshotResponse": {
@@ -1763,6 +1843,75 @@
           "data"
         ],
         "title": "WarmupResponse",
+        "type": "object"
+      },
+      "WarmupSpecification": {
+        "additionalProperties": false,
+        "properties": {
+          "deadline_ms": {
+            "default": 20000,
+            "maximum": 120000.0,
+            "minimum": 100.0,
+            "title": "Deadline Ms",
+            "type": "integer"
+          },
+          "interval_source_policy": {
+            "$ref": "#/components/schemas/IntervalSourcePolicy",
+            "default": "NATIVE_OR_EXACT_RESAMPLE"
+          },
+          "max_cache_age_ms": {
+            "default": 60000,
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "title": "Max Cache Age Ms",
+            "type": "integer"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "time_range": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WarmupTimeRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "WarmupSpecification",
+        "type": "object"
+      },
+      "WarmupTimeRange": {
+        "additionalProperties": false,
+        "properties": {
+          "end_time_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "End Time Ns",
+            "type": "integer"
+          },
+          "start_time_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "Start Time Ns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_time_ns",
+          "end_time_ns"
+        ],
+        "title": "WarmupTimeRange",
         "type": "object"
       }
     },
@@ -2199,10 +2348,83 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 1000,
-              "maximum": 10000,
-              "minimum": 1,
-              "title": "Limit",
+              "anyOf": [
+                {
+                  "maximum": 10000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start_time_ns",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start Time Ns"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end_time_ns",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End Time Ns"
+            }
+          },
+          {
+            "in": "query",
+            "name": "interval_source_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IntervalSourcePolicy",
+              "default": "NATIVE_OR_EXACT_RESAMPLE"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_cache_age_ms",
+            "required": false,
+            "schema": {
+              "default": 60000,
+              "maximum": 86400000,
+              "minimum": 0,
+              "title": "Max Cache Age Ms",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deadline_ms",
+            "required": false,
+            "schema": {
+              "default": 20000,
+              "maximum": 120000,
+              "minimum": 100,
+              "title": "Deadline Ms",
               "type": "integer"
             }
           },
@@ -2557,10 +2779,83 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 1000,
-              "maximum": 10000,
-              "minimum": 1,
-              "title": "Limit",
+              "anyOf": [
+                {
+                  "maximum": 10000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start_time_ns",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start Time Ns"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end_time_ns",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End Time Ns"
+            }
+          },
+          {
+            "in": "query",
+            "name": "interval_source_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IntervalSourcePolicy",
+              "default": "NATIVE_OR_EXACT_RESAMPLE"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_cache_age_ms",
+            "required": false,
+            "schema": {
+              "default": 60000,
+              "maximum": 86400000,
+              "minimum": 0,
+              "title": "Max Cache Age Ms",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deadline_ms",
+            "required": false,
+            "schema": {
+              "default": 20000,
+              "maximum": 120000,
+              "minimum": 100,
+              "title": "Deadline Ms",
               "type": "integer"
             }
           },

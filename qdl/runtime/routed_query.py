@@ -15,12 +15,17 @@ source available for the request.
 
 from __future__ import annotations
 
-from qdl.query.contracts import DataRequirement
+from qdl.query.contracts import (
+    CanonicalErrorCode,
+    DataRequirement,
+    RecoveryPolicy,
+)
 from qdl.query.results import (
     GapRecord,
     HistoryResult,
     MarketDataItem,
     QualityMetadata,
+    QueryBackendError,
 )
 from qdl.runtime.provider_history import (
     ProviderBarHistorySource,
@@ -28,7 +33,7 @@ from qdl.runtime.provider_history import (
 )
 from qdl.runtime.stable_source import StableSpoolQueryBackend
 
-_LATEST_WINDOW = 1
+_LATEST_WINDOW = 2
 
 
 class RoutedQueryBackend:
@@ -56,22 +61,64 @@ class RoutedQueryBackend:
         return self.pass_through.serves(requirement)
 
     def history(self, requirement: DataRequirement) -> HistoryResult | None:
-        if not self.routes_to_pass_through(requirement):
+        if self._binding_exists(requirement):
+            result = self.spool.history(requirement)
+            specification = requirement.warmup_specification
+            explicit_range = bool(
+                specification is not None and specification.time_range is not None
+            )
+            result_ready = result is not None and (
+                not isinstance(result, HistoryResult)
+                or (
+                    result.coverage.value == "FULL"
+                    and (
+                        explicit_range
+                        or result.items[-1].quality.state
+                        not in {"STALE", "OFFLINE", "UNAVAILABLE"}
+                    )
+                )
+            )
+            if result_ready:
+                return result
+            if (
+                requirement.recovery is not RecoveryPolicy.FRESH_SNAPSHOT
+                or self.pass_through is None
+                or not self.pass_through.serves(requirement)
+            ):
+                return result
+        elif not self.routes_to_pass_through(requirement):
             return self.spool.history(requirement)
         try:
             return self.pass_through.history_result(
                 requirement, schema_digest=self.spool.schema_digest
             )
-        except ProviderHistoryUnavailable:
-            # Refusal is not an empty result: the caller must see "not ready"
-            # rather than a silently short window.
-            return None
+        except ProviderHistoryUnavailable as error:
+            # Preserve the established backend contract for a static refusal:
+            # QueryService turns ``None`` into DATA_NOT_READY. Provider/runtime
+            # failures keep their typed code and retry metadata instead.
+            if (
+                error.problem.code is CanonicalErrorCode.DATA_NOT_READY
+                and not error.problem.retryable
+            ):
+                return None
+            raise QueryBackendError(error.problem) from error
 
     def latest(self, requirement: DataRequirement) -> MarketDataItem | None:
         if not self.routes_to_pass_through(requirement):
-            return self.spool.latest(requirement)
+            item = self.spool.latest(requirement)
+            may_recover = (
+                isinstance(item, MarketDataItem)
+                and item.quality.state in {"STALE", "OFFLINE", "UNAVAILABLE"}
+            ) or item is None
+            if not (
+                may_recover
+                and requirement.recovery is RecoveryPolicy.FRESH_SNAPSHOT
+                and self.pass_through is not None
+                and self.pass_through.serves(requirement)
+            ):
+                return item
         result = self.history(
-            _with_window(requirement, requirement.warmup_limit or _LATEST_WINDOW)
+            _with_window(requirement, _LATEST_WINDOW)
         )
         return result.items[-1] if result and result.items else None
 
@@ -84,8 +131,17 @@ class RoutedQueryBackend:
         # is validated at fetch time and never becomes a tracked gap.
         return self.spool.open_gaps()
 
+    def warmup_stats(self) -> dict[str, int]:
+        if self.pass_through is None:
+            return {}
+        return self.pass_through.stats()
+
 
 def _with_window(requirement: DataRequirement, limit: int) -> DataRequirement:
     from dataclasses import replace
 
-    return replace(requirement, warmup_limit=max(1, int(limit)))
+    return replace(
+        requirement,
+        warmup_limit=max(1, int(limit)),
+        warmup=None,
+    )

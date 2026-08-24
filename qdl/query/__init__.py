@@ -43,6 +43,7 @@ from qdl.query.results import (
     MarketDataQueryBackend,
     MemoryMarketDataBackend,
     QualityMetadata,
+    QueryBackendError,
     SourceMetadata,
 )
 from qdl.query.service import (
@@ -54,6 +55,11 @@ from qdl.query.service import (
     ReadinessResult,
     V2QueryService,
     WarmupResult,
+)
+from qdl.warmup.contracts import (
+    IntervalSourcePolicy,
+    WarmupSpecification,
+    WarmupTimeRange,
 )
 
 __all__ = [
@@ -86,6 +92,7 @@ __all__ = [
     "MarketDataQueryBackend",
     "MemoryMarketDataBackend",
     "QualityMetadata",
+    "QueryBackendError",
     "SourceMetadata",
     "BatchItemResult",
     "BatchQueryResult",
@@ -95,4 +102,7 @@ __all__ = [
     "ReadinessResult",
     "V2QueryService",
     "WarmupResult",
+    "IntervalSourcePolicy",
+    "WarmupSpecification",
+    "WarmupTimeRange",
 ]

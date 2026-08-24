@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+
+_MAX_CALENDAR_SPAN_DAYS = 366 * 50
 
 
 @dataclass(frozen=True, order=True)
@@ -51,6 +54,88 @@ class TradingCalendar:
 
     def is_open_ns(self, timestamp_ns: int) -> bool:
         return self.session_at_ns(timestamp_ns) is not None
+
+    def bar_opens_between_ns(
+        self,
+        *,
+        start_ns: int,
+        end_ns: int,
+        interval_ns: int,
+        max_rows: int | None = None,
+    ) -> tuple[int, ...]:
+        """Enumerate complete session bars in the half-open UTC range.
+
+        Bar alignment is anchored at each governed session open, not at the
+        Unix epoch. This is required for venues with lunch/ATC breaks and keeps
+        a legitimate closed period from being reported as a data gap.
+        """
+        if start_ns <= 0 or end_ns <= start_ns or interval_ns <= 0:
+            raise ValueError("calendar bar range and interval must be positive")
+        if max_rows is not None and max_rows < 1:
+            raise ValueError("calendar max_rows must be positive")
+        zone = ZoneInfo(self.timezone_name)
+        first_date = datetime.fromtimestamp(
+            start_ns / 1_000_000_000, tz=timezone.utc
+        ).astimezone(zone).date()
+        last_date = datetime.fromtimestamp(
+            (end_ns - 1) / 1_000_000_000, tz=timezone.utc
+        ).astimezone(zone).date()
+        if (last_date - first_date).days > _MAX_CALENDAR_SPAN_DAYS:
+            raise ValueError("calendar bar range exceeds the bounded date span")
+        current_date = first_date
+        result: list[int] = []
+        while current_date <= last_date:
+            for session in self.sessions_for(current_date):
+                session_open = self._local_time_ns(
+                    current_date, session.opens_at, zone
+                )
+                session_close = self._local_time_ns(
+                    current_date, session.closes_at, zone
+                )
+                cursor = session_open
+                while cursor + interval_ns <= session_close:
+                    if cursor >= start_ns and cursor + interval_ns <= end_ns:
+                        result.append(cursor)
+                        if max_rows is not None and len(result) > max_rows:
+                            raise ValueError("calendar bar range exceeds the row bound")
+                    cursor += interval_ns
+            current_date += timedelta(days=1)
+        return tuple(result)
+
+    def previous_bar_opens_ns(
+        self,
+        *,
+        end_ns: int,
+        interval_ns: int,
+        rows: int,
+    ) -> tuple[int, ...]:
+        """Return the newest complete governed session bars before `end_ns`."""
+        if end_ns <= 0 or interval_ns <= 0 or rows < 1:
+            raise ValueError("calendar history boundary, interval and rows are required")
+        zone = ZoneInfo(self.timezone_name)
+        current_date = datetime.fromtimestamp(
+            (end_ns - 1) / 1_000_000_000, tz=timezone.utc
+        ).astimezone(zone).date()
+        result: list[int] = []
+        # 100k one-minute bars need roughly one trading year. Five calendar
+        # years is a finite guard against an invalid/empty governed calendar.
+        for _ in range(366 * 5):
+            day = self.bar_opens_between_ns(
+                start_ns=self._local_time_ns(current_date, time.min, zone),
+                end_ns=self._local_time_ns(
+                    current_date + timedelta(days=1), time.min, zone
+                ),
+                interval_ns=interval_ns,
+            )
+            result.extend(value for value in reversed(day) if value + interval_ns <= end_ns)
+            if len(result) >= rows:
+                return tuple(sorted(result[:rows]))
+            current_date -= timedelta(days=1)
+        raise ValueError("calendar cannot resolve the requested historical row count")
+
+    @staticmethod
+    def _local_time_ns(day: date, value: time, zone: ZoneInfo) -> int:
+        return int(datetime.combine(day, value, tzinfo=zone).timestamp() * 1_000_000_000)
 
 
 def trading_calendar_for_id(calendar_id: str) -> TradingCalendar:

@@ -62,6 +62,7 @@ from qdl.runtime.stable_source import (
 from qdl.stream import DurableStreamGateway
 from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
 from qdl.transport.kafka_projector import KafkaProjectorRecord
+from qdl.warmup import WarmupSpecification, WarmupTimeRange
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -349,6 +350,11 @@ class StableQueryContractTests(unittest.TestCase):
                 item = backend.latest(_requirement(binding))
                 self.assertIsNotNone(item)
                 self.assertEqual(item.payload.get("quantity_unit") or item.payload.get("volume_unit"), unit)
+                self.assertEqual(item.observed_at_ns, observed)
+                self.assertEqual(item.received_at_ns, event.received_at_ns)
+                self.assertEqual(item.source.provider, event.provider)
+                self.assertEqual(item.source.source_id, event.source_id)
+                self.assertGreaterEqual(item.quality.freshness_ms, 0)
                 self.assertEqual(item.contract.contract_version, "2.0.0")
                 expected_state = "MARKET_CLOSED" if binding.instrument.identity.venue == "HNX" else "LIVE"
                 self.assertEqual(item.quality.state, expected_state)
@@ -373,6 +379,87 @@ class StableQueryContractTests(unittest.TestCase):
         history = backend.history(_requirement(binding))
         self.assertIsNotNone(history)
         self.assertEqual(history.data_as_of_ns, event.bar.close_time_ns)
+
+    def test_vn_time_range_accepts_lunch_break_but_rejects_missing_session_bar(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "dnse-vn30f1m-bar-1m"
+        )
+        start_ns = int(
+            datetime(2026, 8, 24, 4, 28, tzinfo=timezone.utc).timestamp()
+            * 1_000_000_000
+        )
+        afternoon_ns = int(
+            datetime(2026, 8, 24, 6, 0, tzinfo=timezone.utc).timestamp()
+            * 1_000_000_000
+        )
+        end_ns = afternoon_ns + 60_000_000_000
+
+        def event_at(open_ns, index):
+            event = market_data_pb2.EventEnvelope()
+            event.CopyFrom(_stable_event(
+                self.catalog, "dnse_derivative_bar.json", binding.binding_id
+            ))
+            event.event_id = hashlib.sha256(f"vn-session-{index}".encode()).digest()[:16]
+            event.raw_capture_id = hashlib.sha256(
+                f"vn-raw-{index}".encode()
+            ).digest()[:16]
+            event.bar.open_time_ns = open_ns
+            event.bar.close_time_ns = open_ns + 60_000_000_000 - 1_000_000
+            event.source_event_time_ns = event.bar.close_time_ns
+            event.received_at_ns = event.bar.close_time_ns + 1_000_000
+            event.normalized_at_ns = event.received_at_ns + 1
+            event.published_at_ns = event.received_at_ns + 2
+            event.source_sequence = str(index)
+            event.partition_sequence = index
+            event.correlation_id = f"vn-session-{index}"
+            return event
+
+        for index, open_ns in enumerate(
+            (start_ns, start_ns + 60_000_000_000, afternoon_ns), start=1
+        ):
+            _append(self.spool, self.catalog, event_at(open_ns, index))
+        requirement = DataRequirement(
+            instrument_uid=binding.instrument.instrument_uid,
+            feed=binding.feed,
+            interval=binding.interval,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id=binding.source_policy_id,
+            warmup=WarmupSpecification(
+                time_range=WarmupTimeRange(start_ns, end_ns)
+            ),
+        )
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: end_ns + 1_000_000,
+        )
+        complete = backend.history(requirement)
+        self.assertEqual(complete.coverage.value, "FULL")
+        self.assertEqual(len(complete.items), 3)
+        self.assertEqual(backend.open_gaps(), ())
+
+        with tempfile.TemporaryDirectory() as directory:
+            incomplete_spool = SQLiteDurableSpool(SpoolConfig(
+                path=Path(directory) / "incomplete.sqlite3",
+                min_free_disk_bytes=0,
+            ))
+            try:
+                _append(incomplete_spool, self.catalog, event_at(start_ns, 1))
+                _append(incomplete_spool, self.catalog, event_at(afternoon_ns, 3))
+                incomplete = StableSpoolQueryBackend(
+                    incomplete_spool,
+                    self.catalog,
+                    schema_digest="a" * 64,
+                    clock_ns=lambda: end_ns + 1_000_000,
+                )
+                result = incomplete.history(requirement)
+                self.assertEqual(result.coverage.value, "PARTIAL")
+                self.assertEqual(len(incomplete.open_gaps()), 1)
+            finally:
+                incomplete_spool.close()
 
     def test_query_reads_are_bounded_by_feed_and_requested_history(self):
         trade = next(

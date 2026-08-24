@@ -3,6 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from qdl.adapters.intervals import (
+    BINANCE_SPOT_NATIVE_INTERVALS,
+    BINANCE_USDM_NATIVE_INTERVALS,
+    OKX_NATIVE_INTERVALS,
+    VN_NATIVE_INTERVALS,
+)
+
 
 class CapabilityAvailability(str, Enum):
     AVAILABLE = "AVAILABLE"
@@ -79,7 +86,13 @@ def okx_global_capabilities(market: str, *, account_tier: str = "PUBLIC") -> Ven
             "instrument": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True, live=True, resubscribe=True),
             "trade": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True, live=True, resubscribe=True),
             "bbo": FeedCapability(CapabilityAvailability.AVAILABLE, live=True, resubscribe=True),
-            "bar": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True, live=True, resubscribe=True),
+            "bar": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                live=True,
+                resubscribe=True,
+                native_intervals=OKX_NATIVE_INTERVALS,
+            ),
             "l2": FeedCapability(
                 CapabilityAvailability.AVAILABLE,
                 live=True,
@@ -149,7 +162,13 @@ def binance_usdm_capabilities() -> VenueCapabilityProfile:
             "instrument": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True),
             "trade": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True, live=True, resubscribe=True),
             "bbo": FeedCapability(CapabilityAvailability.AVAILABLE, live=True, resubscribe=True),
-            "bar": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True, live=True, resubscribe=True),
+            "bar": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                live=True,
+                resubscribe=True,
+                native_intervals=BINANCE_USDM_NATIVE_INTERVALS,
+            ),
             "l2": FeedCapability(
                 CapabilityAvailability.AVAILABLE,
                 live=True,
@@ -179,7 +198,13 @@ def binance_spot_capabilities() -> VenueCapabilityProfile:
             "instrument": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True),
             "trade": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True, live=True, resubscribe=True),
             "bbo": FeedCapability(CapabilityAvailability.AVAILABLE, live=True, resubscribe=True),
-            "bar": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True, live=True, resubscribe=True),
+            "bar": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                live=True,
+                resubscribe=True,
+                native_intervals=BINANCE_SPOT_NATIVE_INTERVALS,
+            ),
             "l2": FeedCapability(
                 CapabilityAvailability.AVAILABLE,
                 live=True,
@@ -208,7 +233,11 @@ def dnse_capabilities() -> VenueCapabilityProfile:
             "instrument": FeedCapability(CapabilityAvailability.UNVERIFIED, constraint="instrument master reconciles controlled VN allowlist"),
             "trade": FeedCapability(CapabilityAvailability.UNVERIFIED, live=True, resubscribe=True),
             "bbo": FeedCapability(CapabilityAvailability.AVAILABLE, live=True, resubscribe=True),
-            "bar": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True),
+            "bar": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                native_intervals=VN_NATIVE_INTERVALS,
+            ),
             "l2": FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint="not certified in current provider contract"),
         },
     )

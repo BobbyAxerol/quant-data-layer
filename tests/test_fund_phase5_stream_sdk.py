@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import time
 import unittest
@@ -893,8 +894,13 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
                 "freshness_ms": 86_400_000,
                 "execution_eligible": False,
             }
+            latest = json.loads(json.dumps(payload["data"][0]))
+            latest["observed_at_ns"] += 60_000_000_000
+            latest["payload"]["open_time_ns"] += 60_000_000_000
+            latest["payload"]["close_time_ns"] += 60_000_000_000
             payload["count"] = 2
-            payload["data"] = [old, payload["data"][0]]
+            payload["data_as_of_ns"] = latest["payload"]["close_time_ns"]
+            payload["data"] = [old, latest]
             return payload
 
         query.warmup = historical_context

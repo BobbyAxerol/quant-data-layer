@@ -4,6 +4,10 @@ import hashlib
 import time
 from dataclasses import replace
 
+from qdl.adapters.intervals import (
+    canonical_interval_ms,
+    latest_closed_boundary_ms,
+)
 from qdl.common.v1 import common_pb2
 from qdl.domain.calendar import trading_calendar_for_id
 from qdl.domain.decimal import CanonicalDecimal
@@ -57,18 +61,10 @@ def _decimal_text(value) -> str:
 
 
 def _interval_ns(interval: str) -> int:
-    units = {
-        "s": 1_000_000_000,
-        "m": 60 * 1_000_000_000,
-        "h": 60 * 60 * 1_000_000_000,
-        "d": 24 * 60 * 60 * 1_000_000_000,
-    }
-    if not interval or interval[-1] not in units:
-        raise ValueError("stable BAR interval is unsupported")
-    count = int(interval[:-1])
-    if count <= 0:
-        raise ValueError("stable BAR interval must be positive")
-    return count * units[interval[-1]]
+    try:
+        return canonical_interval_ms(interval) * 1_000_000
+    except ValueError as error:
+        raise ValueError(f"stable BAR interval is unsupported: {interval}") from error
 
 
 def _quality_flag_names(envelope: market_data_pb2.EventEnvelope) -> tuple[str, ...]:
@@ -162,26 +158,52 @@ class StableSpoolQueryBackend:
         return items[-1] if items else None
 
     def history(self, requirement: DataRequirement) -> HistoryResult | None:
-        requested = requirement.warmup_limit or 1
-        all_records = self._records(requirement, limit=requested)
+        requested, start_ns, end_ns, expected_opens = self._requested_window(requirement)
+        read_limit = 10_000 if start_ns is not None else requested
+        all_records = self._records(requirement, limit=read_limit)
         if not all_records:
             return None
         binding = self.catalog.binding_for(requirement)
-        gap_open = bool(self._gaps(binding, all_records))
-        records = all_records[-requested:]
+        records = all_records
+        if start_ns is not None:
+            records = tuple(
+                stored
+                for stored in all_records
+                if start_ns
+                <= market_data_pb2.EventEnvelope.FromString(
+                    stored.event.payload
+                ).bar.open_time_ns
+                < end_ns
+            )
+        records = records[-requested:]
+        if not records:
+            return None
+        gap_open = bool(self._gaps(binding, records))
         items = self._items(requirement, records, gap_open=gap_open)
         last = records[-1]
         snapshot_hash = hashlib.sha256(
             f"{last.cursor.stream}|{last.cursor.partition_key}|{last.cursor.offset}|"
             f"{last.event.event_id.hex()}".encode()
         ).hexdigest()
+        exact_boundary = True
+        if start_ns is not None and items:
+            observed_opens = tuple(
+                int(item.payload["open_time_ns"]) for item in items
+            )
+            exact_boundary = (
+                observed_opens == expected_opens
+                if expected_opens is not None
+                else (
+                    observed_opens[0] == start_ns
+                    and observed_opens[-1]
+                    + _interval_ns(requirement.interval or "")
+                    == end_ns
+                )
+            )
+        full = len(items) == requested and not gap_open and exact_boundary
         return HistoryResult(
             items=items,
-            coverage=(
-                CoverageStatus.FULL
-                if len(items) >= requested
-                else CoverageStatus.PARTIAL
-            ),
+            coverage=CoverageStatus.FULL if full else CoverageStatus.PARTIAL,
             snapshot_id=f"qdl-v2-{snapshot_hash[:32]}",
             stream_cursor="CONSUMER_CURSOR_PENDING",
             watermark_offset=last.cursor.offset,
@@ -208,8 +230,66 @@ class StableSpoolQueryBackend:
         return tuple(sorted(gaps, key=lambda item: (item.detected_at_ns, item.gap_id)))
 
     def stored_events(self, requirement: DataRequirement) -> tuple[StoredEvent, ...]:
-        requested = requirement.warmup_limit or 1
-        return self._records(requirement, limit=requested)
+        requested, start_ns, end_ns, _ = self._requested_window(requirement)
+        rows = self._records(
+            requirement, limit=10_000 if start_ns is not None else requested
+        )
+        if start_ns is None:
+            return rows[-requested:]
+        return tuple(
+            stored
+            for stored in rows
+            if start_ns
+            <= market_data_pb2.EventEnvelope.FromString(
+                stored.event.payload
+            ).bar.open_time_ns
+            < end_ns
+        )
+
+    def _requested_window(
+        self,
+        requirement: DataRequirement,
+    ) -> tuple[int, int | None, int | None, tuple[int, ...] | None]:
+        specification = requirement.warmup_specification
+        if specification is None:
+            return 1, None, None, None
+        if specification.rows is not None:
+            return specification.rows, None, None, None
+        if requirement.feed is not FeedType.BAR or not requirement.interval:
+            raise ValueError("time-range warmup requires a BAR interval")
+        interval_ns = _interval_ns(requirement.interval)
+        latest_boundary_ns = latest_closed_boundary_ms(
+            requirement.interval,
+            self._clock_ns() // 1_000_000,
+        ) * 1_000_000
+        assert specification.time_range is not None
+        start_ns = specification.time_range.start_time_ns
+        end_ns = specification.time_range.end_time_ns
+        if end_ns > latest_boundary_ns:
+            raise ValueError("warmup time range includes an unfinished bar")
+        binding = self.catalog.binding_for(requirement)
+        expected_opens = None
+        if binding.continuous_calendar:
+            start_ns, end_ns, rows = specification.resolved_window(
+                interval_ns=interval_ns,
+                latest_closed_boundary_ns=latest_boundary_ns,
+            )
+        else:
+            calendar = trading_calendar_for_id(
+                binding.instrument.session_calendar_id
+            )
+            expected_opens = calendar.bar_opens_between_ns(
+                start_ns=start_ns,
+                end_ns=end_ns,
+                interval_ns=interval_ns,
+                max_rows=10_000,
+            )
+            rows = len(expected_opens)
+            if rows < 1:
+                raise ValueError("warmup time range contains no governed session bars")
+        if rows > 10_000:
+            raise ValueError("stable spool time range exceeds bounded query rows")
+        return rows, start_ns, end_ns, expected_opens
 
     def _records(
         self, requirement: DataRequirement, *, limit: int
@@ -314,18 +394,33 @@ class StableSpoolQueryBackend:
                     envelope.source_sequence,
                     detected_at_ns,
                 ))
-        if binding.feed is not FeedType.BAR or not binding.continuous_calendar:
+        if binding.feed is not FeedType.BAR:
             return tuple(result)
         opens = sorted({
             market_data_pb2.EventEnvelope.FromString(item.event.payload).bar.open_time_ns
             for item in records
         })
+        if not opens:
+            return tuple(result)
         step = _interval_ns(binding.interval or "")
-        for previous, current in zip(opens, opens[1:], strict=False):
-            expected = previous + step
-            if current != expected:
+        if binding.continuous_calendar:
+            expected_opens = tuple(
+                range(opens[0], opens[-1] + step, step)
+            )
+        else:
+            calendar = trading_calendar_for_id(
+                binding.instrument.session_calendar_id
+            )
+            expected_opens = calendar.bar_opens_between_ns(
+                start_ns=opens[0],
+                end_ns=opens[-1] + step,
+                interval_ns=step,
+            )
+        observed = set(opens)
+        for expected in expected_opens:
+            if expected not in observed:
                 result.append(self._gap(
-                    binding, str(expected), str(current), detected_at_ns
+                    binding, str(expected), "MISSING", detected_at_ns
                 ))
         return tuple(result)
 
@@ -366,6 +461,7 @@ class StableSpoolQueryBackend:
             instrument_id=envelope.instrument_id,
             instrument_revision=int(envelope.instrument_revision),
             observed_at_ns=int(envelope.source_event_time_ns),
+            received_at_ns=max(1, int(envelope.received_at_ns)),
             source=SourceMetadata(
                 venue=envelope.venue,
                 provider=envelope.provider,

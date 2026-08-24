@@ -7,6 +7,11 @@ import json
 from typing import Any, Mapping
 
 from qdl.demand.v1 import demand_pb2
+from qdl.warmup.contracts import (
+    IntervalSourcePolicy,
+    WarmupSpecification,
+    WarmupTimeRange,
+)
 
 
 class _StringEnum(str, Enum):
@@ -309,6 +314,7 @@ class DataRequirement:
     execution_grade: bool = False
     depth_levels: int = 0
     configuration_revision: int = 1
+    warmup: WarmupSpecification | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "consumer_id", _text(self.consumer_id, "consumer_id"))
@@ -319,6 +325,16 @@ class DataRequirement:
         object.__setattr__(self, "interval", interval)
         if not 0 <= self.warmup_limit <= 100_000:
             raise ValueError("warmup_limit is outside bounds")
+        if self.warmup is not None and not isinstance(
+            self.warmup, WarmupSpecification
+        ):
+            raise TypeError("warmup must use WarmupSpecification")
+        if self.warmup is not None and self.warmup.rows is not None:
+            if self.warmup_limit not in {0, self.warmup.rows}:
+                raise ValueError("warmup_limit conflicts with warmup.rows")
+        if self.warmup is not None and self.warmup.time_range is not None:
+            if self.warmup_limit:
+                raise ValueError("time-range warmup cannot also declare warmup_limit")
         if self.max_freshness_ms is not None and not 1 <= self.max_freshness_ms <= 86_400_000:
             raise ValueError("max_freshness_ms is outside bounds")
         if not 0 <= self.priority <= 1_000:
@@ -354,6 +370,7 @@ class DataRequirement:
             "interval", "warmup_limit", "max_freshness_ms", "priority",
             "ttl_seconds", "require_final_bars", "require_live", "execution_grade",
             "depth_levels", "configuration_revision",
+            "warmup",
         }
         unknown = set(value) - allowed
         if unknown:
@@ -381,10 +398,15 @@ class DataRequirement:
             execution_grade=bool(value.get("execution_grade", False)),
             depth_levels=int(value.get("depth_levels", 0)),
             configuration_revision=int(value.get("configuration_revision", 1)),
+            warmup=(
+                WarmupSpecification.from_mapping(value["warmup"])
+                if isinstance(value.get("warmup"), Mapping)
+                else None
+            ),
         )
 
     def canonical_mapping(self) -> dict[str, Any]:
-        return {
+        mapping = {
             "consumer_id": self.consumer_id,
             "purpose": self.purpose.value,
             "universe": self.universe.canonical_mapping(),
@@ -401,6 +423,12 @@ class DataRequirement:
             "depth_levels": self.depth_levels,
             "configuration_revision": self.configuration_revision,
         }
+        # Preserve requirement IDs produced before the additive Phase 10.2
+        # contract. An absent optional field is not a semantic change and must
+        # not churn manifests, leases or consumer checkpoints.
+        if self.warmup is not None:
+            mapping["warmup"] = self.warmup.canonical_mapping()
+        return mapping
 
     @property
     def requirement_id(self) -> str:
@@ -409,8 +437,16 @@ class DataRequirement:
         ).encode()
         return hashlib.sha256(encoded).hexdigest()
 
+    @property
+    def warmup_specification(self) -> WarmupSpecification | None:
+        if self.warmup is not None:
+            return self.warmup
+        if self.warmup_limit:
+            return WarmupSpecification.for_rows(self.warmup_limit)
+        return None
+
     def to_proto(self) -> demand_pb2.DataRequirement:
-        return demand_pb2.DataRequirement(
+        result = demand_pb2.DataRequirement(
             consumer_id=self.consumer_id,
             purpose=getattr(demand_pb2, f"DEMAND_PURPOSE_{self.purpose.value}"),
             universe=self.universe.to_proto(),
@@ -427,6 +463,25 @@ class DataRequirement:
             depth_levels=self.depth_levels,
             configuration_revision=self.configuration_revision,
         )
+        if self.warmup is not None:
+            proto = demand_pb2.WarmupSpecification(
+                interval_source_policy=getattr(
+                    demand_pb2,
+                    f"INTERVAL_SOURCE_POLICY_{self.warmup.interval_source_policy.value}",
+                ),
+                max_cache_age_ms=self.warmup.max_cache_age_ms,
+                deadline_ms=self.warmup.deadline_ms,
+            )
+            if self.warmup.rows is not None:
+                proto.rows = self.warmup.rows
+            else:
+                assert self.warmup.time_range is not None
+                proto.time_range.CopyFrom(demand_pb2.WarmupTimeRange(
+                    start_time_ns=self.warmup.time_range.start_time_ns,
+                    end_time_ns=self.warmup.time_range.end_time_ns,
+                ))
+            result.warmup.CopyFrom(proto)
+        return result
 
     @classmethod
     def from_proto(cls, value: demand_pb2.DataRequirement) -> "DataRequirement":
@@ -434,6 +489,31 @@ class DataRequirement:
             raise ValueError("demand purpose is required")
         if value.feed == demand_pb2.FEED_TYPE_UNSPECIFIED:
             raise ValueError("demand feed is required")
+        warmup = None
+        if value.HasField("warmup"):
+            horizon = value.warmup.WhichOneof("horizon")
+            if horizon is None:
+                raise ValueError("warmup horizon is required")
+            if value.warmup.interval_source_policy == demand_pb2.INTERVAL_SOURCE_POLICY_UNSPECIFIED:
+                raise ValueError("warmup interval source policy is required")
+            warmup = WarmupSpecification(
+                rows=value.warmup.rows if horizon == "rows" else None,
+                time_range=(
+                    WarmupTimeRange(
+                        value.warmup.time_range.start_time_ns,
+                        value.warmup.time_range.end_time_ns,
+                    )
+                    if horizon == "time_range"
+                    else None
+                ),
+                interval_source_policy=IntervalSourcePolicy(
+                    demand_pb2.IntervalSourcePolicy.Name(
+                        value.warmup.interval_source_policy
+                    ).removeprefix("INTERVAL_SOURCE_POLICY_")
+                ),
+                max_cache_age_ms=value.warmup.max_cache_age_ms,
+                deadline_ms=value.warmup.deadline_ms,
+            )
         return cls(
             consumer_id=value.consumer_id,
             purpose=demand_pb2.DemandPurpose.Name(value.purpose).removeprefix("DEMAND_PURPOSE_"),
@@ -450,6 +530,7 @@ class DataRequirement:
             execution_grade=value.execution_grade,
             depth_levels=value.depth_levels,
             configuration_revision=value.configuration_revision,
+            warmup=warmup,
         )
 
 

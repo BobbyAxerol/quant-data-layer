@@ -72,8 +72,9 @@ mod tests {
         decimal_value, AggressorSide, DecimalValue, QuantityUnit, SourceRole,
     };
     use super::qdl::demand::v1::{
-        universe_selector, DataRequirement as DemandRequirement, DemandPurpose, ExplicitSymbols,
-        FeedType as DemandFeedType, UniverseSelector,
+        universe_selector, warmup_specification, DataRequirement as DemandRequirement,
+        DemandPurpose, ExplicitSymbols, FeedType as DemandFeedType, IntervalSourcePolicy,
+        UniverseSelector, WarmupSpecification,
     };
     use super::qdl::marketdata::v2::{event_envelope, EventEnvelope, Trade, TradeIdentityKind};
     use prost::Message;
@@ -177,6 +178,7 @@ mod tests {
             source_policy_id: "crypto_primary_v2".into(),
             depth_levels: 0,
             configuration_revision: 7,
+            warmup: None,
         }
     }
 
@@ -190,6 +192,23 @@ mod tests {
         assert_eq!(expected.encode_to_vec(), golden);
         let decoded =
             DemandRequirement::decode(golden.as_slice()).expect("decode universal demand golden");
+        assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn typed_warmup_requirement_roundtrips_in_rust() {
+        let mut expected = expected_demand_requirement();
+        expected.feed = DemandFeedType::Bar as i32;
+        expected.interval = "15m".into();
+        expected.warmup = Some(WarmupSpecification {
+            interval_source_policy: IntervalSourcePolicy::NativeOrExactResample as i32,
+            max_cache_age_ms: 60_000,
+            deadline_ms: 20_000,
+            horizon: Some(warmup_specification::Horizon::Rows(700)),
+        });
+        let encoded = expected.encode_to_vec();
+        let decoded =
+            DemandRequirement::decode(encoded.as_slice()).expect("decode typed warmup requirement");
         assert_eq!(decoded, expected);
     }
 }

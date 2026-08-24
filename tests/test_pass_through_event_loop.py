@@ -28,6 +28,7 @@ from qdl.runtime.provider_history import (
     ProviderHistoryUnavailable,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.warmup.executor import ProviderBudgetPolicy
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
@@ -157,13 +158,30 @@ class PassThroughInsideEventLoopTests(unittest.TestCase):
             stop.wait(30)
             raise AssertionError("fetch should have been abandoned")
 
-        source = self._source(binance_fetcher=hanging, fetch_timeout_seconds=0.2)
+        source = self._source(
+            binance_fetcher=hanging,
+            fetch_timeout_seconds=0.2,
+            provider_policies={
+                "BINANCE": ProviderBudgetPolicy(
+                    max_concurrency=1,
+                    requests_per_second=100.0,
+                    burst_requests=1,
+                )
+            },
+        )
         started = time.monotonic()
         with self.assertRaises(ProviderHistoryUnavailable) as caught:
             source.history(_requirement(BINANCE_ETH))
         elapsed = time.monotonic() - started
         self.assertIn("exceeded", str(caught.exception))
+        self.assertEqual(caught.exception.problem.code.value, "SOURCE_UNAVAILABLE")
+        self.assertTrue(caught.exception.problem.retryable)
         self.assertLess(elapsed, 5.0)
+        semaphore = source._provider_semaphores["BINANCE"]
+        self.assertFalse(semaphore.acquire(timeout=0.01))
+        stop.set()
+        self.assertTrue(semaphore.acquire(timeout=1.0))
+        semaphore.release()
 
     def test_a_failing_fetch_reports_the_venue_error_not_the_timeout(self) -> None:
         def failing(binding, *, limit, **rest):

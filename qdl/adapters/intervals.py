@@ -19,6 +19,8 @@ _UNIT_MS = {
     "w": 604_800_000,
 }
 
+_MONDAY_AFTER_UNIX_EPOCH_MS = 4 * 86_400_000
+
 # OKX spells intraday bars natively, but its calendar bars are aligned to a
 # UTC+8 trading day by default; only the ``utc`` suffix selects the UTC+0
 # calendar. Canonical ``1d`` means exactly one UTC day on every venue, so
@@ -75,6 +77,22 @@ def canonical_interval_ms(interval: str) -> int:
     return count * _UNIT_MS[unit]
 
 
+def latest_closed_boundary_ms(interval: str, observed_ms: int) -> int:
+    """Return the latest exclusive closed-bar boundary in UTC.
+
+    Intraday and daily fixed-duration bars are Unix aligned. Canonical weekly
+    bars use the ISO/provider Monday anchor shared by Binance and OKX; flooring
+    them directly from the Thursday Unix epoch would hide a newly closed week
+    until Thursday and delay strategy computation by one bar.
+    """
+    if observed_ms <= 0:
+        raise ValueError("bar observation time must be positive")
+    value = normalise_interval(interval)
+    duration_ms = canonical_interval_ms(value)
+    anchor_ms = _MONDAY_AFTER_UNIX_EPOCH_MS if value.endswith("w") else 0
+    return (observed_ms - anchor_ms) // duration_ms * duration_ms + anchor_ms
+
+
 def okx_bar_size(interval: str) -> str:
     """Return the OKX ``bar`` token for a canonical interval.
 
@@ -96,6 +114,19 @@ def okx_candle_channel(interval: str) -> str:
 
 
 _OKX_SUPPORTED = _OKX_INTRADAY + _OKX_CALENDAR_UTC
+
+# Exact provider-native fixed-duration bars exposed to the demand/warmup
+# planner. Calendar months are intentionally absent because V2 canonical
+# intervals are fixed-duration only.
+BINANCE_USDM_NATIVE_INTERVALS = (
+    "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h",
+    "12h", "1d", "3d", "1w",
+)
+BINANCE_SPOT_NATIVE_INTERVALS = (
+    "1s", *BINANCE_USDM_NATIVE_INTERVALS,
+)
+OKX_NATIVE_INTERVALS = _OKX_SUPPORTED
+VN_NATIVE_INTERVALS = ("1m",)
 
 
 def okx_interval_from_bar_size(bar: str) -> str:

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from qdl.warmup.contracts import WarmupSpecification
+
 
 class CanonicalErrorCode(StrEnum):
     INVALID_ARGUMENT = "INVALID_ARGUMENT"
@@ -117,6 +119,7 @@ class DataRequirement:
     gap_policy: GapPolicy = GapPolicy.BLOCK
     recovery: RecoveryPolicy = RecoveryPolicy.SNAPSHOT_AND_REPLAY
     bar_revision_policy: BarRevisionPolicy = BarRevisionPolicy.LATEST
+    warmup: WarmupSpecification | None = None
 
     @classmethod
     def from_mapping(cls, value: dict[str, object]) -> "DataRequirement":
@@ -136,6 +139,8 @@ class DataRequirement:
         for field, enum_type in enums.items():
             if field in converted and not isinstance(converted[field], enum_type):
                 converted[field] = enum_type(str(converted[field]).upper())
+        if isinstance(converted.get("warmup"), dict):
+            converted["warmup"] = WarmupSpecification.from_mapping(converted["warmup"])
         return cls(**converted)
 
     def __post_init__(self) -> None:
@@ -145,6 +150,18 @@ class DataRequirement:
             raise ValueError("source_policy_id is required")
         if not 0 <= self.warmup_limit <= 10_000:
             raise ValueError("warmup_limit must be between 0 and 10000")
+        if self.warmup is not None and not isinstance(
+            self.warmup, WarmupSpecification
+        ):
+            raise TypeError("warmup must use WarmupSpecification")
+        if self.warmup is not None and self.warmup.rows is not None:
+            if self.warmup.rows > 10_000:
+                raise ValueError("public V2 warmup rows cannot exceed 10000")
+            if self.warmup_limit not in {0, self.warmup.rows}:
+                raise ValueError("warmup_limit conflicts with warmup.rows")
+        if self.warmup is not None and self.warmup.time_range is not None:
+            if self.warmup_limit != 0:
+                raise ValueError("time-range warmup cannot also declare warmup_limit")
         if self.max_freshness_ms is not None and self.max_freshness_ms <= 0:
             raise ValueError("max_freshness_ms must be positive")
         enum_values = (
@@ -169,6 +186,14 @@ class DataRequirement:
                 raise ValueError("execution-grade gap policy must BLOCK")
             if not self.require_full_coverage:
                 raise ValueError("execution-grade requirements need full coverage")
+
+    @property
+    def warmup_specification(self) -> WarmupSpecification | None:
+        if self.warmup is not None:
+            return self.warmup
+        if self.warmup_limit:
+            return WarmupSpecification.for_rows(self.warmup_limit)
+        return None
 
 
 @dataclass(frozen=True)

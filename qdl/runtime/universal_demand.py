@@ -17,6 +17,7 @@ from qdl.demand import (
     UniverseRegistry,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.warmup.planner import UniversalWarmupPlanner, WarmupPlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +156,10 @@ class UniversalDemandPlanner:
         self.topology = DemandTopologyPlanner(
             max_subscriptions_per_connection=max_subscriptions_per_connection
         )
+        self.warmup = UniversalWarmupPlanner(session_calendar_ids={
+            item.instrument_uid: item.session_calendar_id
+            for item in catalog.instruments
+        })
 
     def compile(self, manifest: DemandManifest) -> UniversalDemandRuntimePlan:
         resolved = self.resolver.resolve_manifest(manifest)
@@ -177,6 +182,21 @@ class UniversalDemandPlanner:
             resolved=active,
             topology=topology,
             readiness=readiness,
+        )
+
+    def compile_warmup(
+        self,
+        plan: UniversalDemandRuntimePlan,
+        *,
+        generated_at_ns: int,
+    ) -> WarmupPlan:
+        """Compile the active resolved BAR demand without changing topology IDs."""
+        if plan.catalog_revision != self.catalog.catalog_revision:
+            raise ValueError("warmup plan catalog revision differs from runtime plan")
+        return self.warmup.compile(
+            plan.resolved,
+            generated_at_ns=generated_at_ns,
+            demand_revision=plan.demand_revision,
         )
 
     @staticmethod

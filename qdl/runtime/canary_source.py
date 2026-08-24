@@ -8,6 +8,10 @@ from typing import Any, Mapping
 
 import yaml
 
+from qdl.adapters.intervals import (
+    canonical_interval_ms,
+    latest_closed_boundary_ms,
+)
 from qdl.common.v1 import common_pb2
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
@@ -49,20 +53,10 @@ _STREAM_BY_FEED = {FeedType.BAR: "md.canonical.v2.bar"}
 
 
 def _interval_ns(interval: str) -> int:
-    units = {
-        "s": 1_000_000_000,
-        "m": 60 * 1_000_000_000,
-        "h": 60 * 60 * 1_000_000_000,
-        "d": 24 * 60 * 60 * 1_000_000_000,
-    }
     try:
-        amount = int(interval[:-1])
-        unit = units[interval[-1]]
-    except (KeyError, ValueError, IndexError) as error:
+        return canonical_interval_ms(interval) * 1_000_000
+    except ValueError as error:
         raise ValueError(f"unsupported canary bar interval: {interval}") from error
-    if amount <= 0:
-        raise ValueError("canary bar interval must be positive")
-    return amount * unit
 
 
 @dataclass(frozen=True, slots=True)
@@ -384,11 +378,9 @@ class SpoolCanonicalQueryBackend:
         return self._items(requirement, records)[-1] if records else None
 
     def history(self, requirement: DataRequirement) -> HistoryResult | None:
-        records = self._records(requirement)
+        records, requested, exact_boundary = self._window_records(requirement)
         if not records:
             return None
-        requested = requirement.warmup_limit or 1
-        records = records[-requested:]
         items = self._items(requirement, records)
         last = records[-1]
         snapshot_id = hashlib.sha256(
@@ -399,7 +391,9 @@ class SpoolCanonicalQueryBackend:
             items=items,
             coverage=(
                 CoverageStatus.FULL
-                if len(items) >= requested
+                if len(items) == requested
+                and exact_boundary
+                and not self._gaps(self.catalog.binding_for(requirement), records)
                 else CoverageStatus.PARTIAL
             ),
             snapshot_id=f"qdl-beta-{snapshot_id[:32]}",
@@ -423,9 +417,53 @@ class SpoolCanonicalQueryBackend:
         return tuple(sorted(result, key=lambda item: (item.detected_at_ns, item.gap_id)))
 
     def stored_events(self, requirement: DataRequirement) -> tuple[StoredEvent, ...]:
+        records, _, _ = self._window_records(requirement)
+        return records
+
+    def _window_records(
+        self,
+        requirement: DataRequirement,
+    ) -> tuple[tuple[StoredEvent, ...], int, bool]:
         records = self._records(requirement)
-        requested = requirement.warmup_limit or 1
-        return records[-requested:]
+        specification = requirement.warmup_specification
+        if specification is None:
+            return records[-1:], 1, bool(records)
+        if specification.rows is not None:
+            selected = records[-specification.rows:]
+            return selected, specification.rows, len(selected) == specification.rows
+        if requirement.feed is not FeedType.BAR or not requirement.interval:
+            raise ValueError("time-range warmup requires a BAR interval")
+        interval_ns = _interval_ns(requirement.interval)
+        latest_boundary_ns = latest_closed_boundary_ms(
+            requirement.interval,
+            self._clock_ns() // 1_000_000,
+        ) * 1_000_000
+        start_ns, end_ns, requested = specification.resolved_window(
+            interval_ns=interval_ns,
+            latest_closed_boundary_ns=latest_boundary_ns,
+        )
+        selected = tuple(
+            row
+            for row in records
+            if start_ns
+            <= market_data_pb2.EventEnvelope.FromString(
+                row.event.payload
+            ).bar.open_time_ns
+            < end_ns
+        )
+        exact = bool(selected) and (
+            len(selected) == requested
+            and market_data_pb2.EventEnvelope.FromString(
+                selected[0].event.payload
+            ).bar.open_time_ns
+            == start_ns
+            and market_data_pb2.EventEnvelope.FromString(
+                selected[-1].event.payload
+            ).bar.open_time_ns
+            + interval_ns
+            == end_ns
+        )
+        return selected, requested, exact
 
     def _records(self, requirement: DataRequirement) -> tuple[StoredEvent, ...]:
         binding = self.catalog.binding_for(requirement)
@@ -525,6 +563,7 @@ class SpoolCanonicalQueryBackend:
             feed=FeedType.BAR,
             interval=bar.interval,
             observed_at_ns=int(envelope.source_event_time_ns),
+            received_at_ns=max(1, int(envelope.received_at_ns)),
             revision=int(bar.revision),
             payload={
                 "open_time_ns": int(bar.open_time_ns),

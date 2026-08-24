@@ -43,6 +43,7 @@ from qdl_sdk.models import (
     TradeIdentityKind,
     TradePayload,
     WarmupResponse,
+    WarmupSpecification,
 )
 
 
@@ -60,6 +61,7 @@ class RequirementModel(ClosedModel):
     gap_policy: GapPolicy = GapPolicy.BLOCK
     recovery: RecoveryPolicy = RecoveryPolicy.SNAPSHOT_AND_REPLAY
     bar_revision_policy: BarRevisionPolicy = BarRevisionPolicy.LATEST
+    warmup: WarmupSpecification | None = None
 
 
 class BatchRequirementModel(ClosedModel):

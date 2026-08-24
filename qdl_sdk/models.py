@@ -74,8 +74,40 @@ class BarRevisionPolicy(StrEnum):
     EMIT_REVISIONS = "EMIT_REVISIONS"
 
 
+class IntervalSourcePolicy(StrEnum):
+    NATIVE_ONLY = "NATIVE_ONLY"
+    NATIVE_OR_EXACT_RESAMPLE = "NATIVE_OR_EXACT_RESAMPLE"
+
+
 class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class WarmupTimeRange(ClosedModel):
+    start_time_ns: int = Field(gt=0)
+    end_time_ns: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def increasing(self):
+        if self.end_time_ns <= self.start_time_ns:
+            raise ValueError("warmup time range must be increasing")
+        return self
+
+
+class WarmupSpecification(ClosedModel):
+    rows: int | None = Field(default=None, ge=1, le=10_000)
+    time_range: WarmupTimeRange | None = None
+    interval_source_policy: IntervalSourcePolicy = (
+        IntervalSourcePolicy.NATIVE_OR_EXACT_RESAMPLE
+    )
+    max_cache_age_ms: int = Field(default=60_000, ge=0, le=86_400_000)
+    deadline_ms: int = Field(default=20_000, ge=100, le=120_000)
+
+    @model_validator(mode="after")
+    def exactly_one_horizon(self):
+        if (self.rows is None) == (self.time_range is None):
+            raise ValueError("warmup requires exactly one rows or time_range horizon")
+        return self
 
 
 class ProblemDetails(ClosedModel):
@@ -165,6 +197,20 @@ class QuotePayload(ClosedModel):
     level: int = Field(default=1, ge=1)
 
 
+class ResampleLineageView(ClosedModel):
+    base_interval: str = Field(min_length=1, max_length=20)
+    constituent_count: int = Field(ge=1)
+    first_watermark: int = Field(ge=0)
+    last_watermark: int = Field(ge=0)
+    constituent_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def increasing_watermark(self):
+        if self.last_watermark < self.first_watermark:
+            raise ValueError("resample watermark range must be increasing")
+        return self
+
+
 class BarPayload(ClosedModel):
     feed: Literal[Feed.BAR] = Feed.BAR
     interval: str = Field(min_length=1, max_length=20)
@@ -184,6 +230,7 @@ class BarPayload(ClosedModel):
     revision: int = Field(ge=0)
     origin: Literal["VENUE_NATIVE", "AGGREGATED", "BACKFILLED", "RECONCILED"]
     supersedes_event_id: str | None = None
+    resample_lineage: ResampleLineageView | None = None
 
     @model_validator(mode="after")
     def validate_lifecycle(self):
@@ -276,6 +323,7 @@ class MarketDataView(ClosedModel):
     feed: Feed
     interval: str | None
     observed_at_ns: int = Field(gt=0)
+    received_at_ns: int | None = Field(default=None, gt=0)
     revision: int = Field(ge=0)
     payload: MarketPayload
     source: SourceView
@@ -423,6 +471,7 @@ class DataRequirement:
     gap_policy: GapPolicy = GapPolicy.BLOCK
     recovery: RecoveryPolicy = RecoveryPolicy.SNAPSHOT_AND_REPLAY
     bar_revision_policy: BarRevisionPolicy = BarRevisionPolicy.LATEST
+    warmup: WarmupSpecification | None = None
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.source_policy_id.strip():
@@ -442,6 +491,16 @@ class DataRequirement:
                 raise TypeError(f"{field} must use the typed SDK enum")
         if not 0 <= self.warmup_limit <= 10_000:
             raise ValueError("warmup_limit must be between 0 and 10000")
+        if self.warmup is not None and not isinstance(
+            self.warmup, WarmupSpecification
+        ):
+            raise TypeError("warmup must use WarmupSpecification")
+        if self.warmup is not None and self.warmup.rows is not None:
+            if self.warmup_limit not in {0, self.warmup.rows}:
+                raise ValueError("warmup_limit conflicts with warmup.rows")
+        if self.warmup is not None and self.warmup.time_range is not None:
+            if self.warmup_limit:
+                raise ValueError("time-range warmup cannot also declare warmup_limit")
         if self.max_freshness_ms is not None and self.max_freshness_ms <= 0:
             raise ValueError("max_freshness_ms must be positive")
         if self.feed is Feed.BAR and not self.interval:
@@ -456,12 +515,17 @@ class DataRequirement:
             raise ValueError("execution-grade requirement cannot relax fail-closed policy")
 
     def query_params(self) -> dict[str, str | int | bool]:
+        warmup = self.warmup
         values: dict[str, str | int | bool | None] = {
             "feed": self.feed.value,
             "consumer_grade": self.consumer_grade.value,
             "source_policy_id": self.source_policy_id,
             "interval": self.interval,
-            "limit": self.warmup_limit or None,
+            "limit": (
+                warmup.rows
+                if warmup is not None and warmup.rows is not None
+                else self.warmup_limit or None
+            ),
             "max_freshness_ms": self.max_freshness_ms,
             "require_full_coverage": self.require_full_coverage,
             "require_final_bars": self.require_final_bars,
@@ -470,10 +534,48 @@ class DataRequirement:
             "recovery": self.recovery.value,
             "bar_revision_policy": self.bar_revision_policy.value,
         }
+        if warmup is not None:
+            values.update({
+                "interval_source_policy": warmup.interval_source_policy.value,
+                "max_cache_age_ms": warmup.max_cache_age_ms,
+                "deadline_ms": warmup.deadline_ms,
+                "start_time_ns": (
+                    warmup.time_range.start_time_ns if warmup.time_range else None
+                ),
+                "end_time_ns": (
+                    warmup.time_range.end_time_ns if warmup.time_range else None
+                ),
+            })
         return {key: value for key, value in values.items() if value is not None}
 
+    @property
+    def warmup_specification(self) -> WarmupSpecification | None:
+        if self.warmup is not None:
+            return self.warmup
+        if self.warmup_limit:
+            return WarmupSpecification(rows=self.warmup_limit)
+        return None
+
+    def to_mapping(self) -> dict[str, object]:
+        return {
+            "instrument_uid": self.instrument_uid,
+            "feed": self.feed.value,
+            "consumer_grade": self.consumer_grade.value,
+            "source_policy_id": self.source_policy_id,
+            "interval": self.interval,
+            "warmup_limit": self.warmup_limit,
+            "max_freshness_ms": self.max_freshness_ms,
+            "require_full_coverage": self.require_full_coverage,
+            "require_final_bars": self.require_final_bars,
+            "stale_policy": self.stale_policy.value,
+            "gap_policy": self.gap_policy.value,
+            "recovery": self.recovery.value,
+            "bar_revision_policy": self.bar_revision_policy.value,
+            "warmup": self.warmup.model_dump(mode="json") if self.warmup else None,
+        }
+
     def to_proto(self) -> query_pb2.DataRequirement:
-        return query_pb2.DataRequirement(
+        result = query_pb2.DataRequirement(
             instrument_uid=self.instrument_uid,
             interval=self.interval or "",
             source_policy_id=self.source_policy_id,
@@ -494,6 +596,25 @@ class DataRequirement:
                 query_pb2, f"BAR_REVISION_POLICY_{self.bar_revision_policy.value}"
             ),
         )
+        if self.warmup is not None:
+            proto = query_pb2.WarmupSpecification(
+                interval_source_policy=getattr(
+                    query_pb2,
+                    f"INTERVAL_SOURCE_POLICY_{self.warmup.interval_source_policy.value}",
+                ),
+                max_cache_age_ms=self.warmup.max_cache_age_ms,
+                deadline_ms=self.warmup.deadline_ms,
+            )
+            if self.warmup.rows is not None:
+                proto.rows = self.warmup.rows
+            else:
+                assert self.warmup.time_range is not None
+                proto.time_range.CopyFrom(query_pb2.WarmupTimeRange(
+                    start_time_ns=self.warmup.time_range.start_time_ns,
+                    end_time_ns=self.warmup.time_range.end_time_ns,
+                ))
+            result.warmup.CopyFrom(proto)
+        return result
 
 
 @dataclass(frozen=True)

@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from qdl.domain.instrument import InstrumentRecord, InstrumentRegistry
-from qdl.query.contracts import CoverageStatus, DataRequirement, FeedType
+from qdl.query.contracts import (
+    CoverageStatus,
+    DataRequirement,
+    FeedType,
+    QueryProblem,
+)
 from qdl.query.lifecycle import BarLifecycle
+
+if TYPE_CHECKING:
+    from qdl.warmup.handoff import ResampleLineage
 
 
 # A fresh provider snapshot has no durable canonical-log position to resume.
 # Keeping one contract sentinel prevents edge adapters from fabricating a cursor.
 NON_REPLAYABLE_STREAM_CURSOR = "PASS_THROUGH_NO_REPLAY"
+
+
+class QueryBackendError(RuntimeError):
+    def __init__(self, problem: QueryProblem) -> None:
+        super().__init__(problem.detail)
+        self.problem = problem
 
 
 @dataclass(frozen=True)
@@ -98,6 +112,8 @@ class MarketDataItem:
     watermark_offset: int = 0
     bar_lifecycle: BarLifecycle | None = None
     supersedes_event_id: str | None = None
+    received_at_ns: int | None = None
+    resample_lineage: "ResampleLineage | None" = None
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.instrument_id.strip():
@@ -106,6 +122,8 @@ class MarketDataItem:
             raise ValueError("market-data revision/time fields are invalid")
         if self.watermark_offset < 0:
             raise ValueError("market-data watermark_offset cannot be negative")
+        if self.received_at_ns is not None and self.received_at_ns <= 0:
+            raise ValueError("market-data received_at_ns must be positive")
         if self.feed is FeedType.BAR and not self.interval:
             raise ValueError("bar item requires interval")
         if self.feed is not FeedType.BAR and self.interval is not None:
@@ -121,7 +139,11 @@ class MarketDataItem:
                     raise ValueError("final or revised bar must declare is_final=true")
             if self.bar_lifecycle is BarLifecycle.REVISED and not self.supersedes_event_id:
                 raise ValueError("revised bar must identify the superseded event")
-        elif self.bar_lifecycle is not None or self.supersedes_event_id is not None:
+        elif (
+            self.bar_lifecycle is not None
+            or self.supersedes_event_id is not None
+            or self.resample_lineage is not None
+        ):
             raise ValueError("bar lifecycle metadata is valid only for bar items")
 
 

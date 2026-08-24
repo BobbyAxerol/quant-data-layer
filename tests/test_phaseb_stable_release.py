@@ -311,7 +311,7 @@ class StableReleaseVersionContractTests(unittest.TestCase):
         self.assertEqual(generated["info"]["version"], "2.0.0")
         self.assertEqual(snapshot, generated)
         self.assertEqual(len(generated["paths"]), 10)
-        self.assertEqual(len(generated["components"]["schemas"]), 42)
+        self.assertEqual(len(generated["components"]["schemas"]), 46)
 
 
 if __name__ == "__main__":

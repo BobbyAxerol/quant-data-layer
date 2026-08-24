@@ -51,6 +51,11 @@ from qdl.security import (
 )
 from qdl.runtime.bounds import BoundedRequestMiddleware, RequestBounds
 from qdl.runtime.readiness import FailClosedReadiness
+from qdl.warmup.contracts import (
+    IntervalSourcePolicy,
+    WarmupSpecification,
+    WarmupTimeRange,
+)
 
 
 router = APIRouter(prefix="/v2", tags=["market-data-v2"])
@@ -107,7 +112,7 @@ def _purpose(value: Annotated[str, Header(alias="X-QDL-Purpose")]):
 
 
 def _requirement(model) -> DataRequirement:
-    return DataRequirement(**model.model_dump())
+    return DataRequirement.from_mapping(model.model_dump())
 
 
 def _decimal(value: object) -> DecimalValue:
@@ -204,6 +209,9 @@ def _typed_payload(item) -> dict:
             "revision": item.revision,
             "origin": value["origin"],
             "supersedes_event_id": item.supersedes_event_id,
+            "resample_lineage": (
+                asdict(item.resample_lineage) if item.resample_lineage else None
+            ),
         }
     if item.feed is FeedType.BOOK_SNAPSHOT:
         return {
@@ -261,6 +269,7 @@ def _market_item(item) -> MarketDataView:
         feed=item.feed.value,
         interval=item.interval,
         observed_at_ns=item.observed_at_ns,
+        received_at_ns=item.received_at_ns,
         revision=item.revision,
         payload=_typed_payload(item),
         source=SourceView(**asdict(item.source)),
@@ -400,6 +409,7 @@ def _query_requirement(
     gap_policy: GapPolicy,
     recovery: RecoveryPolicy,
     bar_revision_policy: BarRevisionPolicy,
+    warmup: WarmupSpecification | None = None,
 ) -> DataRequirement:
     return DataRequirement(
         instrument_uid=instrument_uid,
@@ -415,6 +425,35 @@ def _query_requirement(
         gap_policy=gap_policy,
         recovery=recovery,
         bar_revision_policy=bar_revision_policy,
+        warmup=warmup,
+    )
+
+
+def _warmup_specification(
+    *,
+    limit: int | None,
+    start_time_ns: int | None,
+    end_time_ns: int | None,
+    interval_source_policy: IntervalSourcePolicy,
+    max_cache_age_ms: int,
+    deadline_ms: int,
+) -> WarmupSpecification:
+    if (start_time_ns is None) != (end_time_ns is None):
+        raise ValueError("start_time_ns and end_time_ns must be provided together")
+    if start_time_ns is not None:
+        if limit is not None:
+            raise ValueError("time-range warmup cannot also declare limit")
+        return WarmupSpecification(
+            time_range=WarmupTimeRange(start_time_ns, end_time_ns),
+            interval_source_policy=interval_source_policy,
+            max_cache_age_ms=max_cache_age_ms,
+            deadline_ms=deadline_ms,
+        )
+    return WarmupSpecification.for_rows(
+        limit or 1000,
+        interval_source_policy=interval_source_policy,
+        max_cache_age_ms=max_cache_age_ms,
+        deadline_ms=deadline_ms,
     )
 
 
@@ -462,7 +501,14 @@ async def warmup(
     source_policy_id: str,
     consumer_grade: ConsumerGrade = ConsumerGrade.ALPHA,
     interval: str | None = None,
-    limit: int = Query(1000, ge=1, le=10_000),
+    limit: int | None = Query(None, ge=1, le=10_000),
+    start_time_ns: int | None = Query(None, gt=0),
+    end_time_ns: int | None = Query(None, gt=0),
+    interval_source_policy: IntervalSourcePolicy = (
+        IntervalSourcePolicy.NATIVE_OR_EXACT_RESAMPLE
+    ),
+    max_cache_age_ms: int = Query(60_000, ge=0, le=86_400_000),
+    deadline_ms: int = Query(20_000, ge=100, le=120_000),
     max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
     require_full_coverage: bool = True,
     require_final_bars: bool = True,
@@ -474,16 +520,31 @@ async def warmup(
     service: V2QueryService = Depends(_service),
     access: DataPlaneAccess = Depends(_data_access),
 ):
+    try:
+        warmup_spec = _warmup_specification(
+            limit=limit,
+            start_time_ns=start_time_ns,
+            end_time_ns=end_time_ns,
+            interval_source_policy=interval_source_policy,
+            max_cache_age_ms=max_cache_age_ms,
+            deadline_ms=deadline_ms,
+        )
+    except ValueError as error:
+        raise QueryServiceError(
+            QueryProblem(CanonicalErrorCode.INVALID_ARGUMENT, str(error), False),
+            request_id=service.request_id(),
+            instrument_uid=instrument_uid,
+        ) from error
     requirement = _query_requirement(
         instrument_uid, feed, consumer_grade, source_policy_id,
-        interval, limit, max_freshness_ms, require_full_coverage,
+        interval, 0, max_freshness_ms, require_full_coverage,
         require_final_bars, stale_policy, gap_policy, recovery,
-        bar_revision_policy,
+        bar_revision_policy, warmup_spec,
     )
     access.require_permission(DataPlanePermission.HISTORY_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    result = service.warmup(
+    result = await service.warmup_async(
         requirement,
         purpose=purpose,
     )
@@ -502,7 +563,14 @@ async def history(
     source_policy_id: str,
     consumer_grade: ConsumerGrade = ConsumerGrade.RESEARCH,
     interval: str | None = None,
-    limit: int = Query(1000, ge=1, le=10_000),
+    limit: int | None = Query(None, ge=1, le=10_000),
+    start_time_ns: int | None = Query(None, gt=0),
+    end_time_ns: int | None = Query(None, gt=0),
+    interval_source_policy: IntervalSourcePolicy = (
+        IntervalSourcePolicy.NATIVE_OR_EXACT_RESAMPLE
+    ),
+    max_cache_age_ms: int = Query(60_000, ge=0, le=86_400_000),
+    deadline_ms: int = Query(20_000, ge=100, le=120_000),
     max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
     require_full_coverage: bool = True,
     require_final_bars: bool = True,
@@ -514,16 +582,31 @@ async def history(
     service: V2QueryService = Depends(_service),
     access: DataPlaneAccess = Depends(_data_access),
 ):
+    try:
+        warmup_spec = _warmup_specification(
+            limit=limit,
+            start_time_ns=start_time_ns,
+            end_time_ns=end_time_ns,
+            interval_source_policy=interval_source_policy,
+            max_cache_age_ms=max_cache_age_ms,
+            deadline_ms=deadline_ms,
+        )
+    except ValueError as error:
+        raise QueryServiceError(
+            QueryProblem(CanonicalErrorCode.INVALID_ARGUMENT, str(error), False),
+            request_id=service.request_id(),
+            instrument_uid=instrument_uid,
+        ) from error
     requirement = _query_requirement(
         instrument_uid, feed, consumer_grade, source_policy_id,
-        interval, limit, max_freshness_ms, require_full_coverage,
+        interval, 0, max_freshness_ms, require_full_coverage,
         require_final_bars, stale_policy, gap_policy, recovery,
-        bar_revision_policy,
+        bar_revision_policy, warmup_spec,
     )
     access.require_permission(DataPlanePermission.HISTORY_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    result = service.warmup(requirement, purpose=purpose)
+    result = await service.warmup_async(requirement, purpose=purpose)
     result = type(result)(
         result.request_id,
         _bind_history_cursor(request, access, requirement, result.history),
@@ -551,7 +634,7 @@ async def warmup_batch(
         requirements,
         require_all=body.require_all,
     )
-    result = service.warmup_batch(batch, purpose=purpose)
+    result = await service.warmup_batch_async(batch, purpose=purpose)
     items = []
     for item, requirement in zip(result.results, requirements, strict=True):
         problem = None

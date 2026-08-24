@@ -33,8 +33,11 @@ from qdl.query import (
     MarketDataItem,
     MemoryMarketDataBackend,
     QualityMetadata,
+    QueryServiceError,
     SourceMetadata,
     V2QueryService,
+    WarmupSpecification,
+    WarmupTimeRange,
 )
 
 
@@ -443,6 +446,34 @@ class Phase5ApiTests(unittest.TestCase):
         )
         self.assertEqual(execution.status_code, 503)
         self.assertEqual(execution.json()["code"], "SOURCE_NON_AUTHORITATIVE")
+
+    def test_query_service_time_range_is_aligned_and_bounded_before_materialization(self):
+        minute_ns = 60_000_000_000
+        start_ns = minute_ns
+        cases = (
+            (start_ns + 10_001 * minute_ns, "public row bound"),
+            (start_ns + 2 * minute_ns + 1, "not aligned"),
+        )
+        for end_ns, detail in cases:
+            with self.subTest(detail=detail):
+                requirement = DataRequirement(
+                    instrument_uid=self.binance.instrument_uid,
+                    feed=FeedType.BAR,
+                    consumer_grade=ConsumerGrade.ALPHA,
+                    source_policy_id="alpha_crypto_primary_v1",
+                    interval="1m",
+                    max_freshness_ms=10_000,
+                    warmup=WarmupSpecification(
+                        time_range=WarmupTimeRange(start_ns, end_ns)
+                    ),
+                )
+                with self.assertRaises(QueryServiceError) as rejected:
+                    self.service.warmup(
+                        requirement,
+                        purpose=AccessPurpose.INTERNAL_ALPHA,
+                    )
+                self.assertEqual(rejected.exception.problem.code.value, "INVALID_ARGUMENT")
+                self.assertIn(detail, rejected.exception.problem.detail)
 
 
 if __name__ == "__main__":

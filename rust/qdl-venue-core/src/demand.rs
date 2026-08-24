@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use qdl_contracts::qdl::demand::v1::{
-    universe_selector, DataRequirement, DemandPurpose, DemandState, FeedType,
+    universe_selector, warmup_specification, DataRequirement, DemandPurpose, DemandState, FeedType,
+    IntervalSourcePolicy,
 };
 use sha2::{Digest, Sha256};
 
@@ -160,6 +161,34 @@ pub fn validate_requirement(requirement: &DataRequirement) -> Result<(), String>
         || requirement.configuration_revision == 0
     {
         return Err("demand requirement bound is invalid".into());
+    }
+    if let Some(warmup) = &requirement.warmup {
+        let policy = IntervalSourcePolicy::try_from(warmup.interval_source_policy)
+            .map_err(|_| "warmup interval source policy is invalid")?;
+        if policy == IntervalSourcePolicy::Unspecified
+            || warmup.max_cache_age_ms > 86_400_000
+            || !(100..=120_000).contains(&warmup.deadline_ms)
+        {
+            return Err("warmup policy bound is invalid".into());
+        }
+        match &warmup.horizon {
+            Some(warmup_specification::Horizon::Rows(rows)) => {
+                if !(1..=100_000).contains(rows)
+                    || (requirement.warmup_limit != 0 && requirement.warmup_limit != *rows)
+                {
+                    return Err("warmup row horizon conflicts with legacy limit".into());
+                }
+            }
+            Some(warmup_specification::Horizon::TimeRange(range)) => {
+                if requirement.warmup_limit != 0
+                    || range.start_time_ns <= 0
+                    || range.end_time_ns <= range.start_time_ns
+                {
+                    return Err("warmup time range is invalid or ambiguous".into());
+                }
+            }
+            None => return Err("warmup horizon is required".into()),
+        }
     }
     let is_book = matches!(feed, FeedType::BookSnapshot | FeedType::BookDelta);
     if requirement.depth_levels > 0 && !is_book {
@@ -354,8 +383,8 @@ mod tests {
         ReconcileActionKind,
     };
     use qdl_contracts::qdl::demand::v1::{
-        universe_selector, DataRequirement, DemandPurpose, DemandState, ExplicitSymbols, FeedType,
-        UniverseSelector,
+        universe_selector, warmup_specification, DataRequirement, DemandPurpose, DemandState,
+        ExplicitSymbols, FeedType, IntervalSourcePolicy, UniverseSelector, WarmupSpecification,
     };
 
     fn requirement() -> DataRequirement {
@@ -387,6 +416,16 @@ mod tests {
             source_policy_id: "crypto_primary_v2".into(),
             depth_levels: 0,
             configuration_revision: 1,
+            warmup: None,
+        }
+    }
+
+    fn typed_warmup(rows: u32) -> WarmupSpecification {
+        WarmupSpecification {
+            interval_source_policy: IntervalSourcePolicy::NativeOrExactResample as i32,
+            max_cache_age_ms: 60_000,
+            deadline_ms: 20_000,
+            horizon: Some(warmup_specification::Horizon::Rows(rows)),
         }
     }
 
@@ -410,6 +449,22 @@ mod tests {
         let mut invalid_freshness = requirement();
         invalid_freshness.max_freshness_ms = 86_400_001;
         assert!(validate_requirement(&invalid_freshness).is_err());
+    }
+
+    #[test]
+    fn typed_warmup_validation_matches_python_contract() {
+        let mut value = requirement();
+        value.feed = FeedType::Bar as i32;
+        value.interval = "15m".into();
+        value.require_final_bars = true;
+        value.warmup = Some(typed_warmup(700));
+        assert!(validate_requirement(&value).is_ok());
+
+        value.warmup_limit = 500;
+        assert!(validate_requirement(&value).is_err());
+        value.warmup_limit = 0;
+        value.warmup = Some(typed_warmup(0));
+        assert!(validate_requirement(&value).is_err());
     }
 
     #[test]
