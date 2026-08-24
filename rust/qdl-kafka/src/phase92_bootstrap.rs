@@ -401,6 +401,9 @@ mod tests {
         assert!(signed.verify(&keyring(), &wrong_scope).is_err());
 
         let verified = signed.verify(&keyring(), &scope()).unwrap();
+        assert!(verified
+            .decide_assignment(&[], &BTreeMap::new(), 200)
+            .is_err());
         let missing = BTreeMap::from([(("md.raw.stable.v1".into(), 0), None)]);
         assert!(verified
             .decide_assignment(&[("md.raw.stable.v1".into(), 0)], &missing, 1_000)

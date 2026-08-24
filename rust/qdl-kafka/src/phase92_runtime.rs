@@ -374,6 +374,40 @@ pub enum Phase92BootstrapStatus {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Phase92RebalanceAction {
+    PrepareAndAssign,
+    Revoke,
+    CooperativeEmptyNoop,
+}
+
+fn phase92_rebalance_action(
+    error: RDKafkaRespErr,
+    cooperative_protocol: bool,
+    assignment_len: usize,
+) -> Result<Phase92RebalanceAction, KafkaTransportError> {
+    match error {
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS => {
+            if assignment_len == 0 {
+                if cooperative_protocol {
+                    Ok(Phase92RebalanceAction::CooperativeEmptyNoop)
+                } else {
+                    Err(KafkaTransportError::Fencing(
+                        "Phase 9.2 bootstrap received an empty assignment outside cooperative rebalance"
+                            .into(),
+                    ))
+                }
+            } else {
+                Ok(Phase92RebalanceAction::PrepareAndAssign)
+            }
+        }
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS => Ok(Phase92RebalanceAction::Revoke),
+        _ => Err(KafkaTransportError::Fencing(
+            "Phase 9.2 Kafka consumer received an unexpected rebalance event".into(),
+        )),
+    }
+}
+
 struct Phase92BootstrapConsumerContext {
     cursor: Option<Phase92BootstrapPayload>,
     status: Mutex<Phase92BootstrapStatus>,
@@ -535,16 +569,20 @@ impl ConsumerContext for Phase92BootstrapConsumerContext {
         error: RDKafkaRespErr,
         assignment: &mut TopicPartitionList,
     ) {
-        let result = match error {
-            RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS => self
+        let result = match phase92_rebalance_action(
+            error,
+            matches!(
+                consumer.rebalance_protocol(),
+                RebalanceProtocol::Cooperative
+            ),
+            assignment.elements().len(),
+        ) {
+            Ok(Phase92RebalanceAction::CooperativeEmptyNoop) => Ok(()),
+            Ok(Phase92RebalanceAction::PrepareAndAssign) => self
                 .prepare_assignment(consumer, assignment)
                 .and_then(|()| self.complete_assignment(consumer, assignment)),
-            RDKafkaRespErr::RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS => {
-                self.complete_revocation(consumer, assignment)
-            }
-            _ => Err(KafkaTransportError::Fencing(
-                "Phase 9.2 Kafka consumer received an unexpected rebalance event".into(),
-            )),
+            Ok(Phase92RebalanceAction::Revoke) => self.complete_revocation(consumer, assignment),
+            Err(error) => Err(error),
         };
         if let Err(error) = result {
             self.fail(error.to_string());
@@ -1033,6 +1071,47 @@ mod tests {
             target_checkpoints: "checkpoints".into(),
             authority_control: "authority".into(),
         }
+    }
+
+    #[test]
+    fn cooperative_empty_assignment_is_a_noop_but_other_empty_assignments_fence() {
+        assert_eq!(
+            phase92_rebalance_action(
+                RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS,
+                true,
+                0,
+            )
+            .unwrap(),
+            Phase92RebalanceAction::CooperativeEmptyNoop
+        );
+        assert!(phase92_rebalance_action(
+            RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS,
+            false,
+            0,
+        )
+        .is_err());
+        assert_eq!(
+            phase92_rebalance_action(
+                RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS,
+                true,
+                1,
+            )
+            .unwrap(),
+            Phase92RebalanceAction::PrepareAndAssign
+        );
+        assert_eq!(
+            phase92_rebalance_action(
+                RDKafkaRespErr::RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS,
+                true,
+                0,
+            )
+            .unwrap(),
+            Phase92RebalanceAction::Revoke
+        );
+        assert!(
+            phase92_rebalance_action(RDKafkaRespErr::RD_KAFKA_RESP_ERR__TIMED_OUT, true, 0,)
+                .is_err()
+        );
     }
 
     #[test]

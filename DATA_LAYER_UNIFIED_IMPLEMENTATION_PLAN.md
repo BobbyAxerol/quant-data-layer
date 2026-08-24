@@ -11254,3 +11254,61 @@ live migration or authority transition is part of R0.
 - Candidate rollover now calculates its expiry as min(requested child TTL, immutable parent prerequisite expiry). It rejects a parent with fewer than 60 seconds remaining, so no child packet can outlive or race a nearly-expired authorization bundle.
 - Regression added and passed: child expiry clamps exactly to parent approval; a parent with 30 seconds remaining rejects before packet output. The focused immutable R1/R2/C3/C40/cursor matrix passed 42/42 in 5.625 seconds, and eight changed Python files passed non-writing syntax compilation. Git whitespace check passed.
 - No authority DB/CAS, Kafka offset/topic, Redis/SQLite, V1/Trading System or core container mutation occurred. The earlier reference/admission/bootstrap artifacts remain retained as failed-precondition evidence only; a new suffixed evidence chain will be collected before applying any rollover.
+
+**R1 fresh candidate rollover execution - 2026-08-24.**
+
+- Applied reviewed packet 3b9aa072beb18129278b73ed951483f06a572e04650987fc123f3746fa10a0aa for candidate 21bae7ea3ce301f97a73d2e83b3e12f78460dc1c5640d2fc632803af5c8e3e85. Result: twelve new append-only rollover records and one new prerequisite bundle; all slices remain BLOCKED at authority revision 9 and lease 4 under the new candidate.
+- Immediate isolated authority DB verification: BLOCKED=12, revision range 9..9, lease range 4..4, candidate prefix 21bae7ea3ce3; candidate rollover history count is 24 (the prior terminalized 12 plus the new 12); authority outbox PUBLISHED=96. Apply reported production_mutations=13 and kafka_offset_mutations=0.
+- No production core was started. No Kafka reset/seek/topic mutation, Redis/SQLite/V1/Trading System/DNSE/Spot change occurred. Next allowed action is fresh packet preparation, dry-run and CAS application for BLOCKED -> VALIDATING only; any mismatch/expiry stops before RUST_CANARY.
+
+**R1 REVALIDATE transition execution - 2026-08-24.**
+
+- Reviewed and applied exact C3 packet e833f33280d9fd846bc0c2e9c35215aae0cbcf109856565e87f60df624ad9a19. All twelve selected Binance USD-M/OKX Swap TRADE, QUOTE and BAR slices moved only from BLOCKED revision 9 to VALIDATING revision 10; lease remains 4 and candidate remains 21bae7ea3ce3.
+- Immediate authority verification: VALIDATING=12, revision 10..10, lease 4..4, candidate prefix 21bae7ea3ce3; authority outbox PUBLISHED=108. Apply reported 12 control-plane mutations and no Kafka offset mutation. No production core, public/legacy data writer, V1, Trading System, Redis/SQLite, DNSE or Spot process changed.
+- Next action is a separate freshly prepared/dry-run reviewed C3 CANARY packet. The canary will remain output-fenced until a signed bootstrap cursor is issued and production_core replicas pass rolling resource/recovery gates.
+
+**R1 CANARY transition execution - 2026-08-24.**
+
+- Reviewed and applied exact C3 CANARY packet 967ea35ed1b883c9a90d9d90cf645da77cc14682b72853a7ee8c4f4e3b40004c. All twelve selected Binance USD-M/OKX Swap TRADE, QUOTE and BAR slices moved only from VALIDATING revision 10 to RUST_CANARY revision 11; lease remains 4 and candidate remains 21bae7ea3ce3.
+- Immediate authority verification: RUST_CANARY=12, revision 11..11, lease 4..4, candidate prefix 21bae7ea3ce3; authority outbox PUBLISHED=120. Apply reported 12 control-plane mutations. No production core started and no public/legacy projection, Kafka offset/topic, Redis/SQLite, V1/Trading System, DNSE or Spot mutation occurred.
+- The next operation is a signed fresh-group tail cursor dry-run, then explicit issue only after it proves no committed offsets. The cursor is non-secret runtime input; its verification key stays sealed in stable.env. Core start remains rolling and fail-closed.
+
+**R1 signed tail cursor issuance - 2026-08-24.**
+
+- Dry-run and apply both proved the fresh group qdl-v2-production-core-r1-9b8daa5e45fc-0a3fcff59c57-phase92-raw has no committed offsets across all six md.raw.stable.v1 partitions. Apply wrote only a signed non-secret production-bootstrap.json for candidate 21bae7ea3ce3, generation 1, partition-plan epoch 1; both reports recorded kafka_offset_mutations=0.
+- The issuer generated a distinct dry-run cursor and applied cursor by design; only the applied cursor is mounted. Network-isolated UID 10001 read preflight passed for the final runtime file. The HMAC key remains only in sealed stable.env; no V1, Redis, SQLite, Kafka reset/seek/topic, Trading System or DNSE/Spot mutation occurred.
+- Next bounded mutation is rolling recreate/start of production_core_1 only with the new immutable 9b8daa image and current sealed bundle. It must reach structured signed-bootstrap/authority reconstruction, remain under its 256MiB cgroup without OOM/retry/transport error and preserve V1 health before core 2 is allowed.
+
+**R1 rolling core observation - replica 1 - 2026-08-24.**
+
+- Canonical Compose recreated only production_core_1 from immutable image sha256:9b8daa5e45fc1cbd3c183af93e502c26b4cbcdcff1bbb0ea71e9e4ddb476df2b with no dependency rebuild/start. It loaded the applied signed cursor, reconstructed authority and target watermarks, and progressed bootstrap PENDING to SEEDED.
+- After the bounded warm-up plus 45-second steady observation: state running, OOMKilled=false, restart count 0, RSS 111MiB of 256MiB and CPU about 4.65 percent. Structured progress advanced from 12,800 to 39,494 processed records with no quarantine/duplicate/retry/authority/transport error. Filtered records are explicitly reported; ignored_out_of_scope is zero in this exact production-core scope.
+- V1 compact health remained status=ok with Binance trade and kline stream flags true. This passes replica-1 resource/recovery gate; core 2 may be recreated next, one service only. A failure at any later replica still stops all production_core replicas and fences the canary without touching V1.
+
+**R1 rolling-rebalance failure and mandatory rollback - 2026-08-24 (in progress).**
+
+- Replica 1 passed standalone recovery/resource gates, but after production_core_2 joined the shared fresh group, production_core_1 exited code 1 without OOM. Bounded log root cause: Kafka sink fencing rejected: Phase 9.2 bootstrap received an empty assignment. This occurred during group rebalance; core 2 remained running at 42.75MiB, while V1 stayed status=ok.
+- An empty partition assignment during cooperative rebalance is a transient ownership state, not evidence that the exact authority/cursor is invalid. Treating it as fatal makes N-1 worker scaling unavailable and violates the approved rolling-canary acceptance gate. No core 3 will start and no R2 preparation is allowed.
+- Mandatory rollback under the approved packet: stop production_core_1..3 only, prepare/dry-run/apply a separate C3 BLOCK_CANARY packet for the exact current 12 slices, verify BLOCKED/outbox/V1, then repair the Rust cooperative-rebalance behavior with tests. Kafka offsets are not reset or sought; V1 and generic scope-fenced cores remain unchanged.
+
+**R1 rebalance rollback execution - 2026-08-24.**
+
+- Approved rollback completed. All production_core replicas are stopped; no active production-core container remains. Core 1 had exit code 1 from the empty-assignment fencing defect. Core 2 was stopped by the bounded Compose rollback after its grace period (exit 137, OOMKilled=false); core 3 remains historical stopped/OOM evidence from the prior candidate.
+- Exact BLOCK_CANARY packet 63629c8711439d50635a54fdf82dfefab9e517d5af46971c0e34800756981dab was dry-run and applied. Authority now reports BLOCKED=12, revision 12..12, lease 4..4, candidate prefix 21bae7ea3ce3; authority outbox PUBLISHED=132. No authority row/evidence was deleted.
+- V1 compact health remained status=ok. No Kafka reset/seek/topic mutation, Redis/SQLite flush, generic core change, Trading System/DNSE/Spot change or R2 preparation occurred. R1 is blocked pending a Rust cooperative-rebalance repair, a new immutable image/candidate/bundle and fresh full evidence; the current 9b8daa candidate is terminal audit evidence only.
+
+
+**R1 cooperative-rebalance source repair - 2026-08-24 (approved, in progress).**
+
+- Scope is deliberately narrow: a zero-length `ASSIGN_PARTITIONS` callback is a valid transient state only when librdkafka explicitly reports the Cooperative protocol. The worker owns no raw partition in that state, must not poll/commit/produce from it, and preserves the existing signed-bootstrap status until a non-empty assignment arrives.
+- The signed cursor payload itself continues to reject direct empty assignment, preserving strict validation for malformed/non-cooperative paths. Eager/None protocols with an empty assignment and every unknown rebalance event remain fail-closed. Non-empty cooperative assignment still runs the unchanged signed cursor, committed-offset, authority and scope fences before incremental assignment.
+- Required gates before a new runtime candidate: Rust unit coverage for cooperative-empty no-op versus eager/unknown failure behavior; existing bootstrap/transport tests, formatting and Clippy; immutable image build; fresh candidate/bundle/admission/cursor evidence; rolling three-replica real-provider twelve-slice canary. No manual Kafka offset reset/seek, V1/Trading System restart, Redis/SQLite flush, DNSE/Spot cutover or R2 transition is allowed before all gates pass.
+
+
+**R1 cooperative-rebalance source repair - 2026-08-24 (complete source slice).**
+
+- Implemented a private Phase 9.2 rebalance classifier. ASSIGN_PARTITIONS with zero partitions is a no-op only for an explicitly cooperative protocol; it performs no cursor preparation, broker assignment, poll, commit or output. Empty eager/none assignment fences; unknown callback fences; non-empty assignment and revocation retain the existing code paths.
+- Kept the signed payload strict: direct empty decide_assignment still fences. Regression therefore proves both the allowed cooperative transport callback and the non-negotiable cursor contract.
+- Source gates passed in disposable, network-isolated containers: cargo fmt --all -- --check; cargo test -p qdl-kafka --locked (20 library tests, plus 6 ingestor, 3 production-core and 2 realtime-core binary tests); cargo clippy -p qdl-kafka --all-targets --locked -- -D warnings; and the pinned Python R0/R1/R2 matrix (85/85, 4.581s) in a read-only V2 Python image. Expected provider/reconnect diagnostics inside deterministic unit coverage did not create runtime mutation.
+- The temporary Rust builder container used only an executable tmpfs target and exited cleanly; no host build cache, Kafka offset, topic, Redis/SQLite, V1/Trading System, generic-core, DNSE/Spot or production-core mutation occurred. Next is a fresh immutable candidate image and fresh sealed/evidence chain; the failed 9b8daa generation remains terminal audit evidence.
+- Extended source gate passed after the focused matrix: full cargo clippy --workspace --all-targets --locked with warnings denied, and full cargo test --workspace --locked with 94 Rust unit tests passed. Both used the same disposable, network-isolated builder with only executable tmpfs build output.
