@@ -12719,6 +12719,78 @@ MUTATION`).**
   A controlled fallback/return proof remains a route-manifest/SDK test, not an
   ad-hoc broad service restart.
 
+**Implementation slice 10.3 consumer-receipt harness - 2026-08-24
+(`APPROVED SOURCE SCOPE / NO RUNTIME MUTATION`).**
+
+- **Goal:** replace the obsolete fixed-case, `RUST_SHADOW`-expecting C1 smoke
+  as Phase 10.3 cutover evidence with one manifest/catalog-driven, no-order
+  acceptance harness. It will use the real V2 SDK and workload identity for
+  both `trading-system.paper.stable` and `alpha.binance.paper.stable`, but
+  never make a direct provider connection, call Gateway or submit an order.
+- **Exact contract:** derive crypto requirements only from the approved
+  consumer manifest plus stable source catalog/acquisition scope. Cover every
+  selected `TRADE`, `QUOTE` and materialised final `BAR 1m` requirement through
+  typed V2 snapshot/warmup and validate identity, decimal, source lineage,
+  finality, quality, freshness and query-replica agreement. Prove stream
+  cursor ACK/resume continuity on durable realtime requirements. Alpha `15m`
+  windows are tested only as explicit provider pass-through snapshot products;
+  they must never be misreported as durable replay or live-stream authority.
+- **Boundaries:** VN requirements remain excluded until in-session admission;
+  an absent metric/bar must fail explicitly rather than be replaced with zero
+  or a fabricated record. The harness writes cursor state only to a caller
+  supplied disposable directory and emits bounded identity/offset/hash/latency
+  evidence, never market payloads, keys or strategy data. It does not alter a
+  consumer migration manifest, route, cache, broker, service or alpha.
+- **Required tests:** source-manifest/catalog selection including TS/alpha
+  scopes, rejected missing/foreign/duplicate requirements, typed requirement
+  conversion, durable versus pass-through classification, result-domain checks,
+  cursor continuity and output redaction. A later approved runtime invocation
+  must use the sealed `RUST_PRIMARY` packet, test both workload identities and
+  retain only compact disposable evidence.
+- **Decision boundary:** this source slice makes the final Phase 10.3
+  acceptance executable and auditable. It does not authorize the currently
+  degraded Trading System consumer to restart or the V2 plane to become
+  primary; those remain one bounded packet with explicit rollback.
+
+**Implementation slice 10.3 consumer-receipt scope - 2026-08-24
+(`SOURCE/CONTRACT PASS / NO RUNTIME MUTATION`).**
+
+- Added `qdl.certification.phase103_consumer_acceptance`, a pure
+  manifest/catalog/acquisition resolver for the exact two governed workload
+  identities: `trading-system.paper.stable` and
+  `alpha.binance.paper.stable`. It refuses a missing/foreign/duplicate
+  manifest set, a crypto requirement with a non-approved policy, a missing
+  durable binding and a disabled acquisition. This removes the old C1
+  hard-coded BTC-only/`RUST_SHADOW` assumption from the new Phase 10.3
+  acceptance path without changing C1's historical evidence contract.
+- The committed manifests resolve to `18` crypto acceptance products: `16`
+  durable canonical products (all requested Binance USD-M/OKX Swap
+  `TRADE`/`QUOTE`/final `BAR 1m`) and `2` explicit alpha `BAR 15m`
+  `FRESH_SNAPSHOT` pass-through products. The latter retain no binding ID and
+  cannot be represented as durable replay/live authority. The one DNSE/VN
+  requirement is emitted only as
+  `VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE`; it is neither silently omitted nor
+  certified while the session is closed.
+- The deterministic, payload-free scope digest includes only manifest
+  revision/hash, identity, feed, interval, declared provider/policy, delivery
+  class and binding ID. It never serializes market payloads, raw frames,
+  credentials or cursor values.
+- **Tests actually run:** `python3 -m py_compile` for the new module/test; the
+  host test import correctly stopped because host Python lacks the `redis`
+  dependency, so it was not treated as product evidence. The immutable
+  `qdl-v2-python@sha256:90c96b9c4418525ec6e505e7debcb7dfc8addbcb9e957eeaded90f2e9ddc8730`
+  image, mounted source read-only with `--network none`, passed the new scope
+  suite `5/5`; the targeted Phase 10.3 regression suite passed `23/23`
+  (scope, raw lineage, broker scope and sealed handoff tests). No Docker
+  service, image, Kafka topic/offset/ACL, Redis/SQLite/PostgreSQL state,
+  authority, route, V1 consumer, Trading System, alpha or provider was
+  mutated.
+- **Remaining exact gate:** run this resolver with the real V2 SDK under both
+  workload identities only inside a newly generated and explicitly approved
+  `RUST_PRIMARY` handoff packet. It must prove fresh query/warmup/cursor/live
+  receipt against the active slice before the Trading System is recreated;
+  the source contract alone does not certify the stale running route.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 
