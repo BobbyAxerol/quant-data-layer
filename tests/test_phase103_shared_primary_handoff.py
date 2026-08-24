@@ -120,7 +120,12 @@ class SharedPrimaryConsumerRouteTests(unittest.TestCase):
 
 
 class SharedPrimaryPacketTests(unittest.TestCase):
-    def packet(self, output_dir: Path) -> dict[str, object]:
+    def packet(
+        self,
+        output_dir: Path,
+        *,
+        host_runtime_dir: Path | None = None,
+    ) -> dict[str, object]:
         return prepare_shared_primary_packet(
             output_dir=output_dir,
             rust_image_digest="sha256:" + "b" * 64,
@@ -130,6 +135,7 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             change_ticket="QDL-PHASE103-TEST",
             observation_seconds=300,
             issued_at_ns=1_800_000_000_000_000_000,
+            host_runtime_dir=host_runtime_dir,
         )
 
     @staticmethod
@@ -149,7 +155,10 @@ class SharedPrimaryPacketTests(unittest.TestCase):
     def test_packet_uses_one_shared_topology_and_has_review_only_rollback(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phase103-packet-") as directory:
             output = Path(directory) / "packet"
-            packet = self.packet(output)
+            packet = self.packet(
+                output,
+                host_runtime_dir=Path("/host/qdl/phase103/runtime"),
+            )
             validate_shared_primary_packet(packet)
             self.assertFalse(packet["apply_requested"])
             self.assertEqual(packet["production_mutations"], 0)
@@ -163,7 +172,10 @@ class SharedPrimaryPacketTests(unittest.TestCase):
                 "sha256:" + "c" * 64,
             )
             environment = packet["compose_environment"]
-            self.assertTrue(environment["QDL_STABLE_RUNTIME_DIR"].endswith("/runtime"))
+            self.assertEqual(
+                environment["QDL_STABLE_RUNTIME_DIR"],
+                "/host/qdl/phase103/runtime",
+            )
             self.assertEqual(
                 environment["QDL_STABLE_PYTHON_IMAGE"],
                 "sha256:" + "c" * 64,
@@ -271,6 +283,18 @@ class SharedPrimaryPacketTests(unittest.TestCase):
                     change_ticket="QDL-PHASE103-TEST",
                     observation_seconds=300,
                     issued_at_ns=1_800_000_000_000_000_000,
+                )
+            with self.assertRaisesRegex(ValueError, "host_runtime_dir"):
+                prepare_shared_primary_packet(
+                    output_dir=Path(directory) / "bad-host-runtime-dir",
+                    rust_image_digest="sha256:" + "b" * 64,
+                    python_image_digest="sha256:" + "c" * 64,
+                    source_commit="0123456789abcdef",
+                    actor="BobbyAxerol",
+                    change_ticket="QDL-PHASE103-TEST",
+                    observation_seconds=300,
+                    issued_at_ns=1_800_000_000_000_000_000,
+                    host_runtime_dir=Path("runtime"),
                 )
 
 

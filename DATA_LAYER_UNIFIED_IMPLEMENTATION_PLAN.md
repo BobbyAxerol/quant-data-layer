@@ -12547,6 +12547,28 @@ RUNTIME PACKET PENDING`).**
   create/up/restart command ran. No runtime resource, topic, ACL, authority,
   V1 route, secret, Trading System or alpha state changed.
 
+**Phase 10.3 host-runtime-path packet checkpoint - 2026-08-24
+(`SOURCE/PACKAGING PASS / RUNTIME CUTOVER PENDING`).**
+
+- Corrected the packet generator to distinguish its local write directory from
+  `host_runtime_dir`, the absolute host path Docker Compose will mount later.
+  When generating on the host the default remains the generated `runtime`
+  directory; a containerized generator must receive the host path explicitly.
+  Relative, traversal-shaped or non-`runtime` paths fail before bundle write.
+  The exact host path is now part of the full-body packet checksum and sealed
+  Compose overlay.
+- The earlier review-only bundle whose packet declared container path `/out/...`
+  remains unmounted and ineligible for apply; it is preserved only as compact
+  preflight evidence. No runtime process ever referenced it. A fresh packet
+  will use `/home/bobby/.local/state/qdl-v2/.../runtime` as its declared host
+  mount path.
+- **Tests actually run:** `git diff --check` and host `py_compile` passed;
+  immutable-Python, read-only/no-network packet/deployment regression passed
+  `19/19`; a tmpfs-only generator smoke supplied an explicit host runtime path
+  and passed `REVIEW_REQUIRED` with `12` bindings, `13` services and zero
+  mutations. No source image was rebuilt because this repair changes only the
+  offline packet generator, not any runtime binary.
+
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
 
@@ -12599,6 +12621,14 @@ CUTOVER PENDING`).**
   token derived from that digest; validation must recompute it before trusting
   any field. This is a deterministic integrity checksum, not a substitute for
   the later operator approval or authority CAS.
+- **Host-path correctness repair before any packet can be reviewed:** generating
+  a private bundle through a read-only Docker test container correctly writes
+  files via its mounted `/out` path, but that container-local path must never
+  leak into a host Compose overlay. The generator must distinguish its write
+  directory from an explicitly supplied absolute host runtime directory,
+  seal the latter into the packet, reject ambiguous/relative values and prove
+  a Docker-generated packet renders the exact host path. The invalid
+  review-only packet is retained as evidence and is not eligible for apply.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 

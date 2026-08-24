@@ -112,6 +112,19 @@ def _file_digest(path: Path) -> str:
 def _require_sha256(value: str, *, field: str) -> None:
     if not value.startswith("sha256:") or len(value) != 71:
         raise ValueError(f"{field} must be an immutable sha256 image digest")
+
+
+def _require_host_runtime_dir(path: Path) -> Path:
+    """Validate the host path that Compose will mount, without dereferencing it.
+
+    Packet generation may run inside an isolated container whose writable mount
+    path differs from the host path consumed later by Docker Compose.  This
+    value is therefore explicit and path-shape validated rather than inferred
+    from the generator's local output directory.
+    """
+    if not path.is_absolute() or path.name != "runtime" or ".." in path.parts:
+        raise ValueError("host_runtime_dir must be an absolute runtime directory")
+    return path
     if any(char not in "0123456789abcdef" for char in value.removeprefix("sha256:")):
         raise ValueError(f"{field} must be an immutable sha256 image digest")
 
@@ -187,6 +200,7 @@ def prepare_shared_primary_packet(
     change_ticket: str,
     observation_seconds: int,
     issued_at_ns: int | None = None,
+    host_runtime_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Create the sealed bundle and review-only packet without runtime I/O."""
     if output_dir.exists() and any(output_dir.iterdir()):
@@ -203,6 +217,9 @@ def prepare_shared_primary_packet(
 
     output_dir.mkdir(parents=True, mode=0o700)
     runtime_dir = output_dir / "runtime"
+    compose_runtime_dir = _require_host_runtime_dir(
+        runtime_dir if host_runtime_dir is None else host_runtime_dir
+    )
     catalog = StableSourceCatalog.load(ROOT / "config/v2/stable-source-bindings.yaml")
     acquisition_path = ROOT / "config/v2/stable-acquisition-bindings.yaml"
     acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
@@ -252,7 +269,7 @@ def prepare_shared_primary_packet(
     runtime_digests[manifest_path.name] = _file_digest(manifest_path)
     bundle_digest = _sha256({"files": runtime_digests})
     compose_environment = {
-        "QDL_STABLE_RUNTIME_DIR": str(runtime_dir),
+        "QDL_STABLE_RUNTIME_DIR": str(compose_runtime_dir),
         "QDL_STABLE_PYTHON_IMAGE": python_image_digest,
         "QDL_STABLE_RUST_IMAGE": rust_image_digest,
         "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
@@ -446,6 +463,7 @@ def main() -> int:
     parser.add_argument("--actor", required=True)
     parser.add_argument("--change-ticket", required=True)
     parser.add_argument("--observation-seconds", type=int, default=300)
+    parser.add_argument("--host-runtime-dir", type=Path)
     args = parser.parse_args()
     packet = prepare_shared_primary_packet(
         output_dir=args.output_dir,
@@ -455,6 +473,7 @@ def main() -> int:
         actor=args.actor,
         change_ticket=args.change_ticket,
         observation_seconds=args.observation_seconds,
+        host_runtime_dir=args.host_runtime_dir,
     )
     print(json.dumps({
         "status": "REVIEW_REQUIRED",
