@@ -228,6 +228,33 @@ def okx_request_id(*, role: str, generation: int) -> str:
     return f"qdl103{generation}{suffixes[role]}"
 
 
+def binance_request_id(*, role: str, generation: int) -> int:
+    """Return a per-lane direct-control request id for Binance."""
+    suffixes = {
+        "BINANCE:USDM:BAR": 1,
+        "BINANCE:USDM:TRADE": 2,
+        "BINANCE:USDM:QUOTE": 3,
+    }
+    if generation <= 0 or role not in suffixes:
+        raise ProviderAdmissionError("Binance request identity is invalid")
+    return 10_000 + generation * 10 + suffixes[role]
+
+
+def binance_admission_lanes(
+    bindings: tuple[NativeBinding, ...],
+) -> dict[str, tuple[NativeBinding, ...]]:
+    """Split one Binance worker into deterministic feed lanes, never symbols."""
+    if any(item.venue != "BINANCE" or item.market != "USDM" for item in bindings):
+        raise ProviderAdmissionError("Binance admission lane identity is invalid")
+    lanes = {
+        feed: tuple(item for item in bindings if item.feed == feed)
+        for feed in ("BAR", "TRADE", "QUOTE")
+    }
+    if not all(lanes.values()) or sum(len(items) for items in lanes.values()) != len(bindings):
+        raise ProviderAdmissionError("Binance admission lanes are incomplete or ambiguous")
+    return lanes
+
+
 def is_binance_trade_status_frame(payload: Mapping[str, Any]) -> bool:
     """Mirror the Rust core's narrow non-canonical Binance status-frame rule.
 
@@ -389,6 +416,7 @@ async def _recv_with_heartbeat(socket) -> str | bytes | None:
 async def _binance_session(
     bindings: tuple[NativeBinding, ...],
     *,
+    role: str,
     generation: int,
     timeout_seconds: float,
     require_final_bars: bool,
@@ -398,7 +426,7 @@ async def _binance_session(
     urls = {item.websocket_url for item in bindings}
     if len(urls) != 1:
         raise ProviderAdmissionError("Binance bindings disagree on control WebSocket URL")
-    request_id = 10_000 + generation
+    request_id = binance_request_id(role=role, generation=generation)
     command = {
         "method": "SUBSCRIBE",
         "params": [item.native_channel for item in bindings],
@@ -445,7 +473,7 @@ async def _binance_session(
                     pre_ack.append(observation)
             if acknowledged and accumulator.complete(require_final_bars=require_final_bars):
                 return accumulator.evidence(
-                    role="BINANCE:USDM",
+                    role=role,
                     generation=generation,
                     ack_count=1,
                     pre_ack_frames=pre_ack_count,
@@ -628,9 +656,16 @@ async def run(
     )
     binance = tuple(item for item in bindings if item.venue == "BINANCE")
     okx = tuple(item for item in bindings if item.venue == "OKX")
+    binance_lanes = binance_admission_lanes(binance)
     okx_public = tuple(item for item in okx if item.feed in {"TRADE", "QUOTE"})
     okx_business = tuple(item for item in okx if item.feed == "BAR")
-    if len(binance) != 6 or len(okx_public) != 4 or len(okx_business) != 2:
+    if (
+        len(binance_lanes["BAR"]) != 2
+        or len(binance_lanes["TRADE"]) != 2
+        or len(binance_lanes["QUOTE"]) != 2
+        or len(okx_public) != 4
+        or len(okx_business) != 2
+    ):
         raise ProviderAdmissionError("active native role composition differs from Phase 10.3 demand")
     public_urls = {item.websocket_url for item in okx_public}
     business_urls = {item.business_websocket_url for item in okx_business}
@@ -638,9 +673,32 @@ async def run(
         raise ProviderAdmissionError("OKX active bindings disagree on public/business WebSocket URLs")
     started_wall = time.monotonic()
     started_cpu = time.process_time()
-    binance_task = _two_session_probe(
-        lambda **kwargs: _binance_session(binance, timeout_seconds=timeout_seconds, **kwargs),
+    binance_bar_task = _two_session_probe(
+        lambda **kwargs: _binance_session(
+            binance_lanes["BAR"],
+            role="BINANCE:USDM:BAR",
+            timeout_seconds=timeout_seconds,
+            **kwargs,
+        ),
         first_requires_final_bars=True,
+    )
+    binance_trade_task = _two_session_probe(
+        lambda **kwargs: _binance_session(
+            binance_lanes["TRADE"],
+            role="BINANCE:USDM:TRADE",
+            timeout_seconds=timeout_seconds,
+            **kwargs,
+        ),
+        first_requires_final_bars=False,
+    )
+    binance_quote_task = _two_session_probe(
+        lambda **kwargs: _binance_session(
+            binance_lanes["QUOTE"],
+            role="BINANCE:USDM:QUOTE",
+            timeout_seconds=timeout_seconds,
+            **kwargs,
+        ),
+        first_requires_final_bars=False,
     )
     public_task = _two_session_probe(
         lambda **kwargs: _okx_session(
@@ -662,12 +720,22 @@ async def run(
         ),
         first_requires_final_bars=True,
     )
-    binance_sessions, public_sessions, business_sessions = await asyncio.gather(
-        binance_task, public_task, business_task
+    binance_bar_sessions, binance_trade_sessions, binance_quote_sessions, public_sessions, business_sessions = await asyncio.gather(
+        binance_bar_task,
+        binance_trade_task,
+        binance_quote_task,
+        public_task,
+        business_task,
     )
     return _render_report(
         bindings=bindings,
-        sessions=binance_sessions + public_sessions + business_sessions,
+        sessions=(
+            binance_bar_sessions
+            + binance_trade_sessions
+            + binance_quote_sessions
+            + public_sessions
+            + business_sessions
+        ),
         elapsed_seconds=time.monotonic() - started_wall,
         cpu_seconds=time.process_time() - started_cpu,
         max_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,

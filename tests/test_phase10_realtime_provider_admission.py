@@ -154,6 +154,25 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(admission.ProviderAdmissionError, "identity"):
             admission.okx_request_id(role="OKX:SWAP:OTHER", generation=1)
 
+    def test_binance_feed_lanes_are_complete_and_request_ids_are_role_bound(self):
+        binance = tuple(item for item in self.bindings if item.venue == "BINANCE")
+        lanes = admission.binance_admission_lanes(binance)
+        self.assertEqual({name: len(items) for name, items in lanes.items()}, {"BAR": 2, "TRADE": 2, "QUOTE": 2})
+        self.assertEqual(
+            [item.feed for item in lanes["BAR"]],
+            ["BAR", "BAR"],
+        )
+        self.assertEqual(
+            admission.binance_request_id(role="BINANCE:USDM:BAR", generation=12),
+            10_121,
+        )
+        self.assertEqual(
+            admission.binance_request_id(role="BINANCE:USDM:QUOTE", generation=12),
+            10_123,
+        )
+        with self.assertRaisesRegex(admission.ProviderAdmissionError, "identity"):
+            admission.binance_request_id(role="BINANCE:USDM:FLOW", generation=1)
+
     def test_report_rejects_missing_reconnect_or_stale_binding(self):
         binding = self.bindings[0]
         fresh = admission.FrameObservation(binding.binding_id, 10_000_000_000_000, "a" * 64, False)

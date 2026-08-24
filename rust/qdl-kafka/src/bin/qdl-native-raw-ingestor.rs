@@ -155,6 +155,26 @@ fn partition_bindings(bindings: &[RawBinding], max_subscriptions: usize) -> Vec<
         .collect()
 }
 
+fn partition_binance_bindings(
+    bindings: &[RawBinding],
+    max_subscriptions: usize,
+) -> Vec<Vec<RawBinding>> {
+    // Keep low-rate final BARs and lossless trades out of a high-rate quote
+    // socket. One worker still owns the complete venue/market demand; these
+    // are stable internal connection lanes, not per-symbol processes.
+    [RawFeed::Bar, RawFeed::Trade, RawFeed::Quote]
+        .into_iter()
+        .flat_map(|feed| {
+            let lane = bindings
+                .iter()
+                .filter(|binding| binding.feed == feed)
+                .cloned()
+                .collect::<Vec<_>>();
+            partition_bindings(&lane, max_subscriptions)
+        })
+        .collect()
+}
+
 impl IngestorConfig {
     fn validate(&self) -> Result<(), String> {
         self.authority.validate()?;
@@ -982,7 +1002,8 @@ async fn run_binance(
     coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let shards = partition_bindings(&config.bindings, config.max_subscriptions_per_connection);
+    let shards =
+        partition_binance_bindings(&config.bindings, config.max_subscriptions_per_connection);
     let futures = shards.into_iter().enumerate().map(|(index, bindings)| {
         run_binance_connection(
             config.clone(),
@@ -1555,8 +1576,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        next_connection_generation, partition_bindings, pending_binance_frame, pending_okx_frame,
-        DeliveryClass, LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
+        next_connection_generation, partition_binance_bindings, partition_bindings,
+        pending_binance_frame, pending_okx_frame, DeliveryClass, LatestStateBuffer,
+        PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -1611,6 +1633,32 @@ mod tests {
             vec![100, 100, 5]
         );
         assert_eq!(shards.into_iter().flatten().count(), values.len());
+    }
+
+    #[test]
+    fn binance_feed_lanes_isolate_bars_and_trades_from_quotes() {
+        let mut trade = binding(RawFeed::Trade, DeliveryClass::Lossless);
+        trade.native_symbol = "ETHUSDT".into();
+        trade.native_channel = "ethusdt@trade".into();
+        let mut quote = binding(RawFeed::Quote, DeliveryClass::LatestState);
+        quote.native_symbol = "ETHUSDT".into();
+        quote.native_channel = "ethusdt@bookTicker".into();
+        let mut bar = binding(RawFeed::Bar, DeliveryClass::Lossless);
+        bar.native_symbol = "ETHUSDT".into();
+        bar.native_channel = "ethusdt@kline_1m".into();
+
+        let values = vec![
+            trade.clone(),
+            quote.clone(),
+            bar.clone(),
+            binding(RawFeed::Bar, DeliveryClass::Lossless),
+        ];
+        let lanes = partition_binance_bindings(&values, 100);
+        assert_eq!(lanes.len(), 3);
+        assert!(lanes[0].iter().all(|item| item.feed == RawFeed::Bar));
+        assert!(lanes[1].iter().all(|item| item.feed == RawFeed::Trade));
+        assert!(lanes[2].iter().all(|item| item.feed == RawFeed::Quote));
+        assert_eq!(lanes.into_iter().flatten().count(), values.len());
     }
 
     #[test]

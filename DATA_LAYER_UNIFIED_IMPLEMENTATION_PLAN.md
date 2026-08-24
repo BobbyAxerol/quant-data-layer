@@ -12007,6 +12007,41 @@ ADMISSION PENDING`).**
   diagnostic unit suite passed `8/8` network-isolated. Re-run the same
   read-only provider probe before any conclusion or route change.
 
+**Native lane-isolation correction - 2026-08-24 (`IN PROGRESS / IN-SCOPE`).**
+
+- The diagnostic rerun proved a real fairness defect in the single mixed
+  Binance socket: ACK succeeded and `184807` TRADE/BBO frames were accepted,
+  but both demanded final 1m BAR bindings were missing before the 90-second
+  deadline. This is a verifier/runtime topology issue, not provider absence;
+  its exact bounded result was `filtered_status_frames=50`, no pre-ACK frames,
+  and missing only `binance-usdm-{btc,eth}usdt-bar-1m`.
+- Corrective invariant: retain one Rust worker/container per `(venue, market)`,
+  but partition its WebSocket sessions deterministically by feed lane before
+  subscription-count sharding: final `BAR`, lossless `TRADE`, then latest-state
+  `QUOTE`. Thus a high-rate latest/lossless lane cannot starve final-bar
+  receipt. This is not per-symbol topology, does not add images or services,
+  and preserves the same canonical writer, lease, event identity and Kafka
+  contract.
+- Required gate for this correction: source partition test with no truncation;
+  admission verifier opens the same role lanes and proves all 12 bindings plus
+  reconnect/finality against public providers; rerun the complete isolated
+  Python/Rust matrix. No runtime deployment or authority change is authorized.
+
+**Lane-isolation source checkpoint - 2026-08-24 (`SOURCE PASS / LIVE RE-PROBE
+PENDING`).**
+
+- Implemented deterministic Binance internal lanes in the shared native worker:
+  `BAR` first, `TRADE` second and `QUOTE` third, with the existing maximum
+  subscription sharding applied inside each lane. The provider-admission
+  verifier now exercises the same three role lanes with independent control
+  request IDs. No symbol-specific worker, container, image, manifest demand or
+  canonical data schema was introduced.
+- **Targeted tests passed:** Python admission/demand/deployment `43/43` in
+  `1.354s`; Rust native-ingestor `cargo fmt --check`, `clippy -D warnings` and
+  `9/9` unit tests. This validates lane identity, no truncation, feed delivery
+  semantics and bounded diagnostics. The same public-provider re-probe remains
+  mandatory before this correction can be certified.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,
