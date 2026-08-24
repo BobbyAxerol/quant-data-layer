@@ -150,6 +150,16 @@ class ScopeTally:
         }
 
 
+def _group_id(prefix: str) -> str:
+    if (
+        not prefix.startswith("qdl-")
+        or len(prefix) > 80
+        or any(item in prefix for item in ("..", "/", "\\", "*"))
+    ):
+        raise ValueError("group-prefix must be a bounded qdl audit prefix")
+    return f"{prefix}{uuid.uuid4().hex}"
+
+
 def _consumer(args: argparse.Namespace):
     try:
         from confluent_kafka import Consumer
@@ -158,7 +168,7 @@ def _consumer(args: argparse.Namespace):
     return Consumer({
         "bootstrap.servers": args.bootstrap_servers,
         "client.id": f"qdl-phase103-raw-scope-{uuid.uuid4().hex[:12]}",
-        "group.id": f"qdl-phase103-raw-scope-{uuid.uuid4().hex}",
+        "group.id": _group_id(args.group_prefix),
         "security.protocol": "ssl",
         "ssl.ca.location": str(args.ca),
         "ssl.certificate.location": str(args.certificate),
@@ -267,6 +277,7 @@ def main() -> int:
     parser.add_argument("--topic")
     parser.add_argument("--records-per-partition", type=int, default=500)
     parser.add_argument("--timeout-seconds", type=int, default=30)
+    parser.add_argument("--group-prefix", default="qdl-phase103-raw-scope-")
     parser.add_argument("--require-all-bindings", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()

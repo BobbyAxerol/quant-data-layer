@@ -12216,6 +12216,11 @@ READ-ONLY RUNTIME EVIDENCE PENDING`).**
   or provider was contacted. `ruff` is intentionally absent from this runtime
   image, so lint remains covered by the repository CI environment rather than
   being misreported as locally passed.
+- The inspector now accepts only a bounded `qdl-` audit group prefix. This
+  lets an operator use an already ACL-scoped, non-committing read-only audit
+  namespace during live evidence collection without borrowing a live core or
+  projector consumer group. The updated isolated suite passed `7/7`; this
+  remains a source-only change with no Kafka ACL or runtime mutation.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 

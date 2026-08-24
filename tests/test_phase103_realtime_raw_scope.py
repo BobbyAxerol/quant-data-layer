@@ -8,7 +8,7 @@ from qdl.raw.envelope import build_raw_envelope
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
-from scripts.phase103_inspect_realtime_raw_scope import ScopeTally
+from scripts.phase103_inspect_realtime_raw_scope import ScopeTally, _group_id
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +110,13 @@ class RealtimeRawScopeTests(unittest.TestCase):
             evidence["missing_required_bindings"], ["okx-swap-eth-usdt-swap-bar-1m"]
         )
         self.assertNotIn("raw_frame_bytes", str(evidence))
+
+    def test_audit_group_prefix_is_bounded_and_cannot_escape_acl_namespace(self):
+        self.assertTrue(_group_id("qdl-c40-handoff-").startswith("qdl-c40-handoff-"))
+        for invalid in ("other-", "qdl-../", "qdl-a*", "qdl-" + "x" * 81):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "group-prefix"):
+                    _group_id(invalid)
 
 
 if __name__ == "__main__":
