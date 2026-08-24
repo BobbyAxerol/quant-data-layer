@@ -11060,3 +11060,61 @@ live migration or authority transition is part of R0.
   generic-core image changed. The old `7e270...` candidate and prior R1 bundles
   remain immutable audit evidence; they cannot be promoted. Next gate is a
   commit, fresh immutable Rust image and fresh generation-bound R1 bundle.
+
+**R1 physical shared-writer fence preflight - 2026-08-24 (in progress).**
+
+- Approved bounded mutation: roll only `rust_core`, `rust_core_2` and
+  `rust_core_3` one at a time from the sealed bundle
+  `r1-51a64da92c88-scopefix-20260824T060335Z`, using immutable image
+  `sha256:51a64da92c884b5d8031e5e1593e635c760a9c14f837467d077459b41248c23d`
+  (source `79e4e7b89661`). The resulting generic config contains exactly the
+  four retained DNSE source IDs and excludes exactly the twelve proposed
+  Binance USD-M/OKX Swap promotion bindings. Its fresh production-core group
+  is generation-bound and not started by this fence.
+- Preconditions passed: source tests/Clippy and focused bundle tests are green;
+  bundle root/env/runtime permissions are `0700/0600/0644`; image revision,
+  `RUST_SHADOW` default and UID/GID `10001:10001` match the sealed manifest.
+  The first historical `7e270...` candidate, all prior R1 bundles and current
+  running `db240...` generic image are retained as audit/rollback evidence.
+- Acceptance for each one-at-a-time recreate: correct immutable image and
+  bind-mounted runtime config, structured startup with four approved
+  subscriptions, no `UnknownBinding`/authority/transaction error, observed
+  positive `ignored_out_of_scope` on live Binance/OKX raw flow, no public or
+  legacy write, and a stable bounded observation window before the next
+  replica. Rollback recreates only the affected generic replica from the
+  recorded `db240...` bundle/override. `production_core_*` remain stopped;
+  authority C40, Kafka offsets/topics, Redis, SQLite, V1, Trading System and
+  alpha services remain untouched until this physical fence passes.
+
+**R1 physical shared-writer fence execution - 2026-08-24.**
+
+- Status: `PASS / C40 TERMINALIZATION UNBLOCKED / RUST_PRIMARY STILL FORBIDDEN`.
+  `rust_core`, `rust_core_2` and `rust_core_3` were recreated one at a time
+  from the sealed R1 bundle. Each now runs immutable image
+  `sha256:51a64da92c884b5d8031e5e1593e635c760a9c14f837467d077459b41248c23d`
+  with four approved subscriptions. Live raw Binance/OKX records are committed
+  input-only: representative `ignored_out_of_scope` progress advanced to
+  `27,692`, `6,297` and `5,936` respectively, while generic canonical,
+  quarantine, duplicate and normalizer-filter counters remained zero during
+  the DNSE-closed observation. No `UnknownBinding`, authority revision failure,
+  public write or legacy write occurred.
+- Cooperative consumer-group ownership changed during the three sequential
+  recreates. `rust_core_2` logged two and `rust_core_3` one retryable
+  `Specified group generation id is not valid` transactional commit rejection;
+  their existing retry policy restarted generations `3` and `2` respectively.
+  This is expected transactional Kafka fencing during a rolling group rebalance:
+  no output was committed on the rejected generation, inputs were retried, and
+  no manual offset action occurred. After the group settled, all three ran for
+  a further 45-second bounded window with no new retry and monotonically rising
+  input-only scope counters. This is retained as evidence, not normalized away.
+- Resource/compatibility observation: each generic core used about
+  `1.67-2.33%` CPU and `5.6-6.5 MiB / 256 MiB` memory; V1
+  `GET /v1/health` remained `status=ok`. `production_core_1..3` stayed exited,
+  and V1 `data_layer_service`/`market_data_service` remained up. No Kafka
+  offset reset, topic/Redis/SQLite/authority mutation, V1 restart, Trading
+  System restart or alpha change occurred.
+- Boundary: this proves the writer is physically excluded and safely filters
+  the shared raw topic. It is not DNSE live-session acceptance (market closed)
+  and it is not twelve-slice Rust authority promotion. The next legal action is
+  a fresh read-only twelve-slice parity/admission packet, then C3 terminalizes
+  old C40 evidence before append-only candidate rollover.
