@@ -1,7 +1,7 @@
 schema: qdl.v2.stable-acquisition-bindings.v1
-revision: 8
+revision: 9
 topics:
-  raw: md.raw.stable.v1
+  raw: md.raw.realtime.v2
   canonical: md.canonical.v2
   quarantine: md.quarantine.stable.v1
 bindings:

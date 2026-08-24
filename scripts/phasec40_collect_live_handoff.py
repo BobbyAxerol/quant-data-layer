@@ -314,7 +314,7 @@ def main() -> int:
     parser.add_argument("--ca", type=Path, required=True)
     parser.add_argument("--certificate", type=Path, required=True)
     parser.add_argument("--key", type=Path, required=True)
-    parser.add_argument("--raw-topic", default="md.raw.stable.v1")
+    parser.add_argument("--raw-topic", default="md.raw.realtime.v2")
     parser.add_argument("--canonical-topic", default="md.canonical.v2")
     parser.add_argument("--canary-topic", default="md.canary.canonical.v2")
     parser.add_argument("--checkpoint-topic", default="qdl.target-checkpoint.v1")

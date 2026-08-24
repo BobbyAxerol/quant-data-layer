@@ -251,7 +251,7 @@ class StableDeploymentContractTests(unittest.TestCase):
     def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
         self.assertEqual(len(self.catalog.bindings), 22)
         self.assertEqual(len(self.acquisition.bindings), 22)
-        self.assertEqual(self.acquisition.revision, 8)
+        self.assertEqual(self.acquisition.revision, 9)
         modes = {item.mode for item in self.acquisition.bindings}
         self.assertEqual(modes, {"PYTHON_REST", "RUST_NATIVE", "PYTHON_VENDOR_SDK"})
         native = self.acquisition.native_ingestor_configs(
@@ -356,7 +356,8 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertFalse(core["authority"]["public_write_allowed"])
         self.assertFalse(core["authority"]["legacy_write_allowed"])
         self.assertFalse(core["core"]["allow_test_provenance"])
-        self.assertEqual(core["raw_topics"], ["md.raw.stable.v1"])
+        self.assertEqual(core["raw_topics"], ["md.raw.realtime.v2"])
+        self.assertTrue(core["strict_subscription_scope"])
         workers = [
             self.acquisition.core_config(
                 catalog=self.catalog,
@@ -373,7 +374,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             {item["shard_id"] for item in workers},
             {item["transactional_id"] for item in workers},
         )
-        self.assertEqual({item["raw_topics"][0] for item in workers}, {"md.raw.stable.v1"})
+        self.assertEqual({item["raw_topics"][0] for item in workers}, {"md.raw.realtime.v2"})
         self.assertEqual({json.dumps(item["authority"], sort_keys=True) for item in workers}, {
             json.dumps(self.authority, sort_keys=True)
         })
@@ -410,6 +411,37 @@ class StableDeploymentContractTests(unittest.TestCase):
                     "ingestor-okx-swap.json",
                 },
             )
+
+    def test_full_generated_bundle_keeps_every_enabled_binding_on_strict_v2_ingress(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-phase103-full-bundle-") as directory:
+            result = write_stable_runtime_bundle(
+                Path(directory),
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+            )
+            self.assertIn("core.json", result)
+            core = json.loads((Path(directory) / "core.json").read_text())
+            enabled = {
+                item.binding_id for item in self.acquisition.bindings if item.enabled
+            }
+            expected_sources = {
+                item.source_id for item in self.catalog.bindings if item.binding_id in enabled
+            }
+            self.assertTrue(core["strict_subscription_scope"])
+            self.assertEqual(core["raw_topics"], ["md.raw.realtime.v2"])
+            self.assertEqual(
+                {item["source_id"] for item in core["core"]["bindings"]},
+                expected_sources,
+            )
+            okx = json.loads(
+                (Path(directory) / "ingestor-okx-swap.json").read_text()
+            )
+            self.assertEqual(
+                {item["feed"] for item in okx["bindings"]},
+                {"TRADE", "QUOTE", "BAR"},
+            )
+            self.assertEqual(len(okx["bindings"]), 6)
             persisted = json.loads((Path(directory) / "core.json").read_text())
             self.assertEqual(persisted, core)
             persisted_workers = [

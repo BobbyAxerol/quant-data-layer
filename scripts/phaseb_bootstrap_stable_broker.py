@@ -11,8 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "docker-compose.v2-stable.yml"
 BOOTSTRAP = "kafka1:9092,kafka2:9092,kafka3:9092"
 ADMIN_CONFIG = "/etc/kafka/secrets/admin.properties"
+V2_REALTIME_RAW_TOPIC = "md.raw.realtime.v2"
+LEGACY_RAW_TOPIC = "md.raw.stable.v1"
 TOPIC_POLICIES = {
-    "md.raw.stable.v1": "delete",
+    # The V2 Rust primary ingress is one shared multi-venue topic. It is
+    # intentionally separate from the retained legacy raw topic so an old
+    # broad-universe producer cannot starve or silently filter V2 demand.
+    V2_REALTIME_RAW_TOPIC: "delete",
+    LEGACY_RAW_TOPIC: "delete",
     "md.canonical.v2": "delete",
     "md.quarantine.stable.v1": "delete",
     "qdl.authority.v1": "compact",
@@ -180,7 +186,7 @@ def bootstrap(env_file: Path) -> dict[str, object]:
 
     described = kafka(
         env_file, "kafka-topics.sh", "--describe",
-        "--topic", "md.raw.stable.v1",
+        "--topic", V2_REALTIME_RAW_TOPIC,
     )
     if (
         "ReplicationFactor: 3" not in described

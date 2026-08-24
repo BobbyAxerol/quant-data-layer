@@ -200,7 +200,7 @@ class StableRuntimeDependencyTests(unittest.TestCase):
                         self.partition = partition
 
                 return [
-                    Partition("md.raw.stable.v1", 0),
+                    Partition("md.raw.realtime.v2", 0),
                     Partition("md.canonical.v2", 0),
                 ]
 
@@ -227,7 +227,7 @@ class StableRuntimeDependencyTests(unittest.TestCase):
 
         def record(offset, *, partition=0, epoch=1):
             return KafkaProjectorRecord(
-                topic="md.raw.stable.v1",
+                topic="md.raw.realtime.v2",
                 partition=partition,
                 offset=offset,
                 key="BINANCE/USDM/BTCUSDT/trade",
@@ -245,7 +245,7 @@ class StableRuntimeDependencyTests(unittest.TestCase):
                 bootstrap_servers="kafka1:9092",
                 client_id="stable-projector",
                 group_id="stable-projector-v1",
-                raw_topics=("md.raw.stable.v1",),
+                raw_topics=("md.raw.realtime.v2",),
                 canonical_topic="md.canonical.v2",
                 ca_path=root / "ca.crt",
                 certificate_path=root / "client.crt",

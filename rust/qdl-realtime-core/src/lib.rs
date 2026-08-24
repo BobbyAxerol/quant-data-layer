@@ -221,6 +221,18 @@ impl RealtimeCore {
         self.process_internal(raw, processing_at_ns, Some(transport_offset))
     }
 
+    /// Preserve a valid raw envelope as durable quarantine evidence when the
+    /// runtime ingress boundary rejects it before canonicalization.
+    pub fn quarantine_raw(
+        &self,
+        raw: &RawProviderEnvelope,
+        reason: QuarantineReason,
+        summary: &str,
+        quarantined_at_ns: i64,
+    ) -> ProcessBatch {
+        self.quarantine(raw, reason, summary, quarantined_at_ns)
+    }
+
     fn process_internal(
         &mut self,
         raw: RawProviderEnvelope,
@@ -1086,6 +1098,39 @@ mod tests {
             permissive.process(unknown, 10),
             Err(CoreError::UnknownBinding)
         );
+    }
+
+    #[test]
+    fn explicit_ingress_quarantine_preserves_raw_lineage() {
+        let binding = binding((
+            "BINANCE_DIRECT",
+            "BINANCE",
+            "USDM",
+            "PERPETUAL",
+            "BTCUSDT",
+            "trade",
+            "binance_usdm_trade",
+            "PRIMARY",
+            SequencePolicy::Monotonic,
+        ));
+        let raw = raw(
+            &binding,
+            br#"{\"s\":\"BTCUSDT\",\"t\":10,\"p\":\"1\",\"q\":\"1\",\"T\":3,\"m\":false}"#,
+            1,
+        );
+        let core = core(binding, true);
+        let result = core.quarantine_raw(
+            &raw,
+            QuarantineReason::FencingRejected,
+            "undeclared raw subscription in strict scope",
+            42,
+        );
+        assert!(result.canonical.is_empty());
+        assert_eq!(result.quarantines.len(), 1);
+        let record = QuarantineRecord::decode(result.quarantines[0].payload.as_slice()).unwrap();
+        assert_eq!(record.reason, QuarantineReason::FencingRejected as i32);
+        assert_eq!(record.quarantined_at_ns, 42);
+        assert_eq!(record.raw.unwrap().capture_id, raw.capture_id);
     }
 
     #[test]

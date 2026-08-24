@@ -12222,6 +12222,65 @@ READ-ONLY RUNTIME EVIDENCE PENDING`).**
   projector consumer group. The updated isolated suite passed `7/7`; this
   remains a source-only change with no Kafka ACL or runtime mutation.
 
+**Current V2 raw-scope audit - 2026-08-24 (`READ-ONLY ROOT CAUSE CONFIRMED`).**
+
+- Ran the inspector against the currently running V2 Kafka topic with the
+  existing `phase8-consumer` TLS identity and its `qdl-c40-handoff-` audit ACL:
+  `250` committed records per non-empty partition, `1,250` records total,
+  `auto.commit=false`, no topic write, offset commit, service change or secret
+  disclosure. The current shared topic has no malformed, out-of-scope,
+  identity, revision or test-provenance records in that bounded tail.
+- Binance BTC/ETH TRADE/BBO and REST final-BAR records are present; OKX BTC/ETH
+  TRADE/BBO records are present. OKX final BAR is absent because the deployed
+  old OKX ingestor config contains only four TRADE/BBO bindings. DNSE records
+  are absent during the closed session, which is expected and not certified as
+  healthy.
+- The decisive defect is the deployed Rust-core config, not the provider
+  parser: all three current Rust-core replicas consume `md.raw.stable.v1` with
+  only the four DNSE binding IDs. They therefore ignore every live crypto raw
+  envelope, producing the observed `canonical=0` / growing
+  `ignored_out_of_scope` counters. The current static source/config generator
+  already resolves the crypto demand, but its full generated bundle has not
+  been the runtime bundle. The dedicated realtime topic plus regenerated full
+  dynamic bundle is therefore required; simply waiting for the old group to
+  catch up cannot make it correct.
+
+**Dedicated Rust-primary ingress source checkpoint - 2026-08-24 (`SOURCE PASS /
+RUNTIME PACKET PENDING`).**
+
+- Changed the governed V2 acquisition revision to `9` and its raw topic to
+  `md.raw.realtime.v2`. `ProductionCatalogBuilder` now generates that topic by
+  default. The retained `md.raw.stable.v1` topic is explicit legacy evidence
+  only: V2 producers/core ACL intent no longer grants it as the active ingress
+  route. No public V1 endpoint, consumer payload or provider contract changed.
+- The fixed shared Rust core now receives `strict_subscription_scope=true` only
+  on the dedicated V2 topic. Undeclared subscription, identity mismatch, wrong
+  authority revision, forbidden test provenance, invalid envelope or invalid
+  provider frame becomes a transactional durable quarantine with a fencing or
+  semantic reason and raw lineage. Legacy shared-topic configs retain the old
+  non-primary filtered behavior for rollback evidence, but cannot meet the
+  Phase 10.3 primary gate.
+- The deterministic full bundle regression now proves that one fixed core
+  worker configuration carries all `16` enabled binding IDs, uses only the V2
+  realtime topic and strict scope, and that the one OKX Swap worker includes
+  all six BTC/ETH TRADE, QUOTE and BAR subscriptions. This directly prevents
+  the observed stale DNSE-only core configuration; it adds no per-symbol topic,
+  worker, container or image.
+- **Source verification passed:** focused Python contract/deployment/ACL/replay
+  matrix `50/50` in `1.672s` under `qdl-v2-python:2.0.0-7a5aef6`, read-only and
+  `--network none`; the added full-bundle regression passed `2/2`. Rust format
+  check and `clippy -D warnings` passed; focused `qdl-realtime-core` plus
+  `qdl-kafka` test packages passed all `49` cases in a network-disabled,
+  read-only-source builder with only `/tmp/qdl-phase103-cargo-target` as a
+  disposable cache. Test containers were removed. The expected argparse/DNSE
+  fail-closed test log lines are assertions, not runtime errors.
+- **Runtime boundary:** no topic was created, no ACL was applied, no image was
+  built, no service/consumer group/offset/Redis/SQLite state was changed, and
+  V1 remains untouched. The next action is one bounded runtime packet that
+  names the new topic, ACLs, regenerated bundle, image digest, fixed V2 roles,
+  observation gates and manifest-only V1 rollback; it must be approved before
+  execution.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,

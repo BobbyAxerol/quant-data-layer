@@ -5,14 +5,14 @@ use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message;
-use qdl_contracts::qdl::provider::v1::RawProviderEnvelope;
+use qdl_contracts::qdl::provider::v1::{QuarantineReason, RawProviderEnvelope};
 use qdl_core::backoff::BackoffPolicy;
 use qdl_core::transport::RetryClass;
 use qdl_kafka::{
     shutdown_signal, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
     TransactionalKafkaBridge, TransactionalKafkaOutput, TransactionalShadowTopics,
 };
-use qdl_realtime_core::{RealtimeCore, RealtimeCoreConfig};
+use qdl_realtime_core::{CoreError, RealtimeCore, RealtimeCoreConfig};
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use serde::Deserialize;
 use serde_json::json;
@@ -29,6 +29,8 @@ struct RuntimeConfig {
     batch_wait_ms: u64,
     max_events: u64,
     metrics_every_batches: u64,
+    #[serde(default)]
+    strict_subscription_scope: bool,
 }
 
 impl RuntimeConfig {
@@ -114,6 +116,28 @@ fn is_approved_subscription(
     approved_subscriptions.contains(&raw.subscription_id)
 }
 
+fn strict_quarantine_reason(error: &CoreError) -> Option<(QuarantineReason, &'static str)> {
+    match error {
+        CoreError::UnknownBinding => Some((
+            QuarantineReason::FencingRejected,
+            "raw identity does not match declared strict scope",
+        )),
+        CoreError::ProvenanceRejected => Some((
+            QuarantineReason::FencingRejected,
+            "test provenance is forbidden in strict scope",
+        )),
+        CoreError::RawEnvelope(_) => Some((
+            QuarantineReason::Malformed,
+            "raw envelope validation failed in strict scope",
+        )),
+        CoreError::Decode(_) => Some((
+            QuarantineReason::SemanticInvalid,
+            "provider frame cannot be canonicalized in strict scope",
+        )),
+        CoreError::Configuration(_) => None,
+    }
+}
+
 async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), RuntimeError> {
     let mut core = RealtimeCore::new(config.core.clone())?;
     let approved_subscriptions = approved_subscription_scope(config);
@@ -147,6 +171,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
     let mut duplicates = 0_u64;
     let mut filtered = 0_u64;
     let mut ignored_out_of_scope = 0_u64;
+    let mut scope_quarantines = 0_u64;
     let mut batches = 0_u64;
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -175,18 +200,48 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
         let mut outputs = vec![];
         for input in &inputs {
             let raw = RawProviderEnvelope::decode(input.record.payload.as_slice())?;
-            if !is_approved_subscription(&raw, &approved_subscriptions) {
-                ignored_out_of_scope = ignored_out_of_scope.saturating_add(1);
-                continue;
-            }
-            if raw.authority_revision != config.authority.revision {
-                return Err("raw authority revision does not match runtime authority".into());
-            }
-            let result = core.process_at_transport_offset(
-                raw.clone(),
-                normalized_at_ns,
-                input.cursor.offset,
-            )?;
+            let result = if !is_approved_subscription(&raw, &approved_subscriptions) {
+                if config.strict_subscription_scope {
+                    scope_quarantines = scope_quarantines.saturating_add(1);
+                    core.quarantine_raw(
+                        &raw,
+                        QuarantineReason::FencingRejected,
+                        "undeclared raw subscription in strict scope",
+                        normalized_at_ns,
+                    )
+                } else {
+                    ignored_out_of_scope = ignored_out_of_scope.saturating_add(1);
+                    continue;
+                }
+            } else if raw.authority_revision != config.authority.revision {
+                if config.strict_subscription_scope {
+                    scope_quarantines = scope_quarantines.saturating_add(1);
+                    core.quarantine_raw(
+                        &raw,
+                        QuarantineReason::FencingRejected,
+                        "raw authority revision does not match strict runtime authority",
+                        normalized_at_ns,
+                    )
+                } else {
+                    return Err("raw authority revision does not match runtime authority".into());
+                }
+            } else {
+                match core.process_at_transport_offset(
+                    raw.clone(),
+                    normalized_at_ns,
+                    input.cursor.offset,
+                ) {
+                    Ok(result) => result,
+                    Err(error) if config.strict_subscription_scope => {
+                        let Some((reason, summary)) = strict_quarantine_reason(&error) else {
+                            return Err(error.into());
+                        };
+                        scope_quarantines = scope_quarantines.saturating_add(1);
+                        core.quarantine_raw(&raw, reason, summary, normalized_at_ns)
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            };
             canonical += result.canonical.len() as u64;
             quarantines += result.quarantines.len() as u64;
             duplicates += result.duplicates as u64;
@@ -233,6 +288,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
                     "duplicates": duplicates,
                     "filtered": filtered,
                     "ignored_out_of_scope": ignored_out_of_scope,
+                    "scope_quarantines": scope_quarantines,
                     "batches": batches,
                 }))?
             );
@@ -250,6 +306,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
             "duplicates": duplicates,
             "filtered": filtered,
             "ignored_out_of_scope": ignored_out_of_scope,
+            "scope_quarantines": scope_quarantines,
             "batches": batches,
             "reason": stop_reason,
         }))?
@@ -323,5 +380,27 @@ mod tests {
 
         assert!(is_approved_subscription(&approved, &approved_subscriptions));
         assert!(!is_approved_subscription(&foreign, &approved_subscriptions));
+    }
+
+    #[test]
+    fn strict_scope_errors_map_to_durable_quarantine_reasons() {
+        assert_eq!(
+            strict_quarantine_reason(&CoreError::UnknownBinding),
+            Some((
+                QuarantineReason::FencingRejected,
+                "raw identity does not match declared strict scope",
+            )),
+        );
+        assert_eq!(
+            strict_quarantine_reason(&CoreError::Decode("bad frame".into())),
+            Some((
+                QuarantineReason::SemanticInvalid,
+                "provider frame cannot be canonicalized in strict scope",
+            )),
+        );
+        assert_eq!(
+            strict_quarantine_reason(&CoreError::Configuration("bad config".into())),
+            None,
+        );
     }
 }

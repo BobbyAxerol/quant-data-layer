@@ -17,6 +17,7 @@ _MODES = frozenset({"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
 _SEQUENCE_POLICIES = frozenset({"NONE", "MONOTONIC", "CONTIGUOUS"})
 STABLE_TOPIC_PARTITIONS = 6
 STABLE_CORE_WORKER_COUNT = 3
+V2_REALTIME_RAW_TOPIC = "md.raw.realtime.v2"
 _PROVIDER_KINDS = {
     ("BINANCE", "TRADE"): frozenset({"binance_usdm_trade", "binance_spot_trade"}),
     ("BINANCE", "QUOTE"): frozenset({"binance_usdm_bbo", "binance_spot_bbo"}),
@@ -302,6 +303,10 @@ class StableAcquisitionPlan:
                 "bindings": bindings,
             },
             "raw_topics": [self.raw_topic],
+            # A dedicated V2 ingress topic has no legacy producer traffic.
+            # The Rust core must therefore quarantine a bad envelope instead
+            # of quietly skipping it and masking a topology/config error.
+            "strict_subscription_scope": self.raw_topic == V2_REALTIME_RAW_TOPIC,
             "authority": dict(authority),
             "shard_id": f"qdl-v2-stable-core-{worker_index:03d}",
             "transactional_id": f"qdl-v2-stable-core-{worker_index:03d}",

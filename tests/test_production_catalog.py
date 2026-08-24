@@ -189,6 +189,10 @@ class ProductionCatalogTests(unittest.TestCase):
             )
             self.assertEqual(first.source_catalog, second.source_catalog)
             self.assertEqual(first.acquisition_plan, second.acquisition_plan)
+            self.assertEqual(
+                first.acquisition_plan["topics"]["raw"],
+                "md.raw.realtime.v2",
+            )
             self.assertEqual(first.provenance["fabricated_metadata"], False)
             self.assertEqual(first.provenance["instrument_count"], 4)
             paths = first.write(root / "out")

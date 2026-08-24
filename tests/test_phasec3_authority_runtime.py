@@ -23,6 +23,8 @@ class AuthorityRuntimeContractTests(unittest.TestCase):
     def test_authority_and_checkpoint_topics_are_compacted(self):
         self.assertEqual(TOPIC_POLICIES["qdl.authority.v1"], "compact")
         self.assertEqual(TOPIC_POLICIES["qdl.target-checkpoint.v1"], "compact")
+        self.assertEqual(TOPIC_POLICIES["md.raw.realtime.v2"], "delete")
+        self.assertEqual(TOPIC_POLICIES["md.raw.stable.v1"], "delete")
         self.assertEqual(TOPIC_POLICIES["md.canonical.v2"], "delete")
         source = (
             ROOT / "scripts/phaseb_bootstrap_stable_broker.py"
@@ -65,7 +67,7 @@ class AuthorityRuntimeContractTests(unittest.TestCase):
             calls.append((executable, arguments))
             if executable == "kafka-topics.sh" and "--describe" in arguments:
                 return (
-                    "Topic: md.raw.stable.v1 PartitionCount: 6 "
+                    "Topic: md.raw.realtime.v2 PartitionCount: 6 "
                     "ReplicationFactor: 3 Configs: min.insync.replicas=2"
                 )
             return ""
@@ -101,6 +103,24 @@ class AuthorityRuntimeContractTests(unittest.TestCase):
                 ),
                 acl_calls,
             )
+        self.assertIn("md.raw.realtime.v2", report["topics"])
+        self.assertIn("md.raw.stable.v1", report["topics"])
+        self.assertIn(
+            (
+                "--add", "--allow-principal", "User:phase8-producer",
+                "--operation", "WRITE", "--operation", "DESCRIBE",
+                "--topic", "md.raw.realtime.v2",
+            ),
+            acl_calls,
+        )
+        self.assertNotIn(
+            (
+                "--add", "--allow-principal", "User:phase8-producer",
+                "--operation", "WRITE", "--operation", "DESCRIBE",
+                "--topic", "md.raw.stable.v1",
+            ),
+            acl_calls,
+        )
         self.assertFalse(any("*" in arguments for arguments in acl_calls))
 
     def test_dispatcher_role_is_function_scoped_and_not_table_writer(self):

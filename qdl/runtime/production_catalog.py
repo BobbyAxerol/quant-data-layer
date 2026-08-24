@@ -15,7 +15,10 @@ from qdl.adapters.okx.instruments import parse_public_instrument
 from qdl.domain.instrument import InstrumentRecord, InstrumentStatus, ProductType
 from qdl.query import ConsumerGrade, FeedType
 from qdl.runtime.stable_catalog import StableSourceCatalog
-from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from qdl.runtime.stable_deployment import (
+    V2_REALTIME_RAW_TOPIC,
+    StableAcquisitionPlan,
+)
 
 
 _DEMAND_SCHEMA = "qdl.v2.production-demand.v1"
@@ -192,7 +195,7 @@ class ProductionCatalogBuilder:
         source_policy_revision: int,
         authority_revision: int,
         canonical_stream: str = "md.canonical.v2",
-        raw_topic: str = "md.raw.stable.v1",
+        raw_topic: str = V2_REALTIME_RAW_TOPIC,
         quarantine_topic: str = "md.quarantine.stable.v1",
     ) -> None:
         if min(catalog_revision, source_policy_revision, authority_revision) < 1:
