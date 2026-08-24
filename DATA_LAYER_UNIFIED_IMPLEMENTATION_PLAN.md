@@ -12491,6 +12491,33 @@ RUNTIME PACKET PENDING`).**
   named services, observation duration and V1 manifest revision before topic
   or ACL creation, service recreation or consumer route activation.
 
+**Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
+CUTOVER PENDING`).**
+
+- Re-ran the bounded provider-native admission from the committed Phase 10.3
+  source with no Kafka, Redis, PostgreSQL, Data Layer role, consumer, order or
+  provider write. `scripts/phase10_realtime_provider_admission.py` passed the
+  full active crypto manifest: `12/12` demanded Binance USD-M/OKX Swap
+  bindings, `16` subscription ACKs, `74` accepted provider frames, `4`
+  intentional WebSocket reconnect/re-subscribe lanes, `4` pre-ACK frames
+  handled within the bounded buffer, `0` fallback, `0` production writes and
+  `0` runtime mutations. Binance BTC/ETH TRADE and BBO were native WebSocket;
+  its two fully closed 1m BARs were provider-authentic REST recovery. OKX
+  BTC/ETH TRADE, BBO and final 1m BARs were native WebSocket. Each reported
+  exact binding ID, declared transport, finality and raw-frame SHA-256; no raw
+  payload or credential was retained.
+- This proves current public-provider protocol availability for every approved
+  crypto demanded slice. It does not certify the currently running V2 runtime:
+  its old shadow bundle still reads `md.raw.stable.v1` and carries only its
+  legacy scope. DNSE/VN remains capability-present but excluded from
+  `V2_PRIMARY` until its own authenticated in-session admission passes.
+- **Next bounded source/packaging slice:** build exactly one immutable Python
+  adapter/query/projector image and one immutable Rust core image from the
+  committed source; generate a fresh private primary bundle and review-only
+  packet bound to those digests; run it only in isolated acceptance before any
+  service/topic/authority mutation. No per-symbol image, container, topic or
+  worker is permitted.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,
