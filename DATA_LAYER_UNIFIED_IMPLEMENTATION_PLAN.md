@@ -12685,6 +12685,10 @@ APPLIED`).**
   validator passed; no Docker service, Kafka, Redis, database, authority or
   consumer route was changed. If approval arrives after expiry, generate a new
   packet rather than editing or reusing this one.
+- Rendered `docker-compose.v2-stable.yml` with the six sealed nonsecret packet
+  substitutions plus the current stable env file; `docker compose config -q`
+  passed. This was a local configuration render only: it did not contact the
+  Docker daemon, recreate a service or expose a secret value.
 
 **Phase 10.3 real-provider re-admission - 2026-08-24 (`PASS / RUNTIME
 CUTOVER PENDING`).**
