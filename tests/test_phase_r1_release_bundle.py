@@ -116,6 +116,13 @@ class R1ReleaseBundleTests(unittest.TestCase):
             self.assertTrue((output / "identities-rotate-test/core/client.crt").is_file())
             self.assertTrue((output / "cert-material-rotate-test/ca.crt").is_file())
             self.assertEqual(oct((output / "stable.env").stat().st_mode & 0o777), "0o600")
+            runtime_modes = {
+                item.name: oct(item.stat().st_mode & 0o777)
+                for item in (output / "runtime").iterdir()
+                if item.is_file()
+            }
+            self.assertTrue(runtime_modes)
+            self.assertEqual(set(runtime_modes.values()), {"0o644"})
             manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
             self.assertFalse(manifest["secret_values_recorded"])
             self.assertEqual(manifest["source_commit"], SOURCE_COMMIT)

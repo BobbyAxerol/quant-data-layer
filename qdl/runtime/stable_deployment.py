@@ -444,6 +444,15 @@ class StableAcquisitionPlan:
             raise ValueError("stable authority is not an isolated Rust shadow record")
 
 
+RUNTIME_CONFIG_MODE = 0o644
+
+
+def _write_runtime_config(path: Path, encoded: bytes) -> None:
+    """Write non-secret runtime JSON readable by the non-root containers."""
+    path.write_bytes(encoded)
+    path.chmod(RUNTIME_CONFIG_MODE)
+
+
 def write_production_core_bundle(
     destination: Path,
     *,
@@ -471,7 +480,7 @@ def write_production_core_bundle(
             json.dumps(payload, indent=2, sort_keys=True, separators=(",", ": ")) + "\n"
         ).encode()
         path = destination / name
-        path.write_bytes(encoded)
+        _write_runtime_config(path, encoded)
         digests[name] = hashlib.sha256(encoded).hexdigest()
     manifest = {
         "schema": "qdl.v2.production-core-bundle.v1",
@@ -486,7 +495,7 @@ def write_production_core_bundle(
         json.dumps(manifest, indent=2, sort_keys=True, separators=(",", ": ")) + "\n"
     ).encode()
     manifest_path = destination / "production-core-manifest.json"
-    manifest_path.write_bytes(encoded_manifest)
+    _write_runtime_config(manifest_path, encoded_manifest)
     digests[manifest_path.name] = hashlib.sha256(encoded_manifest).hexdigest()
     return digests
 
@@ -557,6 +566,6 @@ def write_stable_runtime_bundle(
             json.dumps(payload, indent=2, sort_keys=True, separators=(",", ": ")) + "\n"
         ).encode()
         path = destination / name
-        path.write_bytes(encoded)
+        _write_runtime_config(path, encoded)
         digests[name] = hashlib.sha256(encoded).hexdigest()
     return digests

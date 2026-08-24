@@ -10931,3 +10931,43 @@ live migration or authority transition is part of R0.
   read ACL resources described above, list them back exactly, and rerun the
   bounded real reference collector with the pre-existing projector/audit mTLS
   identity. A failed collector remains non-mutating and blocks physical fencing.
+
+**R1 runtime-permission fail-closed finding - 2026-08-24 (in progress).**
+
+- The first approved rolling recreate targeted only `rust_core`. It mounted the
+  correct new immutable image and R1 `core.json`, then exited in under one
+  second with `Os { code: 13, PermissionDenied }`. The other two generic cores,
+  V1, Kafka, Redis, projector, query, stream and Trading System were not
+  recreated; the first replica was immediately restored to the retained
+  `db240...` C40 image/config and is running again.
+- Exact root cause is bundle file mode, not provider/Kafka/authority logic:
+  R1 creates `runtime/*.json` under an `umask 077` staging directory, leaving
+  `core.json` mode `0600` owned by host UID `1001`. The Rust image deliberately
+  runs UID/GID `10001`, so its read-only bind mount cannot open the non-secret
+  runtime config. The active bundle's equivalent JSON is `0644`.
+- Required in-scope repair: make both shared runtime-bundle writers explicitly
+  mark serialized public runtime JSON `0644`, keep release root, `stable.env`,
+  keys and identities private, add regression coverage, rebuild a *new* sealed
+  R1 bundle without overwriting the failed review bundle, and rerun reference
+  admission. No authority state, Kafka offset or public endpoint may change
+  until the repaired bundle passes a non-root start preflight.
+
+**R1 runtime-permission source repair - 2026-08-24.**
+
+- Status: `SOURCE CERTIFIED / OLD BUNDLE RETAINED / REPAIRED BUNDLE PENDING`.
+  Shared `write_stable_runtime_bundle` and `write_production_core_bundle` now
+  use one explicit `RUNTIME_CONFIG_MODE=0644` writer for runtime JSON and its
+  manifest. These files contain catalog/config/authority metadata only; the
+  sealed release root, identity/key material and `stable.env` remain private
+  (`0700`/`0600`). This is compatible with Docker's individual read-only bind
+  mounts into UID/GID `10001` containers.
+- Regression test proves a real R1 release output keeps `stable.env` at `0600`
+  while every generated `runtime/*.json` file is `0644`. Isolated impacted
+  suite passed `57` tests: R1 bundle, stable runtime refresh/deployment,
+  signed cursor, candidate rollover, pre-canary provenance, C3 packet and
+  authority runtime contracts. `py_compile` and `git diff --check` passed.
+- The first failed `r1-7e27052b4830` bundle and review packets are retained as
+  non-authoritative audit evidence. It is never overwritten. A fresh sealed
+  bundle with the same immutable Rust image but new signing group/key is
+  required before retrying the physical fence; a fresh reference/admission and
+  bootstrap packet will bind that new bundle. No authority state changed.
