@@ -194,7 +194,9 @@ def atomic_write(path: Path, payload: dict[str, str]) -> None:
             handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
-        temporary_path.chmod(0o600)
+        # The HMAC key remains in stable.env (0600); the signed envelope is a
+        # non-secret, read-only runtime input for qdl-production-core (UID 10001).
+        temporary_path.chmod(0o644)
         os.replace(temporary_path, path)
     finally:
         temporary_path.unlink(missing_ok=True)

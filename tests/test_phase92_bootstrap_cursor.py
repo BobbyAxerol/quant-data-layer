@@ -11,7 +11,7 @@ from qdl.control.phase92_bootstrap import (
     build_signed_cursor,
     verify_signed_cursor,
 )
-from scripts.phase92_issue_bootstrap_cursor import prepare
+from scripts.phase92_issue_bootstrap_cursor import atomic_write, prepare
 
 
 KEY_ID = "phase92-k1"
@@ -92,6 +92,16 @@ class Phase92BootstrapCursorTests(unittest.TestCase):
             self.assertFalse(target.exists())
             self.assertEqual(calls[0]["group_id"], SCOPE.consumer_group_id)
             self.assertTrue(envelope["signature_hex"])
+
+    def test_issued_cursor_is_non_secret_runtime_input(self):
+        with tempfile.TemporaryDirectory() as raw:
+            target = Path(raw) / "production-bootstrap.json"
+            atomic_write(target, {"schema": "qdl.phase92.signed-bootstrap.v1"})
+            self.assertEqual(target.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(
+                json.loads(target.read_text(encoding="utf-8"))["schema"],
+                "qdl.phase92.signed-bootstrap.v1",
+            )
 
 
 if __name__ == "__main__":

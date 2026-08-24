@@ -11118,3 +11118,82 @@ live migration or authority transition is part of R0.
   and it is not twelve-slice Rust authority promotion. The next legal action is
   a fresh read-only twelve-slice parity/admission packet, then C3 terminalizes
   old C40 evidence before append-only candidate rollover.
+
+**R1 reference-parity timing clarification - 2026-08-24 (in progress).**
+
+- The typed R1 admission intentionally requires a **different** passing
+  reference-runtime image; it rejects a report that claims the not-yet-started
+  candidate image. The prior `db240...` twelve-slice report is semantically
+  correct but its capture timestamp is near the 30-minute admission limit.
+- Before C40 terminalization, collect a new bounded, read-only verifier report
+  from authentic provider lineage in the retained canonical Kafka tail produced
+  by the `db240...` reference runtime before the physical fence. It is explicitly
+  `REAL` provider provenance with `production_mutations=0`, uses only the
+  isolated `qdl-r1-reference-parity-*` audit group/manual assignment and does
+  not commit/reset offsets. It must retain the reference image/commit identity;
+  it must not be relabeled as candidate runtime parity. Candidate freshness and
+  current live data are instead proven by the later signed R1 canary/handoff.
+- This is a durable authentic-provider replay allowed by the Data Layer rules,
+  not synthetic data and not an execution-authority claim. The scan is bounded
+  to the recent canonical tail and fails closed unless all 12 slices retain at
+  least eight exact Python-oracle samples with zero semantic/provenance mismatch.
+
+
+**R1 C3/rollover execution gate - 2026-08-24 (in progress).**
+
+- The operator approved the complete R0/R1/R2 packet. The only permitted control
+  plane mutations before real canary are: apply additive migration `0011` to the
+  isolated `stable_authority_db`; terminalize the twelve historical C40 rows
+  through existing C3 `RUST_CANARY -> BLOCKED`; then append one exact
+  `BLOCKED` candidate rollover for immutable image
+  `sha256:51a64da92c884b5d8031e5e1593e635c760a9c14f837467d077459b41248c23d`.
+  Old authority rows, transition history, outbox evidence and prior candidate
+  provenance are retained; no authority record is deleted or overwritten.
+- Current preconditions are recorded as PASS: generic `rust_core*` are physically
+  scope-fenced to the four non-promoted DNSE bindings; the twelve Binance USD-M /
+  OKX Swap bindings have no generic Rust writer; V1 remains `ok`; three
+  `production_core_*` replicas remain stopped. Fresh authentic reference parity
+  recorded 96 samples across 12 slices with zero semantic/provenance mismatch,
+  gap, duplicate or consumer error; typed pre-canary admission is candidate-bound
+  and currently active.
+- Prohibited throughout this gate: manual Kafka reset/seek or topic deletion,
+  consumer offset mutation, Redis/SQLite flush, V1/8100 or Trading System restart,
+  DNSE/Spot cutover, public schema change and broad service recreate. Any failed
+  C3/CAS/admission gate stops the R1 sequence before production cores start; V1
+  remains the rollback route.
+
+
+**R1 C3 terminalization and rollover-schema gate - 2026-08-24.**
+
+- Status: `PASS / C40 TERMINALIZED / ROLLOVER UNBLOCKED`. Read-only preflight
+  found exactly twelve authority rows, all `RUST_CANARY`; they cover two
+  Binance USD-M and two OKX Swap instruments across `TRADE`, `QUOTE` and `BAR`.
+  `qdl_authority_candidate_rollovers` was absent as expected.
+- Applied additive `0011_authority_candidate_rollover.sql` only to isolated
+  `stable_authority_db`: the new table, blocked-only rollover function and two
+  append-only/provenance guard triggers are present. The migration produced no
+  authority candidate row and did not touch Kafka, Redis, V1 or Trading System.
+- Exact C3 packet `34deaeb23729596d...` then transitioned every C40 slice from
+  `RUST_CANARY` revision `3` / lease `2` to `BLOCKED` revision `4` / lease `2`.
+  It created 12 terminal transition audit/outbox records; the 12 original rows
+  and all historical evidence remain queryable. No production core started.
+- Next allowed mutation is one dry-run-reviewed append-only candidate rollover
+  from this exact `BLOCKED` revision to the sealed `51a64...` candidate. A CAS
+  mismatch or expired packet stops before revalidation/canary.
+
+
+**R1 signed-cursor non-root runtime blocker - 2026-08-24 (in progress).**
+
+- The first approved cursor issuance correctly read Kafka tails without an
+  offset mutation, but its writer sealed `production-bootstrap.json` as `0600`
+  owned by the ephemeral root operator container. `qdl-production-core` is
+  deliberately UID/GID `10001`, so starting it would fail before Kafka with a
+  local permission error. No production core was started and no data-plane
+  write occurred.
+- This is a deployment-contract defect, not a reason to weaken secret policy:
+  the signed cursor contains scope/tail/signature metadata only, while the HMAC
+  verification key remains exclusively in `stable.env` `0600`. Repair the
+  writer to publish the cursor as non-secret runtime input (`0644`), add a
+  direct regression test and a UID `10001` bind-read preflight, then atomically
+  re-issue the same fresh-group cursor. Do not hand-chown the existing cursor
+  or start production cores before that source gate passes.
