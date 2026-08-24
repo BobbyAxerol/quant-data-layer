@@ -23,6 +23,21 @@ TOPIC_POLICIES = {
 }
 TOPICS = tuple(TOPIC_POLICIES)
 
+# Exact Kafka ACL namespaces used by bounded R1/R2 control-plane readers.
+# They deliberately do not overlap with the active generic-core group.
+CORE_GROUP_PREFIXES = (
+    "qdl-v2-production-core-v1-",
+    "qdl-v2-production-core-r1-",
+)
+READ_ONLY_AUDIT_GROUP_PREFIXES = (
+    "qdl-r1-reference-parity-",
+    "qdl-c40-handoff-",
+)
+READ_ONLY_AUDIT_EXTRA_TOPICS = (
+    "md.canary.canonical.v2",
+    "qdl.target-checkpoint.v1",
+)
+
 
 def compose(env_file: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -113,13 +128,27 @@ def bootstrap(env_file: Path) -> dict[str, object]:
             env_file, "phase8-core", ("WRITE", "DESCRIBE"),
             ("--topic", topic),
         )
-    add_acl(
-        env_file, "phase8-core", ("READ",),
-        (
-            "--group", "qdl-v2-production-core-v1-",
-            "--resource-pattern-type", "prefixed",
-        ),
-    )
+    for group_prefix in CORE_GROUP_PREFIXES:
+        add_acl(
+            env_file, "phase8-core", ("READ",),
+            (
+                "--group", group_prefix,
+                "--resource-pattern-type", "prefixed",
+            ),
+        )
+    for topic in READ_ONLY_AUDIT_EXTRA_TOPICS:
+        add_acl(
+            env_file, "phase8-consumer", ("READ", "DESCRIBE"),
+            ("--topic", topic),
+        )
+    for group_prefix in READ_ONLY_AUDIT_GROUP_PREFIXES:
+        add_acl(
+            env_file, "phase8-consumer", ("READ",),
+            (
+                "--group", group_prefix,
+                "--resource-pattern-type", "prefixed",
+            ),
+        )
     add_acl(env_file, "phase8-core", ("IdempotentWrite",), ("--cluster",))
     for transactional_prefix in (
         "qdl-v2-stable-core-", "qdl-v2-production-core-"

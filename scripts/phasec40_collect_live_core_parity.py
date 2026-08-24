@@ -58,6 +58,15 @@ SUPPORTED_KINDS = frozenset(
         "okx_bar",
     }
 )
+R1_REFERENCE_GROUP_PREFIX = "qdl-r1-reference-parity-"
+
+
+def _require_r1_reference_group(value: str) -> str:
+    if not value.startswith(R1_REFERENCE_GROUP_PREFIX) or value == R1_REFERENCE_GROUP_PREFIX:
+        raise ValueError(
+            "R1 reference parity requires an isolated qdl-r1-reference-parity-* group"
+        )
+    return value
 
 
 def _digest(value: bytes) -> str:
@@ -371,6 +380,7 @@ def verify_sample(
 
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
+    _require_r1_reference_group(args.consumer_group)
     if not 8 <= args.samples_per_slice <= 256:
         raise ValueError("samples_per_slice must be in 8..256")
     if not 1_000 <= args.records_per_partition <= 2_000_000:

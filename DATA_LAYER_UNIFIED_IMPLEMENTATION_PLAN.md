@@ -10881,3 +10881,53 @@ live migration or authority transition is part of R0.
   `py_compile` and `git diff --check` passed. No real bundle, database, Kafka,
   Redis, service or V1/Trading System runtime has been touched by this source
   sub-slice.
+
+**R1 Kafka ACL preflight and least-privilege correction - 2026-08-24 (in progress).**
+
+- A real, read-only R1 twelve-slice reference-parity attempt correctly failed
+  closed with `GROUP_AUTHORIZATION_FAILED` before writing evidence: the active
+  broker allows `phase8-core` only the legacy stable-core and C40 production
+  group prefixes. Reusing the active generic-core group would have caused a
+  rebalance and is forbidden.
+- The corrective slice is deliberately narrow. `phase8-consumer` remains the
+  existing read-only audit/projector identity and receives only `READ` on the
+  exact pre-canary collector group prefix `qdl-r1-reference-parity-`; its
+  current canonical read is reused. The later handoff collector receives the
+  separate exact prefix `qdl-c40-handoff-` and read access only to its canary
+  and checkpoint topics. `phase8-core` receives only the exact R1 production
+  group prefix `qdl-v2-production-core-r1-`, required by the signed-tail
+  issuer and three production-core replicas. No wildcard group, topic write,
+  identity, CA, topic, offset, Redis, V1 or Trading System change is allowed.
+- Before applying any live ACL, source policy and focused contract tests must
+  prove these exact prefixes and reject broad grants. The operator-approved
+  R1 packet permits these additive broker ACLs; they are prerequisite security
+  configuration, not an authority transition. After application, list-only
+  ACL verification and a fresh real-provider reference scan must pass before
+  the generic-writer physical fence or C40 terminalization.
+
+**R1 Kafka ACL source gate - 2026-08-24.**
+
+- Status: `SOURCE CERTIFIED / LIVE ACL PENDING / AUTHORITY UNCHANGED`.
+  `phaseb_bootstrap_stable_broker.py` now declares exact immutable namespaces:
+  `phase8-core` may read `qdl-v2-production-core-v1-` and the new
+  `qdl-v2-production-core-r1-` only; the existing read-only
+  `phase8-consumer` may use only `qdl-r1-reference-parity-` and
+  `qdl-c40-handoff-`, with read/describe added only for
+  `md.canary.canonical.v2` and `qdl.target-checkpoint.v1`. Existing raw and
+  canonical read grants are unchanged. No wildcard, topic write, identity or
+  credential expansion was introduced.
+- `phasec40_collect_live_core_parity.py` now refuses a blank, shared,
+  C40-handoff or generic-core group before connecting. This protects the
+  active generic writer from accidental consumer-group rebalance during the
+  reference scan.
+- Tests actually passed in isolated immutable Python image:
+  `19` focused authority/R1/R2 contract tests, including an execution-level
+  bootstrap ACL call-vector test, candidate provenance/tamper/expiry rejection,
+  signed cursor no-reset behavior and transition/primary packet rejection.
+  `py_compile` and `git diff --check` passed. No Docker service, Kafka ACL,
+  offset, topic, Redis, authority row, V1 or Trading System runtime changed by
+  this source gate.
+- Next gate: commit this reviewed source slice; apply only the five additive
+  read ACL resources described above, list them back exactly, and rerun the
+  bounded real reference collector with the pre-existing projector/audit mTLS
+  identity. A failed collector remains non-mutating and blocks physical fencing.

@@ -5,7 +5,14 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.phaseb_bootstrap_stable_broker import TOPIC_POLICIES
+from scripts.phaseb_bootstrap_stable_broker import (
+    CORE_GROUP_PREFIXES,
+    READ_ONLY_AUDIT_EXTRA_TOPICS,
+    READ_ONLY_AUDIT_GROUP_PREFIXES,
+    TOPIC_POLICIES,
+    bootstrap,
+)
+from scripts.phasec40_collect_live_core_parity import _require_r1_reference_group
 from scripts.run_authority_outbox_dispatcher import write_health
 
 
@@ -22,7 +29,79 @@ class AuthorityRuntimeContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('"stable-authority-dispatcher"', source)
         self.assertIn('"qdl-v2-production-core-"', source)
-        self.assertIn('"qdl-v2-production-core-v1-"', source)
+        self.assertEqual(
+            CORE_GROUP_PREFIXES,
+            ("qdl-v2-production-core-v1-", "qdl-v2-production-core-r1-"),
+        )
+        self.assertEqual(
+            READ_ONLY_AUDIT_GROUP_PREFIXES,
+            ("qdl-r1-reference-parity-", "qdl-c40-handoff-"),
+        )
+        self.assertEqual(
+            READ_ONLY_AUDIT_EXTRA_TOPICS,
+            ("md.canary.canonical.v2", "qdl.target-checkpoint.v1"),
+        )
+        self.assertNotIn('"--group", "*"', source)
+
+    def test_r1_reference_collector_refuses_shared_or_broad_group(self):
+        self.assertEqual(
+            _require_r1_reference_group("qdl-r1-reference-parity-20260824"),
+            "qdl-r1-reference-parity-20260824",
+        )
+        for invalid in (
+            "qdl-r1-reference-parity-",
+            "qdl-v2-stable-core-v1",
+            "qdl-c40-handoff-audit",
+        ):
+            with self.assertRaisesRegex(ValueError, "isolated"):
+                _require_r1_reference_group(invalid)
+
+    def test_bootstrap_grants_only_exact_r1_control_plane_acl_namespaces(self):
+        from unittest.mock import patch
+
+        calls = []
+
+        def fake_kafka(_env, executable, *arguments):
+            calls.append((executable, arguments))
+            if executable == "kafka-topics.sh" and "--describe" in arguments:
+                return (
+                    "Topic: md.raw.stable.v1 PartitionCount: 6 "
+                    "ReplicationFactor: 3 Configs: min.insync.replicas=2"
+                )
+            return ""
+
+        with patch("scripts.phaseb_bootstrap_stable_broker.kafka", fake_kafka):
+            report = bootstrap(Path("/tmp/stable.env"))
+
+        acl_calls = [arguments for executable, arguments in calls if executable == "kafka-acls.sh"]
+        self.assertEqual(report["status"], "PASS")
+        self.assertIn(
+            (
+                "--add", "--allow-principal", "User:phase8-core", "--operation", "READ",
+                "--group", "qdl-v2-production-core-r1-",
+                "--resource-pattern-type", "prefixed",
+            ),
+            acl_calls,
+        )
+        for prefix in READ_ONLY_AUDIT_GROUP_PREFIXES:
+            self.assertIn(
+                (
+                    "--add", "--allow-principal", "User:phase8-consumer",
+                    "--operation", "READ", "--group", prefix,
+                    "--resource-pattern-type", "prefixed",
+                ),
+                acl_calls,
+            )
+        for topic in READ_ONLY_AUDIT_EXTRA_TOPICS:
+            self.assertIn(
+                (
+                    "--add", "--allow-principal", "User:phase8-consumer",
+                    "--operation", "READ", "--operation", "DESCRIBE",
+                    "--topic", topic,
+                ),
+                acl_calls,
+            )
+        self.assertFalse(any("*" in arguments for arguments in acl_calls))
 
     def test_dispatcher_role_is_function_scoped_and_not_table_writer(self):
         migration = (

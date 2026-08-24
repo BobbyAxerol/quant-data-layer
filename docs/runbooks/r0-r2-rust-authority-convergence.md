@@ -85,7 +85,14 @@ python scripts/phase_r1_prepare_release_bundle.py \
    promoted bindings and each production-core config must mount
    `production-bootstrap.json` read-only.
 4. Collect fresh read-only twelve-slice reference parity from the currently
-   running fenced Rust image, then create a typed R1 pre-canary admission bound
+   running fenced Rust image. It must use the existing `phase8-consumer`
+   projector/audit mTLS identity and a unique
+   `qdl-r1-reference-parity-*` consumer group; it must never reuse the active
+   generic-core group. Broker ACLs grant that identity only read access to the
+   bounded parity/handoff topics and the two exact audit group prefixes. The
+   production-core identity receives only the separate
+   `qdl-v2-production-core-r1-*` group prefix for signed tail issuance and
+   canary consumption. Then create a typed R1 pre-canary admission bound
    to that reference, the new image inspect/revision, and the new R1 release
    artifact. This evidence is deliberately `PENDING_R1_CANARY`: it proves
    current provider/contract health and candidate provenance, not candidate
