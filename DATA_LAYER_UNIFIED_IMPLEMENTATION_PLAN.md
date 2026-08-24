@@ -12356,6 +12356,28 @@ DEPLOYMENT CONFIGURATION NEXT`).**
   deployment/parity matrix. Runtime promotion remains unperformed and needs
   its explicit bounded packet.
 
+**Primary bundle and edge configuration slice - 2026-08-24 (`IN PROGRESS /
+SOURCE ONLY`).**
+
+- **Scope:** make one generated shared authority record (`RUST_SHADOW` or
+  `RUST_PRIMARY`, never an ad-hoc env override) flow consistently through the
+  fixed Rust core, Rust-native Binance/OKX ingestors, bounded Python REST/VN
+  raw edges and V2 query/stream/projector runtime validation. Rename only the
+  clean fixed core Kafka identities to `qdl-v2-realtime-core-v2` and
+  `qdl-v2-realtime-core-*`; leave older group/transaction identities and every
+  runtime resource untouched.
+- **Invariant:** a primary record still has
+  `public_write_allowed=false` and `legacy_write_allowed=false`; it grants only
+  canonical ownership, never a direct compatibility/public fan-out. Invalid
+  mode/flag combinations must fail during bundle or role construction. Existing
+  historical Phase-9.2 production-core code remains inactive and is not started
+  by this Phase 10.3 topology.
+- **Tests:** generated primary and shadow bundles; primary Python edge
+  construction; V2 role health/manifest; compose/core identity; broker bootstrap
+  topic/group/transaction ACL intent; source/catalog/demand parity. Then run the
+  network-isolated Python matrix and the Rust matrix already specified above.
+  No runtime state or provider interaction is permitted.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,
