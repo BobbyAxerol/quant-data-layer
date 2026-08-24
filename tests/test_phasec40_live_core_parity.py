@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -21,6 +22,7 @@ from scripts.phasec40_collect_live_core_parity import (
     _canonicalize,
     _context,
     _provider_frames,
+    _prepare_output,
     _scan_tail,
     verify_sample,
 )
@@ -198,6 +200,16 @@ class C40LiveCoreParityTests(unittest.TestCase):
                 binding=binding,
                 acquisition=acquisition,
             )
+
+    def test_prepare_output_creates_private_parent_and_refuses_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "review" / "reference-live-parity.json"
+            prepared = _prepare_output(output)
+            self.assertEqual(prepared, output.resolve())
+            self.assertEqual(prepared.parent.stat().st_mode & 0o777, 0o700)
+            prepared.write_text("{}\n", encoding="utf-8")
+            with self.assertRaises(FileExistsError):
+                _prepare_output(prepared)
 
     def test_scan_freezes_highs_and_stops_at_complete_sample_floor(self) -> None:
         class Message:

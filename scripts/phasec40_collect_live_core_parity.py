@@ -69,6 +69,20 @@ def _require_r1_reference_group(value: str) -> str:
     return value
 
 
+def _prepare_output(path: Path) -> Path:
+    output = path.resolve()
+    if output.exists():
+        raise FileExistsError(f"live parity evidence output already exists: {output}")
+    parent = output.parent
+    if parent.exists():
+        if not parent.is_dir():
+            raise NotADirectoryError(parent)
+    else:
+        parent.mkdir(parents=True, mode=0o700)
+        parent.chmod(0o700)
+    return output
+
+
 def _digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -566,11 +580,13 @@ def main() -> int:
     ):
         if not path.is_file():
             raise FileNotFoundError(path)
+    output = _prepare_output(args.output)
     evidence = collect(args)
-    args.output.write_text(
+    output.write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    output.chmod(0o640)
     print(
         json.dumps(
             {

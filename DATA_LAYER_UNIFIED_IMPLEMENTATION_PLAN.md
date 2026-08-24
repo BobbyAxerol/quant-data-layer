@@ -11312,3 +11312,22 @@ live migration or authority transition is part of R0.
 - Source gates passed in disposable, network-isolated containers: cargo fmt --all -- --check; cargo test -p qdl-kafka --locked (20 library tests, plus 6 ingestor, 3 production-core and 2 realtime-core binary tests); cargo clippy -p qdl-kafka --all-targets --locked -- -D warnings; and the pinned Python R0/R1/R2 matrix (85/85, 4.581s) in a read-only V2 Python image. Expected provider/reconnect diagnostics inside deterministic unit coverage did not create runtime mutation.
 - The temporary Rust builder container used only an executable tmpfs target and exited cleanly; no host build cache, Kafka offset, topic, Redis/SQLite, V1/Trading System, generic-core, DNSE/Spot or production-core mutation occurred. Next is a fresh immutable candidate image and fresh sealed/evidence chain; the failed 9b8daa generation remains terminal audit evidence.
 - Extended source gate passed after the focused matrix: full cargo clippy --workspace --all-targets --locked with warnings denied, and full cargo test --workspace --locked with 94 Rust unit tests passed. Both used the same disposable, network-isolated builder with only executable tmpfs build output.
+
+
+**R1 cooperative-rebalance candidate and fresh evidence chain - 2026-08-24 (approved, in progress).**
+
+- New immutable candidate is sha256:e3640be4cfbf7d101fb393daba43e3359d6af3b94e56fec87f725ec34d7d85f5, built from source commit 74dff63e54b33166d46cb8a5c99ef45f328ec76c and labeled 2.0.0-74dff63e54b3. It remains non-root UID/GID 10001:10001. Retained Rust rollback image is sha256:51a64da92c884b5d8031e5e1593e635c760a9c14f837467d077459b41248c23d; V1 remains the separate hot fallback.
+- Create a distinct sealed bundle r1-e3640be4cfbf-cooprebalance-20260824T080419Z by copying only current bundle-local identity/certificate material from the fenced 9b8daa generation. The new output receives a fresh bootstrap group/key/generation nonce and runtime metadata bound to e364; old candidate, old cursor, old bundle, C40 history and authority audit rows remain immutable evidence.
+- The dry-run and apply are limited to new files beneath the new bundle path. They may not alter source bundle files, Kafka offset/topic, authority rows, Redis/SQLite, V1/Trading System, generic scope-fenced cores, DNSE/Spot or production_core replicas. After a clean bundle preflight, collect fresh real twelve-slice reference parity and candidate-bound admission before any C3 rollover.
+
+
+**R1 collector evidence-output safety repair - 2026-08-24 (approved, in progress).**
+
+- The first fresh reference collector completed its read-only Kafka scan but could not persist a report because a new R1 release bundle deliberately contains no review directory. The failure occurred only at local evidence output creation; it did not commit/reset Kafka offsets, modify authority, Redis/SQLite, V1, generic cores or production cores, and it produced no partial report.
+- Harden the collector, not the evidence manually: create a missing immediate output parent with private mode 0700, reject an existing output path before scanning, and write the evidence file mode 0640. Add a focused regression. Then use a new isolated reference group and rerun the full authentic scan so the accepted report has a single clean provenance chain.
+
+
+**R1 collector evidence-output safety repair - 2026-08-24 (complete source slice).**
+
+- Implemented private output preparation in the collector: it creates a missing direct evidence parent at 0700, refuses an existing report before Kafka work begins, and sets accepted evidence to 0640. No runtime public contract or Rust candidate binary changed.
+- Focused network-isolated Python regression passed 24/24 across C40 live core parity, R1 admission/release/rollover and Phase 9.2 cursor contracts. The next collector attempt will use a fresh qdl-r1-reference-parity group and the same authentic C40 timestamp; the failed no-output attempt remains only journaled diagnostic evidence.
