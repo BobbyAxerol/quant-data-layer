@@ -13354,6 +13354,13 @@ CUTOVER PENDING`).**
   `35/35`. The current checked Trading System override independently hashes to
   the sealed `c7f19b...59c7aea` value. No runtime state changed in this source
   gate.
+- **Immutable-consumer artifact preflight:** because the handoff checks both
+  the host override and the packaged `/app/docker-compose.data-layer-v2-primary.yml`,
+  the prior Trading System image remains intentionally ineligible: it embeds
+  revision `1`. Build one replacement immutable image from the already-tested
+  Trading System commit, verify its embedded override hash against this lock,
+  then include that image identifier in the fresh packet evidence. This adds
+  no Data Layer image, service, topic, ACL, offset, cache, or authority change.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
