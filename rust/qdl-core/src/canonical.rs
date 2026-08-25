@@ -4,8 +4,8 @@ use qdl_contracts::qdl::common::v1::{
     SourceRole,
 };
 use qdl_contracts::qdl::marketdata::v2::{
-    event_envelope, Bar, BarLifecycle, BookLevel, EventEnvelope, OrderBookSnapshot, Quote, Trade,
-    TradeIdentityKind,
+    event_envelope, Bar, BarLifecycle, BookLevel, EventEnvelope, OrderBookSnapshot, Quote,
+    Trade, TradeIdentityKind,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -106,6 +106,10 @@ fn set_payload_hash(envelope: &mut EventEnvelope) -> Result<(), String> {
         event_envelope::Payload::OpenInterest(value) => value.encode_to_vec(),
         event_envelope::Payload::MarkIndexPrice(value) => value.encode_to_vec(),
         event_envelope::Payload::Ticker(value) => value.encode_to_vec(),
+        event_envelope::Payload::LongShortRatio(value) => value.encode_to_vec(),
+        event_envelope::Payload::TakerFlow(value) => value.encode_to_vec(),
+        event_envelope::Payload::Basis(value) => value.encode_to_vec(),
+        event_envelope::Payload::ContractMetadata(value) => value.encode_to_vec(),
         event_envelope::Payload::FeedState(value) => value.encode_to_vec(),
         event_envelope::Payload::QualityEvent(value) => value.encode_to_vec(),
     };
@@ -840,7 +844,35 @@ pub fn canonical_bytes(fixture: &TradeFixture) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_bytes, TradeFixture};
+    use prost::Message;
+    use qdl_contracts::qdl::common::v1::{decimal_value, DecimalValue, QuantityUnit};
+    use qdl_contracts::qdl::marketdata::v2::{
+        event_envelope, Basis, BasisKind, ContractMetadata, LongShortRatio,
+        LongShortRatioPopulation, MetricUnit, OpenInterest, TakerFlow,
+    };
+    use sha2::{Digest, Sha256};
+
+    use super::{canonical_bytes, set_payload_hash, EventEnvelope, TradeFixture};
+
+    fn decimal(value: i64, scale: i32) -> DecimalValue {
+        DecimalValue {
+            coefficient: Some(decimal_value::Coefficient::Mantissa(value)),
+            scale,
+            source_text: if scale == 0 {
+                value.to_string()
+            } else {
+                format!("{value}e-{scale}")
+            },
+        }
+    }
+
+    fn envelope(payload: event_envelope::Payload) -> EventEnvelope {
+        EventEnvelope {
+            source_session_id: "phase104-contract-hash".into(),
+            payload: Some(payload),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn non_positive_trade_price_and_quantity_fail_closed() {
@@ -900,6 +932,73 @@ mod tests {
                 env!("CARGO_MANIFEST_DIR")
             );
             assert_eq!(actual, std::fs::read(golden_path).expect("read golden"));
+        }
+    }
+
+    #[test]
+    fn reference_payload_hashes_are_exhaustive_and_deterministic() {
+        let payloads = vec![
+            event_envelope::Payload::OpenInterest(OpenInterest {
+                quantity: Some(decimal(10, 0)),
+                notional: Some(decimal(2500, 2)),
+                quantity_unit: QuantityUnit::Contract as i32,
+                sampling_interval: "5m".into(),
+            }),
+            event_envelope::Payload::LongShortRatio(LongShortRatio {
+                population: LongShortRatioPopulation::GlobalAccount as i32,
+                sampling_interval: "1h".into(),
+                long_value: Some(decimal(6, 1)),
+                short_value: Some(decimal(4, 1)),
+                long_short_ratio: Some(decimal(15, 1)),
+                value_unit: MetricUnit::Ratio as i32,
+            }),
+            event_envelope::Payload::TakerFlow(TakerFlow {
+                sampling_interval: "1h".into(),
+                buy_volume: Some(decimal(3, 0)),
+                sell_volume: Some(decimal(2, 0)),
+                buy_sell_ratio: Some(decimal(15, 1)),
+                quantity_unit: QuantityUnit::BaseAsset as i32,
+            }),
+            event_envelope::Payload::Basis(Basis {
+                kind: BasisKind::Derived as i32,
+                sampling_interval: "1h".into(),
+                basis: Some(decimal(12, 2)),
+                basis_unit: MetricUnit::Percent as i32,
+                annualized_basis: Some(decimal(18, 2)),
+                reference_instrument_uid: "BINANCE.USDM.PERPETUAL.BTC-USDT".into(),
+                formula_id: "spread-v1".into(),
+                input_instrument_uids: vec![
+                    "BINANCE.USDM.PERPETUAL.BTC-USDT".into(),
+                    "BINANCE.USDM.FUTURE.BTC-USDT-20261225".into(),
+                ],
+            }),
+            event_envelope::Payload::ContractMetadata(ContractMetadata {
+                contract_kind: "PERPETUAL".into(),
+                settlement_asset: "USDT".into(),
+                contract_multiplier: Some(decimal(1, 0)),
+                price_tick: Some(decimal(1, 2)),
+                quantity_step: Some(decimal(1, 3)),
+                expiry_time_ns: None,
+                funding_interval_ns: Some(28_800_000_000_000),
+                continuous: false,
+                underlying_instrument_uid: "BINANCE.USDM.PERPETUAL.BTC-USDT".into(),
+            }),
+        ];
+        for payload in payloads {
+            let expected = match &payload {
+                event_envelope::Payload::OpenInterest(value) => value.encode_to_vec(),
+                event_envelope::Payload::LongShortRatio(value) => value.encode_to_vec(),
+                event_envelope::Payload::TakerFlow(value) => value.encode_to_vec(),
+                event_envelope::Payload::Basis(value) => value.encode_to_vec(),
+                event_envelope::Payload::ContractMetadata(value) => value.encode_to_vec(),
+                _ => unreachable!("Phase 10.4 reference payload only"),
+            };
+            let mut value = envelope(payload);
+            set_payload_hash(&mut value).expect("hash reference payload");
+            assert_eq!(
+                value.canonical_payload_hash,
+                Sha256::digest(expected).to_vec()
+            );
         }
     }
 }

@@ -114,6 +114,41 @@ def okx_global_capabilities(market: str, *, account_tier: str = "PUBLIC") -> Ven
                 resnapshot_on_gap=True,
                 constraint="requires approved OKX VIP/channel entitlement",
             ),
+            "funding_rate": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                constraint="public funding-history; cadence is provider supplied",
+            ),
+            "open_interest": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                snapshot=True,
+                constraint="public current snapshot; no certified historical series in this profile",
+            ),
+            "mark_index_price": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                snapshot=True,
+                constraint="mark/index history and current public reference reads",
+            ),
+            "long_short_ratio": FeedCapability(
+                CapabilityAvailability.UNAVAILABLE,
+                constraint="no provider-equivalent public OKX global/top account ratio",
+            ),
+            "taker_flow": FeedCapability(
+                CapabilityAvailability.UNAVAILABLE,
+                constraint="no provider-equivalent public OKX taker long/short ratio",
+            ),
+            "basis": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                constraint="derived-only from explicit mark/index or contract inputs; no provider-native basis claim",
+            ),
+            "contract_metadata": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                snapshot=True,
+                constraint="versioned public instrument metadata",
+            ),
             "sbe_trade": FeedCapability(
                 CapabilityAvailability.TIER_GATED,
                 live=True,
@@ -178,6 +213,44 @@ def binance_usdm_capabilities() -> VenueCapabilityProfile:
                 resubscribe=True,
                 resnapshot_on_gap=True,
             ),
+            "funding_rate": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                constraint="public USD-M funding history",
+            ),
+            "open_interest": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                snapshot=True,
+                constraint="public current and bounded USD-M open-interest history",
+            ),
+            "mark_index_price": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                snapshot=True,
+                constraint="public USD-M mark/index reference reads",
+            ),
+            "long_short_ratio": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                constraint="bounded public global/top account and top-position ratio history",
+            ),
+            "taker_flow": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                constraint="bounded public taker buy/sell ratio history",
+            ),
+            "basis": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                constraint="bounded provider-native USD-M basis history by contract type",
+            ),
+            "contract_metadata": FeedCapability(
+                CapabilityAvailability.AVAILABLE,
+                rest_history=True,
+                snapshot=True,
+                constraint="versioned USD-M exchange-info metadata",
+            ),
         },
     )
 
@@ -239,5 +312,12 @@ def dnse_capabilities() -> VenueCapabilityProfile:
                 native_intervals=VN_NATIVE_INTERVALS,
             ),
             "l2": FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint="not certified in current provider contract"),
+            "funding_rate": FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint="crypto derivative metric not applicable to DNSE profile"),
+            "open_interest": FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint="no certified public VN derivative OI product in current adapter"),
+            "mark_index_price": FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint="crypto mark/index semantics are not applicable to DNSE profile"),
+            "long_short_ratio": FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint="crypto participant-ratio metric is not applicable to DNSE profile"),
+            "taker_flow": FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint="crypto taker-flow metric is not applicable to DNSE profile"),
+            "basis": FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint="crypto futures-basis product is not applicable to DNSE profile"),
+            "contract_metadata": FeedCapability(CapabilityAvailability.AVAILABLE, rest_history=True, snapshot=True, constraint="versioned VN instrument metadata only"),
         },
     )

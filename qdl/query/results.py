@@ -8,6 +8,7 @@ from qdl.query.contracts import (
     CoverageStatus,
     DataRequirement,
     FeedType,
+    METRIC_INTERVAL_FEEDS,
     QueryProblem,
 )
 from qdl.query.lifecycle import BarLifecycle
@@ -126,8 +127,14 @@ class MarketDataItem:
             raise ValueError("market-data received_at_ns must be positive")
         if self.feed is FeedType.BAR and not self.interval:
             raise ValueError("bar item requires interval")
-        if self.feed is not FeedType.BAR and self.interval is not None:
-            raise ValueError("interval is valid only for bar items")
+        if self.feed in METRIC_INTERVAL_FEEDS and not self.interval:
+            raise ValueError("metric-series item requires sampling interval")
+        if (
+            self.feed is not FeedType.BAR
+            and self.feed not in METRIC_INTERVAL_FEEDS
+            and self.interval is not None
+        ):
+            raise ValueError("interval is valid only for bar or metric-series items")
         if self.feed is FeedType.BAR:
             if self.bar_lifecycle in {None, BarLifecycle.UNSPECIFIED}:
                 raise ValueError("bar item requires an explicit lifecycle")

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from decimal import Decimal
 import unittest
 
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl_sdk import (
     DataRequirement,
+    EXECUTION_PRICE_VALIDATION_FEEDS,
     Feed,
     Grade,
     StreamEvent,
@@ -16,10 +18,15 @@ from qdl_sdk.models import MarketDataView
 
 NOW = 1_800_000_000_000_000_000
 DIGEST = "a" * 64
+METRIC_SERIES = {Feed.LONG_SHORT_RATIO, Feed.TAKER_FLOW, Feed.BASIS}
 
 
 def dec(value: int, scale: int = 2):
-    return common_pb2.DecimalValue(mantissa=value, scale=scale, source_text=str(value))
+    return common_pb2.DecimalValue(
+        mantissa=value,
+        scale=scale,
+        source_text=format(Decimal(value).scaleb(-scale), "f"),
+    )
 
 
 def payload_fixture(feed: Feed) -> dict:
@@ -76,12 +83,48 @@ def payload_fixture(feed: Feed) -> dict:
         Feed.FUNDING_RATE: {**common, "rate": dv(), "funding_time_ns": NOW},
         Feed.OPEN_INTEREST: {**common, "quantity": dv(), "quantity_unit": "CONTRACT"},
         Feed.MARK_INDEX_PRICE: {**common, "mark_price": dv(), "index_price": dv()},
+        Feed.LONG_SHORT_RATIO: {
+            **common,
+            "population": "GLOBAL_ACCOUNT",
+            "sampling_interval": "1h",
+            "long_value": dv(),
+            "short_value": dv(),
+            "long_short_ratio": dv(),
+            "value_unit": "RATIO",
+        },
+        Feed.TAKER_FLOW: {
+            **common,
+            "sampling_interval": "1h",
+            "buy_volume": dv(),
+            "sell_volume": dv(),
+            "buy_sell_ratio": dv(),
+            "quantity_unit": "BASE_ASSET",
+        },
+        Feed.BASIS: {
+            **common,
+            "kind": "PROVIDER_NATIVE",
+            "sampling_interval": "1h",
+            "basis": dv(),
+            "basis_unit": "PRICE",
+        },
+        Feed.CONTRACT_METADATA: {
+            **common,
+            "contract_kind": "PERPETUAL",
+            "settlement_asset": "USDT",
+            "contract_multiplier": dv(1),
+            "price_tick": dv(1),
+            "quantity_step": dv(1),
+        },
         Feed.TICKER: {**common, "last_price": dv()},
     }[feed]
 
 
-def dv(value: int = 100) -> dict:
-    return {"coefficient": str(value), "scale": 2, "source_text": str(value)}
+def dv(value: int = 100, scale: int = 2) -> dict:
+    return {
+        "coefficient": str(value),
+        "scale": scale,
+        "source_text": format(Decimal(value).scaleb(-scale), "f"),
+    }
 
 
 def level() -> dict:
@@ -101,7 +144,7 @@ def template(feed: Feed) -> MarketDataView:
             "instrument_id": "BINANCE.USDM.PERPETUAL.BTC-USDT",
             "instrument_revision": 7,
             "feed": feed.value,
-            "interval": "1m" if feed is Feed.BAR else None,
+            "interval": "1m" if feed is Feed.BAR else "1h" if feed in METRIC_SERIES else None,
             "observed_at_ns": NOW,
             "revision": 0,
             "payload": payload_fixture(feed),
@@ -248,6 +291,46 @@ def envelope(feed: Feed) -> market_data_pb2.EventEnvelope:
         result.mark_index_price.CopyFrom(
             market_data_pb2.MarkIndexPrice(mark_price=dec(100), index_price=dec(99))
         )
+    elif feed is Feed.LONG_SHORT_RATIO:
+        result.long_short_ratio.CopyFrom(
+            market_data_pb2.LongShortRatio(
+                population=market_data_pb2.LONG_SHORT_RATIO_POPULATION_GLOBAL_ACCOUNT,
+                sampling_interval="1h",
+                long_value=dec(6, 1),
+                short_value=dec(4, 1),
+                long_short_ratio=dec(15, 1),
+                value_unit=market_data_pb2.METRIC_UNIT_RATIO,
+            )
+        )
+    elif feed is Feed.TAKER_FLOW:
+        result.taker_flow.CopyFrom(
+            market_data_pb2.TakerFlow(
+                sampling_interval="1h",
+                buy_volume=dec(3),
+                sell_volume=dec(2),
+                buy_sell_ratio=dec(15, 1),
+                quantity_unit=common_pb2.QUANTITY_UNIT_BASE_ASSET,
+            )
+        )
+    elif feed is Feed.BASIS:
+        result.basis.CopyFrom(
+            market_data_pb2.Basis(
+                kind=market_data_pb2.BASIS_KIND_PROVIDER_NATIVE,
+                sampling_interval="1h",
+                basis=dec(12, 2),
+                basis_unit=market_data_pb2.METRIC_UNIT_PRICE,
+            )
+        )
+    elif feed is Feed.CONTRACT_METADATA:
+        result.contract_metadata.CopyFrom(
+            market_data_pb2.ContractMetadata(
+                contract_kind="PERPETUAL",
+                settlement_asset="USDT",
+                contract_multiplier=dec(1, 0),
+                price_tick=dec(1, 2),
+                quantity_step=dec(1, 3),
+            )
+        )
     elif feed is Feed.TICKER:
         result.ticker.CopyFrom(market_data_pb2.Ticker(last_price=dec(100)))
     return result
@@ -258,9 +341,13 @@ class SdkStreamProjectionTests(unittest.TestCase):
         return DataRequirement(
             instrument_uid="uid-1",
             feed=feed,
-            consumer_grade=Grade.EXECUTION,
+            consumer_grade=(
+                Grade.EXECUTION
+                if feed in EXECUTION_PRICE_VALIDATION_FEEDS
+                else Grade.ALPHA
+            ),
             source_policy_id="crypto_primary_v2",
-            interval="1m" if feed is Feed.BAR else None,
+            interval="1m" if feed is Feed.BAR else "1h" if feed in METRIC_SERIES else None,
             max_freshness_ms=1000,
         )
 
@@ -278,7 +365,10 @@ class SdkStreamProjectionTests(unittest.TestCase):
                 self.assertIs(result.feed, feed)
                 self.assertEqual(result.watermark_offset, 11)
                 self.assertEqual(result.cursor, "signed")
-                self.assertTrue(result.quality.execution_eligible)
+                self.assertEqual(
+                    result.quality.execution_eligible,
+                    feed in EXECUTION_PRICE_VALIDATION_FEEDS,
+                )
 
     def test_unspecified_feed_is_rejected_at_requirement_boundary(self):
         with self.assertRaisesRegex(ValueError, "UNSPECIFIED"):

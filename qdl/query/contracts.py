@@ -52,6 +52,34 @@ class FeedType(StrEnum):
     OPEN_INTEREST = "OPEN_INTEREST"
     MARK_INDEX_PRICE = "MARK_INDEX_PRICE"
     TICKER = "TICKER"
+    LONG_SHORT_RATIO = "LONG_SHORT_RATIO"
+    TAKER_FLOW = "TAKER_FLOW"
+    BASIS = "BASIS"
+    CONTRACT_METADATA = "CONTRACT_METADATA"
+
+
+METRIC_INTERVAL_FEEDS = frozenset(
+    {
+        FeedType.LONG_SHORT_RATIO,
+        FeedType.TAKER_FLOW,
+        FeedType.BASIS,
+    }
+)
+
+# These products may satisfy an execution-grade requirement. Final BAR remains
+# here for established execution-readiness compatibility; it is not a direct
+# broker-price substitute. Reference metrics remain alpha/research inputs even
+# when their observations are fresh and provider-authoritative.
+EXECUTION_PRICE_VALIDATION_FEEDS = frozenset(
+    {
+        FeedType.TRADE,
+        FeedType.QUOTE,
+        FeedType.BAR,
+        FeedType.BOOK_SNAPSHOT,
+        FeedType.BOOK_DELTA,
+        FeedType.MARK_INDEX_PRICE,
+    }
+)
 
 
 class CoverageStatus(StrEnum):
@@ -177,9 +205,16 @@ class DataRequirement:
         if self.feed is FeedType.BAR:
             if self.interval is None or not self.interval.strip():
                 raise ValueError("bar requirements need an interval")
+        elif self.feed in METRIC_INTERVAL_FEEDS:
+            if self.interval is None or not self.interval.strip():
+                raise ValueError("metric-series requirements need a sampling interval")
         elif self.interval is not None:
-            raise ValueError("interval is valid only for bar requirements")
+            raise ValueError("interval is valid only for bar or metric-series requirements")
         if self.consumer_grade is ConsumerGrade.EXECUTION:
+            if self.feed not in EXECUTION_PRICE_VALIDATION_FEEDS:
+                raise ValueError(
+                    "execution-grade requirements need an execution-price validation feed"
+                )
             if self.stale_policy is not StalePolicy.BLOCK:
                 raise ValueError("execution-grade stale policy must BLOCK")
             if self.gap_policy is not GapPolicy.BLOCK:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Annotated, Any, Literal
 
@@ -18,7 +19,11 @@ from qdl.query.v2 import query_pb2
 
 try:
     # The service and SDK share enum identity when the public query package is present.
-    from qdl.query import BarLifecycle, FeedType
+    from qdl.query import (
+        BarLifecycle,
+        EXECUTION_PRICE_VALIDATION_FEEDS as _QUERY_EXECUTION_PRICE_VALIDATION_FEEDS,
+        FeedType,
+    )
 except ImportError:
     class FeedType(StrEnum):
         UNSPECIFIED = "UNSPECIFIED"
@@ -31,6 +36,10 @@ except ImportError:
         OPEN_INTEREST = "OPEN_INTEREST"
         MARK_INDEX_PRICE = "MARK_INDEX_PRICE"
         TICKER = "TICKER"
+        LONG_SHORT_RATIO = "LONG_SHORT_RATIO"
+        TAKER_FLOW = "TAKER_FLOW"
+        BASIS = "BASIS"
+        CONTRACT_METADATA = "CONTRACT_METADATA"
 
     class BarLifecycle(StrEnum):
         UNSPECIFIED = "UNSPECIFIED"
@@ -39,9 +48,32 @@ except ImportError:
         REVISED = "REVISED"
         CANCELLED = "CANCELLED"
 
+    _QUERY_EXECUTION_PRICE_VALIDATION_FEEDS = frozenset(
+        {
+            FeedType.TRADE,
+            FeedType.QUOTE,
+            FeedType.BAR,
+            FeedType.BOOK_SNAPSHOT,
+            FeedType.BOOK_DELTA,
+            FeedType.MARK_INDEX_PRICE,
+        }
+    )
+
 
 # Concise public SDK spelling; the frozen wire component remains FeedType.
 Feed = FeedType
+
+METRIC_INTERVAL_FEEDS = frozenset(
+    {
+        Feed.LONG_SHORT_RATIO,
+        Feed.TAKER_FLOW,
+        Feed.BASIS,
+    }
+)
+
+EXECUTION_PRICE_VALIDATION_FEEDS = frozenset(
+    Feed(feed.value) for feed in _QUERY_EXECUTION_PRICE_VALIDATION_FEEDS
+)
 
 
 class Grade(StrEnum):
@@ -128,6 +160,23 @@ class DecimalValue(ClosedModel):
     scale: int = Field(ge=-38, le=38)
     source_text: str = Field(min_length=1, max_length=128)
 
+    @model_validator(mode="after")
+    def source_text_matches_canonical_value(self):
+        try:
+            source = Decimal(self.source_text)
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError("decimal source_text is invalid") from error
+        if not source.is_finite():
+            raise ValueError("decimal source_text must be finite")
+        canonical = Decimal(self.coefficient).scaleb(-self.scale)
+        if canonical != source:
+            raise ValueError("decimal source_text does not match coefficient and scale")
+        return self
+
+
+def _decimal_value(value: DecimalValue) -> Decimal:
+    return Decimal(value.coefficient).scaleb(-value.scale)
+
 
 class TradeIdentityKind(StrEnum):
     NATIVE = "NATIVE"
@@ -139,6 +188,28 @@ class QuantityUnit(StrEnum):
     QUOTE_ASSET = "QUOTE_ASSET"
     CONTRACT = "CONTRACT"
     SHARE = "SHARE"
+
+
+class MetricUnit(StrEnum):
+    RATIO = "RATIO"
+    PRICE = "PRICE"
+    BASE_ASSET = "BASE_ASSET"
+    QUOTE_ASSET = "QUOTE_ASSET"
+    CONTRACT = "CONTRACT"
+    NOTIONAL = "NOTIONAL"
+    PERCENT = "PERCENT"
+    BASIS_POINTS = "BASIS_POINTS"
+
+
+class LongShortRatioPopulation(StrEnum):
+    GLOBAL_ACCOUNT = "GLOBAL_ACCOUNT"
+    TOP_ACCOUNT = "TOP_ACCOUNT"
+    TOP_POSITION = "TOP_POSITION"
+
+
+class BasisKind(StrEnum):
+    PROVIDER_NATIVE = "PROVIDER_NATIVE"
+    DERIVED = "DERIVED"
 
 
 class SourceView(ClosedModel):
@@ -281,12 +352,109 @@ class OpenInterestPayload(ClosedModel):
     quantity: DecimalValue
     quantity_unit: QuantityUnit
     notional: DecimalValue | None = None
+    sampling_interval: str | None = Field(default=None, min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def sampling_interval_is_not_blank(self):
+        if self.sampling_interval is not None and not self.sampling_interval.strip():
+            raise ValueError("open-interest sampling_interval cannot be blank")
+        return self
 
 
 class MarkIndexPricePayload(ClosedModel):
     feed: Literal[Feed.MARK_INDEX_PRICE] = Feed.MARK_INDEX_PRICE
     mark_price: DecimalValue
     index_price: DecimalValue
+
+
+class LongShortRatioPayload(ClosedModel):
+    feed: Literal[Feed.LONG_SHORT_RATIO] = Feed.LONG_SHORT_RATIO
+    population: LongShortRatioPopulation
+    sampling_interval: str = Field(min_length=1, max_length=20)
+    long_value: DecimalValue
+    short_value: DecimalValue
+    long_short_ratio: DecimalValue
+    value_unit: MetricUnit = MetricUnit.RATIO
+
+    @model_validator(mode="after")
+    def ratio_has_ratio_unit(self):
+        if not self.sampling_interval.strip():
+            raise ValueError("long/short ratio sampling_interval cannot be blank")
+        if self.value_unit is not MetricUnit.RATIO:
+            raise ValueError("long/short ratio value unit must be RATIO")
+        return self
+
+
+class TakerFlowPayload(ClosedModel):
+    feed: Literal[Feed.TAKER_FLOW] = Feed.TAKER_FLOW
+    sampling_interval: str = Field(min_length=1, max_length=20)
+    buy_volume: DecimalValue
+    sell_volume: DecimalValue
+    buy_sell_ratio: DecimalValue
+    quantity_unit: QuantityUnit
+
+    @model_validator(mode="after")
+    def sampling_interval_is_not_blank(self):
+        if not self.sampling_interval.strip():
+            raise ValueError("taker-flow sampling_interval cannot be blank")
+        return self
+
+
+class BasisPayload(ClosedModel):
+    feed: Literal[Feed.BASIS] = Feed.BASIS
+    kind: BasisKind
+    sampling_interval: str = Field(min_length=1, max_length=20)
+    basis: DecimalValue
+    basis_unit: MetricUnit
+    annualized_basis: DecimalValue | None = None
+    reference_instrument_uid: str = Field(default="", max_length=200)
+    formula_id: str = Field(default="", max_length=160)
+    input_instrument_uids: list[str] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def derived_basis_has_explicit_lineage(self):
+        if not self.sampling_interval.strip():
+            raise ValueError("basis sampling_interval cannot be blank")
+        if self.kind is BasisKind.DERIVED:
+            inputs = self.input_instrument_uids
+            if (
+                not self.formula_id.strip()
+                or len(inputs) < 2
+                or any(not value.strip() for value in inputs)
+                or len(set(inputs)) != len(inputs)
+            ):
+                raise ValueError("derived basis requires formula_id and at least two input instruments")
+        elif self.formula_id or self.input_instrument_uids:
+            raise ValueError("provider-native basis cannot claim a QDL formula or input list")
+        return self
+
+
+class ContractMetadataPayload(ClosedModel):
+    feed: Literal[Feed.CONTRACT_METADATA] = Feed.CONTRACT_METADATA
+    contract_kind: str = Field(min_length=1, max_length=40)
+    settlement_asset: str = Field(min_length=1, max_length=40)
+    contract_multiplier: DecimalValue
+    price_tick: DecimalValue
+    quantity_step: DecimalValue
+    expiry_time_ns: int | None = Field(default=None, gt=0)
+    funding_interval_ns: int | None = Field(default=None, gt=0)
+    continuous: bool = False
+    underlying_instrument_uid: str = Field(default="", max_length=200)
+
+    @model_validator(mode="after")
+    def tradable_rules_are_positive(self):
+        if not self.contract_kind.strip() or not self.settlement_asset.strip():
+            raise ValueError("contract metadata kind and settlement asset are required")
+        if any(
+            _decimal_value(value) <= 0
+            for value in (
+                self.contract_multiplier,
+                self.price_tick,
+                self.quantity_step,
+            )
+        ):
+            raise ValueError("contract metadata multiplier, tick and quantity step must be positive")
+        return self
 
 
 class TickerPayload(ClosedModel):
@@ -311,7 +479,9 @@ class TickerPayload(ClosedModel):
 
 MarketPayload = Annotated[
     TradePayload | QuotePayload | BarPayload | BookSnapshotPayload | BookDeltaPayload
-    | FundingRatePayload | OpenInterestPayload | MarkIndexPricePayload | TickerPayload,
+    | FundingRatePayload | OpenInterestPayload | MarkIndexPricePayload
+    | LongShortRatioPayload | TakerFlowPayload | BasisPayload
+    | ContractMetadataPayload | TickerPayload,
     Field(discriminator="feed"),
 ]
 
@@ -342,8 +512,11 @@ class MarketDataView(ClosedModel):
                 raise ValueError("bar envelope and payload interval must match")
             if self.payload.revision != self.revision:
                 raise ValueError("bar envelope and payload revision must match")
+        elif self.feed in METRIC_INTERVAL_FEEDS:
+            if not self.interval or self.payload.sampling_interval != self.interval:
+                raise ValueError("metric-series envelope and payload interval must match")
         elif self.interval is not None:
-            raise ValueError("interval is valid only for bar market data")
+            raise ValueError("interval is valid only for bar or metric-series market data")
         return self
 
 
@@ -505,14 +678,23 @@ class DataRequirement:
             raise ValueError("max_freshness_ms must be positive")
         if self.feed is Feed.BAR and not self.interval:
             raise ValueError("bar requirement needs interval")
-        if self.feed is not Feed.BAR and self.interval is not None:
-            raise ValueError("interval is valid only for bar requirements")
+        if self.feed in METRIC_INTERVAL_FEEDS and not self.interval:
+            raise ValueError("metric-series requirement needs a sampling interval")
+        if (
+            self.feed is not Feed.BAR
+            and self.feed not in METRIC_INTERVAL_FEEDS
+            and self.interval is not None
+        ):
+            raise ValueError("interval is valid only for bar or metric-series requirements")
         if self.consumer_grade is Grade.EXECUTION and (
-            self.stale_policy is not StalePolicy.BLOCK
+            self.feed not in EXECUTION_PRICE_VALIDATION_FEEDS
+            or self.stale_policy is not StalePolicy.BLOCK
             or self.gap_policy is not GapPolicy.BLOCK
             or not self.require_full_coverage
         ):
-            raise ValueError("execution-grade requirement cannot relax fail-closed policy")
+            raise ValueError(
+                "execution-grade requirement needs an execution-price validation feed and fail-closed policy"
+            )
 
     def query_params(self) -> dict[str, str | int | bool]:
         warmup = self.warmup

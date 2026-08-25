@@ -35,6 +35,7 @@ from qdl.query import (
     CanonicalErrorCode,
     ConsumerGrade,
     DataRequirement,
+    EXECUTION_PRICE_VALIDATION_FEEDS,
     FeedType,
     GapPolicy,
     QueryProblem,
@@ -244,12 +245,61 @@ def _typed_payload(item) -> dict:
             "quantity": _decimal(value["quantity"]),
             "quantity_unit": value["quantity_unit"],
             "notional": _decimal(value["notional"]) if value.get("notional") is not None else None,
+            "sampling_interval": value.get("sampling_interval"),
         }
     if item.feed is FeedType.MARK_INDEX_PRICE:
         return {
             "feed": item.feed,
             "mark_price": _decimal(value["mark_price"]),
             "index_price": _decimal(value["index_price"]),
+        }
+    if item.feed is FeedType.LONG_SHORT_RATIO:
+        return {
+            "feed": item.feed,
+            "population": value["population"],
+            "sampling_interval": value["sampling_interval"],
+            "long_value": _decimal(value["long_value"]),
+            "short_value": _decimal(value["short_value"]),
+            "long_short_ratio": _decimal(value["long_short_ratio"]),
+            "value_unit": value["value_unit"],
+        }
+    if item.feed is FeedType.TAKER_FLOW:
+        return {
+            "feed": item.feed,
+            "sampling_interval": value["sampling_interval"],
+            "buy_volume": _decimal(value["buy_volume"]),
+            "sell_volume": _decimal(value["sell_volume"]),
+            "buy_sell_ratio": _decimal(value["buy_sell_ratio"]),
+            "quantity_unit": value["quantity_unit"],
+        }
+    if item.feed is FeedType.BASIS:
+        return {
+            "feed": item.feed,
+            "kind": value["kind"],
+            "sampling_interval": value["sampling_interval"],
+            "basis": _decimal(value["basis"]),
+            "basis_unit": value["basis_unit"],
+            "annualized_basis": (
+                _decimal(value["annualized_basis"])
+                if value.get("annualized_basis") is not None
+                else None
+            ),
+            "reference_instrument_uid": value.get("reference_instrument_uid", ""),
+            "formula_id": value.get("formula_id", ""),
+            "input_instrument_uids": list(value.get("input_instrument_uids", [])),
+        }
+    if item.feed is FeedType.CONTRACT_METADATA:
+        return {
+            "feed": item.feed,
+            "contract_kind": value["contract_kind"],
+            "settlement_asset": value["settlement_asset"],
+            "contract_multiplier": _decimal(value["contract_multiplier"]),
+            "price_tick": _decimal(value["price_tick"]),
+            "quantity_step": _decimal(value["quantity_step"]),
+            "expiry_time_ns": value.get("expiry_time_ns"),
+            "funding_interval_ns": value.get("funding_interval_ns"),
+            "continuous": bool(value.get("continuous", False)),
+            "underlying_instrument_uid": value.get("underlying_instrument_uid", ""),
         }
     if item.feed is FeedType.TICKER:
         result = {"feed": item.feed, "last_price": _decimal(value["last_price"])}
@@ -262,6 +312,9 @@ def _typed_payload(item) -> dict:
 
 
 def _market_item(item) -> MarketDataView:
+    quality = {**asdict(item.quality), "flags": list(item.quality.flags)}
+    if item.feed not in EXECUTION_PRICE_VALIDATION_FEEDS:
+        quality["execution_eligible"] = False
     return MarketDataView(
         instrument_uid=item.instrument_uid,
         instrument_id=item.instrument_id,
@@ -273,7 +326,7 @@ def _market_item(item) -> MarketDataView:
         revision=item.revision,
         payload=_typed_payload(item),
         source=SourceView(**asdict(item.source)),
-        quality=QualityView(**{**asdict(item.quality), "flags": list(item.quality.flags)}),
+        quality=QualityView(**quality),
         contract=asdict(item.contract),
         cursor=item.cursor,
         snapshot_id=item.snapshot_id,

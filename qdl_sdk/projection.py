@@ -8,7 +8,13 @@ from typing import Any
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl_sdk.errors import ContinuityError
-from qdl_sdk.models import DataRequirement, Feed, MarketDataView, StreamEvent
+from qdl_sdk.models import (
+    DataRequirement,
+    EXECUTION_PRICE_VALIDATION_FEEDS,
+    Feed,
+    MarketDataView,
+    StreamEvent,
+)
 
 _GAP_FLAGS = {"SEQUENCE_GAP_BEFORE", "OUT_OF_ORDER", "RESYNC_REQUIRED"}
 
@@ -47,6 +53,10 @@ def _decimal(value) -> dict[str, str | int]:
 
 def _quantity_unit(value: int) -> str:
     return _enum_name(common_pb2.QuantityUnit, value, "QUANTITY_UNIT_")
+
+
+def _metric_unit(value: int) -> str:
+    return _enum_name(market_data_pb2.MetricUnit, value, "METRIC_UNIT_")
 
 
 def _book_level(value) -> dict[str, Any]:
@@ -199,6 +209,7 @@ def _payload(
                     else None
                 ),
                 "quantity_unit": _quantity_unit(envelope.open_interest.quantity_unit),
+                "sampling_interval": envelope.open_interest.sampling_interval or None,
             },
         )
     if name == "mark_index_price":
@@ -210,6 +221,93 @@ def _payload(
                 "feed": "MARK_INDEX_PRICE",
                 "mark_price": _decimal(envelope.mark_index_price.mark_price),
                 "index_price": _decimal(envelope.mark_index_price.index_price),
+            },
+        )
+    if name == "long_short_ratio":
+        interval = envelope.long_short_ratio.sampling_interval
+        return (
+            Feed.LONG_SHORT_RATIO,
+            interval,
+            0,
+            {
+                "feed": "LONG_SHORT_RATIO",
+                "population": _enum_name(
+                    market_data_pb2.LongShortRatioPopulation,
+                    envelope.long_short_ratio.population,
+                    "LONG_SHORT_RATIO_POPULATION_",
+                ),
+                "sampling_interval": interval,
+                "long_value": _decimal(envelope.long_short_ratio.long_value),
+                "short_value": _decimal(envelope.long_short_ratio.short_value),
+                "long_short_ratio": _decimal(envelope.long_short_ratio.long_short_ratio),
+                "value_unit": _metric_unit(envelope.long_short_ratio.value_unit),
+            },
+        )
+    if name == "taker_flow":
+        interval = envelope.taker_flow.sampling_interval
+        return (
+            Feed.TAKER_FLOW,
+            interval,
+            0,
+            {
+                "feed": "TAKER_FLOW",
+                "sampling_interval": interval,
+                "buy_volume": _decimal(envelope.taker_flow.buy_volume),
+                "sell_volume": _decimal(envelope.taker_flow.sell_volume),
+                "buy_sell_ratio": _decimal(envelope.taker_flow.buy_sell_ratio),
+                "quantity_unit": _quantity_unit(envelope.taker_flow.quantity_unit),
+            },
+        )
+    if name == "basis":
+        interval = envelope.basis.sampling_interval
+        return (
+            Feed.BASIS,
+            interval,
+            0,
+            {
+                "feed": "BASIS",
+                "kind": _enum_name(
+                    market_data_pb2.BasisKind,
+                    envelope.basis.kind,
+                    "BASIS_KIND_",
+                ),
+                "sampling_interval": interval,
+                "basis": _decimal(envelope.basis.basis),
+                "basis_unit": _metric_unit(envelope.basis.basis_unit),
+                "annualized_basis": (
+                    _decimal(envelope.basis.annualized_basis)
+                    if envelope.basis.HasField("annualized_basis")
+                    else None
+                ),
+                "reference_instrument_uid": envelope.basis.reference_instrument_uid,
+                "formula_id": envelope.basis.formula_id,
+                "input_instrument_uids": list(envelope.basis.input_instrument_uids),
+            },
+        )
+    if name == "contract_metadata":
+        return (
+            Feed.CONTRACT_METADATA,
+            None,
+            0,
+            {
+                "feed": "CONTRACT_METADATA",
+                "contract_kind": envelope.contract_metadata.contract_kind,
+                "settlement_asset": envelope.contract_metadata.settlement_asset,
+                "contract_multiplier": _decimal(envelope.contract_metadata.contract_multiplier),
+                "price_tick": _decimal(envelope.contract_metadata.price_tick),
+                "quantity_step": _decimal(envelope.contract_metadata.quantity_step),
+                "expiry_time_ns": (
+                    int(envelope.contract_metadata.expiry_time_ns)
+                    if envelope.contract_metadata.HasField("expiry_time_ns")
+                    else None
+                ),
+                "funding_interval_ns": (
+                    int(envelope.contract_metadata.funding_interval_ns)
+                    if envelope.contract_metadata.HasField("funding_interval_ns")
+                    else None
+                ),
+                "continuous": bool(envelope.contract_metadata.continuous),
+                "underlying_instrument_uid": envelope.contract_metadata.underlying_instrument_uid,
             },
         )
     if name == "ticker":
@@ -372,7 +470,9 @@ def market_data_view_from_stream(
                 "freshness_ms": int(freshness_ms),
                 "gap_open": gap_open,
                 "complete": not gap_open,
-                "execution_eligible": authoritative,
+                "execution_eligible": (
+                    authoritative and feed in EXECUTION_PRICE_VALIDATION_FEEDS
+                ),
                 "policy_id": requirement.source_policy_id,
                 "flags": flags,
             },

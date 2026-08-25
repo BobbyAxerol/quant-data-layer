@@ -194,7 +194,7 @@ These rules apply to all phases.
 | 10.1 | Universal demand contract and runtime topology | Replace fixed reference slices with one capability-truthful demand manifest and one shared Rust canonical core | `COMPLETE (SOURCE/ISOLATED; DARK; NO RUNTIME CUTOVER)` |
 | 10.2 | Universal warmup, history and batch handoff | Serve strategy-defined historical windows quickly, exactly and safely for every supported venue, instrument and interval | `COMPLETE (SOURCE/ISOLATED; NO RUNTIME CUTOVER; VN IN-SESSION EXTERNAL GATE)` |
 | 10.3 | Rust-primary realtime execution data plane | Make Rust the primary canonical TRADE, QUOTE and BAR source for the complete demanded universe, with V1 as observable fallback | `COMPLETE (ACTIVE BINANCE/OKX RUST_PRIMARY; V1 FALLBACK; VN IN-SESSION GATE)` |
-| 10.4 | Microstructure and alternative-data products | Add execution-grade order book, reference metrics and multi-instrument derivatives data behind the same contracts | `PROPOSED - AWAITING APPROVAL` |
+| 10.4 | Microstructure and alternative-data products | Add execution-grade order book, reference metrics and multi-instrument derivatives data behind the same contracts | `ACTIVE (SOURCE/ISOLATED; NO RUNTIME CUTOVER)` |
 | 10.5 | Consumer cutover, certification and release | Move Trading System and alpha SDK routes to V2 primary by manifest, retain V1 rollback and publish stable V2 | `PROPOSED - AWAITING APPROVAL` |
 
 ## 4. Phase 0 - Containment, Inventory And Measurable Baseline
@@ -13860,6 +13860,221 @@ through the common V2 path.
 revision and use its V1/reference fallback where contract-compatible. Retain
 canonical evidence for audit; no historical or order state is deleted.
 
+**Phase 10.4 activation and implementation boundary - 2026-08-25
+(`APPROVED / SOURCE AND ISOLATED TEST ONLY`):**
+
+- **Approved goal:** implement the common V2 microstructure and reference-data
+  path for Binance USD-M and OKX, while keeping the contract provider-neutral
+  for VN, Deribit and later venues.  The governing design remains
+  [`upgrade/quant-data-layer-fund-grade-upgrade-architecture.md`](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md),
+  with OKX endpoint and capability detail from
+  [`upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md`](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md).
+- **Slices:** (A) additive canonical proto/query/SDK contracts and truthful
+  capability registration; (B) bounded, provider-neutral Binance/OKX reference
+  batch adapters with explicit missing-data semantics; (C) exact-decimal Rust
+  L2 snapshot/delta state machine and Python conformance adapter; (D) V2
+  projection/query/stream mapping, multi-instrument integration, bounded
+  real-provider read-only smoke and acceptance evidence.
+- **Invariants:** a metric observation is never invented as zero; provider
+  native basis remains provider-lineaged while a derived basis names its input
+  instruments and formula; book state is invalid after a continuity/checksum
+  failure until an approved new snapshot starts a new generation; all public
+  decimals preserve canonical text; Data Layer provides price/reference data
+  only and never owns execution, risk, OCO or bracket decisions.
+- **Required acceptance:** additive V1 compatibility, protobuf/Rust/Python
+  golden parity, book duplicate/out-of-order/gap/reset/truncation/recovery
+  cases, multi-symbol batch isolation/concurrency and bounded authentic
+  Binance+OKX read-only provider evidence for the declared selector universe.
+  Synthetic frames are permitted only in deterministic tests and carry test
+  provenance.
+- **Runtime decision boundary:** no V1/V2 service recreate, authority/CAS
+  change, Kafka offset/topic mutation, Redis/SQLite flush, alpha/Trading System
+  restart or order submission is approved by this phase activation.  A future
+  runtime packet must name exact images, services, topics, consumer groups,
+  rollback manifest and live provider universe after source acceptance passes.
+- **Rollback/cleanup:** source remains additive; a later manifest can remove an
+  affected feed capability and retain the current V1/reference route. Isolated
+  test artifacts are bounded and removed after evidence; no durable production
+  event, cache or order state is deleted.
+
+**Phase 10.4 slice A - canonical contract and capability foundation
+(`COMPLETE / SOURCE-ONLY / RUNTIME UNCHANGED`):** additive typed `LONG_SHORT_RATIO`, `TAKER_FLOW`, `BASIS`
+and `CONTRACT_METADATA` products will be added without renaming current V2
+feeds or changing V1 endpoints. Existing typed funding, open-interest and
+mark/index products remain stable. The slice exits only after generated
+Python/Rust contracts, query/SDK models and capability truth tests agree.
+
+**Phase 10.4 code-generation evidence - 2026-08-25 (`PASS / SOURCE ONLY`):**
+the approved isolated command
+`docker run --rm -v "$(pwd):/workspace" -w /workspace/contracts bufbuild/buf:1.50.0 generate`
+completed successfully. It regenerated only the four expected Python/Rust
+protobuf artifacts for the already-edited additive contracts; no runtime,
+Kafka, Redis, service, data or authority action occurred. `git diff --check`
+also passed. Slice A remains in progress until its separate contract and Rust
+test gates pass.
+
+**Phase 10.4-A contract-foundation completion - 2026-08-25
+(`PASS / SOURCE-ONLY / RUNTIME UNCHANGED`):**
+
+- **Implemented contract boundary:** additive V2 protobuf/query definitions and
+  Buf-generated Python/Rust artifacts now cover `LONG_SHORT_RATIO`,
+  `TAKER_FLOW`, `BASIS` and `CONTRACT_METADATA`. Existing funding,
+  open-interest and mark/index fields remain additive-compatible. The shared
+  query contract, public SDK, API projection and capability matrix expose the
+  same typed feed identities without changing `/v1` or a current runtime route.
+- **Fail-closed invariants:** `DecimalValue.source_text` must parse as a finite
+  decimal equal to `coefficient * 10^-scale`; no missing field is translated
+  into zero. Metric-series requests require a nonblank sampling interval;
+  derived basis requires a formula and unique named input instruments;
+  provider-native basis cannot claim QDL-derived lineage; contract multiplier,
+  tick and quantity step must be positive. Reference metrics cannot satisfy an
+  execution-grade request or be projected as execution-eligible; the declared
+  priced feeds plus the already-established final-BAR execution-readiness
+  compatibility path may do so under their existing fail-closed freshness/gap
+  policy. A BAR is never represented here as a direct broker-price substitute.
+- **Venue truth:** Binance USD-M declares its public metric products;
+  OKX declares long/short and taker flow unavailable and basis derived-only;
+  DNSE declares crypto-only metrics unavailable while retaining versioned
+  instrument metadata. This is capability metadata only: no provider adapter
+  or entitlement was enabled in this slice.
+- **Compatibility finding fixed before exit:** the first broad API regression
+  run showed that established V2 manifests legitimately use final `BAR` at
+  `EXECUTION` grade for readiness. The contract now retains that prior
+  final-BAR compatibility while documenting that it is not a broker-price
+  substitute. Reference metrics remain excluded. The REST projector also
+  forces `execution_eligible=false` for every feed outside the declared
+  execution-grade set, so a backend cannot accidentally advertise a metric as
+  price-validating data.
+- **Tests actually run:**
+  - isolated Buf `format --diff --exit-code`, `lint`, and `breaking` against a
+    `git archive HEAD` baseline all passed; `buf generate` then regenerated the
+    existing four Python/Rust artifacts successfully;
+  - immutable `qdl-v2-python:2.0.0-e0bedff`, source read-only and
+    `--network none`: SDK stream/projection, public contract/security,
+    Phase 10.4 contract, V2 API and instrument/capability suites passed
+    `41/41` after the final-BAR compatibility correction;
+  - transient pinned `rust:1.82-slim@sha256:1111c28d...6f38010`, source
+    read-only: `cargo fmt --check` passed before compile; then pinned Rust
+    `1.82.0`, `--network none`, `cargo test --locked --offline -p qdl-core`
+    passed `18/18`, including existing Python-golden parity and the new
+    exhaustive reference-payload SHA-256 test;
+  - final `git diff --check` passed. The initial breaking invocation used an
+    incorrect archive subdirectory and was corrected before the recorded
+    passing baseline gate; it was a test-harness path error, not a schema
+    failure.
+- **Cleanup:** the compiler container was ephemeral. Its exact `/tmp`
+  baseline, Cargo cache and target directory plus the pulled compiler image are
+  removed before this slice is committed; no production/test runtime resource,
+  Kafka/Redis/SQLite/PostgreSQL state, provider data, authority, V1/V2 route,
+  Trading System, alpha or order state was created or mutated.
+- **Exit and rollback:** 10.4-A exit is met as source-only evidence. Reverting
+  this coherent additive commit removes the capability/contract advertisement;
+  no runtime rollback is needed. `10.4-B` remains pending and requires its own
+  approval for provider batch adapters; L2 state, query/stream runtime wiring,
+  real-provider I/O, deployment and consumer cutover remain explicitly out of
+  scope.
+
+#### Phase 10.4 Closure Work Breakdown (`PLANNED / SLICE-BY-SLICE APPROVAL`)
+
+The following four scopes are the complete Phase 10.4 closure path. An
+approval for one scope never authorizes the next one. Each scope stops after
+its stated exit gate, records exact evidence in this journal, runs
+`git diff --check`, and is committed as one coherent tested slice. No extra
+container, image, topic, consumer group, deployment topology, authority change
+or consumer route is created merely for a retry or test.
+
+**10.4-A - Contract foundation (`APPROVED / IN PROGRESS / SOURCE-ONLY`):**
+
+- **Allowed scope:** additive protobuf/query contracts, their Buf-generated
+  Python/Rust artifacts, SDK/API mappings, canonical payload validation and
+  truthful per-venue capability declarations for funding, OI, long/short,
+  taker flow, basis and contract metadata.
+- **Correctness gates:** Buf `lint` and breaking compatibility checks; Rust
+  contract/core compile and golden hash coverage; Python SDK/API capability
+  tests. They must prove exact decimal text, quantity/notional unit,
+  sampling-interval rules, derived-basis formula/input lineage, provider-native
+  lineage, and explicit missing values rather than fabricated zero.
+- **Exit:** generated and hand-written representations are compatible and all
+  named tests pass. Record pass/fail/skip counts and the generated-artifact
+  list. Commit, then stop.
+- **Explicitly excluded:** provider HTTP/WS adapters, book-state logic,
+  query/stream runtime wiring, real-provider I/O, deployment and consumer
+  cutover.
+- **Rollback:** revert only the additive source commit before any runtime
+  packet; public V1 endpoints and current V2 realtime route remain unchanged.
+
+**10.4-B - Reference-data batch (`PENDING / REQUIRES 10.4-A EXIT`):**
+
+- **Allowed scope:** one provider-neutral, bounded Binance USD-M/OKX Swap
+  reference-data interface for funding, OI, long/short, taker flow,
+  mark/index, contract metadata and basis. It supports declared dated and
+  continuous futures only where a provider’s capability says it does, with
+  bounded pagination, retry/backoff, request coalescing/cache policy and
+  per-instrument result isolation.
+- **Correctness gates:** deterministic provider-byte fixtures for pagination,
+  overlap/dedup, retry exhaustion, missing data, interval/units and contract
+  rollover; bounded read-only authentic Binance and OKX calls for the declared
+  selector universe. A provider value may be unavailable, but may never be
+  invented, silently downgraded or mixed with another instrument.
+- **Exit:** batch requests are concurrent without cross-symbol contamination,
+  all responses carry capability/lineage/freshness, bounded real-provider
+  evidence is recorded without raw payload retention, then commit and stop.
+- **Explicitly excluded:** L2 state, durable publishing, stream/query
+  integration, service recreate, manifest routing and alpha execution.
+- **Rollback:** remove the new capability from a later manifest/config only;
+  retain the existing V1/reference paths and do not delete history.
+
+**10.4-C - Rust L2 book core (`PENDING / REQUIRES 10.4-B EXIT`):**
+
+- **Allowed scope:** one provider-neutral exact-decimal Rust snapshot/delta
+  state machine plus Python conformance boundary. It owns sequence continuity,
+  duplicate/out-of-order handling, depth truncation, optional checksum policy,
+  invalidation, resync request, source-generation reset and snapshot recovery.
+- **Correctness gates:** deterministic snapshot-plus-delta tests for normal
+  continuity, duplicate, out-of-order, gap, checksum mismatch, disconnect,
+  resync, truncation and generation reset. Binance and OKX fixtures must obey
+  their respective sequence/checksum capability, never a fictional common
+  checksum rule.
+- **Exit:** no invalid book is readable as valid; canonical decimal levels and
+  sequence state match across Rust and Python conformance tests. Commit, then
+  stop.
+- **Explicitly excluded:** starting a websocket worker, subscribing a live
+  universe, order simulation, execution price decisions, service cutover and
+  consumer migration.
+- **Rollback:** remove the unadvertised book capability/source commit; current
+  TRADE/BAR/BBO paths remain untouched.
+
+**10.4-D - V2 query/stream integration (`PENDING / REQUIRES 10.4-C EXIT`):**
+
+- **Allowed scope:** source-level V2 projection/query/SDK/stream mapping for
+  the reference and book products, multi-instrument batch handoff and bounded
+  read-only provider/capture-replay acceptance. Latest trade/BBO/book/mark may
+  be exposed for Trading System validation only; Data Layer still never owns
+  order, OCO, bracket, risk or portfolio decisions.
+- **Correctness gates:** multi-symbol concurrent integration with no
+  cross-mixing and no blocking of unrelated TRADE/BAR consumers; real
+  Binance+OKX L2 capture/replay for the declared book universe; freshness,
+  gap/recovery, reconnect, batch-latency, cache/event growth and CPU/RAM
+  measurements. Evidence records bounded hashes/session IDs rather than raw
+  frames.
+- **Exit:** every advertised product has proven units, lineage, freshness and
+  recovery semantics through the common V2 path. Record exact scope,
+  pass/fail/skip metrics, cleanup and remaining external provider gates;
+  commit and mark **Phase 10.4 COMPLETE (SOURCE/ISOLATED)**.
+- **Explicitly excluded:** production authority/CAS, runtime service recreate,
+  Kafka/Redis/SQLite mutation, consumer routing changes, alpha restart and
+  order submission.
+- **Rollback:** remove only affected advertised capabilities in a later
+  manifest; V1/reference fallback remains available.
+
+**Phase 10.4 decision boundary:** the Buf-generation approval already used is
+not approval for any scope after 10.4-A. The operator approved 10.4-A on
+2026-08-25 only: source and isolated verification of the stated contract
+foundation. 10.4-B, 10.4-C and 10.4-D still require their own explicit
+approval. A failed gate is fixed only when necessary for 10.4-A’s stated exit
+condition; a newly found architecture concern is reported and stops the scope
+rather than expanding it.
+
 ### 21.8 Phase 10.5 - Consumer Cutover, Certification And Stable V2 Release
 
 **Goal:** Promote V2 to the operational default for Trading System and alpha
@@ -13918,6 +14133,38 @@ This is the first point at which V2 can be called a stable production release.
 fallback manifest revision, preserve V2 Kafka/cursor evidence, and stop only
 V2 workers named in the approved deployment packet. The rollback does not
 rewrite alpha logic, delete durable data, modify order state or restart V1.
+
+#### Phase 10.5 Closure Work Breakdown (`PENDING / REQUIRES PHASE 10.4 COMPLETE`)
+
+Phase 10.5 is a separate, operator-approved runtime release phase; it does not
+begin when Phase 10.4 source work passes. It has four ordered, bounded scopes:
+
+1. **10.5-A - Release manifest and observability:** freeze one versioned
+   consumer-routing manifest, exact V1 fallback revision, capability matrix,
+   health/readiness fields and runbook. Test manifest validation and migration
+   idempotency only; commit and stop. No consumer is recreated.
+2. **10.5-B - Isolated consumer acceptance:** run no-order V2-primary,
+   forced-V1-fallback and return-to-V2 acceptance for monitoring, Trading
+   System and representative alpha SDK classes using declared paper scopes.
+   Verify warmup, replay, reconnect and no direct venue bypass; terminalize or
+   reset only exact disposable smoke namespaces; commit and stop.
+3. **10.5-C - Approved rolling consumer handoff:** only after a separate
+   packet names immutable images, services, ports, manifests, selected
+   consumers, rollback revision and blast radius. Recreate only that packet’s
+   services, validate demanded-slice health and run bounded paper-cycle and
+   resource/recovery acceptance. Any failure switches the affected consumer
+   back to its frozen V1 revision; it never rewrites alpha logic or order data.
+4. **10.5-D - Stable release certification:** perform immutable-image release
+   rehearsal, full compatibility/consumer/resource evidence review, exact
+   disposable-artifact cleanup and release documentation. Publish `2.0.0` only
+   if all approved consumers are V2/Rust-primary with a passed V1 rollback;
+   DNSE is either separately in-session certified or honestly excluded in the
+   release capability matrix.
+
+Each 10.5 scope has its own explicit approval, evidence packet, rollback and
+coherent commit. No broad prune, Kafka offset reset, Redis/SQLite flush,
+database cleanup or alpha/order mutation is an implicit part of release
+acceptance.
 
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 

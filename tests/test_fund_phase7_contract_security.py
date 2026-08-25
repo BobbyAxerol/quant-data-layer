@@ -256,6 +256,25 @@ class Phase7RestAndContractTests(unittest.TestCase):
                 "notional": decimal,
             },
             "MARK_INDEX_PRICE": {"mark_price": decimal, "index_price": decimal},
+            "LONG_SHORT_RATIO": {
+                "population": "GLOBAL_ACCOUNT", "sampling_interval": "1h",
+                "long_value": decimal, "short_value": decimal,
+                "long_short_ratio": decimal, "value_unit": "RATIO",
+            },
+            "TAKER_FLOW": {
+                "sampling_interval": "1h", "buy_volume": decimal,
+                "sell_volume": decimal, "buy_sell_ratio": decimal,
+                "quantity_unit": "BASE_ASSET",
+            },
+            "BASIS": {
+                "kind": "PROVIDER_NATIVE", "sampling_interval": "1h",
+                "basis": decimal, "basis_unit": "PRICE",
+            },
+            "CONTRACT_METADATA": {
+                "contract_kind": "PERPETUAL", "settlement_asset": "USDT",
+                "contract_multiplier": decimal, "price_tick": decimal,
+                "quantity_step": decimal,
+            },
             "TICKER": {
                 "last_price": decimal, "volume_24h": decimal,
                 "volume_24h_unit": "BASE_ASSET",
@@ -290,7 +309,7 @@ class Phase7RestAndContractTests(unittest.TestCase):
                 result = MarketDataView.model_validate({
                     **base,
                     "feed": feed,
-                    "interval": "1m" if feed == "BAR" else None,
+                    "interval": "1m" if feed == "BAR" else "1h" if feed in {"LONG_SHORT_RATIO", "TAKER_FLOW", "BASIS"} else None,
                     "payload": {"feed": feed, **payload},
                 })
                 self.assertEqual(result.feed.value, feed)

@@ -196,6 +196,10 @@ pub enum FeedType {
     OpenInterest = 7,
     MarkIndexPrice = 8,
     Ticker = 9,
+    LongShortRatio = 10,
+    TakerFlow = 11,
+    Basis = 12,
+    ContractMetadata = 13,
 }
 impl FeedType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -214,6 +218,10 @@ impl FeedType {
             Self::OpenInterest => "FEED_TYPE_OPEN_INTEREST",
             Self::MarkIndexPrice => "FEED_TYPE_MARK_INDEX_PRICE",
             Self::Ticker => "FEED_TYPE_TICKER",
+            Self::LongShortRatio => "FEED_TYPE_LONG_SHORT_RATIO",
+            Self::TakerFlow => "FEED_TYPE_TAKER_FLOW",
+            Self::Basis => "FEED_TYPE_BASIS",
+            Self::ContractMetadata => "FEED_TYPE_CONTRACT_METADATA",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -229,6 +237,10 @@ impl FeedType {
             "FEED_TYPE_OPEN_INTEREST" => Some(Self::OpenInterest),
             "FEED_TYPE_MARK_INDEX_PRICE" => Some(Self::MarkIndexPrice),
             "FEED_TYPE_TICKER" => Some(Self::Ticker),
+            "FEED_TYPE_LONG_SHORT_RATIO" => Some(Self::LongShortRatio),
+            "FEED_TYPE_TAKER_FLOW" => Some(Self::TakerFlow),
+            "FEED_TYPE_BASIS" => Some(Self::Basis),
+            "FEED_TYPE_CONTRACT_METADATA" => Some(Self::ContractMetadata),
             _ => None,
         }
     }
