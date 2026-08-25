@@ -221,8 +221,18 @@ def _broker_records(binding, raw, event, *, raw_offset=0, canonical_offset=0):
 
 def _append(spool, catalog, event):
     binding = catalog.binding_for_envelope(event)
+    return _append_unvalidated(spool, binding, event)
+
+
+def _append_unvalidated(spool, binding, event):
+    """Persist a controlled legacy-row fixture without catalog admission.
+
+    Production ingestion always resolves the envelope through the catalog. This
+    helper exists solely to model old retained rows whose lineage was valid at
+    the time they were written but has since been retired.
+    """
     durable = DurableEvent(
-        stream=catalog.canonical_stream,
+        stream=binding.canonical_stream,
         partition_key=binding.partition_key,
         event_id=bytes(event.event_id),
         payload=event.SerializeToString(deterministic=True),
@@ -430,6 +440,117 @@ class StableQueryContractTests(unittest.TestCase):
             backend.latest(_requirement(binding)).payload["open_time_ns"],
             newer.bar.open_time_ns,
         )
+
+    def test_row_warmup_selects_current_market_tail_after_late_backfill(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        template = _stable_event(
+            self.catalog, "binance_usdm_rest_bar.json", binding.binding_id
+        )
+        minute_ns = 60 * 1_000_000_000
+
+        def event_at(index: int):
+            event = type(template)()
+            event.CopyFrom(template)
+            event.event_id = hashlib.sha256(
+                f"phase-b-market-tail-{index}".encode()
+            ).digest()[:16]
+            event.raw_capture_id = hashlib.sha256(
+                f"phase-b-market-tail-raw-{index}".encode()
+            ).digest()[:16]
+            event.bar.open_time_ns = template.bar.open_time_ns + index * minute_ns
+            event.bar.close_time_ns = template.bar.close_time_ns + index * minute_ns
+            event.source_event_time_ns = event.bar.close_time_ns
+            event.received_at_ns = event.bar.close_time_ns + 1
+            event.normalized_at_ns = event.received_at_ns + 1
+            event.published_at_ns = event.received_at_ns + 2
+            event.source_sequence = f"phase-b-market-tail-{index}"
+            event.partition_sequence = index + 1
+            event.correlation_id = f"phase-b-market-tail-{index}"
+            return event
+
+        # Live rows may arrive first. A later bounded provider repair is valid
+        # market history even though its durable logical offsets are newer.
+        for index in range(6, 11):
+            _append(self.spool, self.catalog, event_at(index))
+        for index in range(0, 6):
+            event = event_at(index)
+            if index < 2:
+                event.adapter_version = "binance-rest/2.0.0"
+                _append_unvalidated(self.spool, binding, event)
+            else:
+                _append(self.spool, self.catalog, event)
+        for index in range(11, 13):
+            _append(self.spool, self.catalog, event_at(index))
+
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="b" * 64,
+            clock_ns=lambda: event_at(12).bar.close_time_ns + 1,
+        )
+        requirement = _requirement(binding, warmup=5)
+        history = backend.history(requirement)
+        self.assertIsNotNone(history)
+        self.assertEqual(history.coverage.value, "FULL")
+        expected_opens = [event_at(index).bar.open_time_ns for index in range(8, 13)]
+        self.assertEqual(
+            [item.payload["open_time_ns"] for item in history.items], expected_opens
+        )
+        self.assertEqual(
+            [
+                market_data_pb2.EventEnvelope.FromString(item.event.payload).bar.open_time_ns
+                for item in backend.stored_events(requirement)
+            ],
+            expected_opens,
+        )
+        self.assertFalse(backend.latest(requirement).quality.gap_open)
+
+        with tempfile.TemporaryDirectory() as directory:
+            gap_spool = SQLiteDurableSpool(SpoolConfig(
+                path=Path(directory) / "market-tail-gap.sqlite3",
+                min_free_disk_bytes=0,
+            ))
+            try:
+                for index in (6, 7, 9, 10, 11):
+                    _append(gap_spool, self.catalog, event_at(index))
+                gapped = StableSpoolQueryBackend(
+                    gap_spool,
+                    self.catalog,
+                    schema_digest="c" * 64,
+                    clock_ns=lambda: event_at(11).bar.close_time_ns + 1,
+                ).history(requirement)
+                self.assertIsNotNone(gapped)
+                self.assertEqual(gapped.coverage.value, "PARTIAL")
+            finally:
+                gap_spool.close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            invalid_spool = SQLiteDurableSpool(SpoolConfig(
+                path=Path(directory) / "market-tail-lineage.sqlite3",
+                min_free_disk_bytes=0,
+            ))
+            try:
+                for index in range(8, 13):
+                    event = event_at(index)
+                    if index == 12:
+                        event.adapter_version = "binance-rest/2.0.0"
+                        _append_unvalidated(invalid_spool, binding, event)
+                    else:
+                        _append(invalid_spool, self.catalog, event)
+                invalid = StableSpoolQueryBackend(
+                    invalid_spool,
+                    self.catalog,
+                    schema_digest="d" * 64,
+                    clock_ns=lambda: event_at(12).bar.close_time_ns + 1,
+                )
+                with self.assertRaisesRegex(ValueError, "identity/lineage"):
+                    invalid.history(requirement)
+            finally:
+                invalid_spool.close()
 
     def test_vn_time_range_accepts_lunch_break_but_rejects_missing_session_bar(self):
         binding = next(

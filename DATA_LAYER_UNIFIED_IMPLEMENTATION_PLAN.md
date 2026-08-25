@@ -13549,6 +13549,86 @@ CUTOVER PENDING`).**
   rerun the same fixed 13-role handoff. The old checkpoint remains immutable
   audit evidence; no reset, deletion or path reuse is permitted.
 
+**Phase 10.3 bounded BAR-contiguity repair - 2026-08-25
+(`IN PROGRESS / SAME 13-ROLE HANDOFF ONLY`):**
+
+- **Observed fail-closed acceptance condition:** after the checkpoint-fenced
+  handoff, the V2 cache contained 1,000 unique final 1m BAR rows for each
+  active Binance USD-M and OKX Swap BTC/ETH binding, but each 1,000-row window
+  had 17 missing minute opens. Query correctly returned `PARTIAL` and the
+  external no-order receipt therefore stopped before stream or execution.
+  No V1 fallback was used to mask the result.
+- **Evidence and diagnosis:** an isolated, read-only copy of the canonical
+  SQLite cache measured the gaps. A bounded real-provider read through the
+  exact Binance adapter returned 1,000 unique, monotonic, gap-free BTCUSDT and
+  ETHUSDT final bars. The enabled Binance/OKX adapters already validate exact
+  historical cadence and fail closed before raw publication. A second read-only
+  check proved each Binance/OKX BTC/ETH partition already contains its newest
+  1,000 final BARs with zero duplicates and zero market-time gaps. The defect
+  is query selection: a valid late bootstrap is appended after live offsets,
+  while rows-based BAR history first read exactly `requested` *logical* offsets
+  and only then sorted market time. That clips a valid current window and
+  manufactures a gap. The same read-only inspection found 67 older Binance
+  rows per BAR partition with retired `binance-rest/2.0.0` adapter lineage;
+  they predate the active `binance-usdm/2.0.0` binding and fall outside the
+  current 1,000-row market window. Eagerly validating all retained rows would
+  therefore reject an otherwise valid current response. Projector, Kafka
+  checkpointing and Rust normalization do not need a source change for this
+  incident.
+- **Approved correction boundary:** change only the Python V2 cache query path:
+  BAR rows use the existing bounded 10,000-record scan, are ordered by market
+  open time, then select the requested current window. Catalog/lineage
+  validation applies strictly to every returned BAR and its latest-quality
+  horizon, not unrelated retired retention rows; an incompatible record inside
+  that current window still fails closed. Latest BAR quality uses its declared
+  warmup horizon (or two bars where no horizon exists), so a gap outside the
+  demanded window cannot block a fresh execution read; global retained-history
+  gaps remain visible through `open_gaps()` telemetry. Keep strict coverage
+  inside every returned window, the raw writer, projector, fixed 13-role
+  handoff, checkpoint fencing and provider adapters unchanged.
+  Build one replacement Python artifact only for this source correction; do
+  not create new services, topics, images, reset offsets, flush Redis/SQLite,
+  alter V1, or submit an order.
+- **Close gates:** focused late-backfill/market-time BAR query tests including
+  a real gap inside the requested window; immutable full scoped regression;
+  packet/Compose validation; bounded real-provider four-binding history proof;
+  then the existing 12-product no-order query/stream receipt including
+  signed-cursor replay and V1 fallback. If a requested current BAR window is
+  actually gapped, stop and return `PARTIAL`; do not relax
+  `require_full_coverage`.
+
+**Phase 10.3 bounded BAR-contiguity source gate result - 2026-08-25
+(`SOURCE + REAL-PROVIDER PASS / SAME HANDOFF PENDING`):**
+
+- `StableSpoolQueryBackend` now scans the existing bounded BAR retention window,
+  orders it by market open time, selects the requested current horizon, and
+  only then validates catalog lineage. A retired row outside that returned
+  horizon cannot manufacture a fresh-data failure; a retired row inside it
+  still fails closed. `open_gaps()` remains a whole-retention telemetry view.
+- Added a regression with live rows, a late historical repair and two retained
+  legacy-lineage rows: the current five-BAR warmup is `FULL`; a real current
+  gap remains `PARTIAL`; and a lineage mismatch inside the current response
+  raises the existing identity/lineage failure.
+- **Tests actually run:** `git diff --check` and host `py_compile` passed.
+  In immutable `qdl-v2-python:2.0.0-132e7e2`, with source read-only, root
+  filesystem read-only and network disabled, the bounded regression and
+  full scoped Phase 10.3/stable-query suite passed `198/198`, with `1`
+  explicitly skipped isolated-Redis case. The expected injected recovery,
+  CLI-negative and bounded-DNSE diagnostics were asserted paths; exit status
+  was zero.
+- **Real-provider proof:** one disposable, no-state REST probe used the exact
+  V2 provider-history adapter for the four enabled final-BAR bindings only:
+  Binance USD-M `BTCUSDT`/`ETHUSDT` and OKX Swap `BTC-USDT-SWAP`/
+  `ETH-USDT-SWAP`. Each returned exactly `1000` final, continuous 1m BARs
+  from `1787574480000000000` through `1787634420000000000`; p95 was
+  `1460.564 ms`, provenance was `REAL_PROVIDER_READ_ONLY`, and production
+  writes/raw-payload persistence were both `0`.
+- **Runtime impact:** none in this source gate. No service/image/Kafka topic or
+  offset/Redis/SQLite/V1/Trading System/alpha/order state changed. The only
+  remaining Phase 10.3 step is one replacement Python image followed by the
+  already-approved fixed 13-role packet and its no-order receipt; Phase 10.4
+  remains out of scope.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,

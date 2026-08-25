@@ -151,19 +151,40 @@ class StableSpoolQueryBackend:
         self._clock_ns = clock_ns
 
     def latest(self, requirement: DataRequirement) -> MarketDataItem | None:
+        binding = self.catalog.binding_for(requirement)
         records = self._records(
             requirement, limit=10_000 if requirement.feed is FeedType.BAR else 1
         )
-        items = self._items(requirement, records)
+        if not records:
+            return None
+        if binding.feed is FeedType.BAR:
+            requested, _start_ns, _end_ns, _expected_opens = self._requested_window(
+                requirement
+            )
+            # A BAR's execution quality is scoped to its declared warmup
+            # horizon. Retained late backfills outside that horizon remain
+            # observable through open_gaps(), but cannot poison fresh data.
+            quality_records = records[-max(2, requested):]
+        else:
+            quality_records = records[-1:]
+        self._validate_records(binding, quality_records)
+        items = self._items(requirement, quality_records)
         return items[-1] if items else None
 
     def history(self, requirement: DataRequirement) -> HistoryResult | None:
         requested, start_ns, end_ns, expected_opens = self._requested_window(requirement)
-        read_limit = 10_000 if start_ns is not None else requested
+        binding = self.catalog.binding_for(requirement)
+        # A provider history repair can be appended after newer live BARs. Read
+        # the bounded retained BAR window before selecting the market-time tail;
+        # selecting logical append offsets first can manufacture a false gap.
+        read_limit = (
+            10_000
+            if start_ns is not None or binding.feed is FeedType.BAR
+            else requested
+        )
         all_records = self._records(requirement, limit=read_limit)
         if not all_records:
             return None
-        binding = self.catalog.binding_for(requirement)
         records = all_records
         if start_ns is not None:
             records = tuple(
@@ -178,6 +199,7 @@ class StableSpoolQueryBackend:
         records = records[-requested:]
         if not records:
             return None
+        self._validate_records(binding, records)
         gap_open = bool(self._gaps(binding, records))
         items = self._items(requirement, records, gap_open=gap_open)
         # Logical offsets are append order, not market chronology. A bounded
@@ -235,20 +257,43 @@ class StableSpoolQueryBackend:
 
     def stored_events(self, requirement: DataRequirement) -> tuple[StoredEvent, ...]:
         requested, start_ns, end_ns, _ = self._requested_window(requirement)
+        binding = self.catalog.binding_for(requirement)
         rows = self._records(
-            requirement, limit=10_000 if start_ns is not None else requested
+            requirement,
+            limit=(
+                10_000
+                if start_ns is not None or binding.feed is FeedType.BAR
+                else requested
+            ),
         )
         if start_ns is None:
-            return rows[-requested:]
-        return tuple(
-            stored
-            for stored in rows
-            if start_ns
-            <= market_data_pb2.EventEnvelope.FromString(
-                stored.event.payload
-            ).bar.open_time_ns
-            < end_ns
-        )
+            selected = rows[-requested:]
+        else:
+            selected = tuple(
+                stored
+                for stored in rows
+                if start_ns
+                <= market_data_pb2.EventEnvelope.FromString(
+                    stored.event.payload
+                ).bar.open_time_ns
+                < end_ns
+            )
+        self._validate_records(binding, selected)
+        return selected
+
+    def _validate_records(
+        self,
+        binding: StableSourceBinding,
+        records: tuple[StoredEvent, ...],
+    ) -> None:
+        """Fail closed on lineage mismatch within the returned data window."""
+
+        for stored in records:
+            resolved = self.catalog.binding_for_envelope(
+                market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+            )
+            if resolved.binding_id != binding.binding_id:
+                raise ValueError("canonical event resolves to a different stable binding")
 
     def _requested_window(
         self,
@@ -307,7 +352,6 @@ class StableSpoolQueryBackend:
         selected = []
         for row in rows:
             envelope = market_data_pb2.EventEnvelope.FromString(row.event.payload)
-            self.catalog.binding_for_envelope(envelope)
             if binding.feed is not FeedType.BAR or envelope.bar.interval == binding.interval:
                 selected.append(row)
         if binding.feed is FeedType.BAR:
