@@ -13309,11 +13309,36 @@ CUTOVER PENDING`).**
   correction.
 - **Next bounded action:** commit this source slice, generate and validate a
   fresh packet with the same immutable Python/Rust images and previously
-  successful broker scope, verify the twelve already-recreated roles still
-  match its unchanged sealed runtime/image identity, then recreate only
-  `binance_bar_edge`. A failed retry preserves evidence and uses the existing
-  V1 route plus stop-only rollback; it does not modify the retained shadow
-  checkpoint.
+  successful broker scope. A newly generated packet has a new sealed authority
+  effective timestamp and therefore a new runtime-bundle digest: the twelve
+  roles currently mounted to the earlier packet cannot truthfully certify the
+  new packet. Recreate the same approved thirteen roles once, rolling and in
+  the documented order, with no topology/image/ACL expansion. A failed retry
+  preserves evidence and uses the existing V1 route plus stop-only rollback;
+  it does not modify the retained shadow checkpoint.
+
+**Phase 10.3 external consumer JWT manifest-binding observation - 2026-08-25
+(`IN PROGRESS / FAIL-CLOSED CORRECTION IN TRADING SYSTEM`):**
+
+- The sealed V2 runtime accepted the fixed authority-scoped BAR bootstrap, but
+  the one approved Trading System `market_data_service` recreate received
+  `401 UNAUTHENTICATED` on all bounded V2 routes. This is correct Data Layer
+  behavior: the external override minted manifest revision `1`, while the
+  active `trading-system.paper.stable` requirement is revision `2`.
+- The correction is external-consumer configuration only: change that one
+  non-secret revision to `2`, add its Trading System regression assertion and
+  recreate only the same named service. Data Layer source/images, Kafka,
+  offsets, Redis, SQLite, V1, alpha and execution paths remain unchanged.
+- The Phase 10.3 acceptance window resumes only after the bounded consumer
+  authenticates with the sealed manifest revision; a mismatch remains a
+  fail-closed no-data condition, never a fallback-mask or an authority defect.
+- **External correction source gate:** the corrected Trading System override
+  rendered against canonical Compose and its read-only/no-network targeted
+  deployment/consumer regression passed `17/17`. The correction does not
+  change a Data Layer binary, packet, runtime role, provider source, or
+  authority; the next permitted operation remains the one approved
+  `market_data_service` recreate followed by the existing Phase 10.3
+  acceptance gates.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
