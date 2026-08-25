@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import time
 from typing import Any, Mapping
 import uuid
@@ -54,7 +54,9 @@ COMPOSE_ENVIRONMENT_KEYS = (
     "QDL_STABLE_AUTHORITY_MODE",
     "QDL_STABLE_AUTHORITY_REVISION",
     "QDL_CONFIG_REVISION",
+    "QDL_STABLE_BAR_STATE_PATH",
 )
+BAR_STATE_DIRECTORY = PurePosixPath("/var/lib/qdl-stable/runtime")
 CORE_RUNTIME_FILES = frozenset({
     "authority.json",
     "core.json",
@@ -126,6 +128,23 @@ def canonical_bytes(value: Mapping[str, Any] | list[Any]) -> bytes:
 
 def sha256(value: Mapping[str, Any] | list[Any]) -> str:
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def authority_scoped_bar_state_path(authority: Mapping[str, Any]) -> str:
+    """Return the sealed BAR checkpoint path for one authority identity.
+
+    A checkpoint is valid only for the authority/configuration that wrote it.
+    Keeping the old path as rollback evidence and starting a primary edge at a
+    new deterministic path avoids mutating or trusting a shadow checkpoint.
+    """
+    validate_shared_authority_record(authority)
+    identity = sha256({
+        "slice_id": authority["slice_id"],
+        "revision": authority["revision"],
+        "partition_plan_digest": authority["partition_plan_digest"],
+        "candidate_image_digest": authority["candidate_image_digest"],
+    })
+    return str(BAR_STATE_DIRECTORY / f"stable-crypto-bar-edge-{identity[:20]}.json")
 
 
 def file_digest(path: Path) -> str:
@@ -361,6 +380,8 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
         or compose_environment["QDL_STABLE_AUTHORITY_REVISION"] != str(authority["revision"])
         or compose_environment["QDL_CONFIG_REVISION"]
         != f"phase103-shared-primary-r{authority['revision']}"
+        or compose_environment["QDL_STABLE_BAR_STATE_PATH"]
+        != authority_scoped_bar_state_path(authority)
     ):
         raise ValueError("shared primary packet Compose environment differs from authority")
     deployment = packet["deployment"]

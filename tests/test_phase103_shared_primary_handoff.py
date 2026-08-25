@@ -25,6 +25,7 @@ from scripts.phase103_prepare_shared_primary_packet import (
     validate_prepared_shared_primary_bundle,
     validate_shared_primary_packet,
 )
+from scripts.phase103_packet_contract import authority_scoped_bar_state_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -189,6 +190,10 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             self.assertEqual(environment["QDL_STABLE_AUTHORITY_REVISION"], "1")
             self.assertEqual(environment["QDL_CONFIG_REVISION"], "phase103-shared-primary-r1")
             self.assertEqual(
+                environment["QDL_STABLE_BAR_STATE_PATH"],
+                authority_scoped_bar_state_path(packet["authority"]),
+            )
+            self.assertEqual(
                 packet["deployment"]["services"],
                 list(_ALLOWED_SERVICE_ORDER),
             )
@@ -258,6 +263,14 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             self.reseal(bad_environment)
             with self.assertRaisesRegex(ValueError, "Compose environment differs"):
                 validate_shared_primary_packet(bad_environment)
+
+            bad_checkpoint = copy.deepcopy(packet)
+            bad_checkpoint["compose_environment"]["QDL_STABLE_BAR_STATE_PATH"] = (
+                "/var/lib/qdl-stable/runtime/stable-crypto-bar-edge-unsealed.json"
+            )
+            self.reseal(bad_checkpoint)
+            with self.assertRaisesRegex(ValueError, "Compose environment differs"):
+                validate_shared_primary_packet(bad_checkpoint)
 
             bad_topic = copy.deepcopy(packet)
             bad_topic["deployment"]["topic"]["partitions"] = 7

@@ -13257,6 +13257,64 @@ CUTOVER PENDING`).**
   unchanged. The next retry uses that verified rotated environment with the
   same packet, token and nine-command allowlist.
 
+**Phase 10.3 BAR checkpoint identity correction - 2026-08-25
+(`IN PROGRESS / IN-SCOPE HANDOFF FIX`).**
+
+- **Observed after the approved bounded recreate:** only
+  `binance_bar_edge` exited. Its strict restore guard correctly rejected the
+  retained shadow checkpoint because it declares
+  `slice_id=qdl-v2-stable-multivenue-shadow`, while the sealed primary packet
+  declares `slice_id=qdl-v2-shared-realtime-primary`. No provider, V1, Kafka
+  offset, Redis, SQLite, database, alpha or order action failed or changed as
+  a consequence; the old checkpoint remains intact on `stable_state`.
+- **Approved in-scope correction:** seal a distinct, deterministic BAR
+  checkpoint path into each Phase 10.3 primary packet and allow Compose to
+  pass that path to the existing edge. The path is derived from the sealed
+  authority identity/revision, not manually chosen. A primary edge therefore
+  bootstraps authentic provider history into its own state file rather than
+  reusing, modifying or deleting a shadow checkpoint.
+- **Invariants:** the old checkpoint is retained as rollback/audit evidence;
+  no offset seek/reset, cache flush, volume deletion, V1 restart, topology
+  expansion or image rebuild is allowed. The packet contract must reject a
+  missing, altered or non-authority-scoped checkpoint path. The service list
+  remains the same fixed thirteen roles.
+- **Required gates before a fresh packet is applied:** deterministic packet,
+  Compose and edge-checkpoint isolation tests; existing Phase 10.3 packet and
+  broker-helper regressions; `git diff --check`; then fresh packet validation.
+  The prior packet is not reused after this source correction. Its successful
+  topic/ACL broker scope remains idempotent and no broker state is rolled back.
+
+**Phase 10.3 BAR checkpoint identity correction result - 2026-08-25
+(`SOURCE PASS / FRESH PACKET AND BAR-EDGE RETRY PENDING`).**
+
+- Added `authority_scoped_bar_state_path`: the Phase 10.3 packet now seals a
+  non-secret path derived from `slice_id`, authority revision, partition-plan
+  digest and candidate image digest. Compose accepts that sealed path for
+  `binance_bar_edge` while preserving the legacy default for all existing
+  stable deployments. The packet validator rejects a missing or substituted
+  path, so a future shadow checkpoint cannot silently become primary input.
+- The existing shadow file remains untouched (read-only evidence digest
+  `92c9ea6ac9f312896e9e26786963783c67639d76b29387554a8fd04b741f626d`). A
+  primary BAR edge will bootstrap provider-authentic final bars into the new
+  authority-scoped checkpoint only after it starts; no state is copied,
+  renamed, deleted or trusted across the authority boundary.
+- **Tests actually run:** host `py_compile` and `git diff --check` passed.
+  In the immutable `qdl-v2-python:2.0.0-7b7388348615` image with source
+  mounted read-only, root filesystem read-only and `--network none`, the full
+  Phase 10.3 suite passed `35/35` and stable deployment/BAR/checkpoint suite
+  passed `48/48` (`83/83`, zero failures). The negative argparse and bounded
+  DNSE-queue messages are asserted tests; all disposable containers removed
+  on exit. No runtime service, image, Kafka topic/ACL/offset, Redis, SQLite,
+  database, provider, V1 route, alpha or order state changed by this source
+  correction.
+- **Next bounded action:** commit this source slice, generate and validate a
+  fresh packet with the same immutable Python/Rust images and previously
+  successful broker scope, verify the twelve already-recreated roles still
+  match its unchanged sealed runtime/image identity, then recreate only
+  `binance_bar_edge`. A failed retry preserves evidence and uses the existing
+  V1 route plus stop-only rollback; it does not modify the retained shadow
+  checkpoint.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,

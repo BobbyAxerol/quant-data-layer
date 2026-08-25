@@ -126,7 +126,7 @@ Binance-USD-M/OKX-Swap TRADE/final-BAR-1m identities, and no wildcard. This is
 a read-only artifact check; it neither recreates Trading System nor changes a
 consumer route.
 
-Before approval, render Compose with the six non-secret values copied exactly
+Before approval, render Compose with the seven non-secret values copied exactly
 from `compose_environment` in the validated packet. The packet values override
 same-named values in the existing stable environment file only for the render:
 
@@ -138,6 +138,7 @@ export QDL_STABLE_RUST_IMAGE='sha256:<packet Rust image>'
 export QDL_STABLE_AUTHORITY_MODE=RUST_PRIMARY
 export QDL_STABLE_AUTHORITY_REVISION='<packet authority revision>'
 export QDL_CONFIG_REVISION='<packet config revision>'
+export QDL_STABLE_BAR_STATE_PATH='<packet authority-scoped BAR checkpoint path>'
 
 docker compose \
   --env-file "$QDL_STABLE_ENV_FILE" \
@@ -158,7 +159,7 @@ is read-only and must pass before any create-or-verify command.
 
 After the separate approval only, use the bounded helper. Its default is still
 review-only; `--apply` needs the exact token from the sealed packet.
-The helper injects the packet's six sealed non-secret Compose substitutions
+The helper injects the packet's seven sealed non-secret Compose substitutions
 into its own subprocess, so it cannot accidentally render `stable.env` without
 the approved authority/runtime/image values.
 
@@ -192,7 +193,7 @@ control or consumer-route mutation. A policy mismatch aborts the operation.
 
 ## Approved Service Handoff
 
-Use the six packet environment values and recreate only these services in this
+Use the seven packet environment values and recreate only these services in this
 order. The command must be issued one line at a time and stop on the first
 failure. Do not use `down`, `-v`, a wildcard, a profile, or `production_core_*`.
 

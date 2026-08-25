@@ -1089,7 +1089,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
         )
         self.assertEqual(
             bar_edge["environment"]["QDL_STABLE_BAR_STATE_PATH"],
-            "/var/lib/qdl-stable/runtime/stable-crypto-bar-edge.json",
+            "${QDL_STABLE_BAR_STATE_PATH:-/var/lib/qdl-stable/runtime/stable-crypto-bar-edge.json}",
         )
         self.assertIn("stable_state:/var/lib/qdl-stable", bar_edge["volumes"])
         self.assertEqual(

@@ -47,6 +47,7 @@ from scripts.phase103_packet_contract import (
     SCHEMA,
     SHARED_REALTIME_CORE_GROUP_ID,
     SHARED_REALTIME_CORE_ID_PREFIX,
+    authority_scoped_bar_state_path,
     canonical_bytes as _canonical_bytes,
     file_digest as _file_digest,
     require_host_runtime_dir as _require_host_runtime_dir,
@@ -229,6 +230,7 @@ def prepare_shared_primary_packet(
         "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
         "QDL_STABLE_AUTHORITY_REVISION": str(authority["revision"]),
         "QDL_CONFIG_REVISION": f"phase103-shared-primary-r{authority['revision']}",
+        "QDL_STABLE_BAR_STATE_PATH": authority_scoped_bar_state_path(authority),
     }
     packet_body = {
         "schema": SCHEMA,
