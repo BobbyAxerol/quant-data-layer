@@ -13449,10 +13449,12 @@ CUTOVER PENDING`).**
   alpha or order state changed.
 - **Remaining Phase 10.3 decision boundary:** a fresh sealed packet must use
   one immutable replacement Python image and a new authority-scoped BAR
-  checkpoint path. Its minimal affected-role set is `binance_bar_edge`,
-  `query_v2_1`, `query_v2_2`, `stream_v2_active` and `stream_v2_passive`.
-  Rust cores, ingestors, projectors, V1, Trading System and all durable stores
-  stay running. The real no-order acceptance must observe four complete
+  checkpoint path. The source delta is consumed by `binance_bar_edge`, query
+  and stream roles, but the already-approved Phase 10.3 packet has one fixed,
+  tested 13-role shared-authority topology. Reusing that exact packet/rolling
+  order is safer than inventing a second five-role packet format; it is not a
+  topology expansion. V1 and all durable stores stay running. The real
+  no-order acceptance must observe four complete
   1000-row Binance/OKX BTC/ETH BAR warmups, twelve demanded slices with no
   freshness/gap failure, signed cursor replay and the existing automatic V1
   fallback proof before Phase 10.3 can close.
@@ -13502,10 +13504,29 @@ CUTOVER PENDING`).**
   raw payload was persisted. This proves source coverage only, not a Kafka or
   consumer handoff.
 - **Next and only remaining Phase 10.3 action:** build one immutable Python
-  replacement artifact, seal/validate a fresh narrow packet with a new
-  authority-scoped BAR checkpoint, then apply the bounded BAR/query/stream
-  handoff and no-order consumer receipt. V1 remains untouched as rollback;
-  Phase 10.4 remains out of scope.
+  replacement artifact, seal/validate a fresh packet with a new
+  authority-scoped BAR checkpoint, then apply the existing fixed 13-role
+  rolling handoff and no-order consumer receipt. V1 remains untouched as
+  rollback; Phase 10.4 remains out of scope.
+
+**Phase 10.3 final handoff transaction - 2026-08-25
+(`APPROVED / PRE-BUILD`):**
+
+- Operator approved completion of Phase 10.3 only, with an explicit request to
+  reuse the governing guide and avoid new topology or retry ceremony. The
+  runtime action therefore uses one replacement Python image, one fresh
+  30-minute packet and the packet's already-reviewed fixed 13-role rolling
+  order. It does not build Rust, create per-symbol services/images/topics,
+  reset Kafka offsets, flush Redis/SQLite, restart V1, change alpha config or
+  submit an order.
+- **Pre-handoff gates:** image labels/digest, read-only regression suite,
+  packet generation/validation, Compose render and route-lock checks must pass
+  before the broker review/apply and service handoff. The only close gate is
+  the existing no-order receipt: four 1000-row real-provider BAR warmups,
+  twelve demanded products, signed cursor replay and automatic V1 fallback.
+- **Rollback:** return only the named consumer route to V1 if required and
+  stop only the same 13 V2 roles; retain all durable evidence and do not reset
+  or delete state.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
