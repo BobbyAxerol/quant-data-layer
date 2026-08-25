@@ -151,6 +151,9 @@ hash, token, image values or runtime files.
 
 After the separate approval only, use the bounded helper. Its default is still
 review-only; `--apply` needs the exact token from the sealed packet.
+The helper injects the packet's six sealed non-secret Compose substitutions
+into its own subprocess, so it cannot accidentally render `stable.env` without
+the approved authority/runtime/image values.
 
 ```bash
 python3 -B scripts/phase103_apply_shared_primary_broker_scope.py \

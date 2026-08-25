@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.phase103_apply_shared_primary_broker_scope import (
+    _compose,
     apply_broker_scope,
     broker_scope_commands,
 )
@@ -68,8 +69,11 @@ class SharedPrimaryBrokerScopeTests(unittest.TestCase):
 
             calls = []
 
-            def fake_kafka(_env_file, command):
+            compose_environments = []
+
+            def fake_kafka(_env_file, command, compose_environment):
                 calls.append(tuple(command))
+                compose_environments.append(dict(compose_environment))
                 if command[0] == "kafka-topics.sh" and "--describe" in command:
                     return (
                         "Topic: md.raw.realtime.v2 PartitionCount: 6 "
@@ -97,13 +101,17 @@ class SharedPrimaryBrokerScopeTests(unittest.TestCase):
             self.assertEqual(calls[0], commands[0])
             self.assertEqual(calls[1][:4], ("kafka-topics.sh", "--describe", "--topic", "md.raw.realtime.v2"))
             self.assertEqual(calls[2:], list(commands[1:]))
+            self.assertEqual(
+                compose_environments,
+                [packet["compose_environment"]] * len(calls),
+            )
 
     def test_existing_topic_policy_mismatch_stops_before_acl_grants(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phase103-broker-") as directory:
             packet, runtime_dir, env_file = self.prepared(Path(directory))
             calls = []
 
-            def fake_kafka(_env_file, command):
+            def fake_kafka(_env_file, command, _compose_environment):
                 calls.append(tuple(command))
                 if command[0] == "kafka-topics.sh" and "--describe" in command:
                     return "Topic: md.raw.realtime.v2 PartitionCount: 1 ReplicationFactor: 1"
@@ -122,6 +130,18 @@ class SharedPrimaryBrokerScopeTests(unittest.TestCase):
                 )
             commands = broker_scope_commands(packet)
             self.assertEqual(calls, [commands[0], ("kafka-topics.sh", "--describe", "--topic", "md.raw.realtime.v2")])
+
+    def test_compose_subprocess_receives_only_the_sealed_overlay(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-phase103-broker-") as directory:
+            packet, _runtime_dir, env_file = self.prepared(Path(directory))
+            with patch(
+                "scripts.phase103_apply_shared_primary_broker_scope.subprocess.run"
+            ) as run:
+                _compose(env_file, packet["compose_environment"], "config", "-q")
+            environment = run.call_args.kwargs["env"]
+            for key, value in packet["compose_environment"].items():
+                self.assertEqual(environment[key], value)
+            self.assertEqual(run.call_args.kwargs["cwd"], Path(__file__).resolve().parents[1])
 
 
 if __name__ == "__main__":

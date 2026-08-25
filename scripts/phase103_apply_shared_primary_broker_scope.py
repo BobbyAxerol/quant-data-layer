@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -21,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.phase103_packet_contract import (
+    COMPOSE_ENVIRONMENT_KEYS,
     SHARED_REALTIME_CORE_GROUP_ID,
     SHARED_REALTIME_CORE_ID_PREFIX,
     validate_prepared_shared_primary_bundle,
@@ -119,7 +121,27 @@ def broker_scope_commands(packet: Mapping[str, Any]) -> tuple[tuple[str, ...], .
     )
 
 
-def _compose(env_file: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def _sealed_compose_environment(packet: Mapping[str, Any]) -> dict[str, str]:
+    """Return the exact non-secret Compose overlay sealed in the packet."""
+    raw = packet.get("compose_environment")
+    if not isinstance(raw, Mapping):
+        raise ValueError("shared primary packet Compose environment is invalid")
+    values: dict[str, str] = {}
+    for key in COMPOSE_ENVIRONMENT_KEYS:
+        value = raw.get(key)
+        if not isinstance(value, str) or not value:
+            raise ValueError("shared primary packet Compose environment is invalid")
+        values[key] = value
+    return values
+
+
+def _compose(
+    env_file: Path,
+    compose_environment: Mapping[str, str],
+    *arguments: str,
+) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    environment.update(compose_environment)
     return subprocess.run(
         [
             "docker",
@@ -137,12 +159,18 @@ def _compose(env_file: Path, *arguments: str) -> subprocess.CompletedProcess[str
         capture_output=True,
         text=True,
         timeout=120,
+        env=environment,
     )
 
 
-def kafka(env_file: Path, command: Sequence[str]) -> str:
+def kafka(
+    env_file: Path,
+    command: Sequence[str],
+    compose_environment: Mapping[str, str],
+) -> str:
     result = _compose(
         env_file,
+        compose_environment,
         "run",
         "--rm",
         "--no-deps",
@@ -183,6 +211,7 @@ def apply_broker_scope(
     bundle = validate_prepared_shared_primary_bundle(packet, runtime_dir=runtime_dir)
     if not env_file.is_file():
         raise ValueError(f"stable environment file is missing: {env_file}")
+    compose_environment = _sealed_compose_environment(packet)
     commands = broker_scope_commands(packet)
     report: dict[str, Any] = {
         "schema": "qdl.v2.phase103-shared-primary-broker-scope.v1",
@@ -207,13 +236,17 @@ def apply_broker_scope(
     if confirmation != packet["confirmation_token"]:
         raise ValueError("--confirm must equal the sealed packet confirmation token")
     topic_command, *acl_commands = commands
-    kafka(env_file, topic_command)
+    kafka(env_file, topic_command, compose_environment)
     topic = packet["deployment"]["topic"]
-    described = kafka(env_file, ("kafka-topics.sh", "--describe", "--topic", topic["name"]))
+    described = kafka(
+        env_file,
+        ("kafka-topics.sh", "--describe", "--topic", topic["name"]),
+        compose_environment,
+    )
     if not _topic_is_exact(described, topic):
         raise RuntimeError("shared primary raw topic policy does not match sealed packet")
     for command in acl_commands:
-        kafka(env_file, command)
+        kafka(env_file, command, compose_environment)
     report.update({
         "status": "PASS",
         "production_mutations": len(commands),

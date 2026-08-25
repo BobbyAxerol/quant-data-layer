@@ -13187,6 +13187,53 @@ CUTOVER PENDING`).**
   preserve bounded evidence, and use the pre-approved V1/stop-only rollback;
   do not improvise offset reset, cache cleanup, volume changes or topology.
 
+**Phase 10.3 broker-helper Compose-environment correction - 2026-08-25
+(`IN PROGRESS / IN-SCOPE CORRECTNESS FIX`).**
+
+- **Observed failure before broker mutation:** the first approved helper action
+  stopped during Docker Compose interpolation because `stable.env` deliberately
+  omits the six sealed Phase 10.3 authority/image/runtime substitutions. The
+  helper had validated those values in the packet but did not pass them to its
+  own `docker compose ... run stable_admin` subprocess. No Kafka topic, ACL,
+  offset, service, authority, V1 route, cache, database, alpha or order state
+  changed; the failure occurred before `kafka-topics.sh` was invoked.
+- **Approved in-scope repair:** make the helper derive the exact six
+  non-secret Compose variables from the already validated packet and pass them
+  only to its subprocess environment. Add a unit test proving packet-bound
+  propagation and preserve the existing command allowlist, confirmation check
+  and forbidden-operation surface. This removes a manual-export footgun; it
+  neither expands broker capability nor changes a public contract/topology.
+- **Required verification:** targeted broker-helper unit suite including the
+  new interpolation regression, host compile/diff checks, review-only helper
+  output, then one reattempt of the same sealed apply packet. Any failure still
+  stops before service handoff and retains V1/stop-only rollback.
+
+**Phase 10.3 broker-helper Compose-environment correction result - 2026-08-25
+(`SOURCE PASS / BROKER RETRY PENDING`).**
+
+- Implemented the sealed-overlay propagation in
+  `scripts/phase103_apply_shared_primary_broker_scope.py`. Every Kafka admin
+  subprocess now receives only the six non-secret values already validated in
+  `packet.compose_environment`, layered over the host process environment.
+  The helper does not parse, copy or log any stable-env secret; it still uses
+  the same one topic/eight ACL allowlist and cannot start a service.
+- Added regression coverage that checks all nine mocked Kafka calls receive the
+  exact sealed overlay and that the Compose subprocess gets each expected
+  packet-bound value. Updated the handoff runbook so the broker helper's
+  behavior matches the executable contract rather than relying on a manual
+  export step.
+- **Tests actually run:** host `py_compile` and `git diff --check` passed;
+  targeted broker/handoff/receipt suite passed `19/19`; immutable Python image
+  with source mounted read-only and `--network none` passed the full Phase
+  10.3/stable-deployment regression `130/130`. The printed missing
+  `--promotion-scope` and bounded DNSE-queue messages are covered negative-path
+  assertions; the suite exited `0`. No service, image, Kafka, Redis, SQLite,
+  PostgreSQL, provider, authority, V1 route, alpha or order mutation occurred
+  during this correction/test slice.
+- **Next action:** re-run only the same approved broker helper with the still
+  sealed packet. A non-zero result again stops before all service recreation;
+  no retry may widen the command list or alter durable offsets/state.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,
