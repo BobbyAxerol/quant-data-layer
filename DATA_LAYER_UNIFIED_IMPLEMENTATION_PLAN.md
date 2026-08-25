@@ -13528,6 +13528,27 @@ CUTOVER PENDING`).**
   stop only the same 13 V2 roles; retain all durable evidence and do not reset
   or delete state.
 
+**Phase 10.3 runtime checkpoint-fence correction - 2026-08-25
+(`IN PROGRESS / IN-SCOPE RETRY`):**
+
+- The first final handoff correctly stopped fail-closed before any external
+  consumer receipt: the newly recreated BAR edge found a checkpoint with
+  schema `qdl.stable-bar-edge-state.v1`, while its runtime requires v2 with
+  `warmup_rows=1000`. Projectors only emitted their bounded no-stream retry;
+  Trading System was not recreated, no order was submitted and V1/durable
+  stores were untouched.
+- Root cause is narrowly scoped to packet identity. The original checkpoint
+  path hash included the Rust authority but not the Python BAR-edge artifact,
+  so a previous v1 Python attempt sharing the same Rust authority reused the
+  path. This is a fencing defect, not a provider, Kafka, Rust core or data
+  correctness defect.
+- **Repair and gates:** seal the checkpoint path with the exact Python image
+  digest and declared checkpoint schema, reject any substitution in packet
+  validation, add regression coverage for same-authority/different-Python
+  artifacts, rebuild one final Python image, then generate a fresh packet and
+  rerun the same fixed 13-role handoff. The old checkpoint remains immutable
+  audit evidence; no reset, deletion or path reuse is permitted.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,

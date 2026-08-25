@@ -57,6 +57,7 @@ COMPOSE_ENVIRONMENT_KEYS = (
     "QDL_STABLE_BAR_STATE_PATH",
 )
 BAR_STATE_DIRECTORY = PurePosixPath("/var/lib/qdl-stable/runtime")
+BAR_STATE_SCHEMA = "qdl.stable-bar-edge-state.v2"
 CORE_RUNTIME_FILES = frozenset({
     "authority.json",
     "core.json",
@@ -130,19 +131,26 @@ def sha256(value: Mapping[str, Any] | list[Any]) -> str:
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
-def authority_scoped_bar_state_path(authority: Mapping[str, Any]) -> str:
+def authority_scoped_bar_state_path(
+    authority: Mapping[str, Any],
+    *,
+    python_image_digest: str,
+) -> str:
     """Return the sealed BAR checkpoint path for one authority identity.
 
-    A checkpoint is valid only for the authority/configuration that wrote it.
-    Keeping the old path as rollback evidence and starting a primary edge at a
-    new deterministic path avoids mutating or trusting a shadow checkpoint.
+    A checkpoint is valid only for the authority and Python edge artifact that
+    wrote it. Keeping old paths as rollback evidence avoids mutating or
+    trusting a shadow or older-schema checkpoint.
     """
     validate_shared_authority_record(authority)
+    require_sha256(python_image_digest, field="python_image_digest")
     identity = sha256({
         "slice_id": authority["slice_id"],
         "revision": authority["revision"],
         "partition_plan_digest": authority["partition_plan_digest"],
         "candidate_image_digest": authority["candidate_image_digest"],
+        "python_image_digest": python_image_digest,
+        "bar_state_schema": BAR_STATE_SCHEMA,
     })
     return str(BAR_STATE_DIRECTORY / f"stable-crypto-bar-edge-{identity[:20]}.json")
 
@@ -381,7 +389,10 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
         or compose_environment["QDL_CONFIG_REVISION"]
         != f"phase103-shared-primary-r{authority['revision']}"
         or compose_environment["QDL_STABLE_BAR_STATE_PATH"]
-        != authority_scoped_bar_state_path(authority)
+        != authority_scoped_bar_state_path(
+            authority,
+            python_image_digest=python_image_digest,
+        )
     ):
         raise ValueError("shared primary packet Compose environment differs from authority")
     deployment = packet["deployment"]

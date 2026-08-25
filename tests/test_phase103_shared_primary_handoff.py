@@ -191,7 +191,10 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             self.assertEqual(environment["QDL_CONFIG_REVISION"], "phase103-shared-primary-r1")
             self.assertEqual(
                 environment["QDL_STABLE_BAR_STATE_PATH"],
-                authority_scoped_bar_state_path(packet["authority"]),
+                authority_scoped_bar_state_path(
+                    packet["authority"],
+                    python_image_digest="sha256:" + "c" * 64,
+                ),
             )
             self.assertEqual(
                 packet["deployment"]["services"],
@@ -237,6 +240,25 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             self.assertEqual(core["raw_topics"], ["md.raw.realtime.v2"])
             self.assertTrue(core["strict_subscription_scope"])
             self.assertEqual(len(core["core"]["bindings"]), 16)
+
+    def test_checkpoint_path_fences_python_artifact_and_schema(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-phase103-packet-") as directory:
+            first = self.packet(Path(directory) / "first")
+            second = prepare_shared_primary_packet(
+                output_dir=Path(directory) / "second",
+                rust_image_digest="sha256:" + "b" * 64,
+                python_image_digest="sha256:" + "d" * 64,
+                source_commit="0123456789abcdef",
+                actor="BobbyAxerol",
+                change_ticket="QDL-PHASE103-TEST",
+                observation_seconds=300,
+                issued_at_ns=1_800_000_000_000_000_000,
+            )
+            self.assertEqual(first["authority"], second["authority"])
+            self.assertNotEqual(
+                first["compose_environment"]["QDL_STABLE_BAR_STATE_PATH"],
+                second["compose_environment"]["QDL_STABLE_BAR_STATE_PATH"],
+            )
 
     def test_packet_rejects_obsolete_topology_and_nonempty_output(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phase103-packet-") as directory:

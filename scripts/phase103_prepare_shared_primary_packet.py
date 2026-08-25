@@ -230,7 +230,10 @@ def prepare_shared_primary_packet(
         "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
         "QDL_STABLE_AUTHORITY_REVISION": str(authority["revision"]),
         "QDL_CONFIG_REVISION": f"phase103-shared-primary-r{authority['revision']}",
-        "QDL_STABLE_BAR_STATE_PATH": authority_scoped_bar_state_path(authority),
+        "QDL_STABLE_BAR_STATE_PATH": authority_scoped_bar_state_path(
+            authority,
+            python_image_digest=python_image_digest,
+        ),
     }
     packet_body = {
         "schema": SCHEMA,
