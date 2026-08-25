@@ -13234,6 +13234,29 @@ CUTOVER PENDING`).**
   sealed packet. A non-zero result again stops before all service recreation;
   no retry may widen the command list or alter durable offsets/state.
 
+**Phase 10.3 current TLS environment selection correction - 2026-08-25
+(`SOURCE/RUNBOOK PASS / BROKER RETRY PENDING`).**
+
+- The corrected broker helper reached Kafka but failed TLS authentication before
+  topic creation because the supplied unversioned `stable.env` still pointed to
+  pre-rotation CA material. Read-only mount/fingerprint inspection proved that
+  running Kafka uses `cert-material-rotate-20260822T144323Z` (CA SHA-256
+  `fc24c04779a42501c93e54bd9fc2838abb94a3e4dace8998470af23d48023fc8`), while
+  the old environment points to a different CA. No topic/ACL, service,
+  authority, V1 route, offset, cache, database, alpha or order mutation
+  occurred.
+- The existing versioned rotated stable environment points to the active Kafka
+  certificate/identity generation. Its `admin.properties` SHA-256 matches the
+  running broker mount exactly, and a disposable `kafka-topics.sh --list`
+  probe passed over mTLS. The probe was read-only and removed its admin
+  container after exit.
+- Updated the handoff runbook to require an explicit
+  `QDL_STABLE_ENV_FILE` selected by the Kafka-mounted credential generation,
+  not an assumed unversioned filename. This is a documentation/operational
+  correctness correction only: certificates, Kafka and existing containers are
+  unchanged. The next retry uses that verified rotated environment with the
+  same packet, token and nine-command allowlist.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,

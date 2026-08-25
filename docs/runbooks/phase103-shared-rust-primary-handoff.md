@@ -131,6 +131,7 @@ from `compose_environment` in the validated packet. The packet values override
 same-named values in the existing stable environment file only for the render:
 
 ```bash
+export QDL_STABLE_ENV_FILE=/home/bobby/.local/state/qdl-v2/<current-stable>/<active-stable-env>
 export QDL_STABLE_RUNTIME_DIR='<packet compose_environment value>'
 export QDL_STABLE_PYTHON_IMAGE='sha256:<packet Python image>'
 export QDL_STABLE_RUST_IMAGE='sha256:<packet Rust image>'
@@ -139,13 +140,19 @@ export QDL_STABLE_AUTHORITY_REVISION='<packet authority revision>'
 export QDL_CONFIG_REVISION='<packet config revision>'
 
 docker compose \
-  --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env \
+  --env-file "$QDL_STABLE_ENV_FILE" \
   -f docker-compose.v2-stable.yml config -q
 ```
 
 The render must pass and must not resolve `production_core_*`. A packet is
 expired after 30 minutes; generate a fresh packet rather than editing its time,
 hash, token, image values or runtime files.
+
+`QDL_STABLE_ENV_FILE` must be the active credential generation actually mounted
+by the Kafka brokers. After a CA rotation it can be a versioned `stable.env`
+artifact rather than the older unversioned filename; select it by the mounted
+certificate generation, not by filename convention. A TLS `--list` admin probe
+is read-only and must pass before any create-or-verify command.
 
 ## Approved Broker Scope
 
@@ -159,14 +166,14 @@ the approved authority/runtime/image values.
 python3 -B scripts/phase103_apply_shared_primary_broker_scope.py \
   --packet "$QDL_PACKET_DIR/shared-primary-handoff-packet.json" \
   --runtime-dir "$QDL_RUNTIME_DIR" \
-  --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env
+  --env-file "$QDL_STABLE_ENV_FILE"
 
 python3 -B scripts/phase103_apply_shared_primary_broker_scope.py \
   --apply \
   --confirm 'APPLY_QDL_PHASE103_<packet-prefix>' \
   --packet "$QDL_PACKET_DIR/shared-primary-handoff-packet.json" \
   --runtime-dir "$QDL_RUNTIME_DIR" \
-  --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env
+  --env-file "$QDL_STABLE_ENV_FILE"
 ```
 
 The apply helper is limited to the following idempotent broker actions:
@@ -190,14 +197,14 @@ order. The command must be issued one line at a time and stop on the first
 failure. Do not use `down`, `-v`, a wildcard, a profile, or `production_core_*`.
 
 ```bash
-docker compose --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate rust_core
-docker compose --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate rust_core_2
-docker compose --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate rust_core_3
-docker compose --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate ingestor_binance_usdm
-docker compose --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate ingestor_okx_swap
-docker compose --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate binance_bar_edge
-docker compose --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate projector_v2 projector_v2_2 projector_v2_3
-docker compose --env-file /home/bobby/.local/state/qdl-v2/<current-stable>/stable.env -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate query_v2_1 query_v2_2 stream_v2_active stream_v2_passive
+docker compose --env-file "$QDL_STABLE_ENV_FILE" -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate rust_core
+docker compose --env-file "$QDL_STABLE_ENV_FILE" -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate rust_core_2
+docker compose --env-file "$QDL_STABLE_ENV_FILE" -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate rust_core_3
+docker compose --env-file "$QDL_STABLE_ENV_FILE" -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate ingestor_binance_usdm
+docker compose --env-file "$QDL_STABLE_ENV_FILE" -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate ingestor_okx_swap
+docker compose --env-file "$QDL_STABLE_ENV_FILE" -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate binance_bar_edge
+docker compose --env-file "$QDL_STABLE_ENV_FILE" -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate projector_v2 projector_v2_2 projector_v2_3
+docker compose --env-file "$QDL_STABLE_ENV_FILE" -f docker-compose.v2-stable.yml up -d --no-deps --force-recreate query_v2_1 query_v2_2 stream_v2_active stream_v2_passive
 ```
 
 The environment variables must remain exported for every command. The stable
