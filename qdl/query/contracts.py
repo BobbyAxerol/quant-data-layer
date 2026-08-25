@@ -66,6 +66,13 @@ METRIC_INTERVAL_FEEDS = frozenset(
     }
 )
 
+# Open interest has two provider-valid shapes: an instantaneous snapshot with
+# no sampling interval, and a bounded historical series with one.  Keeping it
+# separate from the required metric-series set prevents a snapshot caller from
+# inventing an interval while still allowing the historical contract to carry
+# the provider cadence explicitly.
+OPTIONAL_INTERVAL_FEEDS = frozenset({FeedType.OPEN_INTEREST})
+
 # These products may satisfy an execution-grade requirement. Final BAR remains
 # here for established execution-readiness compatibility; it is not a direct
 # broker-price substitute. Reference metrics remain alpha/research inputs even
@@ -208,6 +215,9 @@ class DataRequirement:
         elif self.feed in METRIC_INTERVAL_FEEDS:
             if self.interval is None or not self.interval.strip():
                 raise ValueError("metric-series requirements need a sampling interval")
+        elif self.feed in OPTIONAL_INTERVAL_FEEDS:
+            if self.interval is not None and not self.interval.strip():
+                raise ValueError("open-interest sampling interval cannot be blank")
         elif self.interval is not None:
             raise ValueError("interval is valid only for bar or metric-series requirements")
         if self.consumer_grade is ConsumerGrade.EXECUTION:

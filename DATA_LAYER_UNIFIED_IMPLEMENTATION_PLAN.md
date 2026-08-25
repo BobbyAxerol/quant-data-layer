@@ -14249,7 +14249,7 @@ or consumer route is created merely for a retry or test.
   `PENDING` and needs its own approval before any query/stream mapping, real
   L2 capture/replay or runtime integration.
 
-**10.4-D - V2 query/stream integration (`PENDING / REQUIRES 10.4-C EXIT`):**
+**10.4-D - V2 query/stream integration (`COMPLETE / SOURCE-ISOLATED / RUNTIME UNCHANGED`):**
 
 - **Allowed scope:** source-level V2 projection/query/SDK/stream mapping for
   the reference and book products, multi-instrument batch handoff and bounded
@@ -14272,10 +14272,126 @@ or consumer route is created merely for a retry or test.
 - **Rollback:** remove only affected advertised capabilities in a later
   manifest; V1/reference fallback remains available.
 
-**Phase 10.4 decision boundary:** 10.4-A and 10.4-B are complete as separate,
-source-only commits. Neither completion approves 10.4-C or 10.4-D. A failed
-gate is fixed only when necessary for its approved slice exit condition; a new
-architecture concern is reported and stops the slice rather than expanding it.
+**Phase 10.4-D implementation preflight - 2026-08-25
+(`APPROVED / SOURCE-ISOLATED / RUNTIME UNCHANGED`):**
+
+- **Approved boundary:** connect the already-defined canonical V2
+  `BOOK_SNAPSHOT`, `BOOK_DELTA`, `FUNDING_RATE`, `OPEN_INTEREST`,
+  `MARK_INDEX_PRICE`, `LONG_SHORT_RATIO`, `TAKER_FLOW`, `BASIS` and
+  `CONTRACT_METADATA` payloads through the existing catalog -> durable-spool
+  query -> gRPC stream -> Python SDK path. The implementation must use the
+  Phase 10.4-B typed reference observations and Phase 10.4-C book-state output
+  as sources; it must not add a parallel, venue-specific public model.
+- **Invariants:** identity is `(instrument_uid, instrument_revision, feed,
+  interval, source_id)`; metric intervals are explicit for sampled series and
+  optional for point-in-time or historical `OPEN_INTEREST`; missing fields
+  remain absent rather than zero;
+  decimal text/unit/lineage are preserved; an L2 core that is not `READY` has
+  no queryable snapshot; source sequence/gap and freshness policy still fail
+  closed. A batch may return item-level failure but must never cross-map one
+  instrument's payload to another. The generic stream gateway remains
+  partition-scoped, so a book/reference consumer cannot block TRADE/BAR peers.
+- **Implementation shape:** extend the existing stable catalog/source
+  projection boundary rather than add a service, image, topic, cache or
+  provider-specific endpoint. Add a narrow canonical envelope bridge for
+  trusted Phase 10.4-B/C values and use the existing API/gRPC/SDK serializers.
+  Production demand/acquisition manifests remain unchanged and do not advertise
+  these products in this slice.
+- **Required tests:** deterministic multi-instrument query + gRPC/SDK replay;
+  interval/decimal/unit/lineage and explicit-missing negative tests; book
+  ready/gap/resync/recovery tests; peer-stream non-blocking/bounded-buffer
+  test; bounded capture/replay using real public Binance USD-M and OKX Swap
+  book snapshots or deltas when provider access is available. The latter
+  records counts/timestamps/digests only and is a skipped external gate if the
+  host cannot complete a read-only provider session.
+- **Explicit exclusions and rollback:** no runtime service/image build or
+  recreate, Kafka/Redis/SQLite mutation, authority/CAS/manifest change,
+  consumer/alpha restart, provider write or order action. Reverting the one
+  source commit removes the unadvertised bridge; V1 remains untouched.
+- **Decision boundary:** if the existing V2 protobuf cannot faithfully express
+  a provider field/unit without an invented default, preserve it only in the
+  Phase 10.4-B reference result and report the schema gap. Do not expand the
+  protobuf contract or silently coerce the value during this slice.
+
+**Phase 10.4-D implementation and evidence - 2026-08-25
+(`COMPLETE / SOURCE-ISOLATED / RUNTIME UNCHANGED`):**
+
+- **Implemented common path:** added the narrow
+  `qdl.canonical.reference.canonicalize_reference_observation` bridge. It
+  accepts only an `OK`, bounded Phase 10.4-B observation whose instrument,
+  revision, provider, adapter version, `REFERENCE` role, timestamp and raw
+  lineage match the canonical context. It deterministically maps
+  `FUNDING_RATE`, `OPEN_INTEREST`, `MARK_INDEX_PRICE`,
+  `LONG_SHORT_RATIO`, `TAKER_FLOW`, provider-native `BASIS` and
+  `CONTRACT_METADATA`; every output carries `SOURCE_REFERENCE_ONLY`, so it is
+  never execution eligible merely by being queryable.
+- **Catalog/query/SDK integration:** the existing stable catalog now has one
+  payload-interval resolver shared by admission and durable-spool reads. It
+  validates decimal text/coefficient/scale, unit, product-specific lineage,
+  L2 snapshot/delta continuity and metadata rules before admission, then the
+  existing V2 REST/gRPC/SDK serializers materialize every Phase 10.4 product.
+  `OPEN_INTEREST` supports both no-interval snapshots and explicitly sampled
+  history. Source entitlements are coalesced by `source_id` across multiple
+  bindings, preserving the union of declared access purposes without duplicate
+  grant failure.
+- **Book correctness:** an OKX delta now requires the active websocket
+  snapshot sequence, and `OkxOrderBook` retains/clears it with its generation.
+  The real-provider smoke emitted one snapshot plus six anchored deltas. Rust
+  durable partition naming now recognizes long/short, taker flow, basis and
+  contract metadata rather than routing them as `unknown`.
+- **Domain correction found during validation:** zero OI and one-sided taker
+  flow are valid observed values, not missing data. Stable validation therefore
+  permits non-negative OI/long-short/taker values while still rejecting
+  negative values, absent decimals, unspecified units and invented defaults.
+  Regression coverage proves exact zero survives catalog -> query -> API
+  projection rather than being dropped or synthesized.
+- **Source-isolated tests:**
+  - `tests.test_phase104_v2_query_stream_integration`: `7/7` passed. It covers
+    seven reference products through canonical -> catalog -> SQLite spool ->
+    V2 query -> API typed payload; two Binance instruments in one batch plus
+    gRPC/SDK handoff without cross-mix; source-scoped entitlement coalescing;
+    exact units/intervals/zero preservation; missing/unsupported units fail
+    closed; L2 ready -> gap -> resync; required delta snapshot anchors; and a
+    slow book consumer that cannot block a BAR peer.
+  - Network-disabled Python regression bundles in immutable
+    `qdl-v2-python:2.0.0-e0bedff`, source mounted read-only: `57/57` first
+    contract/reference/SDK/catalog/realtime checks and final `137/138` passed/
+    skipped, with the only skip being the pre-existing optional isolated-Redis
+    integration. The
+    final bundle includes Phase 10.4-A/B, stable edge/recovery, existing OKX
+    book, routed-query, entitlement and SDK stream suites; there were no test
+    failures.
+  - Pinned Rust `1.82` compile/test of `qdl-realtime-core`: `14/14` passed.
+    The temporary compiler image and all container target/cache layers were
+    removed after the test.
+  - Read-only public provider smoke: Binance USD-M produced one trade, one
+    BBO and one final REST 1m bar; OKX Swap produced one trade, one L2 snapshot
+    and six deltas. The isolated temporary spool recorded `22` rows / `69,987`
+    payload bytes, no production write, and only bounded SHA-256 provenance.
+- **External/data-contract boundary:** a provider-native taker quantity with
+  unit `PROVIDER_NATIVE_VOLUME` is deliberately not represented as a base,
+  quote or contract quantity; it remains in the Phase 10.4-B reference result
+  until a provider-specific, metadata-backed unit mapping is approved. Mark
+  and index price must arrive in the same bounded observation; no temporal join
+  or fabricated peer price is allowed. These are fail-closed capability gates,
+  not a fallback or silent loss of truth.
+- **Runtime/cleanup:** no service/image build or recreate, Kafka topic/offset,
+  Redis key, SQLite/PostgreSQL production data, authority/CAS/manifest,
+  consumer/alpha route, provider write or order action changed. All Python test
+  containers were `--rm`; their source mounts were read-only. The public smoke
+  used only its in-container temporary SQLite/JSON. No test artifact remains
+  in the repository or runtime stores.
+- **Exit/rollback:** 10.4-D exits as an unadvertised, source-isolated common
+  V2 path. A source revert removes it with no operational rollback. Phase 10.4
+  is now complete at `SOURCE/ISOLATED`, while 10.5 remains a separately
+  approved consumer-routing/release phase; this completion grants neither
+  `V2_PRIMARY` nor `RUST_PRIMARY` runtime authority.
+
+**Phase 10.4 decision boundary:** 10.4-A through 10.4-D are complete as
+separate, source-isolated commits. Phase 10.5 requires its own approval for
+any manifest, consumer, image, runtime, authority or alpha change. A failed
+10.5 gate may be fixed only inside that later approved scope; it must not turn
+the Phase 10.4 source evidence into an unreviewed rollout.
 
 ### 21.8 Phase 10.5 - Consumer Cutover, Certification And Stable V2 Release
 

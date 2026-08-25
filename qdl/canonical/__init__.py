@@ -9,6 +9,10 @@ from qdl.canonical.trade import (
 )
 from qdl.canonical.market import canonicalize_dnse_bar
 from qdl.canonical.book import canonicalize_deribit_option_book_fixture
+from qdl.canonical.reference import (
+    ReferenceProjectionError,
+    canonicalize_reference_observation,
+)
 
 __all__ = [
     "TradeContext",
@@ -17,5 +21,7 @@ __all__ = [
     "canonicalize_okx_trade",
     "canonicalize_dnse_bar",
     "canonicalize_deribit_option_book_fixture",
+    "ReferenceProjectionError",
+    "canonicalize_reference_observation",
     "raw_trade_event",
 ]

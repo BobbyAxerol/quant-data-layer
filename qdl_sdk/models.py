@@ -71,6 +71,11 @@ METRIC_INTERVAL_FEEDS = frozenset(
     }
 )
 
+# See qdl.query.contracts: OI may be a point snapshot or a historical sampled
+# series.  The public SDK keeps that distinction rather than pretending every
+# OI observation has a cadence.
+OPTIONAL_INTERVAL_FEEDS = frozenset({Feed.OPEN_INTEREST})
+
 EXECUTION_PRICE_VALIDATION_FEEDS = frozenset(
     Feed(feed.value) for feed in _QUERY_EXECUTION_PRICE_VALIDATION_FEEDS
 )
@@ -515,6 +520,9 @@ class MarketDataView(ClosedModel):
         elif self.feed in METRIC_INTERVAL_FEEDS:
             if not self.interval or self.payload.sampling_interval != self.interval:
                 raise ValueError("metric-series envelope and payload interval must match")
+        elif self.feed in OPTIONAL_INTERVAL_FEEDS:
+            if self.interval is not None and self.payload.sampling_interval != self.interval:
+                raise ValueError("open-interest envelope and payload interval must match")
         elif self.interval is not None:
             raise ValueError("interval is valid only for bar or metric-series market data")
         return self

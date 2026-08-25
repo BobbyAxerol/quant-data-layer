@@ -33,7 +33,11 @@ from qdl.query import (
 )
 from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR
 from qdl.replay import GapFreeHandoff
-from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
+from qdl.runtime.stable_catalog import (
+    StableSourceBinding,
+    StableSourceCatalog,
+    canonical_payload_interval,
+)
 from qdl.stream import GrpcSnapshot
 from qdl.transport import Cursor, SQLiteDurableSpool, StoredEvent
 
@@ -72,6 +76,26 @@ def _quality_flag_names(envelope: market_data_pb2.EventEnvelope) -> tuple[str, .
         common_pb2.QualityFlag.Name(value).removeprefix("QUALITY_FLAG_")
         for value in envelope.quality_flags
     )
+
+
+def _metric_unit_name(value: int) -> str:
+    name = market_data_pb2.MetricUnit.Name(value)
+    if name == "METRIC_UNIT_UNSPECIFIED":
+        raise ValueError("canonical metric unit cannot be UNSPECIFIED")
+    return name.removeprefix("METRIC_UNIT_")
+
+
+def _book_level_fields(values) -> list[dict[str, object]]:
+    return [
+        {
+            "side": common_pb2.BookSide.Name(value.side).removeprefix("BOOK_SIDE_"),
+            "price": _decimal_text(value.price),
+            "quantity": _decimal_text(value.quantity),
+            "quantity_unit": quantity_unit_name(value.quantity_unit),
+            "order_count": int(value.order_count),
+        }
+        for value in values
+    ]
 
 
 def bar_item_fields(
@@ -352,7 +376,7 @@ class StableSpoolQueryBackend:
         selected = []
         for row in rows:
             envelope = market_data_pb2.EventEnvelope.FromString(row.event.payload)
-            if binding.feed is not FeedType.BAR or envelope.bar.interval == binding.interval:
+            if canonical_payload_interval(envelope) == binding.interval:
                 selected.append(row)
         if binding.feed is FeedType.BAR:
             selected.sort(key=lambda item: (
@@ -576,7 +600,166 @@ class StableSpoolQueryBackend:
             )
         if payload_name == "bar":
             return MarketDataItem(**bar_item_fields(envelope), **common)
-        raise ValueError("stable query backend supports only TRADE/QUOTE/BAR")
+        if payload_name == "book_snapshot":
+            return MarketDataItem(
+                feed=FeedType.BOOK_SNAPSHOT,
+                payload={
+                    "native_sequence": envelope.book_snapshot.native_sequence,
+                    "checksum": envelope.book_snapshot.checksum or None,
+                    "levels": _book_level_fields(envelope.book_snapshot.levels),
+                    "depth": int(envelope.book_snapshot.depth),
+                },
+                **common,
+            )
+        if payload_name == "book_delta":
+            return MarketDataItem(
+                feed=FeedType.BOOK_DELTA,
+                payload={
+                    "native_sequence_start": envelope.book_delta.native_sequence_start,
+                    "native_sequence_end": envelope.book_delta.native_sequence_end,
+                    "snapshot_sequence": envelope.book_delta.snapshot_sequence,
+                    "checksum": envelope.book_delta.checksum or None,
+                    "updates": _book_level_fields(envelope.book_delta.updates),
+                    "reset": bool(envelope.book_delta.reset),
+                },
+                **common,
+            )
+        if payload_name == "funding_rate":
+            return MarketDataItem(
+                feed=FeedType.FUNDING_RATE,
+                payload={
+                    "rate": _decimal_text(envelope.funding_rate.rate),
+                    "funding_time_ns": int(envelope.funding_rate.funding_time_ns),
+                    "next_funding_time_ns": (
+                        int(envelope.funding_rate.next_funding_time_ns)
+                        if envelope.funding_rate.HasField("next_funding_time_ns")
+                        else None
+                    ),
+                },
+                **common,
+            )
+        if payload_name == "open_interest":
+            return MarketDataItem(
+                feed=FeedType.OPEN_INTEREST,
+                interval=envelope.open_interest.sampling_interval or None,
+                payload={
+                    "quantity": _decimal_text(envelope.open_interest.quantity),
+                    "quantity_unit": quantity_unit_name(envelope.open_interest.quantity_unit),
+                    "notional": (
+                        _decimal_text(envelope.open_interest.notional)
+                        if envelope.open_interest.HasField("notional")
+                        else None
+                    ),
+                    "sampling_interval": envelope.open_interest.sampling_interval or None,
+                },
+                **common,
+            )
+        if payload_name == "mark_index_price":
+            return MarketDataItem(
+                feed=FeedType.MARK_INDEX_PRICE,
+                payload={
+                    "mark_price": _decimal_text(envelope.mark_index_price.mark_price),
+                    "index_price": _decimal_text(envelope.mark_index_price.index_price),
+                },
+                **common,
+            )
+        if payload_name == "long_short_ratio":
+            return MarketDataItem(
+                feed=FeedType.LONG_SHORT_RATIO,
+                interval=envelope.long_short_ratio.sampling_interval,
+                payload={
+                    "population": market_data_pb2.LongShortRatioPopulation.Name(
+                        envelope.long_short_ratio.population
+                    ).removeprefix("LONG_SHORT_RATIO_POPULATION_"),
+                    "sampling_interval": envelope.long_short_ratio.sampling_interval,
+                    "long_value": _decimal_text(envelope.long_short_ratio.long_value),
+                    "short_value": _decimal_text(envelope.long_short_ratio.short_value),
+                    "long_short_ratio": _decimal_text(envelope.long_short_ratio.long_short_ratio),
+                    "value_unit": _metric_unit_name(envelope.long_short_ratio.value_unit),
+                },
+                **common,
+            )
+        if payload_name == "taker_flow":
+            return MarketDataItem(
+                feed=FeedType.TAKER_FLOW,
+                interval=envelope.taker_flow.sampling_interval,
+                payload={
+                    "sampling_interval": envelope.taker_flow.sampling_interval,
+                    "buy_volume": _decimal_text(envelope.taker_flow.buy_volume),
+                    "sell_volume": _decimal_text(envelope.taker_flow.sell_volume),
+                    "buy_sell_ratio": _decimal_text(envelope.taker_flow.buy_sell_ratio),
+                    "quantity_unit": quantity_unit_name(envelope.taker_flow.quantity_unit),
+                },
+                **common,
+            )
+        if payload_name == "basis":
+            return MarketDataItem(
+                feed=FeedType.BASIS,
+                interval=envelope.basis.sampling_interval,
+                payload={
+                    "kind": market_data_pb2.BasisKind.Name(
+                        envelope.basis.kind
+                    ).removeprefix("BASIS_KIND_"),
+                    "sampling_interval": envelope.basis.sampling_interval,
+                    "basis": _decimal_text(envelope.basis.basis),
+                    "basis_unit": _metric_unit_name(envelope.basis.basis_unit),
+                    "annualized_basis": (
+                        _decimal_text(envelope.basis.annualized_basis)
+                        if envelope.basis.HasField("annualized_basis")
+                        else None
+                    ),
+                    "reference_instrument_uid": envelope.basis.reference_instrument_uid,
+                    "formula_id": envelope.basis.formula_id,
+                    "input_instrument_uids": list(envelope.basis.input_instrument_uids),
+                },
+                **common,
+            )
+        if payload_name == "contract_metadata":
+            return MarketDataItem(
+                feed=FeedType.CONTRACT_METADATA,
+                payload={
+                    "contract_kind": envelope.contract_metadata.contract_kind,
+                    "settlement_asset": envelope.contract_metadata.settlement_asset,
+                    "contract_multiplier": _decimal_text(
+                        envelope.contract_metadata.contract_multiplier
+                    ),
+                    "price_tick": _decimal_text(envelope.contract_metadata.price_tick),
+                    "quantity_step": _decimal_text(envelope.contract_metadata.quantity_step),
+                    "expiry_time_ns": (
+                        int(envelope.contract_metadata.expiry_time_ns)
+                        if envelope.contract_metadata.HasField("expiry_time_ns")
+                        else None
+                    ),
+                    "funding_interval_ns": (
+                        int(envelope.contract_metadata.funding_interval_ns)
+                        if envelope.contract_metadata.HasField("funding_interval_ns")
+                        else None
+                    ),
+                    "continuous": bool(envelope.contract_metadata.continuous),
+                    "underlying_instrument_uid": envelope.contract_metadata.underlying_instrument_uid,
+                },
+                **common,
+            )
+        if payload_name == "ticker":
+            payload = {"last_price": _decimal_text(envelope.ticker.last_price)}
+            for field in ("last_quantity", "open_24h", "high_24h", "low_24h", "volume_24h"):
+                payload[field] = (
+                    _decimal_text(getattr(envelope.ticker, field))
+                    if envelope.ticker.HasField(field)
+                    else None
+                )
+            payload["last_quantity_unit"] = (
+                quantity_unit_name(envelope.ticker.last_quantity_unit)
+                if envelope.ticker.HasField("last_quantity")
+                else None
+            )
+            payload["volume_24h_unit"] = (
+                quantity_unit_name(envelope.ticker.volume_24h_unit)
+                if envelope.ticker.HasField("volume_24h")
+                else None
+            )
+            return MarketDataItem(feed=FeedType.TICKER, payload=payload, **common)
+        raise ValueError(f"stable query backend has no payload projection for {payload_name}")
 
 
 class StableCatalogCursorScopeValidator:

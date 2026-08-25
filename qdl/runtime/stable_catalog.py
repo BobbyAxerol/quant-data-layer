@@ -25,8 +25,36 @@ from qdl.query import (
     EntitlementGrant,
     EntitlementPolicy,
     FeedType,
+    METRIC_INTERVAL_FEEDS,
+    OPTIONAL_INTERVAL_FEEDS,
 )
 from qdl.transport.contracts import partition_key
+
+
+def canonical_payload_interval(
+    envelope: market_data_pb2.EventEnvelope,
+) -> str | None:
+    """Return the contract interval carried by a canonical V2 payload.
+
+    BAR and sampled reference products carry different protobuf field names,
+    but the stable binding identity intentionally has one interval coordinate.
+    Point-in-time products return ``None``.  This helper is shared by catalog
+    admission and the spool query edge so an event cannot be admitted under
+    one key then queried under another.
+    """
+
+    payload_name = envelope.WhichOneof("payload")
+    if payload_name == "bar":
+        return envelope.bar.interval or None
+    if payload_name == "long_short_ratio":
+        return envelope.long_short_ratio.sampling_interval or None
+    if payload_name == "taker_flow":
+        return envelope.taker_flow.sampling_interval or None
+    if payload_name == "basis":
+        return envelope.basis.sampling_interval or None
+    if payload_name == "open_interest":
+        return envelope.open_interest.sampling_interval or None
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +93,20 @@ class StableSourceBinding:
             raise ValueError("stable source role is invalid")
         if self.feed is FeedType.BAR and not self.interval:
             raise ValueError("stable BAR binding requires interval")
-        if self.feed is not FeedType.BAR and self.interval is not None:
+        if self.feed in METRIC_INTERVAL_FEEDS and not self.interval:
+            raise ValueError("stable metric-series binding requires interval")
+        if (
+            self.feed in OPTIONAL_INTERVAL_FEEDS
+            and self.interval is not None
+            and not self.interval.strip()
+        ):
+            raise ValueError("stable open-interest interval cannot be blank")
+        if (
+            self.feed is not FeedType.BAR
+            and self.feed not in METRIC_INTERVAL_FEEDS
+            and self.feed not in OPTIONAL_INTERVAL_FEEDS
+            and self.interval is not None
+        ):
             raise ValueError("stable non-BAR binding cannot have interval")
         if self.require_final_bar and self.feed is not FeedType.BAR:
             raise ValueError("require_final_bar is valid only for BAR")
@@ -314,7 +355,7 @@ class StableSourceCatalog:
         self, envelope: market_data_pb2.EventEnvelope
     ) -> StableSourceBinding:
         payload_name = envelope.WhichOneof("payload")
-        interval = envelope.bar.interval if payload_name == "bar" else ""
+        interval = canonical_payload_interval(envelope) or ""
         key = (envelope.instrument_uid, payload_name or "", interval, envelope.source_id)
         try:
             binding = self._by_envelope[key]
@@ -369,12 +410,31 @@ class StableSourceCatalog:
                 == market_data_pb2.TRADE_IDENTITY_KIND_UNSPECIFIED
             ):
                 raise ValueError("stable trade quantity/identity semantics are incomplete")
+            StableSourceCatalog._decimal(envelope.trade.price, "trade price", positive=True)
+            StableSourceCatalog._decimal(
+                envelope.trade.quantity, "trade quantity", positive=True
+            )
         elif payload_name == "quote":
             if envelope.quote.quantity_unit == common_pb2.QUANTITY_UNIT_UNSPECIFIED:
                 raise ValueError("stable quote quantity unit is incomplete")
+            for field in (
+                (envelope.quote.bid_price, "quote bid price"),
+                (envelope.quote.ask_price, "quote ask price"),
+                (envelope.quote.bid_quantity, "quote bid quantity"),
+                (envelope.quote.ask_quantity, "quote ask quantity"),
+            ):
+                StableSourceCatalog._decimal(*field, positive=True)
         elif payload_name == "bar":
             if envelope.bar.volume_unit == common_pb2.QUANTITY_UNIT_UNSPECIFIED:
                 raise ValueError("stable BAR volume unit is incomplete")
+            for value, name in (
+                (envelope.bar.open, "bar open"),
+                (envelope.bar.high, "bar high"),
+                (envelope.bar.low, "bar low"),
+                (envelope.bar.close, "bar close"),
+                (envelope.bar.volume, "bar volume"),
+            ):
+                StableSourceCatalog._decimal(value, name, positive=name != "bar volume")
             if binding.require_final_bar and (
                 not envelope.bar.is_final
                 or envelope.bar.lifecycle
@@ -384,8 +444,174 @@ class StableSourceCatalog:
                 }
             ):
                 raise ValueError("stable binding requires a final/revised BAR")
+        elif payload_name == "book_snapshot":
+            if not envelope.book_snapshot.native_sequence or envelope.book_snapshot.depth < 1:
+                raise ValueError("stable book snapshot sequence/depth is incomplete")
+            if not envelope.book_snapshot.levels:
+                raise ValueError("stable book snapshot has no readable levels")
+            for level in envelope.book_snapshot.levels:
+                StableSourceCatalog._book_level(level, positive_quantity=True)
+        elif payload_name == "book_delta":
+            if not all(
+                (
+                    envelope.book_delta.native_sequence_start,
+                    envelope.book_delta.native_sequence_end,
+                    envelope.book_delta.snapshot_sequence,
+                )
+            ):
+                raise ValueError("stable book delta lacks continuity/snapshot sequence")
+            for level in envelope.book_delta.updates:
+                StableSourceCatalog._book_level(level, positive_quantity=False)
+        elif payload_name == "funding_rate":
+            StableSourceCatalog._decimal(envelope.funding_rate.rate, "funding rate")
+            if envelope.funding_rate.funding_time_ns <= 0:
+                raise ValueError("stable funding time is incomplete")
+            if (
+                envelope.funding_rate.HasField("next_funding_time_ns")
+                and envelope.funding_rate.next_funding_time_ns <= 0
+            ):
+                raise ValueError("stable next funding time is invalid")
+        elif payload_name == "open_interest":
+            if envelope.open_interest.quantity_unit == common_pb2.QUANTITY_UNIT_UNSPECIFIED:
+                raise ValueError("stable open-interest quantity unit is incomplete")
+            StableSourceCatalog._decimal(
+                envelope.open_interest.quantity,
+                "open-interest quantity",
+                nonnegative=True,
+            )
+            if envelope.open_interest.HasField("notional"):
+                StableSourceCatalog._decimal(
+                    envelope.open_interest.notional,
+                    "open-interest notional",
+                    nonnegative=True,
+                )
+            StableSourceCatalog._validate_interval(envelope, binding)
+        elif payload_name == "mark_index_price":
+            StableSourceCatalog._decimal(
+                envelope.mark_index_price.mark_price, "mark price", positive=True
+            )
+            StableSourceCatalog._decimal(
+                envelope.mark_index_price.index_price, "index price", positive=True
+            )
+        elif payload_name == "long_short_ratio":
+            if (
+                envelope.long_short_ratio.population
+                == market_data_pb2.LONG_SHORT_RATIO_POPULATION_UNSPECIFIED
+                or envelope.long_short_ratio.value_unit != market_data_pb2.METRIC_UNIT_RATIO
+            ):
+                raise ValueError("stable long-short ratio semantics are incomplete")
+            for value, name in (
+                (envelope.long_short_ratio.long_value, "long value"),
+                (envelope.long_short_ratio.short_value, "short value"),
+                (envelope.long_short_ratio.long_short_ratio, "long-short ratio"),
+            ):
+                StableSourceCatalog._decimal(value, name, nonnegative=True)
+            StableSourceCatalog._validate_interval(envelope, binding)
+        elif payload_name == "taker_flow":
+            if envelope.taker_flow.quantity_unit == common_pb2.QUANTITY_UNIT_UNSPECIFIED:
+                raise ValueError("stable taker-flow quantity unit is incomplete")
+            for value, name in (
+                (envelope.taker_flow.buy_volume, "taker buy volume"),
+                (envelope.taker_flow.sell_volume, "taker sell volume"),
+                (envelope.taker_flow.buy_sell_ratio, "taker buy-sell ratio"),
+            ):
+                StableSourceCatalog._decimal(value, name, nonnegative=True)
+            StableSourceCatalog._validate_interval(envelope, binding)
+        elif payload_name == "basis":
+            if (
+                envelope.basis.kind == market_data_pb2.BASIS_KIND_UNSPECIFIED
+                or envelope.basis.basis_unit == market_data_pb2.METRIC_UNIT_UNSPECIFIED
+            ):
+                raise ValueError("stable basis kind/unit is incomplete")
+            StableSourceCatalog._decimal(envelope.basis.basis, "basis")
+            if envelope.basis.HasField("annualized_basis"):
+                StableSourceCatalog._decimal(
+                    envelope.basis.annualized_basis, "annualized basis"
+                )
+            if envelope.basis.kind == market_data_pb2.BASIS_KIND_DERIVED and (
+                not envelope.basis.formula_id
+                or len(envelope.basis.input_instrument_uids) < 2
+            ):
+                raise ValueError("derived basis lacks formula/input lineage")
+            StableSourceCatalog._validate_interval(envelope, binding)
+        elif payload_name == "contract_metadata":
+            metadata = envelope.contract_metadata
+            if not metadata.contract_kind or not metadata.settlement_asset:
+                raise ValueError("stable contract metadata identity is incomplete")
+            for value, name in (
+                (metadata.contract_multiplier, "contract multiplier"),
+                (metadata.price_tick, "price tick"),
+                (metadata.quantity_step, "quantity step"),
+            ):
+                StableSourceCatalog._decimal(value, name, positive=True)
+            for field in ("expiry_time_ns", "funding_interval_ns"):
+                if metadata.HasField(field) and getattr(metadata, field) <= 0:
+                    raise ValueError(f"stable contract metadata {field} is invalid")
+        elif payload_name == "ticker":
+            StableSourceCatalog._decimal(envelope.ticker.last_price, "ticker last price", positive=True)
+            for value_name, unit_name in (
+                ("last_quantity", "last_quantity_unit"),
+                ("volume_24h", "volume_24h_unit"),
+            ):
+                if envelope.ticker.HasField(value_name):
+                    if getattr(envelope.ticker, unit_name) == common_pb2.QUANTITY_UNIT_UNSPECIFIED:
+                        raise ValueError(f"stable ticker {unit_name} is incomplete")
+                    StableSourceCatalog._decimal(
+                        getattr(envelope.ticker, value_name), value_name, positive=True
+                    )
         else:
-            raise ValueError("stable baseline supports only TRADE/QUOTE/BAR")
+            raise ValueError("stable canonical payload is unsupported")
+
+    @staticmethod
+    def _validate_interval(
+        envelope: market_data_pb2.EventEnvelope,
+        binding: StableSourceBinding,
+    ) -> None:
+        expected = binding.interval or ""
+        observed = canonical_payload_interval(envelope) or ""
+        if expected != observed:
+            raise ValueError("stable canonical payload interval differs from binding")
+
+    @staticmethod
+    def _decimal(
+        value,
+        name: str,
+        *,
+        positive: bool = False,
+        nonnegative: bool = False,
+    ) -> CanonicalDecimal:
+        if positive and nonnegative:
+            raise ValueError("decimal validation cannot require both positive and nonnegative")
+        source_text = str(value.source_text).strip()
+        if not source_text:
+            raise ValueError(f"stable {name} decimal source text is missing")
+        parsed = CanonicalDecimal.from_text(source_text)
+        coefficient = (
+            value.mantissa_text
+            if value.WhichOneof("coefficient") == "mantissa_text"
+            else value.mantissa
+            if value.WhichOneof("coefficient") == "mantissa"
+            else None
+        )
+        if coefficient is None or str(parsed.coefficient) != str(coefficient) or parsed.scale != value.scale:
+            raise ValueError(f"stable {name} decimal representation is inconsistent")
+        if positive and parsed.as_decimal() <= 0:
+            raise ValueError(f"stable {name} must be positive")
+        if nonnegative and parsed.as_decimal() < 0:
+            raise ValueError(f"stable {name} cannot be negative")
+        return parsed
+
+    @staticmethod
+    def _book_level(level, *, positive_quantity: bool) -> None:
+        if (
+            level.side == common_pb2.BOOK_SIDE_UNSPECIFIED
+            or level.quantity_unit == common_pb2.QUANTITY_UNIT_UNSPECIFIED
+        ):
+            raise ValueError("stable book level side/unit is incomplete")
+        StableSourceCatalog._decimal(level.price, "book level price", positive=True)
+        quantity = StableSourceCatalog._decimal(level.quantity, "book level quantity")
+        if quantity.as_decimal() < 0 or (positive_quantity and quantity.as_decimal() <= 0):
+            raise ValueError("stable book level quantity is invalid")
 
     def instrument_registry(
         self, *, include_unbound: bool = False
@@ -443,7 +669,7 @@ class StableSourceCatalog:
         canonical core and is covered by no authority record. It is also opt-in,
         so adding catalog metadata cannot silently open a new data product.
         """
-        grants = []
+        grant_purposes: dict[str, set[AccessPurpose]] = {}
         for binding in self.bindings:
             purposes = {
                 AccessPurpose.INTERNAL_ALPHA,
@@ -451,8 +677,14 @@ class StableSourceCatalog:
             }
             if binding.authoritative:
                 purposes.add(AccessPurpose.INTERNAL_EXECUTION)
-            grants.append(EntitlementGrant(
-                source_id=binding.source_id,
+            # A provider session normally emits more than one feed and can
+            # serve several instruments. Entitlements are source-scoped, not
+            # binding-scoped, so merge the capabilities before constructing
+            # the policy's unique ``(source_id, license_revision)`` grants.
+            grant_purposes.setdefault(binding.source_id, set()).update(purposes)
+        grants = [
+            EntitlementGrant(
+                source_id=source_id,
                 license_revision="internal-stable-v2",
                 purposes=frozenset(purposes),
                 products=frozenset({
@@ -460,7 +692,9 @@ class StableSourceCatalog:
                     DataProduct.CANONICAL_HISTORY,
                 }),
                 valid_from_ns=0,
-            ))
+            )
+            for source_id, purposes in sorted(grant_purposes.items())
+        ]
         if include_unbound:
             # Every declared instrument gets the pass-through grant, including
             # one that already has a binding. Routing decides per *requirement*

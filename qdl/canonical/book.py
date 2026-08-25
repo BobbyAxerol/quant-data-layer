@@ -36,7 +36,7 @@ def _levels(
 
 
 def canonicalize_okx_book(
-    frame: Mapping[str, Any], context: TradeContext
+    frame: Mapping[str, Any], context: TradeContext, *, snapshot_sequence: str | None = None
 ) -> market_data_pb2.EventEnvelope:
     argument = frame.get("arg")
     rows = frame.get("data")
@@ -76,10 +76,15 @@ def canonicalize_okx_book(
             )
         )
     else:
+        if not str(snapshot_sequence or "").strip():
+            raise ValueError(
+                "OKX book delta requires the active websocket snapshot sequence"
+            )
         envelope.book_delta.CopyFrom(
             market_data_pb2.OrderBookDelta(
                 native_sequence_start=str(_required(row, "prevSeqId")),
                 native_sequence_end=sequence,
+                snapshot_sequence=str(snapshot_sequence),
                 checksum=checksum,
                 updates=levels,
                 reset=False,
