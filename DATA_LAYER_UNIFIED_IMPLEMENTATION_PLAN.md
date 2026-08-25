@@ -13156,6 +13156,37 @@ CUTOVER PENDING`).**
   route back to the frozen V1 revision and stops only those named V2 roles;
   it never resets offsets, flushes state, deletes data or restarts V1.
 
+**Phase 10.3 approved runtime handoff preflight - 2026-08-25
+(`APPROVED / APPLY PENDING`).**
+
+- **Operator approval:** the operator explicitly approved the existing Phase
+  10.3 blast radius only: create-or-verify the one realtime Kafka topic and
+  sealed ACLs, recreate the exact 13 V2 services, recreate the one named
+  Trading System `market_data` service, perform the sealed `RUST_PRIMARY`
+  handoff and run the bounded 300-second no-order acceptance. V1, Kafka
+  offsets, Redis, SQLite, PostgreSQL, alpha configuration, order state, VN,
+  volumes and every other service remain outside scope. Rollback is frozen V1
+  routing plus stop only the named 13 V2 roles.
+- Generated a fresh non-secret review packet from commit `1114275`: SHA-256
+  `78acb12fd4eb898763529df464c1929c6f3e26cb4fe64efe35aaf702d013fb63`,
+  schema `qdl.v2.shared-primary-handoff-packet.v2`, `12` crypto bindings, `13`
+  V2 services, eight runtime files, `RUST_PRIMARY` revision `1` and a
+  300-second observation window. Host validation returned `PASS` with runtime
+  bundle SHA-256
+  `5e15eb3a9b969807fdd7b0e87082f02548ad1abe662072f566e3cfbb6b72e5b3`.
+- Re-verified the locked Trading System source/image artifacts: both resolve
+  route manifest SHA-256
+  `b4376881b71853fc514ed70198cb52040aa0af3a8ad3f283bbab6fa2a2900e9f` and
+  Compose override SHA-256
+  `68e1ae602216063e4468d4354af3e57e4ead8ae6984b661e8b83cd576835478e`.
+  The stable Compose file rendered successfully with the packet's six sealed
+  non-secret substitutions and existing secret environment; no Docker daemon
+  mutation occurred during that render.
+- **Apply gate:** execute only the packet's nine idempotent broker/ACL commands
+  and the ordered named service handoff. Stop immediately on any failure,
+  preserve bounded evidence, and use the pre-approved V1/stop-only rollback;
+  do not improvise offset reset, cache cleanup, volume changes or topology.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,
