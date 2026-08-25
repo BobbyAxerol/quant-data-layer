@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 import yaml
@@ -21,6 +23,10 @@ from qdl.certification.phase103_consumer_acceptance import (
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from scripts.phase103_consumer_receipt_acceptance import (
+    _query_product,
+    _stream_event_timeout_seconds,
+)
 from qdl_sdk import MarketDataView
 from qdl_sdk.models import DecimalValue
 
@@ -342,6 +348,73 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             self._view(trade, close="10.3"),
         )
         self.assertNotEqual(primary_hash, secondary_hash)
+
+    def test_historical_bar_keeps_domain_checks_but_not_current_sla(self):
+        bar = self._product(feed="BAR")
+        current = self._view(
+            bar,
+            freshness_ms=bar.requirement.max_freshness_ms + 1,
+        )
+        historical = current.model_copy(
+            update={
+                "quality": current.quality.model_copy(
+                    update={"state": "STALE", "execution_eligible": False}
+                )
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "freshness"):
+            validate_product_view(bar, historical)
+        validate_product_view(bar, historical, require_current_quality=False)
+
+        gapped = historical.model_copy(
+            update={
+                "quality": historical.quality.model_copy(update={"gap_open": True})
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "gap"):
+            validate_product_view(
+                bar,
+                gapped,
+                require_current_quality=False,
+            )
+
+    def test_warmup_applies_current_quality_only_to_last_closed_bar(self):
+        bar = self._product(feed="BAR")
+        current = self._view(bar)
+        historical = current.model_copy(
+            update={
+                "quality": current.quality.model_copy(
+                    update={
+                        "state": "STALE",
+                        "freshness_ms": bar.requirement.max_freshness_ms + 1,
+                        "execution_eligible": False,
+                    }
+                )
+            }
+        )
+
+        class WarmupClient:
+            async def warmup(self, requirement):
+                self.requirement = requirement
+                return SimpleNamespace(data=[historical, current])
+
+        primary = WarmupClient()
+        secondary = WarmupClient()
+        primary_hash, secondary_hash, _, _ = asyncio.run(
+            _query_product(bar, primary=primary, secondary=secondary)
+        )
+        self.assertEqual(primary_hash, secondary_hash)
+        self.assertEqual(primary.requirement, sdk_requirement(bar))
+
+    def test_bar_stream_wait_covers_one_close_but_stays_sla_bounded(self):
+        bar = self._product(feed="BAR")
+        self.assertEqual(_stream_event_timeout_seconds(bar, 15.0), 75.0)
+        self.assertLessEqual(
+            _stream_event_timeout_seconds(bar, 15.0) * 1_000,
+            bar.requirement.max_freshness_ms,
+        )
+        trade = self._product(feed="TRADE")
+        self.assertEqual(_stream_event_timeout_seconds(trade, 15.0), 15.0)
 
     def test_cursor_continuity_and_evidence_redaction_are_strict(self):
         product = self._product(feed="TRADE")

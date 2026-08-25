@@ -38,6 +38,7 @@ from qdl.certification.phase103_consumer_acceptance import (
     validate_resume_offsets,
     warmup_content_fingerprint,
 )
+from qdl.adapters.intervals import canonical_interval_ms
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from scripts.phase103_prepare_shared_primary_packet import (
@@ -140,6 +141,24 @@ def _cursor_path(state_dir: Path, product: AcceptanceProduct) -> Path:
     return state_dir / f"{hashlib.sha256(identity).hexdigest()}.json"
 
 
+def _stream_event_timeout_seconds(
+    product: AcceptanceProduct,
+    request_timeout_seconds: float,
+) -> float:
+    """Wait through one final BAR close without exceeding its freshness SLA."""
+    if product.feed.value != "BAR":
+        return request_timeout_seconds
+    if product.interval is None:
+        raise ValueError("BAR receipt product must declare its canonical interval")
+    interval_seconds = canonical_interval_ms(product.interval) / 1_000
+    settlement_seconds = min(15.0, max(5.0, interval_seconds / 4.0))
+    wait_seconds = max(request_timeout_seconds, interval_seconds + settlement_seconds)
+    max_freshness_ms = product.requirement.max_freshness_ms
+    if max_freshness_ms is not None:
+        wait_seconds = min(wait_seconds, max_freshness_ms / 1_000)
+    return wait_seconds
+
+
 async def _next_data(session, *, timeout_seconds: float) -> tuple[StreamEvent, list[str]]:
     controls: list[str] = []
     for _ in range(8):
@@ -164,8 +183,9 @@ async def _query_product(
     if product.feed.value == "BAR":
         primary_response = await primary.warmup(requirement)
         primary_latency_ms = (time.perf_counter() - primary_started) * 1000
-        for view in primary_response.data:
-            validate_product_view(product, view)
+        for view in primary_response.data[:-1]:
+            validate_product_view(product, view, require_current_quality=False)
+        validate_product_view(product, primary_response.data[-1])
         primary_hash = warmup_content_fingerprint(primary_response.data)
     else:
         primary_response = await primary.snapshot(requirement)
@@ -177,8 +197,9 @@ async def _query_product(
     if product.feed.value == "BAR":
         secondary_response = await secondary.warmup(requirement)
         secondary_latency_ms = (time.perf_counter() - secondary_started) * 1000
-        for view in secondary_response.data:
-            validate_product_view(product, view)
+        for view in secondary_response.data[:-1]:
+            validate_product_view(product, view, require_current_quality=False)
+        validate_product_view(product, secondary_response.data[-1])
         secondary_hash = warmup_content_fingerprint(secondary_response.data)
         if product.delivery is DeliveryClass.DURABLE and primary_hash != secondary_hash:
             raise AssertionError("V2 query replicas diverged on a final BAR warmup")
@@ -212,6 +233,7 @@ async def _stream_resume(
         return None, None, ()
     cursor_path = _cursor_path(state_dir, product)
     requirement = sdk_requirement(product)
+    event_timeout_seconds = _stream_event_timeout_seconds(product, timeout_seconds)
     first_client = _client(
         identity,
         base_url=primary_url,
@@ -223,7 +245,7 @@ async def _stream_resume(
         async with first_client.warmup_then_stream(requirement) as session:
             first, first_controls = await _next_data(
                 session,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=event_timeout_seconds,
             )
             first_view = market_data_view_from_stream(
                 first,
@@ -250,7 +272,7 @@ async def _stream_resume(
         ) as session:
             resumed, resumed_controls = await _next_data(
                 session,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=event_timeout_seconds,
             )
             resumed_view = market_data_view_from_stream(
                 resumed,
@@ -394,15 +416,23 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
 
     async def certify(product: AcceptanceProduct) -> dict[str, object]:
         async with semaphore:
-            return await _certify_product(
-                product,
-                identity=identities[product.consumer_id],
-                primary_url=args.primary_url,
-                secondary_url=args.secondary_url,
-                grpc_target=args.grpc_target,
-                state_dir=state_dir,
-                timeout_seconds=args.timeout_seconds,
-            )
+            try:
+                return await _certify_product(
+                    product,
+                    identity=identities[product.consumer_id],
+                    primary_url=args.primary_url,
+                    secondary_url=args.secondary_url,
+                    grpc_target=args.grpc_target,
+                    state_dir=state_dir,
+                    timeout_seconds=args.timeout_seconds,
+                )
+            except Exception as error:
+                raise RuntimeError(
+                    "V2 receipt failed "
+                    f"consumer={product.consumer_id} "
+                    f"instrument={product.instrument_id} "
+                    f"feed={product.feed.value} interval={product.interval}"
+                ) from error
 
     with _cursor_directory(args.cursor_dir) as state_dir:
         results = await asyncio.gather(*(certify(product) for product in scope.products))

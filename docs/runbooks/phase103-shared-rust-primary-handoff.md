@@ -293,6 +293,14 @@ match the sealed `packet_sha256`, report exactly `18` products (`16` durable,
   unstable byte equality; and
 - no direct provider connection, Gateway request or order submission occurs.
 
+For a multi-row final-BAR warmup, identity, provenance, finality, gap/coverage
+and cross-replica content parity apply to every row. Current freshness, `LIVE`
+state and execution eligibility apply only to the last returned closed BAR;
+older retained history is not incorrectly judged against a live-tick SLA.
+For a durable BAR stream, the receipt waits through one canonical interval plus
+bounded settlement time, capped by the manifest freshness SLA (`1m` currently
+means 75 seconds). A missing next final BAR remains a fail-closed result.
+
 Do not redirect the result into a source-controlled file. Retain only its
 bounded hash/offset/latency summary under the approved evidence location. A
 failure is a fail-closed handoff failure: preserve compact evidence, apply the

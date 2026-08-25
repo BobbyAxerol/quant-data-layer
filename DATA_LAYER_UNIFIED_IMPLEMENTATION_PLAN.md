@@ -193,7 +193,7 @@ These rules apply to all phases.
 | 9 | Rust core canary and progressive replacement | Promote certified Rust feed slices while Python remains the outer platform and rollback boundary | `PLANNED` |
 | 10.1 | Universal demand contract and runtime topology | Replace fixed reference slices with one capability-truthful demand manifest and one shared Rust canonical core | `COMPLETE (SOURCE/ISOLATED; DARK; NO RUNTIME CUTOVER)` |
 | 10.2 | Universal warmup, history and batch handoff | Serve strategy-defined historical windows quickly, exactly and safely for every supported venue, instrument and interval | `COMPLETE (SOURCE/ISOLATED; NO RUNTIME CUTOVER; VN IN-SESSION EXTERNAL GATE)` |
-| 10.3 | Rust-primary realtime execution data plane | Make Rust the primary canonical TRADE, QUOTE and BAR source for the complete demanded universe, with V1 as observable fallback | `IN PROGRESS (SOURCE/ISOLATED; NO RUNTIME CUTOVER)` |
+| 10.3 | Rust-primary realtime execution data plane | Make Rust the primary canonical TRADE, QUOTE and BAR source for the complete demanded universe, with V1 as observable fallback | `COMPLETE (ACTIVE BINANCE/OKX RUST_PRIMARY; V1 FALLBACK; VN IN-SESSION GATE)` |
 | 10.4 | Microstructure and alternative-data products | Add execution-grade order book, reference metrics and multi-instrument derivatives data behind the same contracts | `PROPOSED - AWAITING APPROVAL` |
 | 10.5 | Consumer cutover, certification and release | Move Trading System and alpha SDK routes to V2 primary by manifest, retain V1 rollback and publish stable V2 | `PROPOSED - AWAITING APPROVAL` |
 
@@ -13691,6 +13691,115 @@ CUTOVER PENDING`).**
   were asserted paths. A Compose render using the exact active certificate env
   plus packet image/runtime coordinates passed and showed the flag only on both
   query replicas. No runtime or durable state changed in this gate.
+
+**Phase 10.3 receipt-window expiry and one bounded retry - 2026-08-25
+(`APPROVED / SAME-TOPOLOGY RETRY`):**
+
+- The original 30-minute review packet expired while the no-order receipt was
+  being rerun. The receipt correctly stopped before SDK I/O; an expired packet
+  is not edited, reused or treated as acceptance evidence. The runtime stayed
+  on its already-applied `RUST_PRIMARY` revision, and V1, Kafka offsets, Redis,
+  SQLite, Trading System, alpha and order paths remained unchanged.
+- The user approved Phase 10.3 completion with a narrow retry. Generate one
+  fresh review packet using the same Python/Rust image digests, authority
+  revision, route revision and fixed thirteen-role topology; then perform the
+  existing rolling handoff once and run its 300-second, no-order acceptance.
+  No new image, service, topic, ACL change, offset operation, cache action or
+  additional retry packet is permitted.
+- **Decision boundary and rollback:** if the receipt or bounded observation
+  fails, preserve compact evidence and stop. Do not retry again, weaken a
+  packet-time guard, or mutate durable state; V1 remains the rollback route.
+
+**Phase 10.3 warmup-quality receipt correction - 2026-08-25
+(`IN PROGRESS / RECEIPT-HARNESS-ONLY`):**
+
+- The 300-second read-only V2 observation passed `180/180` governed reads with
+  no freshness/gap failure. The exact two-replica, concurrency-4 receipt then
+  failed only for every durable `BAR 1m` warmup. Direct typed metadata proved
+  both replicas return the same current final bar, watermark and live
+  freshness; TRADE, QUOTE and `BAR 15m` pass-through remain within their
+  declared bounds.
+- **Root cause:** the receipt harness applied the current freshness/live/
+  execution-eligibility gate to every historical row in a 500/1,000-row BAR
+  warmup. Historical final bars are intentionally older than a current
+  1-minute freshness bound, so the harness rejected its own valid history.
+  This is an acceptance-domain bug, not provider, Rust core, Kafka, projector,
+  cache or query-replica divergence.
+- **Approved in-scope correction:** historical warmup rows continue to require
+  exact identity, source, no unresolved gap, final-bar domain invariants and
+  cross-replica content parity; only the last returned closed BAR is subject to
+  current freshness, `LIVE` and execution-eligibility gates. The scope is the
+  receipt validator, its focused test and the governing runbook wording only.
+  No runtime/service/image/topic/offset/cache/V1/Trading-System/alpha/order
+  change is permitted by this correction.
+
+**Phase 10.3 live-BAR receipt-timeout correction - 2026-08-25
+(`IN PROGRESS / RECEIPT-HARNESS-ONLY`):**
+
+- With the warmup semantics corrected, the real receipt reached V2 stream
+  resume and timed out at its fixed 15-second wait. Final `BAR 1m` records are
+  emitted only after the next close, so a fresh cursor may validly wait up to
+  one bar interval plus the declared settlement allowance. TRADE/QUOTE did not
+  exhibit this issue.
+- The harness must derive a bounded BAR stream wait from the canonical fixed
+  interval and cap it at the consumer's declared freshness SLA. For the active
+  `1m` products the budget is 75 seconds; a missing next final bar still fails
+  closed. It does not alter the source, consumer manifest, quality policy,
+  timeout of REST requests or any runtime service.
+
+**Phase 10.3 shared Rust-primary handoff result - 2026-08-25
+(`COMPLETE FOR ACTIVE BINANCE/OKX V2_PRIMARY; V1 FALLBACK RETAINED`):**
+
+- **Scope and topology:** the approved fixed thirteen-role V2 packet was
+  applied once with no new topic, image topology, Kafka offset reset,
+  Redis/SQLite flush, V1 restart, Trading System/alpha restart or order path.
+  The running authority is `RUST_PRIMARY`; the Python image is
+  `qdl-v2-python:2.0.0-e0bedff`
+  (`sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`)
+  and the existing Rust artifact remains
+  `sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`.
+  The sealed acceptance packet was
+  `63369baad880b133edec382edeeefa8280e3a59e282eaa1f7f0d2121dfa23eee`.
+- **In-scope receipt repairs:** the governed receipt now validates identity,
+  finality, provenance, coverage/gap state and replica parity for every BAR
+  warmup row, but applies current freshness/`LIVE`/execution eligibility only
+  to the final closed row. It also waits a bounded canonical interval plus
+  settlement for a durable BAR live resume (`75` seconds for `1m`), while
+  TRADE/QUOTE retain the request timeout. These are validator/runbook changes
+  only; they do not weaken any V2 product or runtime quality policy.
+- **Tests actually run:** focused receipt tests passed `28/28`; the final
+  scoped stable deployment/pass-through/receipt/handoff suite passed `61/61`.
+  `py_compile` and `git diff --check` passed. Expected negative-path output
+  from the authority bundle and bounded-DNSE source fence was asserted, with
+  zero test failures.
+- **No-order consumer acceptance:** the disposable read-only two-replica V2
+  receipt passed with `18` products: `16` durable and `2` explicit provider
+  pass-through products; all `16` durable cursor resumes advanced. It reported
+  `provider_connections=0`, `order_actions=0`, temporary cursor cleanup, and
+  `query_p95_ms=680.376`. A preceding 300-second read-only observation passed
+  `180/180` governed reads with no freshness or gap failure. The
+  manifest-only `V2_PRIMARY -> V1_FALLBACK -> V2_PRIMARY` drill passed; it is
+  correctly recorded as a routing-manifest drill, not an additional physical
+  runtime cutover.
+- **Runtime/resource evidence:** all thirteen named V2 roles remained running;
+  `query_v2_1` was healthy and `query_v2_2` has no Compose healthcheck but
+  passed direct mTLS readiness (`200`). Recent projector logs had no error.
+  The active stream cache remained bounded at `181,256,192` bytes; its WAL was
+  bounded by the configured `64 MiB` journal limit (`7,972,232` to
+  `25,914,832` bytes in the observed window), with no unbounded file growth.
+  The active stream used about `69 MiB` RSS. A high-rate live sample advanced
+  `21,710` logical offsets in about `25` seconds and wrote about `494 MiB` of
+  process-accounted SQLite/WAL I/O while the cache size stayed flat. This is
+  bounded high-rate TRADE/QUOTE cache churn, not a disk-growth leak: Kafka
+  remains the durable replay authority and cache cursor expiry still fails to
+  snapshot/recovery. A future endurance/SLO optimisation may reduce this
+  write amplification, but no correctness, capacity-bound, gap, duplicate or
+  consumer-visible failure was observed in this approved handoff.
+- **Status boundary:** Binance USD-M and OKX Swap active demanded products are
+  Rust-primary and V2 consumer-visible with V1 retained as the explicit
+  rollback route. VN remains capability-present but outside `V2_PRIMARY` until
+  its separate verified in-session provider admission; it is not represented
+  as certified primary data. Phase 10.4 and 10.5 remain out of scope.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 

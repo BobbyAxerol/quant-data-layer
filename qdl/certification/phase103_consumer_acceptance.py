@@ -419,8 +419,18 @@ def _validate_payload(product: AcceptanceProduct, view) -> None:
     raise ValueError("Phase 10.3 receipt received an unsupported feed")
 
 
-def validate_product_view(product: AcceptanceProduct, view) -> None:
-    """Fail closed unless one typed V2 result satisfies its governed product."""
+def validate_product_view(
+    product: AcceptanceProduct,
+    view,
+    *,
+    require_current_quality: bool = True,
+) -> None:
+    """Validate one governed view.
+
+    Historical BAR warmup rows retain identity, provenance, gap and payload
+    checks, but cannot individually satisfy a *current* freshness SLA. The
+    latest closed BAR is the row that carries current/live/execution quality.
+    """
     if (
         view.instrument_uid != product.instrument_uid
         or view.instrument_id != product.instrument_id
@@ -432,7 +442,11 @@ def validate_product_view(product: AcceptanceProduct, view) -> None:
     if view.quality.gap_open or not view.quality.complete:
         raise ValueError("V2 receipt has an unresolved gap or incomplete coverage")
     max_freshness_ms = product.requirement.max_freshness_ms
-    if max_freshness_ms is not None and view.quality.freshness_ms > max_freshness_ms:
+    if (
+        require_current_quality
+        and max_freshness_ms is not None
+        and view.quality.freshness_ms > max_freshness_ms
+    ):
         raise ValueError("V2 receipt exceeds the governed freshness bound")
     if product.delivery is DeliveryClass.DURABLE:
         if (
@@ -440,11 +454,12 @@ def validate_product_view(product: AcceptanceProduct, view) -> None:
             or view.source.provider != product.provider
             or view.source.source_role != "PRIMARY"
             or not view.source.authoritative
-            or view.quality.state != "LIVE"
+            or (require_current_quality and view.quality.state != "LIVE")
         ):
             raise ValueError("durable V2 receipt is not authoritative and live")
         if (
-            product.requirement.consumer_grade.value == "EXECUTION"
+            require_current_quality
+            and product.requirement.consumer_grade.value == "EXECUTION"
             and not view.quality.execution_eligible
         ):
             raise ValueError("execution-grade durable V2 receipt is not eligible")
