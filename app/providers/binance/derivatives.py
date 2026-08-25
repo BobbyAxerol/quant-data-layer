@@ -30,6 +30,7 @@ BINANCE_DERIVATIVE_ENDPOINTS = {
     "depth": "/fapi/v1/depth",
     "funding_rate": "/fapi/v1/fundingRate",
     "open_interest": "/fapi/v1/openInterest",
+    "mark_index_price": "/fapi/v1/premiumIndex",
     "open_interest_hist": "/futures/data/openInterestHist",
     "global_long_short_account_ratio": "/futures/data/globalLongShortAccountRatio",
     "top_long_short_account_ratio": "/futures/data/topLongShortAccountRatio",
@@ -176,6 +177,17 @@ def fetch_depth(symbol: str, limit: int = 5, **kwargs) -> dict[str, Any]:
 def fetch_open_interest(symbol: str, **kwargs) -> dict[str, Any]:
     params = {"symbol": symbol.upper().strip()}
     return _wrap("open_interest", _public_get("open_interest", params, **kwargs), symbol=symbol)
+
+
+def fetch_mark_index_price(symbol: str, **kwargs) -> dict[str, Any]:
+    """Fetch the exact USD-M mark/index reference snapshot for one symbol."""
+
+    params = {"symbol": symbol.upper().strip()}
+    return _wrap(
+        "mark_index_price",
+        _public_get("mark_index_price", params, **kwargs),
+        symbol=symbol,
+    )
 
 
 def fetch_metric_history(

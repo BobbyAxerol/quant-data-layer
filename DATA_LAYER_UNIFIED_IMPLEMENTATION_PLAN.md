@@ -13983,7 +13983,7 @@ its stated exit gate, records exact evidence in this journal, runs
 container, image, topic, consumer group, deployment topology, authority change
 or consumer route is created merely for a retry or test.
 
-**10.4-A - Contract foundation (`APPROVED / IN PROGRESS / SOURCE-ONLY`):**
+**10.4-A - Contract foundation (`COMPLETE / SOURCE-ONLY / RUNTIME UNCHANGED`):**
 
 - **Allowed scope:** additive protobuf/query contracts, their Buf-generated
   Python/Rust artifacts, SDK/API mappings, canonical payload validation and
@@ -14003,7 +14003,41 @@ or consumer route is created merely for a retry or test.
 - **Rollback:** revert only the additive source commit before any runtime
   packet; public V1 endpoints and current V2 realtime route remain unchanged.
 
-**10.4-B - Reference-data batch (`PENDING / REQUIRES 10.4-A EXIT`):**
+**10.4-B - Reference-data batch (`COMPLETE / SOURCE-ONLY / RUNTIME UNCHANGED`):**
+
+- **Approval and boundary (2026-08-25):** 10.4-A exited in commit
+  `7b5f222`. This completed slice implements only a provider-neutral reference
+  batch core and thin, injected Binance USD-M/OKX Swap adapters. Governing
+  detail remains the metric/lineage rules in
+  `upgrade/quant-data-layer-fund-grade-upgrade-architecture.md` and the OKX
+  endpoint/unit rules in `upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md`.
+  It neither exposes a V2 endpoint nor starts, recreates or reconfigures any
+  runtime role.
+- **Implementation invariants:** callers identify an instrument through the
+  versioned registry record, never an unscoped symbol string; every cache and
+  coalescing key includes provider, product, instrument revision and complete
+  request selector; each result preserves its own provider identity,
+  capability, lineage, observed time and freshness. `MISSING`,
+  `UNAVAILABLE` and retry-exhausted `ERROR` are explicit states and no numeric
+  field is substituted with `0`. Binance-only products remain unavailable on
+  OKX; OKX basis remains explicitly `DERIVED_ONLY` rather than pretending a
+  provider-native series exists. No request is silently redirected across a
+  dated contract, a continuous selector or another instrument.
+- **Bounded verification plan:** deterministic fixture tests cover provider
+  pagination/overlap/dedup, retry exhaustion, missing values, units/intervals,
+  per-instrument concurrent isolation, coalescing and dated/continuous
+  selectors. After source tests pass, a small read-only public-provider check
+  uses the declared Binance USD-M `BTCUSDT`/`ETHUSDT` and OKX Swap
+  `BTC-USDT-SWAP`/`ETH-USDT-SWAP` selector set. This is a bounded
+  multi-symbol adapter certification, not a claim that all operational demand
+  is cut over. Evidence records only endpoint, item count, timestamps and a
+  semantic digest, never raw market bytes. Failure or provider unavailability
+  remains an honest failed/partial gate, not a synthetic success.
+- **Rollback and decision boundary:** this is unadvertised source only. A
+  revert removes the new classes/tests with no runtime rollback. L2 state,
+  durable publication, V2 query/stream integration, service/image work,
+  manifest/consumer routing, alpha execution and any authority change are
+  excluded and require their later scoped approval.
 
 - **Allowed scope:** one provider-neutral, bounded Binance USD-M/OKX Swap
   reference-data interface for funding, OI, long/short, taker flow,
@@ -14023,6 +14057,66 @@ or consumer route is created merely for a retry or test.
   integration, service recreate, manifest routing and alpha execution.
 - **Rollback:** remove the new capability from a later manifest/config only;
   retain the existing V1/reference paths and do not delete history.
+
+**Phase 10.4-B reference-data completion - 2026-08-25
+(`PASS / SOURCE-ONLY / RUNTIME UNCHANGED`):**
+
+- **Implemented boundary:** added one injected, provider-neutral
+  `ReferenceBatch` with bounded concurrency, per-request in-flight coalescing
+  and bounded in-memory TTL/LRU cache. Requests are anchored to a versioned
+  `InstrumentRecord`; cache keys include venue/market, instrument UID/revision,
+  native identity and the complete product selector. It has no route, stream,
+  durable cache, Kafka/Redis/SQLite or manifest/consumer wiring.
+- **Provider edges:** Binance USD-M reuses the established derivatives wrappers
+  for funding, current/historical OI, global/top long-short, taker flow,
+  mark/index, instrument metadata and provider basis. It adds bounded forward
+  pagination, overlap deduplication and no-progress/conflicting-row failure.
+  OKX Swap reuses its established REST/history client for funding, current OI,
+  mark/index and instrument metadata. Its unavailable long-short/taker products
+  and `DERIVED_ONLY` basis remain `UNAVAILABLE`; no Binance-shaped substitute
+  or cross-venue value is fabricated.
+- **Domain correctness:** exact `CanonicalDecimal.source_text` and explicit
+  units are preserved. Provider malformed decimal text, mismatched symbol/pair,
+  duplicate/conflicting timestamp or invalid pagination maps to
+  `PROVIDER_PROTOCOL`; bounded retry exhaustion maps to
+  `PROVIDER_RETRY_EXHAUSTED`; empty successful responses map to `MISSING`.
+  Neither missing nor unavailable values contain an observation or numeric zero.
+  Provider-native/continuous basis stays bound to the declared contract
+  selector; a dated future cannot claim a perpetual/continuous pair series.
+- **Tests actually run:**
+  - source AST parse of the six new/changed B modules and `git diff --check`
+    passed;
+  - isolated immutable `qdl-v2-python:2.0.0-e0bedff`, source mounted read-only,
+    network disabled, dropped capabilities and bounded CPU/RAM: the B unit and
+    dependent Binance/OKX suites passed `30/30`;
+  - the wider isolated regression passed `65/65`:
+    Phase 10.4 contract, SDK/stream projection, security, universal-demand,
+    Binance derivatives and OKX history suites. The first invocation reported
+    eight `TemporaryDirectory` harness errors because a read-only container had
+    no `/tmp`; it was rerun unchanged with only an ephemeral `/tmp` tmpfs and
+    then passed. This was not a source or domain failure;
+  - bounded read-only public-provider smoke over 48 hours passed with `23 OK`,
+    `3 expected UNAVAILABLE`, `0 ERROR`: Binance USD-M BTCUSDT/ETHUSDT funding
+    (6 each), current OI (1 each), OI/long-short history (48 each), taker flow
+    (47 each), mark/index and metadata (1 each), plus BTC current-quarter
+    continuous basis (48); OKX Swap BTC-USDT-SWAP/ETH-USDT-SWAP funding (6
+    each), current OI (1 each), mark/index (2 each) and metadata (1 each).
+    OKX long-short, taker flow and native basis correctly returned
+    `CAPABILITY_UNAVAILABLE` without a provider call. Output retained only
+    endpoint, count, timestamp bounds and semantic SHA-256, never raw bytes.
+- **In-scope correction before exit:** a first public smoke surfaced a Binance
+  basis protocol result. Structural inspection printed only the provider row
+  key set and showed official `annualizedBasisRate`; the mapper and fixture
+  were corrected from the obsolete `annualizedBasis` spelling. The final smoke
+  above contains no error result.
+- **Runtime/cleanup:** all tests used `docker run --rm`; source mounts were
+  read-only and scratch space was a disposable tmpfs. The public smoke made
+  read-only provider calls only. No service/image build, runtime container,
+  Kafka topic/offset, Redis key, SQLite file, provider payload, V1/V2 route,
+  consumer, authority or alpha execution state changed.
+- **Exit/rollback:** 10.4-B exits as unadvertised source-only capability.
+  Revert this coherent commit to remove it; no operational rollback is needed.
+  10.4-C remains separately pending and requires explicit approval.
 
 **10.4-C - Rust L2 book core (`PENDING / REQUIRES 10.4-B EXIT`):**
 
@@ -14067,13 +14161,10 @@ or consumer route is created merely for a retry or test.
 - **Rollback:** remove only affected advertised capabilities in a later
   manifest; V1/reference fallback remains available.
 
-**Phase 10.4 decision boundary:** the Buf-generation approval already used is
-not approval for any scope after 10.4-A. The operator approved 10.4-A on
-2026-08-25 only: source and isolated verification of the stated contract
-foundation. 10.4-B, 10.4-C and 10.4-D still require their own explicit
-approval. A failed gate is fixed only when necessary for 10.4-A’s stated exit
-condition; a newly found architecture concern is reported and stops the scope
-rather than expanding it.
+**Phase 10.4 decision boundary:** 10.4-A and 10.4-B are complete as separate,
+source-only commits. Neither completion approves 10.4-C or 10.4-D. A failed
+gate is fixed only when necessary for its approved slice exit condition; a new
+architecture concern is reported and stops the slice rather than expanding it.
 
 ### 21.8 Phase 10.5 - Consumer Cutover, Certification And Stable V2 Release
 

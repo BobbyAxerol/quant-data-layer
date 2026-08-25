@@ -1,0 +1,31 @@
+{
+  "provenance": "TEST_ONLY_SYNTHETIC_PROVIDER_BYTES",
+  "BTCUSDT": {
+    "100": [
+      {"symbol": "BTCUSDT", "fundingRate": "0.00010000", "markPrice": "60000.10", "fundingTime": "100"},
+      {"symbol": "BTCUSDT", "fundingRate": "0.00020000", "markPrice": "60001.20", "fundingTime": "200"}
+    ],
+    "201": [
+      {"symbol": "BTCUSDT", "fundingRate": "0.00020000", "markPrice": "60001.20", "fundingTime": "200"},
+      {"symbol": "BTCUSDT", "fundingRate": "0.00030000", "markPrice": "60002.30", "fundingTime": "300"}
+    ],
+    "301": [
+      {"symbol": "BTCUSDT", "fundingRate": "0.00030000", "markPrice": "60002.30", "fundingTime": "300"},
+      {"symbol": "BTCUSDT", "fundingRate": "0.00040000", "markPrice": "60003.40", "fundingTime": "400"}
+    ]
+  },
+  "ETHUSDT": {
+    "100": [
+      {"symbol": "ETHUSDT", "fundingRate": "0.00011000", "markPrice": "3000.10", "fundingTime": "100"},
+      {"symbol": "ETHUSDT", "fundingRate": "0.00021000", "markPrice": "3001.20", "fundingTime": "200"}
+    ],
+    "201": [
+      {"symbol": "ETHUSDT", "fundingRate": "0.00021000", "markPrice": "3001.20", "fundingTime": "200"},
+      {"symbol": "ETHUSDT", "fundingRate": "0.00031000", "markPrice": "3002.30", "fundingTime": "300"}
+    ],
+    "301": [
+      {"symbol": "ETHUSDT", "fundingRate": "0.00031000", "markPrice": "3002.30", "fundingTime": "300"},
+      {"symbol": "ETHUSDT", "fundingRate": "0.00041000", "markPrice": "3003.40", "fundingTime": "400"}
+    ]
+  }
+}

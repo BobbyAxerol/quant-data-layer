@@ -44,9 +44,11 @@ from qdl.adapters.okx.bar_edge import (
     fetch_closed_bar_history_raw_envelopes,
     fetch_latest_closed_bar_raw_envelope,
 )
+from qdl.adapters.okx.reference import OkxSwapReferenceAdapter
 
 __all__ += [
     "OkxBarRawBinding",
     "fetch_closed_bar_history_raw_envelopes",
     "fetch_latest_closed_bar_raw_envelope",
+    "OkxSwapReferenceAdapter",
 ]

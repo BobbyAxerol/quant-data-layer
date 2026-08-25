@@ -70,6 +70,19 @@ class TestBinanceDerivativesContract(unittest.TestCase):
         self.assertEqual(calls["count"], 2)
         self.assertEqual(payload["data"]["openInterest"], "10")
 
+    def test_mark_index_snapshot_uses_official_premium_index_endpoint(self):
+        def fake_get(url, params=None, headers=None, timeout=None):
+            self.assertTrue(url.endswith("/fapi/v1/premiumIndex"))
+            self.assertEqual(params["symbol"], "BTCUSDT")
+            return FakeResponse(payload={"symbol": "BTCUSDT", "markPrice": "1", "indexPrice": "0.9", "time": 1})
+
+        payload = derivatives.fetch_mark_index_price(
+            "btcusdt", http_get=fake_get, max_attempts=1
+        )
+
+        self.assertEqual(payload["endpoint"], "mark_index_price")
+        self.assertEqual(payload["data"]["markPrice"], "1")
+
     def test_non_retryable_status_raises_provider_error(self):
         def fake_get(url, params=None, headers=None, timeout=None):
             return FakeResponse(status_code=400, text="bad request")
