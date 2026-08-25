@@ -13339,6 +13339,21 @@ CUTOVER PENDING`).**
   authority; the next permitted operation remains the one approved
   `market_data_service` recreate followed by the existing Phase 10.3
   acceptance gates.
+- **Sealed handoff consequence:** the external consumer override is part of
+  the packet-bound route lock. Its corrected SHA-256 is now
+  `c7f19b98f8c987042ba681da4f089169e3c5db5c75a1ba00aa23a44dd59c7aea`, so
+  the old packet cannot truthfully authorize its use. Refresh the existing
+  lock and generate one fresh packet; per the approved runtime-bundle rule,
+  rolling-recreate the same fixed thirteen V2 roles once with the new bundle.
+  This is not topology growth, image creation, broker mutation or a new
+  approval surface. The one `market_data_service` recreate then uses the
+  packet-matching external override.
+- **Lock-refresh source gate passed:** `git diff --check` and host
+  `py_compile` passed; the immutable, read-only/no-network
+  `qdl-v2-python:2.0.0-7b7388348615` Phase 10.3 packet/handoff suite passed
+  `35/35`. The current checked Trading System override independently hashes to
+  the sealed `c7f19b...59c7aea` value. No runtime state changed in this source
+  gate.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 

@@ -66,7 +66,7 @@ route_manifest:
       fallback: BLOCK
 compose_override:
   path: docker-compose.data-layer-v2-primary.yml
-  sha256: 68e1ae602216063e4468d4354af3e57e4ead8ae6984b661e8b83cd576835478e
+  sha256: c7f19b98f8c987042ba681da4f089169e3c5db5c75a1ba00aa23a44dd59c7aea
   binance_symbols:
     - BTCUSDT
     - ETHUSDT
