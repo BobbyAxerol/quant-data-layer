@@ -1116,6 +1116,17 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 services[name]["networks"]["stable_consumer"]["aliases"],
                 [alias],
             )
+        for name in ("query_v2_1", "query_v2_2"):
+            with self.subTest(pass_through_query_role=name):
+                self.assertEqual(
+                    services[name]["environment"]["QDL_STABLE_PASS_THROUGH_ENABLED"],
+                    "true",
+                )
+        for name in ("stream_v2_active", "stream_v2_passive"):
+            with self.subTest(pass_through_stream_role=name):
+                self.assertNotIn(
+                    "QDL_STABLE_PASS_THROUGH_ENABLED", services[name]["environment"]
+                )
         self.assertEqual(
             compose["networks"]["stable_consumer"],
             {

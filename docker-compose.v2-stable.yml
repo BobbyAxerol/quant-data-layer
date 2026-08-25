@@ -250,6 +250,9 @@ services:
       QDL_STABLE_CONSUMER_GROUP: stable-query-1
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
+      # Phase 10.3 permits explicit alpha BAR fresh-snapshot warmups only.
+      # It does not grant a replayable stream or execution authority.
+      QDL_STABLE_PASS_THROUGH_ENABLED: "true"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-1-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
@@ -271,6 +274,8 @@ services:
       QDL_STABLE_CONSUMER_GROUP: stable-query-2
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
+      # Keep both query replicas on the same declared history capability.
+      QDL_STABLE_PASS_THROUGH_ENABLED: "true"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-2-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt

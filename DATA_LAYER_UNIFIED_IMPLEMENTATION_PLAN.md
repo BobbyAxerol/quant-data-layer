@@ -13629,6 +13629,69 @@ CUTOVER PENDING`).**
   already-approved fixed 13-role packet and its no-order receipt; Phase 10.4
   remains out of scope.
 
+**Phase 10.3 final packet preflight - 2026-08-25
+(`REVIEW PASS / APPROVED BOUNDED APPLY PENDING`):**
+
+- Built the single required replacement Python artifact from source commit
+  `e0bedffad983f4d8efb8d3cecfb9dcd4d557db9d`:
+  `qdl-v2-python:2.0.0-e0bedff` /
+  `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`.
+  The existing Rust primary artifact remains unchanged:
+  `sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`.
+- The new sealed, 30-minute review packet is
+  `d1a485a6dc0c1d6d77b12437a45f86b0834adf49479dc69a09b83011d98cb167` at
+  `/home/bobby/.local/state/qdl-v2/phase103-shared-primary-e0bedff-20260825T051321Z/`.
+  Offline validator passed with runtime-bundle digest
+  `0207a12af7a57c75eb6d61beb2d6e307b972fede57cbe3c9b030700bbddf3b67`,
+  `RUST_PRIMARY`, config revision `phase103-shared-primary-r1`, and the sealed
+  Trading System route-lock digest
+  `3b5ee12169c39e5059dcefcb87898df1a19f3c73ce8483b7d7d3650e9c63c99e`.
+- **Approved bounded apply:** create-or-verify only the sealed realtime topic
+  and ACLs, then rolling-recreate exactly `ingestor_binance_usdm`,
+  `ingestor_okx_swap`, `binance_bar_edge`, three `rust_core`, three
+  `projector_v2`, two query and two stream roles. Kafka offsets, Redis,
+  SQLite, V1, VN, Trading System, alpha configuration and all order paths stay
+  unchanged. Rollback is stop only those same 13 V2 roles; V1 remains the
+  existing route.
+- **Pre-apply gates still running:** review-only broker allowlist, Compose
+  render against the certificate generation mounted by Kafka, then apply the
+  existing packet once. Any failure stops before the next service command.
+
+**Phase 10.3 query pass-through wiring correction - 2026-08-25
+(`IN PROGRESS / TWO-QUERY-REPLICA RECREATE ONLY`):**
+
+- The approved packet broker scope and the fixed 13-role rolling handoff have
+  completed; the BAR edge loaded the four real 1,000-row Binance/OKX warmups
+  and all named V2 roles remained running. The no-order receipt then failed on
+  the first declared alpha `BAR 15m` fresh-snapshot product.
+- **Root cause, reproduced through one authenticated read-only V2 request:**
+  both query replicas omitted `QDL_STABLE_PASS_THROUGH_ENABLED`. The runtime
+  therefore built the intentionally spool-only query stack; a manifest product
+  explicitly declared as `FRESH_SNAPSHOT` reached its unbound 15m path and the
+  bounded executor returned the generic fail-closed internal error. The exact
+  provider adapter, same requirement and same query container independently
+  returned 500 final Binance rows, so this is neither a provider, data-gap,
+  Rust, Kafka, Redis nor network defect.
+- **Approved minimal correction:** set that flag to `true` only on
+  `query_v2_1` and `query_v2_2`. Stream remains deliberately disabled for the
+  non-replayable pass-through product; it is not an execution source. Add a
+  compose regression proving both query replicas carry the flag and both stream
+  replicas do not. Test/configure, then rolling-recreate those two query
+  replicas only; no image build, topic/ACL/offset action, Redis/SQLite action,
+  V1, Trading System, alpha, order or other V2 service change is permitted.
+- **Close gates remain unchanged:** exact 15m read on both replicas must be
+  full/final/reference/non-replayable, followed by the existing all-18-product
+  no-order receipt, signed durable cursor resume, V1 fallback drill and bounded
+  post-recreate health/log observation. Failure rolls back by removing the
+  flag and stopping only the same two query replicas; it never resets state.
+- **Source/config gate passed:** `git diff --check` passed. In the immutable
+  `qdl-v2-python:2.0.0-e0bedff` image with source mounted read-only and
+  network disabled, the focused compose/pass-through/Phase 10.3 contract suite
+  passed `42/42`; its expected CLI-negative and bounded-DNSE diagnostic lines
+  were asserted paths. A Compose render using the exact active certificate env
+  plus packet image/runtime coordinates passed and showed the flag only on both
+  query replicas. No runtime or durable state changed in this gate.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,
