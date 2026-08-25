@@ -88,53 +88,60 @@ class StableBinanceBarEdge:
             (source_by_id[item.binding_id], item)
             for item in acquisition.bindings
         )
-        self.bindings = tuple(
+        # Every enabled Binance/OKX final-BAR demand needs a bounded history
+        # bootstrap before it can satisfy a durable warmup.  The live transport
+        # is deliberately irrelevant here: a Rust-native candle stream owns
+        # live OKX BARs, while this Python edge obtains only the provider's
+        # closed historical window and publishes it through the same raw topic.
+        self.history_bindings = tuple(
             pair
             for pair in pairs
             if (
                 pair[1].enabled
-                and pair[1].mode == "PYTHON_REST"
                 and pair[1].runtime == "BINANCE"
                 and pair[0].feed.value == "BAR"
             )
         )
-        self.okx_bindings = tuple(
+        self.history_okx_bindings = tuple(
             pair
             for pair in pairs
             if (
                 pair[1].enabled
-                and pair[1].mode == "PYTHON_REST"
                 and pair[1].runtime == "OKX"
                 and pair[0].feed.value == "BAR"
             )
         )
+        # Only explicitly configured REST bindings are polled after bootstrap.
+        # Native websocket BARs stay owned by their Rust acquisition lane.
+        self.bindings = tuple(
+            pair for pair in self.history_bindings if pair[1].mode == "PYTHON_REST"
+        )
+        self.okx_bindings = tuple(
+            pair for pair in self.history_okx_bindings if pair[1].mode == "PYTHON_REST"
+        )
         # Demand decides which venues and markets exist, so this edge must not
-        # assert a fixed market-family set. It asserts instead that it owns every
-        # REST BAR binding the deployment configured: a config that silently drops
-        # one, or that introduces a runtime this edge cannot serve, fails closed.
-        expected = {
+        # assert a fixed market-family set. It owns every enabled crypto BAR
+        # bootstrap and only the explicit REST subset for recurring polling.
+        expected_history = {
             source.binding_id
             for source, acquisition in pairs
             if acquisition.enabled
-            and acquisition.mode == "PYTHON_REST"
+            and acquisition.runtime in {"BINANCE", "OKX"}
             and source.feed.value == "BAR"
         }
-        owned = {
+        history_owned = {
             source.binding_id
-            for source, _acquisition in self.bindings + self.okx_bindings
+            for source, _acquisition in self.history_bindings + self.history_okx_bindings
         }
-        if owned != expected:
+        if history_owned != expected_history:
             raise ValueError(
-                "stable crypto BAR edge does not serve every configured REST BAR "
-                "binding: " + ",".join(sorted(expected - owned))
+                "stable crypto BAR edge does not bootstrap every configured BAR "
+                "binding: " + ",".join(sorted(expected_history - history_owned))
             )
         validate_shared_authority_record(authority)
-        # Rust-native BAR feeds are the Phase 10.3 primary path. Keep this
-        # legacy edge constructible for an explicitly configured REST fallback,
-        # but do not create a synthetic polling workload when the resolved
-        # manifest contains no REST BAR binding.
-        self._rest_fallback_active = bool(expected)
-        if self._rest_fallback_active:
+        self._history_bootstrap_active = bool(expected_history)
+        self._rest_fallback_active = bool(self.bindings or self.okx_bindings)
+        if self._history_bootstrap_active:
             self._restore_state()
         else:
             self._history_bootstrapped = True
@@ -143,16 +150,17 @@ class StableBinanceBarEdge:
     def _binding_ids(self) -> tuple[str, ...]:
         return tuple(sorted(
             source.binding_id
-            for source, _acquisition in self.bindings + self.okx_bindings
+            for source, _acquisition in self.history_bindings + self.history_okx_bindings
         ))
 
     def _state_payload(self) -> dict:
         return {
-            "schema": "qdl.stable-bar-edge-state.v1",
+            "schema": "qdl.stable-bar-edge-state.v2",
             "slice_id": str(self.authority.get("slice_id", "")),
             "authority_revision": int(self.authority["revision"]),
             "catalog_revision": int(self.catalog.catalog_revision),
             "acquisition_revision": int(self.acquisition.revision),
+            "warmup_rows": self.warmup_rows,
             "binding_ids": list(self._binding_ids),
             "last_open_ms": {
                 key: self._last_open_ms[key] for key in sorted(self._last_open_ms)
@@ -168,13 +176,13 @@ class StableBinanceBarEdge:
             raise RuntimeError("stable BAR checkpoint is unreadable") from error
         if not isinstance(payload, dict) or set(payload) != {
             "schema", "slice_id", "authority_revision", "catalog_revision",
-            "acquisition_revision", "binding_ids", "last_open_ms",
+            "acquisition_revision", "warmup_rows", "binding_ids", "last_open_ms",
         }:
             raise RuntimeError("stable BAR checkpoint fields are invalid")
         expected = self._state_payload()
         for field in (
             "schema", "slice_id", "authority_revision", "catalog_revision",
-            "acquisition_revision", "binding_ids",
+            "acquisition_revision", "warmup_rows", "binding_ids",
         ):
             if payload[field] != expected[field]:
                 raise RuntimeError(
@@ -188,7 +196,7 @@ class StableBinanceBarEdge:
         restored: dict[str, int] = {}
         sources = {
             source.binding_id: source
-            for source, _acquisition in self.bindings + self.okx_bindings
+            for source, _acquisition in self.history_bindings + self.history_okx_bindings
         }
         for binding_id, value in last_open_ms.items():
             if (
@@ -334,13 +342,13 @@ class StableBinanceBarEdge:
         )
 
     def bootstrap_history(self) -> int:
-        if not self._rest_fallback_active:
+        if not self._history_bootstrap_active:
             return 0
         if self._history_bootstrapped:
             return 0
         observed_ms = self._settled_observed_ms()
         published = 0
-        for source, acquisition in self.bindings:
+        for source, acquisition in self.history_bindings:
             if source.binding_id in self._last_open_ms:
                 continue
             published += self._publish_history(
@@ -354,7 +362,7 @@ class StableBinanceBarEdge:
                     test_provenance=False,
                 ),
             )
-        for source, acquisition in self.okx_bindings:
+        for source, acquisition in self.history_okx_bindings:
             if source.binding_id in self._last_open_ms:
                 continue
             published += self._publish_history(
@@ -374,7 +382,7 @@ class StableBinanceBarEdge:
             raise RuntimeError("stable BAR bootstrap did not checkpoint every binding")
         logger.info(
             "stable multi-venue BAR bootstrap complete bindings=%s rows=%s",
-            len(self.bindings) + len(self.okx_bindings),
+            len(self.history_bindings) + len(self.history_okx_bindings),
             published,
         )
         return published
@@ -507,8 +515,8 @@ class StableBinanceBarEdge:
         return len(acknowledgements)
 
     def run_forever(self) -> None:
-        if not self._rest_fallback_active:
-            logger.info("stable crypto BAR REST edge idle; Rust native BAR owns the active demand")
+        if not self._history_bootstrap_active:
+            logger.info("stable crypto BAR edge idle; no enabled crypto BAR demand")
             while not self._stopped.wait(60.0):
                 pass
             return
@@ -523,7 +531,8 @@ class StableBinanceBarEdge:
                 continue
             try:
                 self.bootstrap_history()
-                self.run_cycle()
+                if self._rest_fallback_active:
+                    self.run_cycle()
                 failures = 0
             except Exception:
                 failures += 1
@@ -531,10 +540,13 @@ class StableBinanceBarEdge:
                     "stable crypto BAR cycle failed consecutive_failures=%s", failures
                 )
             now = self.clock()
-            next_boundary = (
-                (int(now) // 60 + 1) * 60 + self.settlement_delay_seconds
-            )
-            delay = max(0.25, next_boundary - now)
+            if self._rest_fallback_active:
+                next_boundary = (
+                    (int(now) // 60 + 1) * 60 + self.settlement_delay_seconds
+                )
+                delay = max(0.25, next_boundary - now)
+            else:
+                delay = 60.0
             if failures:
                 delay = min(delay, min(2 ** min(failures, 6), 30))
             self._stopped.wait(delay)

@@ -180,7 +180,11 @@ class StableSpoolQueryBackend:
             return None
         gap_open = bool(self._gaps(binding, records))
         items = self._items(requirement, records, gap_open=gap_open)
-        last = records[-1]
+        # Logical offsets are append order, not market chronology. A bounded
+        # provider backfill may legitimately append older final bars after live
+        # ones, so the handoff cursor must fence the greatest durable offset
+        # while the returned BAR window stays ordered by open time.
+        last = max(records, key=lambda item: item.cursor.offset)
         snapshot_hash = hashlib.sha256(
             f"{last.cursor.stream}|{last.cursor.partition_key}|{last.cursor.offset}|"
             f"{last.event.event_id.hex()}".encode()
@@ -306,6 +310,13 @@ class StableSpoolQueryBackend:
             self.catalog.binding_for_envelope(envelope)
             if binding.feed is not FeedType.BAR or envelope.bar.interval == binding.interval:
                 selected.append(row)
+        if binding.feed is FeedType.BAR:
+            selected.sort(key=lambda item: (
+                market_data_pb2.EventEnvelope.FromString(
+                    item.event.payload
+                ).bar.open_time_ns,
+                item.cursor.offset,
+            ))
         return tuple(selected)
 
     def _items(

@@ -380,6 +380,57 @@ class StableQueryContractTests(unittest.TestCase):
         self.assertIsNotNone(history)
         self.assertEqual(history.data_as_of_ns, event.bar.close_time_ns)
 
+    def test_late_bar_backfill_keeps_market_order_and_fences_max_offset(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        newer = _stable_event(
+            self.catalog, "binance_usdm_rest_bar.json", binding.binding_id
+        )
+        newer.event_id = hashlib.sha256(b"phase103-newer-bar").digest()[:16]
+        newer.raw_capture_id = hashlib.sha256(b"phase103-newer-raw").digest()[:16]
+
+        older = market_data_pb2.EventEnvelope()
+        older.CopyFrom(newer)
+        interval_ns = 60_000_000_000
+        older.event_id = hashlib.sha256(b"phase103-older-bar").digest()[:16]
+        older.raw_capture_id = hashlib.sha256(b"phase103-older-raw").digest()[:16]
+        older.bar.open_time_ns -= interval_ns
+        older.bar.close_time_ns -= interval_ns
+        older.source_event_time_ns -= interval_ns
+        older.received_at_ns -= interval_ns
+        older.normalized_at_ns -= interval_ns
+        older.published_at_ns -= interval_ns
+        older.source_sequence = "phase103-late-history"
+        older.partition_sequence += 1
+        older.correlation_id = "phase103-late-history"
+
+        # A real provider history bootstrap may reach durable storage after a
+        # newer live BAR. Append order must fence replay, not reorder market time.
+        self.assertEqual(_append(self.spool, self.catalog, newer).cursor.offset, 1)
+        self.assertEqual(_append(self.spool, self.catalog, older).cursor.offset, 2)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: newer.bar.close_time_ns + 1_000_000,
+        )
+
+        history = backend.history(_requirement(binding, warmup=2))
+        self.assertIsNotNone(history)
+        self.assertEqual(
+            [item.payload["open_time_ns"] for item in history.items],
+            [older.bar.open_time_ns, newer.bar.open_time_ns],
+        )
+        self.assertEqual(history.watermark_offset, 2)
+        self.assertEqual(history.data_as_of_ns, newer.bar.close_time_ns)
+        self.assertEqual(
+            backend.latest(_requirement(binding)).payload["open_time_ns"],
+            newer.bar.open_time_ns,
+        )
+
     def test_vn_time_range_accepts_lunch_break_but_rejects_missing_session_bar(self):
         binding = next(
             item

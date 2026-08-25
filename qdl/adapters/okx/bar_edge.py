@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from qdl.adapters.intervals import (
     canonical_interval_ms,
+    latest_closed_boundary_ms,
     okx_bar_size,
     okx_candle_channel,
 )
@@ -77,16 +78,13 @@ async def fetch_closed_bar_history_raw_envelopes(
         raise ValueError("OKX history limit must be between 1 and 10000")
     observed_ms = int(now_ms if now_ms is not None else time.time() * 1000)
     interval_ms = canonical_interval_ms(binding.interval)
-    # The venue owns its own bar anchor. A daily bar starts at UTC midnight,
-    # which epoch arithmetic reproduces, but a multi-day or weekly bar is
-    # anchored to a calendar weekday the epoch does not share, so computing a
-    # start from `now // interval * interval` would request a window the venue
-    # never emits. Ask for a generous range instead and let the provider decide
-    # where its boundaries fall, then verify the properties that actually
-    # matter: exactly the requested number of consecutive closed bars, spaced by
-    # exactly one interval.
-    end_ms = observed_ms
-    start_ms = observed_ms - (limit + 2) * interval_ms
+    # `now_ms` is an exclusive closed-bar boundary.  OKX history includes its
+    # end boundary, so passing it through would repeat the oldest bar on the
+    # next paged request. Keep the provider end just before that boundary;
+    # provider-native rows still decide the exact calendar anchor and are
+    # validated for continuity below.
+    end_ms = latest_closed_boundary_ms(binding.interval, observed_ms) - 1
+    start_ms = end_ms - (limit + 2) * interval_ms
     client = history_client or OkxHistoricalClient(OkxRestClient())
     history = await client.candles(
         inst_id=binding.native_symbol,

@@ -145,6 +145,31 @@ class BarHistoryAdapterTests(unittest.TestCase):
                 sleep=lambda _seconds: None,
             )
 
+    def test_binance_max_window_excludes_the_open_candle_at_provider_boundary(self):
+        interval_ms = 60_000
+        observed_ms = 1_002 * interval_ms + 12_345
+        last_closed_open = 1_001 * interval_ms
+        rows = [
+            _binance_row(last_closed_open - (999 - index) * interval_ms)
+            for index in range(1_000)
+        ]
+        calls = []
+
+        def fetcher(*_args, **kwargs):
+            calls.append(kwargs)
+            return {"data": rows}
+
+        values = fetch_binance_history(
+            _binance_binding(),
+            limit=1_000,
+            now_ms=observed_ms,
+            fetcher=fetcher,
+            sleep=lambda _seconds: None,
+        )
+        self.assertEqual(len(values), 1_000)
+        self.assertEqual(calls[0]["limit"], 1_000)
+        self.assertEqual(calls[0]["end_time"], 1_002 * interval_ms - 1)
+
     def test_okx_history_preserves_confirmed_native_rows_and_rejects_partial(self):
         start = 60_000
         records = tuple(
@@ -217,6 +242,53 @@ class BarHistoryAdapterTests(unittest.TestCase):
                 history_client=Partial(),
             ))
 
+    def test_okx_history_uses_an_exclusive_provider_page_boundary(self):
+        records = tuple(
+            OkxCandle(
+                inst_id="BTC-USDT-SWAP",
+                bar="1m",
+                price_type="TRADE",
+                open_ts_ms=300_000 + index * 60_000,
+                open="100",
+                high="101",
+                low="99",
+                close="100.5",
+                volume_raw="10",
+                volume_ccy_raw="0.1",
+                volume_quote_raw="1005",
+                confirmed=True,
+            )
+            for index in range(3)
+        )
+        coverage = HistoryCoverage(
+            requested_start_ms=299_999,
+            requested_end_ms=599_999,
+            observed_min_ts_ms=300_000,
+            observed_max_ts_ms=420_000,
+            complete_left=True,
+            complete_right=True,
+            truncated=False,
+            terminal_reason="REACHED_REQUEST_START",
+            provider_endpoint="/api/v5/market/history-candles",
+        )
+
+        class Client:
+            calls = []
+
+            async def candles(self, **kwargs):
+                self.calls.append(kwargs)
+                return OkxCandleHistory(records, coverage)
+
+        client = Client()
+        asyncio.run(fetch_okx_history(
+            _okx_binding(),
+            limit=3,
+            now_ms=600_000,
+            history_client=client,
+        ))
+        self.assertEqual(client.calls[0]["end_ms"], 599_999)
+        self.assertEqual(client.calls[0]["start_ms"], 299_999)
+
     def test_okx_latest_closed_bar_retries_provisional_provider_state(self):
         sentinel = object()
         sleeps = []
@@ -267,10 +339,10 @@ class StableBarBootstrapTests(unittest.TestCase):
         self.catalog_path = ROOT / "config/v2/stable-source-bindings.yaml"
         self.acquisition_path = ROOT / "config/v2/stable-acquisition-bindings.yaml"
         self.catalog = StableSourceCatalog.load(self.catalog_path)
-        self.acquisition = StableAcquisitionPlan.load(
+        self.native_acquisition = StableAcquisitionPlan.load(
             self.acquisition_path, catalog=self.catalog
         )
-        self.acquisition = _legacy_rest_bar_fallback(self.acquisition)
+        self.acquisition = _legacy_rest_bar_fallback(self.native_acquisition)
         self.authority = stable_authority_record(
             rust_image_digest="a" * 64,
             capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
@@ -322,6 +394,99 @@ class StableBarBootstrapTests(unittest.TestCase):
         self.assertEqual(len(edge._last_open_ms), expected_bindings)
         self.assertTrue(edge._history_bootstrapped)
 
+    def test_history_bootstrap_covers_native_okx_bars_without_polling_them(self):
+        class Envelope:
+            def __init__(self, venue: str, open_time: int):
+                payload = (
+                    {"row": _binance_row(open_time)}
+                    if venue == "BINANCE"
+                    else {"data": [[str(open_time), "1", "1", "1", "1", "1", "1", "1", "1"]]}
+                )
+                self.raw_frame_bytes = json.dumps(payload).encode()
+
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return tuple(range(len(batch)))
+
+        edge = StableBinanceBarEdge(
+            catalog=self.catalog,
+            acquisition=self.native_acquisition,
+            authority=self.authority,
+            publisher=Publisher(),
+            warmup_rows=2,
+            clock=lambda: 180.0,
+        )
+        history_ids = {
+            source.binding_id
+            for source, _acquisition in edge.history_bindings + edge.history_okx_bindings
+        }
+        poll_ids = {
+            source.binding_id
+            for source, _acquisition in edge.bindings + edge.okx_bindings
+        }
+        self.assertEqual(
+            history_ids,
+            {
+                item.binding_id
+                for item in self.native_acquisition.bindings
+                if item.enabled
+                and item.runtime in {"BINANCE", "OKX"}
+                and next(
+                    source for source in self.catalog.bindings
+                    if source.binding_id == item.binding_id
+                ).feed.value == "BAR"
+            },
+        )
+        self.assertTrue(any(value.startswith("okx-swap-") for value in history_ids))
+        self.assertFalse(any(value.startswith("okx-swap-") for value in poll_ids))
+        with patch(
+            "qdl.runtime.stable_bar_edge.fetch_binance_history",
+            return_value=(Envelope("BINANCE", 60_000), Envelope("BINANCE", 120_000)),
+        ), patch(
+            "qdl.runtime.stable_bar_edge.fetch_okx_history",
+            new_callable=AsyncMock,
+            return_value=(Envelope("OKX", 60_000), Envelope("OKX", 120_000)),
+        ):
+            self.assertEqual(edge.bootstrap_history(), len(history_ids) * 2)
+        self.assertTrue(edge._history_bootstrapped)
+
+    def test_deployed_bootstrap_depth_covers_registered_crypto_bar_demand(self):
+        compose = yaml.safe_load(
+            (ROOT / "docker-compose.v2-stable.yml").read_text(encoding="utf-8")
+        )
+        configured = int(
+            compose["services"]["binance_bar_edge"]["environment"]
+            ["QDL_STABLE_BAR_WARMUP_ROWS"]
+        )
+        source_by_id = {item.binding_id: item for item in self.catalog.bindings}
+        history_uids = {
+            source_by_id[item.binding_id].instrument.instrument_uid
+            for item in self.native_acquisition.bindings
+            if item.enabled
+            and item.runtime in {"BINANCE", "OKX"}
+            and source_by_id[item.binding_id].feed.value == "BAR"
+        }
+        manifest_paths = compose["x-stable-env"][
+            "QDL_STABLE_CONSUMER_MANIFESTS"
+        ].split(":")
+        declared = []
+        for container_path in manifest_paths:
+            relative = Path(container_path).relative_to("/app")
+            manifest = yaml.safe_load((ROOT / relative).read_text(encoding="utf-8"))
+            declared.extend(
+                int(item["warmup_limit"])
+                for item in manifest["spec"]["requirements"]
+                if item["feed"] == "BAR"
+                and item["instrument_uid"] in history_uids
+            )
+        self.assertEqual(max(declared), 1000)
+        self.assertGreaterEqual(configured, max(declared))
+
     def test_durable_ack_watermark_skips_overlapping_restart_bootstrap(self):
         class Envelope:
             def __init__(self, venue: str, open_time: int):
@@ -371,7 +536,8 @@ class StableBarBootstrapTests(unittest.TestCase):
                 self.assertEqual(first.bootstrap_history(), expected_bindings * 2)
 
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v1")
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v2")
+            self.assertEqual(persisted["warmup_rows"], 2)
             self.assertEqual(set(persisted["last_open_ms"]), set(first._binding_ids))
             self.assertEqual(set(persisted["last_open_ms"].values()), {120_000})
 

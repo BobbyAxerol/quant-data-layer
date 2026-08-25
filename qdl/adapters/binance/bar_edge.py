@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.providers.binance.rest import BinanceProviderError, fetch_klines
-from qdl.adapters.intervals import canonical_interval_ms
+from qdl.adapters.intervals import canonical_interval_ms, latest_closed_boundary_ms
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.capture import capture_exact_frame
 
@@ -180,9 +180,14 @@ def fetch_closed_bar_history_raw_envelopes(
         raise ValueError("Binance history limit must be between 1 and 1000")
     observed_ms = int(now_ms if now_ms is not None else time.time() * 1000)
     interval_ms = _interval_ms(binding.interval)
+    # Binance caps a kline response at 1000 rows.  Asking through wall-clock
+    # `now` can consume one slot with the still-open candle, yielding only 999
+    # usable closed rows.  The history API's cutoff is therefore the exclusive
+    # boundary of the current interval, not request observation time.
+    provider_end_ms = latest_closed_boundary_ms(binding.interval, observed_ms) - 1
     rows = _fetch_rows(
         binding,
-        observed_ms=observed_ms,
+        observed_ms=provider_end_ms,
         limit=min(1000, limit + 2),
         attempts=attempts,
         fetcher=fetcher,

@@ -13390,6 +13390,123 @@ CUTOVER PENDING`).**
   consumer artifact update only; the running V2 image/source remains the
   authority and is unchanged.
 
+**Phase 10.3 real consumer-receipt readiness finding - 2026-08-25
+(`IN PROGRESS / IN-SCOPE HISTORY-BOOTSTRAP CORRECTION`):**
+
+- The approved no-order receipt reached authenticated V2 query with the active
+  rotated workload identities. It then failed closed on a declared BAR warmup;
+  this is not a TLS, JWT, SDK-schema or order-path failure.
+- A read-only cache audit established the exact gap: Binance USD-M final-1m
+  BAR partitions contain `675` rows and OKX Swap final-1m BAR partitions
+  contain `191` rows, while the governed Trading System requirement is
+  `1000` rows and the alpha requirement is `500`. The current edge environment
+  bootstraps only `500` rows and its implementation bootstraps only
+  `PYTHON_REST` BAR bindings, leaving live-native OKX BAR history cold after a
+  primary start. Lowering the manifest requirement, treating a partial result
+  as success, or masking the failure with V1 would violate the Phase 10.2/10.3
+  contract and is forbidden.
+- **Approved correction scope:** keep Rust as the shared canonical writer and
+  keep live-native subscriptions unchanged. The existing Python BAR edge is
+  extended only as a bounded real-provider *history bootstrap* for every
+  enabled Binance/OKX final-BAR binding. Its bootstrap depth is validated
+  against the greatest durable manifest warmup need (`1000` currently); it
+  never opens a per-symbol worker or writes query/Redis state directly. The
+  edge continues to poll only declared `PYTHON_REST` bindings after bootstrap.
+  Query history will order final BAR responses by governed market time and bind
+  the handoff watermark to the greatest durable offset, so a valid historical
+  backfill cannot make a response time-reverse or resume from an older offset.
+- **Runtime boundary:** this source correction requires one new immutable
+  Python image and a fresh bounded packet before any affected Python-role
+  recreate. The current runtime, V1, Kafka offsets, Redis, SQLite, database,
+  volumes, alpha configuration and order paths remain unchanged until that
+  separately sealed packet is reviewed. Tests must cover Binance/OKX 1000-row
+  bootstrap, no live polling for native OKX BAR, duplicate/backfill ordering,
+  watermark correctness, typed receipt and V1 fallback.
+
+**Phase 10.3 bounded multi-venue BAR-history correction - 2026-08-25
+(`SOURCE PASS / NARROW RUNTIME HANDOFF PENDING`):**
+
+- Implemented the approved correction without changing the canonical writer
+  boundary: `StableBinanceBarEdge` now bootstraps every enabled Binance/OKX
+  final-BAR binding through authentic provider history, while recurring polling
+  remains restricted to explicit `PYTHON_REST` bindings. Rust-native OKX BAR
+  remains Rust-owned for live acquisition.
+- The governed Compose depth is now `1000`, and a contract test derives the
+  maximum demand from every manifest named by `QDL_STABLE_CONSUMER_MANIFESTS`.
+  It fails if a future declared crypto BAR warmup exceeds the edge depth.
+- Query history now orders BARs by `open_time_ns`; its signed handoff watermark
+  remains the greatest durable logical offset. The late-backfill regression
+  proves chronological history, latest-bar correctness and cursor fencing
+  together instead of choosing one at the expense of another.
+- **Tests actually run:** host `python3 -B -m py_compile` passed. The existing
+  immutable `qdl-v2-python:2.0.0-7b7388348615` image ran network-disabled,
+  read-only regression modules for BAR bootstrap, stable query/projector,
+  checkpoint refresh, stable deployment and every Phase 10.3 packet/consumer
+  guard: `120 passed`, `1 skipped` (the explicitly conditional isolated Redis
+  integration). The disposable test container was removed automatically.
+- **No runtime action in this source gate:** no image was built, no service was
+  recreated, and no Kafka offset/topic/ACL, Redis, SQLite, V1, Trading System,
+  alpha or order state changed.
+- **Remaining Phase 10.3 decision boundary:** a fresh sealed packet must use
+  one immutable replacement Python image and a new authority-scoped BAR
+  checkpoint path. Its minimal affected-role set is `binance_bar_edge`,
+  `query_v2_1`, `query_v2_2`, `stream_v2_active` and `stream_v2_passive`.
+  Rust cores, ingestors, projectors, V1, Trading System and all durable stores
+  stay running. The real no-order acceptance must observe four complete
+  1000-row Binance/OKX BTC/ETH BAR warmups, twelve demanded slices with no
+  freshness/gap failure, signed cursor replay and the existing automatic V1
+  fallback proof before Phase 10.3 can close.
+
+**Phase 10.3 real-provider 1000-row preflight finding - 2026-08-25
+(`IN PROGRESS / ADAPTER-CUTOFF CORRECTION`):**
+
+- A disposable read-only real-provider warmup attempt made no production
+  writes. It correctly refused the result rather than shortening a window.
+  The generic Phase 10 inventory includes two disabled Spot BAR definitions,
+  so it is not itself Phase 10.3 active-scope evidence and is retained as an
+  inventory tool, not rewritten or used to certify the active handoff.
+- It exposed two real shared-wrapper defects relevant to the four active
+  Binance USD-M/OKX Swap final-BAR bindings: Binance requested its maximum
+  1000 rows through the current open candle and received only `999` closed
+  rows; OKX pagination re-used an inclusive boundary and detected overlap.
+- **In-scope repair:** both provider BAR adapters will interpret `now_ms` as
+  an exclusive closed-bar boundary for historical pages. They request only up
+  to `latest_closed_boundary - 1`, preserving exact row count and making the
+  existing generic chunk cursor monotonic across pages. No Spot activation,
+  demand-manifest rewrite, poller change, consumer route, persistence or
+  runtime action is authorized by this correction.
+
+**Phase 10.3 adapter-cutoff correction result - 2026-08-25
+(`SOURCE + REAL-PROVIDER PASS / RUNTIME HANDOFF PENDING`):**
+
+- Binance historical BAR fetch now limits its maximum page at the latest
+  closed-bar boundary, excluding the in-progress candle even when the venue
+  page is capped at 1000. OKX history uses the same exclusive boundary before
+  its inclusive provider page, so the next bounded page begins strictly before
+  the preceding oldest BAR.
+- Added strict adapter regressions for Binance 1000-row cutoff and OKX page
+  boundary; retained the prior incomplete/gap/provisional fail-closed tests.
+  The prior multi-venue edge, manifest-depth, late-backfill ordering and cursor
+  fence tests remain part of the same source gate.
+- **Tests actually run:** `python3 -B -m py_compile` and `git diff --check`
+  passed. The immutable `qdl-v2-python:2.0.0-7b7388348615` image ran
+  network-disabled BAR adapter/bootstrap, universal warmup, realtime provider
+  contract, stable query/projector and all Phase 10.3 packet/receipt guards:
+  `138 passed`, `1 skipped` (explicit isolated Redis integration).
+- **Authentic provider evidence:** a disposable read-only probe generated its
+  input from the enabled acquisition plan, not the broader disabled-Spot
+  inventory. Binance USD-M BTCUSDT/ETHUSDT and OKX Swap BTC-USDT-SWAP/
+  ETH-USDT-SWAP each returned exactly `1000` final 1m BARs with equal closed
+  boundary `1787630699999000000`; four-slice p95 was `1441.848 ms`.
+  Provenance was `REAL_PROVIDER_READ_ONLY`; production writes were `0` and no
+  raw payload was persisted. This proves source coverage only, not a Kafka or
+  consumer handoff.
+- **Next and only remaining Phase 10.3 action:** build one immutable Python
+  replacement artifact, seal/validate a fresh narrow packet with a new
+  authority-scoped BAR checkpoint, then apply the bounded BAR/query/stream
+  handoff and no-order consumer receipt. V1 remains untouched as rollback;
+  Phase 10.4 remains out of scope.
+
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
 **Goal:** Give future alpha families including basis arbitrage, reactive grid,

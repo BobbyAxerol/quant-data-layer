@@ -639,7 +639,9 @@ services:
       QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_KAFKA_CERT_ROOT: /stable-certs/producer
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-binance-bars
-      QDL_STABLE_BAR_WARMUP_ROWS: "500"
+      # Must cover the greatest durable final-BAR warmup declared by the
+      # governed Trading System/alpha manifests.
+      QDL_STABLE_BAR_WARMUP_ROWS: "1000"
       QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS: "10"
       QDL_STABLE_BAR_STATE_PATH: ${QDL_STABLE_BAR_STATE_PATH:-/var/lib/qdl-stable/runtime/stable-crypto-bar-edge.json}
     volumes:
