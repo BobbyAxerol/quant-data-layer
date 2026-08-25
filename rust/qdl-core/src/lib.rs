@@ -6,6 +6,7 @@ pub mod binance_session;
 pub mod canonical;
 pub mod decimal;
 pub mod event_id;
+pub mod l2_book;
 pub mod okx;
 pub mod okx_simulator;
 pub mod rate_limit;

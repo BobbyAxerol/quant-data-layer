@@ -1,0 +1,630 @@
+{
+  "schema_version": 1,
+  "provenance": "TEST_ONLY_SYNTHETIC_PROTOCOL_FIXTURE",
+  "cases": [
+    {
+      "name": "okx_stateful_keepalive_reset_gap_and_ws_recovery",
+      "config": {
+        "key": {
+          "provider_profile": "OKX_PUBLIC_V5_SWAP",
+          "instrument_uid": "OKX.SWAP.PERPETUAL.BTC-USDT",
+          "channel": "books"
+        },
+        "sequence_policy": "PREVIOUS_SEQUENCE",
+        "checksum_policy": "IGNORE",
+        "view_depth_per_side": 3
+      },
+      "actions": [
+        {
+          "kind": "snapshot",
+          "generation": 1,
+          "sequence_end": 100,
+          "checksum": "NOT_PROVIDED",
+          "levels": [
+            {"side": "BID", "price": "100.0", "quantity": "2.0"},
+            {"side": "BID", "price": "99", "quantity": "1"},
+            {"side": "ASK", "price": "101", "quantity": "3"},
+            {"side": "ASK", "price": "102", "quantity": "1"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 100,
+            "ready": true,
+            "bids": [["100", "2"], ["99", "1"]],
+            "asks": [["101", "3"], ["102", "1"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 1,
+          "previous_sequence": 100,
+          "sequence_end": 100,
+          "levels": [],
+          "expect": {
+            "outcome": "KEEPALIVE",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 100,
+            "ready": true,
+            "bids": [["100", "2"], ["99", "1"]],
+            "asks": [["101", "3"], ["102", "1"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 1,
+          "previous_sequence": 100,
+          "sequence_end": 101,
+          "levels": [
+            {"side": "BID", "price": "100", "quantity": "3"},
+            {"side": "BID", "price": "98", "quantity": "1"},
+            {"side": "ASK", "price": "101", "quantity": "0"},
+            {"side": "ASK", "price": "103", "quantity": "5"}
+          ],
+          "expect": {
+            "outcome": "DELTA_APPLIED",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 101,
+            "ready": true,
+            "bids": [["100", "3"], ["99", "1"], ["98", "1"]],
+            "asks": [["102", "1"], ["103", "5"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 1,
+          "previous_sequence": 101,
+          "sequence_end": 50,
+          "levels": [
+            {"side": "ASK", "price": "100.5", "quantity": "2"}
+          ],
+          "expect": {
+            "outcome": "DELTA_APPLIED",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 50,
+            "ready": true,
+            "bids": [["100", "3"], ["99", "1"], ["98", "1"]],
+            "asks": [["100.5", "2"], ["102", "1"], ["103", "5"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 1,
+          "previous_sequence": 51,
+          "sequence_end": 53,
+          "levels": [],
+          "expect": {
+            "outcome": "SEQUENCE_GAP",
+            "status": "GAPPED",
+            "generation": 1,
+            "last_sequence": null,
+            "ready": false
+          }
+        },
+        {
+          "kind": "snapshot",
+          "generation": 1,
+          "sequence_end": 54,
+          "origin": "REST",
+          "levels": [],
+          "expect": {
+            "outcome": "SNAPSHOT_SOURCE_REJECTED",
+            "status": "GAPPED",
+            "generation": 1,
+            "last_sequence": null,
+            "ready": false
+          }
+        },
+        {
+          "kind": "request_resync",
+          "generation": 2,
+          "expect": {
+            "outcome": "RESYNC_REQUESTED",
+            "status": "RESYNCING",
+            "generation": 2,
+            "last_sequence": null,
+            "ready": false
+          }
+        },
+        {
+          "kind": "snapshot",
+          "generation": 2,
+          "sequence_end": 200,
+          "levels": [
+            {"side": "BID", "price": "200", "quantity": "1"},
+            {"side": "ASK", "price": "201", "quantity": "1"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 2,
+            "last_sequence": 200,
+            "ready": true,
+            "bids": [["200", "1"]],
+            "asks": [["201", "1"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 1,
+          "previous_sequence": 200,
+          "sequence_end": 201,
+          "levels": [],
+          "expect": {
+            "outcome": "IGNORED_STALE_GENERATION",
+            "status": "READY",
+            "generation": 2,
+            "last_sequence": 200,
+            "ready": true,
+            "bids": [["200", "1"]],
+            "asks": [["201", "1"]],
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "binance_diff_depth_initial_range_bridge_then_chain",
+      "config": {
+        "key": {
+          "provider_profile": "BINANCE_USDM_DIFF_DEPTH",
+          "instrument_uid": "BINANCE.USDM.PERPETUAL.ETHUSDT",
+          "channel": "depth"
+        },
+        "sequence_policy": "RANGE_BRIDGE_THEN_PREVIOUS",
+        "checksum_policy": "IGNORE",
+        "view_depth_per_side": 2
+      },
+      "actions": [
+        {
+          "kind": "snapshot",
+          "generation": 7,
+          "sequence_end": 200,
+          "levels": [
+            {"side": "BID", "price": "100", "quantity": "2"},
+            {"side": "ASK", "price": "101", "quantity": "2"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 7,
+            "last_sequence": 200,
+            "ready": true,
+            "bids": [["100", "2"]],
+            "asks": [["101", "2"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 7,
+          "sequence_start": 199,
+          "sequence_end": 201,
+          "levels": [
+            {"side": "BID", "price": "100", "quantity": "3"},
+            {"side": "ASK", "price": "101", "quantity": "4"}
+          ],
+          "expect": {
+            "outcome": "DELTA_APPLIED",
+            "status": "READY",
+            "generation": 7,
+            "last_sequence": 201,
+            "ready": true,
+            "bids": [["100", "3"]],
+            "asks": [["101", "4"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 7,
+          "sequence_start": 202,
+          "previous_sequence": 201,
+          "sequence_end": 202,
+          "levels": [
+            {"side": "BID", "price": "99", "quantity": "1"},
+            {"side": "ASK", "price": "102", "quantity": "1"}
+          ],
+          "expect": {
+            "outcome": "DELTA_APPLIED",
+            "status": "READY",
+            "generation": 7,
+            "last_sequence": 202,
+            "ready": true,
+            "bids": [["100", "3"], ["99", "1"]],
+            "asks": [["101", "4"], ["102", "1"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 7,
+          "sequence_start": 200,
+          "previous_sequence": 199,
+          "sequence_end": 201,
+          "levels": [],
+          "expect": {
+            "outcome": "DUPLICATE",
+            "status": "READY",
+            "generation": 7,
+            "last_sequence": 202,
+            "ready": true,
+            "bids": [["100", "3"], ["99", "1"]],
+            "asks": [["101", "4"], ["102", "1"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 7,
+          "sequence_start": 204,
+          "previous_sequence": 203,
+          "sequence_end": 205,
+          "levels": [],
+          "expect": {
+            "outcome": "SEQUENCE_GAP",
+            "status": "GAPPED",
+            "generation": 7,
+            "last_sequence": null,
+            "ready": false
+          }
+        },
+        {
+          "kind": "snapshot",
+          "generation": 8,
+          "sequence_end": 300,
+          "levels": [
+            {"side": "BID", "price": "300", "quantity": "1"},
+            {"side": "ASK", "price": "301", "quantity": "1"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 8,
+            "last_sequence": 300,
+            "ready": true,
+            "bids": [["300", "1"]],
+            "asks": [["301", "1"]],
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "generic_checksum_policy_rejects_without_venue_assumption",
+      "config": {
+        "key": {
+          "provider_profile": "TEST_CHECKSUM_PROFILE",
+          "instrument_uid": "TEST.INSTRUMENT.CHECKSUM",
+          "channel": "book"
+        },
+        "sequence_policy": "PREVIOUS_SEQUENCE",
+        "checksum_policy": "REQUIRE_VERIFIED",
+        "view_depth_per_side": 2
+      },
+      "actions": [
+        {
+          "kind": "snapshot",
+          "generation": 1,
+          "sequence_end": 7,
+          "checksum": "VERIFIED",
+          "levels": [
+            {"side": "BID", "price": "7", "quantity": "1"},
+            {"side": "ASK", "price": "8", "quantity": "1"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 7,
+            "ready": true,
+            "bids": [["7", "1"]],
+            "asks": [["8", "1"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 1,
+          "previous_sequence": 7,
+          "sequence_end": 8,
+          "checksum": "FAILED",
+          "levels": [],
+          "expect": {
+            "outcome": "CHECKSUM_REJECTED",
+            "status": "GAPPED",
+            "generation": 1,
+            "last_sequence": null,
+            "ready": false
+          }
+        },
+        {
+          "kind": "snapshot",
+          "generation": 1,
+          "sequence_end": 9,
+          "checksum": "NOT_PROVIDED",
+          "levels": [],
+          "expect": {
+            "outcome": "CHECKSUM_REJECTED",
+            "status": "GAPPED",
+            "generation": 1,
+            "last_sequence": null,
+            "ready": false
+          }
+        },
+        {
+          "kind": "snapshot",
+          "generation": 2,
+          "sequence_end": 10,
+          "checksum": "VERIFIED",
+          "levels": [
+            {"side": "BID", "price": "10", "quantity": "1"},
+            {"side": "ASK", "price": "11", "quantity": "1"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 2,
+            "last_sequence": 10,
+            "ready": true,
+            "bids": [["10", "1"]],
+            "asks": [["11", "1"]],
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "out_of_order_delta_is_fail_closed",
+      "config": {
+        "key": {
+          "provider_profile": "TEST_ORDERING_PROFILE",
+          "instrument_uid": "TEST.INSTRUMENT.ORDERING",
+          "channel": "book"
+        },
+        "sequence_policy": "PREVIOUS_SEQUENCE",
+        "checksum_policy": "IGNORE",
+        "view_depth_per_side": 2
+      },
+      "actions": [
+        {
+          "kind": "snapshot",
+          "generation": 1,
+          "sequence_end": 30,
+          "levels": [
+            {"side": "BID", "price": "30", "quantity": "1"},
+            {"side": "ASK", "price": "31", "quantity": "1"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 30,
+            "ready": true,
+            "bids": [["30", "1"]],
+            "asks": [["31", "1"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 1,
+          "previous_sequence": 29,
+          "sequence_end": 31,
+          "levels": [],
+          "expect": {
+            "outcome": "OUT_OF_ORDER",
+            "status": "GAPPED",
+            "generation": 1,
+            "last_sequence": null,
+            "ready": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "truncation_and_atomic_invalid_delta",
+      "config": {
+        "key": {
+          "provider_profile": "TEST_DEPTH_PROFILE",
+          "instrument_uid": "TEST.INSTRUMENT.DEPTH",
+          "channel": "book"
+        },
+        "sequence_policy": "PREVIOUS_SEQUENCE",
+        "checksum_policy": "VERIFY_IF_PRESENT",
+        "view_depth_per_side": 2
+      },
+      "actions": [
+        {
+          "kind": "snapshot",
+          "generation": 1,
+          "sequence_end": 10,
+          "levels": [
+            {"side": "BID", "price": "100", "quantity": "1"},
+            {"side": "BID", "price": "99", "quantity": "2"},
+            {"side": "BID", "price": "98", "quantity": "3"},
+            {"side": "BID", "price": "97", "quantity": "0"},
+            {"side": "ASK", "price": "101", "quantity": "1"},
+            {"side": "ASK", "price": "102", "quantity": "2"},
+            {"side": "ASK", "price": "103", "quantity": "3"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 10,
+            "ready": true,
+            "bids": [["100", "1"], ["99", "2"]],
+            "asks": [["101", "1"], ["102", "2"]],
+            "truncated": true
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 1,
+          "previous_sequence": 10,
+          "sequence_end": 11,
+          "levels": [
+            {"side": "BID", "price": "100", "quantity": "0"},
+            {"side": "ASK", "price": "101", "quantity": "4"}
+          ],
+          "expect": {
+            "outcome": "DELTA_APPLIED",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 11,
+            "ready": true,
+            "bids": [["99", "2"], ["98", "3"]],
+            "asks": [["101", "4"], ["102", "2"]],
+            "truncated": true
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 1,
+          "previous_sequence": 11,
+          "sequence_end": 12,
+          "levels": [
+            {"side": "BID", "price": "99", "quantity": "9"},
+            {"side": "ASK", "price": "102", "quantity": "-1"}
+          ],
+          "expect": {
+            "outcome": "INVALID_FRAME",
+            "status": "GAPPED",
+            "generation": 1,
+            "last_sequence": null,
+            "ready": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "snapshot_only_replacement_identity_and_disconnect",
+      "config": {
+        "key": {
+          "provider_profile": "OKX_PUBLIC_V5_SWAP",
+          "instrument_uid": "OKX.SWAP.PERPETUAL.ETH-USDT",
+          "channel": "books5"
+        },
+        "sequence_policy": "SNAPSHOT_ONLY",
+        "checksum_policy": "IGNORE",
+        "view_depth_per_side": 5
+      },
+      "actions": [
+        {
+          "kind": "snapshot",
+          "generation": 1,
+          "sequence_end": 1,
+          "levels": [
+            {"side": "BID", "price": "10", "quantity": "1"},
+            {"side": "ASK", "price": "11", "quantity": "1"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 1,
+            "ready": true,
+            "bids": [["10", "1"]],
+            "asks": [["11", "1"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "delta",
+          "generation": 1,
+          "sequence_end": 2,
+          "levels": [],
+          "expect": {
+            "outcome": "DELTA_UNSUPPORTED",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 1,
+            "ready": true,
+            "bids": [["10", "1"]],
+            "asks": [["11", "1"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "snapshot",
+          "generation": 1,
+          "sequence_end": 2,
+          "levels": [
+            {"side": "BID", "price": "12", "quantity": "2"},
+            {"side": "ASK", "price": "13", "quantity": "2"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 2,
+            "ready": true,
+            "bids": [["12", "2"]],
+            "asks": [["13", "2"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "snapshot",
+          "identity": {
+            "provider_profile": "OKX_PUBLIC_V5_SWAP",
+            "instrument_uid": "OKX.SWAP.PERPETUAL.BTC-USDT",
+            "channel": "books5"
+          },
+          "generation": 1,
+          "sequence_end": 3,
+          "levels": [],
+          "expect": {
+            "outcome": "IDENTITY_MISMATCH",
+            "status": "READY",
+            "generation": 1,
+            "last_sequence": 2,
+            "ready": true,
+            "bids": [["12", "2"]],
+            "asks": [["13", "2"]],
+            "truncated": false
+          }
+        },
+        {
+          "kind": "disconnect",
+          "expect": {
+            "outcome": "DISCONNECTED",
+            "status": "DISCONNECTED",
+            "generation": 1,
+            "last_sequence": null,
+            "ready": false
+          }
+        },
+        {
+          "kind": "snapshot",
+          "generation": 2,
+          "sequence_end": 4,
+          "levels": [
+            {"side": "BID", "price": "14", "quantity": "1"},
+            {"side": "ASK", "price": "15", "quantity": "1"}
+          ],
+          "expect": {
+            "outcome": "SNAPSHOT_APPLIED",
+            "status": "READY",
+            "generation": 2,
+            "last_sequence": 4,
+            "ready": true,
+            "bids": [["14", "1"]],
+            "asks": [["15", "1"]],
+            "truncated": false
+          }
+        }
+      ]
+    }
+  ]
+}

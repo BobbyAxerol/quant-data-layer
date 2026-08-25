@@ -14118,7 +14118,49 @@ or consumer route is created merely for a retry or test.
   Revert this coherent commit to remove it; no operational rollback is needed.
   10.4-C remains separately pending and requires explicit approval.
 
-**10.4-C - Rust L2 book core (`PENDING / REQUIRES 10.4-B EXIT`):**
+**10.4-C - Rust L2 book core (`COMPLETE / SOURCE-ONLY / RUNTIME UNCHANGED`):**
+
+- **Approval, goal and governing sources (2026-08-25):** 10.4-B exited in
+  commit `d917dc8`; the user approved this next, isolated source slice. This
+  slice implements one provider-neutral Rust L2 snapshot/delta state machine
+  and one Python test/reference conformance boundary only. It follows the
+  canonical book and gap rules in Sections 9.6 and 13.4-13.5 of
+  `upgrade/quant-data-layer-fund-grade-upgrade-architecture.md`, plus the OKX
+  V5 stateful/snapshot-only rules in Sections 10-11 of
+  `upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md`.
+- **Core invariants:** a book is keyed by the complete
+  `(provider_profile, instrument_uid, channel, source_generation)` identity;
+  no binary float is accepted for price or quantity; price must be positive,
+  quantity nonnegative, and a zero quantity is an explicit deletion only. A
+  frame is committed atomically across both sides and sequence state. Any
+  continuity/checksum/decoded-level failure leaves no readable `READY` view;
+  recovery requires a fresh WebSocket snapshot, never a REST snapshot bridge.
+  Stored full observed depth and separately bounded top-N presentation avoid
+  inventing levels after a deletion; a truncated view is explicit.
+- **Provider-neutral policy boundary:** sequence and checksum behavior are
+  configuration supplied by a venue adapter, not a `BINANCE`/`OKX` branch in
+  the core. The initial Binance diff-depth bridge accepts a native inclusive
+  range that covers `snapshot_sequence + 1`, then requires previous-sequence
+  continuity. OKX stateful books require `prevSeqId == last_seq_id`, permit
+  their documented maintenance reset when that chain holds, and ignore their
+  deprecated/fixed checksum. Snapshot-only profiles replace state and never
+  demand a previous sequence. A generic checksum-required fixture verifies the
+  policy engine without claiming that Binance or OKX uses that checksum rule.
+- **Test and exit gates:** one clearly marked synthetic protocol fixture will
+  drive both Rust and Python reference tests for normal continuation,
+  insert/update/delete, multi-side atomicity, duplicate/out-of-order, gap,
+  checksum rejection, disconnect, resync, stale generation, snapshot-only
+  replacement, depth truncation and recovery. Rust formatting/unit tests and
+  isolated network-disabled Python tests must pass. This source-only slice has
+  no real-provider smoke because it neither opens a provider connection nor
+  exposes data; raw/provider fixtures remain a later 10.4-D concern.
+- **Exclusions, rollback and stop boundary:** no WebSocket worker, adapter
+  migration, V2 endpoint, Kafka/Redis/SQLite mutation, image build, runtime
+  service recreate, manifest route, consumer migration, alpha execution or
+  authority change is authorized. Revert this one source commit to roll back;
+  TRADE/BAR/BBO and current V1/V2 runtime paths are untouched. Once this
+  state-machine source and its tests pass, record exact evidence, commit and
+  stop before 10.4-D.
 
 - **Allowed scope:** one provider-neutral exact-decimal Rust snapshot/delta
   state machine plus Python conformance boundary. It owns sequence continuity,
@@ -14137,6 +14179,75 @@ or consumer route is created merely for a retry or test.
   consumer migration.
 - **Rollback:** remove the unadvertised book capability/source commit; current
   TRADE/BAR/BBO paths remain untouched.
+
+**Phase 10.4-C Rust L2 book-core completion - 2026-08-25
+(`PASS / SOURCE-ONLY / RUNTIME UNCHANGED`):**
+
+- **Implemented boundary:** added `rust/qdl-core/src/l2_book.rs`, exported by
+  `qdl-core`, containing a provider-neutral exact-decimal state machine. It
+  consumes a complete profile/instrument/channel identity plus source
+  generation, snapshot/delta sequence fields, an adapter-selected sequence
+  policy and checksum evidence. It owns no transport, provider parser,
+  persistence, endpoint, cache, execution decision or runtime lifecycle.
+  `qdl/l2/conformance.py` is an independent Python reference used only by the
+  tests; `tests/fixtures/phase104/l2_book_state_machine.json` is explicitly
+  marked `TEST_ONLY_SYNTHETIC_PROTOCOL_FIXTURE` and is the shared golden
+  oracle, not market data.
+- **Domain behavior proven:** exact normalized decimal maps never use binary
+  float keys; zero quantity deletes rather than creates an active level;
+  snapshot/delta parsing completes before the two sides and sequence watermark
+  commit. `view()` is absent for `AWAITING_SNAPSHOT`, `GAPPED`, `RESYNCING` and
+  `DISCONNECTED`, so an invalid book cannot be read as valid. Full observed
+  levels are retained while the exposed top-N is bounded and marks
+  `truncated=true`, avoiding fabricated depth after a top-level deletion.
+  Final audit also corrected exponent-equivalent normalization: `1000` and
+  `1e3` now resolve to the same canonical level key in both Rust and Python,
+  rather than splitting a book level by numeric text representation. The
+  Python oracle now enforces the same narrow ASCII lexical grammar as Rust, so
+  permissive `Decimal` spellings such as `1_0` cannot create a false parity.
+- **Provider-neutral policies:** the Rust core has no venue-name branch.
+  Fixture policy proves the documented OKX stateful chain, empty keepalive and
+  valid maintenance sequence reset; it ignores the deprecated/fixed OKX
+  checksum. The Binance diff-depth profile proves its inclusive initial range
+  bridge then `previous_sequence` chain. Snapshot-only replacement is separate
+  from stateful deltas. A test-only generic checksum-required profile proves
+  reject/invalidate behavior without incorrectly assigning a common checksum
+  algorithm to Binance or OKX. Gap, out-of-order, malformed levels, stale
+  generation, REST-as-recovery, disconnect and resync all fail closed until a
+  new WebSocket snapshot arrives.
+- **Tests actually run:**
+  - host Python conformance smoke passed `1/1` before and after the final
+    fixture additions;
+  - isolated immutable `qdl-v2-python:2.0.0-e0bedff`, source read-only,
+    `--network none`, tmpfs scratch: Phase 10.4 L2/reference/contract,
+    existing OKX book, Phase 0 fixture and SDK stream-projection regression
+    suites passed `36/36` after the final exponent-equivalence assertion;
+  - transient pinned `rust:1.82-slim@sha256:1111c28d...6f38010`, source
+    read-only, `--network none`, locked/offline Cargo cache and disposable
+    target volume: `cargo test --locked --offline -p qdl-core` passed `20/20`
+    (including both new exact-decimal/shared-fixture tests). A first compiler
+    attempt exposed a small identity-loop compile error, fixed in this slice;
+    a no-exec tmpfs also prevented Cargo build scripts and was replaced by the
+    named disposable target volume before the passing run. Neither was a
+    provider/runtime or domain evidence failure;
+  - `rustfmt --check rust/qdl-core/src/l2_book.rs` and Python fixture parsing
+    passed. Workspace-wide `cargo fmt --all -- --check` remains blocked only
+    by pre-existing formatting in `rust/qdl-core/src/canonical.rs`, which has
+    no diff in this slice and was intentionally not reformatted out of scope.
+- **Runtime and cleanup:** no provider socket/REST call, worker, endpoint,
+  Kafka topic/offset, Redis key, SQLite/PostgreSQL data, image build, service
+  recreate, authority/manifest route, V1/V2 consumer or alpha/order state was
+  touched. The temporary Cargo cache/target volumes
+  `qdl-phase104c-cargo` and `qdl-phase104c-target` were verified unused then
+  removed; the 292 MB `rust:1.82-slim` compiler image pulled solely for this
+  test was removed too. Existing `qdl.adapters.okx.client.OkxOrderBook` stays
+  unchanged on its legacy path and must not be represented as this new core;
+  adapter/runtime wiring belongs only to the separately approved 10.4-D.
+- **Exit/rollback:** 10.4-C exits as a tested, unadvertised source component.
+  This coherent commit is the single source rollback point; reverting it
+  removes the capability with no operational rollback needed. 10.4-D remains
+  `PENDING` and needs its own approval before any query/stream mapping, real
+  L2 capture/replay or runtime integration.
 
 **10.4-D - V2 query/stream integration (`PENDING / REQUIRES 10.4-C EXIT`):**
 
