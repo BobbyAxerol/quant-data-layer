@@ -13361,6 +13361,34 @@ CUTOVER PENDING`).**
   Trading System commit, verify its embedded override hash against this lock,
   then include that image identifier in the fresh packet evidence. This adds
   no Data Layer image, service, topic, ACL, offset, cache, or authority change.
+- **Immutable-consumer artifact gate passed:** the new
+  `tradingsystem-image:sha-b594b65` has identity
+  `sha256:f126f3c84fe86ebf2de2cf131d944909881cb127ff1495d21fe7b66096a15487`.
+  Its embedded route-manifest and Compose-override hashes exactly match the
+  source and refreshed lock. Generate a fresh 30-minute Phase 10.3 packet with
+  this evidence before any service handoff; no image rebuild is needed again.
+
+**Phase 10.3 external SDK artifact diagnosis - 2026-08-25
+(`IN PROGRESS / CONSUMER REPIN REQUIRED`):**
+
+- After the approved handoff, Trading System JWT authentication passed but its
+  typed V2 client rejected `data.received_at_ns` as an unknown extra field.
+  A bounded redacted validation diagnostic proved the response shape; source
+  hashes confirm the running V2 query image and Data Layer `qdl_sdk` source are
+  identical. The stale artifact is only the separately vendored Trading System
+  wheel.
+- This is an in-scope consumer compatibility repair: build the deterministic
+  public wheel from the unchanged Data Layer source, repin it in Trading System
+  with its release/CDX/uv evidence and re-run its V2 typed contract gates. Do
+  not weaken strict schema parsing or remove query provenance. Data Layer
+  runtime/images/authority/topology remain unchanged.
+- **Source artifact evidence:** the Data Layer release builder emitted the
+  public `qdl-sdk==2.0.0` wheel SHA-256
+  `9211485f1db927118cefa5c79b1fe2f87c7f3b9257288e32997f4b8d39d3d578` with
+  matching release and CycloneDX manifests. An isolated tmpfs install imported
+  it and proved the current `received_at_ns` contract field exists. This is a
+  consumer artifact update only; the running V2 image/source remains the
+  authority and is unchanged.
 
 ### 21.7 Phase 10.4 - Microstructure, Reference Metrics And Multi-Instrument Data
 
