@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from qdl.certification.phase105_handoff import (
+    active_query_environment_binding,
     active_runtime_binding,
     handoff_packet,
     load_dotenv,
@@ -35,6 +36,12 @@ def main() -> int:
         required=True,
         help="sealed current Phase 10.3 runtime packet; only its allowlisted selectors apply",
     )
+    parser.add_argument(
+        "--active-query-env",
+        type=Path,
+        required=True,
+        help="private allowlisted capture from the current query container",
+    )
     parser.add_argument("--extension-dir", type=Path, required=True)
     parser.add_argument("--python-image", required=True)
     parser.add_argument("--v1-provenance", type=Path, required=True)
@@ -55,11 +62,17 @@ def main() -> int:
     if not isinstance(active_packet, dict):
         raise SystemExit("Phase 10.5-C active runtime packet must be an object")
     runtime_binding = active_runtime_binding(base_environment, active_packet)
+    query_binding = active_query_environment_binding(
+        base_environment,
+        load_dotenv(args.active_query_env),
+        runtime_binding,
+    )
     environment = prepare_handoff_environment(
         base_environment,
         extension_dir=args.extension_dir,
         python_image=args.python_image,
         runtime_binding=runtime_binding,
+        query_environment_binding=query_binding,
     )
     try:
         v1_provenance = json.loads(args.v1_provenance.read_text(encoding="utf-8"))
@@ -70,6 +83,7 @@ def main() -> int:
         extension_dir=args.extension_dir,
         v1_attestation=v1_provenance,
         runtime_binding=runtime_binding,
+        query_environment_binding=query_binding,
     )
     packet["packet_sha256"] = sha256_bytes(
         json.dumps(packet, sort_keys=True, separators=(",", ":")).encode()

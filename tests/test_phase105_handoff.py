@@ -9,6 +9,7 @@ from qdl.certification.phase105_handoff import (
     ALL_KEY_SUBJECTS,
     V1_FALLBACK_COMMIT,
     V1_FALLBACK_VERSION,
+    active_query_environment_binding,
     active_runtime_binding,
     handoff_packet,
     prepare_handoff_environment,
@@ -92,6 +93,55 @@ class Phase105HandoffTests(unittest.TestCase):
         active["authority"]["contract_digest"] = "x" * 64
         with self.assertRaisesRegex(ValueError, "contract digest"):
             active_runtime_binding(base, active)
+
+    def test_active_query_binding_carries_only_rotated_cursor_and_public_jwt_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = {
+                **self.base,
+                "QDL_STABLE_SCHEMA_DIGEST": "c" * 64,
+                "QDL_STABLE_INTERNAL_INGEST_SECRET": "unchanged-secret",
+            }
+            active = {
+                "schema": "qdl.v2.shared-primary-handoff-packet.v2",
+                "authority": {
+                    "mode": "RUST_PRIMARY", "revision": 1,
+                    "public_write_allowed": False, "legacy_write_allowed": False,
+                    "contract_digest": "c" * 64,
+                },
+                "compose_environment": {
+                    "QDL_CONFIG_REVISION": "phase103-shared-primary-r1",
+                    "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
+                    "QDL_STABLE_AUTHORITY_REVISION": "1",
+                    "QDL_STABLE_RUNTIME_DIR": "/home/bobby/.local/state/qdl-v2/packet/runtime",
+                    "QDL_STABLE_RUST_IMAGE": "sha256:" + "d" * 64,
+                },
+                "runtime_bundle": {"rust_image_digest": "sha256:" + "d" * 64},
+            }
+            runtime = active_runtime_binding(base, active)
+            current = {
+                "QDL_STABLE_INTERNAL_INGEST_SECRET": "unchanged-secret",
+                "QDL_STABLE_CURSOR_KEYS_JSON": json.dumps({"stable-k2": "rotated"}),
+                "QDL_DATA_JWT_KEYS_JSON": base["QDL_STABLE_JWT_KEYS_JSON"],
+                "QDL_STABLE_SCHEMA_DIGEST": "c" * 64,
+                "QDL_CONFIG_REVISION": "phase103-shared-primary-r1",
+                "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
+                "QDL_STABLE_AUTHORITY_REVISION": "1",
+            }
+            query = active_query_environment_binding(base, current, runtime)
+            values = prepare_handoff_environment(
+                base,
+                extension_dir=self._extension(Path(raw)),
+                python_image="sha256:" + "e" * 64,
+                runtime_binding=runtime,
+                query_environment_binding=query,
+            )
+        self.assertEqual(values["QDL_STABLE_CURSOR_KEYS_JSON"], current["QDL_STABLE_CURSOR_KEYS_JSON"])
+        self.assertEqual(query["override_keys"], [
+            "QDL_STABLE_CURSOR_KEYS_JSON", "QDL_STABLE_JWT_KEYS_JSON",
+        ])
+        current["QDL_STABLE_INTERNAL_INGEST_SECRET"] = "mismatch"
+        with self.assertRaisesRegex(ValueError, "ingest secret"):
+            active_query_environment_binding(base, current, runtime)
 
     def test_environment_rejects_unapproved_existing_key(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

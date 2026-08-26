@@ -43,6 +43,10 @@ _ACTIVE_RUNTIME_SELECTORS = (
     "QDL_STABLE_RUNTIME_DIR",
     "QDL_STABLE_RUST_IMAGE",
 )
+_ACTIVE_QUERY_OVERRIDE_KEYS = (
+    "QDL_STABLE_CURSOR_KEYS_JSON",
+    "QDL_STABLE_JWT_KEYS_JSON",
+)
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -148,12 +152,81 @@ def active_runtime_binding(
     }
 
 
+def active_query_environment_binding(
+    base_environment: Mapping[str, str],
+    query_environment: Mapping[str, str],
+    runtime_binding: Mapping[str, object],
+) -> dict[str, object]:
+    """Carry only rotated query cursor/JWT material into a handoff env.
+
+    This intentionally does not import the complete container environment. The
+    caller must capture only a private env file, and the returned binding
+    records a hash rather than any credential value.
+    """
+    selectors = runtime_binding.get("selectors")
+    if not isinstance(selectors, Mapping) or set(selectors) != set(_ACTIVE_RUNTIME_SELECTORS):
+        raise ValueError("Phase 10.5-C active runtime binding selectors are invalid")
+    required = {
+        "QDL_STABLE_INTERNAL_INGEST_SECRET",
+        "QDL_STABLE_CURSOR_KEYS_JSON",
+        "QDL_DATA_JWT_KEYS_JSON",
+        "QDL_STABLE_SCHEMA_DIGEST",
+        "QDL_STABLE_AUTHORITY_MODE",
+        "QDL_STABLE_AUTHORITY_REVISION",
+        "QDL_CONFIG_REVISION",
+    }
+    missing = sorted(required - set(query_environment))
+    if missing:
+        raise ValueError(f"Phase 10.5-C active query environment is missing {missing}")
+    if query_environment["QDL_STABLE_INTERNAL_INGEST_SECRET"] != base_environment.get(
+        "QDL_STABLE_INTERNAL_INGEST_SECRET"
+    ):
+        raise ValueError("Phase 10.5-C active query ingest secret mismatches base env")
+    if query_environment["QDL_STABLE_SCHEMA_DIGEST"] != base_environment.get(
+        "QDL_STABLE_SCHEMA_DIGEST"
+    ):
+        raise ValueError("Phase 10.5-C active query schema digest mismatches base env")
+    for key in (
+        "QDL_CONFIG_REVISION",
+        "QDL_STABLE_AUTHORITY_MODE",
+        "QDL_STABLE_AUTHORITY_REVISION",
+    ):
+        if query_environment[key] != selectors[key]:
+            raise ValueError(f"Phase 10.5-C active query selector mismatches sealed runtime: {key}")
+    try:
+        cursor_keys = json.loads(query_environment["QDL_STABLE_CURSOR_KEYS_JSON"])
+        jwt_keys = json.loads(query_environment["QDL_DATA_JWT_KEYS_JSON"])
+    except json.JSONDecodeError as error:
+        raise ValueError("Phase 10.5-C active query cursor/JWT material is invalid JSON") from error
+    if not isinstance(cursor_keys, dict) or not cursor_keys or not all(
+        isinstance(key, str) and isinstance(value, str) and value
+        for key, value in cursor_keys.items()
+    ):
+        raise ValueError("Phase 10.5-C active query cursor keyring is invalid")
+    existing = {"stable-trading-system-rs256-v1", "stable-alpha-binance-rs256-v1"}
+    if set(jwt_keys) != existing or not all(
+        isinstance(value, str) and "BEGIN PUBLIC KEY" in value and "PRIVATE KEY" not in value
+        for value in jwt_keys.values()
+    ):
+        raise ValueError("Phase 10.5-C active query JWT keyring is invalid")
+    overrides = {
+        "QDL_STABLE_CURSOR_KEYS_JSON": query_environment["QDL_STABLE_CURSOR_KEYS_JSON"],
+        "QDL_STABLE_JWT_KEYS_JSON": query_environment["QDL_DATA_JWT_KEYS_JSON"],
+    }
+    return {
+        "sha256": sha256_bytes(render_dotenv(overrides).encode()),
+        "override_keys": sorted(overrides),
+        "overrides": overrides,
+    }
+
+
 def prepare_handoff_environment(
     base_environment: Mapping[str, str],
     *,
     extension_dir: str | Path,
     python_image: str,
     runtime_binding: Mapping[str, object] | None = None,
+    query_environment_binding: Mapping[str, object] | None = None,
 ) -> dict[str, str]:
     """Append only the two approved external public signing keys.
 
@@ -189,6 +262,15 @@ def prepare_handoff_environment(
             value = selectors[key]
             if not isinstance(value, str) or not value or "\n" in value:
                 raise ValueError(f"Phase 10.5-C active runtime binding is invalid: {key}")
+            result[key] = value
+    if query_environment_binding is not None:
+        overrides = query_environment_binding.get("overrides")
+        if not isinstance(overrides, Mapping) or set(overrides) != set(_ACTIVE_QUERY_OVERRIDE_KEYS):
+            raise ValueError("Phase 10.5-C active query environment overrides are invalid")
+        for key in _ACTIVE_QUERY_OVERRIDE_KEYS:
+            value = overrides[key]
+            if not isinstance(value, str) or not value or "\n" in value:
+                raise ValueError(f"Phase 10.5-C active query environment is invalid: {key}")
             result[key] = value
     extension = Path(extension_dir)
     for key_id, spec in EXTERNAL_IDENTITY_SPECS.items():
@@ -257,6 +339,7 @@ def handoff_packet(
     extension_dir: str | Path,
     v1_attestation: Mapping[str, object],
     runtime_binding: Mapping[str, object] | None = None,
+    query_environment_binding: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Make an auditable packet without serializing a secret-bearing env file."""
     if v1_attestation.get("status") != "PASS":
@@ -312,4 +395,7 @@ def handoff_packet(
     if runtime_binding is not None:
         packet["active_runtime_packet_sha256"] = runtime_binding.get("packet_sha256")
         packet["active_runtime_selectors"] = runtime_binding.get("selectors")
+    if query_environment_binding is not None:
+        packet["active_query_env_sha256"] = query_environment_binding.get("sha256")
+        packet["active_query_override_keys"] = query_environment_binding.get("override_keys")
     return packet

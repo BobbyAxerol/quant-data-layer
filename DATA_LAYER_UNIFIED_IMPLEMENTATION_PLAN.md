@@ -14911,6 +14911,25 @@ SOURCE-ONLY`).**
   DNSE queue-fence diagnostics were test paths. No runtime service, image,
   provider, Kafka/Redis/SQLite state or private bundle was changed by this
   source-only correction.
+- **Hash-only live preflight finding:** the active query container and the
+  historical private env agree on the ingest secret and schema digest, but its
+  cursor-key ring and JWT public-key ring have legitimately rotated. This is
+  not treated as a harmless mismatch: a recreate from the historical values
+  would invalidate active cursors/tokens. The in-scope correction is to accept
+  a private, allowlisted query-env capture and carry forward only
+  `QDL_STABLE_CURSOR_KEYS_JSON` and the active public JWT keyring, after
+  checking its authority/config/schema and unchanged ingest secret against the
+  sealed packet/base env. It will record only a hash and field names in the
+  handoff packet. No complete container env, secret value or provider payload
+  may be persisted outside the mode-`0600` packet namespace.
+- **Implemented/tested query-keyring preservation:** the preparation CLI now
+  requires that private allowlisted capture. Its pure binding accepts exactly
+  the rotated cursor keyring and active public JWT keyring, rejects a changed
+  ingest secret/schema/authority selector, and records only a deterministic
+  hash plus the two override names. Targeted helper tests passed `7/7`; the
+  same immutable, network-disabled/read-only matrix passed `43/43`. This is
+  still source-only: no V2/V1 container, trust file, key, provider, topic,
+  offset, Redis or SQLite state has changed.
 
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 
