@@ -20,6 +20,7 @@ from qdl.consumer import (
     ReleaseRouteObservation,
     StableReleaseRoutePlan,
     evaluate_release_readiness,
+    is_explicit_v1_exclusion,
     requirement_key,
 )
 
@@ -252,23 +253,26 @@ def _measurements_are_current(
     observations: Iterable[ReleaseRouteObservation],
 ) -> bool:
     requirements = {
-        (consumer.consumer_id, product.requirement_key): {
-            requirement_key(item): item
-            for item in consumer.manifest.requirements
-        }[product.requirement_key]
+        (consumer.consumer_id, product.requirement_key): (
+            product,
+            {
+                requirement_key(item): item
+                for item in consumer.manifest.requirements
+            }[product.requirement_key],
+        )
         for consumer in plan.consumers
         for product in consumer.products
     }
     for item in observations:
-        requirement = requirements[(item.consumer_id, item.requirement_key)]
+        product, requirement = requirements[(item.consumer_id, item.requirement_key)]
         maximum = requirement.max_freshness_ms
+        if product.route == "V1_PRIMARY":
+            if not is_explicit_v1_exclusion(product, item):
+                return False
+            continue
         if item.route == "V2_PRIMARY":
             ages = (item.v2_source_age_ms, item.v2_receive_age_ms)
             if item.v2_gap_open or any(age is None for age in ages):
-                return False
-        elif item.route == "V1_PRIMARY":
-            ages = (item.v1_source_age_ms, item.v1_receive_age_ms)
-            if any(age is None for age in ages):
                 return False
         else:
             return False

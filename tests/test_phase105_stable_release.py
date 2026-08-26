@@ -172,12 +172,12 @@ class StableReleaseReadinessTests(unittest.TestCase):
                 consumer_id=consumer_id,
                 requirement_key=product.requirement_key,
                 route=route,
-                reason="V1_EXCLUDED" if route == "V1_PRIMARY" else "V2_READY",
+                reason=product.reason if route == "V1_PRIMARY" else "V2_READY",
                 v2_source_age_ms=None if route == "V1_PRIMARY" else 10,
                 v2_receive_age_ms=None if route == "V1_PRIMARY" else 12,
                 v2_gap_open=False,
-                v1_source_age_ms=20 if route == "V1_PRIMARY" else None,
-                v1_receive_age_ms=22 if route == "V1_PRIMARY" else None,
+                v1_source_age_ms=None,
+                v1_receive_age_ms=None,
                 consumer_lag=3,
                 cpu_millicores=250,
                 rss_bytes=64 * 1024 * 1024,
@@ -239,6 +239,30 @@ class StableReleaseReadinessTests(unittest.TestCase):
             "CONSUMER_LAG:monitoring.multivenue.stable",
             over_budget.budget_violations,
         )
+
+    def test_v1_exclusion_cannot_claim_freshness_or_change_reason(self):
+        observations = list(self.observations())
+        excluded_index = next(
+            index
+            for index, (_consumer_id, product) in enumerate(self.plan.products())
+            if product.route == "V1_PRIMARY"
+        )
+        with self.assertRaisesRegex(ValueError, "explicit V2 exclusion"):
+            evaluate_release_readiness(
+                self.plan,
+                tuple(replace(
+                    observations[excluded_index], v1_source_age_ms=20
+                ) if index == excluded_index else observation
+                    for index, observation in enumerate(observations)),
+            )
+        with self.assertRaisesRegex(ValueError, "explicit V2 exclusion"):
+            evaluate_release_readiness(
+                self.plan,
+                tuple(replace(
+                    observations[excluded_index], reason="V1_EXCLUDED"
+                ) if index == excluded_index else observation
+                    for index, observation in enumerate(observations)),
+            )
 
     def test_observation_set_cannot_hide_a_missing_or_duplicate_product(self):
         observations = self.observations()

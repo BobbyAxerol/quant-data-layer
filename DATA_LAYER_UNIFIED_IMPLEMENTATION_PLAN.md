@@ -16094,6 +16094,65 @@ or broad image/container cleanup.
      performance and resource envelope; exclusions; rollback command/revision;
      tests/evidence/cleanup; and any genuine external gate left after release.
 
+   **B3 implementation packet (`APPROVED / IN PROGRESS`, 2026-08-26):** the
+   operator approved immutable stable-release rehearsal and publication. This
+   packet is intentionally bounded to the existing V1/V2 topology and current
+   release-routing revision. It may add a source-tested, read-only evidence
+   collector/certificate support, build and attest one Python and one Rust
+   immutable `2.0.0` candidate from one committed source revision, and run one
+   disposable no-order rehearsal against the existing V2 query/stream reader
+   pair plus declared V1 compatibility reads. It may write only compact,
+   payload-free evidence under a new named `/home/bobby/.local/state/qdl-v2/`
+   B3 namespace and a checked-in plan/runbook/test update.
+   - **Required live evidence:** exact full release-manifest observations;
+     current route/freshness/finality/gap/reconnect evidence; current bounded
+     consumer/projector lag and CPU/RAM/Kafka/Redis/disk metrics; current V1
+     provenance/binding; existing C1 final-BAR/RUST-primary handoff; and the
+     passed C2 receipt including every permitted V1 fallback-return route.
+     `V1_PRIMARY` VN/DNSE requirements remain an explicit V2 exclusion and
+     must be reported as such, never recast as V2 authority.
+   - **Hard invariants/exclusions:** no provider-direct client, no order
+     endpoint/action, no alpha or Trading System recreate/configuration change,
+     no authority/route/manifest mutation, no V1 restart, no V2 service
+     recreate, no Kafka offset reset/seek/topic mutation, Redis/SQLite flush or
+     deletion, database mutation, broad prune, or secret/payload/cursor-offset
+     retention. Existing V1 image and the known-good V2 image remain available
+     for rollback. The disposable client uses only the private existing
+     `executor_network`, read-only source/identities, non-root user, dropped
+     capabilities, read-only rootfs and tmpfs state.
+   - **Exit/publish rule:** run the immutable image source/contract matrix,
+     the bounded real no-order rehearsal and the review-only certificate. Only
+     a `PASS` certificate with no active fallback, no open gap and all budgets
+     below the frozen limits may create the local `2.0.0` release tag and
+     publication evidence. Remote push/release creation or any branch merge is
+     excluded until separately requested; a failed gate creates no tag and
+     leaves current runtime unchanged. Named disposable artifacts are removed
+     only after compact evidence is frozen.
+
+   **B3 source correction - explicit V1 exclusion (`PASS`, 2026-08-26):**
+   - **Finding and bounded repair:** the frozen release routing correctly marks
+     all four VN/DNSE requirements `V1_PRIMARY` with
+     `VN_REAL_PROVIDER_GATE_UNEXERCISED`, but the certificate gate incorrectly
+     demanded current V1 ages. That would make a closed VN session block a V2
+     release while also tempting a caller to record stale values as evidence.
+     `qdl.consumer.release.is_explicit_v1_exclusion()` now requires the exact
+     frozen exclusion reason, `V1_PRIMARY`, no V2 fields/gap, and no claimed
+     V1 freshness. The certificate reuses the same predicate. It does not
+     certify VN freshness or V2 authority; a future VN route needs a new
+     manifest revision and independent in-session evidence.
+   - **Tests actually run:** `13/13` targeted route-plan/certification tests
+     passed in immutable V2 Python image
+     `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`
+     with `--network none`, read-only source, non-root UID `10001`, dropped
+     capabilities and tmpfs-only writable state. Tests cover exact route
+     reason, hidden/missing/duplicate evidence, false V1 freshness, V2 gap,
+     fallback, resource budget and secret rejection. Host Python lacks the
+     repo dependencies, so its failed import was not used as evidence.
+   - **Runtime/cleanup:** source-only; no running service, route, authority,
+     Kafka offset/topic, Redis/SQLite/DB state, V1/alpha/Trading-System runtime
+     or provider connection changed. The `--rm` test container was removed.
+     Next B3 slice is a compact real observation collector and its source tests.
+
 **Phase 10.5 final exit:** only after C1, C2 and D/B3 are all `PASS` may this
 upgrade be declared `Data Layer V2 stable`. At that point there is no Phase
 10.6 architecture task. Image/container topology consolidation is a separate,

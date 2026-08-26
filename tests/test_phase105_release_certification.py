@@ -37,12 +37,12 @@ class Phase105StableReleaseCertificationTests(unittest.TestCase):
                 consumer_id=consumer_id,
                 requirement_key=product.requirement_key,
                 route=route,
-                reason="V1_EXCLUDED" if route == "V1_PRIMARY" else "V2_READY",
+                reason=product.reason if route == "V1_PRIMARY" else "V2_READY",
                 v2_source_age_ms=None if route == "V1_PRIMARY" else 10,
                 v2_receive_age_ms=None if route == "V1_PRIMARY" else 12,
                 v2_gap_open=False,
-                v1_source_age_ms=20 if route == "V1_PRIMARY" else None,
-                v1_receive_age_ms=22 if route == "V1_PRIMARY" else None,
+                v1_source_age_ms=None,
+                v1_receive_age_ms=None,
                 consumer_lag=3,
                 cpu_millicores=250,
                 rss_bytes=64 * 1024 * 1024,
@@ -162,6 +162,12 @@ class Phase105StableReleaseCertificationTests(unittest.TestCase):
         result = self.certify(observations=tuple(observations))
         self.assertEqual(result["status"], "BLOCKED")
         self.assertEqual(self.gate_status(result, "release_route_readiness"), "BLOCKED")
+
+        observations = list(self.observations())
+        first_v1 = next(index for index, item in enumerate(observations) if item.route == "V1_PRIMARY")
+        observations[first_v1] = replace(observations[first_v1], v1_receive_age_ms=20)
+        with self.assertRaisesRegex(ValueError, "explicit V2 exclusion"):
+            self.certify(observations=tuple(observations))
 
         provenance = self.v1_provenance()
         provenance["source_commit"] = "0" * 40

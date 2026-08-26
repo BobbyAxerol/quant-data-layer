@@ -570,6 +570,30 @@ class ReleaseReadinessSummary:
     budget_violations: tuple[str, ...]
 
 
+def is_explicit_v1_exclusion(
+    product: StableReleaseProductRoute,
+    observation: ReleaseRouteObservation,
+) -> bool:
+    """Return whether a V1-only product is honestly recorded as excluded.
+
+    A V1-primary route in the frozen V2 release plan is not V2 evidence and
+    must never be made to look current by borrowing stale or invented V1/V2
+    ages.  Its declared plan reason is the sole release evidence; a separate
+    venue certificate can later replace that exclusion through a new manifest
+    revision.
+    """
+    return (
+        product.route == _V1_ROUTE
+        and observation.route == _V1_ROUTE
+        and observation.reason == product.reason
+        and observation.v2_source_age_ms is None
+        and observation.v2_receive_age_ms is None
+        and observation.v1_source_age_ms is None
+        and observation.v1_receive_age_ms is None
+        and not observation.v2_gap_open
+    )
+
+
 def evaluate_release_readiness(
     plan: StableReleaseRoutePlan,
     observations: Iterable[ReleaseRouteObservation],
@@ -611,15 +635,10 @@ def evaluate_release_readiness(
         if observed.rss_bytes > plan.resource_budget.max_rss_bytes:
             budget_violations.add(f"RSS_BYTES:{identity[0]}")
         if product.route == _V1_ROUTE:
-            if (
-                observed.route != _V1_ROUTE
-                or observed.v1_source_age_ms is None
-                or (
-                    requirement.max_freshness_ms is not None
-                    and observed.v1_source_age_ms > requirement.max_freshness_ms
+            if not is_explicit_v1_exclusion(product, observed):
+                raise ValueError(
+                    "V1-primary release product is not an explicit V2 exclusion"
                 )
-            ):
-                raise ValueError("V1-primary release product changed route")
             v1_primary_count += 1
             continue
         if observed.route == _V2_ROUTE:

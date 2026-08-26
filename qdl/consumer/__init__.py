@@ -38,6 +38,7 @@ from qdl.consumer.release import (
     StableReleaseRoutePlan,
     V1FallbackReference,
     evaluate_release_readiness,
+    is_explicit_v1_exclusion,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +76,7 @@ __all__ = [
     "StableReleaseRoutePlan",
     "V1FallbackReference",
     "evaluate_release_readiness",
+    "is_explicit_v1_exclusion",
 ]
 
 
