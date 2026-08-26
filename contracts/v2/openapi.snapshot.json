@@ -158,6 +158,78 @@
         "title": "BarRevisionPolicy",
         "type": "string"
       },
+      "BasisKind": {
+        "enum": [
+          "PROVIDER_NATIVE",
+          "DERIVED"
+        ],
+        "title": "BasisKind",
+        "type": "string"
+      },
+      "BasisPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "annualized_basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "basis": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "basis_unit": {
+            "$ref": "#/components/schemas/MetricUnit"
+          },
+          "feed": {
+            "const": "BASIS",
+            "default": "BASIS",
+            "title": "Feed",
+            "type": "string"
+          },
+          "formula_id": {
+            "default": "",
+            "maxLength": 160,
+            "title": "Formula Id",
+            "type": "string"
+          },
+          "input_instrument_uids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Input Instrument Uids",
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BasisKind"
+          },
+          "reference_instrument_uid": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Reference Instrument Uid",
+            "type": "string"
+          },
+          "sampling_interval": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Sampling Interval",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "sampling_interval",
+          "basis",
+          "basis_unit"
+        ],
+        "title": "BasisPayload",
+        "type": "object"
+      },
       "BatchItemResponse": {
         "additionalProperties": false,
         "properties": {
@@ -425,6 +497,82 @@
         "title": "ConsumerGrade",
         "type": "string"
       },
+      "ContractMetadataPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "continuous": {
+            "default": false,
+            "title": "Continuous",
+            "type": "boolean"
+          },
+          "contract_kind": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Contract Kind",
+            "type": "string"
+          },
+          "contract_multiplier": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "expiry_time_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Time Ns"
+          },
+          "feed": {
+            "const": "CONTRACT_METADATA",
+            "default": "CONTRACT_METADATA",
+            "title": "Feed",
+            "type": "string"
+          },
+          "funding_interval_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Funding Interval Ns"
+          },
+          "price_tick": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "quantity_step": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "settlement_asset": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Settlement Asset",
+            "type": "string"
+          },
+          "underlying_instrument_uid": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Underlying Instrument Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_kind",
+          "settlement_asset",
+          "contract_multiplier",
+          "price_tick",
+          "quantity_step"
+        ],
+        "title": "ContractMetadataPayload",
+        "type": "object"
+      },
       "ContractView": {
         "additionalProperties": false,
         "properties": {
@@ -559,7 +707,11 @@
           "FUNDING_RATE",
           "OPEN_INTEREST",
           "MARK_INDEX_PRICE",
-          "TICKER"
+          "TICKER",
+          "LONG_SHORT_RATIO",
+          "TAKER_FLOW",
+          "BASIS",
+          "CONTRACT_METADATA"
         ],
         "title": "FeedType",
         "type": "string"
@@ -855,6 +1007,57 @@
         "title": "IntervalSourcePolicy",
         "type": "string"
       },
+      "LongShortRatioPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "feed": {
+            "const": "LONG_SHORT_RATIO",
+            "default": "LONG_SHORT_RATIO",
+            "title": "Feed",
+            "type": "string"
+          },
+          "long_short_ratio": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "long_value": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "population": {
+            "$ref": "#/components/schemas/LongShortRatioPopulation"
+          },
+          "sampling_interval": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Sampling Interval",
+            "type": "string"
+          },
+          "short_value": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "value_unit": {
+            "$ref": "#/components/schemas/MetricUnit",
+            "default": "RATIO"
+          }
+        },
+        "required": [
+          "population",
+          "sampling_interval",
+          "long_value",
+          "short_value",
+          "long_short_ratio"
+        ],
+        "title": "LongShortRatioPayload",
+        "type": "object"
+      },
+      "LongShortRatioPopulation": {
+        "enum": [
+          "GLOBAL_ACCOUNT",
+          "TOP_ACCOUNT",
+          "TOP_POSITION"
+        ],
+        "title": "LongShortRatioPopulation",
+        "type": "string"
+      },
       "MarkIndexPricePayload": {
         "additionalProperties": false,
         "properties": {
@@ -931,12 +1134,16 @@
             "discriminator": {
               "mapping": {
                 "BAR": "#/components/schemas/BarPayload",
+                "BASIS": "#/components/schemas/BasisPayload",
                 "BOOK_DELTA": "#/components/schemas/BookDeltaPayload",
                 "BOOK_SNAPSHOT": "#/components/schemas/BookSnapshotPayload",
+                "CONTRACT_METADATA": "#/components/schemas/ContractMetadataPayload",
                 "FUNDING_RATE": "#/components/schemas/FundingRatePayload",
+                "LONG_SHORT_RATIO": "#/components/schemas/LongShortRatioPayload",
                 "MARK_INDEX_PRICE": "#/components/schemas/MarkIndexPricePayload",
                 "OPEN_INTEREST": "#/components/schemas/OpenInterestPayload",
                 "QUOTE": "#/components/schemas/QuotePayload",
+                "TAKER_FLOW": "#/components/schemas/TakerFlowPayload",
                 "TICKER": "#/components/schemas/TickerPayload",
                 "TRADE": "#/components/schemas/TradePayload"
               },
@@ -966,6 +1173,18 @@
               },
               {
                 "$ref": "#/components/schemas/MarkIndexPricePayload"
+              },
+              {
+                "$ref": "#/components/schemas/LongShortRatioPayload"
+              },
+              {
+                "$ref": "#/components/schemas/TakerFlowPayload"
+              },
+              {
+                "$ref": "#/components/schemas/BasisPayload"
+              },
+              {
+                "$ref": "#/components/schemas/ContractMetadataPayload"
               },
               {
                 "$ref": "#/components/schemas/TickerPayload"
@@ -1030,6 +1249,20 @@
         "title": "MarketDataView",
         "type": "object"
       },
+      "MetricUnit": {
+        "enum": [
+          "RATIO",
+          "PRICE",
+          "BASE_ASSET",
+          "QUOTE_ASSET",
+          "CONTRACT",
+          "NOTIONAL",
+          "PERCENT",
+          "BASIS_POINTS"
+        ],
+        "title": "MetricUnit",
+        "type": "string"
+      },
       "OpenInterestPayload": {
         "additionalProperties": false,
         "properties": {
@@ -1054,6 +1287,19 @@
           },
           "quantity_unit": {
             "$ref": "#/components/schemas/QuantityUnit"
+          },
+          "sampling_interval": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sampling Interval"
           }
         },
         "required": [
@@ -1587,6 +1833,44 @@
           "v2_consumer_activation"
         ],
         "title": "SystemReadinessSummary",
+        "type": "object"
+      },
+      "TakerFlowPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "buy_sell_ratio": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "buy_volume": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "feed": {
+            "const": "TAKER_FLOW",
+            "default": "TAKER_FLOW",
+            "title": "Feed",
+            "type": "string"
+          },
+          "quantity_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
+          },
+          "sampling_interval": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Sampling Interval",
+            "type": "string"
+          },
+          "sell_volume": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "sampling_interval",
+          "buy_volume",
+          "sell_volume",
+          "buy_sell_ratio",
+          "quantity_unit"
+        ],
+        "title": "TakerFlowPayload",
         "type": "object"
       },
       "TickerPayload": {

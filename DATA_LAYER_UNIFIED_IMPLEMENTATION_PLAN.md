@@ -14484,6 +14484,114 @@ coherent commit. No broad prune, Kafka offset reset, Redis/SQLite flush,
 database cleanup or alpha/order mutation is an implicit part of release
 acceptance.
 
+#### 10.5-A Release Manifest And Observability Preflight - 2026-08-26 (`APPROVED / COMPLETE / SOURCE-ONLY`)
+
+- **Approval and guide:** the operator approved Phase 10.5 on 2026-08-26.
+  This first bounded scope follows Section 21.8, Appendix J and
+  `docs/runbooks/v2-production-rust-authority-cutover.md`. It is deliberately
+  source-only: it does not recreate a consumer, change a route, write an
+  authority record, contact a provider, or mutate Kafka, Redis, SQLite,
+  PostgreSQL, V1, Trading System or alpha state.
+- **Why a release manifest is still needed:** the Phase 10.3 shared-primary
+  plan is a valid handoff input, but it is intentionally consumer-level and
+  does not freeze the release-approved per-requirement scope, an immutable V1
+  rollback source revision, or explicit `BLOCKED` behaviour for V1-incompatible
+  products. It must remain backward-compatible and is not repurposed.
+- **Goal:** add one additive, versioned stable-release routing contract bound
+  to the existing consumer manifests, source catalog, crypto demand revision
+  and capability matrix. It will enumerate only approved Binance/OKX products,
+  retain an exact V1 fallback reference where compatibility exists, and mark
+  unproven VN and V1-incompatible products as non-promotable rather than
+  silently routing them.
+- **Invariants:** requirement identity is the existing
+  `instrument_uid:feed:interval:source_policy_id` key; no decimal/unit/finality
+  conversion occurs in routing; a `V1` fallback has one exact source revision
+  and contract reference; a product without proven V1 equivalence is `BLOCKED`,
+  never downgraded; declared demand/capability/manifest digests must match
+  before a future consumer handoff can proceed. Every V2 product with a
+  materialized durable binding must also be present in the checksum-bound
+  `stable-crypto-demand` universe; only provider-history pass-through products
+  are intentionally exempt from that demand-membership test.
+- **10.5-A tests:** strict unknown-field/path-escape/digest/revision rejection;
+  every release route resolves to a declared consumer requirement and a V2
+  materialized or eligible pass-through source; Binance/OKX/VN capability
+  scope; V2-primary -> eligible V1 fallback -> V2-primary and V2-primary ->
+  blocked fallback semantics; deterministic bounded readiness/observability
+  records. Existing V1 compatibility, V2 SDK and Rust contract tests remain
+  regression gates. All test observations are explicit test provenance.
+- **Rollback and decision boundary:** reverting this coherent source commit
+  removes only the new release-contract/parser/runbook. Scope 10.5-B remains
+  separately approval-gated because it exercises an isolated no-order consumer
+  acceptance; 10.5-C requires a named runtime packet; 10.5-D requires an
+  immutable release rehearsal. No Phase 10.5 runtime action is implied by the
+  10.5-A source gate.
+
+**10.5-A implementation and source evidence - 2026-08-26 (`PASS / RUNTIME
+UNCHANGED`).**
+
+- Added `config/v2/stable-v2-release-routing.yaml` and the pure
+  `qdl.consumer.release` parser/evaluator. It is additive to, and deliberately
+  does not alter, the Phase 10.3 authority route. The frozen release scope has
+  five registered consumers and 32 requirement routes: Binance/OKX products
+  are `V2_PRIMARY`; only catalog-proven Binance TRADE/final-BAR products may
+  fall back to the exact V1 `v1.2.2` source commit
+  `85c25df631e263281bd546de69efcaf6146c93ef`; V1-incompatible Binance BBO,
+  all unproven OKX equivalences and provider pass-through parity cases are
+  explicitly `BLOCKED`; four VN requirements remain `V1_PRIMARY` with the
+  recorded unexercised-provider reason.
+- The manifest checksum-binds source catalog revision `3`, crypto demand
+  revision `1`, capability revision `5`, consumer canonical manifest revisions
+  and the exact V1 source contract. It rejects unknown fields, path escapes,
+  changed artifact/manifest digest, omitted/duplicate products, V2 routing for
+  uncertified VN, and a V1 fallback where the source catalog declares no
+  semantic compatibility. A materialized V2 product additionally fails closed
+  if its exact venue/market/product/native-symbol/feed/interval/policy tuple
+  has disappeared from the checksum-bound crypto-demand document; approved
+  provider-history pass-through requirements remain deliberately exempt.
+- Added the bounded `ReleaseRouteObservation` / `evaluate_release_readiness`
+  contract. `READY` requires V2-primary for every approved product;
+  an allowed fallback is `DEGRADED`, never hidden behind green health; a
+  blocked or missing product is `NOT_READY`. The record carries only route,
+  reason, freshness/gap, consumer lag and CPU/RSS fields -- no provider payload
+  or secret. It enforces the existing `10,000` lag alert threshold and the
+  stable Compose maximum role ceilings (`750` millicores, `768 MiB`) as
+  fail-closed release readiness budgets. Runtime endpoint wiring remains
+  10.5-B/C work.
+- Regenerated the V2 OpenAPI snapshot after Phase 10.4 reference-data work.
+  The mechanically generated diff has no path change (`10` remains `10`) and
+  adds exactly seven schemas/feed variants for `LONG_SHORT_RATIO`,
+  `TAKER_FLOW`, `BASIS` and `CONTRACT_METADATA`, plus the intended optional
+  OPEN_INTEREST interval semantics. The snapshot test expectation is now
+  `53` schemas rather than stale `46`.
+- **Tests actually run:** `python3 -m py_compile` for new Python files ->
+  pass; generated OpenAPI compared byte-for-byte with the checked-in snapshot
+  -> pass; network-disabled/read-only `qdl-v2-python:2.0.0-e0bedff` matrix
+  `tests.test_phase105_stable_release`, all Phase 10.4 contract/reference/L2/
+  query-stream modules, Phase 10.3 handoff, stable-release, realtime-route and
+  catalog-demand modules -> `61 passed, 0 failed, 0 skipped`. The added
+  negative case removes one declared Binance USD-M final-BAR durable demand
+  entry in a temporary copied manifest root, refreshes only that test artifact
+  hash, and proves release parsing rejects it. The first matrix execution
+  caught an in-scope parser error that read `native_symbol` from the canonical
+  identity rather than the catalog instrument record; it was corrected and the
+  complete matrix was rerun clean. The test also proves imports through the
+  public FastAPI/OpenAPI factory after the new consumer export, so the initial
+  security/stream import cycle was caught and repaired. Rust source is unchanged
+  in this slice; the host has no Rust builder image or Cargo binary, so no new
+  Rust test was claimed. The prior Phase 10.4 Rust `qdl-realtime-core` evidence
+  remains unchanged and the next immutable-image certification repeats it.
+- **Runtime/cleanup:** all test containers used `--rm`, `--network none` and a
+  read-only source mount. No image was built, provider called, service/container
+  recreated, authority/route activated, or durable state touched. The one
+  generated OpenAPI temporary directory was removed after the verified copy.
+- **Result and next gate:** 10.5-A source/test exit is complete in the coherent
+  commit containing this evidence. 10.5-B is not implicitly authorized: it
+  needs an exact isolated no-order
+  acceptance packet naming the V2 bundle/ports, identities, selected paper
+  consumer scopes, observation duration, V1 runtime-image verification and
+  exact cleanup namespace. See
+  `docs/runbooks/phase105-consumer-cutover-stable-release.md`.
+
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 
 Every Phase 10 implementation slice must record in this journal before code

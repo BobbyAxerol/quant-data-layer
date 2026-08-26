@@ -29,6 +29,16 @@ from qdl.consumer.realtime_route import (
     requirement_key,
     select_realtime_route,
 )
+from qdl.consumer.release import (
+    ReleaseReadinessSummary,
+    ReleaseResourceBudget,
+    ReleaseRouteObservation,
+    StableReleaseConsumerRoute,
+    StableReleaseProductRoute,
+    StableReleaseRoutePlan,
+    V1FallbackReference,
+    evaluate_release_readiness,
+)
 
 if TYPE_CHECKING:
     from qdl.consumer.shadow import ManifestShadowConsumer, ShadowObservation
@@ -57,6 +67,14 @@ __all__ = [
     "evaluate_realtime_health",
     "requirement_key",
     "select_realtime_route",
+    "ReleaseReadinessSummary",
+    "ReleaseResourceBudget",
+    "ReleaseRouteObservation",
+    "StableReleaseConsumerRoute",
+    "StableReleaseProductRoute",
+    "StableReleaseRoutePlan",
+    "V1FallbackReference",
+    "evaluate_release_readiness",
 ]
 
 

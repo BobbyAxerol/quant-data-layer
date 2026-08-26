@@ -5741,3 +5741,22 @@ reduced root filesystem use from 91 GiB to 47 GiB; BuildKit cache fell from
 occurred. Post-cleanup B16/B17 regression ran 49 cases: 48 passed and
 the separately proven real-Redis conditional case was the sole skip; compile
 and diff checks passed.
+
+### J.7 Phase 10.5 consumer cutover closure
+
+Phase 10.5 is governed by main-plan Section 21.8 and the operational detail in
+`docs/runbooks/phase105-consumer-cutover-stable-release.md`. It keeps the
+Phase 10.3 shared authority plan as topology input and adds one per-requirement
+release contract; it does not create a second core, topic or image topology.
+
+`10.5-A` freezes the release manifest, exact V1 source revision, capability and
+demand/catalog checksums, and bounded readiness schema with no runtime action.
+Its parser also proves each materialized V2 product remains in the declared
+crypto-demand universe; only provider-history pass-through is exempt because it
+does not claim durable acquisition.
+`10.5-B` is isolated no-order consumer acceptance; `10.5-C` is an explicitly
+approved rolling handoff packet; `10.5-D` is immutable release certification.
+No scope may use a mutable V1 tag as evidence, make a V1-incompatible BBO/OKX
+product silently fall back, or promote VN before its independent real-provider
+gate. Each scope stops after its declared evidence/rollback gate and records
+the result in the main journal.
