@@ -14864,6 +14864,17 @@ MUTATED`).**
   this source slice. Every test container used `--rm --network none
   --read-only` with tmpfs `/tmp`; it left no test container, volume, image or
   durable cursor.
+- **Artifact preflight correction:** a direct host invocation of the new V1
+  attestation CLI exposed an in-scope packaging defect: Python launched a
+  `scripts/*.py` file with `scripts/` rather than repository root on
+  `sys.path`. The three Phase 10.5-C CLIs now add the existing repository-root
+  bootstrap before importing `qdl`. Host compile plus helper tests -> pass;
+  a read-only source-mount V2 image rerun -> `8 passed, 0 failed`; and the
+  corrected CLI created the first real, secret-free V1 provenance record for
+  image `sha256:55b2cd18f8db46cf492082831fbb7db5540e27f9009f307f36da8c27a38833c8`.
+  It binds exactly frozen commit `85c25df...`, tree `fb5bc2...` and Dockerfile
+  hash `c3f1aae...`. The earlier V2 Python image is not selected for runtime
+  until this small source correction is committed and rebuilt.
 - **Next exact action:** build and attest one V1 and one V2 Python image, then
   create a private `phase105c-*` bundle. Only after its dry-run and Compose
   render pass may the named runtime repair order begin. The actual consumer

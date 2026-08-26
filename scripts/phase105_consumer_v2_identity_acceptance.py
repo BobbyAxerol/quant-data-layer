@@ -12,10 +12,15 @@ import argparse
 import asyncio
 import json
 import shutil
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from qdl.certification.phase103_consumer_acceptance import (
     AcceptanceProduct,
@@ -31,7 +36,6 @@ from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from scripts.phase103_consumer_receipt_acceptance import _certify_product, _identity
 
 
-ROOT = Path(__file__).resolve().parents[1]
 IDENTITY_PREFIXES = {
     "monitoring.multivenue.stable": "monitoring",
     "trading-system.paper.stable": "trading",
