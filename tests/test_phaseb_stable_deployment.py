@@ -166,9 +166,15 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertEqual(script.count('-days "${CERT_DAYS}"'), 2)
         self.assertNotIn("-days 2", script)
         for artifact in (
+            "stable-monitoring",
+            "stable-monitoring-jwt",
+            "stable-monitoring-jwt.public.pem",
             "stable-alpha-binance",
             "stable-alpha-binance-jwt",
             "stable-alpha-binance-jwt.public.pem",
+            "stable-alpha-okx",
+            "stable-alpha-okx-jwt",
+            "stable-alpha-okx-jwt.public.pem",
         ):
             with self.subTest(artifact=artifact):
                 self.assertIn(artifact, script)
@@ -1275,8 +1281,10 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 "phase8-core",
                 "phase8-consumer",
                 "stable-authority-dispatcher",
+                "stable-monitoring",
                 "stable-trading-system",
                 "stable-alpha-binance",
+                "stable-alpha-okx",
                 "stable-query",
                 "stable-stream",
             ):
@@ -1293,6 +1301,18 @@ class StableComposeAndBundleTests(unittest.TestCase):
             )
             (certs / "stable-alpha-binance-jwt.public.pem").write_text(
                 "alpha-public", encoding="ascii"
+            )
+            (certs / "stable-monitoring-jwt.key").write_text(
+                "monitoring-private", encoding="ascii"
+            )
+            (certs / "stable-monitoring-jwt.public.pem").write_text(
+                "monitoring-public", encoding="ascii"
+            )
+            (certs / "stable-alpha-okx-jwt.key").write_text(
+                "okx-private", encoding="ascii"
+            )
+            (certs / "stable-alpha-okx-jwt.public.pem").write_text(
+                "okx-public", encoding="ascii"
             )
             with tempfile.TemporaryDirectory(prefix="qdl-phaseb-output-") as parent:
                 output = Path(parent) / "candidate"
@@ -1313,7 +1333,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertFalse(manifest["secret_values_recorded"])
                 self.assertEqual(manifest["authority"], "RUST_SHADOW")
                 self.assertEqual(manifest["consumer_count"], 6)
-                self.assertEqual(manifest["workload_identity_count"], 5)
+                self.assertEqual(manifest["workload_identity_count"], 7)
                 self.assertEqual(manifest["authority_promotion_binding_count"], 12)
                 self.assertEqual(manifest["consumer_network"], "executor_network")
                 self.assertEqual(len(manifest["authority_promotion_scope_digest"]), 64)
@@ -1352,6 +1372,9 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertIn(
                     "stable-alpha-binance-rs256-v1", env_text
                 )
+                self.assertIn("stable-monitoring-rs256-v1", env_text)
+                self.assertIn("stable-alpha-okx-rs256-v1", env_text)
+                self.assertIn("QDL_STABLE_JWT_KEY_SUBJECTS_JSON", env_text)
                 self.assertIn("QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON", env_text)
                 self.assertIn(
                     "QDL_STABLE_ALPHA_BINANCE_CERT_DIR="
@@ -1361,6 +1384,16 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertIn(
                     "QDL_STABLE_ALPHA_BINANCE_JWT_PRIVATE_KEY="
                     "/host/qdl/candidate/identities/alpha-binance-jwt/private.key",
+                    env_text,
+                )
+                self.assertIn(
+                    "QDL_STABLE_MONITORING_CERT_DIR="
+                    "/host/qdl/candidate/identities/monitoring",
+                    env_text,
+                )
+                self.assertIn(
+                    "QDL_STABLE_ALPHA_OKX_CERT_DIR="
+                    "/host/qdl/candidate/identities/alpha-okx",
                     env_text,
                 )
                 public_manifest = (output / "candidate-manifest.json").read_text()
@@ -1389,6 +1422,14 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertTrue(alpha_jwt_key.is_file())
                 self.assertEqual(alpha_key.stat().st_mode & 0o777, 0o440)
                 self.assertEqual(alpha_jwt_key.stat().st_mode & 0o777, 0o440)
+                for role in ("monitoring", "alpha-okx"):
+                    with self.subTest(role=role):
+                        self.assertTrue(
+                            (output / f"identities/{role}/client.key").is_file()
+                        )
+                        self.assertTrue(
+                            (output / f"identities/{role}-jwt/private.key").is_file()
+                        )
 
 
 if __name__ == "__main__":

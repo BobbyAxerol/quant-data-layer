@@ -57,7 +57,7 @@ done
 # stable-alpha-binance carries the INTERNAL_ALPHA purpose. Every identity here
 # before it was INTERNAL_EXECUTION, which is the one purpose the provider
 # pass-through must refuse, so no consumer could reach that product at all.
-for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized stable-authority-dispatcher stable-trading-system stable-alpha-binance; do
+for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized stable-authority-dispatcher stable-monitoring stable-trading-system stable-alpha-binance stable-alpha-okx; do
   issue_certificate "${client}" "${client}"
 done
 issue_certificate stable-trading-system-jwt stable-trading-system-jwt
@@ -66,6 +66,12 @@ openssl pkey -in "${OUTPUT_DIR}/stable-trading-system-jwt.key" -pubout \
 issue_certificate stable-alpha-binance-jwt stable-alpha-binance-jwt
 openssl pkey -in "${OUTPUT_DIR}/stable-alpha-binance-jwt.key" -pubout \
   -out "${OUTPUT_DIR}/stable-alpha-binance-jwt.public.pem" >/dev/null 2>&1
+issue_certificate stable-monitoring-jwt stable-monitoring-jwt
+openssl pkey -in "${OUTPUT_DIR}/stable-monitoring-jwt.key" -pubout \
+  -out "${OUTPUT_DIR}/stable-monitoring-jwt.public.pem" >/dev/null 2>&1
+issue_certificate stable-alpha-okx-jwt stable-alpha-okx-jwt
+openssl pkey -in "${OUTPUT_DIR}/stable-alpha-okx-jwt.key" -pubout \
+  -out "${OUTPUT_DIR}/stable-alpha-okx-jwt.public.pem" >/dev/null 2>&1
 issue_certificate stable-query query_v2_1 "DNS:query_v2_1,DNS:query_v2_2,DNS:qdl-v2-query"
 issue_certificate stable-stream stream_v2_active "DNS:stream_v2_active,DNS:stream_v2_passive,DNS:qdl-v2-stream,DNS:qdl-v2-stream-a,DNS:qdl-v2-stream-b"
 
@@ -128,10 +134,14 @@ find "${OUTPUT_DIR}" -maxdepth 1 -name '*.key' \
   ! -name 'stable-query.key' \
   ! -name 'stable-stream.key' \
   ! -name 'stable-authority-dispatcher.key' \
+  ! -name 'stable-monitoring.key' \
+  ! -name 'stable-monitoring-jwt.key' \
   ! -name 'stable-trading-system.key' \
   ! -name 'stable-trading-system-jwt.key' \
   ! -name 'stable-alpha-binance.key' \
   ! -name 'stable-alpha-binance-jwt.key' \
+  ! -name 'stable-alpha-okx.key' \
+  ! -name 'stable-alpha-okx-jwt.key' \
   -delete
 rm -f "${OUTPUT_DIR}"/*.csr "${OUTPUT_DIR}"/*.ext "${OUTPUT_DIR}"/*.srl
 

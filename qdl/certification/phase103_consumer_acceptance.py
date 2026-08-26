@@ -115,7 +115,10 @@ class ConsumerAcceptanceScope:
     excluded: tuple[ExcludedRequirement, ...]
 
     def __post_init__(self) -> None:
-        if self.schema != "qdl.phase103.consumer-acceptance-scope.v1":
+        if self.schema not in {
+            "qdl.phase103.consumer-acceptance-scope.v1",
+            "qdl.phase105.consumer-acceptance-scope.v1",
+        }:
             raise ValueError("consumer acceptance scope schema is unsupported")
         if min(self.catalog_revision, self.acquisition_revision) < 1:
             raise ValueError("consumer acceptance scope revisions must be positive")
@@ -252,13 +255,15 @@ def _product_for_requirement(
     )
 
 
-def build_consumer_acceptance_scope(
+def build_manifest_acceptance_scope(
     manifest_paths: Iterable[str | Path],
     *,
     catalog: StableSourceCatalog,
     acquisition: StableAcquisitionPlan,
+    expected_consumer_ids: frozenset[str],
+    schema: str,
 ) -> ConsumerAcceptanceScope:
-    """Build the exact Phase 10.3 crypto acceptance matrix from governed input.
+    """Build a governed crypto acceptance matrix from registered manifests.
 
     The catalog owns identity/lineage while the acquisition plan owns whether a
     canonical product is active. A future 15m alpha window is legal only when
@@ -271,10 +276,9 @@ def build_consumer_acceptance_scope(
     consumer_ids = frozenset(item.consumer_id for item in manifests)
     if len(consumer_ids) != len(manifests):
         raise ValueError("consumer acceptance manifests must have unique consumer IDs")
-    if consumer_ids != PHASE103_CONSUMER_IDS:
+    if consumer_ids != expected_consumer_ids:
         raise ValueError(
-            "Phase 10.3 consumer acceptance requires exactly the Trading System "
-            "and alpha workload manifests"
+            "consumer acceptance requires exactly the governed consumer IDs"
         )
     acquisition_by_id = {item.binding_id: item for item in acquisition.bindings}
     products: list[AcceptanceProduct] = []
@@ -301,11 +305,27 @@ def build_consumer_acceptance_scope(
         )
     )
     return ConsumerAcceptanceScope(
-        schema="qdl.phase103.consumer-acceptance-scope.v1",
+        schema=schema,
         catalog_revision=catalog.catalog_revision,
         acquisition_revision=acquisition.revision,
         products=tuple(products),
         excluded=tuple(excluded),
+    )
+
+
+def build_consumer_acceptance_scope(
+    manifest_paths: Iterable[str | Path],
+    *,
+    catalog: StableSourceCatalog,
+    acquisition: StableAcquisitionPlan,
+) -> ConsumerAcceptanceScope:
+    """Build the exact Phase 10.3 crypto acceptance matrix from governed input."""
+    return build_manifest_acceptance_scope(
+        manifest_paths,
+        catalog=catalog,
+        acquisition=acquisition,
+        expected_consumer_ids=PHASE103_CONSUMER_IDS,
+        schema="qdl.phase103.consumer-acceptance-scope.v1",
     )
 
 

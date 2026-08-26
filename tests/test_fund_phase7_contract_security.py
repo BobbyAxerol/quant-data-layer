@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from qdl.api_v2 import create_v2_app
 from qdl.api_v2.models import MarketDataView
-from qdl.consumer import ConsumerManifestLoader
+from qdl.consumer import ConsumerManifestLoader, ConsumerManifestRegistry
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
     AssetClass,
@@ -39,7 +39,12 @@ from qdl.query import (
     V2QueryService,
 )
 from qdl.query.v2 import query_pb2
-from qdl.security import DataPlaneAccessError, DataPlanePermission
+from qdl.security import (
+    DataPlaneAccessError,
+    DataPlaneIdentityService,
+    DataPlanePermission,
+    DataPlaneSecurityConfig,
+)
 from qdl.security.grpc import GrpcDataPlaneInterceptor
 from qdl.stream import GrpcMarketDataService, create_grpc_server
 from qdl.stream.grpc_service import requirement_from_proto
@@ -361,6 +366,47 @@ class Phase7RestAndContractTests(unittest.TestCase):
         access.require_stream_buffer(access.manifest.quotas.max_buffer_events)
         with self.assertRaises(DataPlaneAccessError):
             access.require_stream_buffer(access.manifest.quotas.max_buffer_events + 1)
+
+    def test_signing_key_is_bound_to_its_registered_workload_subject(self):
+        other = make_manifest(
+            consumer_id="phase7.other",
+            subject="spiffe://qdl/paper/phase7-other",
+            instrument_uid=self.fixture.record.instrument_uid,
+        )
+        identity = DataPlaneIdentityService(
+            DataPlaneSecurityConfig(
+                environment="paper",
+                issuer="https://identity.qdl.test",
+                audience="qdl-v2-beta",
+                keys_by_id={TEST_KEY_ID: TEST_SECRET},
+                algorithms=("HS256",),
+                subjects_by_key_id={TEST_KEY_ID: self.fixture.subject},
+            ),
+            ConsumerManifestRegistry((self.fixture.manifest, other)),
+        )
+        self.assertEqual(
+            identity.authenticate(
+                make_token(self.fixture.subject),
+                consumer_id=self.fixture.consumer_id,
+            ).consumer_id,
+            self.fixture.consumer_id,
+        )
+        with self.assertRaisesRegex(DataPlaneAccessError, "signing key"):
+            identity.authenticate(
+                make_token(other.subject),
+                consumer_id=other.consumer_id,
+            )
+
+    def test_key_subject_bindings_must_cover_the_keyring_exactly(self):
+        with self.assertRaisesRegex(ValueError, "cover exactly"):
+            DataPlaneSecurityConfig(
+                environment="paper",
+                issuer="https://identity.qdl.test",
+                audience="qdl-v2-beta",
+                keys_by_id={TEST_KEY_ID: TEST_SECRET},
+                algorithms=("HS256",),
+                subjects_by_key_id={},
+            )
 
     def test_manifest_rejects_unknown_permission_at_registration(self):
         from tests.phase7_support import manifest_mapping

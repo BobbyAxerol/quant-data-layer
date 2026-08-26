@@ -14592,6 +14592,142 @@ UNCHANGED`).**
   exact cleanup namespace. See
   `docs/runbooks/phase105-consumer-cutover-stable-release.md`.
 
+#### 10.5-B Isolated No-Order Consumer Acceptance - 2026-08-26 (`APPROVED / IN PROGRESS / RUNTIME PRE-FLIGHT FAIL-CLOSED`)
+
+- **Approval, guide and strict scope:** the operator approved this bounded
+  `10.5-B` scope on 2026-08-26. It follows Section 21.8 and
+  `docs/runbooks/phase105-consumer-cutover-stable-release.md`. It may add the
+  source/test support required for real paper workload identities and execute
+  one isolated read-only SDK probe only after its exact runtime packet is
+  verified. It must not submit an order, contact a venue directly, alter alpha
+  logic/configuration, change a consumer route, promote/revoke authority,
+  reset Kafka offsets, flush Redis/SQLite, modify PostgreSQL or restart V1.
+- **Frozen runtime target for the eventual probe:** Compose project
+  `qdl_v2_stable_candidate`; immutable V2 query/stream image
+  `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`;
+  Rust core image `sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`;
+  V2 REST query ports `127.0.0.1:18201` and `127.0.0.1:18202`; V2 gRPC stream
+  ports `127.0.0.1:18220` and `127.0.0.1:18221`; private client network
+  `executor_network`. V1 remains the untouched `data_layer_service` on
+  loopback `127.0.0.1:8100`, container image identity
+  `sha256:8f2a5a3f1ff97762feb1531c3787e714dfda60b0b64df5b7359b9e5f6740c980`.
+  No published endpoint is changed by this acceptance.
+- **Paper-only consumer matrix:** test in this fixed order with their own
+  manifest subject and JWT signing key: `monitoring.multivenue.stable`,
+  `trading-system.paper.stable`, `alpha.binance.paper.stable`, then
+  `alpha.okx.paper.stable`. The scope is all declared Binance/OKX
+  `V2_PRIMARY` requirements in release revision `1`; each V1-compatible
+  Binance requirement gets one forced V1 fallback and return-to-V2 drill;
+  `BLOCKED` requirements must remain blocked. `alpha.vn.paper.stable` and all
+  DNSE/VN data remain explicit `V1_PRIMARY` exclusions and receive no V2
+  request in this gate.
+- **Exact probe behavior and evidence:** start exactly one disposable
+  `qdl-phase105b-acceptance-<UTC>` client with `--rm`, `--read-only`, no
+  Docker socket, source mounted read-only and cursor/state on a tmpfs. It may
+  call only V2 query/stream SDK surfaces over the named ports and V1 read-only
+  compatibility endpoints for an eligible forced-fallback comparison. It
+  observes at most `300` seconds, verifies warmup, snapshot/read, signed
+  cursor/replay, reconnect, replica parity, source freshness, gap state,
+  consumer lag and process CPU/RSS. It records one bounded, payload-free JSON
+  receipt under the exact state namespace
+  `/home/bobby/.local/state/qdl-v2/phase105b-<UTC>/`; its tmpfs cursor and
+  container are removed on exit. The receipt contains no credentials, payload,
+  provider request, order action or direct venue connection.
+- **Acceptance invariants:** zero `order_actions`; zero direct venue/provider
+  connections from the probe; no cross-consumer identity use; no silently
+  substituted `BLOCKED` fallback; all selected durable reads are authoritative,
+  fresh and gap-free; any missing observation, duplicate identity, source
+  mismatch, replay discontinuity, resource-budget breach or unexpected route
+  is a failure. V1 fallback is an observed read-only rollback contract, not a
+  service route mutation.
+- **Preflight facts discovered read-only:** the active rotated bundle has
+  valid until `2026-11-20` certificates only for
+  `stable-trading-system` and `stable-alpha-binance`; it has no independent
+  monitoring or Alpha-OKX workload certificate/JWT signer. Reusing either
+  existing key to mint another manifest subject would violate the intended
+  least-privilege boundary, so it is prohibited. The current security layer
+  authenticates a JWT against a registered manifest but does not yet bind a
+  signing `kid` to that manifest subject; source work in this scope must add
+  this binding before a new identity is admitted.
+- **Capacity preflight failure:** `rust_core` exited `137` with
+  `OOMKilled=true` under its current `256 MiB` limit; `rust_core_2` and
+  `rust_core_3` remain live at approximately `164 MiB` and `154 MiB` during
+  observation. Two live replicas are not a capacity acceptance for the
+  declared three-core topology. The no-order probe is therefore not permitted
+  to certify `10.5-B` until the failed replica has an explicitly approved,
+  bounded repair/recreate packet and all three cores remain healthy throughout
+  the observation window.
+- **V1 provenance preflight failure:** the running V1 container has an
+  immutable container image ID but no OCI/source label that proves the frozen
+  `v1.2.2` commit `85c25df631e263281bd546de69efcaf6146c93ef`. A mutable tag
+  is not accepted as evidence. The source/runtime packet must provide a
+  digest-to-commit attestation or otherwise mark forced V1 comparison as
+  blocked; it may not claim a certified rollback from an unproven build.
+- **Decision boundary and rollback:** source/test work may continue now.
+  Runtime execution remains fail-closed until (1) independent monitoring and
+  Alpha-OKX credentials plus key-to-subject enforcement exist, (2) the exact
+  V1 provenance record is available, and (3) a separately approved bounded
+  core repair packet restores the intended topology. The probe itself rolls
+  back by exiting/removing only its named disposable client and tmpfs state;
+  it never needs to stop a V2/V1 service. Any later identity trust update or
+  core recreate must name all changed files/services, ports, prior material and
+  rollback before it runs.
+
+**10.5-B source prerequisites and validation - 2026-08-26 (`SOURCE PASS /
+RUNTIME BLOCKED`).**
+
+- **Implemented:** the stable TLS/bundle generator now issues separate mTLS
+  client and JWT signer material for `stable-monitoring` and `stable-alpha-okx`
+  in addition to the existing Trading System and Alpha-Binance identities.
+  The stable candidate bundle carries four public keys and the exact
+  `kid -> manifest subject` map. Data-plane configuration loaded from the
+  environment now requires that map and fails closed if it does not cover the
+  keyring exactly; authentication rejects a token whose registered signing key
+  is bound to another subject. Direct in-process fixtures may omit the optional
+  map only to preserve pre-existing unit construction; deployed environment
+  configuration cannot omit it. The stable Compose contract requires the map.
+- **Acceptance scope:** `build_manifest_acceptance_scope` generalizes only the
+  governed manifest-set loader; the Phase 10.3 wrapper remains exact about its
+  two approved IDs. New Phase 10.5 scope derivation selects exactly
+  `monitoring.multivenue.stable`, `trading-system.paper.stable`,
+  `alpha.binance.paper.stable`, and `alpha.okx.paper.stable`, then refuses any
+  difference from the frozen `V2_PRIMARY` release routes. The two VN
+  `V1_PRIMARY` requirements remain explicit exclusions; no DNSE request is
+  introduced. The documented packet template is
+  `docs/runbooks/phase105-consumer-cutover-stable-release.md`.
+- **Tests actually run:** Python compile for the altered security,
+  certification and bundle scripts -> pass. Network-disabled/read-only V2
+  image matrix for Phase 10.3/10.5 scope, stable release, security, candidate
+  deployment and release-bundle modules -> `62 passed, 0 failed, 0 skipped`.
+  Its expected negative-path CLI usage and DNSE queue-fence diagnostics were
+  emitted by tests; the test process exited cleanly. A real generator-to-bundle
+  smoke used a temporary `/tmp` directory and the immutable V2 Python image:
+  it generated the four external paper identities, preserved the key-subject
+  map through `stable.env`, verified no `ca.key` remains, and removed its
+  complete temporary directory -> pass. The first matrix rerun exposed a
+  refactor error message regression and an invalid-decimal fixture blocked too
+  early by Pydantic; both were corrected, then the full matrix was rerun.
+- **Runtime and cleanup:** no image build, service/container recreate, route or
+  authority change, provider call, order action, Kafka/Redis/SQLite/PostgreSQL
+  mutation occurred. Test containers used `--rm`, `--network none` and
+  read-only source mounts; the one keytool helper and all test bundle material
+  were temporary and removed. A host-Python bundle attempt was rejected before
+  mutation because the host lacks the Python `redis` dependency; the accepted
+  smoke reran inside the pinned V2 image.
+- **Exit status:** source prerequisites are complete and committed as one
+  coherent slice. The actual isolated acceptance is still blocked, not skipped:
+  the deployed bundle/trust store does not yet expose these two new workload
+  identities, one Rust core replica is OOM-killed under `256 MiB`, and V1's
+  running image lacks a digest-to-`v1.2.2` provenance attestation. The next
+  valid action is an exact runtime packet following the runbook template; it
+  must repair/recreate only named services and retain V1 unchanged.
+- **Read-only runtime recheck:** `qdl_v2_stable_candidate-rust_core-1` remains
+  `exited / 137 / OOMKilled=true` with its unchanged `268435456`-byte memory
+  limit and the recorded Rust image digest; `_2` and `_3` remain running at the
+  same limit. `data_layer_service` remains running at its recorded V1 image
+  digest, but its labels contain Compose metadata only and no source revision
+  or `v1.2.2` attestation. No remedy was applied during this recheck.
+
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 
 Every Phase 10 implementation slice must record in this journal before code

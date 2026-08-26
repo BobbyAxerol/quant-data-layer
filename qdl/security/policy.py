@@ -41,6 +41,7 @@ class Principal:
     venues: frozenset[str]
     token_id: str
     consumer_manifest_revision: int | None = None
+    key_id: str | None = None
 
     def has_permission(self, permission: Permission) -> bool:
         return any(
@@ -119,6 +120,7 @@ class ServiceTokenVerifier:
             venues=frozenset(str(item).upper() for item in claims.get("venues", [])),
             token_id=str(claims["jti"]),
             consumer_manifest_revision=manifest_revision,
+            key_id=key_id,
         )
 
 

@@ -143,8 +143,10 @@ def prepare_candidate(
         ("core", "phase8-core"),
         ("projector", "phase8-consumer"),
         ("authority-dispatcher", "stable-authority-dispatcher"),
+        ("monitoring", "stable-monitoring"),
         ("trading-system", "stable-trading-system"),
         ("alpha-binance", "stable-alpha-binance"),
+        ("alpha-okx", "stable-alpha-okx"),
     ):
         copy_client_identity(cert_dir, identities_dir / role, principal)
     copy_server_identity(cert_dir, identities_dir / "query", "stable-query")
@@ -158,6 +160,16 @@ def prepare_candidate(
         cert_dir,
         identities_dir / "alpha-binance-jwt",
         "stable-alpha-binance-jwt",
+    )
+    copy_jwt_identity(
+        cert_dir,
+        identities_dir / "monitoring-jwt",
+        "stable-monitoring-jwt",
+    )
+    copy_jwt_identity(
+        cert_dir,
+        identities_dir / "alpha-okx-jwt",
+        "stable-alpha-okx-jwt",
     )
 
     schema_digest = hashlib.sha256(
@@ -173,6 +185,12 @@ def prepare_candidate(
     ).read_text(encoding="utf-8")
     alpha_binance_jwt_public_key = (
         identities_dir / "alpha-binance-jwt/public.pem"
+    ).read_text(encoding="utf-8")
+    monitoring_jwt_public_key = (
+        identities_dir / "monitoring-jwt/public.pem"
+    ).read_text(encoding="utf-8")
+    alpha_okx_jwt_public_key = (
+        identities_dir / "alpha-okx-jwt/public.pem"
     ).read_text(encoding="utf-8")
     compose_cert_dir = (host_cert_dir or cert_dir).resolve()
     compose_output_dir = (host_output_dir or output_dir).resolve()
@@ -196,6 +214,17 @@ def prepare_candidate(
             {
                 "stable-trading-system-rs256-v1": trading_system_jwt_public_key,
                 "stable-alpha-binance-rs256-v1": alpha_binance_jwt_public_key,
+                "stable-monitoring-rs256-v1": monitoring_jwt_public_key,
+                "stable-alpha-okx-rs256-v1": alpha_okx_jwt_public_key,
+            },
+            separators=(",", ":"),
+        ),
+        "QDL_STABLE_JWT_KEY_SUBJECTS_JSON": json.dumps(
+            {
+                "stable-trading-system-rs256-v1": "spiffe://qdl/paper/trading-system-stable",
+                "stable-alpha-binance-rs256-v1": "spiffe://qdl/paper/alpha-binance-stable",
+                "stable-monitoring-rs256-v1": "spiffe://qdl/paper/monitoring-multivenue-stable",
+                "stable-alpha-okx-rs256-v1": "spiffe://qdl/paper/alpha-okx-stable",
             },
             separators=(",", ":"),
         ),
@@ -225,6 +254,18 @@ def prepare_candidate(
         ),
         "QDL_STABLE_ALPHA_BINANCE_JWT_PRIVATE_KEY": str(
             compose_output_dir / "identities/alpha-binance-jwt/private.key"
+        ),
+        "QDL_STABLE_MONITORING_CERT_DIR": str(
+            compose_output_dir / "identities/monitoring"
+        ),
+        "QDL_STABLE_MONITORING_JWT_PRIVATE_KEY": str(
+            compose_output_dir / "identities/monitoring-jwt/private.key"
+        ),
+        "QDL_STABLE_ALPHA_OKX_CERT_DIR": str(
+            compose_output_dir / "identities/alpha-okx"
+        ),
+        "QDL_STABLE_ALPHA_OKX_JWT_PRIVATE_KEY": str(
+            compose_output_dir / "identities/alpha-okx-jwt/private.key"
         ),
         "QDL_STABLE_CONTROL_DB_PASSWORD": control_db_password,
         "QDL_STABLE_DISPATCHER_DB_PASSWORD": dispatcher_db_password,
@@ -263,7 +304,7 @@ def prepare_candidate(
         "consumer_network": consumer_network,
         "consumer_count": 6,
         "workload_mtls": True,
-        "workload_identity_count": 5,
+        "workload_identity_count": 7,
         "secret_values_recorded": False,
     }
     manifest_path = output_dir / "candidate-manifest.json"

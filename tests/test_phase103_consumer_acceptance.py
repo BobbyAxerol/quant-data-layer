@@ -309,7 +309,10 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             update={
                 "payload": self._view(trade).payload.model_copy(
                     update={
-                        "price": DecimalValue(
+                        # Bypass Pydantic construction deliberately so the
+                        # receipt validator, rather than the model parser,
+                        # proves it rejects inconsistent canonical decimals.
+                        "price": DecimalValue.model_construct(
                             coefficient="1",
                             scale=0,
                             source_text="2",

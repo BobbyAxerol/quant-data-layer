@@ -92,6 +92,55 @@ to V2. A `BLOCKED` product must remain blocked. Do not submit an order.
 DNSE/VN is not a candidate for this gate until an in-session real-provider
 certificate is available.
 
+#### 10.5-B Source Prerequisites And Runtime Packet Template
+
+The source gate binds every external paper workload to its own mTLS identity
+and JWT signing key. A known key may sign only its registered manifest subject;
+using a Trading System or Binance-alpha key for Monitoring or Alpha-OKX is a
+hard authentication failure.
+
+| Consumer | Subject | Client identity | JWT key id |
+|---|---|---|---|
+| `monitoring.multivenue.stable` | `spiffe://qdl/paper/monitoring-multivenue-stable` | `stable-monitoring` | `stable-monitoring-rs256-v1` |
+| `trading-system.paper.stable` | `spiffe://qdl/paper/trading-system-stable` | `stable-trading-system` | `stable-trading-system-rs256-v1` |
+| `alpha.binance.paper.stable` | `spiffe://qdl/paper/alpha-binance-stable` | `stable-alpha-binance` | `stable-alpha-binance-rs256-v1` |
+| `alpha.okx.paper.stable` | `spiffe://qdl/paper/alpha-okx-stable` | `stable-alpha-okx` | `stable-alpha-okx-rs256-v1` |
+
+The later runtime approval must name all of the following, exactly:
+
+1. The immutable V2 image digest, bundle digest and release-routing manifest
+   revision/digest. It must include the `QDL_DATA_JWT_KEY_SUBJECTS_JSON`
+   key-to-subject map as well as its public keyring.
+2. The only V2 endpoints the disposable client may use: query HTTPS
+   `127.0.0.1:18201`/`18202`, stream gRPC `127.0.0.1:18220`/`18221`, and the
+   private `executor_network`. The probe does not receive a Docker socket,
+   provider credential, order endpoint or Trading System execution credential.
+3. The exact V2 services, if any, that must reload the updated trust/keyring:
+   `query_v2_1`, `query_v2_2`, `stream_v2_active`, `stream_v2_passive`.
+   Kafka, Redis, SQLite, ingestors, projectors, V1, Trading System and alpha
+   containers are excluded. Restoring their prior bundle and recreating only
+   these named query/stream services is the identity-update rollback.
+4. A separate, measured packet for `rust_core` if its capacity repair is still
+   needed. It must state the old/new memory limit, immutable image, observed
+   RSS ceiling and rollback. Do not hide this repair inside the client probe.
+5. One disposable client named `qdl-phase105b-acceptance-<UTC>` on a tmpfs
+   cursor/state directory, with `--rm --read-only`, bounded to 300 seconds.
+   Its only retained output is the payload-free receipt namespace
+   `/home/bobby/.local/state/qdl-v2/phase105b-<UTC>/`, removed on a failed
+   probe unless an operator explicitly preserves it for diagnosis.
+6. A V1 digest-to-commit attestation for the frozen `v1.2.2` fallback before
+   any forced-fallback assertion. Without it, that assertion is `BLOCKED`, not
+   an equivalent rollback result.
+
+The probe order is Monitoring, Trading System read-only adapter, Binance paper
+SDK, then OKX paper SDK. Each approved V2 product must pass warmup, signed
+cursor/replay, reconnect and V2-primary receipt checks. Only a product whose
+release route explicitly permits `V1` may run the read-only forced-fallback
+comparison and return-to-V2 check. `BLOCKED` products must stay blocked;
+VN/DNSE receives no request in this gate. Zero order action, direct provider
+connection, route mutation, offset reset, Redis/SQLite flush or database write
+is an invariant, not a best effort.
+
 ### 10.5-C: Rolling Consumer Handoff
 
 Requires another approval naming immutable image digests, services, ports,
