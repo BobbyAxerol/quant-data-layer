@@ -41,6 +41,7 @@ from qdl.certification.phase103_consumer_acceptance import (
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from qdl.certification.phase105_release_observations import compact_view_quality
 from scripts.phase103_prepare_shared_primary_packet import (
     validate_prepared_shared_primary_bundle,
 )
@@ -178,6 +179,21 @@ async def _query_product(
     primary: AsyncDataLayerClient,
     secondary: AsyncDataLayerClient,
 ) -> tuple[str, str | None, float, float | None]:
+    primary_hash, secondary_hash, primary_ms, secondary_ms, _quality = (
+        await _query_product_with_quality(
+            product, primary=primary, secondary=secondary
+        )
+    )
+    return primary_hash, secondary_hash, primary_ms, secondary_ms
+
+
+async def _query_product_with_quality(
+    product: AcceptanceProduct,
+    *,
+    primary: AsyncDataLayerClient,
+    secondary: AsyncDataLayerClient,
+) -> tuple[str, str | None, float, float | None, dict[str, object]]:
+    """Query both replicas and retain only compact quality evidence for B3."""
     requirement = sdk_requirement(product)
     primary_started = time.perf_counter()
     if product.feed.value == "BAR":
@@ -185,13 +201,15 @@ async def _query_product(
         primary_latency_ms = (time.perf_counter() - primary_started) * 1000
         for view in primary_response.data[:-1]:
             validate_product_view(product, view, require_current_quality=False)
-        validate_product_view(product, primary_response.data[-1])
+        primary_view = primary_response.data[-1]
+        validate_product_view(product, primary_view)
         primary_hash = warmup_content_fingerprint(primary_response.data)
     else:
         primary_response = await primary.snapshot(requirement)
         primary_latency_ms = (time.perf_counter() - primary_started) * 1000
-        validate_product_view(product, primary_response.data)
-        primary_hash = content_fingerprint(primary_response.data)
+        primary_view = primary_response.data
+        validate_product_view(product, primary_view)
+        primary_hash = content_fingerprint(primary_view)
 
     secondary_started = time.perf_counter()
     if product.feed.value == "BAR":
@@ -199,24 +217,30 @@ async def _query_product(
         secondary_latency_ms = (time.perf_counter() - secondary_started) * 1000
         for view in secondary_response.data[:-1]:
             validate_product_view(product, view, require_current_quality=False)
-        validate_product_view(product, secondary_response.data[-1])
+        secondary_view = secondary_response.data[-1]
+        validate_product_view(product, secondary_view)
         secondary_hash = warmup_content_fingerprint(secondary_response.data)
         if product.delivery is DeliveryClass.DURABLE and primary_hash != secondary_hash:
             raise AssertionError("V2 query replicas diverged on a final BAR warmup")
-        validate_replica_views(
-            product,
-            primary_response.data[-1],
-            secondary_response.data[-1],
-        )
+        validate_replica_views(product, primary_view, secondary_view)
     else:
         secondary_response = await secondary.snapshot(requirement)
         secondary_latency_ms = (time.perf_counter() - secondary_started) * 1000
+        secondary_view = secondary_response.data
         primary_hash, secondary_hash = validate_replica_views(
-            product,
-            primary_response.data,
-            secondary_response.data,
+            product, primary_view, secondary_view
         )
-    return primary_hash, secondary_hash, primary_latency_ms, secondary_latency_ms
+    observed_at_ns = time.time_ns()
+    return (
+        primary_hash,
+        secondary_hash,
+        primary_latency_ms,
+        secondary_latency_ms,
+        {
+            "primary": compact_view_quality(primary_view, observed_at_ns=observed_at_ns),
+            "secondary": compact_view_quality(secondary_view, observed_at_ns=observed_at_ns),
+        },
+    )
 
 
 async def _stream_resume(
@@ -315,7 +339,13 @@ async def _certify_product(
         timeout_seconds=timeout_seconds,
     )
     try:
-        primary_hash, secondary_hash, primary_ms, secondary_ms = await _query_product(
+        (
+            primary_hash,
+            secondary_hash,
+            primary_ms,
+            secondary_ms,
+            quality,
+        ) = await _query_product_with_quality(
             product,
             primary=primary,
             secondary=secondary,
@@ -341,6 +371,7 @@ async def _certify_product(
         acknowledged_offset=acknowledged,
         resumed_offset=resumed,
     )
+    result["release_quality"] = quality
     result["control_codes"] = list(controls)
     return result
 

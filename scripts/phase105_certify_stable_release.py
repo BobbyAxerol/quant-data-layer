@@ -16,7 +16,9 @@ if str(ROOT) not in sys.path:
 
 from qdl.certification.phase105_release import (
     certify_stable_release,
-    parse_release_observations,
+)
+from qdl.certification.phase105_release_observations import (
+    parse_release_observation_bundle,
 )
 from qdl.consumer import StableReleaseRoutePlan
 
@@ -41,7 +43,9 @@ def main(argv: list[str] | None = None) -> int:
         plan = StableReleaseRoutePlan.load(args.release_routing, manifest_root=ROOT)
         result = certify_stable_release(
             plan,
-            observations=parse_release_observations(_load(args.observations, "observations")),
+            observations=parse_release_observation_bundle(
+                plan, _load(args.observations, "observations")
+            ),
             v1_provenance=_load(args.v1_provenance, "V1 provenance"),
             runtime_handoff=_load(args.runtime_handoff, "runtime handoff"),
             consumer_acceptance=_load(args.consumer_acceptance, "consumer acceptance"),

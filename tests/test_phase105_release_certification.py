@@ -5,6 +5,7 @@ from dataclasses import replace
 import io
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -129,6 +130,15 @@ class Phase105StableReleaseCertificationTests(unittest.TestCase):
             "test_provenance": False,
         }
 
+    def observation_bundle(self) -> dict[str, object]:
+        return {
+            "schema": "qdl.phase105.release-observations.v1",
+            "release_route_plan_sha256": self.plan.digest,
+            "captured_at_ms": int(time.time() * 1000),
+            "acceptance_sha256": "e" * 64,
+            "observations": [item.public_record() for item in self.observations()],
+        }
+
     def certify(self, **overrides: object) -> dict[str, object]:
         values: dict[str, object] = {
             "observations": self.observations(),
@@ -223,9 +233,9 @@ class Phase105StableReleaseCertificationTests(unittest.TestCase):
                 "acceptance": root / "acceptance.json",
                 "fallback": root / "fallback.json",
             }
-            paths["observations"].write_text(json.dumps([
-                item.public_record() for item in self.observations()
-            ]), encoding="utf-8")
+            paths["observations"].write_text(
+                json.dumps(self.observation_bundle()), encoding="utf-8"
+            )
             paths["v1"].write_text(json.dumps(self.v1_provenance()), encoding="utf-8")
             paths["runtime"].write_text(json.dumps(self.runtime_handoff()), encoding="utf-8")
             paths["acceptance"].write_text(json.dumps(self.consumer_acceptance()), encoding="utf-8")

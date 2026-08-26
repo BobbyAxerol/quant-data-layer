@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import resource
 import shutil
 import sys
 import tempfile
@@ -308,6 +309,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             raise AssertionError("Phase 10.5 identity did not build workload TLS")
 
     started = time.monotonic()
+    process_started = time.process_time()
     temporary = Path(tempfile.mkdtemp(prefix="qdl-phase105-v2-identity-"))
     semaphore = asyncio.Semaphore(args.concurrency)
 
@@ -373,6 +375,9 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
     elapsed_seconds = time.monotonic() - started
+    cpu_seconds = max(0.0, time.process_time() - process_started)
+    max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    rss_bytes = int(max_rss) * 1024
     if elapsed_seconds > args.observation_seconds:
         raise AssertionError("Phase 10.5 identity observation exceeded its bounded window")
     route_summary = _route_summary(release, scope.products)
@@ -404,6 +409,11 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         "secret_values_recorded": False,
         "test_provenance": False,
         "elapsed_seconds": round(elapsed_seconds, 3),
+        "release_capture": {
+            "captured_at_ms": int(time.time() * 1000),
+            "cpu_millicores": round((cpu_seconds / max(elapsed_seconds, 0.001)) * 1000),
+            "rss_bytes": rss_bytes,
+        },
     }
 
 

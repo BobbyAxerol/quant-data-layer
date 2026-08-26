@@ -16153,6 +16153,38 @@ or broad image/container cleanup.
      or provider connection changed. The `--rm` test container was removed.
      Next B3 slice is a compact real observation collector and its source tests.
 
+   **B3 compact observation/certificate wiring (`PASS`, 2026-08-26):**
+   - **Implemented:** C2's existing public V2 query/stream probe now retains
+     only `release_quality` per primary/secondary result
+     (`source_age_ms`, `receive_age_ms`, `gap_open`) plus one bounded process
+     CPU/RSS/capture timestamp. It retains no prices, bars, payloads, signed
+     cursors or credentials. `scripts/phase105_build_release_observations.py`
+     converts that one current receipt into the exact 32-route
+     `qdl.phase105.release-observations.v1` bundle: all 28 frozen crypto V2
+     routes carry worst-replica age/gap and real resume delta; the four VN/DNSE
+     rows are mechanically emitted only as the explicit V1 exclusion above.
+   - **Certificate semantics:** `scripts/phase105_certify_stable_release.py`
+     now accepts the B3 bundle rather than an unbound list. It rejects missing,
+     duplicated, route-drifted, malformed, non-advancing durable resume or
+     capture evidence older than `300000ms`. This is an internal certification
+     artifact change, not a public V1/V2 endpoint/schema change. Existing C1
+     authority, C2 consumer/fallback and V1 provenance receipts stay valid.
+   - **Tests actually run:** `31/31` focused route/certificate/observation,
+     C2 receipt-harness and fallback-scope tests passed, followed by clean
+     compilation of every changed B3 source file. Both ran in immutable image
+     `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`
+     with network disabled, non-root, dropped capabilities, read-only source
+     and tmpfs `PYTHONPYCACHEPREFIX`. The initial compile attempt without that
+     tmpfs cache correctly failed only trying to write `.pyc` into the
+     deliberately read-only mount and was rerun cleanly; it is not source
+     evidence.
+   - **Runtime/cleanup:** source-only. No V1/V2/Rust service, authority,
+     route/manifest, provider connection, Kafka offset/topic, Redis/SQLite/DB,
+     Trading System, alpha or order changed. All test containers used `--rm`.
+     Next B3 step is commit this source slice, build/attest exactly one Python
+     and one Rust `2.0.0` candidate from that commit, then run the one approved
+     disposable no-order rehearsal and review-only certificate.
+
 **Phase 10.5 final exit:** only after C1, C2 and D/B3 are all `PASS` may this
 upgrade be declared `Data Layer V2 stable`. At that point there is no Phase
 10.6 architecture task. Image/container topology consolidation is a separate,
