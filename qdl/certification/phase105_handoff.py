@@ -240,21 +240,6 @@ def prepare_handoff_environment(
     missing = sorted(required - set(base_environment))
     if missing:
         raise ValueError(f"Phase 10.5-C base environment is missing {missing}")
-    try:
-        keys = json.loads(base_environment["QDL_STABLE_JWT_KEYS_JSON"])
-    except json.JSONDecodeError as error:
-        raise ValueError("stable JWT public keyring is invalid JSON") from error
-    if not isinstance(keys, dict) or not all(
-        isinstance(key, str) and isinstance(value, str) and "BEGIN PUBLIC KEY" in value
-        for key, value in keys.items()
-    ):
-        raise ValueError("stable JWT public keyring is invalid")
-    missing_existing = sorted(
-        {"stable-trading-system-rs256-v1", "stable-alpha-binance-rs256-v1"} - set(keys)
-    )
-    if missing_existing:
-        raise ValueError(f"stable JWT public keyring misses existing identities {missing_existing}")
-
     result = dict(base_environment)
     if runtime_binding is not None:
         selectors = runtime_binding.get("selectors")
@@ -274,6 +259,20 @@ def prepare_handoff_environment(
             if not isinstance(value, str) or not value or "\n" in value:
                 raise ValueError(f"Phase 10.5-C active query environment is invalid: {key}")
             result[key] = value
+    try:
+        keys = json.loads(result["QDL_STABLE_JWT_KEYS_JSON"])
+    except json.JSONDecodeError as error:
+        raise ValueError("stable JWT public keyring is invalid JSON") from error
+    if not isinstance(keys, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) and "BEGIN PUBLIC KEY" in value
+        for key, value in keys.items()
+    ):
+        raise ValueError("stable JWT public keyring is invalid")
+    missing_existing = sorted(
+        {"stable-trading-system-rs256-v1", "stable-alpha-binance-rs256-v1"} - set(keys)
+    )
+    if missing_existing:
+        raise ValueError(f"stable JWT public keyring misses existing identities {missing_existing}")
     extension = Path(extension_dir)
     for key_id, spec in EXTERNAL_IDENTITY_SPECS.items():
         public_key = (extension / str(spec["public_key"])).read_text(encoding="utf-8")

@@ -14943,6 +14943,20 @@ SOURCE-ONLY`).**
   immutable network-disabled/read-only Phase 10.5 regression matrix passed
   `44/44`. The prior failed dry-run and its temporary private capture remain
   confined to the packet namespace; no V1/V2 service or durable state changed.
+- **Second dry-run correction (`IN PROGRESS`):** with quoted parsing fixed, the
+  CLI reached the intended active JWT keyring and exposed an ordering defect:
+  it validated the historical keyring before applying the allowlisted active
+  query override. The correction is limited to applying the validated active
+  cursor/JWT binding before JWT identity validation, with a regression case
+  where the historical keyring is incomplete but the active query keyring is
+  complete. This preserves fail-closed identity checks and still makes no
+  runtime mutation.
+- **Implemented/tested:** active-query overrides now merge before the exact
+  four-identity JWT validation. The regression fixture proves that an
+  incomplete historical JWT file cannot erase the complete active query
+  keyring. Targeted tests passed `8/8`; immutable network-disabled/read-only
+  regression passed `44/44`. No bundle has yet been prepared and no runtime
+  resource has been recreated.
 
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 

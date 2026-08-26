@@ -113,6 +113,11 @@ class Phase105HandoffTests(unittest.TestCase):
                 **self.base,
                 "QDL_STABLE_SCHEMA_DIGEST": "c" * 64,
                 "QDL_STABLE_INTERNAL_INGEST_SECRET": "unchanged-secret",
+                "QDL_STABLE_JWT_KEYS_JSON": json.dumps({
+                    "stable-trading-system-rs256-v1": json.loads(
+                        self.base["QDL_STABLE_JWT_KEYS_JSON"]
+                    )["stable-trading-system-rs256-v1"],
+                }),
             }
             active = {
                 "schema": "qdl.v2.shared-primary-handoff-packet.v2",
@@ -134,7 +139,7 @@ class Phase105HandoffTests(unittest.TestCase):
             current = {
                 "QDL_STABLE_INTERNAL_INGEST_SECRET": "unchanged-secret",
                 "QDL_STABLE_CURSOR_KEYS_JSON": json.dumps({"stable-k2": "rotated"}),
-                "QDL_DATA_JWT_KEYS_JSON": base["QDL_STABLE_JWT_KEYS_JSON"],
+                "QDL_DATA_JWT_KEYS_JSON": self.base["QDL_STABLE_JWT_KEYS_JSON"],
                 "QDL_STABLE_SCHEMA_DIGEST": "c" * 64,
                 "QDL_CONFIG_REVISION": "phase103-shared-primary-r1",
                 "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
@@ -149,6 +154,10 @@ class Phase105HandoffTests(unittest.TestCase):
                 query_environment_binding=query,
             )
         self.assertEqual(values["QDL_STABLE_CURSOR_KEYS_JSON"], current["QDL_STABLE_CURSOR_KEYS_JSON"])
+        self.assertEqual(
+            set(json.loads(values["QDL_STABLE_JWT_KEYS_JSON"])),
+            set(ALL_KEY_SUBJECTS),
+        )
         self.assertEqual(query["override_keys"], [
             "QDL_STABLE_CURSOR_KEYS_JSON", "QDL_STABLE_JWT_KEYS_JSON",
         ])
