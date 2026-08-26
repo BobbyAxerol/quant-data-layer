@@ -15254,6 +15254,44 @@ or broad image/container cleanup.
      gap/reconnect/lag, CPU/RAM/disk/Kafka/Redis metrics, exact tests and
      cleanup. Distinguish real-provider evidence from source-only tests.
 
+   **C1 packet-preparation implementation (`APPROVED / SOURCE-ONLY IN
+   PROGRESS`):** the existing Phase 10.3 bundle generator creates a fresh
+   authority record and is therefore unsafe for C1: its authority timestamp
+   would differ from the active Rust core configuration, forcing an excluded
+   core restart. Add one small source-only prepare tool that reads and validates
+   the active authority record, preserves it byte-for-byte, writes a revision
+   `10` runtime bundle via the existing stable bundle writer, verifies that
+   Binance/OKX final BARs are `PYTHON_REST` and absent from the native OKX
+   ingestor, and emits a non-secret compose override for only the six named
+   roles. It must support dry-run; its apply mode may create only a new,
+   permission-restricted packet directory and never invoke Docker, a provider,
+   Kafka, Redis, SQLite or an authority transition. Deterministic tests must
+   prove preserved authority, revision-10 ownership, bounded `1000` warmup,
+   exact service list, new scoped bar checkpoint and rejection of a malformed
+   active bundle. This source tool is not runtime repair evidence; a separate
+   reviewed Docker packet remains required.
+
+   **C1 packet-preparation evidence (`PASS / SOURCE-ONLY`, 2026-08-26):**
+   added `qdl.certification.phase105c_final_bar` and
+   `scripts/phase105c_prepare_final_bar_repair.py`. The preparer accepts only
+   immutable image digests and a revision-10 source commit, validates the
+   mounted authority, copies `authority.json` byte-for-byte after writing the
+   normal runtime bundle, and emits an exact six-service non-secret compose
+   override plus a permission-restricted packet directory. It rejects malformed
+   authority, a non-revision-10 acquisition plan, a non-REST final BAR, a BAR
+   in the native OKX ingestor, an unbounded warmup, a reused checkpoint, and a
+   non-immutable image. Its dry-run uses a temporary directory and leaves no
+   retained packet. It does not invoke Docker, a provider, Kafka, Redis,
+   SQLite, authority routing, consumer routing or offsets. Deterministic test
+   `tests/test_phase105c_final_bar_repair.py` plus stable deployment and
+   Phase 10.5 handoff regressions passed **32/32** in immutable image
+   `sha256:39d8f766c2c6dd224b3f29cf3367262174b41a4b5317630754ff801ca46839d9`
+   with `--network none --read-only` and tmpfs `/tmp` (2026-08-26). Host
+   Python was intentionally not used as it lacks the locked runtime
+   dependencies; no runtime object, provider request or durable data changed.
+   **Next boundary:** build one immutable C1 Python image and prepare/review
+   the packet against the real mounted authority; this remains C1 only.
+
 2. **10.5-B/C2 - Real no-order consumer acceptance and bounded handoff**
    - **Goal:** prove the repaired V2 plane is consumed correctly by the four
      governed paper classes: Monitoring, Trading System paper market-data
