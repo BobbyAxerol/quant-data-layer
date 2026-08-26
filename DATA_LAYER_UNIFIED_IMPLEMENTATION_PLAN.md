@@ -14930,6 +14930,19 @@ SOURCE-ONLY`).**
   same immutable, network-disabled/read-only matrix passed `43/43`. This is
   still source-only: no V2/V1 container, trust file, key, provider, topic,
   offset, Redis or SQLite state has changed.
+- **Bundle dry-run packaging correction (`IN PROGRESS`):** the first real
+  Phase 10.5-C dry-run reached the handoff helper and then correctly rejected
+  the historical private env because its JSON keyring is shell-quoted while
+  the narrow dotenv parser did not unquote a standard `.env` value. The packet
+  remains unprepared and no runtime action occurred. The in-scope fix is
+  parser-only with a quoted-value test; it does not reinterpret shell escapes,
+  alter any secret, or relax JSON/keyring validation.
+- **Implemented/tested:** `load_dotenv` now removes one matching outer single
+  or double quote exactly as the existing stable-bundle parser does. It neither
+  expands variables nor decodes escapes. Targeted tests passed `8/8`; the
+  immutable network-disabled/read-only Phase 10.5 regression matrix passed
+  `44/44`. The prior failed dry-run and its temporary private capture remain
+  confined to the packet namespace; no V1/V2 service or durable state changed.
 
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 

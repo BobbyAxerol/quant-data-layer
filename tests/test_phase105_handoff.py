@@ -12,6 +12,7 @@ from qdl.certification.phase105_handoff import (
     active_query_environment_binding,
     active_runtime_binding,
     handoff_packet,
+    load_dotenv,
     prepare_handoff_environment,
     sha256_file,
     v1_image_attestation,
@@ -39,6 +40,18 @@ class Phase105HandoffTests(unittest.TestCase):
             )
         (root / "client-ca-bundle.crt").write_text("server-ca\\nexternal-ca\\n", encoding="utf-8")
         return root
+
+    def test_load_dotenv_unquotes_standard_private_env_values(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "stable.env"
+            path.write_text(
+                "QDL_STABLE_JWT_KEYS_JSON='{\"key\":\"value\"}'\n"
+                "QDL_STABLE_RUNTIME_DIR=/runtime\n",
+                encoding="utf-8",
+            )
+            values = load_dotenv(path)
+        self.assertEqual(values["QDL_STABLE_JWT_KEYS_JSON"], '{"key":"value"}')
+        self.assertEqual(values["QDL_STABLE_RUNTIME_DIR"], "/runtime")
 
     def test_environment_has_exact_four_key_subject_bindings(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

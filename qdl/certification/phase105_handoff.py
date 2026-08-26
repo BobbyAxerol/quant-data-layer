@@ -73,6 +73,8 @@ def load_dotenv(path: str | Path) -> dict[str, str]:
             raise ValueError(f"runtime env line {line_number} has an invalid key")
         if key in values:
             raise ValueError(f"runtime env repeats {key}")
+        if len(value) >= 2 and value[:1] == value[-1:] and value[:1] in {"'", '"'}:
+            value = value[1:-1]
         values[key] = value
     if not values:
         raise ValueError("runtime env is empty")
