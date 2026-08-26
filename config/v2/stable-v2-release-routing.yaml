@@ -1,12 +1,12 @@
 # Phase 10.5-A frozen source contract. This file does not activate a runtime
 # route; Phase 10.5-B/C must bind it to an approved deployment packet.
 schema: qdl.v2.stable-release-routing.v1
-revision: 1
+revision: 2
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
-  sha256: 823d5528ab48bae3c375027f22568bbc363ee1a89a4be996c1ea3afacc256fe2
-  revision: 3
+  sha256: ad70c03a26c55a9f6ac67858ef0963f1e7c53eb1d4abc242ad620dbd965b2a67
+  revision: 4
 crypto_demand:
   path: /app/config/v2/stable-crypto-demand.yaml
   sha256: 60d550e6d83d4cfd91701f7bac104f965114b5966f470cbe080a9490edf378c4
@@ -63,16 +63,16 @@ consumers:
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:BAR:1m:crypto_primary_v2
     route: V2_PRIMARY
-    fallback: V1
-    reason: null
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: V1
     reason: null
   - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:BAR:1m:crypto_primary_v2
     route: V2_PRIMARY
-    fallback: V1
-    reason: null
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: V1
@@ -145,8 +145,8 @@ consumers:
     reason: V1_BBO_EQUIVALENCE_UNPROVEN
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:BAR:1m:crypto_primary_v2
     route: V2_PRIMARY
-    fallback: V1
-    reason: null
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -173,8 +173,8 @@ consumers:
     reason: V1_BBO_EQUIVALENCE_UNPROVEN
   - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:BAR:1m:crypto_primary_v2
     route: V2_PRIMARY
-    fallback: V1
-    reason: null
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED

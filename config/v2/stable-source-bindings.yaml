@@ -1,6 +1,6 @@
 schema: qdl.v2.stable-source-bindings.v1
 canonical_stream: md.canonical.v2
-catalog_revision: 3
+catalog_revision: 4
 source_policy_revision: 1
 authority_revision: 1
 instruments:
@@ -206,7 +206,9 @@ bindings:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: true
-  v1_compatibility: BINANCE_BAR_GENERIC
+  # V1 only exposes the currently-open cache entry, not a durable latest-final
+  # candle. A V2 final-BAR reader must block rather than receive this mismatch.
+  v1_compatibility: NONE
 - binding_id: binance-spot-btcusdt-trade
   instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
   feed: TRADE
@@ -444,7 +446,9 @@ bindings:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: true
-  v1_compatibility: BINANCE_BAR_GENERIC
+  # V1 only exposes the currently-open cache entry, not a durable latest-final
+  # candle. A V2 final-BAR reader must block rather than receive this mismatch.
+  v1_compatibility: NONE
 - binding_id: binance-usdm-ethusdt-quote
   instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
   feed: QUOTE

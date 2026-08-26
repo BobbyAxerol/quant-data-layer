@@ -90,7 +90,13 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
             StableReleaseRoutePlan.from_mapping(missing_product, manifest_root=ROOT)
 
         incompatible_v1 = copy.deepcopy(payload)
-        product = incompatible_v1["consumers"][2]["products"][0]
+        product = next(
+            item
+            for consumer in incompatible_v1["consumers"]
+            if consumer["consumer_id"] == "alpha.binance.paper.stable"
+            for item in consumer["products"]
+            if ":BAR:1m:" in item["requirement_key"]
+        )
         product["fallback"] = "V1"
         product["reason"] = None
         with self.assertRaisesRegex(ValueError, "lacks proven binding compatibility"):
@@ -142,7 +148,7 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
         second = self.load()
         self.assertEqual(first.digest, second.digest)
         self.assertEqual(len(first.digest), 64)
-        self.assertEqual(first.source_catalog.revision, 3)
+        self.assertEqual(first.source_catalog.revision, 4)
         self.assertEqual(first.crypto_demand.revision, 1)
         self.assertEqual(first.capability_matrix.revision, 5)
         self.assertEqual(first.resource_budget.max_consumer_lag, 10_000)

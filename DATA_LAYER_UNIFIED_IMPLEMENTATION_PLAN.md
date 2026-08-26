@@ -15515,9 +15515,11 @@ or broad image/container cleanup.
      stores only SHA-256/timing evidence. `fallback: BLOCKED` identities are
      materialized separately and receive no V1 HTTP request. The V1
      digest-to-commit attestation is required before any fallback request.
-   - Frozen source scope is `28` V2 products: `10` permitted V1 fallback drills
-     (`2` Monitoring, `4` Trading System paper, `4` Binance paper alpha, `0`
-     OKX paper alpha) and `18` explicit `BLOCKED` routes. VN/DNSE remains
+   - At this initial source checkpoint, the frozen revision-`1` scope was `28`
+     V2 products: `10` permitted V1 fallback drills (`2` Monitoring, `4`
+     Trading System paper, `4` Binance paper alpha, `0` OKX paper alpha) and
+     `18` explicit `BLOCKED` routes. The later revision-`2` final-BAR
+     correction below supersedes those fallback counts; VN/DNSE remains
      excluded. This is a route-selection probe only: signal, sizing, risk,
      broker/execution and deployed consumer routing remain untouched.
    - **Tests actually run:** network-isolated, read-only C1 immutable image
@@ -15582,6 +15584,130 @@ or broad image/container cleanup.
      explicit rollback) or an approved C2 scope change that drops the
      fallback-drill claim. Until then full C2 cannot pass; no trust extension,
      V2 reader recreate or disposable client has been started.
+
+   **C2 V1 provenance repair packet (`APPROVED / EXECUTED`,
+   2026-08-26):** The operator approved the minimum repair needed to complete
+   the real fallback drill: build and attest frozen V1 `v1.2.2` from commit
+   `85c25df631e263281bd546de69efcaf6146c93ef`, replace only
+   `data_layer_service`, bind it to the new provenance, then run the bounded
+   300-second C2 no-order acceptance. The current V1 image was pruned, so the
+   intact stopped original container, not an unverified `docker commit` image,
+   is the rollback artifact. This is stricter and avoids serializing its live
+   writable filesystem into a new image.
+   - **Exact V1 cutover:** build one local immutable image from the frozen
+     commit with the four V1 OCI provenance labels; preserve the original
+     `data_layer_service` stopped under one private `phase105b` rollback name;
+     start exactly one replacement named `data_layer_service` with the existing
+     `127.0.0.1:8100` port, `bobby_network` and `executor_network` aliases
+     `data_layer_service`/`data_layer`, non-secret Redis settings and the
+     existing `/home/bobby/data_layer/.env` mounted read-only as the controlled
+     secret reference, plus only the existing writable `/app/data` and
+     `/app/logs` bind mounts. No secret is copied into the C2 state namespace
+     or process arguments. The old
+     `/app` source bind mount is deliberately omitted so the frozen image is
+     actually the source authority. The replacement keeps `unless-stopped`;
+     it receives no Docker socket, provider/execution credential change, new
+     volume, database migration, Redis flush, Kafka action or alpha/order
+     mutation.
+   - **Pre/post gates:** static image import check; V1 cached Binance USD-M
+     `TRADE` and final `BAR 1m` bounded response checks; immutable
+     digest-to-source attestation; current-serving binding; then only the
+     existing C2 trust extension and four reader reloads
+     (`query_v2_1`, `query_v2_2`, `stream_v2_active`,
+     `stream_v2_passive`) followed by one `--rm --read-only` paper client,
+     tmpfs cursor state and a hard `300s` wall clock. It runs the four required
+     identities in declared order and retains payload-free evidence only.
+   - **Rollback:** stop/remove the replacement, rename/start the stopped
+     original container with its original name and aliases; remove only the
+     fresh C2 client cursor namespace and restore/remove only the two additive
+     V2 client-CA bundle files if the later reader reload fails. No V1 image,
+     Kafka, Redis, SQLite, V2 durable state, Trading System, alpha, offset or
+     order data is deleted. A failed V1 smoke stops before the V2 trust/reload
+     portion; a failed C2 probe rolls back only the named V2 readers and
+     disposable client.
+
+   **C2 V1 image/admission checkpoint (`PASS / CUTOVER EXECUTED`,
+   2026-08-26):** Built exactly one deliberate V1 rollback/serving image from
+   the frozen detached source worktree at `85c25df...`: local tag
+   `qdl-v1:v1.2.2-85c25df-attested`, immutable Docker image
+   `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`.
+   Its OCI revision/version/source-tree/Dockerfile labels match the frozen
+   release values. `scripts/phase105_attest_v1_fallback.py` wrote fresh
+   payload-free provenance under the private C2 namespace and returned `PASS`.
+   A network-disabled, read-only-rootfs import smoke passed with only
+   `/app/logs` as tmpfs (`v1-import-ok`); the initial no-log-mount attempt
+   correctly failed at logging setup and did not touch data. No V1/V2 service,
+   endpoint, trust file, provider stream, Kafka/Redis/SQLite state or consumer
+   route had changed at this image-admission checkpoint. The approved short V1
+   swap and its semantic result are recorded immediately below.
+
+   **C2 bounded V1 runtime cutover (`PASS WITH BAR CONTRACT REJECTION`,
+   2026-08-26):** Replaced only `data_layer_service` with the attested frozen
+   V1 image `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`
+   under the existing `127.0.0.1:8100` port, two existing networks and aliases,
+   read-only `.env`, `/app/data` and `/app/logs` mounts. The old V1 container
+   remains stopped and disconnected under
+   `data_layer_service_phase105b_rollback_20260826T083028Z`, retaining its
+   rootfs as the exact rollback artifact; no `docker commit`, data deletion,
+   Kafka/Redis/SQLite action, V2 reader change, Trading System/alpha change or
+   order action occurred. A bounded real `GET /v1/binance/price/BTCUSDT?market=usdm`
+   returned a valid Binance USD-M trade. The final-BAR probe correctly exposed
+   the V1 semantic mismatch described below, so C2 did not extend trust or
+   recreate any V2 reader before the source contract was repaired.
+
+   **C2 real V1 semantic probe (`BAR FALLBACK REJECTED / CONTRACT REVISION
+   REQUIRED`, 2026-08-26):** After the approved V1 swap, bounded real reads
+   proved Binance USD-M `BTCUSDT` trade is present and identity-compatible. The
+   V1 `/v1/binance/kline/{symbol}?interval=1m` cache, however, returns the
+   currently open candle (`k.x=false`) and overwrites the cache after a close;
+   it has no stable latest-final-bar endpoint. This is not equivalent to a V2
+   `BAR` requirement with `require_final_bar=true`. Provider pass-through
+   `/v1/binance/klines` is deliberately not substituted because it would turn
+   the local cached fallback into a provider-direct consumer read. Before C2
+   acceptance resumes, change only the V1 compatibility metadata for Binance
+   USD-M BTC/ETH `BAR 1m` to `NONE`, revise the release manifest so its four
+   affected paper products are `V2_PRIMARY + BLOCKED` with an explicit
+   final-bar-equivalence reason, and recompute catalog/manifest revisions and
+   checksums. This preserves `6` real trade fallback drills and makes `22`
+   product routes explicitly blocked. The correction is source-only; it does
+   not alter V2 data, V1 service behavior, V2 reader topology, alpha logic or
+   any order path. Its tests must prove no `BAR` fallback probe is materialized
+   and every blocked BAR makes zero V1 HTTP requests.
+
+   **C2 final-BAR compatibility correction (`PLANNED / SOURCE ONLY`,
+   2026-08-26):** Apply the evidence above as a narrow immutable route-contract
+   revision before C2 resumes. `stable-source-bindings.yaml` advances from
+   catalog revision `3` to `4`; only Binance USD-M BTC/ETH `BAR 1m` bindings
+   change V1 compatibility from `BINANCE_BAR_GENERIC` to `NONE`. The release
+   routing manifest advances from revision `1` to `2` and changes exactly the
+   four affected Binance paper BAR products to `V2_PRIMARY + BLOCKED` with
+   `V1_FINAL_BAR_EQUIVALENCE_UNPROVEN`. Its source-catalog digest/revision are
+   recomputed together. The C2 harness may issue V1 requests for exactly six
+   Binance USD-M `TRADE` products; every final-BAR product must be in the
+   blocked identity set and materialize zero V1 probes. This does not regenerate
+   the broader production catalog, change a running route, build an image, or
+   touch V1/V2 runtime state. Exit requires the bounded C2 source matrix,
+   compile and whitespace checks to pass, followed by a coherent documented
+   commit before any trust extension or reader recreate.
+
+   **C2 final-BAR compatibility correction (`PASS / RUNTIME C2 PENDING`,
+   2026-08-26):** Source catalog revision `4`, SHA-256
+   `ad70c03a26c55a9f6ac67858ef0963f1e7c53eb1d4abc242ad620dbd965b2a67`, and
+   release-route revision `2`, file SHA-256
+   `600fc8d860bdf5bbf5949f1d9a2461d552618321a6f986c4c222a8cfc365b745`,
+   parsed to release digest
+   `025eb58e25ffce0c2f2501373a1f0213b012e4167ffaa829de9d35ca1d7270fe`.
+   The route summary is exactly `6` permitted V1 `TRADE` drills, `22` blocked
+   V2 products and `0` V1 BAR drills. The isolated immutable C1 image
+   `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`
+   ran `60/60` C2/Phase-10 regression tests in `4.117s`; Python compile and
+   `git diff --check` passed. The matrix caught an acceptance-product key
+   access error before runtime; the test now uses the canonical requirement-key
+   helper. No image was built, service restarted, trust file changed, V1/V2
+   endpoint called, or provider/order state mutated in this source slice. The
+   next permitted operation is the approved C2 trust extension plus only the
+   four named V2 reader recreates, followed by the 300-second disposable
+   no-order client.
 
 3. **10.5-D/B3 - Immutable stable-release rehearsal and publication**
    - **Goal:** certify the exact `2.0.0` release candidate rather than merely

@@ -162,12 +162,26 @@ is an invariant, not a best effort.
 The C2 harness is deliberately not a deployed route controller. It runs the
 shared V2 SDK receipt first, selects only the frozen local V1 cached endpoint
 `http://data_layer:8100` for a `fallback: V1` product, validates symbol,
-market, decimal values, final-BAR state and freshness without persisting the
-payload, then makes the same V2 SDK read again. The current frozen scope has
-`28` V2 products: `10` permitted Binance USD-M V1 fallback drills and `18`
-`BLOCKED` routes. A blocked route must produce no V1 HTTP request. This makes
-the `V2 -> V1 -> V2` receipt real while leaving every Trading System and alpha
-route unchanged.
+market, decimal values and freshness without persisting the payload, then
+makes the same V2 SDK read again. V1 lacks a stable latest-final-bar contract,
+so final BAR requirements are V2-only and never enter a V1 probe. The current
+route revision has `28` V2 products: `6` permitted Binance USD-M `TRADE` V1
+fallback drills and `22` `BLOCKED` routes. A blocked route must produce no V1
+HTTP request. This makes the `V2 -> V1 -> V2` receipt real where equivalence is
+proven while leaving every Trading System and alpha route unchanged.
+
+#### V1 Provenance Repair Exception
+
+If the active V1 image has been pruned and no current-serving provenance can
+be made, the only permitted C2 repair is an operator-approved replacement of
+`data_layer_service` from the frozen `v1.2.2` source. Preserve the original
+stopped container as rollback; do not use `docker commit` as provenance. The
+replacement retains only the existing data/log mounts, port, network aliases,
+and the pre-existing `.env` as a read-only controlled secret reference; it
+must not copy credential values into a packet or env capture. It deliberately
+omits a source `/app` bind mount so image provenance is meaningful. A failed
+V1 cached-read smoke rolls
+back before query/stream trust or reader changes begin.
 
 ### 10.5-C: Rolling Consumer Handoff
 

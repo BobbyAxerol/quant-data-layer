@@ -14,6 +14,7 @@ from qdl.certification.phase105_fallback import (
     validate_v1_runtime_binding,
 )
 from qdl.consumer import StableReleaseRoutePlan
+from qdl.consumer.realtime_route import requirement_key
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 
@@ -52,7 +53,26 @@ class Phase105FallbackAcceptanceTests(unittest.TestCase):
         self.assertTrue(self.probes)
         self.assertTrue(all(item.native_symbol in {"BTCUSDT", "ETHUSDT"} for item in self.probes))
         self.assertTrue(all(item.path.startswith("/v1/binance/") for item in self.probes))
-        self.assertTrue(all(item.feed in {"TRADE", "BAR"} for item in self.probes))
+        self.assertTrue(all(item.feed == "TRADE" for item in self.probes))
+
+    def test_final_bars_are_blocked_when_v1_has_no_latest_closed_bar_contract(self) -> None:
+        blocked = set(blocked_fallback_identities(self.release))
+        for product in self.scope.products:
+            if product.feed == "BAR" and product.venue == "BINANCE" and product.market == "USDM":
+                self.assertIn((product.consumer_id, requirement_key(product.requirement)), blocked)
+        bindings = {
+            item.binding_id: item
+            for item in self.catalog.bindings
+            if item.binding_id in {
+                "binance-usdm-btcusdt-bar-1m",
+                "binance-usdm-ethusdt-bar-1m",
+            }
+        }
+        self.assertEqual(set(bindings), {
+            "binance-usdm-btcusdt-bar-1m",
+            "binance-usdm-ethusdt-bar-1m",
+        })
+        self.assertTrue(all(item.v1_compatibility == "NONE" for item in bindings.values()))
 
     def test_blocked_scope_never_appears_in_v1_probe_scope(self) -> None:
         blocked = set(blocked_fallback_identities(self.release))
@@ -60,7 +80,7 @@ class Phase105FallbackAcceptanceTests(unittest.TestCase):
         self.assertFalse(blocked & {item.identity for item in self.probes})
         self.assertTrue(any("alpha.okx" in consumer for consumer, _key in blocked))
 
-    def test_trade_and_final_bar_contracts_are_checked_without_retaining_payload(self) -> None:
+    def test_trade_contract_is_checked_without_retaining_payload(self) -> None:
         trade = next(item for item in self.probes if item.feed == "TRADE")
         trade_result = validate_v1_fallback_payload(trade, {
             "symbol": trade.native_symbol,
@@ -73,41 +93,12 @@ class Phase105FallbackAcceptanceTests(unittest.TestCase):
         self.assertNotIn("payload", trade_result)
         self.assertEqual(trade_result["source_age_ms"], 500)
 
-        bar = next(item for item in self.probes if item.feed == "BAR")
-        bar_result = validate_v1_fallback_payload(bar, {
-            "e": "kline",
-            "E": 1_000_000,
-            "s": bar.native_symbol,
-            "k": {
-                "t": 940_000,
-                "T": 1_000_000,
-                "s": bar.native_symbol,
-                "i": bar.interval,
-                "o": "100",
-                "h": "102",
-                "l": "99",
-                "c": "101",
-                "v": "0",
-                "x": True,
-            },
-        }, now_ms=1_000_500)
-        self.assertEqual(bar_result["endpoint_kind"], "BINANCE_BAR")
-        self.assertNotIn("payload", bar_result)
-
-    def test_invalid_symbol_or_non_final_bar_fails_closed(self) -> None:
+    def test_invalid_trade_symbol_fails_closed(self) -> None:
         trade = next(item for item in self.probes if item.feed == "TRADE")
         with self.assertRaisesRegex(ValueError, "symbol"):
             validate_v1_fallback_payload(trade, {
                 "symbol": "WRONG", "market": "binance_usdm", "price": "1",
                 "quantity": "1", "trade_time": 1_000_000,
-            }, now_ms=1_000_500)
-        bar = next(item for item in self.probes if item.feed == "BAR")
-        with self.assertRaisesRegex(ValueError, "finality"):
-            validate_v1_fallback_payload(bar, {
-                "e": "kline", "E": 1_000_000, "s": bar.native_symbol,
-                "k": {"t": 940_000, "T": 1_000_000, "s": bar.native_symbol,
-                      "i": bar.interval, "o": "1", "h": "1", "l": "1", "c": "1",
-                      "v": "0", "x": False},
             }, now_ms=1_000_500)
 
     def test_provenance_and_final_receipt_are_exact_and_fail_closed(self) -> None:
