@@ -15219,6 +15219,99 @@ MUTATED`).**
   A deterministic fixture only validates certificate logic; it is not runtime
   or real-provider certification.
 
+#### Phase 10.5 Runtime Closure Sequence (`PENDING / EXPLICIT PACKET REQUIRED PER STEP`)
+
+This is the complete, ordered closure path for Phase 10.5. It adds no new
+product architecture or public contract. Each step stops after its own evidence
+and report; approval for one step does not permit the next step, a release tag,
+or broad image/container cleanup.
+
+1. **10.5-C1 - Revision-10 final-BAR runtime repair**
+   - **Goal:** replace the deployed revision-`9` final-BAR ownership behavior
+     that left a real OKX `BAR 1m` gap. Build exactly one immutable Python V2
+     image from the committed revision-`10` source and regenerate exactly one
+     sealed revision-`10` bundle.
+   - **Exact runtime scope:** recreate only `ingestor_okx_swap`,
+     `binance_bar_edge`, `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+     `stream_v2_passive`. Preserve the old bar-edge checkpoint as rollback
+     evidence and use a new state path for bootstrap. Do not recreate a Rust
+     core, Kafka, Redis, SQLite, V1, Trading System or alpha service; do not
+     change Kafka offsets, consumer routes or authority mode.
+   - **Real-provider acceptance:** bootstrap at most 1,000 closed final bars
+     for each active Binance USD-M/OKX Swap BTC/ETH binding. Require contiguous
+     final-BAR history, healed missing OKX open, canonical idempotency,
+     primary/secondary query agreement, no open demanded-slice gap and no Rust
+     core restart or OOM. A provider/API failure is `BLOCKED`, never a reason
+     to synthesize or backfill invented data.
+   - **Rollback and cleanup:** stop/recreate only the six named roles using
+     their prior V2 image/environment; preserve authentic provider raw records
+     already appended. Do not delete any durable state. Remove only an exact,
+     named disposable bootstrap namespace after evidence capture.
+   - **Mandatory report after completion:** state each currently served task
+     and route: V1/V2 query and stream products by venue/feed/interval,
+     warmup/historical pass-through status, supported paper Trading System and
+     alpha SDK read paths, data authority/fallback state, provider freshness,
+     gap/reconnect/lag, CPU/RAM/disk/Kafka/Redis metrics, exact tests and
+     cleanup. Distinguish real-provider evidence from source-only tests.
+
+2. **10.5-B/C2 - Real no-order consumer acceptance and bounded handoff**
+   - **Goal:** prove the repaired V2 plane is consumed correctly by the four
+     governed paper classes: Monitoring, Trading System paper market-data
+     adapter, Binance paper alpha SDK and OKX paper alpha SDK. This is a data
+     read acceptance, not an execution or alpha-logic migration.
+   - **Acceptance scope:** each approved product completes warmup, signed
+     cursor/replay, reconnect and V2-primary reads. For only products whose
+     frozen manifest allows `V1`, prove `V2_PRIMARY -> V1_FALLBACK ->
+     V2_PRIMARY`; products declared `BLOCKED` stay blocked and VN/DNSE is not
+     silently promoted. Verify zero direct venue connection by the consumer,
+     zero order action, zero route mutation and no change to alpha signal,
+     sizing, risk or broker behavior.
+   - **Runtime boundary:** the approval packet must name exact immutable image
+     digests, consumer services/ports/identities, manifest digest, observation
+     window, paper scopes, V1 rollback revision and stop-only rollback. It may
+     recreate only named consumer workers. It must not reset offsets, flush
+     Redis/SQLite, delete durable evidence, restart V1 or modify order state.
+   - **Rollback and cleanup:** return only an affected consumer to its frozen
+     V1 route, retain V2 Kafka/cursor receipts, stop only packet-named V2
+     workers and delete only the isolated no-order cursor namespace.
+   - **Mandatory report after completion:** report consumer-by-consumer
+     capability and route matrix, exact endpoints/SDK operations exercised,
+     instruments/feeds/intervals served, warmup/replay/reconnect/fallback
+     evidence, blocked/excluded products, observed data freshness/gap/lag and
+     resource use, plus confirmation that execution, positions, signal/sizing
+     and broker state were untouched.
+
+3. **10.5-D/B3 - Immutable stable-release rehearsal and publication**
+   - **Goal:** certify the exact `2.0.0` release candidate rather than merely
+     its source. Run the review-only stable-release certificate against real
+     receipts from C1/C2, then publish only after every mandatory gate passes.
+   - **Acceptance:** verify frozen V1 public compatibility and provenance,
+     V2 SDK/API/stream contract compatibility, Rust authority, all manifest
+     routes V2-primary with no active fallback, current real-provider
+     freshness/gap/reconnect/consumer/projector lag, CPU/RAM/Kafka/Redis/disk
+     budgets and an immutable-image rehearsal. DNSE must have an independent
+     in-session certificate or remain explicitly V1/excluded in the capability
+     matrix and release notes.
+   - **Release/rollback:** retain V1 and one known-good immutable V2 rollback
+     image; publish tag `2.0.0` only after certificate `PASS`. A failed gate
+     produces no tag and returns only affected consumers to the recorded V1
+     revision. Never use broad prune, offset reset, flush, data deletion or
+     alpha/order mutation as part of release acceptance.
+   - **Cleanup and final report:** remove only named disposable rehearsal
+     artifacts after evidence is frozen. Report the stable topology, images and
+     revision digests; every served venue/product/endpoint/SDK mode and its
+     authority/fallback; consumer/alpha classes actually certified; real
+     performance and resource envelope; exclusions; rollback command/revision;
+     tests/evidence/cleanup; and any genuine external gate left after release.
+
+**Phase 10.5 final exit:** only after C1, C2 and D/B3 are all `PASS` may this
+upgrade be declared `Data Layer V2 stable`. At that point there is no Phase
+10.6 architecture task. Image/container topology consolidation is a separate,
+post-release operational change with an exact cleanup list; it must retain V1
+and one immutable V2 rollback image. Future venue or alpha onboarding uses a
+new manifest revision and independent acceptance, not a reopening of this
+release closure.
+
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 
 Every Phase 10 implementation slice must record in this journal before code
