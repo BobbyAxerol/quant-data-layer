@@ -13,12 +13,16 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import math
-import re
 import time
 from collections.abc import Iterable, Mapping
 
 from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct
-from qdl.certification.phase105_handoff import V1_FALLBACK_COMMIT, V1_FALLBACK_VERSION
+from qdl.certification.phase105_handoff import (
+    V1_FALLBACK_COMMIT,
+    V1_FALLBACK_VERSION,
+    validate_frozen_v1_provenance,
+    validate_frozen_v1_runtime_binding,
+)
 from qdl.consumer import StableReleaseRoutePlan, requirement_key
 from qdl.runtime.stable_catalog import StableSourceCatalog
 
@@ -29,20 +33,6 @@ PHASE105_PAPER_CONSUMER_ORDER = (
     "alpha.binance.paper.stable",
     "alpha.okx.paper.stable",
 )
-_V1_PROVENANCE_FIELDS = frozenset({
-    "schema",
-    "status",
-    "image_id",
-    "source_commit",
-    "source_tree",
-    "dockerfile_sha256",
-    "version",
-})
-_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-_IMAGE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
-_GIT_OBJECT = re.compile(r"[0-9a-f]{40}\Z")
-
-
 @dataclass(frozen=True, slots=True)
 class V1FallbackProbe:
     """One manifest-approved V1 cached read, without any route mutation."""
@@ -148,28 +138,29 @@ def blocked_fallback_identities(release: StableReleaseRoutePlan) -> tuple[tuple[
 
 def validate_v1_provenance(release: StableReleaseRoutePlan, raw: object) -> dict[str, object]:
     """Require the exact frozen V1 fallback identity before an actual V1 read."""
-    if not isinstance(raw, dict) or set(raw) != _V1_PROVENANCE_FIELDS:
-        raise ValueError("Phase 10.5 V1 provenance fields differ from the frozen contract")
+    frozen = validate_frozen_v1_provenance(raw)
     if (
-        raw.get("schema") != "qdl.phase105.v1-fallback-provenance.v1"
-        or raw.get("status") != "PASS"
-        or raw.get("source_commit") != release.v1_fallback.source_commit
-        or raw.get("source_commit") != V1_FALLBACK_COMMIT
+        frozen["source_commit"] != release.v1_fallback.source_commit
+        or frozen["source_commit"] != V1_FALLBACK_COMMIT
+        or not isinstance(raw, dict)
         or raw.get("version") != release.v1_fallback.release_tag
         or raw.get("version") != V1_FALLBACK_VERSION
-        or not isinstance(raw.get("image_id"), str)
-        or _IMAGE_DIGEST.fullmatch(str(raw["image_id"])) is None
-        or not isinstance(raw.get("source_tree"), str)
-        or _GIT_OBJECT.fullmatch(str(raw["source_tree"])) is None
-        or not isinstance(raw.get("dockerfile_sha256"), str)
-        or _SHA256.fullmatch(str(raw["dockerfile_sha256"])) is None
     ):
         raise ValueError("Phase 10.5 V1 fallback provenance is not frozen and attestable")
-    return {
-        "image_id": str(raw["image_id"]),
-        "source_commit": str(raw["source_commit"]),
-        "provenance_sha256": _canonical_sha256(raw),
-    }
+    return frozen
+
+
+def validate_v1_runtime_binding(
+    provenance: Mapping[str, object], raw: object
+) -> dict[str, object]:
+    """Require the fallback receipt to name the V1 container serving this probe.
+
+    The disposable client has no Docker socket. A host-side, payload-free
+    binding is therefore produced immediately before the probe and proves the
+    current container image is the same immutable digest covered by the frozen
+    V1 source attestation.
+    """
+    return validate_frozen_v1_runtime_binding(provenance, raw)
 
 
 def _positive_decimal(value: object, field: str, *, allow_zero: bool = False) -> Decimal:

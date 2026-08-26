@@ -145,8 +145,10 @@ The later runtime approval must name all of the following, exactly:
    `/home/bobby/.local/state/qdl-v2/phase105b-<UTC>/`, removed on a failed
    probe unless an operator explicitly preserves it for diagnosis.
 6. A V1 digest-to-commit attestation for the frozen `v1.2.2` fallback before
-   any forced-fallback assertion. Without it, that assertion is `BLOCKED`, not
-   an equivalent rollback result.
+   any forced-fallback assertion, plus a payload-free binding of that receipt
+   to the **currently serving** `data_layer_service` immutable image digest.
+   An historical attestation for a different image is not reusable. Without
+   both, that assertion is `BLOCKED`, not an equivalent rollback result.
 
 The probe order is Monitoring, Trading System read-only adapter, Binance paper
 SDK, then OKX paper SDK. Each approved V2 product must pass warmup, signed

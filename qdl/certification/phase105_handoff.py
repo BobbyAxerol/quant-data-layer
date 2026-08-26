@@ -35,6 +35,24 @@ ALL_KEY_SUBJECTS = {
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+V1_PROVENANCE_FIELDS = frozenset({
+    "schema",
+    "status",
+    "image_id",
+    "source_commit",
+    "source_tree",
+    "dockerfile_sha256",
+    "version",
+})
+V1_RUNTIME_BINDING_FIELDS = frozenset({
+    "schema",
+    "status",
+    "service",
+    "container_image_id",
+    "container_id_sha256",
+    "v1_provenance_sha256",
+})
 _ACTIVE_RUNTIME_SCHEMA = "qdl.v2.shared-primary-handoff-packet.v2"
 _ACTIVE_RUNTIME_SELECTORS = (
     "QDL_CONFIG_REVISION",
@@ -55,6 +73,64 @@ def sha256_bytes(value: bytes) -> str:
 
 def sha256_file(path: str | Path) -> str:
     return sha256_bytes(Path(path).read_bytes())
+
+
+def _canonical_sha256(value: object) -> str:
+    return sha256_bytes(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
+
+
+def validate_frozen_v1_provenance(raw: object) -> dict[str, str]:
+    """Validate the immutable V1 identity without importing runtime adapters."""
+    if not isinstance(raw, dict) or set(raw) != V1_PROVENANCE_FIELDS:
+        raise ValueError("Phase 10.5 V1 provenance fields differ from the frozen contract")
+    if (
+        raw.get("schema") != "qdl.phase105.v1-fallback-provenance.v1"
+        or raw.get("status") != "PASS"
+        or raw.get("source_commit") != V1_FALLBACK_COMMIT
+        or raw.get("version") != V1_FALLBACK_VERSION
+        or not isinstance(raw.get("image_id"), str)
+        or _DIGEST.fullmatch(str(raw["image_id"])) is None
+        or not isinstance(raw.get("source_tree"), str)
+        or _COMMIT.fullmatch(str(raw["source_tree"])) is None
+        or not isinstance(raw.get("dockerfile_sha256"), str)
+        or _SHA256.fullmatch(str(raw["dockerfile_sha256"])) is None
+    ):
+        raise ValueError("Phase 10.5 V1 fallback provenance is not frozen and attestable")
+    return {
+        "image_id": str(raw["image_id"]),
+        "source_commit": str(raw["source_commit"]),
+        "provenance_sha256": _canonical_sha256(raw),
+    }
+
+
+def validate_frozen_v1_runtime_binding(
+    provenance: Mapping[str, object], raw: object
+) -> dict[str, str]:
+    """Verify a host-side V1 serving-container binding without Docker access."""
+    if not isinstance(raw, dict) or set(raw) != V1_RUNTIME_BINDING_FIELDS:
+        raise ValueError("Phase 10.5 V1 runtime binding fields differ from the frozen contract")
+    image_id = provenance.get("image_id")
+    provenance_sha256 = provenance.get("provenance_sha256")
+    if (
+        raw.get("schema") != "qdl.phase105.v1-runtime-binding.v1"
+        or raw.get("status") != "PASS"
+        or raw.get("service") != "data_layer_service"
+        or raw.get("container_image_id") != image_id
+        or not isinstance(image_id, str)
+        or _DIGEST.fullmatch(image_id) is None
+        or not isinstance(raw.get("container_id_sha256"), str)
+        or _SHA256.fullmatch(str(raw["container_id_sha256"])) is None
+        or raw.get("v1_provenance_sha256") != provenance_sha256
+        or not isinstance(provenance_sha256, str)
+        or _SHA256.fullmatch(provenance_sha256) is None
+    ):
+        raise ValueError("Phase 10.5 V1 runtime binding is not current and attestable")
+    return {
+        "service": "data_layer_service",
+        "image_id": image_id,
+        "container_id_sha256": str(raw["container_id_sha256"]),
+        "binding_sha256": _canonical_sha256(raw),
+    }
 
 
 def load_dotenv(path: str | Path) -> dict[str, str]:

@@ -11,6 +11,7 @@ from qdl.certification.phase105_fallback import (
     build_v1_fallback_probes,
     validate_v1_fallback_payload,
     validate_v1_provenance,
+    validate_v1_runtime_binding,
 )
 from qdl.consumer import StableReleaseRoutePlan
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -121,6 +122,18 @@ class Phase105FallbackAcceptanceTests(unittest.TestCase):
         }
         result = validate_v1_provenance(self.release, provenance)
         self.assertEqual(result["source_commit"], self.release.v1_fallback.source_commit)
+        binding = {
+            "schema": "qdl.phase105.v1-runtime-binding.v1",
+            "status": "PASS",
+            "service": "data_layer_service",
+            "container_image_id": result["image_id"],
+            "container_id_sha256": "d" * 64,
+            "v1_provenance_sha256": result["provenance_sha256"],
+        }
+        self.assertEqual(validate_v1_runtime_binding(result, binding)["image_id"], result["image_id"])
+        binding["container_image_id"] = "sha256:" + "e" * 64
+        with self.assertRaisesRegex(ValueError, "runtime binding"):
+            validate_v1_runtime_binding(result, binding)
         receipt = build_fallback_return_receipt(self.release, self.probes)
         self.assertEqual(receipt["status"], "PASS")
         self.assertEqual(len(receipt["routes"]), len(self.probes))

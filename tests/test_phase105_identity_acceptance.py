@@ -60,6 +60,7 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
                 "--grpc-target", "stream.example:8210",
                 "--v1-base-url", "http://data_layer:8100",
                 "--v1-provenance", str(root / "v1-provenance.json"),
+                "--v1-runtime-binding", str(root / "v1-runtime-binding.json"),
                 "--tls-ca-file", str(certificate),
             ]
             for prefix in IDENTITY_PREFIXES.values():

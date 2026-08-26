@@ -38,6 +38,7 @@ from qdl.certification.phase105_fallback import (
     build_v1_fallback_probes,
     validate_v1_fallback_payload,
     validate_v1_provenance,
+    validate_v1_runtime_binding,
 )
 from qdl.consumer import StableReleaseRoutePlan, requirement_key
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -241,6 +242,11 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError("Phase 10.5 V1 provenance cannot be read") from error
     v1_provenance = validate_v1_provenance(release, v1_provenance_raw)
+    try:
+        v1_runtime_binding_raw = json.loads(args.v1_runtime_binding.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("Phase 10.5 V1 runtime binding cannot be read") from error
+    v1_runtime_binding = validate_v1_runtime_binding(v1_provenance, v1_runtime_binding_raw)
     probes = build_v1_fallback_probes(
         release, catalog=StableSourceCatalog.load(args.catalog), products=scope.products
     )
@@ -348,6 +354,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             "blocked_route_count": len(blocked_fallback_identities(release)),
         },
         "v1_provenance": v1_provenance,
+        "v1_runtime_binding": v1_runtime_binding,
         "fallback_details": fallback_details,
         "fallback_drill": build_fallback_return_receipt(release, probes),
         "provider_connections": 0,
@@ -370,6 +377,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--grpc-target", required=True)
     value.add_argument("--v1-base-url", required=True)
     value.add_argument("--v1-provenance", type=Path, required=True)
+    value.add_argument("--v1-runtime-binding", type=Path, required=True)
     value.add_argument("--tls-ca-file", required=True)
     for prefix in IDENTITY_PREFIXES.values():
         value.add_argument(f"--{prefix}-tls-certificate-file", type=Path, required=True)

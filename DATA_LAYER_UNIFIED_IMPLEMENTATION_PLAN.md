@@ -15540,6 +15540,49 @@ or broad image/container cleanup.
      stop/remove the disposable client, delete only its cursor namespace and
      restore/recreate only those four V2 readers.
 
+   **C2 runtime provenance preflight (`BLOCKED / SOURCE BINDING PATCH REQUIRED`,
+   2026-08-26):** Read-only Docker inspection found the running V1
+   `data_layer_service` container references
+   `sha256:8f2a5a3f1ff97762feb1531c3787e714dfda60b0b64df5b7359b9e5f6740c980`,
+   while the preserved V1 provenance receipt attests the different immutable
+   image `sha256:55b2cd18f8db46cf492082831fbb7db5540e27f9009f307f36da8c27a38833c8`.
+   The referenced running image no longer exists in the Docker image store, so
+   its OCI source labels cannot be re-attested without a separately approved
+   V1 rebuild/recreate. No endpoint, trust file, service, Kafka/Redis/SQLite
+   state or consumer route was changed. C2 must not use the historical receipt
+   to validate a live V1 fallback. Before any runtime packet, the acceptance
+   harness will require a payload-free current-container image binding whose
+   immutable digest equals the frozen V1 attestation; a mismatch or absent
+   image blocks only the permitted fallback drill, never silently downgrades
+   its meaning. The source patch is limited to that binding plus negative
+   tests and this journal/runbook clarification. It neither rebuilds nor
+   restarts V1, and C2 remains outside runtime handoff until the binding gate
+   passes.
+
+   **C2 current-serving binding repair (`SOURCE PASS / RUNTIME STILL BLOCKED`,
+   2026-08-26):** Added the pure `qdl.certification.phase105_handoff`
+   validators and `scripts/phase105_bind_running_v1_fallback.py`. The host-side
+   script reads the already-attested V1 receipt, Docker-inspects only the named
+   `data_layer_service`, requires its current immutable image to equal the
+   attested digest, requires that image to remain inspectable, and writes a
+   payload-free binding containing only the service name, image digest,
+   container-id SHA-256 and provenance SHA-256. The disposable client now
+   requires that binding before it constructs an SDK client or sends any V1/V2
+   request. It has no Docker socket and validates the binding independently.
+   - **Tests actually run:** `py_compile` and `git diff --check` -> pass. The
+     immutable C1 V2 image with read-only source, `--network none` and tmpfs
+     ran the C2/regression matrix -> `59 passed, 0 failed, 0 skipped` in
+     `4.255s`. A real host dry-run against the active service failed cleanly
+     before any endpoint request: `V1 serving container image differs from
+     frozen provenance`. This is the required fail-closed result; it created no
+     output, changed no runtime object and retained no payload.
+   - **Decision/rollback:** no V1 image is rebuilt or recreated in this scope.
+     The valid next action is a separately approved bounded V1 provenance
+     repair (build/attest the frozen `v1.2.2` image and recreate only V1 with
+     explicit rollback) or an approved C2 scope change that drops the
+     fallback-drill claim. Until then full C2 cannot pass; no trust extension,
+     V2 reader recreate or disposable client has been started.
+
 3. **10.5-D/B3 - Immutable stable-release rehearsal and publication**
    - **Goal:** certify the exact `2.0.0` release candidate rather than merely
      its source. Run the review-only stable-release certificate against real
