@@ -14957,6 +14957,50 @@ SOURCE-ONLY`).**
   keyring. Targeted tests passed `8/8`; immutable network-disabled/read-only
   regression passed `44/44`. No bundle has yet been prepared and no runtime
   resource has been recreated.
+- **Prepared runtime packet/preflight (`PASS`):** private namespace
+  `/home/bobby/.local/state/qdl-v2/phase105c-20260826T044109Z/` is mode `0700`;
+  its input capture and derived env/packet are mode `0600`. The packet is
+  `9338674de29c5ed18bb494a1199757069c2dcba4c0c1ce00330c5ec39d4fef76` and
+  binds the live Phase 10.3 runtime directory, Rust image
+  `sha256:3056cf...cd156`, new V2 Python image `sha256:39d8f7...839d9`, four
+  exact JWT key IDs and only the two active-keyring override fields. Sanitized
+  Compose renders confirm V1 `build=null` with only `/app/data` and `/app/logs`;
+  the four V2 Python roles use only their additive client CA path; and only
+  `rust_core` changes its cgroup to `536870912` bytes. No service was recreated
+  during this preflight. The next ordered mutation is additive client CA copy,
+  then `rust_core`, V2 query/stream, and V1 rolling replacement with an
+  immediate health/read gate after each slice.
+- **Runtime slice 1 - additive trust + Rust capacity (`PASS`):** both absent
+  client-authority paths were created as the same additive public bundle hash
+  `fd9b1452...3b39`; the pre-existing query/stream server-CA hash remained
+  `fc24c047...3fc8`. Only `rust_core` was recreated with its existing image
+  and existing `runtime/core.json` mount at `512 MiB`. After a bounded 75-second
+  observation it was `running`, `oom=false`, `restarts=0`, RSS `8.7 MiB` and
+  CPU `2.33%`; untouched peers remained at their former `256 MiB` limits. Its
+  structured progress advanced canonical records with `duplicates=0` and
+  `quarantines=0`. Kafka, Redis, SQLite, offsets, ingestors, projectors, V1,
+  Trading System and alpha services were not recreated or mutated. Next only
+  the four named V2 query/stream services may reload the derived env.
+- **Runtime slice 2 preliminary mTLS gate (`PARTIAL PASS / PROBE SOURCE FIX
+  REQUIRED`):** all four query/stream containers reloaded the selected V2
+  image and remained running with zero restarts. Query replicas returned mTLS
+  `READY`; active stream returned `READY`; passive stream returned the expected
+  `503/STANDBY` because its peer holds the gateway lease, while every required
+  dependency was `READY`. The four-key public JWT/key-subject maps and additive
+  client-authority paths were present. The disposable identity probe then
+  failed before opening a request: argparse canonicalizes `alpha-binance` to
+  `alpha_binance`, while its attribute lookup retained the dash. Its container
+  was removed, its temporary cursor was removed, and its empty scoped receipt
+  will be discarded. This is a source-only CLI defect; V1 has not been
+  recreated and no provider/order/Kafka/Redis/SQLite mutation occurred.
+- **Implemented/tested probe CLI correction:** the identity helper now maps
+  public dashed CLI flags to argparse's underscored namespace attributes. A
+  parser regression covers all four identities, including Alpha-Binance and
+  Alpha-OKX. Host compilation and handoff-only tests passed; the host lacks the
+  optional `redis` test dependency, so the full identity test was run in the
+  selected immutable image instead. The network-disabled/read-only matrix
+  passed `45/45`. No runtime service was recreated by this source correction;
+  the next action is exactly one rerun of the same disposable no-order probe.
 
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 

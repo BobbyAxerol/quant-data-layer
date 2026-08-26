@@ -11,7 +11,9 @@ from qdl_sdk import Grade
 from scripts.phase105_consumer_v2_identity_acceptance import (
     IDENTITY_PREFIXES,
     _authority,
+    _identity_files,
     _route_summary,
+    parser,
 )
 
 
@@ -41,6 +43,32 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
             }), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "RUST_PRIMARY"):
                 _authority(path)
+
+    def test_cli_parser_resolves_dashed_alpha_identity_options(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            certificate = root / "client.crt"
+            private_key = root / "client.key"
+            jwt_private_key = root / "private.key"
+            for path in (certificate, private_key, jwt_private_key):
+                path.write_text("fixture", encoding="utf-8")
+            arguments = [
+                "--authority-record", str(root / "authority.json"),
+                "--primary-url", "https://query.example",
+                "--secondary-url", "https://query-two.example",
+                "--grpc-target", "stream.example:8210",
+                "--tls-ca-file", str(certificate),
+            ]
+            for prefix in IDENTITY_PREFIXES.values():
+                arguments.extend((
+                    f"--{prefix}-tls-certificate-file", str(certificate),
+                    f"--{prefix}-tls-private-key-file", str(private_key),
+                    f"--{prefix}-jwt-private-key-file", str(jwt_private_key),
+                    f"--{prefix}-jwt-key-id", f"{prefix}-key",
+                ))
+            files = _identity_files(parser().parse_args(arguments))
+        self.assertEqual(set(files), set(IDENTITY_PREFIXES))
+        self.assertEqual(files["alpha.binance.paper.stable"].jwt_key_id, "alpha-binance-key")
 
     def test_route_summary_counts_declared_v1_and_blocked_without_claiming_transition(self) -> None:
         requirement = DataRequirement(

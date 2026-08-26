@@ -67,11 +67,15 @@ def _authority(path: Path) -> dict[str, object]:
 def _identity_files(args: argparse.Namespace) -> dict[str, IdentityFiles]:
     values: dict[str, IdentityFiles] = {}
     for consumer_id, prefix in IDENTITY_PREFIXES.items():
+        # argparse converts every option dash into an underscore in Namespace
+        # attributes, while the public CLI intentionally keeps alpha-binance
+        # and alpha-okx readable as dashed option names.
+        attribute_prefix = prefix.replace("-", "_")
         fields = IdentityFiles(
-            certificate=str(getattr(args, f"{prefix}_tls_certificate_file")),
-            private_key=str(getattr(args, f"{prefix}_tls_private_key_file")),
-            jwt_private_key=str(getattr(args, f"{prefix}_jwt_private_key_file")),
-            jwt_key_id=str(getattr(args, f"{prefix}_jwt_key_id")),
+            certificate=str(getattr(args, f"{attribute_prefix}_tls_certificate_file")),
+            private_key=str(getattr(args, f"{attribute_prefix}_tls_private_key_file")),
+            jwt_private_key=str(getattr(args, f"{attribute_prefix}_jwt_private_key_file")),
+            jwt_key_id=str(getattr(args, f"{attribute_prefix}_jwt_key_id")),
         )
         if not fields.jwt_key_id or any(not Path(path).is_file() for path in (
             fields.certificate, fields.private_key, fields.jwt_private_key,
