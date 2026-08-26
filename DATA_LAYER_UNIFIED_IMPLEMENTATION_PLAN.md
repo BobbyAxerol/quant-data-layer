@@ -16185,13 +16185,69 @@ or broad image/container cleanup.
      and one Rust `2.0.0` candidate from that commit, then run the one approved
      disposable no-order rehearsal and review-only certificate.
 
+   **B3 immutable rehearsal and local publication (`PASS`, 2026-08-26):**
+   - **Exact candidate and topology:** one Python candidate
+     `qdl-v2-python:2.0.0-747231f`
+     (`sha256:49f23850167269668b2c01c1f617fe1571a5bbda756a0a2d4ed7e685fe5cce2c`)
+     and one Rust candidate `qdl-v2-rust:2.0.0-747231f`
+     (`sha256:de1a459c3dd353e0af4c801eb41301932ba27bc8311ff14941d1d9d884b01d38`)
+     were built and attested from committed source
+     `747231f126d4c3ebd2f86d343303e50a8d63b034`, labels `2.0.0`. The existing
+     serving reader pair remained deliberately unchanged on Python
+     `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`
+     and Rust authority on
+     `sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`.
+     This is a release rehearsal, not a server-image cutover.
+   - **Real no-order acceptance:** one disposable, `--rm` client from the
+     Python candidate completed in `79.853s` (ceiling `300s`) using only
+     `executor_network`, non-root UID `1001`, read-only rootfs/identities,
+     dropped capabilities and tmpfs state. It contacted only
+     `query_v2_1/query_v2_2`, both stream aliases, and the six manifest-allowed
+     cached V1 comparisons. Its payload-free receipt
+     `/home/bobby/.local/state/qdl-v2/phase105d-b3-20260826T103848Z/acceptance.json`
+     (SHA-256 `ef772fee3a11ecd5225ccc9697cd3f618f5660791ddc51201a7d41c85828d272`)
+     passed all `28/28` V2 products, including `24` durable products with
+     advancing resume offsets, `0` open gaps, six real `V2 -> V1 -> V2`
+     fallback drills and `0` V1 reads for the `BLOCKED` routes. It recorded
+     `provider_connections=0`, `order_actions=0`, no retained cursor and no
+     secrets.
+   - **Certification and resource evidence:** the immutable candidate built
+     the fresh 32-route observation bundle and ran the review-only certificate
+     with `--network none`. All five gates passed: route readiness, frozen V1
+     provenance, current `RUST_PRIMARY` runtime handoff, four consumer-class
+     V2-primary receipt, and V1 fallback-return. The certificate is
+     `PASS` at
+     `/home/bobby/.local/state/qdl-v2/phase105d-b3-20260826T103848Z/certificate.json`.
+     Bounded runtime metrics in the same namespace recorded max durable resume
+     delta `1`, no non-advancing resume, about `226.0 GB` host free disk,
+     V2 query `105.7/134.8 MiB`, V2 stream `70.4/70.3 MiB`, projector
+     `80.2/82.2/81.3 MiB`, Rust core `53.4/164.6/158.1 MiB`, and stable Redis
+     `4.0 MiB`; all were below the frozen role limits. The candidate client
+     itself used `78` millicores and `226,168,832` bytes RSS. The oldest valid
+     measured source age was `2,342,413ms`, within its declared per-route
+     freshness budget; no route claimed synthetic data.
+   - **Publication, rollback and cleanup:** local annotated tag `2.0.0` now
+     points to `747231f`; no remote push, GitHub release, branch merge, reader
+     recreate or authority/manifest mutation occurred. V1
+     `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`
+     and the serving V2 images remain the rollback path. The two failed
+     preflight namespaces (both failed before any V1/V2 request) and the
+     transient copied public CA were removed; only nine compact, mode-`0600`
+     B3 evidence files remain. DNSE/VN remains explicitly `V1_PRIMARY` and
+     excluded from V2 authority until its independent in-session certificate.
+   - **Exit:** **10.5-D/B3 is complete.** Phase 10.5 exit is satisfied for the
+     frozen Binance/OKX paper manifest and local `2.0.0` rehearsal tag. This
+     does not authorize a remote release, server-image promotion, VN cutover,
+     or a new consumer/venue manifest without a separate approved packet.
+
 **Phase 10.5 final exit:** only after C1, C2 and D/B3 are all `PASS` may this
-upgrade be declared `Data Layer V2 stable`. At that point there is no Phase
-10.6 architecture task. Image/container topology consolidation is a separate,
-post-release operational change with an exact cleanup list; it must retain V1
-and one immutable V2 rollback image. Future venue or alpha onboarding uses a
-new manifest revision and independent acceptance, not a reopening of this
-release closure.
+upgrade be declared `Data Layer V2 stable` for its frozen V2-primary
+Binance/OKX paper manifest. At that point there is no Phase 10.6 architecture
+task. Image/container topology consolidation is a separate, post-release
+operational change with an exact cleanup list; it must retain V1 and one
+immutable V2 rollback image. Future venue or alpha onboarding uses a new
+manifest revision and independent acceptance, not a reopening of this release
+closure.
 
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 

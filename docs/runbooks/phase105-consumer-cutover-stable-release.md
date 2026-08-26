@@ -228,6 +228,31 @@ demanded final-BAR gap and produce real no-order handoff evidence. A `PASS`
 from the gate is necessary, not sufficient, for the separately approved
 immutable release rehearsal and `2.0.0` publication.
 
+#### B3 Immutable Release Rehearsal
+
+The approved B3 packet is intentionally a rehearsal, not a reader/core
+deployment. Build exactly one Python and one Rust candidate from one committed
+SHA, run the immutable Python candidate as one disposable no-order client
+against the existing V2 reader pair, and run observation/certification from
+that same candidate with `--network none`. The client is non-root, has a
+read-only root filesystem and identities, dropped capabilities, tmpfs-only
+cursor state, no Docker socket and no provider or execution credentials.
+
+The retained B3 namespace contains only compact JSON: current V1 binding and
+provenance, the acceptance receipt, observation bundle, fallback receipt,
+runtime handoff, resource metrics, candidate attestation and certificate. Do
+not retain payloads, cursors, private keys, logs, or copied CA material. A
+preflight that fails before an endpoint request is cleaned as a named
+disposable artifact and is not acceptance evidence.
+
+Create the local annotated `2.0.0` tag only after the certificate is `PASS`.
+The certificate proves the frozen manifest and the existing serving V2 runtime;
+the candidate attestation proves the immutable release candidate exercised the
+rehearsal. It does **not** deploy that candidate to query/stream/core, publish
+to a remote, promote VN/DNSE, or authorize a new consumer route. Keep the
+attested V1 image and serving V2 images available as rollback until a separate
+deployment packet is approved.
+
 ## Rollback
 
 Use the named V1 route revision from the approved 10.5-C packet. Preserve V2
