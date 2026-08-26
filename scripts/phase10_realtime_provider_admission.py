@@ -3,9 +3,9 @@
 
 This verifier intentionally talks only to public provider edges. It exercises
 the direct-control WebSocket protocol used by the Rust native ingestor and the
-approved Binance REST closed-BAR recovery edge without starting a producer, a
-projector, a consumer group, or any Data Layer service. Its output contains
-bounded metadata and frame hashes, not raw market data.
+approved Binance/OKX REST closed-BAR recovery edges without starting a
+producer, a projector, a consumer group, or any Data Layer service. Its output
+contains bounded metadata and frame hashes, not raw market data.
 """
 from __future__ import annotations
 
@@ -26,7 +26,11 @@ from qdl.adapters.binance import (
     BinanceBarRawBinding,
     fetch_latest_closed_bar_raw_envelope,
 )
-from qdl.adapters.intervals import canonical_interval_ms
+from qdl.adapters.intervals import canonical_interval_ms, okx_candle_channel
+from qdl.adapters.okx.bar_edge import (
+    OkxBarRawBinding,
+    fetch_latest_closed_bar_raw_envelope as fetch_okx_latest_closed_bar_raw_envelope,
+)
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.envelope import validate_raw_envelope
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -182,10 +186,10 @@ def load_active_provider_bindings(
 ) -> tuple[NativeBinding, ...]:
     """Resolve every enabled crypto binding exercised by Phase 10.3.
 
-    `RUST_NATIVE` bindings are read from direct provider WebSockets.  A
-    `PYTHON_REST` binding is allowed only for a Binance final BAR and remains a
-    provider edge: its captured raw envelope is still normalized by the Rust
-    canonical core in the real deployment.
+    `RUST_NATIVE` bindings are read from direct provider WebSockets. A
+    `PYTHON_REST` binding is allowed only for a Binance/OKX final BAR and
+    remains a provider edge: its captured raw envelope is still normalized by
+    the Rust canonical core in the real deployment.
     """
     catalog = StableSourceCatalog.load(catalog_path)
     acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
@@ -200,15 +204,18 @@ def load_active_provider_bindings(
             raise ProviderAdmissionError("unexpected non-crypto provider runtime")
         if identity.venue != item.runtime:
             raise ProviderAdmissionError("provider runtime and catalog venue differ")
-        if item.mode == "PYTHON_REST" and not (
-            item.runtime == "BINANCE"
-            and source.feed.value == "BAR"
-            and item.provider_kind in {
-                "binance_usdm_rest_bar",
-                "binance_spot_rest_bar",
+        if item.mode == "PYTHON_REST":
+            expected_provider_kinds = {
+                "BINANCE": {"binance_usdm_rest_bar", "binance_spot_rest_bar"},
+                "OKX": {"okx_bar"},
             }
-        ):
-            raise ProviderAdmissionError("Phase 10.3 REST acquisition is only Binance final BAR")
+            if (
+                source.feed.value != "BAR"
+                or item.provider_kind not in expected_provider_kinds[item.runtime]
+            ):
+                raise ProviderAdmissionError(
+                    "Phase 10.3 REST acquisition is only venue-owned final BAR"
+                )
         values.append(
             NativeBinding(
                 binding_id=item.binding_id,
@@ -498,7 +505,7 @@ def parse_okx_data(
         _positive_decimal(first[5], "OKX candle volume", allow_zero=True)
         open_time_ms = _timestamp_ms(first[0], "OKX candle open time")
         if binding.interval != "1m":
-            raise ProviderAdmissionError("Phase 10.3 native OKX BAR interval is not 1m")
+            raise ProviderAdmissionError("Phase 10.3 OKX BAR interval is not 1m")
         source_time_ms = open_time_ms + 60_000
         final_bar = str(first[8]) == "1"
     else:
@@ -616,6 +623,50 @@ def _binance_rest_bar_binding(binding: NativeBinding) -> BinanceBarRawBinding:
     )
 
 
+def parse_okx_rest_bar(
+    raw: str | bytes,
+    *,
+    binding: NativeBinding,
+    observed_ms: int,
+) -> FrameObservation:
+    """Validate one provider-authentic, fully closed OKX REST BAR."""
+    if (
+        binding.mode != "PYTHON_REST"
+        or binding.venue != "OKX"
+        or binding.market not in {"SWAP", "SPOT"}
+        or binding.feed != "BAR"
+        or binding.interval is None
+        or binding.native_channel != okx_candle_channel(binding.interval)
+    ):
+        raise ProviderAdmissionError("OKX REST BAR binding identity is invalid")
+    observation = parse_okx_data(raw, bindings={binding.key: binding})
+    if not observation.final_bar:
+        raise ProviderAdmissionError("OKX REST BAR is not final")
+    if observation.source_time_ms > observed_ms:
+        raise ProviderAdmissionError("OKX REST BAR is not closed at observation time")
+    return observation
+
+
+def _okx_rest_bar_binding(binding: NativeBinding) -> OkxBarRawBinding:
+    if binding.interval is None:
+        raise ProviderAdmissionError("OKX REST BAR interval is missing")
+    return OkxBarRawBinding(
+        market=binding.market,
+        product_type=binding.product_type,
+        native_symbol=binding.native_symbol,
+        interval=binding.interval,
+        subscription_id=f"phase10-admission-{binding.binding_id}",
+        source_session_id=f"phase10-admission-{binding.binding_id}",
+        connection_generation=1,
+        lease_epoch=1,
+        authority_revision=1,
+        partition_plan_epoch=1,
+        adapter_version="qdl-phase10-provider-admission/1.0.0",
+        config_revision=1,
+        instrument_catalog_revision=1,
+    )
+
+
 async def _binance_rest_bar_session(
     bindings: tuple[NativeBinding, ...],
 ) -> tuple[SessionEvidence, ...]:
@@ -667,6 +718,58 @@ async def _binance_rest_bar_session(
     return (
         SessionEvidence(
             role="BINANCE:USDM:REST_BAR",
+            generation=1,
+            ack_count=0,
+            pre_ack_frames=0,
+            event_count=len(observations),
+            observations=observations,
+            transport="HTTP",
+        ),
+    )
+
+
+async def _okx_rest_bar_session(
+    bindings: tuple[NativeBinding, ...],
+) -> tuple[SessionEvidence, ...]:
+    """Read each approved OKX REST BAR once; no producer or runtime is started."""
+    if not bindings:
+        raise ProviderAdmissionError("OKX REST BAR session has no bindings")
+    if any(
+        item.mode != "PYTHON_REST"
+        or item.venue != "OKX"
+        or item.market not in {"SWAP", "SPOT"}
+        or item.feed != "BAR"
+        for item in bindings
+    ):
+        raise ProviderAdmissionError("OKX REST BAR session scope is invalid")
+
+    async def fetch(binding: NativeBinding) -> FrameObservation:
+        envelope = await fetch_okx_latest_closed_bar_raw_envelope(
+            _okx_rest_bar_binding(binding),
+            attempts=4,
+            test_provenance=False,
+        )
+        validate_raw_envelope(envelope)
+        if (
+            envelope.transport_protocol != raw_provider_pb2.TRANSPORT_PROTOCOL_HTTP
+            or envelope.venue != "OKX"
+            or envelope.market != binding.market
+            or envelope.product_type != binding.product_type
+            or envelope.native_symbol != binding.native_symbol
+            or envelope.native_channel != binding.native_channel
+            or envelope.test_provenance
+        ):
+            raise ProviderAdmissionError("OKX REST BAR raw capture provenance differs")
+        return parse_okx_rest_bar(
+            bytes(envelope.raw_frame_bytes),
+            binding=binding,
+            observed_ms=time.time_ns() // 1_000_000,
+        )
+
+    observations = tuple(await asyncio.gather(*(fetch(item) for item in bindings)))
+    return (
+        SessionEvidence(
+            role="OKX:REST_BAR",
             generation=1,
             ack_count=0,
             pre_ack_frames=0,
@@ -890,12 +993,18 @@ async def run(
         for item in bindings
         if item.venue == "BINANCE" and item.mode == "PYTHON_REST"
     )
-    okx = tuple(item for item in bindings if item.venue == "OKX")
-    if any(item.mode != "RUST_NATIVE" for item in okx):
-        raise ProviderAdmissionError("Phase 10.3 OKX scope must be Rust-native")
+    okx_native = tuple(
+        item for item in bindings if item.venue == "OKX" and item.mode == "RUST_NATIVE"
+    )
+    okx_rest = tuple(
+        item for item in bindings if item.venue == "OKX" and item.mode == "PYTHON_REST"
+    )
+    if any(item.feed not in {"TRADE", "QUOTE"} for item in okx_native):
+        raise ProviderAdmissionError("OKX native scope must contain only TRADE/QUOTE")
+    if any(item.feed != "BAR" for item in okx_rest):
+        raise ProviderAdmissionError("OKX REST scope must contain only final BAR")
     binance_lanes = binance_admission_lanes(binance_native)
-    okx_public = tuple(item for item in okx if item.feed in {"TRADE", "QUOTE"})
-    okx_business = tuple(item for item in okx if item.feed == "BAR")
+    okx_public = okx_native
     binance_trade_symbols = {
         item.native_symbol for item in binance_lanes["TRADE"]
     }
@@ -904,7 +1013,7 @@ async def run(
     }
     binance_bar_symbols = {item.native_symbol for item in binance_rest}
     okx_public_symbols = {item.native_symbol for item in okx_public}
-    okx_bar_symbols = {item.native_symbol for item in okx_business}
+    okx_bar_symbols = {item.native_symbol for item in okx_rest}
     if (
         binance_lanes["BAR"]
         or not binance_trade_symbols
@@ -916,9 +1025,8 @@ async def run(
     ):
         raise ProviderAdmissionError("active provider role composition differs from Phase 10.3 demand")
     public_urls = {item.websocket_url for item in okx_public}
-    business_urls = {item.business_websocket_url for item in okx_business}
-    if len(public_urls) != 1 or len(business_urls) != 1 or None in business_urls:
-        raise ProviderAdmissionError("OKX active bindings disagree on public/business WebSocket URLs")
+    if len(public_urls) != 1 or "" in public_urls:
+        raise ProviderAdmissionError("OKX native bindings disagree on public WebSocket URL")
     started_wall = time.monotonic()
     started_cpu = time.process_time()
     binance_trade_task = _two_session_probe(
@@ -949,31 +1057,21 @@ async def run(
         ),
         first_requires_final_bars=False,
     )
-    business_task = _two_session_probe(
-        lambda **kwargs: _okx_session(
-            okx_business,
-            role="OKX:SWAP:BUSINESS",
-            websocket_url=next(iter(business_urls)),
-            timeout_seconds=timeout_seconds,
-            **kwargs,
-        ),
-        first_requires_final_bars=True,
-    )
-    binance_trade_sessions, binance_quote_sessions, rest_bar_sessions, public_sessions, business_sessions = await asyncio.gather(
+    binance_trade_sessions, binance_quote_sessions, binance_rest_sessions, okx_rest_sessions, public_sessions = await asyncio.gather(
         binance_trade_task,
         binance_quote_task,
         _binance_rest_bar_session(binance_rest),
+        _okx_rest_bar_session(okx_rest),
         public_task,
-        business_task,
     )
     return _render_report(
         bindings=bindings,
         sessions=(
             binance_trade_sessions
             + binance_quote_sessions
-            + rest_bar_sessions
+            + binance_rest_sessions
+            + okx_rest_sessions
             + public_sessions
-            + business_sessions
         ),
         elapsed_seconds=time.monotonic() - started_wall,
         cpu_seconds=time.process_time() - started_cpu,

@@ -318,13 +318,14 @@ class BarHistoryAdapterTests(unittest.TestCase):
                     _okx_binding(), attempts=2, sleep=no_wait
                 ))
 
-    def test_okx_final_bar_event_identity_is_transport_and_restart_independent(self):
+    def test_okx_final_bar_event_identity_is_transport_restart_and_config_independent(self):
         fixture = json.loads(
             (ROOT / "tests/fixtures/phase2/okx_bar.json").read_text(encoding="utf-8")
         )
         first_context = TradeContext(**fixture["context"])
         second_values = dict(fixture["context"])
         second_values["partition_sequence"] += 99
+        second_values["config_revision"] += 1
         second_context = TradeContext(**second_values)
         first = canonicalize_okx_bar(fixture["raw"], first_context)
         second = canonicalize_okx_bar(fixture["raw"], second_context)

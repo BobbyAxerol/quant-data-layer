@@ -57,6 +57,8 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
             {
                 "binance-usdm-btcusdt-bar-1m",
                 "binance-usdm-ethusdt-bar-1m",
+                "okx-swap-btcusdt-bar-1m",
+                "okx-swap-eth-usdt-swap-bar-1m",
             },
         )
 
@@ -122,7 +124,7 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
                 bindings=self.by_key,
             )
 
-    def test_okx_native_frames_preserve_binding_identity_and_finality(self):
+    def test_okx_native_frames_preserve_trade_and_quote_identity(self):
         trade = admission.parse_okx_data(
             '{"arg":{"channel":"trades","instId":"BTC-USDT-SWAP"},"data":[{"instId":"BTC-USDT-SWAP","tradeId":"1","px":"1","sz":"2","ts":"1000"}]}',
             bindings=self.by_key,
@@ -131,23 +133,33 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
             '{"arg":{"channel":"bbo-tbt","instId":"ETH-USDT-SWAP"},"data":[{"bids":[["1","2","0","1"]],"asks":[["3","4","0","1"]],"seqId":"9","ts":"1001"}]}',
             bindings=self.by_key,
         )
-        final_bar = admission.parse_okx_data(
-            '{"arg":{"channel":"candle1m","instId":"BTC-USDT-SWAP"},"data":[["1000","1","3","1","2","0","0","0","1"]]}',
-            bindings=self.by_key,
-        )
-        provisional_bar = admission.parse_okx_data(
-            '{"arg":{"channel":"candle1m","instId":"ETH-USDT-SWAP"},"data":[["1000","1","3","1","2","0","0","0","0"]]}',
-            bindings=self.by_key,
-        )
         self.assertEqual(trade.binding_id, "okx-swap-btcusdt-trade")
         self.assertEqual(quote.binding_id, "okx-swap-eth-usdt-swap-quote")
-        self.assertEqual(final_bar.source_time_ms, 61_000)
-        self.assertTrue(final_bar.final_bar)
-        self.assertFalse(provisional_bar.final_bar)
         with self.assertRaisesRegex(admission.ProviderAdmissionError, "matching active binding"):
             admission.parse_okx_data(
                 '{"arg":{"channel":"trades","instId":"SOL-USDT-SWAP"},"data":[{"instId":"SOL-USDT-SWAP","tradeId":"1","px":"1","sz":"1","ts":"1"}]}',
                 bindings=self.by_key,
+            )
+
+    def test_okx_rest_bar_requires_a_final_native_closed_row(self):
+        binding = next(
+            item
+            for item in self.bindings
+            if item.binding_id == "okx-swap-btcusdt-bar-1m"
+        )
+        final = admission.parse_okx_rest_bar(
+            '{"arg":{"channel":"candle1m","instId":"BTC-USDT-SWAP"},"data":[["1000","1","3","1","2","0","0","0","1"]]}',
+            binding=binding,
+            observed_ms=61_000,
+        )
+        self.assertEqual(final.binding_id, binding.binding_id)
+        self.assertEqual(final.source_time_ms, 61_000)
+        self.assertTrue(final.final_bar)
+        with self.assertRaisesRegex(admission.ProviderAdmissionError, "not final"):
+            admission.parse_okx_rest_bar(
+                '{"arg":{"channel":"candle1m","instId":"BTC-USDT-SWAP"},"data":[["1000","1","3","1","2","0","0","0","0"]]}',
+                binding=binding,
+                observed_ms=61_000,
             )
 
     def test_session_accumulator_requires_every_binding_and_final_bars(self):
@@ -225,23 +237,25 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
                 max_rss_kib=1,
             )
 
-    def test_report_accepts_one_http_recovery_for_each_rest_bar(self):
-        binding = next(item for item in self.bindings if item.mode == "PYTHON_REST")
-        fresh = admission.FrameObservation(
-            binding.binding_id, 10_000_000_000_000, "b" * 64, True
-        )
-        session = admission.SessionEvidence(
-            "BINANCE:USDM:REST_BAR", 1, 0, 0, 1, (fresh,), transport="HTTP"
+    def test_report_accepts_one_http_recovery_for_each_venue_rest_bar(self):
+        bindings = tuple(item for item in self.bindings if item.mode == "PYTHON_REST")
+        sessions = tuple(
+            admission.SessionEvidence(
+                f"{binding.venue}:REST_BAR", 1, 0, 0, 1,
+                (admission.FrameObservation(binding.binding_id, 10_000_000_000_000, "b" * 64, True),),
+                transport="HTTP",
+            )
+            for binding in bindings
         )
         report = admission._render_report(
-            bindings=(binding,),
-            sessions=(session,),
+            bindings=bindings,
+            sessions=sessions,
             elapsed_seconds=1.0,
             cpu_seconds=0.1,
             max_rss_kib=1,
         )
-        self.assertEqual(report["rest_closed_bar_recovery_count"], 1)
-        self.assertEqual(report["bindings"][0]["transport"], "HTTP")
+        self.assertEqual(report["rest_closed_bar_recovery_count"], 4)
+        self.assertEqual({item["transport"] for item in report["bindings"]}, {"HTTP"})
 
 
 if __name__ == "__main__":

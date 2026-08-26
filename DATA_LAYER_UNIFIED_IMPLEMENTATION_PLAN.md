@@ -15077,6 +15077,68 @@ SOURCE-ONLY`).**
   documented for a later test-maintenance scope; it is not relabeled as a
   Phase 10.5-C defect.
 
+- **Regeneration and admission alignment (`APPROVED SOURCE-ONLY / IN
+  PROGRESS`):** a read-only source sweep after acquisition revision `10` found
+  two remaining encodings of the superseded assumption that an OKX final BAR
+  must be `RUST_NATIVE`: `ProductionCatalogBuilder._acquisition` and the
+  bounded Phase-10 provider-admission tool. Leaving either path unchanged
+  would let a future generated catalog or real-provider certification recreate
+  the exact no-reconciliation ownership regression. This is a required
+  completion of the same four-final-BAR continuity repair, not a new runtime
+  topology or a broader Phase.
+- **Approved source scope/invariants:** generated Binance and OKX final BARs
+  must both be `PYTHON_REST`, have no WebSocket endpoint, preserve the
+  provider-native interval identity, and still enter the same raw envelope
+  contract for the Rust canonical core. The admission verifier must exercise
+  all REST final BARs over bounded HTTP reads, while Rust-native WebSocket
+  coverage remains limited to Binance/OKX TRADE and QUOTE. Deterministic tests
+  must cover generated demand, REST transport/finality, identity, two-session
+  recovery accounting and rejection of an invalid venue/mode mix.
+- **Exclusions/test/rollback:** this slice changes only source, tests and this
+  journal; it performs no provider call, image build, bundle generation,
+  Kafka/Redis/SQLite mutation, service recreate, authority transition, V1,
+  Trading System or alpha change. Run syntax plus the relevant immutable-image
+  contract/admission matrix. Reverting the resulting source commit restores
+  only generator/verifier behavior; it cannot affect the still-running
+  revision-`9` runtime or the visible live gap. A separate explicit runtime
+  packet remains required to heal that gap.
+- **Implemented and source-certified (`PASS / RUNTIME NOT MUTATED`):** the
+  catalog generator now emits `PYTHON_REST` for every Binance/OKX final BAR,
+  retaining each venue's native interval/channel identity while omitting a
+  WebSocket endpoint. The bounded admission tool now reads four final BARs
+  through provider HTTP (Binance USD-M BTC/ETH and OKX SWAP BTC/ETH) and uses
+  WebSocket only for the eight Rust-native TRADE/QUOTE bindings. The stale
+  stable-bar-edge comment was corrected to describe this policy, and the
+  canonical OKX BAR identity regression now changes `config_revision` as well
+  as restart sequence: its deterministic `event_id` and payload hash remain
+  unchanged. A deployment contract additionally proves that changing only
+  final-BAR producer ownership leaves the shared Rust core config byte-for-byte
+  identical while reducing native ingestor bindings from 10 to 8; no Rust core
+  recreate is necessary for this repair.
+- **Tests actually run:** `git diff --check` and Python compilation for all
+  changed source/tests -> pass. In the pre-existing immutable V2 Python image
+  `sha256:39d8f7...839d9`, with `--network none --read-only` and tmpfs `/tmp`,
+  the focused catalog/admission/history/deployment matrix -> `73 passed, 0
+  failed`; the broader Phase 10.3/runtime-refresh/10.5 contract matrix ->
+  `115 passed, 0 failed`. Expected CLI-usage and DNSE queue-fence diagnostics
+  are negative test paths. Every test container used `--rm`; no image, volume,
+  provider request, bundle, Kafka/Redis/SQLite record, service, V1, Trading
+  System or alpha was changed.
+- **Remaining decision gate:** this completes the source alignment only. The
+  live revision-`9` gap remains visible until an operator separately approves a
+  bounded real-provider repair packet. That packet must build one immutable
+  Python image from this source commit and regenerate a revision-`10` sealed
+  bundle, then recreate only `ingestor_okx_swap`, `binance_bar_edge`,
+  `query_v2_1`, `query_v2_2`, `stream_v2_active`, and `stream_v2_passive`.
+  It must preserve the old bar-edge checkpoint as rollback evidence, use a new
+  state path for a bounded four-slice bootstrap (at most 1,000 closed bars per
+  active Binance/OKX BTC/ETH binding), and accept only stable canonical
+  idempotent publication, a healed missing OKX open, contiguous final-BAR
+  history, replica agreement, and no core restart/OOM. Kafka, Redis, SQLite,
+  V1, Trading System, alphas, authority routing and offsets remain excluded;
+  rollback stops/recreates only those six roles with the prior V2 image/env and
+  does not erase authentic provider raw records already appended.
+
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 
 Every Phase 10 implementation slice must record in this journal before code

@@ -145,13 +145,18 @@ class AcquisitionRecipeTests(unittest.TestCase):
         self.assertEqual(result["native_channel"], "rest-klines/15m")
         self.assertIsNone(result["websocket_url"])
 
-    def test_the_okx_bar_channel_follows_the_demanded_interval(self):
+    def test_okx_bar_uses_provider_rest_and_preserves_the_demanded_interval(self):
         minute = ProductionCatalogBuilder._acquisition(
             "b", self._demand("SWAP", FeedType.BAR, interval="1m", venue="OKX")
         )
         hour = ProductionCatalogBuilder._acquisition(
             "b", self._demand("SWAP", FeedType.BAR, interval="1h", venue="OKX")
         )
+        self.assertEqual(minute["mode"], "PYTHON_REST")
+        self.assertEqual(hour["mode"], "PYTHON_REST")
+        self.assertEqual(minute["provider_kind"], "okx_bar")
+        self.assertIsNone(minute["websocket_url"])
+        self.assertIsNone(minute["business_websocket_url"])
         self.assertEqual(minute["native_channel"], "candle1m")
         self.assertEqual(hour["native_channel"], "candle1H")
 

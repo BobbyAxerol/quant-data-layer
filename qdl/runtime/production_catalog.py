@@ -455,10 +455,15 @@ class ProductionCatalogBuilder:
             elif item.feed is FeedType.QUOTE:
                 mode, kind, channel, sequence = "RUST_NATIVE", "okx_bbo", "bbo-tbt", "NONE"
             else:
-                # Derived from the demanded interval; a literal candle1m here
-                # would silently produce a one-minute channel for every interval.
+                # Final BAR ownership stays at the bounded provider REST edge for
+                # every crypto venue. The Python edge publishes the same raw
+                # envelope and the Rust core remains the sole canonical/replay
+                # authority. This gives missed WebSocket finals one explicit,
+                # contiguous history-recovery path instead of a second writer.
+                # The provider-native candle identity still follows the demand
+                # interval exactly.
                 mode, kind, channel, sequence = (
-                    "RUST_NATIVE", "okx_bar",
+                    "PYTHON_REST", "okx_bar",
                     okx_candle_channel(item.interval or "1m"), "NONE",
                 )
             websocket = "wss://ws.okx.com:8443/ws/v5/public" if mode == "RUST_NATIVE" else None

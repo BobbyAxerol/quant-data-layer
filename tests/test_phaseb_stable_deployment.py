@@ -386,6 +386,55 @@ class StableDeploymentContractTests(unittest.TestCase):
             },
         )
 
+    def test_final_bar_owner_changes_producers_not_the_shared_core_contract(self):
+        """A REST ownership revision must not require a Rust-core recreate."""
+        previous = StableAcquisitionPlan(
+            schema=self.acquisition.schema,
+            revision=9,
+            raw_topic=self.acquisition.raw_topic,
+            canonical_topic=self.acquisition.canonical_topic,
+            quarantine_topic=self.acquisition.quarantine_topic,
+            bindings=tuple(
+                replace(
+                    item,
+                    mode="RUST_NATIVE",
+                    websocket_url="wss://ws.okx.com:8443/ws/v5/public",
+                    business_websocket_url="wss://ws.okx.com:8443/ws/v5/business",
+                )
+                if item.binding_id in {
+                    "okx-swap-btcusdt-bar-1m",
+                    "okx-swap-eth-usdt-swap-bar-1m",
+                }
+                else item
+                for item in self.acquisition.bindings
+            ),
+        )
+        current_core = self.acquisition.core_config(
+            catalog=self.catalog, authority=self.authority, worker_index=1
+        )
+        previous_core = previous.core_config(
+            catalog=self.catalog, authority=self.authority, worker_index=1
+        )
+        self.assertEqual(current_core, previous_core)
+        self.assertEqual(
+            sum(
+                len(item["bindings"])
+                for item in previous.native_ingestor_configs(
+                    catalog=self.catalog, authority=self.authority
+                ).values()
+            ),
+            10,
+        )
+        self.assertEqual(
+            sum(
+                len(item["bindings"])
+                for item in self.acquisition.native_ingestor_configs(
+                    catalog=self.catalog, authority=self.authority
+                ).values()
+            ),
+            8,
+        )
+
     def test_core_bundle_uses_stable_identity_lineage_and_never_enables_public_writes(self):
         core = self.acquisition.core_config(
             catalog=self.catalog, authority=self.authority

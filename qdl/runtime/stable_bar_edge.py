@@ -89,10 +89,11 @@ class StableBinanceBarEdge:
             for item in acquisition.bindings
         )
         # Every enabled Binance/OKX final-BAR demand needs a bounded history
-        # bootstrap before it can satisfy a durable warmup.  The live transport
-        # is deliberately irrelevant here: a Rust-native candle stream owns
-        # live OKX BARs, while this Python edge obtains only the provider's
-        # closed historical window and publishes it through the same raw topic.
+        # bootstrap before it can satisfy a durable warmup. Recurring polling
+        # is limited to explicit PYTHON_REST bindings; the execution-grade
+        # crypto policy assigns every enabled final BAR to that recovery owner.
+        # A future native BAR mode must not bypass this edge without separate
+        # finality and reconciliation certification.
         self.history_bindings = tuple(
             pair
             for pair in pairs
