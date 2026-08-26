@@ -14727,6 +14727,31 @@ RUNTIME BLOCKED`).**
   same limit. `data_layer_service` remains running at its recorded V1 image
   digest, but its labels contain Compose metadata only and no source revision
   or `v1.2.2` attestation. No remedy was applied during this recheck.
+- **Additive-trust correction (`SOURCE PASS / RUNTIME UNCHANGED`):** review of
+  the actual stable TLS wiring found that `QDL_STABLE_TLS_CA_FILE` currently
+  means both client trust of the query/stream server and server trust of every
+  mTLS client. The full-CA generator remains valid for a brand-new isolated
+  bundle but is prohibited for narrow in-place Monitoring/Alpha-OKX admission.
+  `StableRuntimeConfig` now has an optional
+  `QDL_STABLE_TLS_CLIENT_CA_FILE`, defaulting exactly to the existing CA path;
+  only Uvicorn and gRPC server-side client authentication use the optional
+  override. Client-side server validation remains pinned to the existing CA.
+  `scripts/phase105_prepare_external_consumer_extension.sh` accepts only the
+  current public server CA, generates a distinct external client CA plus
+  Monitoring/Alpha-OKX mTLS and JWT material, emits a two-PEM
+  `client-ca-bundle.crt`, validates both leaves, and deletes its external CA
+  private key. It cannot rotate Kafka or server TLS because it never receives
+  the existing CA private key.
+- **Correction tests:** the extension smoke generated an independent temporary
+  server CA, created and verified both external client leaves, proved the
+  trust bundle contains exactly the original and external public CA, found no
+  retained external CA private key, then removed the complete `/tmp` tree. The
+  network-disabled/read-only V2 matrix now covers the HTTP and gRPC use of the
+  additive client-CA path, the extension contract, stable deployment/bundle,
+  Phase 10.3/10.5 scope, stable release and security modules. Its exact result
+  is `66 passed, 0 failed, 0 skipped`; expected negative-path CLI usage and
+  DNSE queue-fence diagnostics were test output only. No deployed trust store
+  was touched.
 
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 

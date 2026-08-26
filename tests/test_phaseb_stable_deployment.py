@@ -179,6 +179,23 @@ class StableDeploymentContractTests(unittest.TestCase):
             with self.subTest(artifact=artifact):
                 self.assertIn(artifact, script)
 
+    def test_phase105_external_client_extension_is_additive_and_no_ca_key_is_retained(self):
+        script = (ROOT / "scripts/phase105_prepare_external_consumer_extension.sh").read_text(
+            encoding="utf-8"
+        )
+        for value in (
+            "issue_client monitoring",
+            "issue_client alpha-okx",
+            "spiffe://qdl/paper/monitoring-multivenue-stable",
+            "spiffe://qdl/paper/alpha-okx-stable",
+            "client-ca-bundle.crt",
+            "external-client-ca.key",
+            "rm -f \"${EXTERNAL_CA_KEY}\"",
+            "extendedKeyUsage=clientAuth",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, script)
+
     def test_initial_authority_scope_matches_active_crypto_derivatives_exactly(self):
         expected = {
             "binance-usdm-btcusdt-bar-1m",

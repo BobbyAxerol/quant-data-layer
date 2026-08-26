@@ -158,6 +158,10 @@ class StableRuntimeConfig:
     # Off unless a deployment turns it on. Declaring catalog metadata for an
     # instrument must never open the pass-through product by itself.
     pass_through_enabled: bool = False
+    # Query/stream may trust an additive client-CA bundle while their own
+    # client-side trust remains pinned to the server CA. Keeping this optional
+    # preserves existing one-CA deployments.
+    tls_client_ca_path: Path | None = None
 
     def __post_init__(self) -> None:
         if self.role not in {"query_v2", "stream_v2", "projector_v2"}:
@@ -181,7 +185,10 @@ class StableRuntimeConfig:
             raise ValueError("stable source binding catalog is unavailable")
         missing_tls = [
             path for path in (
-                self.tls_ca_path, self.tls_certificate_path, self.tls_private_key_path
+                self.tls_ca_path,
+                self.tls_certificate_path,
+                self.tls_private_key_path,
+                self.tls_client_authority_path,
             ) if not path.is_file()
         ]
         if missing_tls:
@@ -291,7 +298,15 @@ class StableRuntimeConfig:
             pass_through_enabled=_env_flag(
                 env, "QDL_STABLE_PASS_THROUGH_ENABLED", default=False
             ),
+            tls_client_ca_path=Path(env.get(
+                "QDL_STABLE_TLS_CLIENT_CA_FILE", env["QDL_STABLE_TLS_CA_FILE"]
+            )),
         )
+
+    @property
+    def tls_client_authority_path(self) -> Path:
+        """CA bundle used only when this runtime authenticates mTLS clients."""
+        return self.tls_client_ca_path or self.tls_ca_path
 
     def public_manifest(self) -> dict[str, object]:
         return {
@@ -335,7 +350,7 @@ def stable_uvicorn_tls(config: StableRuntimeConfig) -> dict[str, object]:
     return {
         "ssl_keyfile": str(config.tls_private_key_path),
         "ssl_certfile": str(config.tls_certificate_path),
-        "ssl_ca_certs": str(config.tls_ca_path),
+        "ssl_ca_certs": str(config.tls_client_authority_path),
         "ssl_cert_reqs": ssl.CERT_REQUIRED,
     }
 
@@ -345,7 +360,7 @@ def stable_grpc_server_credentials(
 ) -> grpc.ServerCredentials:
     return grpc.ssl_server_credentials(
         ((config.tls_private_key_path.read_bytes(), config.tls_certificate_path.read_bytes()),),
-        root_certificates=config.tls_ca_path.read_bytes(),
+        root_certificates=config.tls_client_authority_path.read_bytes(),
         require_client_auth=True,
     )
 

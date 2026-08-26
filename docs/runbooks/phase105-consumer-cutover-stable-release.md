@@ -99,6 +99,17 @@ and JWT signing key. A known key may sign only its registered manifest subject;
 using a Trading System or Binance-alpha key for Monitoring or Alpha-OKX is a
 hard authentication failure.
 
+`scripts/phase80_generate_tls.sh` remains the full-CA generator for a fresh,
+isolated candidate only. It must not be used to admit these identities into the
+running V2 mesh. The narrow path is
+`scripts/phase105_prepare_external_consumer_extension.sh OUTPUT_DIR SERVER_CA_FILE`:
+it receives only the public CA currently trusted by query/stream, creates a
+separate external client CA, two client/JWT identities, and a two-certificate
+`client-ca-bundle.crt`. It deletes the external CA private key before returning.
+The new runtime option `QDL_STABLE_TLS_CLIENT_CA_FILE` applies that bundle only
+when query/stream authenticate clients; their own server certificate and
+client-side server trust remain on the existing `QDL_STABLE_TLS_CA_FILE`.
+
 | Consumer | Subject | Client identity | JWT key id |
 |---|---|---|---|
 | `monitoring.multivenue.stable` | `spiffe://qdl/paper/monitoring-multivenue-stable` | `stable-monitoring` | `stable-monitoring-rs256-v1` |
@@ -108,18 +119,23 @@ hard authentication failure.
 
 The later runtime approval must name all of the following, exactly:
 
-1. The immutable V2 image digest, bundle digest and release-routing manifest
-   revision/digest. It must include the `QDL_DATA_JWT_KEY_SUBJECTS_JSON`
-   key-to-subject map as well as its public keyring.
+1. The immutable V2 image digest, extension-bundle digest and release-routing
+   manifest revision/digest. It must include the
+   `QDL_DATA_JWT_KEY_SUBJECTS_JSON` key-to-subject map as well as its public
+   keyring.
 2. The only V2 endpoints the disposable client may use: query HTTPS
    `127.0.0.1:18201`/`18202`, stream gRPC `127.0.0.1:18220`/`18221`, and the
    private `executor_network`. The probe does not receive a Docker socket,
    provider credential, order endpoint or Trading System execution credential.
-3. The exact V2 services, if any, that must reload the updated trust/keyring:
-   `query_v2_1`, `query_v2_2`, `stream_v2_active`, `stream_v2_passive`.
-   Kafka, Redis, SQLite, ingestors, projectors, V1, Trading System and alpha
-   containers are excluded. Restoring their prior bundle and recreating only
-   these named query/stream services is the identity-update rollback.
+3. A one-shot, named helper may copy only `client-ca-bundle.crt` into the
+   existing `stable_tls` volume at the query and stream client-trust paths. It
+   must not replace `ca.crt`, server certificates, client keys, Kafka stores or
+   run `stable_tls_init`. The exact V2 services that then reload the updated
+   trust/keyring are `query_v2_1`, `query_v2_2`, `stream_v2_active`,
+   `stream_v2_passive`. Kafka, Redis, SQLite, ingestors, projectors, V1,
+   Trading System and alpha containers are excluded. Rollback removes only the
+   two additive bundle files, restores the prior query/stream environment, and
+   recreates only those four named services.
 4. A separate, measured packet for `rust_core` if its capacity repair is still
    needed. It must state the old/new memory limit, immutable image, observed
    RSS ceiling and rollback. Do not hide this repair inside the client probe.

@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import yaml
@@ -47,7 +48,11 @@ from qdl.projection.stable import (
 from qdl.raw.capture import bind_capture_context, capture_exact_frame
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
 from qdl.runtime.stable_catalog import StableSourceCatalog
-from qdl.runtime.stable import StableRuntimeConfig
+from qdl.runtime.stable import (
+    StableRuntimeConfig,
+    stable_grpc_server_credentials,
+    stable_uvicorn_tls,
+)
 from qdl.runtime.stable_ingest import StableHttpCanonicalSink, install_stable_canonical_ingest
 from qdl.runtime.stable_projector import (
     LocalStableCanonicalSink,
@@ -1694,6 +1699,25 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             values["QDL_STABLE_AUTHORITY_MODE"] = "RUST_SHADOW"
             with self.assertRaisesRegex(ValueError, "differs from generated record"):
                 StableRuntimeConfig.from_environment("query_v2", values)
+
+    def test_query_client_trust_may_be_additive_without_changing_server_trust(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            values = self.environment(root)
+            client_ca = root / "external-client-ca-bundle.crt"
+            client_ca.write_text("test", encoding="utf-8")
+            values["QDL_STABLE_TLS_CLIENT_CA_FILE"] = str(client_ca)
+            config = StableRuntimeConfig.from_environment("query_v2", values)
+            self.assertEqual(config.tls_ca_path, root / "ca.crt")
+            self.assertEqual(config.tls_client_authority_path, client_ca)
+            self.assertEqual(
+                stable_uvicorn_tls(config)["ssl_ca_certs"], str(client_ca)
+            )
+            with patch("qdl.runtime.stable.grpc.ssl_server_credentials") as factory:
+                stable_grpc_server_credentials(config)
+            self.assertEqual(
+                factory.call_args.kwargs["root_certificates"], client_ca.read_bytes()
+            )
 
 
 @unittest.skipUnless(os.getenv("QDL_PHASEB_REDIS_URL"), "isolated Redis is not configured")
