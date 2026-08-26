@@ -15947,6 +15947,88 @@ or broad image/container cleanup.
      required for this retry; fail-closed rollback remains removal of the
      disposable client only.
 
+   **C2 retry preflight (`FAIL-CLOSED / NO DATA PLANE`, 2026-08-26):** the
+   corrected disposable client stopped while reading its V1 provenance input:
+   the C2 namespace contains the current-serving runtime binding, while the
+   immutable V1 attestation is intentionally retained in the earlier
+   `phase105b-20260826T083028Z` evidence namespace. The supplied C2 mount did
+   not include that separate 404-byte attestation, so the harness raised
+   `Phase 10.5 V1 provenance cannot be read` before it constructed a V2
+   identity, queried a reader, connected to a stream, or attempted a fallback.
+   The resulting zero-byte receipt is disposable and will be removed. The
+   next retry changes only that one read-only evidence mount/path; its
+   four-reader runtime, V1 service, identities, authority, Kafka/Redis/SQLite,
+   Trading System, alpha and order exclusions remain unchanged.
+
+   **C2 retry 2 (`FAIL-CLOSED / NO EXECUTION`, 2026-08-26):** with the correct
+   read-only V1 provenance mount, Monitoring progressed and the bounded probe
+   reached the Trading-System paper `BINANCE.USDM.PERPETUAL.BTC-USDT BAR 1m`
+   warmup. Its HTTPS connection was closed during mTLS before an application
+   response. Read-only certificate inspection proved the cause: the disposable
+   client mounted the old `stable-trading-system` certificate, expired
+   `2026-08-22T17:39:25Z`; the active query server and its client-trust CA are
+   the rotated material valid until `2026-11-20T14:43:26Z`. This is an expired
+   client-identity path only, not a query, catalog, data, stream, lease or
+   provider failure. No stream/fallback/order action occurred and the zero-byte
+   failed receipt is disposable.
+   - **Next permitted action:** keep the exact same disposable image, network,
+     scope, endpoints and two-stream target pair, but mount the existing
+     rotated `stable-trading-system` certificate/private JWT key directory
+     read-only. Do not recreate any V2 reader or change any runtime service.
+
+   **C2 retry 3 (`FAIL-CLOSED / NO EXECUTION`, 2026-08-26):** the disposable
+   client used the rotated Trading-System identity, both explicit query replicas
+   and both governed stream aliases. It remained inside its 300-second bound,
+   then timed out while awaiting the next signed-cursor stream record during
+   resume. There was no order, provider-direct call, route mutation, offset
+   reset or durable-state write; the container was removed and its zero-byte
+   receipt is disposable. The global timeout does not identify the exact
+   product/consumer that was awaiting a record, so a blind retry is prohibited.
+   - **Decision boundary:** perform read-only scope/audit/lease/watermark
+     diagnosis first. Distinguish a C2 harness budget/progress-observability
+     defect from a genuine demanded-stream publication gap. Do not recreate a
+     reader, core, broker, V1, Kafka/Redis/SQLite or consumer route during that
+     diagnosis. Any source-only diagnostic/timeout repair requires its own
+     targeted test and coherent commit before another C2 run.
+
+   **C2 bounded scheduling repair (`IN PROGRESS / SOURCE ONLY`, 2026-08-26):**
+   read-only scope inspection proves the timeout is a harness-budget defect:
+   C2 contains `28` products (`24` durable), including eight durable final
+   `1m` BAR products. Each BAR reconnect receipt can legitimately wait for two
+   final-bar records. The old serial consumer loop therefore had a normal-case
+   wall-clock path beyond its documented global `300` seconds even with no
+   stream gap. The repair launches the four mandated consumer groups in their
+   declared order, collects their results in that same order, but lets their
+   bounded reads overlap under the existing global deadline. The approved C2
+   invocation will use its already-supported maximum concurrency of `8` so the
+   eight BAR receipts may observe the same two close windows.
+   - **Invariants:** no product/identity/route/fallback rule changes; every
+     declared product remains required; no timeout is extended; V1 only serves
+     its six explicit fallback probes; `BLOCKED` still makes no V1 request.
+     Tests must prove ordered concurrent task launch/result collection and the
+     existing full C1/C2/Phase-10 no-network matrix before another runtime
+     attempt. This changes no deployed runtime service or data state.
+
+   **C2 bounded scheduling repair (`PASS / C2 RUNTIME RETRY APPROVED`,
+   2026-08-26):** the harness now creates all four governed consumer-group
+   tasks in the required Monitoring -> Trading System -> Alpha-Binance ->
+   Alpha-OKX order, then collects and emits each group's product/fallback
+   results in that same order. The existing semaphore still bounds individual
+   requests; the global 300-second deadline remains unchanged. This allows the
+   eight independent durable 1m BAR reconnect receipts to share their two
+   final-bar windows rather than accumulating them serially.
+   - **Tests actually run:** `python3 -m py_compile` and `git diff --check`
+     passed. The same existing immutable V2 image with source/rootfs read-only,
+     non-root UID, tmpfs and `--network none` ran the focused C2 suite `37/37`
+     and the bounded C1/C2/Phase-10 matrix `120/120` in `8.968s`. The expected
+     gRPC GOAWAY line was test-server teardown, not a failed case. No image,
+     runtime service, provider, Kafka/Redis/SQLite/V1/Trading System/alpha or
+     order state changed during this source slice.
+   - **Next permitted action:** retry the existing approved disposable C2
+     client only, with both stream aliases, rotated Trading-System identity and
+     `--concurrency 8`. Its same 300-second ceiling, no-order/no-provider/no
+     state-write invariants and exact cleanup rule remain in force.
+
 3. **10.5-D/B3 - Immutable stable-release rehearsal and publication**
    - **Goal:** certify the exact `2.0.0` release candidate rather than merely
      its source. Run the review-only stable-release certificate against real

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import asyncio
 from pathlib import Path
 
 from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct
@@ -14,6 +15,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _c2_grpc_targets,
     _identity_files,
     _route_summary,
+    _run_consumer_groups,
     _v1_base_url,
     parser,
 )
@@ -150,6 +152,35 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
             "v1_fallback_declared": 1,
             "blocked_fallback_declared": 0,
         })
+
+
+class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_groups_start_in_declared_order_and_collect_in_that_order(self) -> None:
+        started: list[str] = []
+        release = asyncio.Event()
+
+        async def run_group(consumer_id: str):
+            started.append(consumer_id)
+            await release.wait()
+            return ([{"consumer": consumer_id}], [{"fallback": consumer_id}])
+
+        task = asyncio.create_task(
+            _run_consumer_groups(("monitoring", "trading", "alpha"), run_group)
+        )
+        for _ in range(20):
+            if len(started) == 3:
+                break
+            await asyncio.sleep(0)
+        self.assertEqual(started, ["monitoring", "trading", "alpha"])
+        release.set()
+        self.assertEqual(
+            await task,
+            (
+                ([{"consumer": "monitoring"}], [{"fallback": "monitoring"}]),
+                ([{"consumer": "trading"}], [{"fallback": "trading"}]),
+                ([{"consumer": "alpha"}], [{"fallback": "alpha"}]),
+            ),
+        )
 
 
 if __name__ == "__main__":

@@ -251,6 +251,20 @@ async def _v1_fallback_return(
     }
 
 
+async def _run_consumer_groups(
+    consumer_ids: tuple[str, ...],
+    run_group,
+) -> tuple[tuple[list[dict[str, object]], list[dict[str, object]]], ...]:
+    """Start every governed C2 group before awaiting the ordered results.
+
+    A final-BAR reconnect can legitimately wait through the next close. The
+    C2-wide deadline is meaningful only if independent consumer groups observe
+    that bounded wait concurrently, not one group after another.
+    """
+    tasks = tuple(asyncio.create_task(run_group(consumer_id)) for consumer_id in consumer_ids)
+    return tuple(await asyncio.gather(*tasks))
+
+
 async def run(args: argparse.Namespace) -> dict[str, object]:
     authority = _authority(args.authority_record)
     scope, release = _scope(args)
@@ -316,33 +330,40 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     f"feed={product.feed.value} interval={product.interval}"
                 ) from error
 
+    async def certify_consumer(
+        consumer_id: str,
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        consumer_products = tuple(
+            item for item in scope.products if item.consumer_id == consumer_id
+        )
+        if not consumer_products:
+            raise ValueError(f"Phase 10.5 consumer has no V2 products: {consumer_id}")
+        ordered = await asyncio.gather(*(certify(product) for product in consumer_products))
+        fallback_details: list[dict[str, object]] = []
+        for probe in (item for item in probes if item.consumer_id == consumer_id):
+            product = products_by_identity[probe.identity]
+            fallback_details.append(await _v1_fallback_return(
+                product,
+                probe,
+                identity=identities[consumer_id],
+                primary_url=args.primary_url,
+                secondary_url=args.secondary_url,
+                grpc_target=grpc_target,
+                v1_base_url=v1_base_url,
+                state_dir=temporary / consumer_id.replace(".", "-"),
+                timeout_seconds=args.timeout_seconds,
+            ))
+        return list(ordered), fallback_details
+
     async def certify_ordered() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        groups = await _run_consumer_groups(
+            tuple(PHASE105_PAPER_CONSUMER_ORDER), certify_consumer
+        )
         results: list[dict[str, object]] = []
         fallback_details: list[dict[str, object]] = []
-        for consumer_id in PHASE105_PAPER_CONSUMER_ORDER:
-            consumer_products = tuple(
-                item for item in scope.products if item.consumer_id == consumer_id
-            )
-            if not consumer_products:
-                raise ValueError(f"Phase 10.5 consumer has no V2 products: {consumer_id}")
-            ordered = await asyncio.wait_for(
-                asyncio.gather(*(certify(product) for product in consumer_products)),
-                timeout=args.observation_seconds,
-            )
-            results.extend(ordered)
-            for probe in (item for item in probes if item.consumer_id == consumer_id):
-                product = products_by_identity[probe.identity]
-                fallback_details.append(await _v1_fallback_return(
-                    product,
-                    probe,
-                    identity=identities[consumer_id],
-                    primary_url=args.primary_url,
-                    secondary_url=args.secondary_url,
-                    grpc_target=grpc_target,
-                    v1_base_url=v1_base_url,
-                    state_dir=temporary / consumer_id.replace(".", "-"),
-                    timeout_seconds=args.timeout_seconds,
-                ))
+        for consumer_results, consumer_fallbacks in groups:
+            results.extend(consumer_results)
+            fallback_details.extend(consumer_fallbacks)
         return results, fallback_details
 
     try:
