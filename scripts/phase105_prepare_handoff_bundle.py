@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from qdl.certification.phase105_handoff import (
+    active_runtime_binding,
     handoff_packet,
     load_dotenv,
     prepare_handoff_environment,
@@ -28,6 +29,12 @@ CONFIRM = "PREPARE_QDL_PHASE105C_HANDOFF"
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-env", type=Path, required=True)
+    parser.add_argument(
+        "--active-runtime-packet",
+        type=Path,
+        required=True,
+        help="sealed current Phase 10.3 runtime packet; only its allowlisted selectors apply",
+    )
     parser.add_argument("--extension-dir", type=Path, required=True)
     parser.add_argument("--python-image", required=True)
     parser.add_argument("--v1-provenance", type=Path, required=True)
@@ -40,10 +47,19 @@ def main() -> int:
     if args.output_dir.exists():
         raise SystemExit("Phase 10.5-C output directory must not already exist")
 
+    base_environment = load_dotenv(args.base_env)
+    try:
+        active_packet = json.loads(args.active_runtime_packet.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit("Phase 10.5-C active runtime packet cannot be read") from error
+    if not isinstance(active_packet, dict):
+        raise SystemExit("Phase 10.5-C active runtime packet must be an object")
+    runtime_binding = active_runtime_binding(base_environment, active_packet)
     environment = prepare_handoff_environment(
-        load_dotenv(args.base_env),
+        base_environment,
         extension_dir=args.extension_dir,
         python_image=args.python_image,
+        runtime_binding=runtime_binding,
     )
     try:
         v1_provenance = json.loads(args.v1_provenance.read_text(encoding="utf-8"))
@@ -53,6 +69,7 @@ def main() -> int:
         environment=environment,
         extension_dir=args.extension_dir,
         v1_attestation=v1_provenance,
+        runtime_binding=runtime_binding,
     )
     packet["packet_sha256"] = sha256_bytes(
         json.dumps(packet, sort_keys=True, separators=(",", ":")).encode()

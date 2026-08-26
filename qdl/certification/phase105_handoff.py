@@ -35,6 +35,14 @@ ALL_KEY_SUBJECTS = {
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+_ACTIVE_RUNTIME_SCHEMA = "qdl.v2.shared-primary-handoff-packet.v2"
+_ACTIVE_RUNTIME_SELECTORS = (
+    "QDL_CONFIG_REVISION",
+    "QDL_STABLE_AUTHORITY_MODE",
+    "QDL_STABLE_AUTHORITY_REVISION",
+    "QDL_STABLE_RUNTIME_DIR",
+    "QDL_STABLE_RUST_IMAGE",
+)
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -77,11 +85,75 @@ def render_dotenv(values: Mapping[str, str]) -> str:
     return "".join(f"{key}={values[key]}\n" for key in sorted(values))
 
 
+def active_runtime_binding(
+    base_environment: Mapping[str, str],
+    packet: Mapping[str, object],
+) -> dict[str, object]:
+    """Bind a handoff env to the currently sealed Phase 10.3 runtime only.
+
+    The historical candidate environment intentionally retains private values.
+    The sealed runtime packet may replace only the small non-secret selector
+    allowlist needed for Compose to mount the active authority record.  This
+    prevents a stale host runtime path from being carried into a recreate.
+    """
+    if packet.get("schema") != _ACTIVE_RUNTIME_SCHEMA:
+        raise ValueError("Phase 10.5-C active runtime packet schema is invalid")
+    authority = packet.get("authority")
+    compose = packet.get("compose_environment")
+    runtime_bundle = packet.get("runtime_bundle")
+    if not isinstance(authority, Mapping) or not isinstance(compose, Mapping):
+        raise ValueError("Phase 10.5-C active runtime packet is incomplete")
+    if not isinstance(runtime_bundle, Mapping):
+        raise ValueError("Phase 10.5-C active runtime bundle is invalid")
+    if (
+        authority.get("mode") != "RUST_PRIMARY"
+        or authority.get("public_write_allowed") is not False
+        or authority.get("legacy_write_allowed") is not False
+    ):
+        raise ValueError("Phase 10.5-C active authority is not fenced RUST_PRIMARY")
+    contract_digest = authority.get("contract_digest")
+    if (
+        not isinstance(contract_digest, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", contract_digest)
+        or base_environment.get("QDL_STABLE_SCHEMA_DIGEST") != contract_digest
+    ):
+        raise ValueError("Phase 10.5-C active runtime contract digest mismatches base env")
+
+    selectors: dict[str, str] = {}
+    for key in _ACTIVE_RUNTIME_SELECTORS:
+        value = compose.get(key)
+        if not isinstance(value, str) or not value or "\n" in value:
+            raise ValueError(f"Phase 10.5-C active runtime selector is invalid: {key}")
+        selectors[key] = value
+    if selectors["QDL_STABLE_AUTHORITY_MODE"] != authority["mode"]:
+        raise ValueError("Phase 10.5-C active authority mode selector mismatches packet")
+    if selectors["QDL_STABLE_AUTHORITY_REVISION"] != str(authority.get("revision")):
+        raise ValueError("Phase 10.5-C active authority revision selector mismatches packet")
+    if not _DIGEST.fullmatch(selectors["QDL_STABLE_RUST_IMAGE"]):
+        raise ValueError("Phase 10.5-C active Rust image selector is invalid")
+    if runtime_bundle.get("rust_image_digest") != selectors["QDL_STABLE_RUST_IMAGE"]:
+        raise ValueError("Phase 10.5-C active Rust image mismatches runtime bundle")
+    runtime_path = Path(selectors["QDL_STABLE_RUNTIME_DIR"])
+    if not runtime_path.is_absolute() or runtime_path.parts[:5] != (
+        "/", "home", "bobby", ".local", "state"
+    ):
+        raise ValueError("Phase 10.5-C active runtime directory is outside the governed state root")
+    if "qdl-v2" not in runtime_path.parts:
+        raise ValueError("Phase 10.5-C active runtime directory is not a QDL V2 state path")
+    return {
+        "packet_sha256": sha256_bytes(
+            json.dumps(packet, sort_keys=True, separators=(",", ":")).encode()
+        ),
+        "selectors": selectors,
+    }
+
+
 def prepare_handoff_environment(
     base_environment: Mapping[str, str],
     *,
     extension_dir: str | Path,
     python_image: str,
+    runtime_binding: Mapping[str, object] | None = None,
 ) -> dict[str, str]:
     """Append only the two approved external public signing keys.
 
@@ -108,8 +180,17 @@ def prepare_handoff_environment(
     if missing_existing:
         raise ValueError(f"stable JWT public keyring misses existing identities {missing_existing}")
 
-    extension = Path(extension_dir)
     result = dict(base_environment)
+    if runtime_binding is not None:
+        selectors = runtime_binding.get("selectors")
+        if not isinstance(selectors, Mapping) or set(selectors) != set(_ACTIVE_RUNTIME_SELECTORS):
+            raise ValueError("Phase 10.5-C active runtime binding selectors are invalid")
+        for key in _ACTIVE_RUNTIME_SELECTORS:
+            value = selectors[key]
+            if not isinstance(value, str) or not value or "\n" in value:
+                raise ValueError(f"Phase 10.5-C active runtime binding is invalid: {key}")
+            result[key] = value
+    extension = Path(extension_dir)
     for key_id, spec in EXTERNAL_IDENTITY_SPECS.items():
         public_key = (extension / str(spec["public_key"])).read_text(encoding="utf-8")
         if "BEGIN PUBLIC KEY" not in public_key or "PRIVATE KEY" in public_key:
@@ -175,6 +256,7 @@ def handoff_packet(
     environment: Mapping[str, str],
     extension_dir: str | Path,
     v1_attestation: Mapping[str, object],
+    runtime_binding: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Make an auditable packet without serializing a secret-bearing env file."""
     if v1_attestation.get("status") != "PASS":
@@ -197,7 +279,7 @@ def handoff_packet(
     subjects = json.loads(environment["QDL_STABLE_JWT_KEY_SUBJECTS_JSON"])
     if set(public_keyring) != set(ALL_KEY_SUBJECTS) or subjects != ALL_KEY_SUBJECTS:
         raise ValueError("Phase 10.5-C packet identity map is not exact")
-    return {
+    packet = {
         "schema": "qdl.phase105c.handoff-packet.v1",
         "status": "PREPARED",
         "v2_python_image": environment["QDL_STABLE_PYTHON_IMAGE"],
@@ -227,3 +309,7 @@ def handoff_packet(
             "trading_system", "alpha_containers", "orders", "provider_direct_calls",
         ],
     }
+    if runtime_binding is not None:
+        packet["active_runtime_packet_sha256"] = runtime_binding.get("packet_sha256")
+        packet["active_runtime_selectors"] = runtime_binding.get("selectors")
+    return packet

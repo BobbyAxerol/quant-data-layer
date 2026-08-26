@@ -14882,6 +14882,36 @@ MUTATED`).**
   the current Trading System and alpha sources; this is an honest boundary,
   not a hidden test skip.
 
+**10.5-C active-runtime binding correction - 2026-08-26 (`IN PROGRESS /
+SOURCE-ONLY`).**
+
+- The historical candidate `stable.env` points at an older host runtime
+  directory, while the live Phase 10.3 sealed packet identifies the active
+  runtime directory, `RUST_PRIMARY` revision and Rust image. Reusing the old
+  path would make a bounded recreate start against the wrong authority file.
+- The handoff preparation CLI is therefore being narrowed further: it will
+  accept the sealed Phase 10.3 packet and overlay only its allowlisted
+  non-secret runtime selectors (`QDL_CONFIG_REVISION`, authority mode/revision,
+  host runtime directory and Rust image) onto the existing private env. It
+  verifies the packet schema/contract digest before writing a new private
+  bundle. Existing cursor keys, ingest secret, JWT keyring, certificate paths,
+  Kafka/Redis/state configuration and all services remain untouched.
+- **Exit gate:** targeted pure tests must reject a stale/invalid packet and
+  prove that only the declared selectors can change. Before runtime work, a
+  hash-only comparison must prove the active query container's retained secret
+  values match the private base env; no secret value is printed or written to
+  the journal.
+- **Implemented/tested:** `qdl.certification.phase105_handoff` now validates
+  the sealed `qdl.v2.shared-primary-handoff-packet.v2` authority/contract/image
+  chain and extracts only the five allowlisted selectors. The preparation CLI
+  requires that packet; its secret-free packet receipt records the input packet
+  hash and selector map. Targeted host compile plus `6/6` helper tests passed.
+  The immutable V2 image then ran the relevant network-disabled/read-only
+  regression matrix: `42 passed, 0 failed`; expected negative CLI-usage and
+  DNSE queue-fence diagnostics were test paths. No runtime service, image,
+  provider, Kafka/Redis/SQLite state or private bundle was changed by this
+  source-only correction.
+
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 
 Every Phase 10 implementation slice must record in this journal before code

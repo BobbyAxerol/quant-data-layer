@@ -9,6 +9,7 @@ from qdl.certification.phase105_handoff import (
     ALL_KEY_SUBJECTS,
     V1_FALLBACK_COMMIT,
     V1_FALLBACK_VERSION,
+    active_runtime_binding,
     handoff_packet,
     prepare_handoff_environment,
     sha256_file,
@@ -49,6 +50,48 @@ class Phase105HandoffTests(unittest.TestCase):
         self.assertEqual(set(json.loads(values["QDL_STABLE_JWT_KEYS_JSON"])), set(ALL_KEY_SUBJECTS))
         self.assertEqual(json.loads(values["QDL_STABLE_JWT_KEY_SUBJECTS_JSON"]), ALL_KEY_SUBJECTS)
         self.assertNotIn("PRIVATE KEY", values["QDL_STABLE_JWT_KEYS_JSON"])
+
+    def test_active_runtime_packet_only_overlays_allowlisted_selectors(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = {
+                **self.base,
+                "QDL_STABLE_SCHEMA_DIGEST": "c" * 64,
+                "QDL_CONFIG_REVISION": "older",
+                "QDL_STABLE_AUTHORITY_MODE": "RUST_SHADOW",
+                "QDL_STABLE_AUTHORITY_REVISION": "0",
+            }
+            active = {
+                "schema": "qdl.v2.shared-primary-handoff-packet.v2",
+                "authority": {
+                    "mode": "RUST_PRIMARY",
+                    "revision": 1,
+                    "public_write_allowed": False,
+                    "legacy_write_allowed": False,
+                    "contract_digest": "c" * 64,
+                },
+                "compose_environment": {
+                    "QDL_CONFIG_REVISION": "phase103-shared-primary-r1",
+                    "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
+                    "QDL_STABLE_AUTHORITY_REVISION": "1",
+                    "QDL_STABLE_RUNTIME_DIR": "/home/bobby/.local/state/qdl-v2/packet/runtime",
+                    "QDL_STABLE_RUST_IMAGE": "sha256:" + "d" * 64,
+                },
+                "runtime_bundle": {"rust_image_digest": "sha256:" + "d" * 64},
+            }
+            binding = active_runtime_binding(base, active)
+            values = prepare_handoff_environment(
+                base,
+                extension_dir=self._extension(Path(raw)),
+                python_image="sha256:" + "e" * 64,
+                runtime_binding=binding,
+            )
+        self.assertEqual(values["QDL_STABLE_RUNTIME_DIR"], active["compose_environment"]["QDL_STABLE_RUNTIME_DIR"])
+        self.assertEqual(values["QDL_STABLE_AUTHORITY_MODE"], "RUST_PRIMARY")
+        self.assertEqual(values["QDL_STABLE_RUST_IMAGE"], "sha256:" + "d" * 64)
+        self.assertEqual(values["QDL_STABLE_SCHEMA_DIGEST"], "c" * 64)
+        active["authority"]["contract_digest"] = "x" * 64
+        with self.assertRaisesRegex(ValueError, "contract digest"):
+            active_runtime_binding(base, active)
 
     def test_environment_rejects_unapproved_existing_key(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
