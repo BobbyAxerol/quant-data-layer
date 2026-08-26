@@ -339,10 +339,9 @@ class StableBarBootstrapTests(unittest.TestCase):
         self.catalog_path = ROOT / "config/v2/stable-source-bindings.yaml"
         self.acquisition_path = ROOT / "config/v2/stable-acquisition-bindings.yaml"
         self.catalog = StableSourceCatalog.load(self.catalog_path)
-        self.native_acquisition = StableAcquisitionPlan.load(
+        self.acquisition = StableAcquisitionPlan.load(
             self.acquisition_path, catalog=self.catalog
         )
-        self.acquisition = _legacy_rest_bar_fallback(self.native_acquisition)
         self.authority = stable_authority_record(
             rust_image_digest="a" * 64,
             capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
@@ -394,7 +393,7 @@ class StableBarBootstrapTests(unittest.TestCase):
         self.assertEqual(len(edge._last_open_ms), expected_bindings)
         self.assertTrue(edge._history_bootstrapped)
 
-    def test_history_bootstrap_covers_native_okx_bars_without_polling_them(self):
+    def test_production_final_okx_bars_are_polled_after_history_bootstrap(self):
         class Envelope:
             def __init__(self, venue: str, open_time: int):
                 payload = (
@@ -415,7 +414,7 @@ class StableBarBootstrapTests(unittest.TestCase):
 
         edge = StableBinanceBarEdge(
             catalog=self.catalog,
-            acquisition=self.native_acquisition,
+            acquisition=self.acquisition,
             authority=self.authority,
             publisher=Publisher(),
             warmup_rows=2,
@@ -433,7 +432,7 @@ class StableBarBootstrapTests(unittest.TestCase):
             history_ids,
             {
                 item.binding_id
-                for item in self.native_acquisition.bindings
+                for item in self.acquisition.bindings
                 if item.enabled
                 and item.runtime in {"BINANCE", "OKX"}
                 and next(
@@ -443,7 +442,8 @@ class StableBarBootstrapTests(unittest.TestCase):
             },
         )
         self.assertTrue(any(value.startswith("okx-swap-") for value in history_ids))
-        self.assertFalse(any(value.startswith("okx-swap-") for value in poll_ids))
+        self.assertTrue(any(value.startswith("okx-swap-") for value in poll_ids))
+        self.assertEqual(history_ids, poll_ids)
         with patch(
             "qdl.runtime.stable_bar_edge.fetch_binance_history",
             return_value=(Envelope("BINANCE", 60_000), Envelope("BINANCE", 120_000)),
@@ -466,7 +466,7 @@ class StableBarBootstrapTests(unittest.TestCase):
         source_by_id = {item.binding_id: item for item in self.catalog.bindings}
         history_uids = {
             source_by_id[item.binding_id].instrument.instrument_uid
-            for item in self.native_acquisition.bindings
+            for item in self.acquisition.bindings
             if item.enabled
             and item.runtime in {"BINANCE", "OKX"}
             and source_by_id[item.binding_id].feed.value == "BAR"

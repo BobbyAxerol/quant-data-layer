@@ -334,6 +334,31 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(denied.json()["code"], "SOURCE_NOT_ALLOWED")
 
+    def test_execution_gap_is_not_misreported_as_non_authoritative(self):
+        execution_requirement = DataRequirement(
+            **{**self.requirement.__dict__, "consumer_grade": ConsumerGrade.EXECUTION}
+        )
+        current = self.backend.latest(self.requirement)
+        self.backend.put_latest(
+            execution_requirement,
+            MarketDataItem(
+                **{
+                    **current.__dict__,
+                    "quality": QualityMetadata(
+                        "GAPPED", 10, True, False, False,
+                        "alpha_crypto_primary_v1",
+                    ),
+                }
+            ),
+        )
+        response = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/snapshot",
+            headers={"X-QDL-Purpose": "INTERNAL_EXECUTION"},
+            params=self.params(consumer_grade="EXECUTION"),
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["code"], "OPEN_SEQUENCE_GAP")
+
     def test_market_closed_history_is_available_but_not_execution_eligible(self):
         current = self.backend.latest(self.requirement)
         self.backend.put_latest(

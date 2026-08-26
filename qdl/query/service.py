@@ -501,9 +501,11 @@ class V2QueryService:
                     )
                 )
             ),
-            authoritative=(
-                authoritative and not quality.gap_open
-            ),
+            # Source authority and continuity are distinct facts.  Keeping
+            # them separate lets execution callers receive OPEN_SEQUENCE_GAP
+            # for a real continuity defect instead of a misleading lineage
+            # rejection.
+            authoritative=authoritative,
             gap_open=quality.gap_open,
             coverage=(
                 coverage if quality.complete else CoverageStatus.PARTIAL

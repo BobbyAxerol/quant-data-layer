@@ -62,9 +62,9 @@ class StableDeploymentContractTests(unittest.TestCase):
     def _legacy_rest_bar_fallback(self) -> StableAcquisitionPlan:
         """Build an explicit test-only REST fallback plan.
 
-        Production uses bounded Binance REST BAR recovery and native OKX BAR.
-        This focused matrix also proves a fully REST-declared recovery plan
-        without changing the production topology.
+        Production uses one bounded REST owner for every final Binance/OKX
+        BAR. This helper additionally converts disabled BAR capabilities to
+        REST so topology-reduction tests can exercise the same edge contract.
         """
         rest_kind = {
             "binance_usdm_bar": "binance_usdm_rest_bar",
@@ -96,17 +96,39 @@ class StableDeploymentContractTests(unittest.TestCase):
         sources = {item.binding_id: item for item in self.catalog.bindings}
 
         def native(item):
-            if item.provider_kind != "binance_usdm_rest_bar":
-                return item
             source = sources[item.binding_id]
+            if (
+                source.feed.value != "BAR"
+                or item.runtime not in {"BINANCE", "OKX"}
+            ):
+                return item
+            if item.runtime == "BINANCE":
+                provider_kind = (
+                    "binance_usdm_bar"
+                    if source.instrument.identity.market == "USDM"
+                    else "binance_spot_bar"
+                )
+                websocket_url = (
+                    "wss://fstream.binance.com/ws"
+                    if source.instrument.identity.market == "USDM"
+                    else "wss://stream.binance.com:9443/ws"
+                )
+                business_websocket_url = None
+                native_channel = (
+                    f"{source.instrument.native_symbol.lower()}@kline_{source.interval}"
+                )
+            else:
+                provider_kind = "okx_bar"
+                websocket_url = "wss://ws.okx.com:8443/ws/v5/public"
+                business_websocket_url = "wss://ws.okx.com:8443/ws/v5/business"
+                native_channel = f"candle{source.interval}"
             return replace(
                 item,
                 mode="RUST_NATIVE",
-                provider_kind="binance_usdm_bar",
-                native_channel=(
-                    f"{source.instrument.native_symbol.lower()}@kline_{source.interval}"
-                ),
-                websocket_url="wss://fstream.binance.com/ws",
+                provider_kind=provider_kind,
+                native_channel=native_channel,
+                websocket_url=websocket_url,
+                business_websocket_url=business_websocket_url,
             )
 
         return StableAcquisitionPlan(
@@ -276,7 +298,7 @@ class StableDeploymentContractTests(unittest.TestCase):
     def test_all_catalog_bindings_have_one_capability_truthful_acquisition(self):
         self.assertEqual(len(self.catalog.bindings), 22)
         self.assertEqual(len(self.acquisition.bindings), 22)
-        self.assertEqual(self.acquisition.revision, 9)
+        self.assertEqual(self.acquisition.revision, 10)
         modes = {item.mode for item in self.acquisition.bindings}
         self.assertEqual(modes, {"PYTHON_REST", "RUST_NATIVE", "PYTHON_VENDOR_SDK"})
         native = self.acquisition.native_ingestor_configs(
@@ -285,7 +307,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         # Spot is disabled by configuration, so no role is generated for it
         # while its capability stays declared in the catalog.
         self.assertEqual(set(native), {"binance-usdm", "okx-swap"})
-        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 10)
+        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 8)
         self.assertTrue(all(item["authority"]["mode"] == "RUST_SHADOW" for item in native.values()))
         self.assertEqual(
             {
@@ -296,6 +318,8 @@ class StableDeploymentContractTests(unittest.TestCase):
             {
                 "binance-usdm-btcusdt-bar-1m",
                 "binance-usdm-ethusdt-bar-1m",
+                "okx-swap-btcusdt-bar-1m",
+                "okx-swap-eth-usdt-swap-bar-1m",
             },
         )
         self.assertEqual(
@@ -329,8 +353,24 @@ class StableDeploymentContractTests(unittest.TestCase):
             {
                 "TRADE": "LOSSLESS",
                 "QUOTE": "LATEST_STATE",
-                "BAR": "LOSSLESS",
             },
+        )
+        sources = {item.binding_id: item for item in self.catalog.bindings}
+        final_crypto_bars = {
+            item.binding_id
+            for item in self.acquisition.bindings
+            if item.enabled
+            and item.runtime in {"BINANCE", "OKX"}
+            and sources[item.binding_id].feed.value == "BAR"
+            and sources[item.binding_id].require_final_bar
+        }
+        self.assertEqual(
+            {
+                item.binding_id
+                for item in self.acquisition.bindings
+                if item.mode == "PYTHON_REST"
+            },
+            final_crypto_bars,
         )
         okx_bbo = {
             item.binding_id: item.sequence_policy
@@ -468,9 +508,9 @@ class StableDeploymentContractTests(unittest.TestCase):
             )
             self.assertEqual(
                 {item["feed"] for item in okx["bindings"]},
-                {"TRADE", "QUOTE", "BAR"},
+                {"TRADE", "QUOTE"},
             )
-            self.assertEqual(len(okx["bindings"]), 6)
+            self.assertEqual(len(okx["bindings"]), 4)
             persisted = json.loads((Path(directory) / "core.json").read_text())
             self.assertEqual(persisted, core)
             persisted_workers = [

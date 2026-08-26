@@ -15001,6 +15001,81 @@ SOURCE-ONLY`).**
   selected immutable image instead. The network-disabled/read-only matrix
   passed `45/45`. No runtime service was recreated by this source correction;
   the next action is exactly one rerun of the same disposable no-order probe.
+- **Runtime slice 2 identity data-plane gate (`FAIL-CLOSED / V1 NOT TOUCHED`):**
+  the corrected disposable probe reached authenticated V2 warmup and failed on
+  `trading-system.paper.stable`, `OKX.SWAP.PERPETUAL.BTC-USDT`, `BAR 1m` with
+  `execution-grade data source is not authoritative`. It made no order,
+  provider or Docker-socket request; the `--rm` container and tmpfs cursor
+  were removed. The partial receipt is not acceptance evidence. This blocks
+  the V1 rolling replacement and all later consumer-handoff claims. The only
+  permitted next work is read-only lineage/freshness/authority diagnosis for
+  the declared V2 requirement, followed by a separately journaled in-scope
+  correction if needed.
+- **Continuity diagnosis and bounded source correction (`APPROVED SOURCE-ONLY /
+  IN PROGRESS`):** read-only inspection proved the source lineage is primary
+  and the 1,439-record durable OKX `BAR 1m` partition has exactly one real
+  missing open at `2026-08-25T18:15:00Z`. The resulting quality is
+  `GAPPED`, so the prior `SOURCE_NON_AUTHORITATIVE` response is a fail-closed
+  symptom rather than the cause. The cause is an ownership regression in the
+  active acquisition revision: Binance final BARs use the approved bounded
+  Python REST edge, while enabled OKX final BARs remained `RUST_NATIVE`.
+  `StableBinanceBarEdge` bootstraps all enabled Binance/OKX BARs but polls
+  only `PYTHON_REST` bindings after bootstrap; therefore a closed bar missed
+  by a native WebSocket has no bounded provider-history reconciliation path.
+- **Approved source-only scope:** restore one REST owner for every currently
+  enabled, execution-grade, final crypto `BAR 1m` binding (Binance USD-M and
+  OKX SWAP, BTC and ETH); retain Rust for TRADE/QUOTE ingestion and as the
+  sole canonical normalization/projection core. The repair changes neither
+  public V1/V2 schemas nor canonical event identity. It must prove that a
+  provider REST retry/catch-up enters the existing raw Kafka route, is
+  contiguous and ACK-authoritative, and preserves deterministic final-BAR
+  identity across provider transport/restart. The V2 policy layer will report
+  a genuine gap as `OPEN_SEQUENCE_GAP`, not conflate it with source lineage.
+- **Source test gates and exclusions:** add/update deterministic config and
+  policy tests for all four active final BAR bindings, Binance/OKX catch-up,
+  duplicate/restart identity, incomplete-history fencing and error precedence;
+  run the focused Python matrix plus the relevant immutable image regression.
+  Do not call a provider, publish Kafka records, recreate `binance_bar_edge`
+  or any Rust core, reset a checkpoint, alter SQLite/Redis, change authority,
+  touch V1, Trading System or alpha containers in this source slice.
+- **Next decision boundary:** even if source tests pass, healing the real
+  `2026-08-25T18:15:00Z` gap needs a new, explicit runtime packet. It must
+  name the immutable image/config digest, regenerated runtime bundle,
+  `binance_bar_edge` and any core roles proven config-dependent, the bounded
+  real-provider/Kafka append, expected one final canonical result, zero
+  duplicate/collision/quarantine and a rollback that stops/reverts only those
+  roles. It may not be inferred from this source approval.
+- **Implemented source repair and acceptance (`PASS / RUNTIME NOT MUTATED`):**
+  acquisition revision `10` restores `PYTHON_REST` ownership for
+  `okx-swap-btcusdt-bar-1m` and `okx-swap-eth-usdt-swap-bar-1m`. Together with
+  the existing Binance USD-M BTC/ETH BAR bindings, every enabled final crypto
+  BAR now has exactly one bounded REST owner. Rust-native ingress remains the
+  eight Binance/OKX TRADE/QUOTE bindings and the Rust core remains the only
+  canonical normalizer/projector. `V2QueryService` now passes source
+  authority and continuity independently to the policy evaluator, so a
+  primary source with an open BAR gap returns the actionable
+  `OPEN_SEQUENCE_GAP` code rather than `SOURCE_NON_AUTHORITATIVE`.
+- **Tests actually run:** source syntax compilation -> pass; immutable V2
+  Python image (`sha256:39d8f7...839d9`), `--network none --read-only`,
+  four targeted contract/history/API suites -> `60/60` pass; expanded
+  deployment/runtime-refresh/Phase-10.5 matrix -> `102/102` pass. These
+  cover the four active final BAR owners, BTC/ETH and Binance/OKX, bounded
+  catch-up with ACK failure/retry, incomplete-history fencing, deterministic
+  OKX final-BAR identity, handoff/identity contracts and the corrected error
+  precedence. A final Python/Rust multi-venue golden matrix yielded `17/18`;
+  its sole assertion failure (`test_mutated_canonical_payload_is_rejected`)
+  was reproduced in a disposable detached `HEAD` worktree at `f67abf2` with
+  the same decimal-validation message, proving it predates this slice. The
+  temporary worktree and every test container were removed. Host full tests
+  are not an alternate result because that host interpreter lacks `fastapi`
+  and `protobuf`; immutable-image results are the recorded evidence.
+- **Runtime impact and remaining gate:** zero provider calls, Kafka records,
+  query cache/Redis/SQLite updates, config bundle rewrites, image builds or
+  service recreates occurred in this repair. The live gap remains intentionally
+  visible and V1 remains untouched until a separate bounded runtime repair
+  packet is approved. The unrelated pre-existing golden assertion drift is
+  documented for a later test-maintenance scope; it is not relabeled as a
+  Phase 10.5-C defect.
 
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 
