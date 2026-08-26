@@ -54,6 +54,7 @@ from qdl.demand.inventory import (
     admit_provider_metadata,
     converge_active_demand,
     parse_provider_metadata,
+    source_requirement_for_admission,
 )
 
 __all__ = [
@@ -93,4 +94,5 @@ __all__ = [
     "admit_provider_metadata",
     "converge_active_demand",
     "parse_provider_metadata",
+    "source_requirement_for_admission",
 ]

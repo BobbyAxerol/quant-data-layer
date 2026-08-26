@@ -76,6 +76,7 @@ class FrameObservation:
     frame_sha256: str
     final_bar: bool
     observed_at_ms: int = 0
+    source_time_missing: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,13 +335,34 @@ def is_binance_trade_status_frame(payload: Mapping[str, Any]) -> bool:
     )
 
 
+def is_binance_direct_book_ticker_frame(payload: Mapping[str, Any]) -> bool:
+    """Recognise the documented direct Binance BBO shape without `e`.
+
+    The inference is deliberately structural and complete. It aligns the
+    older provider verifier with the Rust direct-session decoder without
+    treating arbitrary control objects as market data.
+    """
+    return (
+        isinstance(payload.get("u"), int)
+        and not isinstance(payload.get("u"), bool)
+        and payload["u"] >= 0
+        and all(
+            isinstance(payload.get(field), str) and bool(payload[field])
+            for field in ("b", "B", "a", "A")
+        )
+    )
+
+
 def parse_binance_data(
     raw: str | bytes,
     *,
     bindings: Mapping[tuple[str, str], NativeBinding],
 ) -> FrameObservation:
     text, payload = _payload(raw)
+    observed_at_ms = time.time_ns() // 1_000_000
     event = str(payload.get("e") or "")
+    if not event and is_binance_direct_book_ticker_frame(payload):
+        event = "bookTicker"
     symbol = str(payload.get("s") or "").upper()
     if not symbol:
         raise ProviderAdmissionError("Binance frame has no symbol")
@@ -355,14 +377,21 @@ def parse_binance_data(
             ) from error
         source_time_ms = _timestamp_ms(payload.get("T"), "Binance trade time")
         final_bar = False
+        source_time_missing = False
     elif event == "bookTicker":
         channel = f"{symbol.lower()}@bookTicker"
         _positive_decimal(payload.get("b"), "Binance bid price")
         _positive_decimal(payload.get("B"), "Binance bid quantity")
         _positive_decimal(payload.get("a"), "Binance ask price")
         _positive_decimal(payload.get("A"), "Binance ask quantity")
-        source_time_ms = _timestamp_ms(
-            payload.get("E") or payload.get("T"), "Binance quote event time"
+        provider_time = payload.get("T")
+        if provider_time is None:
+            provider_time = payload.get("E")
+        source_time_missing = provider_time is None
+        source_time_ms = (
+            observed_at_ms
+            if source_time_missing
+            else _timestamp_ms(provider_time, "Binance quote event time")
         )
         final_bar = False
     elif event == "kline":
@@ -378,6 +407,7 @@ def parse_binance_data(
         _positive_decimal(kline.get("v"), "Binance kline volume", allow_zero=True)
         source_time_ms = _timestamp_ms(kline.get("T"), "Binance kline close time")
         final_bar = bool(kline.get("x"))
+        source_time_missing = False
     else:
         raise ProviderAdmissionError(f"unsupported Binance native event: {event or 'missing'}")
     binding = bindings.get((channel, symbol))
@@ -388,7 +418,8 @@ def parse_binance_data(
         source_time_ms=source_time_ms,
         frame_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         final_bar=final_bar,
-        observed_at_ms=time.time_ns() // 1_000_000,
+        observed_at_ms=observed_at_ms,
+        source_time_missing=source_time_missing,
     )
 
 

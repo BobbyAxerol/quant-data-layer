@@ -16455,7 +16455,7 @@ previous manifest revision. No route, authority, broker offset, V1 service,
 alpha or order is changed. Stop after evidence/plan journal/one coherent
 commit; Phase 11.2 requires separate approval.
 
-#### Phase 11.1 Execution Journal - 2026-08-26 (`IMPLEMENTED / TESTED LOCALLY / DARK / RUNTIME NO-GO`)
+#### Phase 11.1 Execution Journal - 2026-08-26 (`PASSED / TESTED LOCALLY / DARK / DELIST EXCLUSIONS APPROVED`)
 
 - **Approval and exact scope:** the operator approved Phase 11.1 only. The
   work is limited to an audited active-demand inventory, canonical manifest
@@ -16563,10 +16563,24 @@ commit; Phase 11.2 requires separate approval.
   `regressionportfolioA001_1d`, and `rsiboundportfolioA001_1d` Binance USD-M
   universe members absent from authentic exchange metadata. They remain typed
   owner-visible failures; Phase 11.1 does not delete, reassign to Spot, or
-  replace them with a reference symbol. The owner must publish an approved
-  universe revision or disable those slices before a Phase 11.2 runtime
-  handoff can be requested. No runtime action, cleanup, or rollback is needed
-  because this phase created only committed source/evidence files.
+  replace them with a reference symbol.
+- **Owner decision / accepted delist control (2026-08-26):** the operator
+  explicitly accepts those 69 provider-missing rows as non-active,
+  de-listed/inactive-universe exclusions for this gate, while preserving their
+  authentic `MISSING_INSTRUMENT` evidence. This acceptance neither masks a
+  provider failure nor grants a fallback: a request for one of those symbols
+  continues to return typed `UNSUPPORTED`; only a later approved shared
+  universe revision can remove it from an alpha/backtest declaration. The
+  accepted active set is therefore the 1,564 admitted rows / 658 deduplicated
+  physical slices. Phase 11.2 may proceed against that active set. No runtime
+  action, cleanup, or rollback is needed because Phase 11.1 created only
+  committed source/evidence files.
+- **Phase 11.1 gate closure (2026-08-26):** with the explicit owner decision
+  above, the inventory/convergence gate is **PASSED DARK**. Every declared
+  Binance/OKX requirement has either an admitted canonical identity in the
+  hashed manifest or a durable owner-visible `UNSUPPORTED` result; none was
+  silently dropped, substituted or routed to a different market. The manifest
+  remains un-applied, so this is not a consumer/runtime cutover.
 
 ### 22.7 Phase 11.2 - Universal Realtime Trade, BBO And Final-Bar Plane
 
@@ -16620,6 +16634,153 @@ or Trading System cutover.
 disable only the new dark demand revision if needed. No broad provider
 unsubscribe, no Kafka offset reset, no Redis/SQLite flush and no consumer
 route change. Stop after evidence/plan journal/one coherent commit.
+
+#### Phase 11.2 Execution Journal - 2026-08-26 (`IMPLEMENTED / TESTED LOCALLY + BOUNDED REAL PROVIDER / DARK`)
+
+- **Approval and exact scope:** the operator approved universal Binance/OKX
+  `TRADE`, `QUOTE/BBO` and final-`BAR` work after accepting the Phase 11.1
+  de-list exclusions. This slice implements and verifies the shared dynamic
+  acquisition/control-plane contract only. It reuses `DataRequirement`,
+  `DemandLeaseRegistry`, `DemandTopologyPlanner`, the Rust realtime core and
+  existing Python provider edges; it must not create a worker, image, topic or
+  container per symbol, interval, alpha or retry.
+- **Active-set rule:** all currently provider-admitted Binance/OKX requirements
+  are eligible for generic planner/capability coverage. Provider-missing rows
+  remain explicit `UNSUPPORTED`; they are never replaced with BTC/ETH, Spot,
+  last-close or synthetic data. Real-provider websocket checks use bounded
+  shared active-demand cohorts and cover every admitted binding in scope; they
+  do not open an unbounded socket for the entire exchange catalog.
+- **Invariants:** canonical identity, native timestamp, decimal/unit, provider
+  session lineage, sequence/gap state, final-bar identity/revision and
+  warmup-to-final-bar FIFO remain source-of-truth. A final bar is publishable
+  only after venue-native finality or bounded REST close confirmation; a
+  previous close cannot be relabelled current. Rust remains the canonical
+  normalization/data-plane authority and Python remains the provider-edge and
+  public V1/V2 compatibility layer.
+- **Test gates:** deterministic multi-symbol subscribe/unsubscribe/rebind,
+  reconnect/resync/duplicate/out-of-order/gap/fair-shard and final-bar lifecycle
+  tests; Rust compile/golden tests; V2 query/stream typed readiness and V1
+  compatibility regression; and bounded, read-only real-provider captures from
+  Binance and OKX covering non-BTC/non-ETH demand in every configured active
+  universe. Tests must record bounded freshness/gap/latency/resource evidence;
+  test-only fixtures carry explicit provenance.
+- **Runtime exclusion and rollback:** no current service is restarted or
+  recreated; no authority, consumer route, Kafka offset/topic, Redis/SQLite
+  cache, provider subscription, alpha configuration, order or broker state is
+  mutated. A later named runtime packet is required for dark-plan handoff. The
+  source rollback is a normal commit revert or withdrawal of the dark demand
+  revision; it must not broadly unsubscribe providers or reset state.
+- **Implementation decision (source-only, 2026-08-26):** the Phase 11.1
+  admitted rows are projected directly into one generated
+  `ProductionDemandManifest`/catalog/acquisition plan, reusing the authentic
+  `InstrumentRecord` objects captured at admission. The projection is keyed by
+  the canonical physical slice and shares the existing planner topology; it
+  cannot turn a consumer, alpha, symbol or interval into a Compose role. Trade
+  and BBO remain provider-native Rust acquisition. Final BAR has exactly one
+  producer: the existing bounded Python REST close-confirmation/recovery edge,
+  which publishes raw provider bytes to the same Rust canonical core. Native
+  candle channels are parsed/validated by Rust for replay and future approved
+  use, but they are not enabled as a competing recurring writer in this phase.
+  BAR stale windows are derived from the canonical interval, not fixed at three
+  minutes. Unsupported/de-listed rows remain outside the generated plan with
+  their typed Phase 11.1 evidence intact.
+- **Topology-accounting correction (source-only, 2026-08-26):** a final-BAR
+  binding is acquired by the bounded shared REST close-confirmation scheduler,
+  not a native WebSocket lane. The universal plan therefore records final-BAR
+  binding IDs and venue/market roles separately, while `DemandTopology`
+  connection/shard metrics contain only native `TRADE` and `QUOTE/BBO`
+  subscriptions. This prevents a historical/finality workload from being
+  reported as WebSocket capacity, preserves one raw producer per final BAR,
+  and does not add a process, image or container.
+- **Rust OKX frame-path correction (source-only, 2026-08-26):** the expanded
+  fixed-duration candle allowlist was used by subscription validation and
+  canonical normalization, but the native-frame fan-out still recognized only
+  `candle1m`. The isolated Rust suite exposed the mismatch on a valid
+  `candle15m` frame. The fan-out now uses the same exact allowlist, retaining
+  one-row frame validation and failing closed for unknown/calendar-month
+  channels. This is a source defect fix; no provider session was opened.
+- **Remaining coherent slice before Phase 11.2 exit (approved,
+  source + isolated-provider test only):** add one bounded universal-provider
+  admission harness. It must rebuild the manifest from the current read-only
+  Trading System/alpha declarations and fresh public metadata, preserve the
+  operator-approved `MISSING_INSTRUMENT` exclusions, project every admitted
+  `TRADE`/`QUOTE`/final-`BAR` binding through the shared plan, and prove each
+  binding against its declared provider edge. Native feeds are grouped only by
+  existing `(venue, market, feed)` roles and bounded chunks; final bars use
+  the one existing REST close-confirmation edge with bounded concurrency. The
+  harness records identifiers, digests and bounded metrics only. It starts no
+  Data Layer process, writes no Kafka/Redis/SQLite state, changes no consumer
+  route and creates no per-symbol image/container. A provider rejection,
+  absent frame, stale/early BAR, cross-mixed identity or unexpected admission
+  state fails closed rather than selecting a substitute symbol.
+- **Universal provider implementation (source-only, 2026-08-26):** added
+  `qdl.runtime.universal_realtime`, which projects only admitted canonical
+  physical demand into shared `ProductionDemandManifest` catalog/acquisition
+  bindings. `TRADE` and `QUOTE` bind to Rust-native multiplexed provider
+  channels; final `BAR` binds only to the existing bounded Python REST
+  close-confirmation edge. BAR is deliberately absent from native WebSocket
+  capacity accounting. The projection records exact identity, product,
+  interval, catalog/demand revision, provider kind, adapter/normalizer lineage
+  and stale policy for every binding. Selective demand removal is a
+  subscribe/unsubscribe membership change, not a new service. Binance USD-M
+  `FUTURE` and OKX fixed-duration candle parsing now retain exact product and
+  canonical interval identity through this shared path.
+- **Provider-contract correction (source-only, 2026-08-26):** bounded direct
+  public frame inspection found that Binance Spot `@bookTicker` has no `e`,
+  `E` or `T` fields, while Binance USD-M carries provider timestamps. This is
+  a documented provider difference, not a missing-data fallback. Rust routing
+  and both admission harnesses now infer a no-`e` book ticker only from the
+  strict complete BBO shape (`u`, `s`, `b/B`, `a/A`); incomplete/control frames
+  still fail closed. The Spot quote uses its actual capture time only for the
+  envelope timestamp and emits explicit `SOURCE_TIME_MISSING` semantics
+  (`source_time_missing=true` in evidence). Where both provider timestamps
+  exist, `T` takes precedence over `E`, matching the Rust and Python canonical
+  implementations. No value is invented and no stale last quote is relabelled
+  as fresh.
+- **Deterministic correctness evidence (isolated, 2026-08-26):** the
+  network-disabled contract suite passed **68/68** tests covering universal
+  projection, bounded 200-binding shared chunks, no per-symbol topology,
+  direct Binance BBO identity, Spot missing-source-time provenance, cross-mix
+  rejection, final-bar exactness, demand/catalog identity, V2 query/stream/SDK
+  readiness and compatibility. The wider isolated realtime/demand/SDK/V1
+  regression passed **184/184** tests. Its two informational provider-cache and
+  gRPC teardown lines are intentional test-fixture behavior; the command
+  exited zero. Rust `qdl-core` compiled from the current source and passed
+  **22/22** library tests and `cargo fmt --check`, including fixed-duration
+  OKX candle identity,
+  reconnect/control correlation, duplicate/gap supervision and the strict
+  direct-BBO parser.
+- **Bounded real-provider admission (read-only, 2026-08-26):** one disposable
+  public-provider harness rebuilt the full manifest from read-only current
+  `execution_alpha` and Trading System declarations plus fresh public metadata,
+  then tested **every 654 in-scope binding**. It passed in **72.423 s**:
+  **295** shared WebSocket `TRADE`/`QUOTE` bindings and **359** REST-confirmed
+  final-BAR bindings across Binance Spot/USD-M and OKX Spot/Swap. The 17
+  bounded sessions are nine primary shared chunks plus one intentional
+  reconnect probe for each of the eight logical `(venue, market, feed)` native
+  roles; they are not symbol workers. All observations had identity,
+  decimal, finality and freshness checks, zero cross-mix, zero fallback and
+  zero provider/raw runtime writes. Process evidence was **10.180310 CPU s**
+  and **189000 KiB** maximum RSS. The only missing provider timestamp was the
+  expected Binance Spot BBO and is recorded explicitly. The largest final-BAR
+  age was **59,936,171 ms** on a `1d` USD-M bar, within its interval-derived
+  three-bar stale window; it is a closed daily bar, not a delayed current bar.
+  Evidence contains identifiers, hashes and bounded metrics only:
+  `upgrade/evidence/phase112-universal-realtime-provider-admission.json`
+  (`REAL_PROVIDER_DIRECT_READ_ONLY`, `raw_provider_frames_persisted=0`,
+  `runtime_mutations=0`, `production_writes=0`).
+- **Scope accounting / exit decision (2026-08-26):** the 1,564 admitted rows
+  deduplicate to 658 physical demand slices. Phase 11.2 correctly certifies
+  the 654 `TRADE`/`QUOTE`/final-`BAR` slices. The remaining four are one
+  `BASIS`, one `FUNDING_RATE`, and two `BOOK_SNAPSHOT` slices, explicitly
+  deferred to Phase 11.3/11.4 rather than silently omitted. The 69
+  operator-approved provider-missing/de-listed rows remain `UNSUPPORTED` with
+  their Phase 11.1 evidence. Therefore the Phase 11.2 source/data-plane exit
+  is **PASSED DARK**: universal code and real-provider admission are complete,
+  but no live role, consumer route, authority, Kafka/Redis/SQLite state, V1
+  endpoint, Trading System, alpha, order or broker state was changed. The
+  temporary Rust builder image was removed after test. Runtime handoff remains
+  a separate Phase 11.5 packet after 11.3 and 11.4 are complete.
 
 ### 22.8 Phase 11.3 - Universal Warmup, Batch History And Reference Data
 

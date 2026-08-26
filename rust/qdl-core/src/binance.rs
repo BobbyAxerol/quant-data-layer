@@ -108,10 +108,24 @@ fn native_stream(decoded: &Value) -> Result<String, String> {
             format!("{symbol}@kline_{interval}")
         }
         Some(other) => return Err(format!("unsupported Binance native event: {other}")),
+        // Binance direct `@bookTicker` frames may omit the generic event
+        // discriminator. Infer only the documented full BBO shape; no
+        // incomplete/control frame can be promoted to a quote subscription.
+        None if is_direct_book_ticker(decoded) => format!("{symbol}@bookTicker"),
         None => return Err("Binance native frame missing event type".into()),
     };
     validate_stream(&stream)?;
     Ok(stream)
+}
+
+fn is_direct_book_ticker(decoded: &Value) -> bool {
+    decoded.get("u").and_then(Value::as_u64).is_some()
+        && ["b", "B", "a", "A"].iter().all(|field| {
+            decoded
+                .get(*field)
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty())
+        })
 }
 
 /// Decode either a legacy combined stream frame or a direct frame received
@@ -209,6 +223,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(trade.stream, "btcusdt@trade");
+        // Direct Binance book-ticker payloads are structural and may omit
+        // `e`; their full BBO shape maps only to the subscribed quote stream.
+        let quote =
+            decode_subscribed(r#"{"u":1,"s":"BTCUSDT","b":"1","B":"2","a":"3","A":"4"}"#.into())
+                .unwrap();
+        assert_eq!(quote.stream, "btcusdt@bookTicker");
         let bar =
             decode_subscribed(r#"{"e":"kline","s":"BTCUSDT","k":{"i":"1m","x":true}}"#.into())
                 .unwrap();

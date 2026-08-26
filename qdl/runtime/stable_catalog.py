@@ -256,13 +256,13 @@ class StableSourceCatalog:
     def _instrument(raw: Any) -> InstrumentRecord:
         if not isinstance(raw, dict):
             raise ValueError("stable instrument must be a mapping")
-        expected = {
+        required = {
             "instrument_uid", "instrument_id", "metadata_revision", "venue", "market",
             "product_type", "canonical_symbol", "native_symbol", "asset_class",
             "base_asset", "quote_asset", "settlement_asset", "price_tick",
             "quantity_step", "contract_multiplier", "session_calendar_id", "attributes",
         }
-        if set(raw) != expected:
+        if not required <= set(raw) or set(raw) - required - {"expiry_time_ns"}:
             raise ValueError("stable instrument fields are incomplete or unknown")
         identity = InstrumentIdentity.create(
             venue=str(raw["venue"]),
@@ -290,6 +290,11 @@ class StableSourceCatalog:
             quantity_step=CanonicalDecimal.from_text(str(raw["quantity_step"])),
             contract_multiplier=CanonicalDecimal.from_text(str(raw["contract_multiplier"])),
             session_calendar_id=str(raw["session_calendar_id"]),
+            expiry_time_ns=(
+                int(raw["expiry_time_ns"])
+                if raw.get("expiry_time_ns") is not None
+                else None
+            ),
             attributes={str(key): str(value) for key, value in attributes.items()},
         )
 

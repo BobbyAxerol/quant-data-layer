@@ -10,7 +10,12 @@ from typing import Any, Iterable, Mapping
 import yaml
 
 from qdl.adapters.binance_usdm import BinanceDiscovery, parse_exchange_info
-from qdl.adapters.intervals import okx_candle_channel
+from qdl.adapters.intervals import (
+    BINANCE_SPOT_NATIVE_INTERVALS,
+    BINANCE_USDM_NATIVE_INTERVALS,
+    canonical_interval_ms,
+    okx_candle_channel,
+)
 from qdl.adapters.okx.instruments import parse_public_instrument
 from qdl.domain.instrument import InstrumentRecord, InstrumentStatus, ProductType
 from qdl.query import ConsumerGrade, FeedType
@@ -26,6 +31,7 @@ _SOURCE_SCHEMA = "qdl.v2.stable-source-bindings.v1"
 _ACQUISITION_SCHEMA = "qdl.v2.stable-acquisition-bindings.v1"
 _SUPPORTED_MARKETS = {
     ("BINANCE", "USDM", "PERPETUAL"),
+    ("BINANCE", "USDM", "FUTURE"),
     ("BINANCE", "SPOT", "SPOT"),
     ("OKX", "SWAP", "PERPETUAL"),
     ("OKX", "SPOT", "SPOT"),
@@ -51,6 +57,22 @@ class ProductionDemand:
     feed: FeedType
     interval: str | None
     source_policy_id: str
+
+    def __post_init__(self) -> None:
+        if (self.venue, self.market, self.product_type) not in _SUPPORTED_MARKETS:
+            raise ValueError("production demand market/product is not certified")
+        if self.feed not in _SUPPORTED_FEEDS:
+            raise ValueError("production demand feed is not certified")
+        if self.feed is FeedType.BAR:
+            _validate_native_bar_interval(
+                venue=self.venue,
+                market=self.market,
+                interval=self.interval,
+            )
+        elif self.interval is not None:
+            raise ValueError("interval is valid only for BAR demand")
+        if not self.consumer_id.strip() or not self.native_symbol.strip() or not self.source_policy_id.strip():
+            raise ValueError("production demand identity/source policy is incomplete")
 
     @property
     def requirement_key(self) -> tuple[str, str, str, str, FeedType, str | None]:
@@ -138,16 +160,6 @@ class ProductionDemandManifest:
         source_policy = str(raw["source_policy_id"]).strip()
         feed = FeedType(str(raw["feed"]).strip().upper())
         interval = str(raw["interval"]).strip() if raw["interval"] is not None else None
-        if (venue, market, product) not in _SUPPORTED_MARKETS:
-            raise ValueError("production demand market/product is not certified")
-        if feed not in _SUPPORTED_FEEDS:
-            raise ValueError("production demand feed is not certified")
-        if feed is FeedType.BAR and interval != "1m":
-            raise ValueError("production V2 BAR acquisition is currently certified for 1m")
-        if feed is not FeedType.BAR and interval is not None:
-            raise ValueError("interval is valid only for BAR demand")
-        if not native_symbol or not source_policy:
-            raise ValueError("production demand identity/source policy is incomplete")
         return ProductionDemand(
             consumer_id=consumer_id,
             consumer_grade=grade,
@@ -159,6 +171,31 @@ class ProductionDemandManifest:
             interval=interval,
             source_policy_id=source_policy,
         )
+
+
+def _validate_native_bar_interval(*, venue: str, market: str, interval: str | None) -> None:
+    if interval is None:
+        raise ValueError("BAR demand requires an interval")
+    # Parsing the canonical interval first keeps case-sensitive `1M` versus
+    # `1m` and calendar-month ambiguity out of every provider adapter.
+    canonical_interval_ms(interval)
+    if venue == "BINANCE":
+        supported = (
+            BINANCE_USDM_NATIVE_INTERVALS
+            if market == "USDM"
+            else BINANCE_SPOT_NATIVE_INTERVALS
+        )
+        if interval not in supported:
+            raise ValueError(
+                f"Binance {market} does not expose canonical BAR interval: {interval}"
+            )
+        return
+    if venue == "OKX":
+        # The helper encodes the documented UTC calendar spelling and fails
+        # closed for unsupported native channels.
+        okx_candle_channel(interval)
+        return
+    raise ValueError(f"production BAR venue is not certified: {venue}/{market}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +260,39 @@ class ProductionCatalogBuilder:
         metadata = self._metadata(
             binance_usdm, okx_rows, demand.demands, binance_spot=binance_spot
         )
+        return self.build_from_records(
+            demand=demand,
+            records=metadata.values(),
+            previous_catalog=previous_catalog,
+            metadata_provenance=metadata_provenance,
+        )
+
+    def build_from_records(
+        self,
+        *,
+        demand: ProductionDemandManifest,
+        records: Iterable[InstrumentRecord],
+        previous_catalog: StableSourceCatalog | None = None,
+        metadata_provenance: Mapping[str, str] | None = None,
+    ) -> ProductionCatalogBundle:
+        """Build a catalog from already-admitted authentic metadata records.
+
+        Phase 11's demand compiler has already fetched and parsed one bounded
+        public metadata capture per venue/market. Re-parsing or fabricating a
+        second provider view would make the resulting runtime plan impossible
+        to audit. This entry point reuses those admitted records verbatim.
+        """
+        metadata: dict[tuple[str, str, str], InstrumentRecord] = {}
+        for record in records:
+            key = (
+                record.identity.venue,
+                record.identity.market,
+                record.native_symbol,
+            )
+            existing = metadata.get(key)
+            if existing is not None and existing != record:
+                raise ValueError(f"duplicate authoritative instrument metadata: {key}")
+            metadata[key] = record
         previous = self._previous_records(previous_catalog)
         selected: dict[str, InstrumentRecord] = {}
         bindings: list[dict[str, Any]] = []
@@ -346,7 +416,7 @@ class ProductionCatalogBuilder:
     @staticmethod
     def _instrument(record: InstrumentRecord) -> dict[str, Any]:
         identity = record.identity
-        return {
+        result = {
             "instrument_uid": identity.instrument_uid,
             "instrument_id": identity.instrument_id,
             "metadata_revision": record.metadata_revision,
@@ -365,6 +435,12 @@ class ProductionCatalogBuilder:
             "session_calendar_id": record.session_calendar_id,
             "attributes": dict(sorted(record.attributes.items())),
         }
+        # A dated contract is not reconstructible from the pair/symbol alone.
+        # Preserve the provider-authoritative expiry through the generated
+        # catalog so a restart cannot silently treat it like a perpetual.
+        if record.expiry_time_ns is not None:
+            result["expiry_time_ns"] = record.expiry_time_ns
+        return result
 
     @staticmethod
     def _binding_id(item: ProductionDemand) -> str:
@@ -383,7 +459,10 @@ class ProductionCatalogBuilder:
         elif item.feed is FeedType.QUOTE:
             stale_after_ms = 5_000
         else:
-            stale_after_ms = 180_000
+            # Final BAR freshness must scale with its canonical interval. The
+            # former fixed three-minute limit mislabeled a valid 1h/1d BAR as
+            # stale and made broad active demand impossible to certify.
+            stale_after_ms = canonical_interval_ms(item.interval or "") * 3
         adapter = (
             f"binance-{item.market.lower()}/2.0.0"
             if item.venue == "BINANCE"

@@ -1540,7 +1540,7 @@ def _admission_requirement_id(
     ).hexdigest()
 
 
-def _source_requirement_for_admission(
+def source_requirement_for_admission(
     inventory: ActiveDemandInventory,
     row: ProviderAdmissionRow,
 ) -> DataRequirement:
@@ -1754,7 +1754,7 @@ def converge_active_demand(
     for row in admission.rows:
         if row.state != "ADMITTED":
             continue
-        source_requirement = _source_requirement_for_admission(inventory, row)
+        source_requirement = source_requirement_for_admission(inventory, row)
         try:
             record = admission.records[
                 (row.venue, row.market, row.product_type, row.native_symbol)

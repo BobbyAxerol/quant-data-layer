@@ -276,15 +276,67 @@ class ProductionCatalogTests(unittest.TestCase):
                     "requirements": [{
                         "venue": "OKX", "market": "SWAP", "product_type": "PERPETUAL",
                         "native_symbol": "ETH-USDT-SWAP", "feed": "BAR",
-                        "interval": "15m", "source_policy_id": "crypto_primary_v2",
+                        "interval": "45m", "source_policy_id": "crypto_primary_v2",
                     }],
                 }],
             }
             import yaml
             path = root / "bad-interval.yaml"
             path.write_text(yaml.safe_dump(payload))
-            with self.assertRaisesRegex(ValueError, "currently certified for 1m"):
+            with self.assertRaisesRegex(ValueError, "does not expose"):
                 ProductionDemandManifest.load_many([path])
+
+    def test_catalog_accepts_all_certified_fixed_bar_intervals_and_scales_staleness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = {
+                "schema": "qdl.v2.production-demand.v1",
+                "revision": 6,
+                "consumers": [{
+                    "consumer_id": "alpha", "consumer_grade": "ALPHA",
+                    "requirements": [
+                        {
+                            "venue": "BINANCE", "market": "USDM",
+                            "product_type": "PERPETUAL", "native_symbol": "ETHUSDT",
+                            "feed": "BAR", "interval": "1d",
+                            "source_policy_id": "crypto_primary_v2",
+                        },
+                        {
+                            "venue": "OKX", "market": "SWAP",
+                            "product_type": "PERPETUAL", "native_symbol": "ETH-USDT-SWAP",
+                            "feed": "BAR", "interval": "15m",
+                            "source_policy_id": "crypto_primary_v2",
+                        },
+                    ],
+                }],
+            }
+            import yaml
+            path = root / "intervals.yaml"
+            path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+            demand = ProductionDemandManifest.load_many([path])
+            bundle = ProductionCatalogBuilder(
+                catalog_revision=1,
+                source_policy_revision=1,
+                authority_revision=1,
+            ).build(
+                demand=demand,
+                binance_usdm=parse_exchange_info(BINANCE, valid_from_ns=1),
+                okx_rows=OKX,
+            )
+            by_id = {item["binding_id"]: item for item in bundle.source_catalog["bindings"]}
+            self.assertEqual(
+                by_id["binance-usdm-ethusdt-bar-1d"]["quality"]["stale_after_ms"],
+                259_200_000,
+            )
+            self.assertEqual(
+                by_id["okx-swap-eth-usdt-swap-bar-15m"]["quality"]["stale_after_ms"],
+                2_700_000,
+            )
+            acquisition = {item["binding_id"]: item for item in bundle.acquisition_plan["bindings"]}
+            self.assertEqual(
+                acquisition["okx-swap-eth-usdt-swap-bar-15m"]["native_channel"],
+                "candle15m",
+            )
 
 
 if __name__ == "__main__":

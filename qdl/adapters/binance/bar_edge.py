@@ -31,10 +31,10 @@ class BinanceBarRawBinding:
     def __post_init__(self) -> None:
         if self.market not in {"USDM", "SPOT"}:
             raise ValueError("Binance bar market must be USDM or SPOT")
-        if self.product_type not in {"PERPETUAL", "SPOT"}:
+        if self.product_type not in {"PERPETUAL", "FUTURE", "SPOT"}:
             raise ValueError("Binance bar product type is invalid")
-        if self.market == "USDM" and self.product_type != "PERPETUAL":
-            raise ValueError("Binance USDM bar requires PERPETUAL product")
+        if self.market == "USDM" and self.product_type not in {"PERPETUAL", "FUTURE"}:
+            raise ValueError("Binance USDM bar requires PERPETUAL or FUTURE product")
         if self.market == "SPOT" and self.product_type != "SPOT":
             raise ValueError("Binance Spot bar requires SPOT product")
         strings = (

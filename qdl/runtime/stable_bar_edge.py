@@ -38,9 +38,13 @@ _MAX_CONNECTION_GENERATION = (1 << 64) - 1
 
 
 def _bar_interval_ms(interval: str) -> int:
-    if not interval or interval[-1] not in {"s", "m", "h", "d"}:
-        raise ValueError("stable BAR interval is unsupported")
-    return canonical_interval_ms(interval)
+    # `canonical_interval_ms` is the one fixed-duration interval authority.
+    # Keeping a private suffix list here previously rejected a valid weekly
+    # demand after the catalog had admitted it.
+    try:
+        return canonical_interval_ms(interval)
+    except ValueError as error:
+        raise ValueError(f"stable BAR interval is unsupported: {interval}") from error
 
 
 class StableBinanceBarEdge:

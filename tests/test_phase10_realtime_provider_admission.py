@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from dataclasses import replace
 from pathlib import Path
 import sys
 import unittest
@@ -73,6 +74,22 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
         )
         self.assertEqual(trade.binding_id, "binance-usdm-ethusdt-trade")
         self.assertEqual(quote.binding_id, "binance-usdm-btcusdt-quote")
+        direct_quote = admission.parse_binance_data(
+            '{"u":101,"s":"BTCUSDT","b":"1","B":"2","a":"3","A":"4","E":1002}',
+            bindings=self.by_key,
+        )
+        self.assertEqual(direct_quote.binding_id, "binance-usdm-btcusdt-quote")
+        spot_binding = replace(
+            next(item for item in self.bindings if item.binding_id == "binance-usdm-btcusdt-quote"),
+            binding_id="binance-spot-btcusdt-quote",
+            market="SPOT",
+            product_type="SPOT",
+        )
+        spot_quote = admission.parse_binance_data(
+            '{"u":8,"s":"BTCUSDT","b":"1","B":"2","a":"3","A":"4"}',
+            bindings={spot_binding.key: spot_binding},
+        )
+        self.assertTrue(spot_quote.source_time_missing)
         with self.assertRaisesRegex(admission.ProviderAdmissionError, "matching active binding"):
             admission.parse_binance_data(
                 '{"e":"trade","s":"SOLUSDT","p":"1","q":"1","T":1}',

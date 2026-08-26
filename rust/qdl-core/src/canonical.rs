@@ -4,8 +4,8 @@ use qdl_contracts::qdl::common::v1::{
     SourceRole,
 };
 use qdl_contracts::qdl::marketdata::v2::{
-    event_envelope, Bar, BarLifecycle, BookLevel, EventEnvelope, OrderBookSnapshot, Quote,
-    Trade, TradeIdentityKind,
+    event_envelope, Bar, BarLifecycle, BookLevel, EventEnvelope, OrderBookSnapshot, Quote, Trade,
+    TradeIdentityKind,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 
 use crate::decimal::parse_decimal;
 use crate::event_id::deterministic_event_id;
+use crate::okx::candle_interval;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct TradeContext {
@@ -533,10 +534,18 @@ fn canonicalize_okx_bbo(fixture: &TradeFixture) -> Result<EventEnvelope, String>
 }
 
 fn canonicalize_okx_bar(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
-    let row = okx_frame_row(fixture, "candle1m")?
+    let channel = fixture
+        .raw
+        .get("arg")
+        .and_then(Value::as_object)
+        .and_then(|argument| argument.get("channel"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "OKX candle channel is missing".to_owned())?;
+    let (interval, interval_ms) = candle_interval(channel)?;
+    let row = okx_frame_row(fixture, channel)?
         .as_array()
         .filter(|values| values.len() >= 9)
-        .ok_or_else(|| "OKX candle1m requires the native nine-field row".to_owned())?;
+        .ok_or_else(|| "OKX candle requires the native nine-field row".to_owned())?;
     let open_time_ms = scalar_text(&row[0])?
         .parse::<i64>()
         .map_err(|_| "OKX candle open timestamp is invalid".to_owned())?;
@@ -554,9 +563,9 @@ fn canonicalize_okx_bar(fixture: &TradeFixture) -> Result<EventEnvelope, String>
         .quality_flags
         .push(QualityFlag::FieldMissing as i32);
     envelope.payload = Some(event_envelope::Payload::Bar(Bar {
-        interval: "1m".into(),
+        interval: interval.into(),
         open_time_ns: open_time_ms * 1_000_000,
-        close_time_ns: (open_time_ms + 60_000 - 1) * 1_000_000,
+        close_time_ns: (open_time_ms + interval_ms - 1) * 1_000_000,
         open: Some(parse_decimal(&scalar_text(&row[1])?)?),
         high: Some(parse_decimal(&scalar_text(&row[2])?)?),
         low: Some(parse_decimal(&scalar_text(&row[3])?)?),
@@ -852,7 +861,9 @@ mod tests {
     };
     use sha2::{Digest, Sha256};
 
-    use super::{canonical_bytes, set_payload_hash, EventEnvelope, TradeFixture};
+    use super::{
+        canonical_bytes, canonicalize_trade, set_payload_hash, EventEnvelope, TradeFixture,
+    };
 
     fn decimal(value: i64, scale: i32) -> DecimalValue {
         DecimalValue {
@@ -933,6 +944,27 @@ mod tests {
             );
             assert_eq!(actual, std::fs::read(golden_path).expect("read golden"));
         }
+    }
+
+    #[test]
+    fn okx_fixed_interval_bar_uses_channel_interval_and_close_boundary() {
+        let fixture_path = format!(
+            "{}/../../tests/fixtures/phase2/okx_bar.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut fixture: TradeFixture =
+            serde_json::from_slice(&std::fs::read(fixture_path).expect("read fixture"))
+                .expect("decode fixture");
+        fixture.raw["arg"]["channel"] = serde_json::Value::String("candle15m".into());
+        fixture.raw["data"][0][0] = serde_json::Value::String("900000".into());
+        let envelope = canonicalize_trade(&fixture).expect("canonicalize fixed bar");
+        let bar = match envelope.payload.expect("bar payload") {
+            event_envelope::Payload::Bar(value) => value,
+            _ => panic!("expected bar payload"),
+        };
+        assert_eq!(bar.interval, "15m");
+        assert_eq!(bar.open_time_ns, 900_000_000_000);
+        assert_eq!(bar.close_time_ns, 1_799_999_000_000);
     }
 
     #[test]

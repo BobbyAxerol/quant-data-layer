@@ -172,9 +172,10 @@ class OkxIntervalGenericHistoryTests(unittest.TestCase):
             "1h", limit=3, now_ms=4 * 3_600_000 + 137
         )
         self.assertEqual(seen["bar"], "1H")
-        # The request is a generous range ending at now; the venue decides
-        # where its own boundaries fall inside it.
-        self.assertEqual(seen["end_ms"], 4 * 3_600_000 + 137)
+        # `end_ms` is just before the latest still-open provider bar.  The
+        # request therefore cannot accidentally return a provisional row and
+        # label it as the final 1h candle.
+        self.assertEqual(seen["end_ms"], 4 * 3_600_000 - 1)
         self.assertLessEqual(seen["start_ms"], start)
         payloads = [json.loads(item.raw_frame_bytes) for item in envelopes]
         self.assertEqual({item["arg"]["channel"] for item in payloads}, {"candle1H"})
