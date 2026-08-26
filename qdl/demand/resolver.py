@@ -250,6 +250,13 @@ class CapabilityRegistry:
         DemandFeed.BAR: "bar",
         DemandFeed.BOOK_SNAPSHOT: "l2",
         DemandFeed.BOOK_DELTA: "l2",
+        DemandFeed.FUNDING_RATE: "funding_rate",
+        DemandFeed.OPEN_INTEREST: "open_interest",
+        DemandFeed.LONG_SHORT_RATIO: "long_short_ratio",
+        DemandFeed.TAKER_FLOW: "taker_flow",
+        DemandFeed.BASIS: "basis",
+        DemandFeed.MARK_PRICE: "mark_index_price",
+        DemandFeed.INDEX_PRICE: "mark_index_price",
     }
 
     def __init__(self, profiles: Mapping[tuple[str, str], VenueCapabilityProfile]) -> None:

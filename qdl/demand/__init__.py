@@ -40,6 +40,21 @@ from qdl.demand.topology import (
     SubscriptionAction,
     SubscriptionActionKind,
 )
+from qdl.demand.inventory import (
+    ActiveDemandConvergence,
+    ActiveDemandCompiler,
+    ActiveDemandInventory,
+    ActiveDemandSourceRegistry,
+    AdmissionBudget,
+    AdmissionBudgetUsage,
+    AdmissionPolicy,
+    DemandInventoryReadiness,
+    InventoryError,
+    ProviderAdmission,
+    admit_provider_metadata,
+    converge_active_demand,
+    parse_provider_metadata,
+)
 
 __all__ = [
     "CapabilityAvailability",
@@ -65,4 +80,17 @@ __all__ = [
     "DemandTopologyPlanner",
     "SubscriptionAction",
     "SubscriptionActionKind",
+    "ActiveDemandCompiler",
+    "ActiveDemandInventory",
+    "ActiveDemandSourceRegistry",
+    "ActiveDemandConvergence",
+    "AdmissionBudget",
+    "AdmissionBudgetUsage",
+    "AdmissionPolicy",
+    "DemandInventoryReadiness",
+    "InventoryError",
+    "ProviderAdmission",
+    "admit_provider_metadata",
+    "converge_active_demand",
+    "parse_provider_metadata",
 ]

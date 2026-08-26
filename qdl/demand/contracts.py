@@ -40,6 +40,23 @@ class DemandFeed(_StringEnum):
     INDEX_PRICE = "INDEX_PRICE"
 
 
+_SAMPLED_FRESHNESS_FEEDS = frozenset(
+    {
+        DemandFeed.LONG_SHORT_RATIO,
+        DemandFeed.TAKER_FLOW,
+        DemandFeed.BASIS,
+    }
+)
+_INTERVAL_CAPABLE_FEEDS = _SAMPLED_FRESHNESS_FEEDS | frozenset(
+    {DemandFeed.OPEN_INTEREST}
+)
+_POINT_FRESHNESS_MAX_MS = 86_400_000
+# A final monthly bar may legitimately remain the newest valid sample for more
+# than one day.  Keep that sampled-data bound explicit without relaxing point
+# feeds such as trade/quote into an unbounded stale-data acceptance window.
+_SAMPLED_FRESHNESS_MAX_MS = 366 * _POINT_FRESHNESS_MAX_MS
+
+
 class DemandState(_StringEnum):
     REQUESTED = "REQUESTED"
     CONNECTING = "CONNECTING"
@@ -335,8 +352,14 @@ class DataRequirement:
         if self.warmup is not None and self.warmup.time_range is not None:
             if self.warmup_limit:
                 raise ValueError("time-range warmup cannot also declare warmup_limit")
-        if self.max_freshness_ms is not None and not 1 <= self.max_freshness_ms <= 86_400_000:
-            raise ValueError("max_freshness_ms is outside bounds")
+        if self.max_freshness_ms is not None:
+            maximum_freshness = (
+                _SAMPLED_FRESHNESS_MAX_MS
+                if self.feed is DemandFeed.BAR or self.feed in _SAMPLED_FRESHNESS_FEEDS
+                else _POINT_FRESHNESS_MAX_MS
+            )
+            if not 1 <= self.max_freshness_ms <= maximum_freshness:
+                raise ValueError("max_freshness_ms is outside bounds for feed semantics")
         if not 0 <= self.priority <= 1_000:
             raise ValueError("priority is outside bounds")
         if not 30 <= self.ttl_seconds <= 3_600:
@@ -348,8 +371,8 @@ class DataRequirement:
         if self.feed is DemandFeed.BAR:
             if not interval:
                 raise ValueError("BAR requirement needs interval")
-        elif interval is not None:
-            raise ValueError("interval is valid only for BAR")
+        elif self.feed not in _INTERVAL_CAPABLE_FEEDS and interval is not None:
+            raise ValueError("interval is valid only for BAR and interval-capable metric requirements")
         if self.require_final_bars and self.feed is not DemandFeed.BAR:
             raise ValueError("require_final_bars is valid only for BAR")
         if self.depth_levels and self.feed not in {

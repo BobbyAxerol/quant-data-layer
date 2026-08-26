@@ -16455,6 +16455,119 @@ previous manifest revision. No route, authority, broker offset, V1 service,
 alpha or order is changed. Stop after evidence/plan journal/one coherent
 commit; Phase 11.2 requires separate approval.
 
+#### Phase 11.1 Execution Journal - 2026-08-26 (`IMPLEMENTED / TESTED LOCALLY / DARK / RUNTIME NO-GO`)
+
+- **Approval and exact scope:** the operator approved Phase 11.1 only. The
+  work is limited to an audited active-demand inventory, canonical manifest
+  compiler, static-binding convergence, admission/topology/readiness planning
+  and their tests. It must reuse `DataRequirement`, `DemandLease`, capability
+  resolution and `DemandTopologyPlanner`; it must not create an alpha-specific
+  registry or a per-symbol runtime shape.
+- **Sources of truth:** inventory inputs are versioned consumer declarations
+  in this repository plus explicitly named Trading System and `execution_alpha`
+  deployment/config files. Logs, Redis state, Docker process lists and guessed
+  symbols are not inventory inputs. Each external source path is recorded with
+  a digest and parsed only for declared venue/market/symbol/universe/feed/
+  interval/warmup/depth/freshness intent.
+- **Invariants and exclusions:** static V1/V2 routes, authority, Kafka
+  offsets/topics, Redis/SQLite/PostgreSQL state, images, services, alpha
+  configuration, broker state and order submission remain untouched. The
+  output is a dark versioned manifest and topology/readiness plan only. No
+  provider write, no order action and no consumer cutover is authorized.
+- **Required exit evidence:** full declared Binance/OKX config-to-manifest
+  compilation; strict source digest/identity/capability/selector/lease tests;
+  deterministic 500-plus-symbol internal-shard proof with fixed role count;
+  unchanged V1 regression; and a bounded read-only provider admission for the
+  complete resolved manifest. A source/config ambiguity fails closed and is
+  recorded rather than inferred.
+- **Rollback and decision boundary:** the resulting manifest stays dark and
+  can be removed/reverted without operational mutation. Any need to modify
+  live adapter subscriptions, route a consumer, recreate a service, use a
+  new image, or change an alpha declaration is Phase 11.2/11.5 work and
+  requires separate approval.
+- **Preflight discovery (source-only, 2026-08-26):** compiling the first
+  declared daily basis-arbitrage BAR exposed a contract-boundary defect:
+  `DataRequirement.max_freshness_ms` limited every feed to 24 hours even
+  though the existing interval contract includes `1d`, `1w` and `1M`. Phase
+  11.1 expands only sampled BAR/sampled-metric freshness validation to a
+  bounded 366-day ceiling; point feeds retain the existing 24-hour ceiling.
+  Provider admission also now carries the exact missing symbol per row rather
+  than the first symbol in a multi-symbol selector. No runtime route or
+  source declaration changed.
+- **Legacy identity rule (source-only, 2026-08-26):** a small set of older
+  Binance portfolio declarations uses `ALPHA_MARKET=crypto` without a market
+  contract. The runtime calls the generic history route with `market=auto`,
+  whose recorded order is USD-M then Spot. The compiler records the two code
+  sources and binds this legacy route to USD-M only for the dark V2 manifest;
+  real provider admission must prove every symbol exists in USD-M. It never
+  inherits the old silent Spot fallback. Any other absent/ambiguous
+  venue/contract identity remains a typed compile failure.
+- **Config-convention discovery (source-only, 2026-08-26):** some canonical
+  alpha families declare their instrument set as `symbols_<interval>` inside
+  a single `config.yaml`, rather than repeat it in compose. The compiler now
+  supports that existing shared convention only when exactly one top-level
+  strategy group owns the requested interval; zero/multiple matches remain
+  explicit failures. This is a source parser addition, not an alpha config
+  rewrite or a per-strategy code path.
+- **Control-plane implementation (source-only, 2026-08-26):** added the
+  versioned `config/v2/active-demand-source-registry.yaml`,
+  `qdl.demand.inventory`, and `scripts/phase111_active_demand_inventory.py`.
+  They compile declared alpha/Trading System Binance/OKX demand into a hashed
+  manifest, use real provider metadata only for bounded read-only admission,
+  and make missing instrument/capability outcomes owner-visible. The dark
+  convergence path reuses `DataRequirement`, `DemandLeaseRegistry`,
+  `CapabilityRegistry`, and `DemandTopologyPlanner`: a physical
+  venue/market/feed/interval/symbol slice is deduplicated across consumers,
+  priority and per-feed/venue budgets are enforced, and no per-symbol image,
+  container, or runtime role is created. Continuous dated-contract selectors
+  are preserved through their resolved native contract identity.
+- **Deterministic evidence (source-only, 2026-08-26):** isolated
+  network-disabled `tests.test_phase111_active_demand_inventory` passed
+  **10/10**, covering source ambiguity, `symbols_<interval>`, explicit and
+  continuous selector admission, exact missing-symbol failure, capability
+  negative, budget/priority fail-closed readiness, lease TTL and a
+  **1,025-symbol** topology proof. The resulting topology uses six bounded
+  shards but one logical role, which is above the current active physical-slice
+  count and proves demand growth does not produce per-symbol infrastructure.
+  The wider isolated V1/V2 compatibility command passed **81 tests** with
+  **3 explicitly skipped** isolated-Redis tests because no disposable
+  `QDL_PHASE2_REDIS_URL` was provisioned; V1 OpenAPI/SDK/Redis golden tests
+  passed. Both commands used read-only source and tmpfs-only logs.
+- **Static manifest evidence (source-only, 2026-08-26):** mounting the current
+  `execution_alpha` and Trading System configuration read-only compiled
+  **83 requirements** from **50 source documents**, with **10 explicit
+  exclusions**, input digest
+  `e9bd5c29e0a8b561cc67ab7383c58c82f64ddca7f53cc93a6c6d0954284265b9`, and
+  manifest digest
+  `c331a1dac94d84a69c88f65667e43fea34f765168a15de12cac9a895d87452a2`.
+  No provider request, runtime connection, service, cache, consumer, alpha,
+  or order path changed during this compile.
+- **Bounded real-provider admission (read-only, 2026-08-26):** exactly four
+  public instrument-metadata requests (Binance Spot/USD-M and OKX Spot/Swap;
+  maximum three retries each) produced **1,633** canonical admission rows:
+  **1,564 `ADMITTED`** and **69 `MISSING_INSTRUMENT`**. The full per-row,
+  digest-only evidence is
+  `upgrade/evidence/phase111-active-demand-provider-admission.json`; raw
+  provider bodies were not persisted. The dark convergence plan selects all
+  **658** admitted physical slices inside their budgets, maps them to **656**
+  realtime subscriptions plus two reference/data-provisioning slices, **15**
+  bounded connection shards, and exactly **four** logical venue/market roles.
+  All admitted rows are `WARMING`/`DARK_PLAN_NOT_APPLIED`, all failed rows are
+  `UNSUPPORTED`, and **zero** rows are execution-eligible. Evidence:
+  `upgrade/evidence/phase111-active-demand-convergence.json` and
+  `upgrade/evidence/PHASE111_ACTIVE_DEMAND_INVENTORY_REPORT.md`.
+- **Exit assessment / decision gate (2026-08-26):** the source/control-plane
+  scope is **IMPLEMENTED AND TESTED LOCALLY**, but it remains dark and is **not
+  runtime-applied or production-authoritative**. The 69 failures come from
+  declared `deep_momentum_prod_yearly_monthly_1d`,
+  `regressionportfolioA001_1d`, and `rsiboundportfolioA001_1d` Binance USD-M
+  universe members absent from authentic exchange metadata. They remain typed
+  owner-visible failures; Phase 11.1 does not delete, reassign to Spot, or
+  replace them with a reference symbol. The owner must publish an approved
+  universe revision or disable those slices before a Phase 11.2 runtime
+  handoff can be requested. No runtime action, cleanup, or rollback is needed
+  because this phase created only committed source/evidence files.
+
 ### 22.7 Phase 11.2 - Universal Realtime Trade, BBO And Final-Bar Plane
 
 **Goal:** Make Rust-primary V2 realtime acquisition serve each approved active

@@ -324,12 +324,12 @@ class UniversalDemandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             registry = self._registry(Path(directory))
             selector = UniverseSelector(
-                selector_id="binance-btc",
+                selector_id="okx-swap-btc",
                 kind=UniverseSelectorKind.EXPLICIT,
-                venue="BINANCE",
-                market="USDM",
+                venue="OKX",
+                market="SWAP",
                 product_type="PERPETUAL",
-                native_symbols=("BTCUSDT",),
+                native_symbols=("BTC-USDT-SWAP",),
             )
             requirement = self._requirement(
                 feed=DemandFeed.LONG_SHORT_RATIO,
