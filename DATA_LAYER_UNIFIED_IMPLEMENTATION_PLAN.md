@@ -15366,6 +15366,72 @@ or broad image/container cleanup.
      source commit, then exactly one replacement immutable Python image and one
      replacement sealed C1 packet; `d04ae7...3dba6d` is retained as rollback.
 
+   **C1 replacement runtime repair and real-provider acceptance (`PASS`,
+   2026-08-26):** the scoped repair was committed as `3ad1244`
+   (`fix(phase105): fence stable bar generations`). It advances the durable
+   `qdl.stable-bar-edge-state.v3` generation before any provider publication,
+   derives the Binance/OKX REST session identities from that generation, and
+   preserves canonical event identity, authority, topics and routes. The new
+   immutable Python image is
+   `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`
+   (`qdl-v2-python:phase105c-r10-3ad1244`); its source-isolated suite passed
+   **60/60** (`46/46` BAR/history/C1/deployment plus `14/14` handoff/release)
+   with no network and a read-only root filesystem.
+
+   - The sealed replacement packet is
+     `/home/bobby/.local/state/qdl-v2/phase105c-final-bar-r10-3ad1244-20260826T072626Z`,
+     SHA-256
+     `3b0716f0ad83df65acf2207a521036770757db2a0fee31e1ef8b40cb84b29f11`.
+     It preserved the active `RUST_PRIMARY` authority bytes/revision `1`,
+     retained the prior checkpoint as rollback evidence, and supplied a new
+     scoped checkpoint only. The approved runtime command recreated exactly
+     `ingestor_okx_swap`, `binance_bar_edge`, `query_v2_1`, `query_v2_2`,
+     `stream_v2_active` and `stream_v2_passive` with `--no-build --no-deps
+     --force-recreate`. Rust cores, Kafka, Redis, SQLite, V1, Trading System,
+     alpha services, authority, consumer routes and Kafka offsets were not
+     changed.
+   - The real provider bootstrap ACKed exactly `1000` closed `BAR 1m` rows for
+     each Binance USD-M/OKX Swap BTC/ETH binding (`4000` rows total), then
+     completed two subsequent four-binding closed-BAR cycles. The bounded,
+     read-only query-spool probe ran twice against both replicas. On each run,
+     every binding held exactly `1000` final/revised `1m` BARs, with zero
+     market-time gaps and byte-identical ordered window fingerprints between
+     replicas. The later probe advanced all four windows together to
+     `last_open_ms=1787729760000`; the previously missing `OKX
+     BTC-USDT-SWAP` `18:15 UTC` row is now a single canonical final event.
+     This proves the authentic provider -> raw Kafka -> Rust core -> projector
+     -> shared canonical cache path and its recurring handoff; no synthetic
+     BAR, direct SQLite mutation, offset reset or cache flush was used.
+   - The scoped checkpoint is
+     `qdl.stable-bar-edge-state.v3`, with issued
+     `connection_generation=1787729354615942950` and all four binding
+     watermarks persisted at `1787729760000`. The active query replicas report
+     `READY`, `RUST_PRIMARY`, revision `phase105c-final-bar-r10`. Stream lease
+     ownership is correctly held by `stable-stream-passive` at epoch `17`; the
+     other stream reports `STANDBY`, which is expected HA behavior rather than
+     a failure. Projectors logged bounded reconnect attempts while the two
+     gateways were recreated together, then had no warning/error after
+     `07:30 UTC`; the advancing canonical windows prove recovery completed.
+   - All three Rust cores retained `restart=0`, `OOMKilled=false` and their
+     original start times. The active core reported `scope_quarantines=0`; no
+     `STALE_GENERATION` record occurred for the four C1 BAR bindings. Its
+     global quarantine counter advanced once concurrently (`917 -> 918`) from
+     the broad shared raw workload. That record is not attributed to a C1 BAR
+     because all four bounded final-BAR targets canonicalized, yet it is
+     retained as observable global telemetry rather than hidden or deleted.
+     One-sample resource evidence stayed bounded: edge `48.71 MiB`, queries
+     `66.67/62.54 MiB`, streams `64.05/66.11 MiB`, active core `37.12 MiB`,
+     passive cores `164.5/158.1 MiB`, Kafka `469.7 MiB`, Redis `3.797 MiB`;
+     host free disk was `213 GiB`.
+   - Cleanup: no durable state was deleted. The only disposable artifact was
+     the exact read-only host probe `/tmp/qdl_phase105c_continuity_probe.py`,
+     removed after evidence capture. Rollback remains a six-role recreate with
+     the preserved pre-C1 environment/checkpoint and image
+     `sha256:d04ae7ba324db6da93d43e1759fb9e114a3ece7e0a86594385f3f074e83dba6d`.
+     **C1 is closed.** C2 consumer acceptance remains a separately approved,
+     no-order boundary; C1 did not exercise an external consumer, modify an
+     alpha, submit an order, or certify a public release.
+
 2. **10.5-B/C2 - Real no-order consumer acceptance and bounded handoff**
    - **Goal:** prove the repaired V2 plane is consumed correctly by the four
      governed paper classes: Monitoring, Trading System paper market-data
