@@ -16269,3 +16269,422 @@ provider-cost or business-semantics decision returns for approval.
 route, V2 consumer route, DNSE service, source code, image, container, Kafka
 state, Redis state, database row or alpha configuration has changed because of
 it.
+
+## 22. Phase 11 - Universal Binance/OKX Crypto Demand Completion
+
+**Status:** `PLANNED / REQUIRES EXPLICIT PHASE-BY-PHASE APPROVAL`
+
+### 22.1 Why This Program Exists
+
+Phase 10.5-D/B3 certified a deliberately frozen, bounded Binance USD-M and
+OKX Swap paper manifest. Its BTC/ETH observations are valid evidence for that
+manifest only. They do **not** certify all Binance/OKX instruments, all native
+intervals, reference metrics, order books, or every existing alpha.
+
+Phase 11 is the compact completion program for the original product objective:
+one provider-neutral V2 data plane, with Rust as its common realtime core,
+that serves every **approved active crypto demand** from Trading System and
+alpha consumers across Binance and OKX. It retains all correct Phase 10 work:
+canonical identity, decimal/unit rules, cursor/replay, V1 compatibility,
+minimal writer fencing, real-provider provenance and fail-closed quality.
+It does not reopen or reinterpret the frozen Phase 10.5 evidence.
+
+`All demand` has a precise production meaning:
+
+- every instrument resolved by an approved versioned consumer/universe
+  manifest, including runtime expansion and expiry/continuous-contract rules;
+- every requested provider-supported feed and interval in that demand;
+- every declared alpha/Trading System consumer class, not a BTC proxy;
+- explicit typed rejection for an unavailable provider capability.
+
+It never means blindly subscribing to every exchange listing. Broad exchange
+telemetry remains a separate, budgeted observability use case; execution and
+alpha acquisition is demand-driven.
+
+### 22.2 Final Product Boundary
+
+At Phase 11 exit, one logical runtime role per provider/market capability
+serves a dynamically changing universe. It may use measured internal
+connection shards and ordinary high-availability replicas, but it never
+creates a Compose service, container, image, topic or cache namespace per
+symbol, interval, alpha or retry.
+
+```text
+versioned consumer/universe manifest
+  -> DataRequirement resolver + demand lease registry
+  -> shared Binance / OKX acquisition sessions
+       dynamic multiplexed subscriptions and bounded REST batch planners
+  -> Rust canonical core
+       identity, decimals, ordering, dedup, watermark, gap/backpressure
+  -> durable canonical log + bounded projections
+  -> Python V2 query / stream / SDK / V1 compatibility edge
+  -> Trading System and alpha consumers, V2_PRIMARY by manifest
+       -> observed, route-specific V1 fallback only when equivalent
+```
+
+The Data Layer provides market and reference data. It does not make execution
+decisions, place orders, emulate OCO, alter alpha signal/sizing logic, or
+become an order authority. Its output must instead let Trading System and
+alpha runtime make those decisions from correctly identified, final, fresh and
+traceable data.
+
+### 22.3 Non-Negotiable Invariants
+
+1. **One common core, provider-neutral adapters.** Rust owns canonical
+   realtime validation/normalization, deterministic event identity, sequence,
+   deduplication, watermark, gap state and bounded backpressure. Python owns
+   V2 API/SDK, control-plane/history planning, compatibility projection and
+   provider SDK edges where needed.
+2. **No hard-coded reference universe.** BTC/ETH are allowed as smoke symbols,
+   never as a production routing condition. The active universe is resolved
+   only from a hashed manifest/catalog revision.
+3. **Finality and source truth are explicit.** Native final bars remain
+   native; derived bars use only complete final constituents and carry lineage.
+   Missing, stale, partial, unsupported or provider-native-unmapped values
+   never become `0`, `OK` or execution-grade data.
+4. **Warmup and live use one identity.** Batch/history, latest snapshots,
+   trade/BBO/book streams and closed-bar handoff use the same canonical
+   instrument, interval, source policy and quality contract.
+5. **V2 primary is manifest-routed.** A consumer can move only through a
+   reviewed versioned manifest with an explicit V1 fallback revision. A
+   `BLOCKED` route never silently falls back.
+6. **One minimal authority boundary.** Retain one scoped writer/leader lease,
+   idempotent event identity, durable watermark and rollback revision. Normal
+   reconnect, demand refresh or retry does not create a new image, bundle,
+   authority transition or runtime topology.
+7. **Real-provider evidence is mandatory.** Synthetic frames are permitted
+   only for deterministic unit/fault tests. A production claim records actual
+   provider scope, manifest hash, source/contract/config revisions, exact
+   pass/fail/skip counts and bounded metrics; a health green alone never
+   closes a gate.
+8. **DNSE/VN is independent.** Binance/OKX Phase 11 completion does not wait
+   for DNSE. DNSE remains V1-primary or blocked until an authenticated
+   in-session certificate passes under the same contracts.
+
+### 22.4 Program-Wide Test, Evidence And Cleanup Rules
+
+Every Phase 11 subphase records before implementation: approved scope,
+manifest/catalog/capability revisions, exact source/contract/image revisions,
+test namespaces, provider endpoints, expected business behavior, performance
+budget, rollback and exclusions. It records after each coherent slice:
+
+```text
+cases_run / cases_passed / cases_failed / cases_skipped
+real-provider instrument + feed + interval coverage
+identity / decimal / unit / timezone / finality / lineage results
+duplicates / gaps / stale events / reconnects / resyncs / replay continuity
+p50 / p95 latency and freshness, queue / consumer lag, CPU / RAM / disk / I/O
+runtime mutations, cleanup resource names and remaining decision gates
+```
+
+Required tests are selected by capability, not merely code path:
+
+| Class | Required acceptance examples |
+|---|---|
+| Identity | venue/market/symbol aliases, dated/continuous contracts, catalog revision drift, no cross-symbol or cross-venue mix |
+| Numeric/time | decimal coefficient/scale, tick/step metadata, provider unit, UTC/native calendar, closed-bar boundary and revisions |
+| Reliability | disconnect/reconnect, duplicate/out-of-order event, rate-limit/429, 5xx, timeout, cancellation, provider partial response, stale/gap/resync |
+| Consumer | SDK warmup -> stream handoff, signed cursor/replay, consumer restart, V2-primary, allowed V1 fallback -> return-to-V2, blocked fallback |
+| Capacity | expanding active universe, internal shard rebalance, burst feed, bounded queues/cache, CPU/RAM/disk/lag headroom |
+| Domain | multi-symbol alpha input parity, final-bar no-one-bar-delay, grid/arb book identity, reference metric missing/value semantics |
+
+Tests use isolated containers, consumer groups, topics/prefixes and compact
+evidence namespaces unless the operator separately approves a named rolling
+runtime packet. Disposable test resources are removed by exact namespace;
+V1, production Kafka offsets, shared Redis/SQLite, alpha/account/order state
+and provider data are never broadly deleted as a test shortcut.
+
+### 22.5 Governing Guides
+
+- [Fund-grade architecture guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md): provider-neutral contracts, demand management, history,
+  quality, durability, recovery and capacity sections.
+- [OKX V5 market-data guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md): native channels, instrument identity, bar calendars, rate limits and
+  subscription semantics.
+- [Data Layer service access guide](DATA_LAYER_SERVICE_ACCESS_GUIDE.md): stable V1 compatibility boundaries during migration.
+- Phase 10 Sections 21.1-21.9 above: existing universal contract, warmup,
+  realtime, reference/L2 and consumer-routing foundations. Phase 11 extends
+  their real-demand coverage; it does not introduce a parallel architecture.
+
+### 22.6 Phase 11.1 - Active-Demand Inventory And Runtime Convergence
+
+**Goal:** Convert declared Trading System and alpha crypto requirements into
+one audited, dynamic V2 demand manifest and prove the runtime topology has no
+symbol/interval/strategy-specific service shape.
+
+**Implementation scope:**
+
+1. Inventory every active or approved-to-run Binance/OKX consumer from
+   Trading System and alpha configuration. Resolve explicit symbols, approved
+   JSON/segment universes, perpetual/spot/swap/dated/continuous selectors,
+   feed classes, intervals, warmup size, depth, freshness and execution intent.
+2. Produce one versioned active-demand manifest with a canonical manifest hash,
+   resolved instrument IDs, capability result and owner. Invalid, missing or
+   unsupported entries are typed failures with an owner-visible reason, never
+   silently dropped or replaced with BTC/ETH.
+3. Converge existing static bindings onto `DataRequirement`/`DemandLease` and
+   one per-venue planner. A demand update changes subscription membership and
+   internal shard assignment only. It cannot create a container/image/release
+   per symbol, interval or alpha.
+4. Define bounded admission budgets by venue/feed and priority. Required
+   execution/alpha demand wins over optional broad telemetry; the latter must
+   not degrade an active demanded slice.
+5. Add demanded-slice health that reports every resolved requirement as
+   `warming`, `live`, `degraded`, `market_closed`, `unsupported` or `expired`.
+   Aggregate health cannot hide a degraded execution-grade slice.
+
+**Required tests:**
+
+- full config-to-manifest compile for all active Binance/OKX crypto consumers;
+- selector/alias/expiry/continuous resolution, duplicate lease, priority,
+  TTL expiry/reactivation, empty universe, catalog revision drift and
+  unsupported capability negative tests;
+- deterministic dynamic subscription/reconnect/shard-rebalance tests at a
+  universe count above the current active count, proving the service/image
+  count remains constant;
+- bounded, read-only provider admission across **every resolved active
+  Binance/OKX requirement**, recording pass/fail per instrument/feed/interval;
+- V1 OpenAPI/SDK/Redis golden regression with no public schema change.
+
+**Exit gate:** one signed/hashed active-demand manifest resolves every approved
+crypto requirement to a truthful capability and canonical identity; a runtime
+plan can add/remove demand without topology proliferation; all failed demand
+entries are explicit and no hard-coded reference symbol remains in routing.
+
+**Rollback and stop condition:** leave the manifest dark or restore the
+previous manifest revision. No route, authority, broker offset, V1 service,
+alpha or order is changed. Stop after evidence/plan journal/one coherent
+commit; Phase 11.2 requires separate approval.
+
+### 22.7 Phase 11.2 - Universal Realtime Trade, BBO And Final-Bar Plane
+
+**Goal:** Make Rust-primary V2 realtime acquisition serve each approved active
+Binance and OKX crypto demand for `TRADE`, `BBO/QUOTE` and final `BAR`, using
+dynamic multiplexed sessions rather than fixed BTC/ETH bindings.
+
+**Implementation scope:**
+
+1. Generalize Binance and OKX adapters to subscribe/unsubscribe every resolved
+   demand through shared provider sessions, with measured internal shards,
+   bounded reconnect and per-session sequence/resync state.
+2. Normalize trade and BBO in Rust with exact native timestamp, decimal/unit,
+   instrument and source-session lineage. Preserve provider differences rather
+   than inventing unavailable fields.
+3. Serve native final bars where a venue provides them. For supported
+   provider-native intervals, use a bounded REST close confirmation/recovery
+   path when websocket bar delivery is delayed; for derived intervals, resample
+   only complete final canonical bars with constituent lineage.
+4. Make stale/gap/finality state visible through V2 query/stream and consumer
+   readiness. A client gets a typed unavailable/degraded response rather than
+   the previous close mislabeled as a current final bar.
+5. Keep spot/swap/perpetual/dated products capability-driven. A product class
+   becomes active only if its catalog and provider adapter test pass; the core
+   does not assume Binance USD-M semantics for OKX or Spot.
+
+**Required tests:**
+
+- real-provider capture for all active manifest instruments and their required
+  trade/BBO/bar intervals, including at least one non-BTC/non-ETH instrument
+  in every active universe where configured;
+- final-bar exactness: close boundary, no early bar, no one-bar delay, revision
+  handling, native versus derived lineage and warmup-to-stream FIFO handoff;
+- multiplexed multi-symbol subscription, selective unsubscribe, reconnect,
+  provider session rollover, duplicate/out-of-order/stale/gap/resync and
+  fair-shard tests;
+- provider 429/5xx/timeout/retry/backoff tests with bounded connection and
+  request budgets; no tick-level log flood under normal operation;
+- CPU/RAM/queue/lag measurements at active-universe load plus a bounded burst
+  above it, with no unexplained loss, duplicate or cross-mix;
+- V2 SDK/stream replay and V1 compatibility regression for unchanged legacy
+  consumers.
+
+**Exit gate:** all active Binance/OKX trade, BBO and requested final-bar
+requirements are served through shared V2/Rust realtime roles or are explicitly
+rejected by capability. Every observed real-provider demand has freshness,
+gap and source-lineage evidence. This is still a data-plane gate, not an alpha
+or Trading System cutover.
+
+**Rollback and stop condition:** retain existing static V2/V1 reader routes;
+disable only the new dark demand revision if needed. No broad provider
+unsubscribe, no Kafka offset reset, no Redis/SQLite flush and no consumer
+route change. Stop after evidence/plan journal/one coherent commit.
+
+### 22.8 Phase 11.3 - Universal Warmup, Batch History And Reference Data
+
+**Goal:** Give every strategy a fast, correct V2 batch/history surface for its
+chosen universe and a truthful reference-data surface for portfolio, basis-arb
+and risk-aware alpha logic.
+
+**Implementation scope:**
+
+1. Complete V2 batch warmup/history for arbitrary resolved symbol lists and
+   every provider-supported native interval. Use bounded chunking, provider
+   budgets, singleflight, deadlines, retry/backoff and response validation;
+   no serial per-symbol REST loop or alpha-specific wrapper.
+2. Support exact time windows and FIFO `warmup -> final closed bar -> stream`
+   handoff. Keep 365-day price/basis and funding requirements feasible through
+   bounded pagination/chunking; keep shorter metric windows separate.
+3. Expose capability-governed reference products: funding, open interest,
+   long/short ratios, taker flow, mark/index, contract metadata, dated and
+   continuous contract/basis. Store/cache only bounded, provenance-tagged
+   data needed for the request; raw retention is not a hidden prerequisite.
+4. Preserve provider differences. For example, Binance-only long/short/taker
+   measures are not fabricated for OKX; unsupported/missing is returned with a
+   typed reason and timestamp, never numeric zero.
+5. Reuse the common V2 query/SDK contract. No direct SSH/data-provider escape
+   hatch is permitted for a production alpha once this capability is admitted.
+
+**Required tests:**
+
+- real-provider batch admission covering every active-demand
+  instrument/interval and representative large multi-symbol batches;
+- 365-day price/basis, 8-hour funding and 30-day metric pagination/chunking,
+  rate-limit, retry, cancellation, partial failure and cache-expiry tests;
+- exact decimal/unit/timezone/lineage/missing-value tests for every reference
+  product, dated contract rollover and continuous-basis construction;
+- duplicate concurrent request singleflight, fairness across consumers,
+  bounded concurrency and resource/no-unbounded-cache tests;
+- parity test that an alpha warmup dataframe followed by one final bar matches
+  the same provider window used for its approved research/backtest contract;
+- V1 fallback/compatibility tests where equivalent, otherwise explicit
+  `BLOCKED` behavior.
+
+**Exit gate:** a multi-symbol alpha can request all required bars and declared
+reference data through one V2 SDK/batch contract with provider-authentic,
+final, complete, typed results; partial/stale/missing source cases fail closed
+and are visible to the caller.
+
+**Rollback and stop condition:** V1 historical endpoints remain unchanged;
+remove the new manifest capability or revert the source commit. No alpha
+configuration, provider storage, Kafka/Redis/SQLite shared state or order data
+is mutated. Stop after evidence/plan journal/one coherent commit.
+
+### 22.9 Phase 11.4 - Rust L2 Book And Execution-Grade Market Data
+
+**Goal:** Supply demand-driven, provider-neutral L2 market data to strategies
+that need microstructure, limit-order pricing, reactive grids or basis/arb
+without turning the Data Layer into an execution engine.
+
+**Implementation scope:**
+
+1. Promote the existing Rust generic book state machine only after Binance and
+   OKX adapter semantics are mapped exactly: snapshot/delta, source sequence,
+   duplicate/out-of-order policy, checksum when available, gap, resync,
+   generation reset and requested-depth truncation.
+2. Demand-plan book subscriptions by active consumer/instrument/depth/TTL. A
+   resting-order or reactive alpha requirement may retain a book demand; idle
+   or unrelated universe symbols do not consume L2 resources.
+3. Expose snapshot, delta, readiness, sequence/generation, freshness/gap and
+   replay semantics through V2 query/stream. An unsynchronized book cannot be
+   served as execution-grade depth.
+4. Keep reference metrics and L2 separate in quality/admission: a delayed OI
+   observation cannot block a healthy book, and a book gap cannot be hidden by
+   a latest quote.
+
+**Required tests:**
+
+- deterministic Binance/OKX snapshot-delta oracle tests for duplicate,
+  out-of-order, missing sequence, checksum failure, reconnect/resnapshot,
+  generation reset, depth truncation and cross-symbol isolation;
+- bounded real L2 capture/replay for each active book-demand venue/product,
+  with only payload digests/counts/timestamps retained in evidence;
+- multi-symbol book fan-out and slow-consumer tests proving one book cannot
+  block trade/BBO/final-bar peers;
+- grid/reactive/basis consumer read-only integration proving exact book
+  identity/freshness reaches the SDK and no order action occurs;
+- resource/latency test under simultaneous depth, trade and bar demand, with
+  bounded memory, queue, lag, reconnect and resync measurements.
+
+**Exit gate:** each approved Binance/OKX L2 demand either has a continuously
+validated snapshot-delta state and V2 execution-grade readiness, or is
+explicitly blocked. No provider-specific book semantics leak into alpha code.
+
+**Rollback and stop condition:** remove only the affected L2 capability/demand
+revision and retain quote/trade/bar paths. No order group, broker, alpha state,
+Kafka offset or V1 route changes. Stop after evidence/plan journal/one coherent
+commit.
+
+### 22.10 Phase 11.5 - Full Consumer Cutover And Universal V2 Release
+
+**Goal:** Make V2/Rust the primary market-data route for the complete approved
+Binance/OKX active-demand manifest while retaining a tested, observable V1
+rollback path and leaving DNSE/VN independent.
+
+**Implementation scope:**
+
+1. Freeze a new release manifest containing every admitted demand from Phases
+   11.1-11.4, each consumer's V2 route, fallback eligibility, freshness/gap
+   policy, capability revision and rollback manifest revision.
+2. Migrate in bounded consumer classes, not ad-hoc symbols: monitoring;
+   Trading System market-data adapter; single-symbol alpha; portfolio/multi-
+   symbol alpha; grid/reactive/bracket price-validation alpha; basis/arb.
+   A class advances only after its own data-only paper acceptance passes.
+3. Run complete no-order consumer cycles: warmup, final-bar handoff, stream,
+   signed cursor replay, reconnect, controlled V2 -> V1 fallback -> V2 return
+   where equivalent, and `BLOCKED` verification where it is not. Alpha signal,
+   sizing, risk and order paths must remain untouched.
+4. Issue one immutable release candidate per committed source revision, not per
+   retry or symbol. Replicas use the same image. Retain V1 and one immutable V2
+   rollback image; clean only named obsolete test images/containers/namespaces
+   after the release evidence passes.
+5. Promote by a reviewed manifest/config revision and a bounded rolling packet
+   naming only affected services, ports, identities, consumer groups and
+   rollback. Do not use a global environment switch or broad restart.
+
+**Required tests:**
+
+- full active-manifest real-provider acceptance for trade/BBO/bars, batch
+  warmup/history/reference data and L2 where declared;
+- Trading System paper adapter plus representative alpha classes listed above,
+  including multi-symbol input parity against their approved data contract;
+- V2-primary, forced compatible V1 fallback and return-to-V2 for every allowed
+  route; assert zero hidden V1 read for `BLOCKED` routes;
+- stream replay/reconnect, process restart, cache/projector rebuild, demand
+  expansion/release and rollback rehearsal without duplicate/gap/stale
+  execution-grade output;
+- bounded real paper-observation window with freshness, p50/p95 latency,
+  gap/reconnect count, durable/projector/consumer lag, CPU/RAM/disk/I/O and
+  provider rate budget; no unexplained monotonic resource growth;
+- V1 public OpenAPI/SDK/Redis compatibility suite and exact cleanup proof for
+  test namespaces. No test submits an order or changes alpha logic.
+
+**Exit gate:**
+
+- every approved active Binance/OKX crypto demand is V2/Rust-primary through
+  one versioned manifest, with real-provider evidence for its actual
+  instrument/feed/interval;
+- every consumer class has passed the declared data-only paper cycle;
+- V1 fallback is proven only for semantically equivalent routes and visibly
+  blocked elsewhere;
+- no unexplained identity, decimal, unit, timestamp, finality, gap, duplicate,
+  replay, consumer-behavior or resource mismatch remains;
+- the release notes state the exact capability matrix honestly. DNSE/VN is
+  listed as an independent V1-primary/onboarding status, not silently claimed
+  by this release.
+
+**Rollback:** atomically restore the prior per-consumer manifest revision,
+fence only the affected V2 route and keep V1 plus one immutable V2 image.
+Preserve cursor/watermark/evidence for diagnosis. Do not delete durable data,
+reset offsets, flush Redis/SQLite, alter Trading System order state or restart
+unrelated consumers.
+
+### 22.11 Phase 11 Completion Decision
+
+Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the
+truthful release statement:
+
+```text
+Data Layer V2/Rust primary for the approved active Binance/OKX crypto demand
+manifest, with versioned V1 rollback and independently governed future venue
+onboarding.
+```
+
+It does not claim universal exchange-listing coverage, DNSE/VN V2 production
+certification, Deribit/options activation, or a provider capability that is
+absent from the approved manifest. Those are separately versioned demand and
+capability expansions, using this same architecture rather than a redesign.
+
+**Decision boundary:** this is a plan only. No source/runtime/topology,
+authority, route, image, Kafka, Redis, SQLite, provider, Trading System, alpha
+or order state changes are authorized by adding it. Each Phase 11 subphase
+requires explicit user approval, then a plan-journal update before code or
+runtime work begins.
