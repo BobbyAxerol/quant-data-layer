@@ -200,7 +200,16 @@ class Phase105HandoffTests(unittest.TestCase):
                 "QDL_STABLE_AUTHORITY_REVISION": "1",
                 "QDL_CONFIG_REVISION": "phase105c-final-bar-r10",
             }
-            commitment = active_query_environment_commitment(base, current, runtime)
+            expected = prepare_handoff_environment(
+                base,
+                extension_dir=self._extension(root / "expected-extension"),
+                python_image="sha256:" + "e" * 64,
+                runtime_binding=runtime,
+            )
+            current["QDL_DATA_JWT_KEYS_JSON"] = expected["QDL_STABLE_JWT_KEYS_JSON"]
+            commitment = active_query_environment_commitment(
+                base, current, runtime, json.loads(expected["QDL_STABLE_JWT_KEYS_JSON"])
+            )
             binding = {
                 "schema": "qdl.phase105.active-query-env-commitment.v1",
                 "status": "PASS",
@@ -271,7 +280,16 @@ class Phase105HandoffTests(unittest.TestCase):
                 "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
                 "QDL_STABLE_AUTHORITY_REVISION": "1",
             }
-            commitment = active_query_environment_commitment(base, current, runtime)
+            expected = prepare_handoff_environment(
+                base,
+                extension_dir=self._extension(Path(raw) / "expected-extension"),
+                python_image="sha256:" + "e" * 64,
+                runtime_binding=runtime,
+            )
+            current["QDL_DATA_JWT_KEYS_JSON"] = expected["QDL_STABLE_JWT_KEYS_JSON"]
+            commitment = active_query_environment_commitment(
+                base, current, runtime, json.loads(expected["QDL_STABLE_JWT_KEYS_JSON"])
+            )
             raw_commitment = {
                 "schema": "qdl.phase105.active-query-env-commitment.v1",
                 "status": "PASS",
@@ -281,7 +299,7 @@ class Phase105HandoffTests(unittest.TestCase):
                 **commitment,
             }
             verified = validate_active_query_environment_commitment(
-                base, runtime, raw_commitment
+                base, runtime, raw_commitment, json.loads(expected["QDL_STABLE_JWT_KEYS_JSON"])
             )
             values = prepare_handoff_environment(
                 base,
@@ -300,9 +318,17 @@ class Phase105HandoffTests(unittest.TestCase):
         })
         self.assertNotIn("unchanged-secret", json.dumps(overlay, sort_keys=True))
         self.assertEqual(set(verified["verified_keys"]), set(current))
+        current["QDL_DATA_JWT_KEYS_JSON"] = base["QDL_STABLE_JWT_KEYS_JSON"]
+        with self.assertRaisesRegex(ValueError, "JWT keyring mismatches public overlay"):
+            active_query_environment_commitment(
+                base, current, runtime, json.loads(expected["QDL_STABLE_JWT_KEYS_JSON"])
+            )
+        current["QDL_DATA_JWT_KEYS_JSON"] = expected["QDL_STABLE_JWT_KEYS_JSON"]
         current["QDL_STABLE_INTERNAL_INGEST_SECRET"] = "mismatch"
         with self.assertRaisesRegex(ValueError, "mismatches controlled reference"):
-            active_query_environment_commitment(base, current, runtime)
+            active_query_environment_commitment(
+                base, current, runtime, json.loads(expected["QDL_STABLE_JWT_KEYS_JSON"])
+            )
 
     def test_environment_rejects_unapproved_existing_key(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

@@ -63,20 +63,23 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(active_packet, dict):
         raise SystemExit("Phase 10.5-C active runtime packet must be an object")
     runtime_binding = active_runtime_binding(base_environment, active_packet)
-    try:
-        query_commitment_raw = json.loads(
-            args.active_query_commitment.read_text(encoding="utf-8")
-        )
-    except (OSError, json.JSONDecodeError) as error:
-        raise SystemExit("Phase 10.5-C active query commitment cannot be read") from error
-    query_commitment = validate_active_query_environment_commitment(
-        base_environment, runtime_binding, query_commitment_raw
-    )
     environment = prepare_handoff_environment(
         base_environment,
         extension_dir=args.extension_dir,
         python_image=args.python_image,
         runtime_binding=runtime_binding,
+    )
+    try:
+        query_commitment_raw = json.loads(
+            args.active_query_commitment.read_text(encoding="utf-8")
+        )
+        expected_jwt_keyring = json.loads(environment["QDL_STABLE_JWT_KEYS_JSON"])
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit("Phase 10.5-C active query commitment cannot be read") from error
+    if not isinstance(expected_jwt_keyring, dict):
+        raise SystemExit("Phase 10.5-C public JWT keyring is invalid")
+    query_commitment = validate_active_query_environment_commitment(
+        base_environment, runtime_binding, query_commitment_raw, expected_jwt_keyring
     )
     overlay = public_handoff_overlay(environment)
     try:

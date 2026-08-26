@@ -20,6 +20,7 @@ from qdl.certification.phase105_handoff import (
     active_query_environment_commitment,
     active_runtime_binding,
     load_dotenv,
+    prepare_handoff_environment,
 )
 
 
@@ -59,6 +60,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-env", type=Path, required=True)
     parser.add_argument("--active-runtime-packet", type=Path, required=True)
+    parser.add_argument("--extension-dir", type=Path, required=True)
+    parser.add_argument("--python-image", required=True)
     parser.add_argument("--container", default="qdl_v2_stable_candidate-query_v2_1-1")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--apply", action="store_true")
@@ -74,12 +77,23 @@ def main() -> int:
         if not isinstance(packet, dict):
             raise ValueError("Phase 10.5-C active runtime packet must be an object")
         runtime = active_runtime_binding(base, packet)
+        expected_environment = prepare_handoff_environment(
+            base,
+            extension_dir=args.extension_dir,
+            python_image=args.python_image,
+            runtime_binding=runtime,
+        )
+        expected_jwt_keyring = json.loads(expected_environment["QDL_STABLE_JWT_KEYS_JSON"])
+        if not isinstance(expected_jwt_keyring, dict):
+            raise ValueError("Phase 10.5-C expected public JWT keyring is invalid")
         record = _docker_record(args.container)
         image_id = record.get("Image")
         container_id = record.get("Id")
         if not isinstance(image_id, str) or not isinstance(container_id, str) or not container_id:
             raise ValueError("Phase 10.5-C active query identity is invalid")
-        commitment = active_query_environment_commitment(base, _environment(record), runtime)
+        commitment = active_query_environment_commitment(
+            base, _environment(record), runtime, expected_jwt_keyring
+        )
     except (OSError, subprocess.CalledProcessError, ValueError, json.JSONDecodeError) as error:
         raise SystemExit(str(error)) from error
     result = {

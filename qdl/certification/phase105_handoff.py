@@ -327,6 +327,7 @@ def active_query_environment_commitment(
     base_environment: Mapping[str, str],
     query_environment: Mapping[str, str],
     runtime_binding: Mapping[str, object],
+    expected_jwt_keyring: Mapping[str, str],
 ) -> dict[str, object]:
     """Compare the active reader in memory and retain only a commitment hash."""
     selectors = runtime_binding.get("selectors")
@@ -342,7 +343,6 @@ def active_query_environment_commitment(
         "QDL_STABLE_CURSOR_KEYS_JSON": base_environment.get(
             "QDL_STABLE_CURSOR_KEYS_JSON"
         ),
-        "QDL_DATA_JWT_KEYS_JSON": base_environment.get("QDL_STABLE_JWT_KEYS_JSON"),
         "QDL_STABLE_SCHEMA_DIGEST": base_environment.get("QDL_STABLE_SCHEMA_DIGEST"),
         "QDL_STABLE_AUTHORITY_MODE": selectors["QDL_STABLE_AUTHORITY_MODE"],
         "QDL_STABLE_AUTHORITY_REVISION": selectors["QDL_STABLE_AUTHORITY_REVISION"],
@@ -351,6 +351,8 @@ def active_query_environment_commitment(
     if any(not isinstance(value, str) or not value for value in expected.values()):
         raise ValueError("Phase 10.5-C controlled query reference is incomplete")
     for key in _ACTIVE_QUERY_ENV_FIELDS:
+        if key == "QDL_DATA_JWT_KEYS_JSON":
+            continue
         if query_environment[key] != expected[key]:
             raise ValueError(f"Phase 10.5-C active query environment mismatches controlled reference: {key}")
     for key in (
@@ -370,12 +372,19 @@ def active_query_environment_commitment(
         for key, value in cursor_keys.items()
     ):
         raise ValueError("Phase 10.5-C active query cursor keyring is invalid")
-    existing = {"stable-trading-system-rs256-v1", "stable-alpha-binance-rs256-v1"}
-    if set(jwt_keys) != existing or not all(
+    if set(expected_jwt_keyring) != set(ALL_KEY_SUBJECTS) or not all(
+        isinstance(value, str) and "BEGIN PUBLIC KEY" in value and "PRIVATE KEY" not in value
+        for value in expected_jwt_keyring.values()
+    ):
+        raise ValueError("Phase 10.5-C expected query JWT keyring is invalid")
+    if set(jwt_keys) != set(expected_jwt_keyring) or not all(
         isinstance(value, str) and "BEGIN PUBLIC KEY" in value and "PRIVATE KEY" not in value
         for value in jwt_keys.values()
-    ):
-        raise ValueError("Phase 10.5-C active query JWT keyring is invalid")
+    ) or jwt_keys != dict(expected_jwt_keyring):
+        raise ValueError("Phase 10.5-C active query JWT keyring mismatches public overlay")
+    expected["QDL_DATA_JWT_KEYS_JSON"] = json.dumps(
+        dict(expected_jwt_keyring), sort_keys=True, separators=(",", ":")
+    )
     return {
         "runtime_packet_sha256": runtime_binding.get("packet_sha256"),
         "verified_keys": list(_ACTIVE_QUERY_ENV_FIELDS),
@@ -389,6 +398,7 @@ def validate_active_query_environment_commitment(
     base_environment: Mapping[str, str],
     runtime_binding: Mapping[str, object],
     raw: object,
+    expected_jwt_keyring: Mapping[str, str],
 ) -> dict[str, object]:
     """Validate a payload-free proof that the current query uses the sealed env."""
     if not isinstance(raw, dict) or set(raw) != _ACTIVE_QUERY_COMMITMENT_FIELDS:
@@ -412,7 +422,9 @@ def validate_active_query_environment_commitment(
             "QDL_STABLE_CURSOR_KEYS_JSON": base_environment.get(
                 "QDL_STABLE_CURSOR_KEYS_JSON", ""
             ),
-            "QDL_DATA_JWT_KEYS_JSON": base_environment.get("QDL_STABLE_JWT_KEYS_JSON", ""),
+            "QDL_DATA_JWT_KEYS_JSON": json.dumps(
+                dict(expected_jwt_keyring), sort_keys=True, separators=(",", ":")
+            ),
             "QDL_STABLE_SCHEMA_DIGEST": base_environment.get("QDL_STABLE_SCHEMA_DIGEST", ""),
             "QDL_STABLE_AUTHORITY_MODE": str(runtime_binding.get("selectors", {}).get(
                 "QDL_STABLE_AUTHORITY_MODE", ""
@@ -425,6 +437,7 @@ def validate_active_query_environment_commitment(
             )),
         },
         runtime_binding,
+        expected_jwt_keyring,
     )
     if (
         raw.get("runtime_packet_sha256") != expected["runtime_packet_sha256"]

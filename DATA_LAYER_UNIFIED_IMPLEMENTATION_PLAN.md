@@ -15841,6 +15841,41 @@ or broad image/container cleanup.
      generated public overlay. Runtime remains exactly V1 plus four reader
      recreates and one disposable, no-order acceptance client.
 
+   **C2 public-keyring verifier correction (`IN PROGRESS / SOURCE ONLY`,
+   2026-08-26):** a read-only dry run found that `query_v2_1` already carries
+   all four declared public JWT identities, while the sealed base env retains
+   the original two-key reference. The verifier correctly failed rather than
+   collapsing the active keyring to two keys, but its comparison target was too
+   narrow. The correction will derive the expected four-key public map from
+   the existing extension and compare that map semantically in memory; the
+   ingest secret/cursor reference and all selectors remain compared exactly to
+   the sealed base/final-BAR runtime. No secret values were printed or written,
+   no service was recreated, and C2 remains runtime-pending.
+   - **Exit:** updated pure/CLI tests prove a valid preloaded four-key reader
+     passes while a missing/extra/different public key and any secret/cursor/
+     selector mismatch fail closed. Re-run the immutable no-network matrix and
+     commit before retrying only the read-only verifier.
+
+   **C2 public-keyring verifier correction (`PASS / RUNTIME C2 PENDING`,
+   2026-08-26):** the commitment contract now derives the expected public
+   four-key map from the controlled base env plus the external identity
+   extension, compares the active reader's JSON map semantically, and commits
+   only the canonical public map hash. It still compares the ingest secret,
+   cursor keyring, schema and final-BAR selectors to the same existing secret
+   reference. The active two-key assumption was removed; a missing, extra or
+   substituted public key remains a hard error rather than a silent downgrade.
+   - **Tests actually run:** Python compilation and the targeted handoff suite
+     passed `12/12`. The immutable V2 image
+     `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`
+     reran the full bounded C1/C2/Phase-10 matrix under source read-only,
+     `--network none`, read-only rootfs and tmpfs: `162 passed, 0 failed, 0
+     skipped` in `6.289s`. Expected negative CLI diagnostics and DNSE capacity
+     fence were asserted. No runtime/service/provider/order mutation occurred.
+   - **Next permitted action:** retry only the read-only active-query verifier;
+     after a payload-free `PASS`, apply its commitment, prepare the public
+     overlay, bind the already-attested V1, then recreate exactly four readers
+     under the approved C2 packet.
+
 3. **10.5-D/B3 - Immutable stable-release rehearsal and publication**
    - **Goal:** certify the exact `2.0.0` release candidate rather than merely
      its source. Run the review-only stable-release certificate against real
