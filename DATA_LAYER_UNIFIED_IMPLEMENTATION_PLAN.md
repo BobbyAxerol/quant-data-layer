@@ -15139,6 +15139,86 @@ SOURCE-ONLY`).**
   rollback stops/recreates only those six roles with the prior V2 image/env and
   does not erase authentic provider raw records already appended.
 
+#### 10.5-D Stable Release Certification - 2026-08-26 (`APPROVED / PRE-FLIGHT IN PROGRESS`)
+
+- **Approval, goal and governing guide:** the operator approved Phase 10.5-D
+  under Section 21.8 and
+  `docs/runbooks/phase105-consumer-cutover-stable-release.md`. This first
+  bounded slice builds the source-only certification gate for a future stable
+  `2.0.0` release. It must not manufacture acceptance from fixtures or health
+  alone: certification is valid only after 10.5-C's named runtime packet heals
+  the demanded final-BAR gap and its no-order handoff acceptance passes.
+- **D-A source-only scope:** add one pure release-certification evaluator and
+  one review-only CLI. It receives the checksum-bound release plan, exact V1
+  fallback provenance, immutable V2 Python/Rust artifact identities, and
+  bounded per-requirement observations/acceptance receipts. It fails closed on
+  a missing/duplicate product, non-primary route, V1 fallback, open gap,
+  stale/over-budget measurement, image/plan mismatch, missing V1 rollback
+  evidence, incomplete approved consumer class, synthetic production evidence,
+  or an unaccepted in-session provider. Its output contains only hashes,
+  counts, route/status and bounded metrics; no payload, credential, private
+  key, cursor or raw provider data.
+- **Invariants and test gate:** deterministic tests must prove a complete,
+  gap-free, V2-primary fixture is eligible; each single failed gate above is
+  rejected; order-independent duplicate/missing handling is deterministic; and
+  serialized certification output cannot leak secret-like values. Tests run in
+  the existing immutable image with network disabled/read-only root. The CLI
+  has no apply mode and reads only explicitly named evidence files.
+- **Exclusions/rollback/decision boundary:** no provider request, image build,
+  bundle generation, Kafka/Redis/SQLite/database write, service/container
+  recreate, authority/route change, V1/Trading System/alpha change, cleanup or
+  release tag is allowed in D-A. Reverting its coherent source commit removes
+  only the evaluator/CLI/tests/journal. D-B is separately runtime-gated: it
+  may rehearse immutable release images and publish `2.0.0` only after the
+  revision-`10` repair, all approved no-order consumer receipts, V1 fallback
+  read evidence and the exact resource/freshness/gap/lag review pass.
+
+**D-A implementation checkpoint - 2026-08-26 (`SOURCE PASS / RUNTIME NOT
+MUTATED`).**
+
+- **Implemented:** `qdl.certification.phase105_release` is a pure,
+  manifest-bound evaluator; `scripts/phase105_certify_stable_release.py` is a
+  read-only JSON review CLI with no `--apply` path. It requires exact
+  V1-attested source/image provenance, a secret-free RUST-primary runtime
+  handoff record, four approved paper-consumer receipts, and a full
+  V2-to-V1-to-V2 drill only for products whose frozen route permits V1. It
+  refuses malformed/hidden observations, duplicate or missing requirements,
+  incomplete paper scope, plan/image mismatch, V1 fallback, open gap,
+  freshness/resource breach, synthetic-runtime flag, order action, or
+  secret-like input. The certificate returns hashes and bounded health data;
+  it never serializes receipt payloads, cursor offsets, keys or raw provider
+  data. The no-order identity receipt now binds its output to the frozen
+  release-plan digest and explicitly records non-synthetic provenance.
+- **Tests actually run:** `git diff --check` and `python3 -m py_compile` for
+  the changed evaluator/CLIs/tests -> pass. The host interpreter cannot import
+  the project runtime because it deliberately lacks the locked `redis`
+  dependency, so it is not acceptance evidence. In the existing immutable V2
+  Python image `sha256:39d8f7...839d9`, mounted read-only with
+  `--network none --read-only --tmpfs /tmp`, the focused Phase 10.5 matrix ->
+  `26 passed, 0 failed, 0 skipped`. It covers complete exact evidence, each
+  required gate failing closed, V1/image/plan mismatch, missing/duplicate
+  observations, strict observation typing, secret-like input rejection,
+  output non-leakage, the review CLI's `PASS`/`BLOCKED` exits, release routing,
+  consumer scope, identity contract and handoff contract.
+- **Broader regression:** the same immutable, network-disabled/read-only image
+  ran the Phase 10 shared-primary/runtime-refresh/handoff/identity/release,
+  provider-admission, crypto-demand/catalog/regeneration and stable
+  deployment/history/release matrix -> `128 passed, 0 failed, 0 skipped`.
+  Its expected CLI-usage diagnostic for a missing promotion scope and bounded
+  DNSE queue-fence message were asserted negative paths; neither contacted a
+  provider nor changed runtime state. A final rerun after the strict immutable
+  image-digest validation adjustment produced the same `128/128` result.
+- **Runtime impact/cleanup:** every test container used `--rm`; no image was
+  built, no service/container/provider/Kafka/Redis/SQLite/V1/Trading
+  System/alpha state was changed, and no disposable artifact remains.
+- **Exit and remaining decision gate:** D-A source evidence is complete. Phase
+  10.5-D as a whole remains **not complete** and `2.0.0` remains unpublished:
+  the revision-`10` final-BAR repair plus real no-order 10.5-C handoff,
+  observed V1 fallback-return, current resource evidence, immutable-image
+  rehearsal and an explicitly approved release packet are still mandatory.
+  A deterministic fixture only validates certificate logic; it is not runtime
+  or real-provider certification.
+
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 
 Every Phase 10 implementation slice must record in this journal before code

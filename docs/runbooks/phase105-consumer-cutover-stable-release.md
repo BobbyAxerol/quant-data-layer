@@ -173,6 +173,21 @@ resource/freshness/gap/lag/fallback metrics, remove only named disposable
 artifacts, and publish `2.0.0`. DNSE must either have its separate certificate
 or remain explicitly excluded in the capability matrix and release notes.
 
+The review-only source gate is `scripts/phase105_certify_stable_release.py`.
+It accepts only explicitly named JSON evidence: exact full-manifest route
+observations, frozen V1 provenance, a passed `RUST_PRIMARY` handoff receipt,
+the four approved paper-consumer receipts, and an observed V2 -> V1 -> V2
+fallback drill for every product whose manifest permits V1. It rejects a
+missing or duplicate product, fallback/stale/gapped/over-budget route,
+manifest/image mismatch, synthetic runtime evidence, incomplete consumer
+class, or secret-like evidence field. Its result records hashes and bounded
+metrics only; it has no apply mode and cannot publish or change a route.
+
+Do not run it as an acceptance substitute: Phase 10.5-C must first heal every
+demanded final-BAR gap and produce real no-order handoff evidence. A `PASS`
+from the gate is necessary, not sufficient, for the separately approved
+immutable release rehearsal and `2.0.0` publication.
+
 ## Rollback
 
 Use the named V1 route revision from the approved 10.5-C packet. Preserve V2

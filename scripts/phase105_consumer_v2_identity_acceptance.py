@@ -176,6 +176,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     return {
         "schema": "qdl.phase105.v2-identity-acceptance.v1",
         "status": "PASS_V2_DATA_PLANE_ONLY",
+        "release_route_plan_sha256": release.digest,
         "authority_revision": authority.get("revision"),
         "scope_sha256": scope.sha256,
         "product_count": len(results),
@@ -192,6 +193,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         "order_actions": 0,
         "cursor_directory_removed": True,
         "secret_values_recorded": False,
+        "test_provenance": False,
         "elapsed_seconds": round(elapsed_seconds, 3),
     }
 
