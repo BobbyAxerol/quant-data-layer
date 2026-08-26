@@ -14753,6 +14753,124 @@ RUNTIME BLOCKED`).**
   DNSE queue-fence diagnostics were test output only. No deployed trust store
   was touched.
 
+#### 10.5-C Combined Rolling Handoff And Runtime-Blocker Closure - 2026-08-26 (`APPROVED / IN PROGRESS`)
+
+- **Approval, goal and governing guide:** the operator approved combining the
+  `10.5-C` rolling consumer-handoff preparation with the three currently
+  blocking runtime defects: the failed `rust_core` replica, unproven V1
+  fallback provenance, and absent Monitoring/Alpha-OKX trust extension. This
+  follows Section 21.8, this plan's Phase 10 rules, and
+  `docs/runbooks/phase105-consumer-cutover-stable-release.md`. The goal is a
+  measured, reversible V2 data-plane handoff for the four paper workload
+  identities; it is not an order, alpha-logic, broker, Kafka-authority or
+  data-retention change.
+- **Exact runtime scope and exclusions:** only the following named services
+  may be recreated, in the recorded order: V1 `data_layer_service` on
+  `127.0.0.1:8100`; V2 `rust_core`; V2 `query_v2_1`, `query_v2_2`,
+  `stream_v2_active` and `stream_v2_passive`. The retained V2 ports are
+  `18201`, `18202`, `18220` and `18221`; no new port, topic, group, Redis
+  prefix, volume, provider socket or container topology is introduced.
+  Kafka 1/2/3, stable Redis, SQLite/state volume, ingestors, projectors,
+  `rust_core_2`, `rust_core_3`, bar edge, V1 Redis, Trading System, all alpha
+  containers, DNSE/VN and every execution/broker route are expressly excluded.
+  No offset reset, Redis/SQLite flush, database mutation, source bind change
+  outside the V1 container, authority CAS, `RUST_PRIMARY` revision change or
+  order submission is allowed.
+- **Artifact and provenance invariant:** build exactly one immutable V2 Python
+  image from this reviewed source revision for the four query/stream reloads,
+  and exactly one immutable frozen V1 fallback image from commit
+  `85c25df631e263281bd546de69efcaf6146c93ef` (`v1.2.2`). Both carry OCI
+  revision/version labels and are recorded by image ID/digest plus source tree
+  and Dockerfile hashes. The V1 rolling replacement removes only its mutable
+  `/app` source bind while preserving `/app/data`, `/app/logs`, the existing
+  `redis_marketdata` connection, restart policy and loopback port. A locally
+  built, attested V1 artifact is not called a remote registry attestation.
+- **Capacity repair invariant:** retain the existing Rust image and all
+  runtime/core JSON. Recreate only `rust_core` with a `512 MiB` cgroup limit,
+  replacing its failed `256 MiB` instance. Its two live peers remain untouched.
+  The repair passes only when all three replicas survive the bounded
+  observation without a duplicate/gap, watermark regression, lag regression or
+  resource breach. Rollback recreates only `rust_core` at `256 MiB` or stops
+  it; it never resets its Kafka group.
+- **Additive trust invariant:** generate only the two external paper client
+  identities from the existing public server CA. Copy only their additive
+  two-PEM `client-ca-bundle.crt` into `stable_tls` at the query and stream
+  client-authority paths. Query/stream reload a new four-key JWT public keyring
+  and exact `kid -> subject` map through the new immutable V2 Python image.
+  The existing server CA/certificates, Kafka stores and existing
+  Trading-System/Alpha-Binance client credentials remain unchanged. Rollback
+  restores the prior query/stream environment and removes only those two
+  additive bundle files before recreating only the same four services.
+- **Consumer boundary:** a disposable no-order SDK probe is the only consumer
+  process created in this slice. It exercises the exact four paper workload
+  identities in release-routing revision `1`: Monitoring, Trading System,
+  Alpha-Binance and Alpha-OKX. It uses V2 query/stream plus an observed V1
+  read-only fallback comparison only where the release route permits it. The
+  probe has no provider, execution, Docker-socket or order credential and is
+  removed with its tmpfs cursor on exit. The currently running Trading System
+  and alpha repositories are not yet configured with a live V2 adapter/route;
+  they are **not** claimed as migrated merely because their workload identity
+  passes this probe. Their actual rolling container handoff remains a later,
+  separately scoped consumer-config change after this acceptance succeeds.
+- **Pre-runtime test and exit gates:** before any recreate, run source compile,
+  contract/identity tests, V1 artifact provenance verification, stable Compose
+  render, and network-disabled image tests. After every bounded recreate,
+  verify exact image/labels, TLS identity separation, health plus meaningful
+  read behavior, three-core RSS/CPU/exit state, watermark/gap/lag continuity
+  and a maximum 300-second no-order receipt. Failure stops at the affected
+  slice, preserves evidence and executes only its documented rollback. The
+  retained evidence namespace is
+  `/home/bobby/.local/state/qdl-v2/phase105c-<UTC>/`; it contains hashes and
+  bounded metrics only. Disposable clients and failed temporary worktrees are
+  removed; no shared durable data is cleaned.
+- **Decision boundary:** this approval permits the precise blocker repair and
+  no-order handoff acceptance above. It does not promote any actual Trading
+  System/alpha container to V2, publish a stable release, alter V1 API schema,
+  or close Phase 10.5-D. A failure or missing consumer adapter is a fail-closed
+  result, not a reason to broaden the packet.
+
+**10.5-C source packet tooling - 2026-08-26 (`SOURCE PASS / RUNTIME NOT YET
+MUTATED`).**
+
+- **Implemented:** `qdl.certification.phase105_handoff` now derives the exact
+  four-key public JWT/key-subject environment, validates a frozen V1 image's
+  OCI revision/version/tree/Dockerfile labels, and emits a secret-free handoff
+  packet. `phase105_prepare_handoff_bundle.py` writes the private derived env
+  only under an operator-selected state namespace; `phase105_attest_v1_fallback.py`
+  writes only digest-to-source provenance. The two Compose overrides are
+  bounded: one changes only `rust_core` to a supplied memory limit and applies
+  query/stream client-authority paths; the other replaces the V1 `/app` source
+  bind with only existing data/log mounts and an attested image.
+- **No-order consumer evidence support:**
+  `phase105_consumer_v2_identity_acceptance.py` reuses the public V2 SDK
+  receipt assertions for the exact Monitoring, Trading-System, Alpha-Binance
+  and Alpha-OKX manifest identities. It requires a fenced `RUST_PRIMARY`
+  authority record and reports `PASS_V2_DATA_PLANE_ONLY`; it deliberately
+  cannot claim a forced V1 fallback until a real consumer-side versioned route
+  controller exists. That distinction prevents a disposable identity probe
+  from being misreported as a deployed Trading System/alpha handoff.
+- **Tests actually run:** host `py_compile` for all three new CLIs and the
+  helper module -> pass. Network-disabled, read-only source mount test matrix
+  in the pinned V2 Python image -> `41 passed, 0 failed, 0 skipped`; it covers
+  Phase 10.5 handoff helper invariants, exact consumer identities/authority
+  gate, existing release routing, stable deployment and bundle behavior. The
+  expected negative CLI-usage and DNSE queue-fence diagnostics in that test
+  output were intentional test paths. Compose render checks passed: the V2
+  override resolves exactly the existing topology, while the V1 override
+  renders `build=null`, the supplied immutable image and only `/app/data` plus
+  `/app/logs` mounts.
+- **Runtime/cleanup:** no image was built, no service/container was recreated,
+  no provider was called and no Kafka/Redis/SQLite/database state changed in
+  this source slice. Every test container used `--rm --network none
+  --read-only` with tmpfs `/tmp`; it left no test container, volume, image or
+  durable cursor.
+- **Next exact action:** build and attest one V1 and one V2 Python image, then
+  create a private `phase105c-*` bundle. Only after its dry-run and Compose
+  render pass may the named runtime repair order begin. The actual consumer
+  container migration remains blocked on the adapter/config gap discovered in
+  the current Trading System and alpha sources; this is an honest boundary,
+  not a hidden test skip.
+
 ### 21.9 Program-Wide Test, Cleanup And Approval Gates
 
 Every Phase 10 implementation slice must record in this journal before code
