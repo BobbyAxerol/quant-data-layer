@@ -36,6 +36,11 @@ from qdl.query.entitlement import (
     EntitlementPolicy,
 )
 from qdl.query.lifecycle import BarLifecycle, DeliveryMode, delivery_mode
+from qdl.query.reference import (
+    ReferenceBatchRequirement,
+    ReferenceDataRequirement,
+    feed_for_reference_product,
+)
 from qdl.query.results import (
     ContractMetadata,
     GapRecord,
@@ -54,6 +59,8 @@ from qdl.query.service import (
     BatchQueryResult,
     QueryResult,
     QueryServiceError,
+    ReferenceBatchItemResult,
+    ReferenceBatchQueryResult,
     ReadinessItemResult,
     ReadinessResult,
     V2QueryService,
@@ -86,10 +93,13 @@ __all__ = [
     "METRIC_INTERVAL_FEEDS",
     "OPTIONAL_INTERVAL_FEEDS",
     "QueryProblem",
+    "ReferenceBatchRequirement",
+    "ReferenceDataRequirement",
     "RecoveryPolicy",
     "StalePolicy",
     "delivery_mode",
     "evaluate_requirement",
+    "feed_for_reference_product",
     "HistoryResult",
     "GapRecord",
     "InstrumentPage",
@@ -104,6 +114,8 @@ __all__ = [
     "BatchQueryResult",
     "QueryResult",
     "QueryServiceError",
+    "ReferenceBatchItemResult",
+    "ReferenceBatchQueryResult",
     "ReadinessItemResult",
     "ReadinessResult",
     "V2QueryService",

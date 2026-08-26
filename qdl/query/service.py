@@ -5,9 +5,11 @@ import math
 import uuid
 import time
 from dataclasses import dataclass, replace
+from typing import Callable
 
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.domain.calendar import trading_calendar_for_id
+from qdl.domain.instrument import InstrumentRecord
 from qdl.query.contracts import (
     BatchRequirement,
     BarRevisionPolicy,
@@ -21,6 +23,10 @@ from qdl.query.contracts import (
 )
 from qdl.query.lifecycle import BarLifecycle
 from qdl.query.entitlement import AccessPurpose, DataProduct, EntitlementPolicy
+from qdl.query.reference import (
+    ReferenceBatchRequirement,
+    ReferenceDataRequirement,
+)
 from qdl.query.results import (
     HistoryResult,
     InstrumentPage,
@@ -31,6 +37,12 @@ from qdl.query.results import (
     QueryBackendError,
 )
 from qdl.warmup.executor import BoundedWarmupExecutor, RetryableWarmupError
+from qdl.reference.batch import ReferenceBatch
+from qdl.reference.contracts import (
+    ReferenceBatchResult,
+    ReferenceRequest,
+    ReferenceStatus,
+)
 
 
 class QueryServiceError(RuntimeError):
@@ -88,6 +100,32 @@ class BatchQueryResult:
 
 
 @dataclass(frozen=True)
+class ReferenceBatchItemResult:
+    requirement: ReferenceDataRequirement
+    status: str
+    result: ReferenceBatchResult | None = None
+    problem: QueryProblem | None = None
+
+
+@dataclass(frozen=True)
+class ReferenceBatchQueryResult:
+    request_id: str
+    results: tuple[ReferenceBatchItemResult, ...]
+
+    @property
+    def partial(self) -> bool:
+        return any(item.problem is not None for item in self.results)
+
+    @property
+    def success_count(self) -> int:
+        return sum(item.problem is None for item in self.results)
+
+    @property
+    def error_count(self) -> int:
+        return len(self.results) - self.success_count
+
+
+@dataclass(frozen=True)
 class ReadinessItemResult:
     instrument_uid: str
     status: str
@@ -113,13 +151,20 @@ class V2QueryService:
         entitlements: EntitlementPolicy,
         clock_ns=time.time_ns,
         warmup_executor: BoundedWarmupExecutor | None = None,
+        reference_batch: ReferenceBatch | None = None,
+        reference_source_id: Callable[[InstrumentRecord], str] | None = None,
     ) -> None:
+        if reference_batch is not None and reference_source_id is None:
+            raise ValueError("reference batch requires an explicit source-id resolver")
         self.instruments = instruments
         self.backend = backend
         self.entitlements = entitlements
         self._clock_ns = clock_ns
         self.warmup_executor = warmup_executor or BoundedWarmupExecutor()
+        self.reference_batch = reference_batch
+        self._reference_source_id = reference_source_id
         self.last_batch_evidence: dict[str, object] = {}
+        self.last_reference_batch_evidence: dict[str, object] = {}
 
     @staticmethod
     def request_id() -> str:
@@ -390,6 +435,207 @@ class V2QueryService:
         if not callable(stats):
             return {}
         return {str(key): int(value) for key, value in stats().items()}
+
+    async def reference_data_batch_async(
+        self,
+        batch: ReferenceBatchRequirement,
+        *,
+        purpose: AccessPurpose,
+        request_id: str | None = None,
+    ) -> ReferenceBatchQueryResult:
+        """Fetch bounded provider reference data through the V2 policy boundary.
+
+        A caller can only reach an adapter after its canonical ``instrument_uid``
+        resolves in the active catalog and the same source/purpose entitlement
+        as a normal V2 history request has been granted.  The shared warmup
+        executor supplies provider lanes, token budgets, deadlines and
+        singleflight; ``ReferenceBatch`` supplies reference-specific cache,
+        capability and decimal/coverage validation.
+        """
+
+        request_id = request_id or self.request_id()
+        if self.reference_batch is None or self._reference_source_id is None:
+            raise QueryServiceError(
+                QueryProblem(
+                    CanonicalErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "V2 reference-data batch is not enabled for this runtime",
+                    True,
+                ),
+                request_id=request_id,
+            )
+
+        executor_before = self.warmup_executor.stats()
+        reference_before = self.reference_batch.stats()
+        results: list[ReferenceBatchItemResult | None] = [None] * len(batch.requirements)
+        admitted: list[tuple[int, ReferenceDataRequirement, ReferenceRequest]] = []
+        for index, requirement in enumerate(batch.requirements):
+            try:
+                instrument = self.instruments.get(requirement.instrument_uid)
+            except KeyError:
+                results[index] = ReferenceBatchItemResult(
+                    requirement,
+                    CanonicalErrorCode.INSTRUMENT_NOT_FOUND.value,
+                    problem=QueryProblem(
+                        CanonicalErrorCode.INSTRUMENT_NOT_FOUND,
+                        "reference instrument is not present in the active catalog",
+                        False,
+                    ),
+                )
+                continue
+            try:
+                request = requirement.to_reference_request(instrument)
+                source_id = self._reference_source_id(instrument)
+            except (TypeError, ValueError) as error:
+                results[index] = ReferenceBatchItemResult(
+                    requirement,
+                    CanonicalErrorCode.INVALID_ARGUMENT.value,
+                    problem=QueryProblem(CanonicalErrorCode.INVALID_ARGUMENT, str(error), False),
+                )
+                continue
+            product = (
+                DataProduct.CANONICAL_HISTORY
+                if request.is_history
+                else DataProduct.CANONICAL_SNAPSHOT
+            )
+            decision = self.entitlements.authorize(
+                source_id=source_id,
+                purpose=purpose,
+                product=product,
+                at_ns=self._clock_ns(),
+            )
+            if not decision.allowed:
+                results[index] = ReferenceBatchItemResult(
+                    requirement,
+                    CanonicalErrorCode.SOURCE_NOT_ALLOWED.value,
+                    problem=QueryProblem(
+                        CanonicalErrorCode.SOURCE_NOT_ALLOWED,
+                        "reference source entitlement denied this consumer purpose",
+                        False,
+                    ),
+                )
+                continue
+            admitted.append((index, requirement, request))
+
+        async def work(
+            candidate: tuple[int, ReferenceDataRequirement, ReferenceRequest]
+        ) -> ReferenceBatchResult:
+            _index, _requirement, request = candidate
+            return await self.reference_batch.fetch_one(request)
+
+        executions = await self.warmup_executor.execute(
+            admitted,
+            work=work,
+            identity=lambda candidate: candidate[2].cache_key,
+            provider=lambda candidate: candidate[2].instrument.identity.venue,
+            deadline_ms=lambda candidate: candidate[1].deadline_ms,
+        )
+        for execution in executions:
+            index, requirement, request = execution.item
+            if execution.error is not None:
+                retry_after_ms = getattr(execution.error, "retry_after_ms", None)
+                results[index] = ReferenceBatchItemResult(
+                    requirement,
+                    CanonicalErrorCode.SOURCE_UNAVAILABLE.value,
+                    problem=QueryProblem(
+                        CanonicalErrorCode.SOURCE_UNAVAILABLE,
+                        "reference batch provider lane did not complete",
+                        True,
+                        retry_after_ms,
+                    ),
+                )
+                continue
+            assert execution.value is not None
+            result = execution.value
+            problem = self._reference_problem(requirement, request, result)
+            results[index] = ReferenceBatchItemResult(
+                requirement,
+                result.status.value if problem is None else problem.code.value,
+                result=result,
+                problem=problem,
+            )
+
+        resolved = tuple(item for item in results if item is not None)
+        if len(resolved) != len(batch.requirements):
+            raise RuntimeError("reference batch lost a result during bounded scheduling")
+        executor_after = self.warmup_executor.stats()
+        reference_after = self.reference_batch.stats()
+        self.last_reference_batch_evidence = {
+            "request_id": request_id,
+            "item_count": len(resolved),
+            "success_count": sum(item.problem is None for item in resolved),
+            "error_count": sum(item.problem is not None for item in resolved),
+            **{
+                f"executor_{key}": executor_after.get(key, 0) - executor_before.get(key, 0)
+                for key in executor_after
+            },
+            **{
+                f"reference_{key}": reference_after.get(key, 0) - reference_before.get(key, 0)
+                for key in reference_after
+                if key != "cache_entries" and key != "inflight"
+            },
+        }
+        return ReferenceBatchQueryResult(request_id, resolved)
+
+    def _reference_problem(
+        self,
+        requirement: ReferenceDataRequirement,
+        request: ReferenceRequest,
+        result: ReferenceBatchResult,
+    ) -> QueryProblem | None:
+        if result.request is not request:
+            return QueryProblem(
+                CanonicalErrorCode.CONFLICT,
+                "reference batch returned a result for a different request identity",
+                False,
+            )
+        if result.request.instrument.instrument_uid != requirement.instrument_uid:
+            return QueryProblem(
+                CanonicalErrorCode.CONFLICT,
+                "reference batch result instrument differs from the request",
+                False,
+            )
+        if result.request.product is not requirement.product:
+            return QueryProblem(
+                CanonicalErrorCode.CONFLICT,
+                "reference batch result product differs from the request",
+                False,
+            )
+        if result.status is ReferenceStatus.OK:
+            if result.request.is_history and requirement.require_full_coverage:
+                coverage = result.coverage
+                if not coverage.complete_left or not coverage.complete_right or coverage.truncated:
+                    return QueryProblem(
+                        CanonicalErrorCode.PARTIAL_RESULT,
+                        "reference provider history did not cover the requested complete window",
+                        False,
+                    )
+            if requirement.max_freshness_ms is not None:
+                newest = max(item.observed_at_ns for item in result.observations)
+                freshness_ms = max(0, (self._clock_ns() - newest) // 1_000_000)
+                if freshness_ms > requirement.max_freshness_ms:
+                    return QueryProblem(
+                        CanonicalErrorCode.DATA_STALE,
+                        "reference provider result exceeds the declared freshness bound",
+                        True,
+                    )
+            return None
+        if result.status is ReferenceStatus.MISSING:
+            return QueryProblem(
+                CanonicalErrorCode.DATA_NOT_READY,
+                "reference provider returned no observation for the requested identity/window",
+                False,
+            )
+        if result.status is ReferenceStatus.UNAVAILABLE:
+            return QueryProblem(
+                CanonicalErrorCode.UNSUPPORTED_FEED,
+                result.error_detail or "reference product is unavailable at this provider",
+                False,
+            )
+        return QueryProblem(
+            CanonicalErrorCode.SOURCE_UNAVAILABLE,
+            result.error_detail or "reference provider request failed",
+            result.error_code not in {"PROVIDER_PROTOCOL"},
+        )
 
     def status(self, requirement: DataRequirement) -> QualityMetadata:
         request_id = self.request_id()

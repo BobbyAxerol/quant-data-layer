@@ -112,6 +112,11 @@ message DataRequirement {
   uint32 depth_levels = 14;
   uint64 configuration_revision = 15;
   WarmupSpecification warmup = 16;
+  // BASIS is always anchored to the perpetual pair.  These optional selector
+  // fields preserve the requested delivery leg/series without pretending that
+  // a dated future identity itself is the basis source.
+  string basis_contract_type = 17;
+  string basis_series = 18;
 }
 
 message FeedCapability {

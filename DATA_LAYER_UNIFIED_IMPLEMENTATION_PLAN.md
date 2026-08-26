@@ -16832,6 +16832,219 @@ remove the new manifest capability or revert the source commit. No alpha
 configuration, provider storage, Kafka/Redis/SQLite shared state or order data
 is mutated. Stop after evidence/plan journal/one coherent commit.
 
+#### Phase 11.3 Execution Journal - 2026-08-26 (`PASSED DARK / SOURCE + ISOLATED PROVIDER TEST ONLY`)
+
+- **Approval and exact scope:** the operator approved Phase 11.3 after Phase
+  11.1 and 11.2 passed dark. This phase completes a provider-neutral V2
+  warmup/batch-history/reference-data contract and its bounded real-provider
+  evidence for the currently admitted Binance/OKX demand. It reuses existing
+  interval, canonical identity, provider-edge, V2 query/SDK and demand-plan
+  abstractions. It must not introduce an alpha-specific history wrapper,
+  direct SSH path, per-symbol worker/image/container, or a hidden storage
+  prerequisite.
+- **Starting inventory:** the 654 admitted `TRADE`/`QUOTE`/final-`BAR` bindings
+  were certified in Phase 11.2. The four remaining admitted physical slices
+  are exactly one `BASIS`, one `FUNDING_RATE`, and two `BOOK_SNAPSHOT` demand
+  slices. `BOOK_SNAPSHOT` remains explicitly deferred to Phase 11.4; the
+  `BASIS` and `FUNDING_RATE` rows become first-class reference-data acceptance
+  inputs here. The 69 provider-missing/de-listed rows remain typed
+  `UNSUPPORTED` and never receive a fallback.
+- **Data and domain invariants:** every response preserves canonical
+  venue/market/product/native-symbol identity, exact decimal text/units,
+  UTC/open-close boundaries, provider/adapter/normalizer lineage and a typed
+  missing/unsupported/partial/stale result. A warmup contains only final,
+  ordered bars and has an explicit FIFO handoff token for the next final bar.
+  `0` is never used for unknown metrics. Dated contracts retain expiry;
+  continuous/basis output carries its constituent identities and derivation
+  rule. Binance-only reference products are `BLOCKED` at OKX rather than
+  fabricated.
+- **Performance and resource invariants:** all provider calls are shared by
+  a bounded batch scheduler with validation, deadline, cancellation,
+  retry/backoff, retry-after handling, concurrency/fairness limits and
+  request-scoped singleflight. Provider bytes are retained only for the
+  request/evidence lifetime unless an already-approved durable product owns
+  them. No serial per-symbol loop, unbounded cache or tick-level INFO logging
+  is allowed.
+- **Required evidence/tests:** deterministic contract/golden tests for
+  identity/decimal/time/finality/FIFO, selector/dedup/singleflight,
+  pagination and partial failure; failure tests for 429/5xx/timeout/cancel and
+  unsupported/missing products; V2 SDK/query and V1 non-regression tests; and
+  a bounded, read-only public-provider admission over every active
+  Binance/OKX BAR binding plus applicable funding/basis/reference requests.
+  The real-provider report may store only identifiers, hashes and bounded
+  latency/resource metrics, never raw provider payloads.
+- **Runtime exclusion, rollback and decision boundary:** this is source plus
+  isolated/disposable provider testing only. It must not restart/recreate a
+  Data Layer, Trading System or alpha service; change authority or consumer
+  route; write Kafka/Redis/SQLite/PostgreSQL; alter alpha config; or submit an
+  order. Source rollback is a normal revert/withdrawal of the dark capability
+  revision. Any V2-primary consumer handoff remains Phase 11.5 and needs its
+  own named runtime packet.
+- **Source slice 11.3-A - V2 reference capability and continuous-basis identity
+  (2026-08-26, passed locally):** added an additive, default-off
+  `QDL_STABLE_REFERENCE_DATA_ENABLED` capability to the stable V2 query stack.
+  It reuses the common query entitlement boundary and bounded `ReferenceBatch`,
+  grants `INTERNAL_ALPHA`/`INTERNAL_RESEARCH` only, and cannot authorize an
+  execution-grade request. The V2 REST/SDK reference batch path remains
+  canonical-record bound and provider-neutral at its public boundary; Binance
+  USD-M and OKX Swap adapters are registered only after the explicit gate.
+  Existing V1/pass-through behavior remains unchanged when the flag is absent.
+- **Basis correction:** active basis-arb demand now declares the perpetual pair
+  anchor plus an explicit `CURRENT_QUARTER`/`NEXT_QUARTER` continuous selector.
+  It no longer mislabels a rolling derived basis as one dated-future instrument.
+  The selector was added additively to the demand protobuf/Python/Rust mapping,
+  preserving legacy requirement identities that do not use it. Binance native
+  basis remains a distinct `NATIVE/PERPETUAL` contract.
+- **365-day continuous series path:** the bounded Binance Vision roll-aware
+  builder is used only for `BASIS/CONTINUOUS/1d`, with UTC daily boundaries,
+  complete-window/duplicate checks, request-scoped retries and no disk cache
+  (`persist_cache=False`, no fallback URL). It emits explicit constituent,
+  active-contract and derivation lineage. This is a derived research series,
+  not a fabricated provider-native field; unsupported intervals/selectors fail
+  closed.
+- **Generated-contract and isolated evidence:** `buf lint` passed; protobuf
+  generation was re-run with the repository-pinned Buf image after the host
+  lacked the remote plugin. The immutable no-network Python matrix passed
+  **126/126** in **5.772s** (`1` Redis integration skip because no isolated
+  Redis was configured), covering V2 API/SDK, exact decimals/units, typed
+  missing data, entitlement denial, selector round-trip, continuous-basis
+  complete-window/memory-only behavior, bounded scheduling, V1/pass-through
+  non-regression and active-demand projection. The one initial fixture failure
+  was corrected by separating `NATIVE/PERPETUAL` from the new continuous-Vision
+  test; it did not expose a runtime data defect. No network, service, cache,
+  topic, database or consumer route was mutated.
+- **Admission-harness regression slice (2026-08-26, passed locally):** added
+  the bounded provider-only admission command
+  `scripts/phase113_universal_warmup_reference_admission.py`. It compiles the
+  authenticated Phase 11.2 active inventory once, builds the resulting catalog
+  in memory, invokes the V2 warmup/reference query contracts, and emits only
+  identity/count/hash/resource evidence. It has no durable backend and every
+  provider result is explicitly non-authoritative/non-execution-eligible. A
+  review caught an inner reference-batch indentation defect before any provider
+  call; the repaired loop now executes every <=100-item chunk. The new
+  deterministic regression proves a 102-item matrix invokes both chunks and
+  preserves explicit `UNSUPPORTED_FEED`/`UNAVAILABLE` behavior, while the
+  calendar assertions prove daily and 8-hour reference windows exclude their
+  still-open period. The immutable, network-disabled focused matrix passed
+  **133/133** in **5.854 seconds**, with **1 declared isolated-Redis skip**.
+  The source mount was read-only and no provider, runtime, durable state or
+  consumer route was touched. The next gate is the bounded real-provider
+  admission; this checkpoint does not yet certify provider availability.
+- **Real-provider diagnostic checkpoint (2026-08-26, in progress):** the
+  first bounded, disposable admission invoked the full active BAR/reference
+  matrix and failed closed with `DATA_STALE` from one reference request. No
+  report was written on failure and no runtime, provider, Kafka, Redis,
+  SQLite, database, consumer route or alpha state changed. The initial error
+  omitted the request identity, which is insufficient for an operator to
+  distinguish a stale provider observation from an incorrect calendar/window.
+  The next source-only correction adds canonical request identity and typed
+  code to that failure without relaxing any freshness, coverage or timeout
+  policy; the same read-only matrix will then be re-run.
+- **Continuous-basis freshness root cause and bounded repair decision
+  (2026-08-26):** the enriched failure identifies only
+  `BASIS/CONTINUOUS/1d` as stale. Its existing builder uses Binance Vision for
+  every dated-quarterly row; Vision is suitable for the long roll-aware
+  archive, but its publication lag makes it an invalid sole source for the
+  latest final daily tail. The approved source-only repair keeps every existing
+  Vision row, calls the official exact-symbol USD-M `/fapi/v1/klines` wrapper
+  only over a bounded 45-day tail for each candidate quarterly, and fills only
+  missing UTC daily rows. It preserves the research volume-crossover roll
+  algorithm, labels both provider components in lineage, and fails complete
+  coverage if the direct tail cannot close the gap. It does not introduce a
+  new store, cache, runtime role, provider fallback, or authority change.
+- **Final-bar timestamp correction (2026-08-26):** a minimal direct probe
+  returned a complete 365-row BTC continuous series through
+  `2026-08-25T00:00:00Z`; no REST tail was needed in that observation. The
+  actual stale verdict came from treating that final daily bar's *open* time as
+  `ReferenceObservation.observed_at_ns`. This is a domain bug: coverage and
+  roll alignment are keyed by period open, while freshness and canonical event
+  time must be keyed by the final period close. The repair keeps period-open
+  identity as explicit labels/coverage input, sets `observed_at_ns` to
+  `open + 1d - 1ms`, and rejects a requested daily window whose final bar has
+  not closed. The bounded Vision/REST-tail repair remains as independent
+  availability hardening; neither change relaxes the 24-hour freshness gate.
+- **Funding coverage root cause and calendar correction (2026-08-26):** a
+  two-page direct `/fapi/v1/fundingRate` probe proved the provider supplies a
+  complete 365-day, 1,096-event window when bounded through the latest
+  completed funding event. The admission helper instead subtracted one whole
+  8-hour bucket and requested a boundary the provider did not include in that
+  constructed window, producing a truthful `PARTIAL_RESULT`. The repair uses
+  `floor(now / 8h) * 8h` as the last completed funding event. If that event is
+  not published yet, complete-window validation continues to fail closed; no
+  history length, provider limit, retry policy or freshness threshold is
+  relaxed.
+- **Metric-history pagination/window root cause and repair decision
+  (2026-08-26):** the Binance OI probe on an active admitted symbol showed
+  that `/futures/data/openInterestHist` returns the most-recent bounded page
+  within a supplied window, unlike funding's forward cursor behavior. The
+  common forward paginator therefore skipped the left side of a 30-day window.
+  In addition, the representative request described 721 inclusive hourly
+  timestamps instead of the provider's exact 30-day/720-hour retention bound.
+  The repair adds bounded reverse pagination for Binance OI, long/short and
+  taker-history endpoints only, and expresses the matrix as exactly 720 hourly
+  periods ending at the last final hour. It preserves per-page limits,
+  max-pages, dedup/conflict checks and full-coverage failure; no metric is
+  zero-filled, shortened silently or substituted cross-venue.
+- **Metric cadence integrity decision (2026-08-26):** the corrected two-page
+  OI probe returned matching left/right boundaries but only 719 distinct hourly
+  observations, with one real two-hour provider gap. Boundary-only coverage is
+  therefore insufficient. The adapter will validate every declared fixed
+  metric cadence and mark an internal gap as truncated/`PARTIAL_RESULT`; a
+  full-window alpha remains blocked. The admission harness will record an
+  explicitly typed partial for optional representative metrics, while active
+  funding/basis requirements remain strict full-window gates. This preserves
+  truthful provider behavior instead of choosing a different symbol, shifting
+  the window or manufacturing the missing hour.
+- **Bounded real-provider acceptance (2026-08-26, passed):** the disposable
+  read-only verifier completed against the freshly compiled active inventory:
+  **359** unique Binance/OKX final-BAR bindings in **4** batches, all with
+  exactly **3** ordered final warmup rows; **34** reference requests with
+  **22** full available, **6** expected provider-capability `BLOCKED`, and
+  **6** explicit `PARTIAL_TYPED` histories. The latter are genuine Binance
+  hourly cadence gaps on the declared provider rows, not substitutions or
+  zero-fill; a full-window alpha would receive `PARTIAL_RESULT` and remain
+  blocked. The report has schema
+  `qdl.phase113.universal-warmup-reference-admission.v1`, provenance
+  `REAL_PROVIDER_READ_ONLY`, inventory hash
+  `dae1c64a7734ebd9f54c529f16fe216dc87f3c2a4efd297d0bc2929023e0bc06`,
+  source-catalog hash
+  `add2bb9767a3e1e4e50cdd0ed17d1f6f831ac4d85c714097c08fabbe5c1ca21b`,
+  elapsed **52.176s**, CPU **6.378s**, max RSS **272,580 KiB**, no 429/5xx,
+  no source failure and zero production/provider writes or runtime mutations.
+  It contains identifiers/digests/counts/metrics only and remains in the
+  disposable `/tmp/qdl-phase113-evidence` namespace, not Git. A non-root
+  evidence-mount permission issue was corrected only on that namespace before
+  the passing run. Final deterministic/contract/Rust verification and exact
+  namespace/image cleanup remain before the one coherent source commit.
+- **Final source acceptance and closure (2026-08-26, passed dark):** the
+  network-disabled V2 compatibility matrix passed **149/149** in **10.406s**
+  with **1 declared isolated-Redis skip**; injected projector recovery log
+  lines are expected negative-path assertions. The universal warmup scheduler
+  and SDK FIFO handoff matrix passed **41/41** in **0.983s**, including exact
+  final-bar-only resampling, bounded FIFO eviction, duplicate suppression and
+  release of the first newly closed bar without a one-bar delay. This is the
+  data-layer parity guarantee: a client dataframe warmup and its next final
+  canonical bar share the same UTC/identity/finality contract. Strategy
+  signal/position parity remains owned by each alpha's approved research
+  migration tests and is deliberately not imitated inside the Data Layer.
+  `buf lint` passed against the pinned contract image, and the isolated Rust
+  `qdl-core` matrix passed **23/23** after compiling from a read-only source
+  mount. `git diff --check` passed. The exact disposable evidence namespace
+  and the Phase 11.3-only Rust test image are removed after this journal entry;
+  no broad Docker prune is used.
+- **Exit and operational meaning:** Phase 11.3 is **PASSED DARK**, not a V2
+  runtime cutover. The additive V2 reference route remains default-off behind
+  `QDL_STABLE_REFERENCE_DATA_ENABLED`; V1 endpoints, consumer routes,
+  authority, shared Kafka/Redis/SQLite/PostgreSQL state, Trading System,
+  alpha configuration and every order path remain unchanged. Reference data is
+  available only to `INTERNAL_ALPHA`/`INTERNAL_RESEARCH`, never execution
+  grade. A strict full-window request receiving a real provider cadence gap
+  returns typed `PARTIAL_RESULT` and fails closed; it cannot silently use a
+  different symbol, a shorter period or zero values. Source rollback is one
+  revert of the coherent Phase 11.3 commit. The next permitted work is
+  Phase 11.4; any live V2 consumer or authority handoff remains an explicitly
+  approved Phase 11.5 runtime packet.
+
 ### 22.9 Phase 11.4 - Rust L2 Book And Execution-Grade Market Data
 
 **Goal:** Supply demand-driven, provider-neutral L2 market data to strategies

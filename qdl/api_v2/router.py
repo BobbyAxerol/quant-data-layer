@@ -23,6 +23,8 @@ from qdl.api_v2.models import (
     QualityView,
     ReadinessItemResponse,
     ReadinessResponse,
+    ReferenceBatchRequest,
+    ReferenceBatchResponse,
     SnapshotResponse,
     SourceView,
     SystemReadinessSummary,
@@ -43,6 +45,13 @@ from qdl.query import (
     RecoveryPolicy,
     StalePolicy,
     V2QueryService,
+)
+from qdl.query.reference import ReferenceBatchRequirement, ReferenceDataRequirement
+from qdl.reference.contracts import (
+    BasisSeries as DomainBasisSeries,
+    LongShortKind as DomainLongShortKind,
+    MarkIndexKind as DomainMarkIndexKind,
+    ReferenceProduct as DomainReferenceProduct,
 )
 from qdl.security import (
     DataPlaneAccess,
@@ -114,6 +123,39 @@ def _purpose(value: Annotated[str, Header(alias="X-QDL-Purpose")]):
 
 def _requirement(model) -> DataRequirement:
     return DataRequirement.from_mapping(model.model_dump())
+
+
+def _reference_requirement(model) -> ReferenceDataRequirement:
+    """Translate the public SDK contract into the catalog-bound domain input.
+
+    The public SDK owns its own generated enums.  Keeping this conversion at
+    the HTTP boundary prevents those types from leaking into the query core
+    while preserving every selector exactly (notably dated/continuous BASIS).
+    """
+
+    return ReferenceDataRequirement(
+        instrument_uid=model.instrument_uid,
+        product=DomainReferenceProduct(model.product.value),
+        consumer_grade=ConsumerGrade(model.consumer_grade.value),
+        source_policy_id=model.source_policy_id,
+        start_time_ns=model.start_time_ns,
+        end_time_ns=model.end_time_ns,
+        interval=model.interval,
+        limit=model.limit,
+        page_size=model.page_size,
+        max_pages=model.max_pages,
+        long_short_kind=(
+            DomainLongShortKind(model.long_short_kind.value)
+            if model.long_short_kind is not None
+            else None
+        ),
+        mark_index_kind=DomainMarkIndexKind(model.mark_index_kind.value),
+        basis_series=DomainBasisSeries(model.basis_series.value),
+        basis_contract_type=model.basis_contract_type,
+        max_freshness_ms=model.max_freshness_ms,
+        require_full_coverage=model.require_full_coverage,
+        deadline_ms=model.deadline_ms,
+    )
 
 
 def _decimal(value: object) -> DecimalValue:
@@ -346,6 +388,41 @@ def _warmup(result) -> WarmupResponse:
         count=len(history.items),
         data=[_market_item(item) for item in history.items],
     )
+
+
+def _reference_data(result) -> dict:
+    """Serialize provider-authentic reference data without float coercion."""
+
+    return {
+        "instrument_uid": result.request.instrument.instrument_uid,
+        "product": result.request.product.value,
+        "status": result.status.value,
+        "lineage": [asdict(item) for item in result.lineage],
+        "coverage": asdict(result.coverage),
+        "received_at_ns": result.received_at_ns,
+        "observations": [
+            {
+                "instrument_uid": item.instrument_uid,
+                "instrument_revision": item.instrument_revision,
+                "product": item.product.value,
+                "observed_at_ns": item.observed_at_ns,
+                "fields": [
+                    {
+                        "name": field.name,
+                        "value": _decimal(field.value.source_text),
+                        "unit": field.unit,
+                    }
+                    for field in item.fields
+                ],
+                "labels": dict(item.labels),
+            }
+            for item in result.observations
+        ],
+        "error_code": result.error_code,
+        "error_detail": result.error_detail,
+        "cache_hit": result.cache_hit,
+        "coalesced": result.coalesced,
+    }
 
 
 def _bind_item_cursor(request: Request, access, requirement, item):
@@ -716,6 +793,63 @@ async def warmup_batch(
             problem=problem,
         ))
     return BatchResponse(
+        request_id=result.request_id,
+        partial=result.partial,
+        success_count=result.success_count,
+        error_count=result.error_count,
+        results=items,
+    )
+
+
+@router.post("/market-data/reference:batch", response_model=ReferenceBatchResponse)
+async def reference_data_batch(
+    body: ReferenceBatchRequest,
+    purpose: AccessPurpose = Depends(_purpose),
+    service: V2QueryService = Depends(_service),
+    access: DataPlaneAccess = Depends(_data_access),
+):
+    """Return bounded provider reference data for declared alpha/research use.
+
+    Unlike the canonical spool route, this path is deliberately a typed,
+    bounded provider query.  It carries coverage and lineage on every result,
+    and never fabricates a missing metric as zero or silently substitutes a
+    different venue.
+    """
+
+    access.require_consumer(body.consumer_id)
+    access.require_permission(DataPlanePermission.HISTORY_READ)
+    access.require_purpose(purpose)
+    access.require_batch_size(len(body.requirements))
+    requirements = tuple(_reference_requirement(item) for item in body.requirements)
+    for requirement in requirements:
+        access.require_requirement(requirement.data_requirement)
+    batch = ReferenceBatchRequirement(
+        body.consumer_id,
+        requirements,
+        require_all=body.require_all,
+    )
+    result = await service.reference_data_batch_async(batch, purpose=purpose)
+    items = []
+    for item in result.results:
+        problem = None
+        if item.problem is not None:
+            problem = _problem(
+                QueryServiceError(
+                    item.problem,
+                    request_id=result.request_id,
+                    instrument_uid=item.requirement.instrument_uid,
+                )
+            )
+        items.append(
+            {
+                "instrument_uid": item.requirement.instrument_uid,
+                "product": item.requirement.product.value,
+                "status": item.status,
+                "data": _reference_data(item.result) if item.result is not None else None,
+                "problem": problem,
+            }
+        )
+    return ReferenceBatchResponse(
         request_id=result.request_id,
         partial=result.partial,
         success_count=result.success_count,

@@ -262,6 +262,16 @@ def _requirement(binding, *, grade=ConsumerGrade.ALPHA, warmup=1):
 
 
 class StableCatalogContractTests(unittest.TestCase):
+    def test_catalog_from_mapping_matches_strict_file_loader_without_io(self):
+        payload = yaml.safe_load(CATALOG_PATH.read_text())
+        from_mapping = StableSourceCatalog.from_mapping(payload)
+        from_file = StableSourceCatalog.load(CATALOG_PATH)
+        self.assertEqual(from_mapping.instruments, from_file.instruments)
+        self.assertEqual(from_mapping.bindings, from_file.bindings)
+        payload["bindings"][0]["unknown"] = "not-allowed"
+        with self.assertRaisesRegex(ValueError, "incomplete or unknown"):
+            StableSourceCatalog.from_mapping(payload)
+
     def test_catalog_covers_equal_source_baseline_with_deterministic_identity(self):
         catalog = StableSourceCatalog.load(CATALOG_PATH)
         self.assertEqual(len(catalog.bindings), 22)

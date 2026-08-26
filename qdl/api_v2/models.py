@@ -45,6 +45,7 @@ from qdl_sdk.models import (
     WarmupResponse,
     WarmupSpecification,
 )
+from qdl_sdk.reference import ReferenceBatchRequest, ReferenceBatchResponse
 
 
 class RequirementModel(ClosedModel):

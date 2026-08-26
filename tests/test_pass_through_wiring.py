@@ -49,7 +49,7 @@ class PassThroughWiringTests(unittest.TestCase):
         path.write_text(yaml.safe_dump(payload), encoding="utf-8")
         return StableSourceCatalog.load(path), identity.instrument_uid
 
-    def _stack(self, *, enabled: bool):
+    def _stack(self, *, enabled: bool, reference_enabled: bool = False):
         spool = SQLiteDurableSpool(
             SpoolConfig(path=self.directory / f"spool-{enabled}.sqlite3")
         )
@@ -60,12 +60,39 @@ class PassThroughWiringTests(unittest.TestCase):
             handoff=None,
             cursor_ttl_seconds=3600,
             pass_through_enabled=enabled,
+            reference_data_enabled=reference_enabled,
         )
 
     def test_disabled_by_default_leaves_the_stack_unchanged(self):
         service, backend, _ = self._stack(enabled=False)
         self.assertIsInstance(backend, StableSpoolQueryBackend)
         self.assertNotIsInstance(service.backend, RoutedQueryBackend)
+        self.assertIsNone(service.reference_batch)
+
+    def test_reference_capability_is_separate_and_never_execution_entitled(self):
+        service, backend, _ = self._stack(enabled=False, reference_enabled=True)
+        self.assertIsInstance(backend, StableSpoolQueryBackend)
+        self.assertNotIsInstance(service.backend, RoutedQueryBackend)
+        self.assertIsNotNone(service.reference_batch)
+        # The unbound declared instrument becomes resolvable only for the
+        # explicitly enabled reference product; this does not open BAR history.
+        record = self.catalog.instrument_registry(include_unbound=True).get(self.unbound_uid)
+        assert service._reference_source_id is not None
+        source_id = service._reference_source_id(record)
+        alpha = service.entitlements.authorize(
+            source_id=source_id,
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+            product=DataProduct.CANONICAL_HISTORY,
+            at_ns=1,
+        )
+        execution = service.entitlements.authorize(
+            source_id=source_id,
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+            product=DataProduct.CANONICAL_HISTORY,
+            at_ns=1,
+        )
+        self.assertTrue(alpha.allowed)
+        self.assertFalse(execution.allowed)
 
     def test_an_unbound_instrument_is_unresolvable_while_disabled(self):
         registry = self.catalog.instrument_registry()

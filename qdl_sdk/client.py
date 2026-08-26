@@ -21,6 +21,7 @@ from qdl_sdk.models import (
     StreamEvent,
     WarmupResponse,
 )
+from qdl_sdk.reference import ReferenceBatchResponse, ReferenceRequirement
 
 
 class QueryTransport(Protocol):
@@ -28,6 +29,13 @@ class QueryTransport(Protocol):
     async def warmup_batch(
         self,
         requirements: tuple[DataRequirement, ...],
+        *,
+        consumer_id: str,
+        require_all: bool,
+    ) -> dict: ...
+    async def reference_batch(
+        self,
+        requirements: tuple[ReferenceRequirement, ...],
         *,
         consumer_id: str,
         require_all: bool,
@@ -449,6 +457,120 @@ class AsyncDataLayerClient:
         self._record_batch(response)
         return response
 
+    async def reference_batch(
+        self,
+        requirements: tuple[ReferenceRequirement, ...] | list[ReferenceRequirement],
+        *,
+        require_all: bool = True,
+    ) -> ReferenceBatchResponse:
+        """Fetch bounded provider reference data through the typed V2 contract.
+
+        Reference results do not carry a stream cursor, so this method keeps
+        them out of cursor telemetry rather than inventing a replay offset.
+        Callers receive explicit capability/coverage failures per item.
+        """
+
+        values = tuple(requirements)
+        if not 1 <= len(values) <= 10_000:
+            raise ValueError("reference batch requires between 1 and 10000 items")
+        if not all(isinstance(item, ReferenceRequirement) for item in values):
+            raise TypeError("reference batch requires typed ReferenceRequirement items")
+        if len({item.consumer_grade for item in values}) != 1:
+            raise ValueError("reference batch cannot mix consumer grades")
+        identities = {
+            (
+                item.instrument_uid,
+                item.product.value,
+                item.interval,
+                item.start_time_ns,
+                item.end_time_ns,
+                item.long_short_kind.value if item.long_short_kind else None,
+                item.mark_index_kind.value,
+                item.basis_series.value,
+                str(item.basis_contract_type or "").strip().upper() or None,
+            )
+            for item in values
+        }
+        if len(identities) != len(values):
+            raise ValueError("reference batch contains duplicate requirements")
+
+        responses = []
+        for offset in range(0, len(values), 100):
+            chunk = values[offset:offset + 100]
+            payload = await self.query_transport.reference_batch(
+                chunk,
+                consumer_id=self.consumer_id,
+                require_all=require_all,
+            )
+            responses.append(self._validate_reference_batch_chunk(chunk, payload))
+        response = ReferenceBatchResponse.model_validate({
+            "schema": "qdl.reference.batch.v2",
+            "request_id": responses[0].request_id,
+            "partial": any(item.partial for item in responses),
+            "success_count": sum(item.success_count for item in responses),
+            "error_count": sum(item.error_count for item in responses),
+            "results": [
+                result.model_dump(mode="json", by_alias=True)
+                for item in responses
+                for result in item.results
+            ],
+        })
+        if len(response.results) != len(values):
+            raise ContinuityError(
+                "PARTIAL_RESULT", "reference batch cardinality differs from request"
+            )
+        if require_all and response.partial:
+            raise DataLayerError(
+                "PARTIAL_RESULT",
+                "required reference batch contains one or more explicit failures",
+                retryable=any(
+                    item.problem is not None and item.problem.retryable
+                    for item in response.results
+                ),
+            )
+        return response
+
+    @staticmethod
+    def _validate_reference_batch_chunk(
+        values: tuple[ReferenceRequirement, ...],
+        payload: dict,
+    ) -> ReferenceBatchResponse:
+        try:
+            response = ReferenceBatchResponse.model_validate(payload)
+        except ValidationError as error:
+            raise ContinuityError(
+                "SCHEMA_NOT_SUPPORTED",
+                "reference batch response violates the typed V2 contract",
+            ) from error
+        if len(response.results) != len(values):
+            raise ContinuityError(
+                "PARTIAL_RESULT", "reference batch cardinality differs from request"
+            )
+        for requirement, item in zip(values, response.results, strict=True):
+            if item.instrument_uid != requirement.instrument_uid:
+                raise ContinuityError(
+                    "CONFLICT", "reference batch order or instrument identity changed"
+                )
+            if item.product.value != requirement.product.value:
+                raise ContinuityError(
+                    "CONFLICT", "reference batch product changed from the request"
+                )
+            if item.data is not None:
+                if item.data.instrument_uid != requirement.instrument_uid:
+                    raise ContinuityError(
+                        "CONFLICT", "reference data instrument differs from the request"
+                    )
+                if item.data.product.value != requirement.product.value:
+                    raise ContinuityError(
+                        "CONFLICT", "reference data product differs from the request"
+                    )
+            elif item.problem is None:
+                raise ContinuityError(
+                    "PARTIAL_RESULT",
+                    "reference batch item has neither data nor explicit problem",
+                )
+        return response
+
     @staticmethod
     def _validate_batch_chunk(
         values: tuple[DataRequirement, ...],
@@ -728,6 +850,22 @@ class DataLayerClientV2:
         except RuntimeError:
             return asyncio.run(
                 self.async_client.warmup_batch(
+                    requirements, require_all=require_all
+                )
+            )
+        raise RuntimeError("sync SDK cannot run inside an active event loop")
+
+    def reference_batch(
+        self,
+        requirements: tuple[ReferenceRequirement, ...] | list[ReferenceRequirement],
+        *,
+        require_all: bool = True,
+    ) -> ReferenceBatchResponse:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(
+                self.async_client.reference_batch(
                     requirements, require_all=require_all
                 )
             )

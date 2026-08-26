@@ -49,6 +49,8 @@ CapabilityResolver = Callable[[InstrumentRecord], VenueCapabilityProfile]
 @dataclass(frozen=True, slots=True)
 class ReferenceBatchPolicy:
     max_concurrency: int = 8
+    max_provider_concurrency: int = 4
+    request_timeout_seconds: float = 20.0
     max_cache_entries: int = 512
     history_ttl_seconds: float = 30.0
     snapshot_ttl_seconds: float = 2.0
@@ -59,6 +61,12 @@ class ReferenceBatchPolicy:
     def __post_init__(self) -> None:
         if not 1 <= self.max_concurrency <= 64:
             raise ValueError("reference batch concurrency must be between 1 and 64")
+        if not 1 <= self.max_provider_concurrency <= self.max_concurrency:
+            raise ValueError(
+                "reference provider concurrency must be between 1 and global concurrency"
+            )
+        if not 0.1 <= self.request_timeout_seconds <= 120.0:
+            raise ValueError("reference request timeout must be between 0.1 and 120 seconds")
         if not 1 <= self.max_cache_entries <= 10_000:
             raise ValueError("reference batch cache capacity must be between 1 and 10000")
         if any(
@@ -130,9 +138,14 @@ class ReferenceBatch:
         self._clock_ns = clock_ns
         self._monotonic = monotonic
         self._semaphore = asyncio.Semaphore(policy.max_concurrency)
+        self._provider_semaphores: dict[str, asyncio.Semaphore] = {}
         self._lock = asyncio.Lock()
         self._cache: OrderedDict[tuple[object, ...], _CacheEntry] = OrderedDict()
         self._inflight: dict[tuple[object, ...], asyncio.Task[ReferenceBatchResult]] = {}
+        self._source_calls = 0
+        self._cache_hits = 0
+        self._cache_misses = 0
+        self._provider_timeouts = 0
 
     async def fetch(self, requests: tuple[ReferenceRequest, ...]) -> tuple[ReferenceBatchResult, ...]:
         """Resolve every item concurrently while preserving caller order."""
@@ -147,7 +160,9 @@ class ReferenceBatch:
             cached = self._cache.get(key)
             if cached is not None:
                 self._cache.move_to_end(key)
+                self._cache_hits += 1
                 return replace(cached.result, cache_hit=True, coalesced=False)
+            self._cache_misses += 1
             task = self._inflight.get(key)
             coalesced = task is not None
             if task is None:
@@ -216,10 +231,27 @@ class ReferenceBatch:
             )
 
         try:
-            async with self._semaphore:
-                fetched = await adapter.fetch(
-                    request, capability=capability, received_at_ns=received_at_ns
+            provider = request.instrument.identity.venue.upper()
+            provider_semaphore = self._provider_semaphores.setdefault(
+                provider, asyncio.Semaphore(self._policy.max_provider_concurrency)
+            )
+            async with self._semaphore, provider_semaphore:
+                self._source_calls += 1
+                fetched = await asyncio.wait_for(
+                    adapter.fetch(
+                        request, capability=capability, received_at_ns=received_at_ns
+                    ),
+                    timeout=self._policy.request_timeout_seconds,
                 )
+        except TimeoutError as error:
+            self._provider_timeouts += 1
+            return self._error_result(
+                request,
+                capability,
+                received_at_ns,
+                "PROVIDER_TIMEOUT",
+                "reference provider request exceeded its bounded deadline",
+            )
         except ReferenceUnavailable as error:
             return self._unavailable_result(
                 request,
@@ -335,3 +367,16 @@ class ReferenceBatch:
         for key, entry in tuple(self._cache.items()):
             if entry.expires_at <= now:
                 self._cache.pop(key, None)
+
+    def stats(self) -> dict[str, int]:
+        """Bounded scheduler/caching counters for batch evidence and SLOs."""
+
+        return {
+            "source_calls": self._source_calls,
+            "cache_hits": self._cache_hits,
+            "cache_misses": self._cache_misses,
+            "provider_timeouts": self._provider_timeouts,
+            "cache_entries": len(self._cache),
+            "inflight": len(self._inflight),
+            "provider_lanes": len(self._provider_semaphores),
+        }

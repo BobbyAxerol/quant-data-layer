@@ -262,7 +262,9 @@ fn quantity_unit(context: &TradeContext) -> Result<QuantityUnit, String> {
     }
     if venue == "BINANCE" {
         return match (market.as_str(), product.as_str()) {
-            ("SPOT", "SPOT") | ("USDM", "PERPETUAL") => Ok(QuantityUnit::BaseAsset),
+            ("SPOT", "SPOT") | ("USDM", "PERPETUAL" | "FUTURE") => {
+                Ok(QuantityUnit::BaseAsset)
+            }
             _ => Err("unsupported Binance quantity-unit identity".into()),
         };
     }
@@ -944,6 +946,28 @@ mod tests {
             );
             assert_eq!(actual, std::fs::read(golden_path).expect("read golden"));
         }
+    }
+
+    #[test]
+    fn binance_usdm_dated_future_bar_keeps_base_asset_volume_unit() {
+        let fixture_path = format!(
+            "{}/../../tests/fixtures/phase2/binance_usdm_rest_bar.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut fixture: TradeFixture =
+            serde_json::from_slice(&std::fs::read(fixture_path).expect("read fixture"))
+                .expect("decode fixture");
+        fixture.context.instrument_id = "BINANCE.USDM.FUTURE.BTC-USDT-260925".into();
+        fixture.context.native_symbol = "BTCUSDT_260925".into();
+        fixture.context.product_type = "FUTURE".into();
+        fixture.raw["symbol"] = serde_json::Value::String("BTCUSDT_260925".into());
+
+        let envelope = canonicalize_trade(&fixture).expect("canonicalize dated future bar");
+        let event_envelope::Payload::Bar(bar) = envelope.payload.expect("bar payload") else {
+            panic!("dated future fixture must remain a bar")
+        };
+        assert_eq!(bar.volume_unit, QuantityUnit::BaseAsset as i32);
+        assert_eq!(bar.volume.expect("volume").source_text, "12.500");
     }
 
     #[test]

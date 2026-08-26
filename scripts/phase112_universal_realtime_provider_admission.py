@@ -35,8 +35,10 @@ from qdl.adapters.okx.bar_edge import (
     fetch_latest_closed_bar_raw_envelope as fetch_okx_latest_closed_bar,
 )
 from qdl.demand import (
+    ActiveDemandInventory,
     ActiveDemandSourceRegistry,
     InventoryError,
+    ProviderAdmission,
     admit_provider_metadata,
     converge_active_demand,
 )
@@ -117,6 +119,11 @@ class ProviderAdmissionPlan:
     bindings: tuple[ProviderRealtimeBinding, ...]
     accepted_missing: tuple[dict[str, str | None], ...]
     deferred_requirement_ids: tuple[str, ...]
+    # Keep the authenticated metadata admission that built this plan available
+    # to later read-only acceptance phases.  Defaults preserve the existing
+    # test/report constructor and no runtime role reads these fields.
+    inventory: ActiveDemandInventory | None = None
+    admission: ProviderAdmission | None = None
 
 
 def _text(value: object, field: str) -> str:
@@ -263,6 +270,8 @@ def _build_plan(
         bindings=bindings,
         accepted_missing=accepted_missing,
         deferred_requirement_ids=plan.deferred_requirement_ids,
+        inventory=inventory,
+        admission=admission,
     )
 
 

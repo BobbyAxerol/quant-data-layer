@@ -173,6 +173,33 @@ class UniversalDemandTests(unittest.TestCase):
         self.assertEqual(decoded.universe.universe_ref, "binance-usdm-core")
         self.assertEqual(decoded.universe.segment_id, "core")
 
+    def test_basis_selector_roundtrip_keeps_perpetual_anchor_and_delivery_intent(self):
+        selector = UniverseSelector(
+            selector_id="basis-perpetual-btcusdt",
+            kind=UniverseSelectorKind.EXPLICIT,
+            venue="BINANCE",
+            market="USDM",
+            product_type="PERPETUAL",
+            native_symbols=("BTCUSDT",),
+        )
+        requirement = self._requirement(
+            feed=DemandFeed.BASIS,
+            selector=selector,
+            interval="1d",
+        )
+        requirement = replace(
+            requirement,
+            basis_contract_type="CURRENT_QUARTER",
+            basis_series="CONTINUOUS",
+        )
+        encoded = requirement.to_proto().SerializeToString(deterministic=True)
+        decoded = requirement.to_proto().__class__()
+        decoded.ParseFromString(encoded)
+        restored = DataRequirement.from_proto(decoded)
+        self.assertEqual(restored.canonical_mapping(), requirement.canonical_mapping())
+        self.assertEqual(restored.basis_contract_type, "CURRENT_QUARTER")
+        self.assertEqual(restored.basis_series, "CONTINUOUS")
+
     def test_universe_registry_manifest_and_segment_resolution_are_strict(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

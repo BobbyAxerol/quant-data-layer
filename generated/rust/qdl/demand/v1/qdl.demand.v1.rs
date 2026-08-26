@@ -105,6 +105,13 @@ pub struct DataRequirement {
     pub configuration_revision: u64,
     #[prost(message, optional, tag="16")]
     pub warmup: ::core::option::Option<WarmupSpecification>,
+    /// BASIS is always anchored to the perpetual pair.  These optional selector
+    /// fields preserve the requested delivery leg/series without pretending that
+    /// a dated future identity itself is the basis source.
+    #[prost(string, tag="17")]
+    pub basis_contract_type: ::prost::alloc::string::String,
+    #[prost(string, tag="18")]
+    pub basis_series: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FeedCapability {

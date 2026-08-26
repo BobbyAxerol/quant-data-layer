@@ -53,9 +53,11 @@ def resolve_quantity_unit(
     if venue_name == "BINANCE":
         if market_name == "SPOT" and product == "SPOT":
             return QuantityUnit.BASE_ASSET
-        if market_name == "USDM" and product == "PERPETUAL":
+        if market_name == "USDM" and product in {"PERPETUAL", "FUTURE"}:
             # Binance USD-M trade/book/kline quantity is expressed in base-asset
-            # units even though the instrument is a perpetual contract.
+            # units for both perpetual and dated delivery futures. The dated
+            # instrument keeps its expiry in identity/lineage; it does not
+            # change the venue-native quantity unit into contract count.
             return QuantityUnit.BASE_ASSET
         raise ValueError("unsupported Binance quantity-unit identity")
 

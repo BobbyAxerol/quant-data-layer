@@ -928,6 +928,7 @@ def build_stable_query_stack(
     handoff: GapFreeHandoff,
     cursor_ttl_seconds: int,
     pass_through_enabled: bool = False,
+    reference_data_enabled: bool = False,
 ) -> tuple[V2QueryService, StableSpoolQueryBackend, StableConsumerCursorIssuer]:
     """Build the query stack, optionally including the pass-through product.
 
@@ -943,12 +944,29 @@ def build_stable_query_stack(
         from qdl.runtime.routed_query import RoutedQueryBackend
 
         served = RoutedQueryBackend(backend, ProviderBarHistorySource(catalog))
+    entitlements = catalog.entitlements(include_unbound=pass_through_enabled)
+    reference_batch = None
+    reference_source_id = None
+    if reference_data_enabled:
+        # This is deliberately independent from BAR pass-through.  It only
+        # enables catalog-bound provider reference products and grants no
+        # execution purpose; no catalog declaration can turn it on by itself.
+        from qdl.reference.runtime import build_default_reference_runtime
+
+        reference_runtime = build_default_reference_runtime()
+        entitlements = entitlements.with_grants(reference_runtime.entitlement_grants())
+        reference_batch = reference_runtime.batch
+        reference_source_id = reference_runtime.source_id_for
     service = V2QueryService(
         instruments=InstrumentQuery(
-            catalog.instrument_registry(include_unbound=pass_through_enabled)
+            catalog.instrument_registry(
+                include_unbound=pass_through_enabled or reference_data_enabled
+            )
         ),
         backend=served,
-        entitlements=catalog.entitlements(include_unbound=pass_through_enabled),
+        entitlements=entitlements,
+        reference_batch=reference_batch,
+        reference_source_id=reference_source_id,
     )
     issuer = StableConsumerCursorIssuer(
         handoff, catalog, ttl_seconds=cursor_ttl_seconds

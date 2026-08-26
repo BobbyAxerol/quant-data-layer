@@ -1096,7 +1096,20 @@ class ActiveDemandCompiler:
             DataRequirement(universe=perp_selector, feed=DemandFeed.BAR, interval=interval, require_final_bars=True, **common),
             DataRequirement(universe=quarterly_selector, feed=DemandFeed.BAR, interval=interval, require_final_bars=True, **common),
             DataRequirement(universe=perp_selector, feed=DemandFeed.FUNDING_RATE, max_freshness_ms=86_400_000, **{key: value for key, value in common.items() if key not in {"max_freshness_ms"}}),
-            DataRequirement(universe=quarterly_selector, feed=DemandFeed.BASIS, interval="1d", max_freshness_ms=86_400_000, **{key: value for key, value in common.items() if key not in {"max_freshness_ms"}}),
+            # Provider basis history is keyed by the perpetual pair plus an
+            # explicit delivery selector.  Keeping the quarterly BAR demand
+            # above preserves the priced leg, while this requirement keeps the
+            # derived continuous series from being mislabeled as a dated-future
+            # feed.
+            DataRequirement(
+                universe=perp_selector,
+                feed=DemandFeed.BASIS,
+                interval="1d",
+                max_freshness_ms=86_400_000,
+                basis_contract_type=contract_type,
+                basis_series="CONTINUOUS",
+                **{key: value for key, value in common.items() if key not in {"max_freshness_ms"}},
+            ),
         ]
         if bool(data.get("include_depth", False)):
             if depth <= 0:

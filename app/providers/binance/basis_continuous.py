@@ -21,6 +21,7 @@ from app.providers.binance.rest import BinanceProviderError, normalize_interval
 
 BINANCE_VISION_BASE_URL = "https://data.binance.vision/data/futures/um"
 DEFAULT_CACHE_DIR = os.getenv("BINANCE_VISION_CACHE_DIR", "/app/data/binance_vision_cache")
+_DIRECT_REST_TAIL_DAYS = 45
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,9 @@ def fetch_continuous_basis_bundle(
     current_delivery_symbol: str | None = None,
     include_components: bool = False,
     fallback_url: str | None = None,
+    end_time: datetime | None = None,
+    cache_dir: str | None = None,
+    persist_cache: bool = True,
     http_get: Callable[..., Any] = requests.get,
     **kwargs,
 ) -> dict[str, Any]:
@@ -53,11 +57,16 @@ def fetch_continuous_basis_bundle(
         buffer_days=int(buffer_days),
         roll_policy=roll_policy,
         current_delivery_symbol=current_delivery_symbol.upper().strip() if current_delivery_symbol else None,
+        end_time=end_time,
     )
     try:
-        builder = ContinuousBasisBuilder(http_get=http_get)
+        builder = ContinuousBasisBuilder(
+            cache_dir=cache_dir,
+            persist_cache=persist_cache,
+            http_get=http_get,
+        )
         df, meta = builder.build(request, **kwargs)
-        source = "binance_vision"
+        source = str(meta.get("source", "binance_vision"))
     except Exception as exc:
         if not fallback_url:
             raise
@@ -75,7 +84,7 @@ def fetch_continuous_basis_bundle(
         "lookback_days": request.lookback_days,
         "roll_policy": request.roll_policy,
         "source": source,
-        "cached": True,
+        "cached": persist_cache,
         "stored": False,
         "rows": len(records),
         "data": records,
@@ -87,8 +96,17 @@ def fetch_continuous_basis_bundle(
 
 
 class ContinuousBasisBuilder:
-    def __init__(self, *, cache_dir: str | None = None, http_get: Callable[..., Any] = requests.get) -> None:
-        self.cache_dir = Path(cache_dir or DEFAULT_CACHE_DIR)
+    def __init__(
+        self,
+        *,
+        cache_dir: str | None = None,
+        persist_cache: bool = True,
+        http_get: Callable[..., Any] = requests.get,
+    ) -> None:
+        # V1's legacy route retains its provider cache by default.  A V2
+        # request can explicitly use memory-only acquisition so a bounded
+        # warmup never creates an undocumented raw-data store.
+        self.cache_dir = Path(cache_dir or DEFAULT_CACHE_DIR) if persist_cache else None
         self.http_get = http_get
 
     def build(self, request: ContinuousBasisRequest, **kwargs) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -110,7 +128,7 @@ class ContinuousBasisBuilder:
             contracts = sorted(set(contracts), key=_expiry_from_symbol)
 
         perp = self._perp_frame(request.pair, request.interval, start_dt, end_dt, **kwargs)
-        quarterly = self._stitch_quarterly_contracts(
+        quarterly, quarterly_components = self._stitch_quarterly_contracts(
             request.pair,
             contracts,
             request.interval,
@@ -146,7 +164,18 @@ class ContinuousBasisBuilder:
             "components": {
                 "perp_rows": len(perp),
                 "quarterly_rows": len(quarterly),
+                **quarterly_components,
             },
+            "source": (
+                "binance_vision+binance_usdm_rest"
+                if quarterly_components["rest_tail_rows"]
+                else "binance_vision"
+            ),
+            "source_components": (
+                ("BINANCE_VISION", "BINANCE_USDM_REST")
+                if quarterly_components["rest_tail_rows"]
+                else ("BINANCE_VISION",)
+            ),
         }
         return aligned, meta
 
@@ -174,8 +203,10 @@ class ContinuousBasisBuilder:
         start_dt: datetime,
         end_dt: datetime,
         **kwargs,
-    ) -> pd.DataFrame:
+    ) -> tuple[pd.DataFrame, dict[str, int]]:
         contract_dfs: dict[str, pd.DataFrame] = {}
+        vision_rows = 0
+        rest_tail_rows = 0
         contracts = sorted(
             [{"symbol": symbol, "expiry": _expiry_from_symbol(symbol)} for symbol in symbols],
             key=lambda row: row["expiry"],
@@ -187,7 +218,17 @@ class ContinuousBasisBuilder:
             window_end = min(pd.Timestamp(end_dt), contract["expiry"] + pd.Timedelta(days=30)).to_pydatetime()
             if window_start > pd.Timestamp(end_dt).to_pydatetime() or window_end < pd.Timestamp(start_dt).to_pydatetime():
                 continue
-            df = self._vision_kline_frame(symbol, interval, window_start, window_end, **kwargs)
+            vision = self._vision_kline_frame(symbol, interval, window_start, window_end, **kwargs)
+            vision_rows += len(vision)
+            df, restored_rows = self._fill_vision_tail_from_direct_rest(
+                symbol,
+                interval,
+                vision,
+                window_start,
+                window_end,
+                **kwargs,
+            )
+            rest_tail_rows += restored_rows
             if not df.empty:
                 contract_dfs[symbol] = df
         if not contract_dfs:
@@ -230,7 +271,64 @@ class ContinuousBasisBuilder:
             raise RuntimeError("No stitched quarterly rows generated")
         stitched = pd.concat(stitched_rows)
         stitched = stitched[~stitched.index.duplicated(keep="last")].sort_index()
-        return stitched[(stitched.index >= pd.Timestamp(start_dt)) & (stitched.index <= pd.Timestamp(end_dt))]
+        return (
+            stitched[(stitched.index >= pd.Timestamp(start_dt)) & (stitched.index <= pd.Timestamp(end_dt))],
+            {
+                "quarterly_vision_rows": vision_rows,
+                "rest_tail_rows": rest_tail_rows,
+            },
+        )
+
+    def _fill_vision_tail_from_direct_rest(
+        self,
+        symbol: str,
+        interval: str,
+        vision: pd.DataFrame,
+        start_dt: datetime,
+        end_dt: datetime,
+        **kwargs,
+    ) -> tuple[pd.DataFrame, int]:
+        """Fill only missing recent daily archive rows from the exact contract.
+
+        Binance Vision remains the roll-aware historical source.  Its daily
+        publication can lag the current final bar, so a bounded direct REST
+        tail is used only to restore absent rows.  Existing Vision rows win;
+        this never rewrites research history or turns an incomplete provider
+        response into a complete one.
+        """
+
+        if interval != "1d" or end_dt < start_dt:
+            return vision, 0
+        tail_start = max(
+            pd.Timestamp(start_dt),
+            pd.Timestamp(end_dt) - pd.Timedelta(days=_DIRECT_REST_TAIL_DAYS),
+        ).to_pydatetime()
+        try:
+            payload = fetch_klines(
+                symbol,
+                interval=interval,
+                limit=1_500,
+                start_time=int(tail_start.timestamp() * 1000),
+                end_time=int(end_dt.timestamp() * 1000),
+                **kwargs,
+            )
+        except BinanceProviderError:
+            # A completed Vision window is still valid if an expired delivery
+            # contract is no longer queryable from REST.  Any missing tail is
+            # left visible to the builder's complete-window validation.
+            return vision, 0
+        direct = _klines_to_frame(payload.get("data", []), symbol=symbol)
+        if direct.empty:
+            return vision, 0
+        direct = direct[(direct.index >= pd.Timestamp(start_dt)) & (direct.index <= pd.Timestamp(end_dt))]
+        if direct.empty:
+            return vision, 0
+        missing = direct.loc[~direct.index.isin(vision.index)]
+        if missing.empty:
+            return vision, 0
+        merged = pd.concat((vision, missing))
+        merged = merged[~merged.index.duplicated(keep="first")].sort_index()
+        return merged, len(missing)
 
     def _vision_kline_frame(
         self,
@@ -255,12 +353,13 @@ class ContinuousBasisBuilder:
 
     def _load_monthly_vision(self, symbol: str, interval: str, year: int, month: int, **kwargs) -> list[list[Any]] | None:
         cache_path = self._cache_path("monthly", symbol, interval, f"{year}-{month:02d}")
-        cached = self._read_cache(cache_path)
-        if cached is not None:
-            return cached
+        if cache_path is not None:
+            cached = self._read_cache(cache_path)
+            if cached is not None:
+                return cached
         url = f"{BINANCE_VISION_BASE_URL}/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{year}-{month:02d}.zip"
         rows = self._fetch_zip_rows(url, **kwargs)
-        if rows is not None:
+        if rows is not None and cache_path is not None:
             self._write_cache(cache_path, rows)
         return rows
 
@@ -279,11 +378,11 @@ class ContinuousBasisBuilder:
         while day.month == month:
             if start_date <= day <= end_date:
                 cache_path = self._cache_path("daily", symbol, interval, day.isoformat())
-                cached = self._read_cache(cache_path)
+                cached = self._read_cache(cache_path) if cache_path is not None else None
                 if cached is None:
                     url = f"{BINANCE_VISION_BASE_URL}/daily/klines/{symbol}/{interval}/{symbol}-{interval}-{day.isoformat()}.zip"
                     cached = self._fetch_zip_rows(url, **kwargs)
-                    if cached is not None:
+                    if cached is not None and cache_path is not None:
                         self._write_cache(cache_path, cached)
                 if cached:
                     rows.extend(cached)
@@ -317,7 +416,9 @@ class ContinuousBasisBuilder:
                 time.sleep(backoff_seconds * (2 ** (attempt - 1)) + random.uniform(0, backoff_seconds))
         raise BinanceProviderError(f"Failed to fetch Binance Vision zip {url}", attempts=attempts)
 
-    def _cache_path(self, scope: str, symbol: str, interval: str, key: str) -> Path:
+    def _cache_path(self, scope: str, symbol: str, interval: str, key: str) -> Path | None:
+        if self.cache_dir is None:
+            return None
         return self.cache_dir / "futures_um" / scope / "klines" / interval / f"symbol={symbol}" / f"{key}.json"
 
     @staticmethod

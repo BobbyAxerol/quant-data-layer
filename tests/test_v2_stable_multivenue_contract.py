@@ -10,6 +10,7 @@ from qdl.api_v2.models import BarPayload, DecimalValue, TradePayload
 from qdl.canonical.market import (
     canonicalize_binance_usdm_bar,
     canonicalize_binance_usdm_bbo,
+    canonicalize_binance_usdm_rest_bar,
     canonicalize_dnse_bar,
     canonicalize_okx_bar,
     canonicalize_okx_bbo,
@@ -138,8 +139,28 @@ class StableMultivenueCanonicalContractTests(unittest.TestCase):
     def test_provider_role_and_unknown_identity_fail_closed(self):
         fallback = load_event("vnstock_equity_bar.json")
         self.assertEqual(fallback.source_role, common_pb2.SOURCE_ROLE_SECONDARY)
+        self.assertEqual(
+            resolve_quantity_unit(
+                venue="BINANCE", market="USDM", product_type="FUTURE"
+            ),
+            QuantityUnit.BASE_ASSET,
+        )
         with self.assertRaisesRegex(ValueError, "quantity unit is undefined"):
             resolve_quantity_unit(venue="UNKNOWN", market="X", product_type="Y")
+
+    def test_binance_usdm_dated_future_bar_keeps_base_asset_volume_unit(self):
+        fixture = json.loads((FIXTURES / "binance_usdm_rest_bar.json").read_text())
+        raw = dict(fixture["raw"])
+        raw["symbol"] = "BTCUSDT_260925"
+        context_data = dict(fixture["context"])
+        context_data.update({
+            "instrument_id": "BINANCE.USDM.FUTURE.BTC-USDT-260925",
+            "native_symbol": "BTCUSDT_260925",
+            "product_type": "FUTURE",
+        })
+        event = canonicalize_binance_usdm_rest_bar(raw, TradeContext(**context_data))
+        self.assertEqual(event.bar.volume_unit, common_pb2.QUANTITY_UNIT_BASE_ASSET)
+        self.assertEqual(event.bar.volume.source_text, "12.500")
 
     def test_non_positive_trade_price_and_quantity_fail_closed_for_all_venues(self):
         cases = (

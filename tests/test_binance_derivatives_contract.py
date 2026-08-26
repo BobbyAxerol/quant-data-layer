@@ -211,6 +211,47 @@ class TestBinanceDerivativesContract(unittest.TestCase):
         self.assertTrue(set(frame["active_contract"]).issubset({"BTCUSDT_260327", "BTCUSDT_260626"}))
         self.assertIn("BTCUSDT_260327", meta["candidate_contracts"])
 
+    def test_continuous_basis_memory_only_mode_never_has_a_cache_path(self):
+        builder = basis_continuous.ContinuousBasisBuilder(
+            cache_dir="/tmp/qdl-test-vision-cache",
+            persist_cache=False,
+        )
+        self.assertIsNone(builder.cache_dir)
+        self.assertIsNone(builder._cache_path("monthly", "BTCUSDT", "1d", "2026-01"))
+
+    def test_continuous_basis_rest_tail_only_fills_missing_vision_rows(self):
+        builder = basis_continuous.ContinuousBasisBuilder(persist_cache=False)
+        index = pd.date_range("2026-08-20", periods=2, freq="1D", tz="UTC")
+        vision = pd.DataFrame(
+            {
+                "symbol": "BTCUSDT_260925",
+                "open": (100.0, 101.0),
+                "high": (101.0, 102.0),
+                "low": (99.0, 100.0),
+                "close": (100.0, 101.0),
+                "volume": (10.0, 11.0),
+            },
+            index=index,
+        )
+        direct_rows = [
+            [int(index[1].timestamp() * 1000), "999", "1000", "998", "999", "99"],
+            [int((index[1] + pd.Timedelta(days=1)).timestamp() * 1000), "102", "103", "101", "102", "12"],
+        ]
+        with patch("app.providers.binance.basis_continuous.fetch_klines", return_value={"data": direct_rows}) as fetch:
+            merged, restored = builder._fill_vision_tail_from_direct_rest(
+                "BTCUSDT_260925",
+                "1d",
+                vision,
+                index[0].to_pydatetime(),
+                (index[1] + pd.Timedelta(days=1)).to_pydatetime(),
+            )
+
+        self.assertEqual(restored, 1)
+        self.assertEqual(len(merged), 3)
+        self.assertEqual(merged.loc[index[1], "close"], 101.0)
+        self.assertEqual(merged.iloc[-1]["close"], 102.0)
+        self.assertEqual(fetch.call_args.kwargs["limit"], 1_500)
+
     def test_route_continuous_basis_bundle_delegates_to_provider(self):
         with patch("app.api.routes_binance_derivatives.basis_continuous.fetch_continuous_basis_bundle") as fetch:
             fetch.return_value = {"kind": "continuous_basis_bundle", "rows": 365}

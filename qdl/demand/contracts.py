@@ -332,6 +332,8 @@ class DataRequirement:
     depth_levels: int = 0
     configuration_revision: int = 1
     warmup: WarmupSpecification | None = None
+    basis_contract_type: str | None = None
+    basis_series: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "consumer_id", _text(self.consumer_id, "consumer_id"))
@@ -340,6 +342,14 @@ class DataRequirement:
         object.__setattr__(self, "source_policy_id", _text(self.source_policy_id, "source_policy_id"))
         interval = UniverseSelector._optional(self.interval)
         object.__setattr__(self, "interval", interval)
+        basis_contract_type = UniverseSelector._optional(self.basis_contract_type)
+        basis_series = UniverseSelector._optional(self.basis_series)
+        if basis_contract_type is not None:
+            basis_contract_type = basis_contract_type.upper()
+        if basis_series is not None:
+            basis_series = basis_series.upper()
+        object.__setattr__(self, "basis_contract_type", basis_contract_type)
+        object.__setattr__(self, "basis_series", basis_series)
         if not 0 <= self.warmup_limit <= 100_000:
             raise ValueError("warmup_limit is outside bounds")
         if self.warmup is not None and not isinstance(
@@ -380,6 +390,17 @@ class DataRequirement:
             DemandFeed.BOOK_DELTA,
         }:
             raise ValueError("depth_levels is valid only for book feeds")
+        if self.feed is DemandFeed.BASIS:
+            if basis_contract_type is not None and basis_contract_type not in {
+                "PERPETUAL", "CURRENT_QUARTER", "NEXT_QUARTER"
+            }:
+                raise ValueError("basis_contract_type is invalid")
+            if basis_series is not None and basis_series not in {"NATIVE", "CONTINUOUS"}:
+                raise ValueError("basis_series is invalid")
+            if basis_series == "CONTINUOUS" and basis_contract_type == "PERPETUAL":
+                raise ValueError("continuous BASIS cannot select PERPETUAL")
+        elif basis_contract_type is not None or basis_series is not None:
+            raise ValueError("basis selector fields are valid only for BASIS")
         if self.purpose is DemandPurpose.EXECUTION:
             if not self.execution_grade or not self.require_live:
                 raise ValueError("execution demand must require execution-grade live data")
@@ -393,7 +414,7 @@ class DataRequirement:
             "interval", "warmup_limit", "max_freshness_ms", "priority",
             "ttl_seconds", "require_final_bars", "require_live", "execution_grade",
             "depth_levels", "configuration_revision",
-            "warmup",
+            "warmup", "basis_contract_type", "basis_series",
         }
         unknown = set(value) - allowed
         if unknown:
@@ -426,6 +447,8 @@ class DataRequirement:
                 if isinstance(value.get("warmup"), Mapping)
                 else None
             ),
+            basis_contract_type=value.get("basis_contract_type"),
+            basis_series=value.get("basis_series"),
         )
 
     def canonical_mapping(self) -> dict[str, Any]:
@@ -451,6 +474,10 @@ class DataRequirement:
         # not churn manifests, leases or consumer checkpoints.
         if self.warmup is not None:
             mapping["warmup"] = self.warmup.canonical_mapping()
+        if self.basis_contract_type is not None:
+            mapping["basis_contract_type"] = self.basis_contract_type
+        if self.basis_series is not None:
+            mapping["basis_series"] = self.basis_series
         return mapping
 
     @property
@@ -485,6 +512,8 @@ class DataRequirement:
             source_policy_id=self.source_policy_id,
             depth_levels=self.depth_levels,
             configuration_revision=self.configuration_revision,
+            basis_contract_type=self.basis_contract_type or "",
+            basis_series=self.basis_series or "",
         )
         if self.warmup is not None:
             proto = demand_pb2.WarmupSpecification(
@@ -554,6 +583,8 @@ class DataRequirement:
             depth_levels=value.depth_levels,
             configuration_revision=value.configuration_revision,
             warmup=warmup,
+            basis_contract_type=value.basis_contract_type or None,
+            basis_series=value.basis_series or None,
         )
 
 

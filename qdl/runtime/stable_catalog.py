@@ -222,6 +222,18 @@ class StableSourceCatalog:
     @classmethod
     def load(cls, path: str | Path) -> "StableSourceCatalog":
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        return cls.from_mapping(raw)
+
+    @classmethod
+    def from_mapping(cls, raw: Any) -> "StableSourceCatalog":
+        """Validate an already-decoded catalog without requiring file I/O.
+
+        Runtime loaders still use :meth:`load`; this entry point is for an
+        admitted, in-memory catalog projection such as a bounded provider
+        acceptance run.  Both paths deliberately share the exact strict
+        schema and identity checks.
+        """
+
         if not isinstance(raw, dict) or raw.get("schema") != "qdl.v2.stable-source-bindings.v1":
             raise ValueError("unsupported stable source binding schema")
         expected = {

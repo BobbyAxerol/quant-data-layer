@@ -41,6 +41,16 @@ from qdl_sdk.models import (
     WarmupTimeRange,
 )
 from qdl_sdk.projection import market_data_view_from_stream
+from qdl_sdk.reference import (
+    BasisSeries,
+    LongShortKind,
+    MarkIndexKind,
+    ReferenceBatchRequest,
+    ReferenceBatchResponse,
+    ReferenceDataResponse,
+    ReferenceProduct,
+    ReferenceRequirement,
+)
 from qdl_sdk.transport import GrpcStreamTransport, RestQueryTransport
 from qdl_sdk.tls import WorkloadTlsConfig
 from qdl_sdk.v1_facade import V1CompatibilityFacade
@@ -49,6 +59,7 @@ __all__ = [
     "__version__",
     "AsyncDataLayerClient",
     "BasisKind",
+    "BasisSeries",
     "BarRevisionPolicy",
     "BatchResponse",
     "CallbackCredentialProvider",
@@ -70,6 +81,8 @@ __all__ = [
     "InstrumentView",
     "IntervalSourcePolicy",
     "LongShortRatioPopulation",
+    "LongShortKind",
+    "MarkIndexKind",
     "MemoryCursorStore",
     "MarketDataView",
     "market_data_view_from_stream",
@@ -78,6 +91,11 @@ __all__ = [
     "QuantityUnit",
     "RestQueryTransport",
     "RecoveryPolicy",
+    "ReferenceBatchRequest",
+    "ReferenceBatchResponse",
+    "ReferenceDataResponse",
+    "ReferenceProduct",
+    "ReferenceRequirement",
     "RotatingJwtCredentialProvider",
     "SnapshotResponse",
     "StalePolicy",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.providers.binance.rest import BinanceProviderError
@@ -251,6 +252,89 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(taker_flow.status, ReferenceStatus.OK)
         self.assertEqual({field.name: field.unit for field in taker_flow.observations[0].fields}["buy_volume"], "PROVIDER_NATIVE_VOLUME")
 
+    async def test_latest_first_metric_history_paginates_backward_without_losing_left_coverage(self):
+        calls = []
+
+        def metric(endpoint, symbol, period, limit, start_time, end_time, **kwargs):
+            self.assertEqual(endpoint, "open_interest_hist")
+            self.assertEqual(symbol, "BTCUSDT")
+            self.assertEqual(period, "1h")
+            calls.append((start_time, end_time, limit))
+            rows = {
+                400: [
+                    {"symbol": symbol, "sumOpenInterest": "30", "timestamp": "300"},
+                    {"symbol": symbol, "sumOpenInterest": "40", "timestamp": "400"},
+                ],
+                299: [
+                    {"symbol": symbol, "sumOpenInterest": "10", "timestamp": "100"},
+                    {"symbol": symbol, "sumOpenInterest": "20", "timestamp": "200"},
+                ],
+            }
+            return {"data": rows[end_time]}
+
+        adapter = BinanceUsdmReferenceAdapter(
+            metric_history_fetcher=metric,
+            max_attempts=1,
+            sleep=no_sleep,
+        )
+        result = await ReferenceBatch({("BINANCE", "USDM"): adapter}).fetch_one(
+            ReferenceRequest(
+                instrument=self.btc,
+                product=ReferenceProduct.OPEN_INTEREST,
+                start_ms=100,
+                end_ms=400,
+                interval="1h",
+                limit=4,
+                page_size=2,
+                max_pages=2,
+            )
+        )
+
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        self.assertEqual(
+            [item.observed_at_ns // 1_000_000 for item in result.observations],
+            [100, 200, 300, 400],
+        )
+        self.assertTrue(result.coverage.complete_left)
+        self.assertTrue(result.coverage.complete_right)
+        self.assertEqual(calls, [(100, 400, 2), (100, 299, 2)])
+
+    async def test_metric_internal_gap_is_typed_partial_even_when_boundaries_match(self):
+        def metric(endpoint, symbol, period, limit, start_time, end_time, **kwargs):
+            del endpoint, symbol, period, limit, start_time, kwargs
+            rows = {
+                4_000: [
+                    {"symbol": "BTCUSDT", "sumOpenInterest": "30", "timestamp": "3000"},
+                    {"symbol": "BTCUSDT", "sumOpenInterest": "40", "timestamp": "4000"},
+                ],
+                2_999: [{"symbol": "BTCUSDT", "sumOpenInterest": "10", "timestamp": "1000"}],
+            }
+            return {"data": rows[end_time]}
+
+        adapter = BinanceUsdmReferenceAdapter(
+            metric_history_fetcher=metric,
+            max_attempts=1,
+            sleep=no_sleep,
+        )
+        result = await ReferenceBatch({("BINANCE", "USDM"): adapter}).fetch_one(
+            ReferenceRequest(
+                instrument=self.btc,
+                product=ReferenceProduct.OPEN_INTEREST,
+                start_ms=1_000,
+                end_ms=4_000,
+                interval="1s",
+                limit=4,
+                page_size=2,
+                max_pages=2,
+            )
+        )
+
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        self.assertTrue(result.coverage.complete_left)
+        self.assertTrue(result.coverage.complete_right)
+        self.assertTrue(result.coverage.truncated)
+        self.assertEqual(result.coverage.terminal_reason, "INTERNAL_GAP")
+
     async def test_cross_instrument_provider_row_is_rejected(self):
         def wrong_symbol(*args, **kwargs):
             return {"data": [{"symbol": "ETHUSDT", "fundingRate": "0.1", "fundingTime": "100"}]}
@@ -292,7 +376,7 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.error_code, "PROVIDER_PROTOCOL")
         self.assertEqual(result.observations, ())
 
-    async def test_mark_metadata_and_continuous_basis_preserve_selector_and_decimal_text(self):
+    async def test_mark_metadata_and_native_basis_preserve_selector_and_decimal_text(self):
         def mark(*args, **kwargs):
             return {"data": {"symbol": "BTCUSDT", "markPrice": "60000.0100", "indexPrice": "59999.9900", "time": "600"}}
 
@@ -300,7 +384,7 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
             return {"data": {"symbols": [{"symbol": "BTCUSDT", "contractType": "PERPETUAL", "filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.10"}, {"filterType": "LOT_SIZE", "stepSize": "0.001"}]}]}}
 
         def basis(*args, **kwargs):
-            return {"data": [{"pair": "BTCUSDT", "contractType": "CURRENT_QUARTER", "indexPrice": "60000.00", "basis": "10.0000", "annualizedBasisRate": "0.123400", "timestamp": "700"}]}
+            return {"data": [{"pair": "BTCUSDT", "contractType": "PERPETUAL", "indexPrice": "60000.00", "basis": "10.0000", "annualizedBasisRate": "0.123400", "timestamp": "700"}]}
 
         adapter = BinanceUsdmReferenceAdapter(mark_index_fetcher=mark, exchange_info_fetcher=exchange, basis_fetcher=basis, max_attempts=1, sleep=no_sleep)
         batch = ReferenceBatch({("BINANCE", "USDM"): adapter})
@@ -308,17 +392,79 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         metadata_result = await batch.fetch_one(ReferenceRequest(instrument=self.btc, product=ReferenceProduct.CONTRACT_METADATA))
         basis_result = await batch.fetch_one(ReferenceRequest(
             instrument=self.btc, product=ReferenceProduct.BASIS, start_ms=100, end_ms=700,
-            interval="1d", basis_series=BasisSeries.CONTINUOUS, basis_contract_type="CURRENT_QUARTER",
+            interval="1d", basis_series=BasisSeries.NATIVE, basis_contract_type="PERPETUAL",
         ))
         self.assertEqual(mark_result.status, ReferenceStatus.OK)
         self.assertEqual(mark_result.observations[0].fields[0].value.source_text, "60000.0100")
         self.assertEqual(metadata_result.observations[0].fields[0].value.source_text, "0.10")
         self.assertEqual(basis_result.status, ReferenceStatus.OK)
-        self.assertIn(("basis_series", "CONTINUOUS"), basis_result.observations[0].labels)
-        self.assertIn(("contract_selector", "CURRENT_QUARTER"), basis_result.observations[0].labels)
+        self.assertIn(("basis_series", "NATIVE"), basis_result.observations[0].labels)
+        self.assertIn(("contract_selector", "PERPETUAL"), basis_result.observations[0].labels)
         self.assertEqual(
             {field.name: field.value.source_text for field in basis_result.observations[0].fields}["annualized_basis_rate"],
             "0.123400",
+        )
+
+    async def test_continuous_vision_basis_is_memory_only_and_requires_a_complete_daily_window(self):
+        day_ms = 86_400_000
+        start_ms = 20_000 * day_ms
+        end_ms = start_ms + 29 * day_ms
+        calls = []
+
+        def continuous(pair, **kwargs):
+            calls.append((pair, kwargs))
+            self.assertEqual(pair, "BTCUSDT")
+            self.assertFalse(kwargs["persist_cache"])
+            self.assertIsNone(kwargs["fallback_url"])
+            self.assertEqual(kwargs["lookback_days"], 30)
+            rows = []
+            for timestamp_ms in range(start_ms, end_ms + day_ms, day_ms):
+                timestamp = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+                rows.append({
+                    "timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "perpetual_close": "60000.00",
+                    "quarterly_close": "60010.00",
+                    "basis": "10.00",
+                    "days_to_expiry": "20",
+                    "active_contract": "BTCUSDT_270626",
+                })
+            return {
+                "data": rows,
+                "meta": {"source_components": ("BINANCE_VISION", "BINANCE_USDM_REST")},
+            }
+
+        adapter = BinanceUsdmReferenceAdapter(
+            continuous_basis_fetcher=continuous,
+            max_attempts=1,
+            sleep=no_sleep,
+        )
+        batch = ReferenceBatch({("BINANCE", "USDM"): adapter})
+        result = await batch.fetch_one(ReferenceRequest(
+            instrument=self.btc,
+            product=ReferenceProduct.BASIS,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            interval="1d",
+            limit=30,
+            basis_series=BasisSeries.CONTINUOUS,
+            basis_contract_type="CURRENT_QUARTER",
+        ))
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        self.assertTrue(result.coverage.complete_left)
+        self.assertTrue(result.coverage.complete_right)
+        self.assertFalse(result.coverage.truncated)
+        self.assertEqual(len(result.observations), 30)
+        self.assertEqual(
+            result.observations[0].observed_at_ns // 1_000_000,
+            start_ms + day_ms - 1,
+        )
+        self.assertEqual(calls[0][1]["end_time"], datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc))
+        self.assertIn(("active_contract", "BTCUSDT_270626"), result.observations[0].labels)
+        self.assertIn(("period_open_time_ms", str(start_ms)), result.observations[0].labels)
+        self.assertIn(("period_close_time_ms", str(start_ms + day_ms - 1)), result.observations[0].labels)
+        self.assertEqual(
+            [item.provider_endpoint for item in result.lineage],
+            ["https://data.binance.vision/data/futures/um", "/fapi/v1/klines"],
         )
 
     async def test_dated_future_cannot_be_mislabeled_as_native_basis(self):
@@ -333,6 +479,38 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         ))
         self.assertEqual(result.status, ReferenceStatus.UNAVAILABLE)
         self.assertEqual(result.error_code, "CAPABILITY_UNAVAILABLE")
+
+    async def test_continuous_basis_rejects_an_unclosed_daily_period(self):
+        day_ms = 86_400_000
+        now_ms = 24_000 * day_ms
+        calls = []
+
+        def continuous(*_args, **_kwargs):
+            calls.append(True)
+            return {"data": []}
+
+        adapter = BinanceUsdmReferenceAdapter(
+            continuous_basis_fetcher=continuous,
+            max_attempts=1,
+            sleep=no_sleep,
+            clock_ns=lambda: now_ms * 1_000_000,
+        )
+        result = await ReferenceBatch({("BINANCE", "USDM"): adapter}).fetch_one(
+            ReferenceRequest(
+                instrument=self.btc,
+                product=ReferenceProduct.BASIS,
+                start_ms=now_ms - 30 * day_ms,
+                end_ms=now_ms,
+                interval="1d",
+                limit=31,
+                basis_series=BasisSeries.CONTINUOUS,
+                basis_contract_type="CURRENT_QUARTER",
+            )
+        )
+
+        self.assertEqual(result.status, ReferenceStatus.ERROR)
+        self.assertEqual(result.error_code, "PROVIDER_PROTOCOL")
+        self.assertFalse(calls)
 
     async def test_inflight_coalescing_uses_one_provider_fetch(self):
         adapter = BlockingAdapter()

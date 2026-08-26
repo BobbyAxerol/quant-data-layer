@@ -158,6 +158,9 @@ class StableRuntimeConfig:
     # Off unless a deployment turns it on. Declaring catalog metadata for an
     # instrument must never open the pass-through product by itself.
     pass_through_enabled: bool = False
+    # Reference data is a distinct provider-authentic alpha/research product.
+    # It remains dark until a reviewed stable-runtime config enables it.
+    reference_data_enabled: bool = False
     # Query/stream may trust an additive client-CA bundle while their own
     # client-side trust remains pinned to the server CA. Keeping this optional
     # preserves existing one-CA deployments.
@@ -298,6 +301,9 @@ class StableRuntimeConfig:
             pass_through_enabled=_env_flag(
                 env, "QDL_STABLE_PASS_THROUGH_ENABLED", default=False
             ),
+            reference_data_enabled=_env_flag(
+                env, "QDL_STABLE_REFERENCE_DATA_ENABLED", default=False
+            ),
             tls_client_ca_path=Path(env.get(
                 "QDL_STABLE_TLS_CLIENT_CA_FILE", env["QDL_STABLE_TLS_CA_FILE"]
             )),
@@ -325,6 +331,7 @@ class StableRuntimeConfig:
             "compatibility_projection": "DEDICATED_REDIS_ONLY",
             "replay_authority": "KAFKA",
             "query_cache_authority": False,
+            "reference_data_enabled": self.reference_data_enabled,
             "transport_security": "MTLS_PLUS_JWT",
         }
 
@@ -496,6 +503,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
         pass_through_enabled=config.pass_through_enabled,
+        reference_data_enabled=config.reference_data_enabled,
     )
     readiness = stable_readiness(
         config, manifests, spool, quota=identity.quota,
@@ -584,6 +592,7 @@ def create_stable_stream_runtime(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
         pass_through_enabled=config.pass_through_enabled,
+        reference_data_enabled=config.reference_data_enabled,
     )
     grpc_service = GrpcMarketDataService(
         gateway=gateway, query_service=query_service,

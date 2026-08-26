@@ -81,6 +81,8 @@ def _requirement(
     symbol: str,
     feed: DemandFeed,
     interval: str | None = None,
+    basis_contract_type: str | None = None,
+    basis_series: str | None = None,
 ) -> DataRequirement:
     return DataRequirement(
         consumer_id=consumer_id,
@@ -107,6 +109,8 @@ def _requirement(
         require_live=True,
         execution_grade=False,
         configuration_revision=11,
+        basis_contract_type=basis_contract_type,
+        basis_series=basis_series,
     )
 
 
@@ -128,7 +132,17 @@ class UniversalRealtimePlanTests(unittest.TestCase):
             _requirement(consumer_id="alpha.okx.spot", venue="OKX", market="SPOT", product_type="SPOT", symbol="ETH-USDT", feed=DemandFeed.QUOTE),
             _requirement(consumer_id="alpha.okx.spot", venue="OKX", market="SPOT", product_type="SPOT", symbol="ETH-USDT", feed=DemandFeed.BAR, interval="1d"),
             _requirement(consumer_id="alpha.missing", venue="BINANCE", market="USDM", product_type="PERPETUAL", symbol="DELISTEDUSDT", feed=DemandFeed.TRADE),
-            _requirement(consumer_id="alpha.reference", venue="BINANCE", market="USDM", product_type="FUTURE", symbol="BTCUSDT_270326", feed=DemandFeed.BASIS, interval="1d"),
+            _requirement(
+                consumer_id="alpha.reference",
+                venue="BINANCE",
+                market="USDM",
+                product_type="PERPETUAL",
+                symbol="BTCUSDT",
+                feed=DemandFeed.BASIS,
+                interval="1d",
+                basis_contract_type="CURRENT_QUARTER",
+                basis_series="CONTINUOUS",
+            ),
         )
         return ActiveDemandInventory(
             revision=11,
@@ -162,6 +176,7 @@ class UniversalRealtimePlanTests(unittest.TestCase):
                 "symbols": [
                     _binance_usdm("ETHUSDT"),
                     _binance_usdm("BNBUSDT"),
+                    _binance_usdm("BTCUSDT"),
                     _binance_usdm("BTCUSDT_270326", contract_type="CURRENT_QUARTER"),
                 ],
             },
