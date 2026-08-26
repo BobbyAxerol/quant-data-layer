@@ -15292,6 +15292,80 @@ or broad image/container cleanup.
    **Next boundary:** build one immutable C1 Python image and prepare/review
    the packet against the real mounted authority; this remains C1 only.
 
+   **C1 bounded runtime packet (`IN PROGRESS / BLOCKED ON REAL GAP`,
+   2026-08-26):**
+   - Built exactly one immutable Python image from committed source
+     `b89a26bde306e5860ad2a15cc3ad63575b95b7cc`:
+     `sha256:d04ae7ba324db6da93d43e1759fb9e114a3ece7e0a86594385f3f074e83dba6d`
+     (`qdl-v2-python:phase105c-r10-b89a26b`). The image labels bind the source
+     revision, Dockerfile SHA-256
+     `c593355b620bd317c90d239bd00766fd207117a98f02f1c3acd5065b5cb69830`,
+     and release candidate `2.0.0-phase105c-r10`. Its network-disabled,
+     read-only contract matrix passed **32/32**.
+   - Created one sealed, permission-restricted C1 packet at
+     `/home/bobby/.local/state/qdl-v2/phase105c-final-bar-r10-b89a26b-20260826T064904Z`.
+     Packet SHA-256 is
+     `303a8d8e98acb78aac910639ff935af4dbf92dec27b5cde9fb3e815b6e04d15d`.
+     It preserves the active authority bytes (`RUST_PRIMARY`, revision `1`),
+     preserves the prior bar-edge checkpoint as rollback evidence, and uses a
+     new revision-10 checkpoint path.
+   - Recreated exactly the approved six roles with `--no-build --no-deps
+     --force-recreate`: `ingestor_okx_swap`, `binance_bar_edge`,
+     `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+     `stream_v2_passive`. Rust cores, Kafka, Redis, SQLite, V1, Trading
+     System, alpha services, offsets, consumer routing and authority routing
+     were not changed. Rust core restart counts remain zero and no core is
+     OOM-killed.
+   - Real provider bootstrap ACKed `1000` closed `BAR 1m` records for each
+     active Binance USD-M/OKX Swap BTC/ETH binding (`4000` records total),
+     then ACKed each four-binding closed-BAR minute cycle. This proves only
+     authenticated provider-to-raw-Kafka receipt; it is not yet an acceptance
+     certificate.
+   - The bounded read-only query-spool probe found primary/secondary agreement
+     but a genuine historical gap in `OKX BTC-USDT-SWAP BAR 1m`: the window has
+     `18:14` then `18:16` UTC on 2026-08-25, with no `18:15` canonical event.
+     The other three required windows are contiguous. This fails the C1
+     invariant. No synthetic record, direct SQLite write, offset reset, cache
+     flush, or unapproved service restart is permitted. The next in-scope
+     action is a bounded read-only raw/canonical/quarantine trace to establish
+     whether the loss is Rust normalization, Kafka-to-projector delivery, or
+     projection before proposing an idempotent pipeline repair.
+
+   **C1 forensic result and scoped source repair (`APPROVED / IN PROGRESS`,
+   2026-08-26):** a direct-partition, `read_committed`, no-group/no-commit
+   Kafka trace decoded one bounded quarantine record at the C1 bootstrap
+   timestamp. It is authentic OKX REST `BTC-USDT-SWAP candle1m` data, with a
+   final native row, catalog revision `3` and authority revision `1`, but its
+   durable reason is `STALE_GENERATION` / `connection generation is stale`.
+   `stable_bar_edge` currently derives a fixed REST session name and hard-codes
+   `connection_generation=1`; an already-running Rust core correctly refuses
+   an older generation for the same declared BAR source. This is a C1 pipeline
+   defect, not a provider, canonicalizer, projector or SQLite defect. The
+   approved minimal repair is confined to `qdl.runtime.stable_bar_edge`: before
+   any raw publication it must durably issue a strictly increasing generation,
+   derive a corresponding REST session identity, and retain BAR watermarks in
+   the same atomically-written scoped checkpoint. It may read legacy v2
+   checkpoints but writes the new schema only; canonical source ID, provider
+   bytes, event identity, topics, authority and consumer routes remain
+   unchanged. Required tests cover initial issuance, restart advancement,
+   legacy-state migration, persisted-before-publish behavior, malformed/
+   exhausted state fencing and four-binding bootstrap/catch-up regression. The
+   only runtime retry after source tests is the same six-role C1 packet; no Rust
+   core, Kafka, Redis, SQLite, offsets, V1, Trading System or alpha may change.
+   Rollback remains the previously recorded six-role image/environment and
+   preserved pre-C1 checkpoint.
+   - **Source test evidence:** `git diff --check` and `py_compile` passed. In
+     immutable Python image `sha256:d04ae7...3dba6d`, with source mounted
+     read-only, `--network none`, read-only rootfs and tmpfs `/tmp`, BAR
+     history/bootstrap, C1 packet-preparation and stable-deployment tests
+     passed **46/46**; Phase 10.5 handoff/release regressions passed **14/14**.
+     The expected `build_production_core_bundle` missing-argument diagnostic and
+     bounded DNSE queue-fence log are asserted negative paths. No runtime
+     container, provider, Kafka, Redis, SQLite, V1, Trading System or alpha
+     state changed during these source tests. The next coherent slice is one
+     source commit, then exactly one replacement immutable Python image and one
+     replacement sealed C1 packet; `d04ae7...3dba6d` is retained as rollback.
+
 2. **10.5-B/C2 - Real no-order consumer acceptance and bounded handoff**
    - **Goal:** prove the repaired V2 plane is consumed correctly by the four
      governed paper classes: Monitoring, Trading System paper market-data

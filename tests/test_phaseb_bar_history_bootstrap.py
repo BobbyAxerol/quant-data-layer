@@ -518,6 +518,7 @@ class StableBarBootstrapTests(unittest.TestCase):
                 warmup_rows=2,
                 state_path=state_path,
                 clock=lambda: 180.0,
+                generation_clock_ns=lambda: 100,
             )
             with patch(
                 "qdl.runtime.stable_bar_edge.fetch_binance_history",
@@ -537,10 +538,17 @@ class StableBarBootstrapTests(unittest.TestCase):
                 self.assertEqual(first.bootstrap_history(), expected_bindings * 2)
 
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v2")
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v3")
+            self.assertEqual(persisted["connection_generation"], 100)
             self.assertEqual(persisted["warmup_rows"], 2)
             self.assertEqual(set(persisted["last_open_ms"]), set(first._binding_ids))
             self.assertEqual(set(persisted["last_open_ms"].values()), {120_000})
+            okx_source = next(
+                source for source, _acquisition in first.history_okx_bindings
+                if source.instrument.native_symbol == "BTC-USDT-SWAP"
+            )
+            self.assertEqual(first._okx_binding(okx_source).connection_generation, 100)
+            self.assertEqual(first._okx_binding(okx_source).source_session_id, first.okx_session_id)
 
             restarted = StableBinanceBarEdge(
                 catalog=self.catalog,
@@ -550,10 +558,13 @@ class StableBarBootstrapTests(unittest.TestCase):
                 warmup_rows=2,
                 state_path=state_path,
                 clock=lambda: 180.0,
+                generation_clock_ns=lambda: 200,
             )
             self.assertTrue(restarted._history_bootstrapped)
             self.assertEqual(restarted._last_open_ms, first._last_open_ms)
-            self.assertEqual(restarted.binance_session_id, first.binance_session_id)
+            self.assertEqual(restarted.connection_generation, 200)
+            self.assertNotEqual(restarted.binance_session_id, first.binance_session_id)
+            self.assertTrue(restarted.binance_session_id.endswith("-g200"))
             with patch(
                 "qdl.runtime.stable_bar_edge.fetch_binance_history",
                 side_effect=AssertionError("restart must not overlap bootstrap"),
@@ -563,6 +574,74 @@ class StableBarBootstrapTests(unittest.TestCase):
                 side_effect=AssertionError("restart must not overlap bootstrap"),
             ):
                 self.assertEqual(restarted.bootstrap_history(), 0)
+
+    def test_legacy_v2_checkpoint_migrates_to_a_fresh_durable_generation(self):
+        class Publisher:
+            def publish_many(self, values):
+                return tuple(range(len(tuple(values))))
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-bar-state-") as directory:
+            state_path = Path(directory) / "bar-edge.json"
+            seed = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=Publisher(),
+                warmup_rows=2,
+                generation_clock_ns=lambda: 1,
+            )
+            legacy = seed._state_identity_payload(
+                schema="qdl.stable-bar-edge-state.v2"
+            )
+            legacy["last_open_ms"] = {}
+            state_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+            migrated = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=Publisher(),
+                warmup_rows=2,
+                state_path=state_path,
+                generation_clock_ns=lambda: 777,
+            )
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v3")
+            self.assertEqual(persisted["connection_generation"], 777)
+            self.assertEqual(migrated.connection_generation, 777)
+            self.assertTrue(migrated.okx_session_id.endswith("-g777"))
+
+    def test_exhausted_connection_generation_fails_closed_before_provider_access(self):
+        class Publisher:
+            def publish_many(self, values):
+                raise AssertionError("provider rows must not be published")
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-bar-state-") as directory:
+            state_path = Path(directory) / "bar-edge.json"
+            seed = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=Publisher(),
+                warmup_rows=2,
+                generation_clock_ns=lambda: 1,
+            )
+            exhausted = seed._state_identity_payload(
+                schema="qdl.stable-bar-edge-state.v3"
+            )
+            exhausted["connection_generation"] = (1 << 64) - 1
+            exhausted["last_open_ms"] = {}
+            state_path.write_text(json.dumps(exhausted), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "generation is exhausted"):
+                StableBinanceBarEdge(
+                    catalog=self.catalog,
+                    acquisition=self.acquisition,
+                    authority=self.authority,
+                    publisher=Publisher(),
+                    warmup_rows=2,
+                    state_path=state_path,
+                    generation_clock_ns=lambda: 1,
+                )
 
     def test_checkpoint_corruption_and_partial_ack_fail_closed(self):
         class Envelope:
@@ -603,7 +682,10 @@ class StableBarBootstrapTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "every Kafka ACK"):
                     edge.bootstrap_history()
-            self.assertFalse(state_path.exists())
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v3")
+            self.assertGreater(persisted["connection_generation"], 0)
+            self.assertEqual(persisted["last_open_ms"], {})
             self.assertEqual(edge._last_open_ms, {})
 
 

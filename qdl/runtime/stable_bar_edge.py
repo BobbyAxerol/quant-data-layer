@@ -32,6 +32,11 @@ from qdl.transport.kafka_raw import KafkaRawPublisher, KafkaRawPublisherConfig
 logger = logging.getLogger(__name__)
 
 
+_STATE_SCHEMA_V2 = "qdl.stable-bar-edge-state.v2"
+_STATE_SCHEMA_V3 = "qdl.stable-bar-edge-state.v3"
+_MAX_CONNECTION_GENERATION = (1 << 64) - 1
+
+
 def _bar_interval_ms(interval: str) -> int:
     if not interval or interval[-1] not in {"s", "m", "h", "d"}:
         raise ValueError("stable BAR interval is unsupported")
@@ -58,6 +63,7 @@ class StableBinanceBarEdge:
         settlement_delay_seconds: float = 10.0,
         state_path: str | Path | None = None,
         clock=time.time,
+        generation_clock_ns=time.time_ns,
     ) -> None:
         if not 1 <= warmup_rows <= 1000:
             raise ValueError("stable BAR warmup rows must be between 1 and 1000")
@@ -74,11 +80,12 @@ class StableBinanceBarEdge:
         self.settlement_delay_seconds = settlement_delay_seconds
         self.state_path = Path(state_path) if state_path is not None else None
         self.clock = clock
+        self.generation_clock_ns = generation_clock_ns
         authority_revision = int(authority.get("revision", 0))
-        self.binance_session_id = (
-            f"qdl-v2-stable-binance-rest-r{authority_revision}"
-        )
-        self.okx_session_id = f"qdl-v2-stable-okx-rest-r{authority_revision}"
+        self._authority_revision = authority_revision
+        self.connection_generation = 0
+        self.binance_session_id = ""
+        self.okx_session_id = ""
         self._last_open_ms: dict[str, int] = {}
         self._history_bootstrapped = False
         self._stopped = threading.Event()
@@ -144,6 +151,11 @@ class StableBinanceBarEdge:
         self._rest_fallback_active = bool(self.bindings or self.okx_bindings)
         if self._history_bootstrap_active:
             self._restore_state()
+            self._issue_connection_generation()
+            # Persist the new generation before any provider row can be sent to
+            # Kafka. A crash after issuance must never reuse an older source
+            # generation on restart.
+            self._persist_state()
         else:
             self._history_bootstrapped = True
 
@@ -154,19 +166,41 @@ class StableBinanceBarEdge:
             for source, _acquisition in self.history_bindings + self.history_okx_bindings
         ))
 
-    def _state_payload(self) -> dict:
+    def _state_identity_payload(self, *, schema: str) -> dict:
         return {
-            "schema": "qdl.stable-bar-edge-state.v2",
+            "schema": schema,
             "slice_id": str(self.authority.get("slice_id", "")),
             "authority_revision": int(self.authority["revision"]),
             "catalog_revision": int(self.catalog.catalog_revision),
             "acquisition_revision": int(self.acquisition.revision),
             "warmup_rows": self.warmup_rows,
             "binding_ids": list(self._binding_ids),
+        }
+
+    def _state_payload(self) -> dict:
+        if not 1 <= self.connection_generation <= _MAX_CONNECTION_GENERATION:
+            raise RuntimeError("stable BAR connection generation is invalid")
+        return {
+            **self._state_identity_payload(schema=_STATE_SCHEMA_V3),
+            "connection_generation": self.connection_generation,
             "last_open_ms": {
                 key: self._last_open_ms[key] for key in sorted(self._last_open_ms)
             },
         }
+
+    def _issue_connection_generation(self) -> None:
+        floor = self.generation_clock_ns()
+        if isinstance(floor, bool) or not isinstance(floor, int) or floor <= 0:
+            raise RuntimeError("stable BAR generation clock is invalid")
+        previous = self.connection_generation
+        if previous < 0 or previous >= _MAX_CONNECTION_GENERATION:
+            raise RuntimeError("stable BAR connection generation is exhausted")
+        self.connection_generation = max(previous + 1, floor)
+        if self.connection_generation > _MAX_CONNECTION_GENERATION:
+            raise RuntimeError("stable BAR connection generation is exhausted")
+        suffix = f"r{self._authority_revision}-g{self.connection_generation}"
+        self.binance_session_id = f"qdl-v2-stable-binance-rest-{suffix}"
+        self.okx_session_id = f"qdl-v2-stable-okx-rest-{suffix}"
 
     def _restore_state(self) -> None:
         if self.state_path is None or not self.state_path.exists():
@@ -175,12 +209,27 @@ class StableBinanceBarEdge:
             payload = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
             raise RuntimeError("stable BAR checkpoint is unreadable") from error
-        if not isinstance(payload, dict) or set(payload) != {
-            "schema", "slice_id", "authority_revision", "catalog_revision",
-            "acquisition_revision", "warmup_rows", "binding_ids", "last_open_ms",
-        }:
+        if not isinstance(payload, dict):
             raise RuntimeError("stable BAR checkpoint fields are invalid")
-        expected = self._state_payload()
+        schema = payload.get("schema")
+        if schema == _STATE_SCHEMA_V2:
+            expected = self._state_identity_payload(schema=_STATE_SCHEMA_V2)
+            expected_fields = set(expected) | {"last_open_ms"}
+            previous_generation = 0
+        elif schema == _STATE_SCHEMA_V3:
+            expected = self._state_identity_payload(schema=_STATE_SCHEMA_V3)
+            expected_fields = set(expected) | {"connection_generation", "last_open_ms"}
+            previous_generation = payload.get("connection_generation")
+            if (
+                isinstance(previous_generation, bool)
+                or not isinstance(previous_generation, int)
+                or not 1 <= previous_generation <= _MAX_CONNECTION_GENERATION
+            ):
+                raise RuntimeError("stable BAR checkpoint generation is invalid")
+        else:
+            raise RuntimeError("stable BAR checkpoint fields are invalid")
+        if set(payload) != expected_fields:
+            raise RuntimeError("stable BAR checkpoint fields are invalid")
         for field in (
             "schema", "slice_id", "authority_revision", "catalog_revision",
             "acquisition_revision", "warmup_rows", "binding_ids",
@@ -209,11 +258,13 @@ class StableBinanceBarEdge:
                 raise RuntimeError("stable BAR checkpoint watermark is invalid")
             restored[binding_id] = value
         self._last_open_ms = restored
+        self.connection_generation = previous_generation
         self._history_bootstrapped = set(restored) == set(self._binding_ids)
         logger.info(
-            "stable BAR checkpoint restored bindings=%s complete=%s",
+            "stable BAR checkpoint restored bindings=%s complete=%s generation=%s",
             len(restored),
             self._history_bootstrapped,
+            self.connection_generation or "legacy",
         )
 
     def _persist_state(self) -> None:
@@ -270,7 +321,7 @@ class StableBinanceBarEdge:
             interval=source.interval or "",
             subscription_id=source.source_id,
             source_session_id=self.binance_session_id,
-            connection_generation=1,
+            connection_generation=self.connection_generation,
             lease_epoch=1,
             authority_revision=int(self.authority["revision"]),
             partition_plan_epoch=1,
@@ -291,7 +342,7 @@ class StableBinanceBarEdge:
             interval=source.interval or "",
             subscription_id=source.source_id,
             source_session_id=self.okx_session_id,
-            connection_generation=1,
+            connection_generation=self.connection_generation,
             lease_epoch=1,
             authority_revision=int(self.authority["revision"]),
             partition_plan_epoch=1,
