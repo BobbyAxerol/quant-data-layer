@@ -16029,6 +16029,48 @@ or broad image/container cleanup.
      `--concurrency 8`. Its same 300-second ceiling, no-order/no-provider/no
      state-write invariants and exact cleanup rule remain in force.
 
+   **C2 final no-order acceptance (`PASS_V2_DATA_PLANE_ONLY`, 2026-08-26):**
+   the approved disposable client completed in `85.087s`, under its
+   300-second ceiling, using the current rotated identities, explicit
+   `query_v2_1`/`query_v2_2` HTTPS replicas and both stream aliases. Receipt:
+   `/home/bobby/.local/state/qdl-v2/phase105b-c2-20260826T091318Z/acceptance-active.json`
+   (mode `0600`, SHA-256
+   `1cc389e05da6d1c4cc787e0eef2fb5303a5ca5e4369088dacf8171f49b5d8998`).
+   - **Consumer/data-plane evidence:** all `28/28` manifest products passed:
+     Monitoring `4`, Trading-System paper `12`, Alpha-Binance paper `6` and
+     Alpha-OKX paper `6`; `24` are durable and every one has both an
+     acknowledged and resumed logical offset. Fourteen receipts observed both
+     `REPLAYING` and `LIVE`; ten continuous TRADE/QUOTE receipts observed
+     replay records in both short sessions and were deliberately closed after
+     the acknowledged replay event, so lack of a later `LIVE` control there is
+     not a failure. The active Redis lease was actually owned by
+     `stable-stream-passive` at epoch `18`; success from the configured
+     `a,b` pair therefore proves the SDK's initial fenced-peer retry rather
+     than a static leader assumption.
+   - **Fallback/security evidence:** exactly `6` manifest-authorized Binance
+     V1 reads completed V2 -> V1 -> V2; all `22` `BLOCKED` routes made zero V1
+     requests. Receipt fields report `provider_connections=0`,
+     `order_actions=0`, `cursor_directory_removed=true` and
+     `secret_values_recorded=false`. The client had no Docker socket, provider
+     credential or execution endpoint; no route, offset, authority or order
+     action was performed.
+   - **Runtime check/cleanup:** V1 remains the attested
+     `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`;
+     the four already-approved V2 readers remain on
+     `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`.
+     Bounded post-run logs were empty of errors. Snapshot usage was V1
+     `279.5MiB`, V2 query `103/121.7MiB`, V2 stream `69.1/69.8MiB`, all below
+     their declared limits; the disposable container is absent. Earlier
+     zero-byte failed receipts were removed exactly; the final payload-free
+     receipt is retained. No Kafka/Redis flush, SQLite deletion, V1 restart,
+     Rust-core recreate, Trading-System/alpha recreate or order mutation
+     occurred in the final C2 run.
+   - **Exit/decision:** **10.5-B/C2 is complete at data-plane acceptance**.
+     This certifies the four workload identities and fallback contract, not a
+     deployed Trading-System/alpha route migration or `2.0.0` publication.
+     The next separate permitted phase remains B3 immutable release rehearsal
+     and certification; do not begin it without a new approved packet.
+
 3. **10.5-D/B3 - Immutable stable-release rehearsal and publication**
    - **Goal:** certify the exact `2.0.0` release candidate rather than merely
      its source. Run the review-only stable-release certificate against real
