@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Bounded no-order V2 identity acceptance for the four Phase 10.5 consumers.
+"""Bounded no-order C2 acceptance for the four Phase 10.5 paper consumers.
 
-This checks the actual V2 query/stream boundary only.  It does not claim a V1
-fallback transition because the deployed Trading System/alpha adapters have not
-yet installed a versioned V2-to-V1 route controller.
+The probe reads V2 through the shared SDK, then performs a local route-selection
+drill only for manifest-authorized V1 cached reads before returning to V2. It
+does not install or mutate a deployed Trading System/alpha route controller.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -30,10 +31,23 @@ from qdl.certification.phase105_consumer_acceptance import (
     PHASE105_PAPER_CONSUMER_IDS,
     build_release_consumer_acceptance_scope,
 )
+from qdl.certification.phase105_fallback import (
+    PHASE105_PAPER_CONSUMER_ORDER,
+    blocked_fallback_identities,
+    build_fallback_return_receipt,
+    build_v1_fallback_probes,
+    validate_v1_fallback_payload,
+    validate_v1_provenance,
+)
 from qdl.consumer import StableReleaseRoutePlan, requirement_key
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
-from scripts.phase103_consumer_receipt_acceptance import _certify_product, _identity
+from scripts.phase103_consumer_receipt_acceptance import (
+    _certify_product,
+    _client,
+    _identity,
+    _query_product,
+)
 
 
 IDENTITY_PREFIXES = {
@@ -115,10 +129,124 @@ def _route_summary(release: StableReleaseRoutePlan, products: tuple[AcceptancePr
     return summary
 
 
+def _v1_base_url(value: str) -> str:
+    """Keep the forced fallback inside the existing V1 service boundary."""
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname != "data_layer"
+        or parsed.port != 8100
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Phase 10.5 V1 fallback URL must be exactly http://data_layer:8100")
+    return value.rstrip("/")
+
+
+async def _v2_query_product(
+    product: AcceptanceProduct,
+    *,
+    identity,
+    primary_url: str,
+    secondary_url: str,
+    grpc_target: str,
+    state_dir: Path,
+    timeout_seconds: float,
+) -> tuple[str, str | None, float, float | None]:
+    primary = _client(
+        identity,
+        base_url=primary_url,
+        grpc_target=grpc_target,
+        cursor_path=state_dir / "fallback-query-primary.json",
+        timeout_seconds=timeout_seconds,
+    )
+    secondary = _client(
+        identity,
+        base_url=secondary_url,
+        grpc_target=grpc_target,
+        cursor_path=state_dir / "fallback-query-secondary.json",
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        return await _query_product(product, primary=primary, secondary=secondary)
+    finally:
+        await primary.close()
+        await secondary.close()
+
+
+async def _v1_fallback_return(
+    product: AcceptanceProduct,
+    probe,
+    *,
+    identity,
+    primary_url: str,
+    secondary_url: str,
+    grpc_target: str,
+    v1_base_url: str,
+    state_dir: Path,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    """Read V2, make one allowed V1 cached read, then confirm V2 again."""
+    before = await _v2_query_product(
+        product,
+        identity=identity,
+        primary_url=primary_url,
+        secondary_url=secondary_url,
+        grpc_target=grpc_target,
+        state_dir=state_dir / "before",
+        timeout_seconds=timeout_seconds,
+    )
+    import httpx
+
+    started = time.perf_counter()
+    async with httpx.AsyncClient(
+        base_url=v1_base_url,
+        timeout=httpx.Timeout(timeout_seconds),
+        trust_env=False,
+    ) as client:
+        response = await client.get(probe.path, params=dict(probe.params))
+        response.raise_for_status()
+        payload = response.json()
+    v1_latency_ms = (time.perf_counter() - started) * 1000
+    details = validate_v1_fallback_payload(probe, payload)
+    after = await _v2_query_product(
+        product,
+        identity=identity,
+        primary_url=primary_url,
+        secondary_url=secondary_url,
+        grpc_target=grpc_target,
+        state_dir=state_dir / "after",
+        timeout_seconds=timeout_seconds,
+    )
+    return {
+        **details,
+        "before_primary_content_sha256": before[0],
+        "before_secondary_content_sha256": before[1],
+        "after_primary_content_sha256": after[0],
+        "after_secondary_content_sha256": after[1],
+        "v1_request_latency_ms": round(v1_latency_ms, 3),
+    }
+
+
 async def run(args: argparse.Namespace) -> dict[str, object]:
     authority = _authority(args.authority_record)
     scope, release = _scope(args)
     files = _identity_files(args)
+    v1_base_url = _v1_base_url(args.v1_base_url)
+    try:
+        v1_provenance_raw = json.loads(args.v1_provenance.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("Phase 10.5 V1 provenance cannot be read") from error
+    v1_provenance = validate_v1_provenance(release, v1_provenance_raw)
+    probes = build_v1_fallback_probes(
+        release, catalog=StableSourceCatalog.load(args.catalog), products=scope.products
+    )
+    products_by_identity = {
+        (item.consumer_id, requirement_key(item.requirement)): item for item in scope.products
+    }
     from qdl_sdk import WorkloadTlsConfig
 
     identities = {}
@@ -162,10 +290,38 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     f"feed={product.feed.value} interval={product.interval}"
                 ) from error
 
+    async def certify_ordered() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        results: list[dict[str, object]] = []
+        fallback_details: list[dict[str, object]] = []
+        for consumer_id in PHASE105_PAPER_CONSUMER_ORDER:
+            consumer_products = tuple(
+                item for item in scope.products if item.consumer_id == consumer_id
+            )
+            if not consumer_products:
+                raise ValueError(f"Phase 10.5 consumer has no V2 products: {consumer_id}")
+            ordered = await asyncio.wait_for(
+                asyncio.gather(*(certify(product) for product in consumer_products)),
+                timeout=args.observation_seconds,
+            )
+            results.extend(ordered)
+            for probe in (item for item in probes if item.consumer_id == consumer_id):
+                product = products_by_identity[probe.identity]
+                fallback_details.append(await _v1_fallback_return(
+                    product,
+                    probe,
+                    identity=identities[consumer_id],
+                    primary_url=args.primary_url,
+                    secondary_url=args.secondary_url,
+                    grpc_target=args.grpc_target,
+                    v1_base_url=v1_base_url,
+                    state_dir=temporary / consumer_id.replace(".", "-"),
+                    timeout_seconds=args.timeout_seconds,
+                ))
+        return results, fallback_details
+
     try:
-        results = await asyncio.wait_for(
-            asyncio.gather(*(certify(product) for product in scope.products)),
-            timeout=args.observation_seconds,
+        results, fallback_details = await asyncio.wait_for(
+            certify_ordered(), timeout=args.observation_seconds
         )
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -186,9 +342,14 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         "products": results,
         "route_contract": {
             **route_summary,
-            "v1_fallback_observed": False,
-            "reason": "CONSUMER_ROUTE_CONTROLLER_NOT_DEPLOYED",
+            "v1_fallback_observed": True,
+            "route_selection_probe_only": True,
+            "blocked_v1_requests": 0,
+            "blocked_route_count": len(blocked_fallback_identities(release)),
         },
+        "v1_provenance": v1_provenance,
+        "fallback_details": fallback_details,
+        "fallback_drill": build_fallback_return_receipt(release, probes),
         "provider_connections": 0,
         "order_actions": 0,
         "cursor_directory_removed": True,
@@ -207,6 +368,8 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--primary-url", required=True)
     value.add_argument("--secondary-url", required=True)
     value.add_argument("--grpc-target", required=True)
+    value.add_argument("--v1-base-url", required=True)
+    value.add_argument("--v1-provenance", type=Path, required=True)
     value.add_argument("--tls-ca-file", required=True)
     for prefix in IDENTITY_PREFIXES.values():
         value.add_argument(f"--{prefix}-tls-certificate-file", type=Path, required=True)

@@ -13,6 +13,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _authority,
     _identity_files,
     _route_summary,
+    _v1_base_url,
     parser,
 )
 
@@ -57,6 +58,8 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
                 "--primary-url", "https://query.example",
                 "--secondary-url", "https://query-two.example",
                 "--grpc-target", "stream.example:8210",
+                "--v1-base-url", "http://data_layer:8100",
+                "--v1-provenance", str(root / "v1-provenance.json"),
                 "--tls-ca-file", str(certificate),
             ]
             for prefix in IDENTITY_PREFIXES.values():
@@ -69,6 +72,18 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
             files = _identity_files(parser().parse_args(arguments))
         self.assertEqual(set(files), set(IDENTITY_PREFIXES))
         self.assertEqual(files["alpha.binance.paper.stable"].jwt_key_id, "alpha-binance-key")
+
+    def test_forced_v1_read_is_pinned_to_the_local_v1_service(self) -> None:
+        self.assertEqual(_v1_base_url("http://data_layer:8100"), "http://data_layer:8100")
+        for value in (
+            "https://data_layer:8100",
+            "http://data_layer:8101",
+            "http://binance.example:8100",
+            "http://data_layer:8100/v1/binance/price/BTCUSDT",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "exactly"):
+                    _v1_base_url(value)
 
     def test_route_summary_counts_declared_v1_and_blocked_without_claiming_transition(self) -> None:
         requirement = DataRequirement(

@@ -157,6 +157,16 @@ VN/DNSE receives no request in this gate. Zero order action, direct provider
 connection, route mutation, offset reset, Redis/SQLite flush or database write
 is an invariant, not a best effort.
 
+The C2 harness is deliberately not a deployed route controller. It runs the
+shared V2 SDK receipt first, selects only the frozen local V1 cached endpoint
+`http://data_layer:8100` for a `fallback: V1` product, validates symbol,
+market, decimal values, final-BAR state and freshness without persisting the
+payload, then makes the same V2 SDK read again. The current frozen scope has
+`28` V2 products: `10` permitted Binance USD-M V1 fallback drills and `18`
+`BLOCKED` routes. A blocked route must produce no V1 HTTP request. This makes
+the `V2 -> V1 -> V2` receipt real while leaving every Trading System and alpha
+route unchanged.
+
 ### 10.5-C: Rolling Consumer Handoff
 
 Requires another approval naming immutable image digests, services, ports,

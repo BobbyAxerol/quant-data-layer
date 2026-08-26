@@ -15459,6 +15459,87 @@ or broad image/container cleanup.
      resource use, plus confirmation that execution, positions, signal/sizing
      and broker state were untouched.
 
+   **C2 preflight (`APPROVED / SOURCE-ONLY IN PROGRESS`, 2026-08-26):** C1 is
+   the required final-BAR exit and passed before this work began. The approved
+   C2 goal is limited to four disposable paper-reader identities, in this
+   strict order: `monitoring.multivenue.stable`,
+   `trading-system.paper.stable`, `alpha.binance.paper.stable`, then
+   `alpha.okx.paper.stable`. It must materialize the frozen release-routing
+   scope, use only V2 query `127.0.0.1:18201/18202` and stream
+   `127.0.0.1:18220/18221` plus the frozen V1 read route where a product
+   explicitly permits it, and retain only payload-free receipt hashes in one
+   exact `phase105b-*` evidence namespace. The disposable probe may not receive
+   a Docker socket, provider credential, execution credential, order endpoint
+   or persistent cursor volume.
+
+   - **Known source gap to close in C2:** the existing
+     `phase105_consumer_v2_identity_acceptance.py` correctly performs V2
+     warmup, signed cursor/replay and reconnect but explicitly reports that it
+     does not perform the permitted V1 fallback-return drill. C2 must add the
+     bounded, read-only route-selection drill rather than pretend that a
+     missing production route controller was exercised. It must prove the
+     selected V1 response is contract-compatible for only `fallback: V1`
+     products, return to V2, and prove `fallback: BLOCKED` products never
+     select V1. This is an acceptance harness behavior only: it must not alter
+     a Trading System/alpha runtime route.
+   - **Planned source tests:** exact four-consumer/manifest scope; identity
+     subject-to-key rejection; declared-V1 and `BLOCKED` fallback branches;
+     no-order/no-provider/no-route-mutation receipts; secret redaction;
+     bounded timeout/cursor cleanup; V2 query primary/secondary parity;
+     signed stream replay/resume and reconnect. Source tests run isolated with
+     the immutable C1 image, read-only filesystem and no network.
+   - **Runtime decision boundary:** source/preflight may generate a fresh
+     private external client-CA/JWT extension and a non-secret review packet,
+     but must not yet write `stable_tls`, recreate query/stream roles, start a
+     client, access V1/V2 endpoints, or touch any consumer route. The later
+     packet must be explicit about the two additive trust files, exactly four
+     V2 role recreates, four identities, ports, paper products, image and
+     routing digests, observation duration, V1 fallback provenance, stop-only
+     rollback and exact disposable namespace. Kafka, Redis, SQLite, ingestors,
+     projectors, Rust cores, V1, Trading System, alpha and all order state stay
+     excluded.
+
+   **C2 source checkpoint (`PASS / RUNTIME HANDOFF PENDING`, 2026-08-26):**
+   - Added `qdl.certification.phase105_fallback` and extended
+     `scripts/phase105_consumer_v2_identity_acceptance.py`. The harness now
+     derives its scope only from the checksum-bound release manifest and runs
+     the four classes in the required order. It performs the normal V2 SDK
+     warmup/query/stream replay/reconnect receipt, then for an explicitly
+     allowed product performs only `V2_PRIMARY -> local V1 cached read ->
+     V2_PRIMARY`. It does not create or install a route controller.
+   - The V1 read is fail-closed to exactly `http://data_layer:8100`, with no
+     URL path/credential/alternate host accepted. Only manifest-compatible
+     Binance USD-M `TRADE` and final `BAR 1m` endpoints can be selected. The
+     response validator checks instrument/market/interval, finite decimal
+     fields, finality, timestamp freshness and a 1 MiB response bound; it
+     stores only SHA-256/timing evidence. `fallback: BLOCKED` identities are
+     materialized separately and receive no V1 HTTP request. The V1
+     digest-to-commit attestation is required before any fallback request.
+   - Frozen source scope is `28` V2 products: `10` permitted V1 fallback drills
+     (`2` Monitoring, `4` Trading System paper, `4` Binance paper alpha, `0`
+     OKX paper alpha) and `18` explicit `BLOCKED` routes. VN/DNSE remains
+     excluded. This is a route-selection probe only: signal, sizing, risk,
+     broker/execution and deployed consumer routing remain untouched.
+   - **Tests actually run:** network-isolated, read-only C1 immutable image
+     `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`:
+     `58/58` in `4.171s` across fallback contract, four identities, scope,
+     handoff, release, SDK routing and shared-primary regression. Python
+     compile and `git diff --check` passed. The first source matrix caught a
+     tuple-key scope bug before runtime; it was corrected and the matrix passed
+     on rerun. Containers were `--rm --network none --read-only` with a tmpfs;
+     no image/service, V1/V2 endpoint, Kafka/Redis/SQLite, route or order state
+     was changed.
+   - **Next exact runtime packet:** one fresh private client extension, one
+     disposable `qdl-phase105b-acceptance-<UTC>` client, query HTTPS
+     `127.0.0.1:18201/18202`, stream gRPC `127.0.0.1:18220/18221`, local V1
+     `data_layer:8100` only, a maximum `300s` observation, and at most a
+     recreate of `query_v2_1`, `query_v2_2`, `stream_v2_active`,
+     `stream_v2_passive` to reload the two additive client-trust files. The
+     packet still excludes Kafka, Redis, SQLite, ingestors, projectors, Rust
+     cores, V1, Trading System, alpha, offsets and all order state; rollback is
+     stop/remove the disposable client, delete only its cursor namespace and
+     restore/recreate only those four V2 readers.
+
 3. **10.5-D/B3 - Immutable stable-release rehearsal and publication**
    - **Goal:** certify the exact `2.0.0` release candidate rather than merely
      its source. Run the review-only stable-release certificate against real
