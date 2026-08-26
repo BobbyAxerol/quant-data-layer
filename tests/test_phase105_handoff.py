@@ -1,22 +1,28 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from qdl.certification.phase105_handoff import (
     ALL_KEY_SUBJECTS,
     V1_FALLBACK_COMMIT,
     V1_FALLBACK_VERSION,
-    active_query_environment_binding,
+    active_query_environment_commitment,
     active_runtime_binding,
     handoff_packet,
     load_dotenv,
     prepare_handoff_environment,
+    public_handoff_overlay,
+    render_dotenv,
     sha256_file,
+    validate_active_query_environment_commitment,
     v1_image_attestation,
 )
+from scripts.phase105_prepare_handoff_bundle import main as prepare_handoff_main
 
 
 class Phase105HandoffTests(unittest.TestCase):
@@ -174,17 +180,70 @@ class Phase105HandoffTests(unittest.TestCase):
                     runtime_binding=binding,
                 )
 
-    def test_active_query_binding_carries_only_rotated_cursor_and_public_jwt_keys(self) -> None:
+    def test_prepare_cli_writes_only_a_public_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base = {
+                **self.base,
+                "QDL_STABLE_SCHEMA_DIGEST": "c" * 64,
+                "QDL_STABLE_INTERNAL_INGEST_SECRET": "test-secret-not-output",
+                "QDL_STABLE_CURSOR_KEYS_JSON": json.dumps({"stable-k2": "cursor"}),
+            }
+            packet = self._final_bar_packet()
+            runtime = active_runtime_binding(base, packet)
+            current = {
+                "QDL_STABLE_INTERNAL_INGEST_SECRET": base["QDL_STABLE_INTERNAL_INGEST_SECRET"],
+                "QDL_STABLE_CURSOR_KEYS_JSON": base["QDL_STABLE_CURSOR_KEYS_JSON"],
+                "QDL_DATA_JWT_KEYS_JSON": base["QDL_STABLE_JWT_KEYS_JSON"],
+                "QDL_STABLE_SCHEMA_DIGEST": base["QDL_STABLE_SCHEMA_DIGEST"],
+                "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
+                "QDL_STABLE_AUTHORITY_REVISION": "1",
+                "QDL_CONFIG_REVISION": "phase105c-final-bar-r10",
+            }
+            commitment = active_query_environment_commitment(base, current, runtime)
+            binding = {
+                "schema": "qdl.phase105.active-query-env-commitment.v1",
+                "status": "PASS",
+                "service": "query_v2_1",
+                "container_image_id": "sha256:" + "e" * 64,
+                "container_id_sha256": "f" * 64,
+                **commitment,
+            }
+            base_path = root / "stable.env"
+            packet_path = root / "runtime.json"
+            commitment_path = root / "query-proof.json"
+            provenance_path = root / "v1.json"
+            output = root / "output"
+            base_path.write_text(render_dotenv(base), encoding="utf-8")
+            packet_path.write_text(json.dumps(packet), encoding="utf-8")
+            commitment_path.write_text(json.dumps(binding), encoding="utf-8")
+            provenance_path.write_text(json.dumps({"status": "PASS"}), encoding="utf-8")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                status = prepare_handoff_main([
+                    "--base-env", str(base_path),
+                    "--active-runtime-packet", str(packet_path),
+                    "--active-query-commitment", str(commitment_path),
+                    "--extension-dir", str(self._extension(root / "extension")),
+                    "--python-image", "sha256:" + "e" * 64,
+                    "--v1-provenance", str(provenance_path),
+                    "--output-dir", str(output),
+                ])
+            self.assertEqual(status, 0)
+            self.assertFalse(output.exists())
+            self.assertNotIn("test-secret-not-output", stdout.getvalue())
+            preview = json.loads(stdout.getvalue())
+            self.assertEqual(preview["recreated_services"], [
+                "query_v2_1", "query_v2_2", "stream_v2_active", "stream_v2_passive",
+            ])
+
+    def test_active_query_commitment_keeps_secret_values_out_of_handoff_output(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             base = {
                 **self.base,
                 "QDL_STABLE_SCHEMA_DIGEST": "c" * 64,
                 "QDL_STABLE_INTERNAL_INGEST_SECRET": "unchanged-secret",
-                "QDL_STABLE_JWT_KEYS_JSON": json.dumps({
-                    "stable-trading-system-rs256-v1": json.loads(
-                        self.base["QDL_STABLE_JWT_KEYS_JSON"]
-                    )["stable-trading-system-rs256-v1"],
-                }),
+                "QDL_STABLE_CURSOR_KEYS_JSON": json.dumps({"stable-k2": "rotated"}),
             }
             active = {
                 "schema": "qdl.v2.shared-primary-handoff-packet.v2",
@@ -206,31 +265,44 @@ class Phase105HandoffTests(unittest.TestCase):
             current = {
                 "QDL_STABLE_INTERNAL_INGEST_SECRET": "unchanged-secret",
                 "QDL_STABLE_CURSOR_KEYS_JSON": json.dumps({"stable-k2": "rotated"}),
-                "QDL_DATA_JWT_KEYS_JSON": self.base["QDL_STABLE_JWT_KEYS_JSON"],
+                "QDL_DATA_JWT_KEYS_JSON": base["QDL_STABLE_JWT_KEYS_JSON"],
                 "QDL_STABLE_SCHEMA_DIGEST": "c" * 64,
                 "QDL_CONFIG_REVISION": "phase103-shared-primary-r1",
                 "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
                 "QDL_STABLE_AUTHORITY_REVISION": "1",
             }
-            query = active_query_environment_binding(base, current, runtime)
+            commitment = active_query_environment_commitment(base, current, runtime)
+            raw_commitment = {
+                "schema": "qdl.phase105.active-query-env-commitment.v1",
+                "status": "PASS",
+                "service": "query_v2_1",
+                "container_image_id": "sha256:" + "e" * 64,
+                "container_id_sha256": "f" * 64,
+                **commitment,
+            }
+            verified = validate_active_query_environment_commitment(
+                base, runtime, raw_commitment
+            )
             values = prepare_handoff_environment(
                 base,
                 extension_dir=self._extension(Path(raw)),
                 python_image="sha256:" + "e" * 64,
                 runtime_binding=runtime,
-                query_environment_binding=query,
             )
-        self.assertEqual(values["QDL_STABLE_CURSOR_KEYS_JSON"], current["QDL_STABLE_CURSOR_KEYS_JSON"])
+            overlay = public_handoff_overlay(values)
+        self.assertEqual(values["QDL_STABLE_CURSOR_KEYS_JSON"], base["QDL_STABLE_CURSOR_KEYS_JSON"])
         self.assertEqual(
-            set(json.loads(values["QDL_STABLE_JWT_KEYS_JSON"])),
+            set(json.loads(overlay["QDL_STABLE_JWT_KEYS_JSON"])),
             set(ALL_KEY_SUBJECTS),
         )
-        self.assertEqual(query["override_keys"], [
-            "QDL_STABLE_CURSOR_KEYS_JSON", "QDL_STABLE_JWT_KEYS_JSON",
-        ])
+        self.assertEqual(set(overlay), {
+            "QDL_STABLE_JWT_KEYS_JSON", "QDL_STABLE_JWT_KEY_SUBJECTS_JSON",
+        })
+        self.assertNotIn("unchanged-secret", json.dumps(overlay, sort_keys=True))
+        self.assertEqual(set(verified["verified_keys"]), set(current))
         current["QDL_STABLE_INTERNAL_INGEST_SECRET"] = "mismatch"
-        with self.assertRaisesRegex(ValueError, "ingest secret"):
-            active_query_environment_binding(base, current, runtime)
+        with self.assertRaisesRegex(ValueError, "mismatches controlled reference"):
+            active_query_environment_commitment(base, current, runtime)
 
     def test_environment_rejects_unapproved_existing_key(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

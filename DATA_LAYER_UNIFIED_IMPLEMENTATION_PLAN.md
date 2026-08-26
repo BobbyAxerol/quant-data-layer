@@ -15796,6 +15796,51 @@ or broad image/container cleanup.
      private allowlisted query env, prepare/bind V1 fallback, reload exactly
      four readers, and execute the 300-second disposable no-order acceptance.
 
+   **C2 secret-reference refinement (`IN PROGRESS / SOURCE ONLY`,
+   2026-08-26):** the runtime environment correctly rejected creation of a
+   second `active-query.env` containing the ingest secret, cursor keyring and
+   JWT material. C2 will not bypass that control. Instead, the existing sealed
+   Phase-10.5 private `stable.env` remains the sole controlled secret
+   reference; a read-only verifier will compare the active query's seven
+   allowlisted values in memory and retain only a commitment hash, key names
+   and container/image identifiers. The handoff builder will write only a
+   public overlay containing the expanded JWT public-key/subject map and
+   packet hashes. Compose will layer that overlay over the existing private
+   env and C1 compose selectors.
+   - **Invariants:** no new ingest-secret, cursor-key or JWT private material
+     file; no secret appears in stdout, Git, evidence or a generated overlay.
+     A mismatch between the active reader and the controlled reference is a
+     hard C2 block. The same four-reader-only runtime packet and rollback
+     remain unchanged.
+   - **Exit:** pure verifier/overlay tests, compilation and the immutable
+     no-network regression matrix pass; then a coherent source commit records
+     the safer packet path before any Docker recreate or acceptance request.
+
+   **C2 secret-reference refinement (`PASS / RUNTIME C2 PENDING`,
+   2026-08-26):** the former private-env capture/output path was replaced with
+   `phase105_verify_active_query_env.py`, which Docker-inspects the active
+   reader only in memory, compares the exact seven allowlisted values against
+   the existing sealed reference, and persists a payload-free commitment.
+   `phase105_prepare_handoff_bundle.py` now consumes that proof and writes
+   `handoff-public.env` containing only the expanded JWT public-key/subject
+   map; it never writes `stable.env`, ingest secrets or cursor keys. The
+   handoff packet records only commitment hashes/key names. This preserves the
+   existing private env as the single secret source while still fail-closing on
+   stale selectors, wrong image or value mismatch.
+   - **Tests actually run:** `py_compile`, `git diff --check`, and a targeted
+     `12/12` handoff suite passed. The same immutable V2 image
+     `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`
+     then ran the full bounded C1/C2/Phase-10 matrix with source mounted
+     read-only, `--network none`, read-only rootfs and tmpfs: `162 passed, 0
+     failed, 0 skipped` in `6.629s`. The new CLI case proves a secret-bearing
+     test value cannot appear in dry-run output and that the output namespace
+     remains absent unless explicitly applied. No V1/V2 runtime, certificate,
+     provider, Kafka/Redis/SQLite, consumer route or order state changed.
+   - **Next permitted action:** use the already-approved C2 packet with the
+     existing private `stable.env`, final-BAR compose selector file and the
+     generated public overlay. Runtime remains exactly V1 plus four reader
+     recreates and one disposable, no-order acceptance client.
+
 3. **10.5-D/B3 - Immutable stable-release rehearsal and publication**
    - **Goal:** certify the exact `2.0.0` release candidate rather than merely
      its source. Run the review-only stable-release certificate against real
