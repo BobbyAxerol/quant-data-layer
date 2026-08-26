@@ -15876,6 +15876,77 @@ or broad image/container cleanup.
      overlay, bind the already-attested V1, then recreate exactly four readers
      under the approved C2 packet.
 
+   **C2 runtime attempt 1 (`FAIL-CLOSED / NO EXECUTION`, 2026-08-26):** active
+   query verification, public-only handoff preparation and current-serving V1
+   binding all passed; the public CA bundle already matched the mounted
+   query/stream bundle hash, so no `stable_tls` write occurred. Compose
+   dry-run and actual `--no-deps --no-build --force-recreate` affected exactly
+   `query_v2_1`, `query_v2_2`, `stream_v2_active` and `stream_v2_passive`.
+   All four started with the client-CA selector and no startup error.
+   - The disposable, read-only acceptance client then failed on its first
+     Monitoring `BINANCE.USDM.PERPETUAL.ETH-USDT TRADE` stream read with
+     `GATEWAY_FENCED: stream gateway is passive or lease expired` through the
+     configured `qdl-v2-stream-a:8210` alias. It submitted no order, made no
+     provider connection, changed no route/offset/state, and `--rm` removed
+     the client. This is not an accepted C2 receipt.
+   - **Decision boundary:** do not retry a random alias or restart a core.
+     Read the active lease and both stream container network/role metadata;
+     if the C2 harness selected a passive alias despite a healthy active
+     gateway, repair and source-test only the deterministic active-target
+     selection, commit, then repeat the same bounded no-order packet. If the
+     lease itself is genuinely expired, stop and request a separately scoped
+     stream-gateway recovery packet.
+
+   **C2 active-gateway target guard (`IN PROGRESS / SOURCE ONLY`, 2026-08-26):**
+   read-only Redis inspection confirmed the lease is healthy and currently
+   owned by `stable-stream-passive` (epoch `18`, live TTL), while the first
+   disposable probe supplied only the static `qdl-v2-stream-a:8210` alias.
+   That alias names a replica, not a leader; its `GATEWAY_FENCED` response was
+   correct. C2 will now require the approved pair of private stream targets
+   (`qdl-v2-stream-a:8210,qdl-v2-stream-b:8210`) and pass that ordered pair to
+   the existing SDK transport, whose retry rule advances only an initial
+   `UNAVAILABLE` response to the peer. This is a source-only harness guard,
+   not a lease, routing, core or topology change.
+   - **Invariant/test/rollback:** reject a singleton, duplicate or different
+     target set before any request; retain the current two-reader runtime;
+     prove the SDK's existing bounded `UNAVAILABLE` peer retry in test. The
+     coherent source commit is rollback for this guard. Only then may the
+     already-approved four-reader/disposable-client C2 packet rerun with a
+     300-second bound. Kafka, Redis contents, SQLite, Rust core, V1, Trading
+     System, alpha and order state remain excluded.
+   - **Matrix finding (`IN PROGRESS / TEST-ONLY`, 2026-08-26):** the focused
+     guard suite passed `28/28`. The broader isolated C1/C2/Phase-10 suite
+     reached `119` tests and exposed one stale assertion in the existing C40
+     mutation test: a malformed decimal is now rejected earlier by the
+     canonical catalog validator (`stable trade price decimal representation
+     is inconsistent`) before the historical byte-equality check. That is the
+     intended fail-closed domain behavior, not a runtime data-plane regression.
+     The test will accept either explicit invariant-preserving rejection,
+     then the full no-network matrix must pass before C2 retry.
+
+   **C2 active-gateway target guard (`PASS / C2 RUNTIME RETRY APPROVED`,
+   2026-08-26):** `phase105_consumer_v2_identity_acceptance.py` now rejects a
+   singleton, duplicate, or foreign gRPC target set before making a request and
+   accepts only the two governed stream aliases. It passes both to the existing
+   `GrpcStreamTransport`, which already has a covered initial-`UNAVAILABLE`
+   peer-retry path. The C40 mutation oracle assertion now accepts either the
+   earlier decimal-consistency guard or the later canonical-byte guard; both
+   reject the altered record and neither permits a payload through.
+   - **Tests actually run:** `python3 -m py_compile` for both touched scripts
+     and `git diff --check` passed. An isolated existing immutable V2 image
+     (`sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`)
+     with `--network none`, read-only source/rootfs, non-root UID and tmpfs
+     ran the focused guard matrix `28/28` and the bounded C1/C2/Phase-10
+     matrix `119/119` in `8.731s`. No image was built, no runtime reader/core
+     was recreated, and no provider/Kafka/Redis/SQLite/V1/Trading System/alpha
+     or order state changed during source verification.
+   - **Next permitted action:** rerun the already-approved C2 disposable
+     no-order acceptance with `--grpc-target
+     qdl-v2-stream-a:8210,qdl-v2-stream-b:8210`, a 300-second maximum window,
+     and the existing four-reader runtime. No further runtime mutation is
+     required for this retry; fail-closed rollback remains removal of the
+     disposable client only.
+
 3. **10.5-D/B3 - Immutable stable-release rehearsal and publication**
    - **Goal:** certify the exact `2.0.0` release candidate rather than merely
      its source. Run the review-only stable-release certificate against real

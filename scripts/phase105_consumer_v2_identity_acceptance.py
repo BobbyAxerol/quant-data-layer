@@ -58,6 +58,14 @@ IDENTITY_PREFIXES = {
     "alpha.okx.paper.stable": "alpha-okx",
 }
 
+# C2 is a bounded acceptance against the fixed stable reader pair. These are
+# replica aliases, not leader names: the SDK must receive both so its existing
+# UNAVAILABLE retry can reach the current lease owner.
+_C2_STREAM_TARGETS = frozenset({
+    "qdl-v2-stream-a:8210",
+    "qdl-v2-stream-b:8210",
+})
+
 
 @dataclass(frozen=True, slots=True)
 class IdentityFiles:
@@ -145,6 +153,17 @@ def _v1_base_url(value: str) -> str:
     ):
         raise ValueError("Phase 10.5 V1 fallback URL must be exactly http://data_layer:8100")
     return value.rstrip("/")
+
+
+def _c2_grpc_targets(value: str) -> str:
+    """Require both stable stream replicas for the C2 lease-failover receipt."""
+    targets = tuple(item.strip() for item in value.split(",") if item.strip())
+    if len(targets) != 2 or len(set(targets)) != 2 or set(targets) != _C2_STREAM_TARGETS:
+        raise ValueError(
+            "Phase 10.5 C2 requires exactly qdl-v2-stream-a:8210 and "
+            "qdl-v2-stream-b:8210 as --grpc-target"
+        )
+    return ",".join(targets)
 
 
 async def _v2_query_product(
@@ -237,6 +256,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     scope, release = _scope(args)
     files = _identity_files(args)
     v1_base_url = _v1_base_url(args.v1_base_url)
+    grpc_target = _c2_grpc_targets(args.grpc_target)
     try:
         v1_provenance_raw = json.loads(args.v1_provenance.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -285,7 +305,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     identity=identities[product.consumer_id],
                     primary_url=args.primary_url,
                     secondary_url=args.secondary_url,
-                    grpc_target=args.grpc_target,
+                    grpc_target=grpc_target,
                     state_dir=temporary,
                     timeout_seconds=args.timeout_seconds,
                 )
@@ -318,7 +338,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     identity=identities[consumer_id],
                     primary_url=args.primary_url,
                     secondary_url=args.secondary_url,
-                    grpc_target=args.grpc_target,
+                    grpc_target=grpc_target,
                     v1_base_url=v1_base_url,
                     state_dir=temporary / consumer_id.replace(".", "-"),
                     timeout_seconds=args.timeout_seconds,

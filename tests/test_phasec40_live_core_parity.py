@@ -214,7 +214,13 @@ class C40LiveCoreParityTests(unittest.TestCase):
             partition=sample.partition,
             offset=sample.offset,
         )
-        with self.assertRaisesRegex(ValueError, "canonical bytes differ"):
+        # The catalog validator may reject a malformed DecimalValue before the
+        # later raw-to-canonical byte oracle. Both are required fail-closed
+        # outcomes for a mutated live record.
+        with self.assertRaisesRegex(
+            ValueError,
+            "canonical bytes differ|decimal representation is inconsistent",
+        ):
             verify_sample(
                 broken,
                 catalog=self.catalog,

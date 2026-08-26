@@ -11,6 +11,7 @@ from qdl_sdk import Grade
 from scripts.phase105_consumer_v2_identity_acceptance import (
     IDENTITY_PREFIXES,
     _authority,
+    _c2_grpc_targets,
     _identity_files,
     _route_summary,
     _v1_base_url,
@@ -85,6 +86,25 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(ValueError, "exactly"):
                     _v1_base_url(value)
+
+    def test_c2_requires_the_complete_stable_stream_pair(self) -> None:
+        self.assertEqual(
+            _c2_grpc_targets("qdl-v2-stream-a:8210,qdl-v2-stream-b:8210"),
+            "qdl-v2-stream-a:8210,qdl-v2-stream-b:8210",
+        )
+        self.assertEqual(
+            _c2_grpc_targets(" qdl-v2-stream-b:8210, qdl-v2-stream-a:8210 "),
+            "qdl-v2-stream-b:8210,qdl-v2-stream-a:8210",
+        )
+        for value in (
+            "qdl-v2-stream-a:8210",
+            "qdl-v2-stream-a:8210,qdl-v2-stream-a:8210",
+            "qdl-v2-stream-a:8210,other:8210",
+            "qdl-v2-stream-a:8210,qdl-v2-stream-b:8210,other:8210",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "requires exactly"):
+                    _c2_grpc_targets(value)
 
     def test_route_summary_counts_declared_v1_and_blocked_without_claiming_transition(self) -> None:
         requirement = DataRequirement(
