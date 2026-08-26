@@ -11,7 +11,6 @@ from typing import Mapping
 
 V1_FALLBACK_COMMIT = "85c25df631e263281bd546de69efcaf6146c93ef"
 V1_FALLBACK_VERSION = "v1.2.2"
-RUST_CORE_MEMORY_LIMIT_BYTES = 512 * 1024 * 1024
 
 EXTERNAL_IDENTITY_SPECS = {
     "stable-monitoring-rs256-v1": {
@@ -54,6 +53,7 @@ V1_RUNTIME_BINDING_FIELDS = frozenset({
     "v1_provenance_sha256",
 })
 _ACTIVE_RUNTIME_SCHEMA = "qdl.v2.shared-primary-handoff-packet.v2"
+_FINAL_BAR_RUNTIME_SCHEMA = "qdl.phase105c.final-bar-repair.v1"
 _ACTIVE_RUNTIME_SELECTORS = (
     "QDL_CONFIG_REVISION",
     "QDL_STABLE_AUTHORITY_MODE",
@@ -64,6 +64,12 @@ _ACTIVE_RUNTIME_SELECTORS = (
 _ACTIVE_QUERY_OVERRIDE_KEYS = (
     "QDL_STABLE_CURSOR_KEYS_JSON",
     "QDL_STABLE_JWT_KEYS_JSON",
+)
+_C2_RECREATED_SERVICES = (
+    "query_v2_1",
+    "query_v2_2",
+    "stream_v2_active",
+    "stream_v2_passive",
 )
 
 
@@ -171,14 +177,17 @@ def active_runtime_binding(
     base_environment: Mapping[str, str],
     packet: Mapping[str, object],
 ) -> dict[str, object]:
-    """Bind a handoff env to the currently sealed Phase 10.3 runtime only.
+    """Bind a handoff environment to one sealed, fenced V2 runtime packet.
 
     The historical candidate environment intentionally retains private values.
     The sealed runtime packet may replace only the small non-secret selector
     allowlist needed for Compose to mount the active authority record.  This
     prevents a stale host runtime path from being carried into a recreate.
     """
-    if packet.get("schema") != _ACTIVE_RUNTIME_SCHEMA:
+    schema = packet.get("schema")
+    if schema == _FINAL_BAR_RUNTIME_SCHEMA:
+        return _final_bar_runtime_binding(packet)
+    if schema != _ACTIVE_RUNTIME_SCHEMA:
         raise ValueError("Phase 10.5-C active runtime packet schema is invalid")
     authority = packet.get("authority")
     compose = packet.get("compose_environment")
@@ -223,10 +232,78 @@ def active_runtime_binding(
     if "qdl-v2" not in runtime_path.parts:
         raise ValueError("Phase 10.5-C active runtime directory is not a QDL V2 state path")
     return {
+        "packet_schema": schema,
         "packet_sha256": sha256_bytes(
             json.dumps(packet, sort_keys=True, separators=(",", ":")).encode()
         ),
         "selectors": selectors,
+    }
+
+
+def _governed_runtime_path(value: object) -> str:
+    if not isinstance(value, str) or not value or "\n" in value:
+        raise ValueError("Phase 10.5-C active runtime directory is invalid")
+    runtime_path = Path(value)
+    if not runtime_path.is_absolute() or runtime_path.parts[:5] != (
+        "/", "home", "bobby", ".local", "state"
+    ):
+        raise ValueError("Phase 10.5-C active runtime directory is outside the governed state root")
+    if "qdl-v2" not in runtime_path.parts or ".." in runtime_path.parts:
+        raise ValueError("Phase 10.5-C active runtime directory is not a QDL V2 state path")
+    return value
+
+
+def _final_bar_runtime_binding(packet: Mapping[str, object]) -> dict[str, object]:
+    """Accept only a self-consistent revision-10 final-BAR repair packet."""
+    runtime = packet.get("runtime")
+    compose = packet.get("compose_environment")
+    if not isinstance(runtime, Mapping) or not isinstance(compose, Mapping):
+        raise ValueError("Phase 10.5-C final-BAR runtime packet is incomplete")
+    authority_sha256 = runtime.get("authority_sha256")
+    runtime_files = runtime.get("runtime_files")
+    authority_revision = runtime.get("authority_revision")
+    if (
+        runtime.get("authority_bytes_preserved") is not True
+        or runtime.get("authority_mode") != "RUST_PRIMARY"
+        or isinstance(authority_revision, bool)
+        or not isinstance(authority_revision, int)
+        or authority_revision <= 0
+        or not isinstance(authority_sha256, str)
+        or _SHA256.fullmatch(authority_sha256) is None
+        or not isinstance(runtime_files, Mapping)
+        or runtime_files.get("authority.json") != authority_sha256
+    ):
+        raise ValueError("Phase 10.5-C final-BAR authority evidence is invalid")
+    host_runtime_dir = _governed_runtime_path(runtime.get("host_runtime_dir"))
+    rust_image = runtime.get("rust_image_digest")
+    python_image = runtime.get("python_image_digest")
+    if (
+        not isinstance(rust_image, str)
+        or _DIGEST.fullmatch(rust_image) is None
+        or not isinstance(python_image, str)
+        or _DIGEST.fullmatch(python_image) is None
+        or compose.get("QDL_STABLE_RUNTIME_DIR") != host_runtime_dir
+        or compose.get("QDL_STABLE_RUST_IMAGE") != rust_image
+        or compose.get("QDL_STABLE_PYTHON_IMAGE") != python_image
+    ):
+        raise ValueError("Phase 10.5-C final-BAR runtime image or path mismatches packet")
+    config_revision = compose.get("QDL_CONFIG_REVISION")
+    if not isinstance(config_revision, str) or not config_revision or "\n" in config_revision:
+        raise ValueError("Phase 10.5-C final-BAR config revision is invalid")
+    selectors = {
+        "QDL_CONFIG_REVISION": config_revision,
+        "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
+        "QDL_STABLE_AUTHORITY_REVISION": str(authority_revision),
+        "QDL_STABLE_RUNTIME_DIR": host_runtime_dir,
+        "QDL_STABLE_RUST_IMAGE": rust_image,
+    }
+    return {
+        "packet_schema": _FINAL_BAR_RUNTIME_SCHEMA,
+        "packet_sha256": sha256_bytes(
+            json.dumps(packet, sort_keys=True, separators=(",", ":")).encode()
+        ),
+        "selectors": selectors,
+        "python_image_digest": python_image,
     }
 
 
@@ -326,6 +403,14 @@ def prepare_handoff_environment(
             if not isinstance(value, str) or not value or "\n" in value:
                 raise ValueError(f"Phase 10.5-C active runtime binding is invalid: {key}")
             result[key] = value
+        sealed_python_image = runtime_binding.get("python_image_digest")
+        if sealed_python_image is not None:
+            if (
+                not isinstance(sealed_python_image, str)
+                or _DIGEST.fullmatch(sealed_python_image) is None
+                or python_image != sealed_python_image
+            ):
+                raise ValueError("Phase 10.5-C Python image differs from sealed final-BAR runtime")
     if query_environment_binding is not None:
         overrides = query_environment_binding.get("overrides")
         if not isinstance(overrides, Mapping) or set(overrides) != set(_ACTIVE_QUERY_OVERRIDE_KEYS):
@@ -445,15 +530,7 @@ def handoff_packet(
         "v2_python_image": environment["QDL_STABLE_PYTHON_IMAGE"],
         "v2_rust_image": environment["QDL_STABLE_RUST_IMAGE"],
         "runtime_dir": environment["QDL_STABLE_RUNTIME_DIR"],
-        "rust_core_memory_limit_bytes": RUST_CORE_MEMORY_LIMIT_BYTES,
-        "recreated_services": [
-            "data_layer_service",
-            "rust_core",
-            "query_v2_1",
-            "query_v2_2",
-            "stream_v2_active",
-            "stream_v2_passive",
-        ],
+        "recreated_services": list(_C2_RECREATED_SERVICES),
         "client_authority_paths": [
             "/stable-certs/query/client-ca-bundle.crt",
             "/stable-certs/stream/client-ca-bundle.crt",

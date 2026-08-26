@@ -15709,6 +15709,93 @@ or broad image/container cleanup.
    four named V2 reader recreates, followed by the 300-second disposable
    no-order client.
 
+   **C2 runtime packet (`APPROVED / PREFLIGHT PASS`, 2026-08-26):** The
+   approved runtime scope resolves to the four existing Compose roles
+   `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+   `stream_v2_passive`, currently running as
+   `qdl_v2_stable_candidate-*` containers on immutable V2 image
+   `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`.
+   They retain the same private `executor_network` aliases and host query/gRPC
+   ports `18201/18202` and `18220/18221`. Current authority is fenced
+   `RUST_PRIMARY`, revision `1`, with both public and legacy writes disabled.
+   - The existing Phase-10.5 external client bundle is cryptographically valid
+     and its SHA-256 (`fd9b1452c2d4c6b87fb287df5c37bc56f1db33374783c170a1e33caf2fba3b39`)
+     matches both mounted query/stream bundle files. Its Monitoring/Alpha-OKX
+     certificates and the existing Trading System/Alpha-Binance certificates
+     verify against their declared CA. Reuse it rather than rotate any key or
+     mint extra identity material.
+   - The four readers currently lack the
+     `QDL_STABLE_TLS_CLIENT_CA_FILE` override and the expanded JWT keyring, so
+     C2 must prepare one private current handoff env, copy only the existing
+     public `client-ca-bundle.crt` into the two named stable-TLS paths, and
+     recreate only those four roles with the C2-only
+     `docker-compose.phase105c-c2.override.yml`.
+     `rust_core`, Kafka, Redis, SQLite, ingestors, projectors, V1, Trading
+     System, alpha and all volumes/offsets remain excluded.
+   - The disposable client is `--rm --read-only`, has tmpfs-only cursors, no
+     Docker socket/provider credential/order endpoint, uses query replicas and
+     stream replicas only through `executor_network`, and is hard-bounded to
+     `300s`. It runs the full four-consumer order, six permitted `TRADE`
+     fallback-return receipts, V2-only BAR routes and zero execution action.
+     Rollback is stop/remove that client and recreate only the four readers
+     with the prior private env; V1's stopped rollback container remains
+     untouched.
+
+   **C2 packet-chain repair (`IN PROGRESS / SOURCE ONLY`, 2026-08-26):** C2
+   preflight exposed a fail-closed compatibility gap: the helper accepted only
+   the historical Phase-10.3 `qdl.v2.shared-primary-handoff-packet.v2`, while
+   the running sealed authority is the valid revision-10
+   `qdl.phase105c.final-bar-repair.v1` packet. The source-only repair will
+   accept that final-BAR packet only when its `RUST_PRIMARY` authority is
+   write-fenced, has a positive revision, preserves authority bytes and hash,
+   binds the exact governed runtime path and Rust image, and matches the
+   caller's immutable Python image. It will derive only the existing five
+   non-secret selectors; any stale path, selector, image or authority evidence
+   remains a hard error.
+   - The generated C2 handoff packet and a new
+     `docker-compose.phase105c-c2.override.yml` will enumerate exactly
+     `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+     `stream_v2_passive`; no V1, Rust core, Kafka, Redis, SQLite, ingestor,
+     projector or authority role may appear. The new override adds only the
+     existing query/stream public client-CA paths. The historical broader
+     Phase-10.5-C override remains unchanged as evidence, not as the C2
+     runtime input.
+   - Source gates cover accepted/rejected final-BAR packets, immutable Python
+     image binding, stale runtime path/Rust digest/authority hash rejection,
+     exact reader-only packet/Compose scope, compilation, whitespace and the
+     existing no-network immutable test matrix. No image build, certificate
+     write, V1/V2 recreate, endpoint call, provider access or consumer/order
+     mutation is permitted until this repair is tested, journaled and committed.
+   - Exit is a coherent source commit with `PASS / C2 RUNTIME PENDING`; the
+     already-approved runtime packet then resumes unchanged, with its exact
+     four-reader blast radius and stop/recreate rollback.
+
+   **C2 packet-chain repair (`PASS / C2 RUNTIME PENDING`, 2026-08-26):**
+   `qdl.certification.phase105_handoff` now accepts the revision-10
+   `qdl.phase105c.final-bar-repair.v1` packet only after checking preserved
+   authority bytes/hash, fenced `RUST_PRIMARY` revision, governed state root,
+   exact runtime/Rust/Python immutable identities and the derived selector
+   set. The historical Phase-10.3 packet path remains supported unchanged.
+   The prepared C2 packet now enumerates exactly the four approved reader
+   roles and no longer contains a V1 or Rust capacity action. The new C2-only
+   Compose override sets only the existing query/stream client-CA bundle paths;
+   it cannot recreate `rust_core` or `data_layer_service`.
+   - **Tests actually run:** Python compilation and `git diff --check` passed.
+     The immutable V2 image
+     `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`,
+     with source mounted read-only, `--network none`, read-only rootfs and
+     tmpfs `/tmp`, ran the bounded C1/C2/Phase-10 regression matrix:
+     `161 passed, 0 failed, 0 skipped` in `6.848s`. It covers final-BAR
+     path/Rust/Python/hash mismatch rejection, reader-only Compose scope,
+     fallback blocking, signed cursor/replay contracts, BAR continuity and
+     provider-admission semantics. No image build, certificate write, runtime
+     recreate, endpoint/provider request, Kafka/Redis/SQLite operation, route
+     mutation or order action occurred.
+   - **Decision boundary:** this source slice is complete after its coherent
+     commit. The separately approved C2 runtime packet may now capture a
+     private allowlisted query env, prepare/bind V1 fallback, reload exactly
+     four readers, and execute the 300-second disposable no-order acceptance.
+
 3. **10.5-D/B3 - Immutable stable-release rehearsal and publication**
    - **Goal:** certify the exact `2.0.0` release candidate rather than merely
      its source. Run the review-only stable-release certificate against real

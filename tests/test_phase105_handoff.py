@@ -41,6 +41,31 @@ class Phase105HandoffTests(unittest.TestCase):
         (root / "client-ca-bundle.crt").write_text("server-ca\\nexternal-ca\\n", encoding="utf-8")
         return root
 
+    def _final_bar_packet(self) -> dict[str, object]:
+        runtime_dir = "/home/bobby/.local/state/qdl-v2/phase105c-test/runtime"
+        rust_image = "sha256:" + "d" * 64
+        python_image = "sha256:" + "e" * 64
+        authority_sha256 = "f" * 64
+        return {
+            "schema": "qdl.phase105c.final-bar-repair.v1",
+            "compose_environment": {
+                "QDL_CONFIG_REVISION": "phase105c-final-bar-r10",
+                "QDL_STABLE_PYTHON_IMAGE": python_image,
+                "QDL_STABLE_RUNTIME_DIR": runtime_dir,
+                "QDL_STABLE_RUST_IMAGE": rust_image,
+            },
+            "runtime": {
+                "authority_bytes_preserved": True,
+                "authority_mode": "RUST_PRIMARY",
+                "authority_revision": 1,
+                "authority_sha256": authority_sha256,
+                "host_runtime_dir": runtime_dir,
+                "python_image_digest": python_image,
+                "rust_image_digest": rust_image,
+                "runtime_files": {"authority.json": authority_sha256},
+            },
+        }
+
     def test_load_dotenv_unquotes_standard_private_env_values(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "stable.env"
@@ -106,6 +131,48 @@ class Phase105HandoffTests(unittest.TestCase):
         active["authority"]["contract_digest"] = "x" * 64
         with self.assertRaisesRegex(ValueError, "contract digest"):
             active_runtime_binding(base, active)
+
+    def test_final_bar_runtime_packet_requires_preserved_authority_and_exact_images(self) -> None:
+        packet = self._final_bar_packet()
+        binding = active_runtime_binding(self.base, packet)
+        self.assertEqual(binding["packet_schema"], "qdl.phase105c.final-bar-repair.v1")
+        self.assertEqual(binding["selectors"]["QDL_CONFIG_REVISION"], "phase105c-final-bar-r10")
+        self.assertEqual(binding["python_image_digest"], "sha256:" + "e" * 64)
+        runtime = packet["runtime"]
+        assert isinstance(runtime, dict)
+        runtime["authority_bytes_preserved"] = False
+        with self.assertRaisesRegex(ValueError, "authority evidence"):
+            active_runtime_binding(self.base, packet)
+
+    def test_final_bar_runtime_packet_rejects_stale_path_rust_or_authority_hash(self) -> None:
+        for field, value in (
+            ("host_runtime_dir", "/tmp/qdl-v2/runtime"),
+            ("rust_image_digest", "sha256:" + "9" * 64),
+        ):
+            with self.subTest(field=field):
+                packet = self._final_bar_packet()
+                runtime = packet["runtime"]
+                assert isinstance(runtime, dict)
+                runtime[field] = value
+                with self.assertRaisesRegex(ValueError, "runtime image or path|runtime directory"):
+                    active_runtime_binding(self.base, packet)
+        packet = self._final_bar_packet()
+        runtime = packet["runtime"]
+        assert isinstance(runtime, dict)
+        runtime["runtime_files"] = {"authority.json": "0" * 64}
+        with self.assertRaisesRegex(ValueError, "authority evidence"):
+            active_runtime_binding(self.base, packet)
+
+    def test_final_bar_runtime_packet_binds_the_python_image(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            binding = active_runtime_binding(self.base, self._final_bar_packet())
+            with self.assertRaisesRegex(ValueError, "Python image differs"):
+                prepare_handoff_environment(
+                    self.base,
+                    extension_dir=self._extension(Path(raw)),
+                    python_image="sha256:" + "1" * 64,
+                    runtime_binding=binding,
+                )
 
     def test_active_query_binding_carries_only_rotated_cursor_and_public_jwt_keys(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -217,7 +284,11 @@ class Phase105HandoffTests(unittest.TestCase):
             }
             packet = handoff_packet(environment=env, extension_dir=root, v1_attestation=v1)
         encoded = json.dumps(packet, sort_keys=True)
-        self.assertEqual(packet["rust_core_memory_limit_bytes"], 512 * 1024 * 1024)
+        self.assertEqual(packet["recreated_services"], [
+            "query_v2_1", "query_v2_2", "stream_v2_active", "stream_v2_passive",
+        ])
+        self.assertNotIn("rust_core", packet["recreated_services"])
+        self.assertNotIn("data_layer_service", packet["recreated_services"])
         self.assertNotIn("PRIVATE KEY", encoded)
         self.assertEqual(packet["jwt_subjects"], ALL_KEY_SUBJECTS)
 
@@ -229,6 +300,13 @@ class Phase105HandoffTests(unittest.TestCase):
         self.assertNotIn("rust_core_2:", v2)
         self.assertNotIn("rust_core_3:", v2)
         self.assertIn("QDL_STABLE_TLS_CLIENT_CA_FILE", v2)
+        c2 = (root / "docker-compose.phase105c-c2.override.yml").read_text(encoding="utf-8")
+        self.assertIn("query_v2_1:", c2)
+        self.assertIn("query_v2_2:", c2)
+        self.assertIn("stream_v2_active:", c2)
+        self.assertIn("stream_v2_passive:", c2)
+        self.assertNotIn("rust_core:", c2)
+        self.assertNotIn("data_layer_service:", c2)
         self.assertIn("build: !reset null", v1)
         self.assertIn("volumes: !override", v1)
         self.assertNotIn(":/app\n", v1)

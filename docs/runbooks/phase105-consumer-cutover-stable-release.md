@@ -170,6 +170,20 @@ fallback drills and `22` `BLOCKED` routes. A blocked route must produce no V1
 HTTP request. This makes the `V2 -> V1 -> V2` receipt real where equivalence is
 proven while leaving every Trading System and alpha route unchanged.
 
+#### C2 Final-BAR Runtime Packet Compatibility
+
+The active revision-10 final-BAR repair packet has schema
+`qdl.phase105c.final-bar-repair.v1`, not the historical Phase-10.3 schema.
+`scripts/phase105_prepare_handoff_bundle.py` accepts it only after validating
+the preserved `RUST_PRIMARY` authority hash/revision, governed host runtime
+path, Rust/Python immutable image identities and the five selector values it
+derives. A differing Python image, stale runtime path, Rust digest or authority
+hash is a hard error. C2 uses only
+`docker-compose.phase105c-c2.override.yml`; it contains exactly the four
+query/stream reader roles and two public client-CA paths. It must not be
+replaced by the broader historical `docker-compose.phase105c.override.yml`,
+which also mentions `rust_core` for an unrelated capacity packet.
+
 #### V1 Provenance Repair Exception
 
 If the active V1 image has been pruned and no current-serving provenance can

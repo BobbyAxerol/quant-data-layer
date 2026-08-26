@@ -34,7 +34,7 @@ def main() -> int:
         "--active-runtime-packet",
         type=Path,
         required=True,
-        help="sealed current Phase 10.3 runtime packet; only its allowlisted selectors apply",
+        help="sealed current V2 runtime packet; only its allowlisted selectors apply",
     )
     parser.add_argument(
         "--active-query-env",

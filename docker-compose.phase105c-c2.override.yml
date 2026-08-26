@@ -1,0 +1,16 @@
+services:
+  query_v2_1:
+    environment:
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/query/client-ca-bundle.crt
+
+  query_v2_2:
+    environment:
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/query/client-ca-bundle.crt
+
+  stream_v2_active:
+    environment:
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/stream/client-ca-bundle.crt
+
+  stream_v2_passive:
+    environment:
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/stream/client-ca-bundle.crt
