@@ -18998,6 +18998,109 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
   Python image with the exact existing per-role rollback map. C2 remains
   blocked until all 56 checkpoint watermarks are materialized and
   gap/freshness evidence passes.
+- **Barfix packet prepared (`PENDING APPLY`, 2026-08-27):** immutable Python
+  image `sha256:0416d26b3b3832b5467e01cd50daa4e33f8539e99380280cf44ef536e75264b9`
+  is labelled source `b965276` / release `2.0.0-c2-r11-barfix`; a
+  network-disabled direct import smoke passed. Packet
+  `70ae6c4f869831295f03b2a3fe5e145ee8c721e3265c12e64b91f332e81e5d2b`
+  renders acquisition revision `11`, 56 crypto BAR bindings, unchanged
+  authority SHA `1cd55d7...981fb1078`, and a new isolated bar checkpoint.
+  Its exact rollback map points to each currently-running r11 role image and
+  runtime directory, with the r11 checkpoint only for `binance_bar_edge`.
+  Compose preflight resolves only the approved seven named targets to this
+  bundle when invoked with `--no-deps`; Rust remains the certified
+  `c8f3...4d16` image. The non-secret C2 admission prefix and policy SHA are
+  reused unchanged from the currently running `rust_core`.
+- **Barfix apply permission correction (`IN PROGRESS`, 2026-08-27):** the
+  first bounded recreate correctly selected only the seven approved roles, but
+  the five unprivileged Python roles exited fail-closed before provider I/O:
+  the newly-rendered host runtime directory was private to its render user,
+  while the containers run as UID/GID `10001`. The immutable image itself
+  passed a direct full-module import smoke. The narrow correction is to make
+  only the generated runtime configuration bundle traversable/readable by the
+  non-root container user (`0755` directories, `0644` non-secret files);
+  `compose.env`, packet, rollback record and every secret remain private.
+  Then recreate only the affected `binance_bar_edge`, `query_v2_1`,
+  `query_v2_2`, `stream_v2_active` and `stream_v2_passive` roles. The already
+  healthy approved Rust/OKX roles are not restarted. No V1 or durable store
+  mutation is part of this correction.
+- **Barfix runtime result (`PASSED / C2 READY`, 2026-08-27):** the initial
+  seven-role recreate was bounded as approved. The permission correction was
+  then smoke-tested with UID/GID `10001` against a read-only runtime mount and
+  only the five exited Python roles were recreated; the healthy Rust/OKX roles
+  were left running. `binance_bar_edge` now has `56/56` checkpoint watermarks
+  and completed authentic Binance USD-M/OKX Swap history bootstrap with
+  `49,178` Kafka ACKs. It immediately ACKed the four current `1m` final BARs
+  after bootstrap. All seven roles are running with restart count `0` and no
+  OOM; observed memory is bounded at approximately `48 MiB` Rust core,
+  `96 MiB` bar edge and `109-116 MiB` per query/stream role, each below its
+  `512 MiB` service limit. This proves the r11 final-BAR materialization gate;
+  C2 now requires its separate continuity/replica checks and the governed
+  300-second disposable no-order consumer handoff with V1 rollback drill.
+- **C2 non-execution preflight (`PASSED / READY TO RUN`, 2026-08-27):** the
+  seven approved roles are running at restart count `0` with no OOM. The
+  repaired Python roles use immutable image
+  `sha256:0416d26b3b3832b5467e01cd50daa4e33f8539e99380280cf44ef536e75264b9`
+  (source `b965276`); the approved Rust/OKX roles remain on
+  `sha256:c8f3c55342f127ed498e4bcde8204bace2e2a8cb35d9e84a80ea5d6d97ac4d16`.
+  Query TLS SANs explicitly cover `query_v2_1`, `query_v2_2` and
+  `qdl-v2-query`; the two stream aliases are `qdl-v2-stream-a` and
+  `qdl-v2-stream-b` on the existing `executor_network`. All four named client
+  identities were checked by subject/issuer/expiry only and remain valid into
+  November 2026. The private external identity parent is intentionally
+  owner-only, so the disposable client will run as non-root UID/GID
+  `1001:10001` with only its required read-only identity mounts and the
+  query-trust volume; no permission is widened and no identity is copied. The
+  attested V1 fallback binding remains `PASS` for image
+  `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`.
+  This preflight made no provider, V1, Kafka, Redis, SQLite, consumer-route,
+  Trading System, alpha or order-path mutation. The C2 receipt is now pinned
+  to the current barfix Python image rather than the historical r11 reader
+  digest; the historical r11 packet remains retained as rollback provenance.
+- **C2 first acceptance attempt (`FAIL-CLOSED / PROJECTOR RUNTIME DRIFT`,
+  2026-08-27):** the governed disposable non-root/read-only client stopped at
+  `monitoring.multivenue.stable` on
+  `OKX.SWAP.PERPETUAL.ETH-USDT / TRADE` with the typed SDK error `DATA_STALE`
+  (`required data exceeds its freshness policy`). It made no provider
+  connection and no order, route, V1, Kafka, Redis, SQLite, Trading System or
+  alpha mutation; Docker removed the client and its temporary cursor directory
+  automatically. The incomplete zero-byte host receipt is disposable test
+  output and will be removed; it contains no payload or secret. Read-only
+  provenance then found the actual cause: all three existing
+  `projector_v2*` roles still mount the Phase 10.3 runtime catalog, while the
+  approved r11 Rust core is canonicalizing the 68-binding catalog. Projector
+  logs therefore repeatedly fail closed with `canonical event is outside the
+  stable catalog`; query roles correctly read their stalled `shared` cache and
+  reject stale data. This is a real reader-plane deployment drift, not a
+  freshness-threshold relaxation candidate. The approved seven-role packet
+  excluded projectors, so no projector has been recreated or reconfigured.
+  The next action requires a separate exact approval naming only the three
+  projector roles, their sealed compatible runtime mount/image rollback map,
+  existing consumer groups and no offset reset; after a gap-free cache catch-up
+  C2 must be rerun from the beginning for its full 300-second observation.
+- **Required bounded projector repair packet (`PENDING OWNER APPROVAL`,
+  2026-08-27):** read-only image inspection proves the three running
+  projectors use immutable Python image
+  `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`
+  (source `e0bedff`) whose embedded stable catalog has only `22` bindings;
+  the current barfix image
+  `sha256:0416d26b3b3832b5467e01cd50daa4e33f8539e99380280cf44ef536e75264b9`
+  (source `b965276`) has `74` total catalog bindings, including the active
+  `68` crypto core bindings and the separately routed VN catalog entries.
+  The repair must recreate **only** `projector_v2`, `projector_v2_2` and
+  `projector_v2_3` with that current immutable Python image and the current
+  r11/barfix runtime directory
+  `/home/bobby/.local/state/qdl-v2/c36c2-20260827T165526Z/r11-barfix-b965276-20260827T1822Z/runtime`.
+  It retains their existing `stable-projector-v1` consumer group, Kafka
+  offsets, Kafka topology/ACLs, Redis, SQLite cache and all V1/Trading
+  System/alpha/order state. No cache deletion, offset reset, topic replay or
+  topology change is permitted. Exact rollback is the same three roles back
+  to image `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`
+  and runtime directory
+  `/home/bobby/.local/state/qdl-v2/phase103-shared-primary-e0bedff-retry-20260825T054740Z/runtime`.
+  After a bounded cache catch-up with no catalog rejection, repeat the
+  disposable four-consumer C2 from its start for the full 300-second
+  observation; failure remains rollback-only and fail-closed.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
