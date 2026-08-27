@@ -49,6 +49,7 @@ from qdl.query.reference import (
     ReferenceDataRequirement,
 )
 from qdl.query.results import HistoryResult
+from qdl.admission import ProviderAdmissionRuntime
 from qdl.reference import (
     BasisSeries,
     LongShortKind,
@@ -501,12 +502,19 @@ def _reference_digest(result) -> str:
     ).hexdigest()
 
 
-def _service(catalog: StableSourceCatalog, *, timeout_seconds: float) -> tuple[V2QueryService, ProviderBarHistorySource]:
+def _service(
+    catalog: StableSourceCatalog,
+    *,
+    timeout_seconds: float,
+    native_basis_admission: ProviderAdmissionRuntime | None = None,
+) -> tuple[V2QueryService, ProviderBarHistorySource]:
     source = ProviderBarHistorySource(
         catalog,
         fetch_timeout_seconds=timeout_seconds,
     )
-    reference_runtime = build_default_reference_runtime()
+    reference_runtime = build_default_reference_runtime(
+        native_basis_admission=native_basis_admission
+    )
     entitlements = catalog.entitlements(include_unbound=True).with_grants(
         reference_runtime.entitlement_grants()
     )

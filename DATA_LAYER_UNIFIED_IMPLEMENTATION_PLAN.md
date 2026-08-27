@@ -18751,6 +18751,33 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
   certificate and the declared no-order handoff. Any external provider
   rate-limit/deadline failure remains a real fail-closed stop, not a reason to
   widen scope or fabricate evidence.
+- **Certificate binding completion (2026-08-27):** the authentic C3.6
+  verifier now has an explicit `--require-rust-admission` mode. It accepts
+  only the sealed `http://rust_core:8300` endpoint and existing internal
+  secret; an absent, weak or non-private binding fails before provider work.
+  Its five isolated native-basis singleton requests are the only reference
+  work permitted to await a typed Rust `Retry-After`, and only while a fixed
+  certificate deadline preserves a final request window. This is neither a
+  hot retry nor a certificate restart; all other typed provider faults remain
+  terminal. The report records whether Rust admission was actually used and
+  aggregate defer count/wait time without recording bodies. The shared Phase
+  11.3 service factory merely accepts the same optional `ProviderAdmissionRuntime`;
+  its existing callers retain the original no-binding behavior.
+- **Additional tests/build evidence (2026-08-27):** Docker-isolated Python
+  `unittest tests.test_phasec36_real_provider_certification
+  tests.test_phase113_provider_admission tests.test_phasec36_admission_binding
+  tests.test_phase104_reference_batch tests.test_phaseb_stable_edge` passed
+  `82/82`, with one named optional Redis integration skip. It covers sealed
+  binding rejection, one deferred native request followed by exactly one
+  retry, deadline failure with no extra provider call, existing reference
+  contract behavior and stable-runtime isolation. The immutable Rust image
+  built from `8e6ade8` is
+  `qdl-v2-rust:2.0.0-c36-c2-8e6ade8`
+  (`sha256:c8f3c55342f127ed498e4bcde8204bace2e2a8cb35d9e84a80ea5d6d97ac4d16`);
+  the corresponding first Python image is
+  `qdl-v2-python:2.0.0-c36-c2-8e6ade8`
+  (`sha256:57abf8a5be7d2797a889e3409713058ce6badf56330b8798b1eb1003c6b2165f`).
+  They are build/provenance evidence only; no C2 runtime role was recreated.
 
 ### 22.11 Phase 11 Completion Decision
 

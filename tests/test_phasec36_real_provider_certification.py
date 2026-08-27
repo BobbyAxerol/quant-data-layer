@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import os
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from qdl.demand.liquid_crypto import LiquidCryptoFeaturePolicy, select_liquid_crypto_feature_set
 from qdl.domain.decimal import CanonicalDecimal
@@ -14,8 +17,10 @@ from scripts.phasec36_real_provider_certification import (
     _chunks,
     _is_truthful_partial_history,
     _l2_admission_document,
+    _reference_batch_until_terminal,
     _reference_certification_batches,
     _reference_work,
+    _runtime_native_basis_admission,
     _selected_provider_rows,
     _select_universe_records,
 )
@@ -218,6 +223,101 @@ class PhaseC36CertificationTests(unittest.TestCase):
                 venue="BINANCE",
                 market="USDM",
             )
+
+    def test_explicit_runtime_certificate_requires_only_private_sealed_binding(self):
+        with patch.dict(os.environ, {
+            "QDL_STABLE_PROVIDER_ADMISSION_URL": "http://rust_core:8300",
+            "QDL_STABLE_INTERNAL_INGEST_SECRET": "s" * 32,
+        }, clear=False):
+            admission = _runtime_native_basis_admission(required=True)
+        self.assertIsNotNone(admission)
+        assert admission is not None
+        asyncio.run(admission.aclose())
+        with patch.dict(os.environ, {
+            "QDL_STABLE_PROVIDER_ADMISSION_URL": "http://provider.example:8300",
+            "QDL_STABLE_INTERNAL_INGEST_SECRET": "s" * 32,
+        }, clear=False):
+            with self.assertRaises(CertificationError):
+                _runtime_native_basis_admission(required=True)
+
+    def test_native_basis_deferral_waits_once_then_retries_without_hot_loop(self):
+        native_chunk = _reference_certification_batches(_reference_work(
+            self.feature_set,
+            policy=self.policy,
+            now_ms=1_800_000_000_000,
+            deadline_ms=60_000,
+        ))[0]
+
+        class Service:
+            def __init__(self):
+                self.calls = 0
+
+            async def reference_data_batch_async(self, _batch, *, purpose):
+                del purpose
+                self.calls += 1
+                if self.calls == 1:
+                    return SimpleNamespace(results=(SimpleNamespace(
+                        result=None,
+                        problem=SimpleNamespace(
+                            code=SimpleNamespace(value="PROVIDER_RETRY_EXHAUSTED"),
+                            retry_after_ms=500,
+                        ),
+                    ),))
+                return SimpleNamespace(results=(SimpleNamespace(result=object(), problem=None),))
+
+        service = Service()
+        sleeps = []
+
+        async def sleep(seconds):
+            sleeps.append(seconds)
+
+        _result, attempts, deferred_ms = asyncio.run(_reference_batch_until_terminal(
+            service,
+            native_chunk,
+            batch_index=1,
+            deadline_monotonic=5.0,
+            clock=lambda: 0.0,
+            sleep=sleep,
+        ))
+        self.assertEqual(service.calls, 2)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(deferred_ms, 500)
+        self.assertEqual(sleeps, [0.5])
+
+    def test_native_basis_deferral_fails_before_deadline_without_extra_provider_call(self):
+        native_chunk = _reference_certification_batches(_reference_work(
+            self.feature_set,
+            policy=self.policy,
+            now_ms=1_800_000_000_000,
+            deadline_ms=60_000,
+        ))[0]
+
+        class Service:
+            def __init__(self):
+                self.calls = 0
+
+            async def reference_data_batch_async(self, _batch, *, purpose):
+                del purpose
+                self.calls += 1
+                return SimpleNamespace(results=(SimpleNamespace(
+                    result=None,
+                    problem=SimpleNamespace(
+                        code=SimpleNamespace(value="PROVIDER_RETRY_EXHAUSTED"),
+                        retry_after_ms=500,
+                    ),
+                ),))
+
+        service = Service()
+        with self.assertRaisesRegex(CertificationError, "cooldown exceeds"):
+            asyncio.run(_reference_batch_until_terminal(
+                service,
+                native_chunk,
+                batch_index=1,
+                deadline_monotonic=0.6,
+                clock=lambda: 0.0,
+                sleep=lambda _seconds: self.fail("deadline rejection must not sleep"),
+            ))
+        self.assertEqual(service.calls, 1)
 
     def test_selected_provider_rows_skip_irrelevant_catalog_rows_but_not_selected_ones(self):
         rows = _selected_provider_rows(

@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import resource
 import tempfile
@@ -41,6 +42,7 @@ from qdl.query import (
 )
 from qdl.query.reference import ReferenceBatchRequirement, ReferenceDataRequirement
 from qdl.reference import BasisSeries, LongShortKind, ReferenceProduct, ReferenceStatus
+from qdl.admission import ProviderAdmissionRuntime, RustHttpProviderAdmission
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.universe import (
     TopVolumeUniverse,
@@ -109,6 +111,26 @@ class CertificationInput:
 class _ReferenceWork:
     requirement: ReferenceDataRequirement
     expected: str
+
+
+def _runtime_native_basis_admission(
+    *,
+    required: bool,
+) -> ProviderAdmissionRuntime | None:
+    """Create the private Rust relay only for an explicit runtime certificate."""
+
+    if not required:
+        return None
+    base_url = os.getenv("QDL_STABLE_PROVIDER_ADMISSION_URL")
+    secret = os.getenv("QDL_STABLE_INTERNAL_INGEST_SECRET", "").encode("utf-8")
+    if base_url != "http://rust_core:8300" or len(secret) < 32:
+        raise CertificationError(
+            "Rust provider admission certificate requires the sealed private query binding"
+        )
+    try:
+        return RustHttpProviderAdmission(base_url=base_url, secret=secret)
+    except ValueError as error:
+        raise CertificationError("Rust provider admission binding is invalid") from error
 
 
 def _canonical(value: object) -> bytes:
@@ -688,23 +710,33 @@ def _is_truthful_partial_history(data: Any) -> bool:
 async def _admit_references(
     service,
     works: Sequence[_ReferenceWork],
+    *,
+    deadline_monotonic: float,
+    clock=time.monotonic,
+    sleep=asyncio.sleep,
 ) -> dict[str, object]:
     available = []
     partial = []
     unavailable = []
     scheduler = []
+    deferred_count = 0
+    deferred_wait_ms = 0
     for batch_index, chunk in enumerate(_reference_certification_batches(works), start=1):
-        result = await service.reference_data_batch_async(
-            ReferenceBatchRequirement(
-                consumer_id=f"qdl.c36.liquid-reference.{batch_index}",
-                requirements=tuple(item.requirement for item in chunk),
-                require_all=False,
-            ),
-            purpose=AccessPurpose.INTERNAL_ALPHA,
+        result, attempts, deferred_ms = await _reference_batch_until_terminal(
+            service,
+            chunk,
+            batch_index=batch_index,
+            deadline_monotonic=deadline_monotonic,
+            clock=clock,
+            sleep=sleep,
         )
+        deferred_count += attempts - 1
+        deferred_wait_ms += deferred_ms
         scheduler.append({
             "batch": batch_index,
             "item_count": len(chunk),
+            "attempts": attempts,
+            "deferred_wait_ms": deferred_ms,
             "evidence": dict(service.last_reference_batch_evidence),
         })
         for work, item in zip(chunk, result.results, strict=True):
@@ -778,12 +810,72 @@ async def _admit_references(
         "available_count": len(available),
         "partial_count": len(partial),
         "unavailable_count": len(unavailable),
+        "deferred_count": deferred_count,
+        "deferred_wait_ms": deferred_wait_ms,
         "available_sha256": _digest(available),
         "partial_sha256": _digest(partial),
         "unavailable_sha256": _digest(unavailable),
         "batch_count": len(scheduler),
         "scheduler_sha256": _digest(scheduler),
     }
+
+
+def _is_native_basis_singleton(chunk: Sequence[_ReferenceWork]) -> bool:
+    if len(chunk) != 1:
+        return False
+    request = chunk[0].requirement
+    return (
+        request.product is ReferenceProduct.BASIS
+        and request.basis_series is BasisSeries.NATIVE
+        and request.basis_contract_type == "PERPETUAL"
+    )
+
+
+async def _reference_batch_until_terminal(
+    service,
+    chunk: Sequence[_ReferenceWork],
+    *,
+    batch_index: int,
+    deadline_monotonic: float,
+    clock=time.monotonic,
+    sleep=asyncio.sleep,
+):
+    """Run one batch, honoring only Rust's bounded native-basis deferral."""
+
+    attempts = 0
+    deferred_ms = 0
+    while True:
+        attempts += 1
+        result = await service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                consumer_id=f"qdl.c36.liquid-reference.{batch_index}",
+                requirements=tuple(item.requirement for item in chunk),
+                require_all=False,
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        if not _is_native_basis_singleton(chunk):
+            return result, attempts, deferred_ms
+        item = result.results[0]
+        problem = item.problem
+        retry_after_ms = getattr(problem, "retry_after_ms", None)
+        if (
+            item.result is not None
+            or problem is None
+            or problem.code.value != "PROVIDER_RETRY_EXHAUSTED"
+            or not isinstance(retry_after_ms, int)
+            or retry_after_ms <= 0
+        ):
+            return result, attempts, deferred_ms
+        remaining_ms = int((deadline_monotonic - clock()) * 1_000)
+        # Preserve a final request window. Sleeping until the deadline would
+        # turn a known provider cooldown into an ambiguous timeout.
+        if retry_after_ms + 250 >= remaining_ms:
+            raise CertificationError(
+                "Rust native-basis admission cooldown exceeds the bounded certificate deadline"
+            )
+        await sleep(retry_after_ms / 1_000)
+        deferred_ms += retry_after_ms
 
 
 def _l2_admission_document(
@@ -850,6 +942,7 @@ async def _run_async(
     deadline_ms: int,
     l2_timeout_seconds: float,
     l2_max_frames: int,
+    native_basis_admission: ProviderAdmissionRuntime | None = None,
 ) -> dict[str, object]:
     all_records = _deduplicate((
         *certification.warmup_records,
@@ -857,7 +950,11 @@ async def _run_async(
         *certification.feature_set.l2_books,
     ))
     catalog = _catalog(all_records, policy)
-    service, source = _service(catalog, timeout_seconds=provider_timeout_seconds)
+    service, source = _service(
+        catalog,
+        timeout_seconds=provider_timeout_seconds,
+        native_basis_admission=native_basis_admission,
+    )
     started = time.monotonic()
     cpu_before = time.process_time()
     references = await _admit_references(
@@ -868,6 +965,7 @@ async def _run_async(
             now_ms=time.time_ns() // 1_000_000,
             deadline_ms=deadline_ms,
         ),
+        deadline_monotonic=started + deadline_ms / 1_000,
     )
     document = _l2_admission_document(
         certification.feature_set,
@@ -908,6 +1006,7 @@ async def _run_async(
         "runtime_mutations": 0,
         "production_writes": 0,
         "raw_provider_bytes_persisted": 0,
+        "rust_provider_admission": native_basis_admission is not None,
         "top_volume": {
             "binance_usdm": {
                 "member_count": len(certification.binance_universe.members),
@@ -960,6 +1059,7 @@ def run(
     deadline_ms: int = 60_000,
     l2_timeout_seconds: float = 60.0,
     l2_max_frames: int = 64,
+    require_rust_admission: bool = False,
 ) -> dict[str, object]:
     if not 5.0 <= metadata_timeout_seconds <= 30.0:
         raise ValueError("metadata timeout must be within [5, 30]")
@@ -984,14 +1084,22 @@ def run(
         now_ns=now_ns,
         top_n=top_n,
     )
-    return asyncio.run(_run_async(
-        certification,
-        policy=policy,
-        provider_timeout_seconds=provider_timeout_seconds,
-        deadline_ms=deadline_ms,
-        l2_timeout_seconds=l2_timeout_seconds,
-        l2_max_frames=l2_max_frames,
-    ))
+    native_basis_admission = _runtime_native_basis_admission(
+        required=require_rust_admission
+    )
+    try:
+        return asyncio.run(_run_async(
+            certification,
+            policy=policy,
+            provider_timeout_seconds=provider_timeout_seconds,
+            deadline_ms=deadline_ms,
+            l2_timeout_seconds=l2_timeout_seconds,
+            l2_max_frames=l2_max_frames,
+            native_basis_admission=native_basis_admission,
+        ))
+    finally:
+        if isinstance(native_basis_admission, RustHttpProviderAdmission):
+            asyncio.run(native_basis_admission.aclose())
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1004,6 +1112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--deadline-ms", type=int, default=60_000)
     parser.add_argument("--l2-timeout-seconds", type=float, default=60.0)
     parser.add_argument("--l2-max-frames", type=int, default=64)
+    parser.add_argument("--require-rust-admission", action="store_true")
     args = parser.parse_args(argv)
     try:
         report = run(
@@ -1015,6 +1124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             deadline_ms=args.deadline_ms,
             l2_timeout_seconds=args.l2_timeout_seconds,
             l2_max_frames=args.l2_max_frames,
+            require_rust_admission=args.require_rust_admission,
         )
     except (CertificationError, OSError, RuntimeError, ValueError) as error:
         print(json.dumps({"status": "FAIL", "error": str(error)}, sort_keys=True))
