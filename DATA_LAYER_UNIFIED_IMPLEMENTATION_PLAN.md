@@ -18270,6 +18270,76 @@ UNCHANGED`, 2026-08-27):**
   on-demand eligibility inventory until a later active-consumer demand declares
   its exact feeds and TTL.
 
+**C3.6-B liquid-feature source contract (`IMPLEMENTED / TESTED / SOURCE-ONLY /
+RUNTIME UNCHANGED`, 2026-08-27):**
+
+- **Approved scope:** add one provider-neutral liquid-crypto feature policy
+  for the five Binance USD-M/OKX Swap perpetuals (`BTC`, `ETH`, `SOL`, `DOGE`,
+  `BNB`), extend reference-data admission to exact OKX Futures identities, and
+  extend the shared Rust-L2 demand/capture compiler to the same public OKX V5
+  book protocol for discovered dated legs. The reference plane is catalog and
+  demand bound; it is not a claim that a consumer route or runtime feature flag
+  is already active.
+- **Invariants:** Binance and OKX instruments remain separate canonical
+  records; quarterly identities come only from provider metadata (`contractType`
+  or `alias`), never a constructed date. Missing provider-equivalent metrics
+  remain typed `UNAVAILABLE`, especially OKX long/short and taker flow. One
+  L2 binding is compiled per physical instrument/feed pair; no container,
+  process, worker or permanent socket is created per alpha or universe member.
+- **Test/exit:** deterministic tests must prove five-asset coverage, market
+  capability resolution, typed missing semantics, exact dated discovery and
+  shared L2 topology for `OKX/FUTURES`. The next C3.6-C source gate will run
+  bounded real-provider metadata/reference/L2 probes and broad final-BAR
+  warmup. No Docker, Kafka, Redis, SQLite, V1/V2 route, authority or consumer
+  deployment is allowed in C3.6-B; reverting its additive commit is rollback.
+- **Test-gate correction before implementation:** C3.5 intentionally expanded
+  `stable-crypto-demand.yaml` from 18 to 70 declared requirements by adding
+  native final-BAR intervals, but an older Phase 10 provider-admission test
+  still hard-coded `18`. C3.6-B corrects that test to prove the admission
+  report covers `len(slices)` from the current versioned manifest; it retains
+  the exact six venue/native-symbol identity assertion and does not alter
+  demand, admission, routing or runtime behavior.
+- **Cross-language parity correction before implementation:** review found
+  Rust demand validation accepted intervals only for `BAR`, while the canonical
+  Python demand contract already permits bounded historical intervals for
+  `OPEN_INTEREST`, `LONG_SHORT_RATIO`, `TAKER_FLOW` and `BASIS`. C3.6-B makes
+  Rust accept precisely that same set and rejects reference feeds from the
+  Rust realtime subscription planner. This preserves the intended split:
+  reference data is scheduled by the bounded reference-batch plane, never
+  mistaken for a websocket subscription. Rust tests must prove both sides;
+  this is source-only and has no runtime effect.
+- **Implemented contract/policy:** added the versioned
+  `c36-liquid-crypto-feature-policy.yaml` and a provider-neutral compiler for
+  the exact Binance USD-M and OKX Swap `BTC/ETH/SOL/DOGE/BNB` perpetuals.
+  Reference declarations cover funding, OI, long/short, taker flow, mark/index,
+  contract metadata and native/continuous basis without converting an
+  unavailable venue product to numeric zero. `CONTRACT_METADATA=13` is an
+  additive protobuf enum with regenerated Python/Rust bindings.
+- **Discovered dated legs and shared L2:** provider metadata retains OKX
+  `alias`; the compiler selects Binance `CURRENT_QUARTER`/`NEXT_QUARTER` and
+  each complete discovered OKX Futures `quarter`/`next_quarter` family for
+  BTC/ETH, rather than constructing dates or assuming USDT settlement. The
+  existing Rust L2 binding/capture contract now admits `OKX/FUTURES` through
+  the same V5 public `books` protocol, still one shared role/binding per
+  physical feed rather than a worker/container per symbol.
+- **Exact tests passed:**
+  - isolated, network-disabled V2 Python container: `48/48` across C3.6
+    policy, L2 capture/topology, reference-batch and universal-demand tests;
+  - isolated Rust contract/domain test: `40/40` (`qdl-contracts` `3/3`,
+    `qdl-venue-core` `37/37`), including interval parity and reference-vs-stream
+    rejection;
+  - Buf `format --diff --exit-code`, `lint`, and both Phase 1/Phase 7 breaking
+    checks: passed; regenerated Python/Rust bindings are deterministic.
+  The host Python interpreter lacks protobuf, so the repository's V2 test
+  image was used; this is a harness dependency fact, not a product failure.
+- **Runtime/cleanup evidence:** all test containers used `--rm`; no image was
+  built, no provider was called in this slice, and no Kafka, Redis, SQLite,
+  V1/V2 route, authority, service, consumer or durable state changed. Rollback
+  is revert of this one additive source commit. **Next permitted scope:**
+  C3.6-C bounded, read-only real-provider validation for top-350 warmup,
+  liquid reference requests and BTC/ETH perp/dated L2 capture; it still does
+  not authorize a rolling handoff.
+
 ### 22.11 Phase 11 Completion Decision
 
 Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the

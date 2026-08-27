@@ -34,6 +34,21 @@ class Phase114L2ProviderCaptureTests(unittest.TestCase):
             [("BINANCE", "USDM", "BTCUSDT"), ("BINANCE", "USDM", "BTCUSDT_260925"), ("OKX", "SWAP", "BTC-USDT-SWAP")],
         )
 
+    def test_okx_futures_binding_is_admitted_by_the_same_public_books_protocol(self):
+        document = {
+            "rows": [{
+                "state": "ADMITTED", "venue": "OKX", "market": "FUTURES",
+                "product_type": "FUTURE", "feed": "BOOK_DELTA",
+                "native_symbol": "BTC-USD-260925", "instrument_uid": "future-uid",
+                "instrument_id": "OKX.FUTURES.FUTURE.BTC-USD-260925",
+                "requirement_id": "future-rid",
+            }]
+        }
+        binding = active_book_bindings(document)[0]
+        self.assertEqual((binding.venue, binding.market, binding.native_symbol), (
+            "OKX", "FUTURES", "BTC-USD-260925"
+        ))
+
     def test_binance_snapshot_range_bridge_and_pu_chain_are_required(self):
         frames = [
             {"e": "depthUpdate", "s": "BTCUSDT", "U": 99, "u": 101, "pu": 98},

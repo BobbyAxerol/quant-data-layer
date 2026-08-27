@@ -5926,3 +5926,17 @@ issued only the four public discovery/ticker reads, persisted no provider
 payload and did not mutate any runtime state. Its next source slice must use
 these discovery rules rather than copying the legacy age-prioritized alpha
 symbol helper.
+
+**C3.6-B evidence (`IMPLEMENTED / TESTED / SOURCE-ONLY`, 2026-08-27):** the
+liquid five-perpetual policy is provider-neutral and keeps Binance USD-M and
+OKX Swap records separate. It adds additive demand `CONTRACT_METADATA`, exact
+OKX Futures reference capability, retained provider `alias` metadata and the
+shared V5 `books` capture edge for discovered BTC/ETH dated legs. No quarterly
+identifier is constructed. Rust now mirrors Python's interval-capable
+historical-reference validation and rejects reference feeds from realtime
+subscription planning. Network-disabled Python tests passed `48/48`, targeted
+Rust contract/domain tests passed `40/40`, and Buf format/lint/breaking gates
+passed against both baselines. No runtime route, service, durable store,
+provider request or container topology changed. C3.6-C alone may run bounded
+read-only provider evidence; it still cannot activate an endpoint, 700-symbol
+stream or consumer route.

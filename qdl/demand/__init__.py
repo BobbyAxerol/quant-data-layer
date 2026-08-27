@@ -56,6 +56,13 @@ from qdl.demand.inventory import (
     parse_provider_metadata,
     source_requirement_for_admission,
 )
+from qdl.demand.liquid_crypto import (
+    LiquidCryptoFeaturePolicy,
+    LiquidCryptoFeatureSet,
+    build_l2_feature_requirements,
+    reference_feeds_for,
+    select_liquid_crypto_feature_set,
+)
 
 __all__ = [
     "CapabilityAvailability",
@@ -95,4 +102,9 @@ __all__ = [
     "converge_active_demand",
     "parse_provider_metadata",
     "source_requirement_for_admission",
+    "LiquidCryptoFeaturePolicy",
+    "LiquidCryptoFeatureSet",
+    "build_l2_feature_requirements",
+    "reference_feeds_for",
+    "select_liquid_crypto_feature_set",
 ]

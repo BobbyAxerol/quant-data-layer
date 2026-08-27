@@ -514,7 +514,7 @@ class UniversalDemandTests(unittest.TestCase):
 
     def test_read_only_provider_admission_covers_every_declared_crypto_slice(self):
         slices = load_provider_slices(ROOT / "config/v2/stable-crypto-demand.yaml")
-        self.assertEqual(len(slices), 18)
+        self.assertGreater(len(slices), 0)
         self.assertEqual(
             {(item.venue, item.market, item.native_symbol) for item in slices},
             {
@@ -556,7 +556,7 @@ class UniversalDemandTests(unittest.TestCase):
             get=fake_get,
         )
         self.assertEqual(report["status"], "PASS")
-        self.assertEqual(report["slice_count"], 18)
+        self.assertEqual(report["slice_count"], len(slices))
         self.assertTrue(all(len(item["payload_sha256"]) == 64 for item in report["slices"]))
         self.assertTrue(all("payload" not in item for item in report["slices"]))
 

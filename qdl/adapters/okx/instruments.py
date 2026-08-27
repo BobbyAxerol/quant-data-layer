@@ -121,6 +121,7 @@ def parse_public_instrument(
                 "ctMult",
                 "ctValCcy",
                 "instIdCode",
+                "alias",
             }
             and value not in (None, "")
         },

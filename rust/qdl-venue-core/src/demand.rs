@@ -57,6 +57,11 @@ impl DemandSubscription {
         if self.feed == FeedType::Unspecified {
             return Err("demand subscription feed is unspecified".into());
         }
+        if !is_realtime_subscription_feed(self.feed) {
+            return Err(
+                "reference demand must not enter the realtime subscription planner".into(),
+            );
+        }
         if self.feed == FeedType::Bar && self.interval.is_none() {
             return Err("BAR demand subscription requires interval".into());
         }
@@ -144,11 +149,14 @@ pub fn validate_requirement(requirement: &DataRequirement) -> Result<(), String>
     if feed == FeedType::Unspecified {
         return Err("demand feed is unspecified".into());
     }
-    if feed == FeedType::Bar && requirement.interval.trim().is_empty() {
+    let has_interval = !requirement.interval.trim().is_empty();
+    if feed == FeedType::Bar && !has_interval {
         return Err("BAR demand requires interval".into());
     }
-    if feed != FeedType::Bar && !requirement.interval.trim().is_empty() {
-        return Err("interval is valid only for BAR demand".into());
+    if feed != FeedType::Bar && has_interval && !is_interval_capable_reference_feed(feed) {
+        return Err(
+            "interval is valid only for BAR and interval-capable reference demand".into(),
+        );
     }
     if (!universe.expected_universe_sha256.is_empty()
         && universe.expected_universe_sha256.len() != 32)
@@ -206,6 +214,27 @@ pub fn validate_requirement(requirement: &DataRequirement) -> Result<(), String>
         return Err("execution-grade is reserved for execution demand".into());
     }
     Ok(())
+}
+
+fn is_realtime_subscription_feed(feed: FeedType) -> bool {
+    matches!(
+        feed,
+        FeedType::Trade
+            | FeedType::Quote
+            | FeedType::Bar
+            | FeedType::BookSnapshot
+            | FeedType::BookDelta
+    )
+}
+
+fn is_interval_capable_reference_feed(feed: FeedType) -> bool {
+    matches!(
+        feed,
+        FeedType::OpenInterest
+            | FeedType::LongShortRatio
+            | FeedType::TakerFlow
+            | FeedType::Basis
+    )
 }
 
 pub fn plan_shards(
@@ -467,6 +496,30 @@ mod tests {
         value.warmup_limit = 0;
         value.warmup = Some(typed_warmup(0));
         assert!(validate_requirement(&value).is_err());
+    }
+
+    #[test]
+    fn interval_capable_reference_validation_matches_python_contract() {
+        let mut value = requirement();
+        value.feed = FeedType::OpenInterest as i32;
+        value.interval = "1h".into();
+        assert!(validate_requirement(&value).is_ok());
+
+        value.feed = FeedType::ContractMetadata as i32;
+        assert!(validate_requirement(&value).is_err());
+    }
+
+    #[test]
+    fn reference_feed_cannot_be_planned_as_a_realtime_subscription() {
+        let result = DemandSubscription::new(
+            "BINANCE",
+            "USDM",
+            FeedType::FundingRate,
+            "BTCUSDT",
+            None,
+            100,
+        );
+        assert!(result.is_err());
     }
 
     #[test]

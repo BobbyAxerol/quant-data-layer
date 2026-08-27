@@ -34,7 +34,7 @@ def _fields(*items):
 
 
 class OkxSwapReferenceAdapter:
-    """OKX V5 reference adapter that preserves endpoint-specific semantics."""
+    """OKX V5 swap/futures reference adapter; class name stays API-compatible."""
 
     def __init__(
         self,
@@ -52,8 +52,8 @@ class OkxSwapReferenceAdapter:
         capability: FeedCapability,
         received_at_ns: int,
     ) -> ReferenceFetch:
-        if request.provider_key != ("OKX", "SWAP"):
-            raise ReferenceUnavailable("OKX Swap adapter received a different venue/market")
+        if request.provider_key not in {("OKX", "SWAP"), ("OKX", "FUTURES")}:
+            raise ReferenceUnavailable("OKX reference adapter received a different venue/market")
         product = request.product
         if product is ReferenceProduct.FUNDING_RATE:
             require_product(request.instrument, ProductType.PERPETUAL)

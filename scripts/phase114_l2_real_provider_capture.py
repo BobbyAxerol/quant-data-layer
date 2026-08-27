@@ -133,6 +133,7 @@ def active_book_bindings(document: Mapping[str, Any]) -> tuple[BookDemandBinding
         if (fields["venue"], fields["market"]) not in {
             ("BINANCE", "USDM"),
             ("OKX", "SWAP"),
+            ("OKX", "FUTURES"),
         }:
             raise ProviderCaptureError(
                 "active L2 admission has no certified capture protocol for "
@@ -491,9 +492,13 @@ async def run(
         item.native_symbol for item in bindings
         if (item.venue, item.market) == ("BINANCE", "USDM")
     )
-    okx_symbols = tuple(
+    okx_swap_symbols = tuple(
         item.native_symbol for item in bindings
         if (item.venue, item.market) == ("OKX", "SWAP")
+    )
+    okx_futures_symbols = tuple(
+        item.native_symbol for item in bindings
+        if (item.venue, item.market) == ("OKX", "FUTURES")
     )
     started_ns = time.time_ns()
     deadline = time.monotonic() + timeout_seconds
@@ -501,16 +506,22 @@ async def run(
         capture_binance(binance_symbols, deadline, max_frames)
         if binance_symbols else _empty_capture()
     )
-    okx_task = (
-        _capture_okx_symbols(okx_symbols, deadline, max_frames)
-        if okx_symbols else _empty_capture()
+    okx_swap_task = (
+        _capture_okx_symbols(okx_swap_symbols, deadline, max_frames)
+        if okx_swap_symbols else _empty_capture()
     )
-    binance, okx = await asyncio.gather(binance_task, okx_task)
+    okx_futures_task = (
+        _capture_okx_symbols(okx_futures_symbols, deadline, max_frames)
+        if okx_futures_symbols else _empty_capture()
+    )
+    binance, okx_swap, okx_futures = await asyncio.gather(
+        binance_task, okx_swap_task, okx_futures_task
+    )
     elapsed_ms = (time.time_ns() - started_ns) // 1_000_000
     provenance = []
     if binance_symbols:
         provenance.append("REAL_BINANCE_USDM_PUBLIC_WS_REST")
-    if okx_symbols:
+    if okx_swap_symbols or okx_futures_symbols:
         provenance.append("REAL_OKX_V5_PUBLIC_WS")
     return {
         "schema": "qdl.phase114.l2-real-provider-capture.v1",
@@ -530,7 +541,8 @@ async def run(
         "resource": {"max_rss_kib": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)},
         "required_bindings": [item.canonical_mapping() for item in bindings],
         "binance_usdm": [asdict(item) for item in binance],
-        "okx_swap": [asdict(item) for item in okx],
+        "okx_swap": [asdict(item) for item in okx_swap],
+        "okx_futures": [asdict(item) for item in okx_futures],
     }
 
 
@@ -557,7 +569,7 @@ def main() -> None:
     print(json.dumps({
         "status": report["status"],
         "binance_symbols": len(report["binance_usdm"]),
-        "okx_symbols": len(report["okx_swap"]),
+        "okx_symbols": len(report["okx_swap"]) + len(report["okx_futures"]),
         "elapsed_ms": report["elapsed_ms"],
     }, sort_keys=True))
 

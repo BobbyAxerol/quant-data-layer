@@ -38,6 +38,7 @@ class DemandFeed(_StringEnum):
     BASIS = "BASIS"
     MARK_PRICE = "MARK_PRICE"
     INDEX_PRICE = "INDEX_PRICE"
+    CONTRACT_METADATA = "CONTRACT_METADATA"
 
 
 _SAMPLED_FRESHNESS_FEEDS = frozenset(

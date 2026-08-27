@@ -257,6 +257,7 @@ class CapabilityRegistry:
         DemandFeed.BASIS: "basis",
         DemandFeed.MARK_PRICE: "mark_index_price",
         DemandFeed.INDEX_PRICE: "mark_index_price",
+        DemandFeed.CONTRACT_METADATA: "contract_metadata",
     }
 
     def __init__(self, profiles: Mapping[tuple[str, str], VenueCapabilityProfile]) -> None:
@@ -271,6 +272,7 @@ class CapabilityRegistry:
             ("BINANCE", "USDM"): binance_usdm_capabilities(),
             ("BINANCE", "SPOT"): binance_spot_capabilities(),
             ("OKX", "SWAP"): okx_global_capabilities("SWAP"),
+            ("OKX", "FUTURES"): okx_global_capabilities("FUTURES"),
             ("OKX", "SPOT"): okx_global_capabilities("SPOT"),
         }
         vn = dnse_capabilities()

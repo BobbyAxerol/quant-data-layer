@@ -26,6 +26,7 @@ from qdl.reference.batch import ReferenceBatch
 _REFERENCE_SOURCES: dict[tuple[str, str], str] = {
     ("BINANCE", "USDM"): "qdl-reference-binance-usdm-v1",
     ("OKX", "SWAP"): "qdl-reference-okx-swap-v1",
+    ("OKX", "FUTURES"): "qdl-reference-okx-futures-v1",
 }
 _REFERENCE_LICENSE_REVISION = "qdl-reference-provider-v1"
 
@@ -75,9 +76,11 @@ def build_default_reference_runtime() -> ReferenceRuntime:
     never need a venue branch.
     """
 
+    okx = OkxSwapReferenceAdapter(OkxRestClient())
     return ReferenceRuntime(
         ReferenceBatch({
             ("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(),
-            ("OKX", "SWAP"): OkxSwapReferenceAdapter(OkxRestClient()),
+            ("OKX", "SWAP"): okx,
+            ("OKX", "FUTURES"): okx,
         })
     )

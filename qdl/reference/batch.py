@@ -107,6 +107,8 @@ def default_capability_resolver(record: InstrumentRecord) -> VenueCapabilityProf
         return binance_usdm_capabilities()
     if (identity.venue, identity.market) == ("OKX", "SWAP"):
         return okx_global_capabilities("SWAP")
+    if (identity.venue, identity.market) == ("OKX", "FUTURES"):
+        return okx_global_capabilities("FUTURES")
     raise ReferenceUnavailable(
         f"reference batch has no approved adapter for {identity.venue}/{identity.market}"
     )

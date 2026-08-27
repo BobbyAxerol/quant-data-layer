@@ -103,7 +103,7 @@ class L2ProviderBinding:
             if self.rest_snapshot_url != _BINANCE_REST_DEPTH[self.market]:
                 raise ValueError("Binance L2 binding must retain its REST snapshot anchor")
         elif self.provider_protocol == "OKX_PUBLIC_BOOKS":
-            if self.venue != "OKX" or self.market not in {"SWAP", "SPOT"}:
+            if self.venue != "OKX" or self.market not in {"SWAP", "FUTURES", "SPOT"}:
                 raise ValueError("OKX public books binding market is invalid")
             if self.native_channel != "books" or self.rest_snapshot_url is not None:
                 raise ValueError("OKX books must bootstrap only from its websocket snapshot")
@@ -334,6 +334,6 @@ def _provider_edge(
             _BINANCE_WS[market],
             _BINANCE_REST_DEPTH[market],
         )
-    if venue == "OKX" and market in {"SWAP", "SPOT"}:
+    if venue == "OKX" and market in {"SWAP", "FUTURES", "SPOT"}:
         return "OKX_PUBLIC_BOOKS", "books", _OKX_PUBLIC_WS, None
     raise InventoryError(f"L2 provider edge is not certified: {venue}/{market}")
