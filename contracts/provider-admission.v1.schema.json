@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bobbyaxerol.github.io/quant-data-layer/contracts/provider-admission.v1.schema.json",
+  "title": "QDL Rust Provider Admission V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "authority",
+    "lane",
+    "request_id",
+    "disposition",
+    "defer_reason",
+    "retry_after_ms",
+    "lease_expires_at_ns",
+    "coalesced"
+  ],
+  "properties": {
+    "schema": {"const": "qdl.provider_admission.v1"},
+    "authority": {"const": "RUST_QDL_CORE_V1"},
+    "lane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "market", "endpoint_family"],
+      "properties": {
+        "provider": {"type": "string", "pattern": "^[A-Z0-9_-]{1,64}$"},
+        "market": {"type": "string", "pattern": "^[A-Z0-9_-]{1,64}$"},
+        "endpoint_family": {"type": "string", "pattern": "^[A-Z0-9_-]{1,64}$"}
+      }
+    },
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+    "disposition": {"enum": ["GRANTED", "DEFERRED"]},
+    "defer_reason": {"enum": ["COOLDOWN", "TOKEN_BUDGET", "INFLIGHT_CAPACITY", null]},
+    "retry_after_ms": {"type": ["integer", "null"], "minimum": 1},
+    "lease_expires_at_ns": {"type": ["integer", "null"], "minimum": 1},
+    "coalesced": {"type": "boolean"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"disposition": {"const": "GRANTED"}}},
+      "then": {
+        "properties": {
+          "defer_reason": {"type": "null"},
+          "retry_after_ms": {"type": "null"},
+          "lease_expires_at_ns": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"disposition": {"const": "DEFERRED"}}},
+      "then": {
+        "properties": {
+          "defer_reason": {"enum": ["COOLDOWN", "TOKEN_BUDGET", "INFLIGHT_CAPACITY"]},
+          "retry_after_ms": {"type": "integer", "minimum": 1},
+          "lease_expires_at_ns": {"type": "null"},
+          "coalesced": {"const": false}
+        }
+      }
+    }
+  ]
+}

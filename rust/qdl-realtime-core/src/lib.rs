@@ -15,6 +15,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+pub mod provider_admission;
+
 const TRANSPORT_SEQUENCE_STRIDE: u64 = 1_000_000;
 
 #[derive(Clone, Debug, Deserialize)]

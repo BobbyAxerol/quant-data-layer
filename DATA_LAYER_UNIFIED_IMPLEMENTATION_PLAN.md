@@ -18528,8 +18528,8 @@ READ-ONLY / RUNTIME UNCHANGED`, 2026-08-27):**
   certificate. No additional provider burst was issued after that evidence;
   V2 remains non-primary and no runtime/durable state changed.
 
-**C3.6-C.1 shared provider-admission core (`PLANNED / SOURCE-FIRST / NO
-RUNTIME MUTATION UNTIL SEPARATE PACKET`, 2026-08-27):**
+**C3.6-C.1 shared provider-admission core (`IMPLEMENTED / TESTED /
+SOURCE-ONLY / RUNTIME UNCHANGED`, 2026-08-27):**
 
 - **Goal:** remove the remaining self-induced shared-egress failure mode before
   repeating the authentic certificate. The durable decision authority is a
@@ -18566,6 +18566,11 @@ RUNTIME MUTATION UNTIL SEPARATE PACKET`, 2026-08-27):**
   Redis namespaces, but may not write the live `stable_redis` keys, recreate a
   role, change a V1/V2 route, alter a consumer manifest or emit provider
   traffic. Runtime use of the adapter is reserved for C3.6-C.2's exact packet.
+- **Implementation start (2026-08-27):** approved source-only work begins from
+  the existing `qdl-core::rate_limit::TokenBucket`, `qdl-realtime-core` and
+  Python provider/query boundaries. The implementation must retain their
+  public V1/V2 contracts, add no runtime wiring, and keep every integration
+  test under an isolated Redis namespace or a deterministic in-memory store.
 - **Required tests:** Rust golden tests cover token refill, weighted lane
   priority, cooldown CAS, expiry and deterministic retry deadlines; contract
   tests prove Python cannot widen/rewrite a Rust decision; isolated Redis
@@ -18581,6 +18586,53 @@ RUNTIME MUTATION UNTIL SEPARATE PACKET`, 2026-08-27):**
   mutation. Rollback is a source revert and isolated namespace cleanup. This
   phase does not itself claim authentic-provider certification or V2-primary;
   only then is a compact C3.6-C.2 runtime packet eligible for approval.
+- **Implemented source boundary:** `qdl-core::provider_admission` is the only
+  policy/state-machine authority. It owns strict provider-neutral lane identity,
+  canonical policy SHA-256, token budget, bounded in-flight leases, reserved
+  realtime capacity, duplicate coalescing, `418`/`429`/`-1003` cooldown,
+  deterministic retry, expiry and bounded metrics. Its state clamps a backward
+  caller clock so a newly arriving worker cannot shorten an existing lease or
+  cooldown. The lane key is exactly `(provider, market, endpoint_family)` and
+  deliberately excludes alpha, container and symbol identifiers.
+- **Coordination and projection:** `qdl-realtime-core::provider_admission`
+  performs only `GET` plus exact-value Lua `EVAL` CAS of serialized Rust state
+  under one namespaced lane key. It has no provider payload/cache/policy branch.
+  The introduced synchronous Redis executor is an unconfigured source adapter,
+  not live wiring. `qdl.admission` is a strict Python transport projection: it
+  carries no bucket/cooldown/retry logic and rejects a malformed, widened,
+  cross-lane or non-Rust-authoritative decision before an adapter can act.
+  `contracts/provider-admission.v1.schema.json` records the exact wire shape,
+  including non-null/`null` rules for `GRANTED` versus `DEFERRED`.
+- **MSRV decision:** coordination uses the existing Rust Redis client pinned to
+  `redis = 0.25.4`; the lock resolves `url = 2.4.1` so the declared Rust 1.82
+  baseline does not transitively select an edition-2024 dependency. CI already
+  uses `--locked`; no compiler baseline or public contract was changed.
+- **Tests actually run:** Rust 1.82 `cargo test --locked -q -p qdl-core`
+  passed `37/37`; `cargo test --locked -q -p qdl-realtime-core --lib` passed
+  `20/20` with the one external-Redis test intentionally ignored in that
+  deterministic run; its isolated Redis execution then passed `1/1` using a
+  no-port, no-volume disposable container and removed its scoped key. Targeted
+  Clippy passed with only two explicit, pre-existing unrelated L2 allowances
+  (`l2_adapter::transition` argument count and `l2_book` type complexity);
+  changed files pass `rustfmt --check`. Full-workspace `cargo fmt --all --
+  --check` still reports only committed baseline drift in
+  `rust/qdl-venue-core/src/demand.rs`, which this scope deliberately leaves
+  untouched. Buf format/lint/two frozen-breaking gates passed `4/4`. Python
+  3.10 schema/projection tests passed `6/6`; the bounded V2
+  contract/reference/query/L2/admission suite passed `79/79` in a read-only,
+  network-disabled container. `git diff --check` passed at this journal point.
+- **Runtime/cleanup evidence:** no provider request, `stable_redis` key,
+  service, image route, consumer manifest, Kafka/SQLite/DB record or V1/V2
+  authority changed. The temporary Redis test container had no published port
+  or volume and is absent after the test; the two one-off `rust:1.82` and
+  `python:3.10-slim` test image tags were removed. The pre-existing ignored
+  worktree `target/` cache was not deleted. This is implementation/test
+  evidence, not an authentic-provider certificate or V2-primary promotion.
+- **Next permitted boundary:** only C3.6-C.2 may configure this coordinator.
+  Its packet must use one Redis `TIME`-derived coordinator clock (not a
+  process-local `Instant` epoch), a named state prefix/policy SHA and existing
+  roles. It remains separately approval-gated; source C1 neither schedules
+  provider work nor changes a route.
 
 **C3.6-C.2 governed authentic certification and V2-primary handoff (`PLANNED /
 REQUIRES C3.6-C.1 EXIT AND EXPLICIT RUNTIME APPROVAL`, 2026-08-27):**
@@ -18593,7 +18645,9 @@ REQUIRES C3.6-C.1 EXIT AND EXPLICIT RUNTIME APPROVAL`, 2026-08-27):**
   the immutable Rust/Python image digests, policy/catalog/manifest SHA,
   existing V2 query/core roles and identities, a dedicated C3.6 coordination
   prefix, fixed maximum concurrency/deadline, no-order consumer scope and the
-  exact prior V1 manifest revision. It reuses existing V2 roles and
+  exact prior V1 manifest revision. It must take the transition timestamp from
+  Redis `TIME` and retain C1's backward-clock clamp, never compare independent
+  process-local monotonic epochs. It reuses existing V2 roles and
   `stable_redis`; it creates no per-venue/symbol container and does not touch
   Kafka topology/offsets, SQLite, V1 processes, Trading System, alpha state or
   order paths. Rollback is one manifest revision to V1 plus deletion of only

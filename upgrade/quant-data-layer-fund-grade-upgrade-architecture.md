@@ -6007,6 +6007,26 @@ local `60s` defer hint. This is a typed scheduling signal, not a synthetic
 datum or alternate-provider fallback. It leaves all non-native reference
 products, BAR, L2 and other venues concurrent.
 
+**C3.6-C.1 shared-admission implementation (`IMPLEMENTED / TESTED /
+SOURCE-ONLY`, 2026-08-27):** the process-local native-basis serialization is
+now backed by a reusable provider-neutral Rust admission state machine rather
+than a Python-side throttle. `qdl-core` owns lane policy, policy digest, token
+budget, bounded lease/coalescing, realtime reservation, cooldown and retry
+decision; the lane is exactly `(provider, market, endpoint_family)`, so it
+never creates a symbol/alpha/container budget. `qdl-realtime-core` owns only
+the namespaced Redis `GET` + exact-state Lua CAS coordination. Python is a
+strict vendor/API projection that must relay the Rust decision verbatim or
+fail closed. State serializes no provider payload and clamps a backward caller
+clock, preventing one worker from shortening an extant cooldown or lease.
+
+The C3.6-C.2 runtime packet must obtain its shared transition time from Redis
+`TIME`, rather than comparing process-local `Instant` epochs. It must name the
+policy SHA, prefix, existing roles and rollback route. C3.6-C.1 itself creates
+no runtime key, provider request, service or route. Its deterministic Rust,
+Python and Buf gates, plus one no-port isolated Redis CAS test, are recorded in
+the main implementation plan; the authentic certificate remains separately
+fail-closed until C3.6-C.2 is explicitly approved and passes.
+
 The aggregate C3.6-C provider certificate is still fail-closed until one run
 passes its five-native-reference, complete reference, L2 and 700 final-BAR
 planes in one bounded read-only execution. Current real evidence proves the
