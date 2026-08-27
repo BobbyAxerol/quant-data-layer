@@ -5845,3 +5845,13 @@ Rollback is narrow: remove probes and recreate only `market_data_service` with
 the attested V1 image/configuration. It never resets Kafka offsets, Redis,
 SQLite, PostgreSQL, provider state or unrelated services. A failed gate ends
 this packet; it does not create another rollout stage.
+
+**Runtime decision record (2026-08-27):** a sealed consumer binding is not by
+itself a server source binding. The real C probe reached V2 with valid mTLS and
+JWT, read Binance `BAR 1m`, then correctly exposed that the unchanged V2 query
+catalog had no durable `BAR 15m` binding. The query returned HTTP 500 and the
+packet rolled only `market_data_service` back to V1. The failure is not
+eligible for a client-side fallback or parser workaround: a future separately
+approved catalog alignment must first prove every declared final-BAR route is
+materialized server-side. Until that happens, this handoff remains blocked and
+V1 remains active.

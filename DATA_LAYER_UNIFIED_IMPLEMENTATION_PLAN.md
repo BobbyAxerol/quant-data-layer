@@ -17770,7 +17770,7 @@ not infer global promotion from this source-only exit.
   is rejected before routing; this is source-only and does not alter any
   existing generated artifact.
 
-#### 11.5-C - Rolling Paper/No-Order Handoff (`APPROVED / IN PROGRESS`)
+#### 11.5-C - Rolling Paper/No-Order Handoff (`BLOCKED / ROLLBACK COMPLETE`)
 
 **Approved goal:** execute the final bounded, paper-only consumer handoff for
 Phase 11.5. It proves that the sealed V2 route serves one Trading System
@@ -17986,6 +17986,105 @@ create a new rollout phase.
   field. No query/server/Rust image, role, route, provider subscription or
   durable store was changed. Replacement consumer images are the only next
   source/runtime prerequisites for retrying this same packet.
+
+**C3.1 replacement-image provenance (`PASS / RUNTIME RETRY AUTHORIZED`):**
+
+- The first replacement Trading System build failed closed before any runtime
+  mutation because its `uv.lock` still pinned the superseded local SDK wheel.
+  `uv lock --upgrade-package qdl-sdk` changed only that wheel hash to the
+  sealed `5cdcb86aacb31520d4721b2507a23f020403852e2fabcb8f6ee96e32b6d6d27a`;
+  package name, version and dependency metadata are unchanged. The alpha
+  runtime had the same bounded lock provenance repair.
+- Replacement immutable images are
+  `tradingsystem-image:phase115c-79e3058@sha256:fca94dc0d7d0910cf4db416d4715433ad2464c7f18dc5048a841a19a5d64a479`
+  and
+  `execution-alpha-runtime:phase115c-b8a50fc@sha256:2103a801fae71c2ba562ab5d3ba4807031132ed1e44b03e4ceda6c6459b91ff0`.
+  They replace the failed candidates; they do not add a runtime topology.
+- Offline acceptance passed on the replacement artifacts: Trading System V2
+  parser/bridge/consumer/deployment/route modules **38/38** in a disposable
+  read-only container with test dependencies only in tmpfs; alpha no-order
+  probe **4/4** and alpha V2 runtime client **31/31**, both read-only and
+  network-disabled. The package-only pytest cache warnings are expected from
+  the read-only filesystem and do not indicate product failure.
+- The exact production compose render passed with the private mTLS/JWT and
+  binding paths, and still renders only `market_data_service` as mutable. It
+  mounts image code (no source bind), logs/state/symbol config, and the
+  read-only identity/JWT/binding paths. The current V1 service remains
+  `tradingsystem-image:v1.2.0-9081397@sha256:ab4e36aab9ef254b498edb75de25a3e4c19f50eb6eb23509c6483b0fed9b5a11`.
+- Immediate pre-roll no-order baseline is unchanged from C3: PostgreSQL
+  `orders=1179`, `fills=6094`, `positions_v2=21`,
+  `execution_sessions=65352`, `command_journal=430`,
+  `command_dispatch_outbox=430`, `execution_command_outbox=0` and
+  `copy_event_outbox=0`; Redis `order.inbound=0` and
+  `commands.execution.paper=0`. V1 currently logs its pre-existing
+  `market active scope refresh failed reason=DataLayerClientError`; C does
+  not waive it. The handoff must demonstrate clean V2 receipt or roll only
+  this service back immediately.
+
+**C3.2 first runtime stop and path correction (ROLLBACK PASS / RETRY IN SCOPE):**
+
+- The first replacement roll stopped before any V2 receipt or alpha probe:
+  market_data_service rejected its rotating JWT signer configuration and
+  crash-looped. The approved immediate rollback restored only the recorded V1
+  image; the complete PostgreSQL and Redis execution baseline remained exactly
+  unchanged and no probe container existed.
+- Read-only host inspection found the supplied JWT host coordinate was a
+  directory, created by Docker when the prior non-existent file coordinate was
+  bind-mounted. The sealed current key is instead the existing regular file in
+  the Trading System identity-rotation bundle. This is a packet host-path
+  correction only: source, image, Data Layer bundle, identity, JWT content,
+  Kafka, Redis, SQLite and database state are unchanged.
+- The same approved C packet may retry only after exact compose rendering
+  verifies the corrected read-only file coordinate. It still recreates only
+  market_data_service; a second identity/config failure stops and rolls back
+  without alpha probes or further repair in this scope.
+
+**C3.3 alpha probe packaging correction (NO-ORDER PRECHECK FAIL / RETRY IN SCOPE):**
+
+- The two disposable probes stopped before V2 I/O because the shared alpha
+  runtime deliberately imports the portable Alpha SDK from
+  /opt/trading_system_alpha_sdk, but that read-only dependency was omitted
+  from the packet mount list. No receipt, strategy, order, service or data
+  mutation resulted; market_data_service remained V2-primary and reported all
+  eight demanded slices ready.
+- The only correction is a read-only bind of the Alpha SDK directory from
+  sealed Trading System commit ef3564788f882c4a6f075592ca7d760c1eb65b0d
+  into that existing image path. It is not a new image, alpha deployment,
+  consumer, service, provider route or runtime topology. A no-network import
+  precheck must pass before the exact two 300-second probes restart.
+
+**C3.4 server-binding stop and exact rollback (2026-08-27, `BLOCKED / ROLLBACK
+COMPLETE`):**
+
+- The corrected non-root, mTLS/JWT-authenticated alpha preflight reached the
+  real V2 query plane. `BINANCE/USDM/BTCUSDT` final `BAR 1m` returned HTTP 200
+  JSON, but final `BAR 15m` returned HTTP 500 `text/plain`. The bounded query
+  log identifies the precise server-side cause: the unchanged stable catalog
+  lacks `(a953e16e-7138-5562-b5e8-c337a44d0b65, BAR, 15m)` and raises
+  `KeyError: requirement has no stable source binding`.
+- This is not a client JSON or credential issue. The alpha's sealed six-route
+  binding admits `15m`, while the existing query replica's source catalog does
+  not materialize it. A client binding can restrict access; it cannot create a
+  durable server source binding. The SDK's JSON decode exception is only the
+  visible consequence of that HTTP 500.
+- The required final-BAR invariant therefore failed before either exact
+  300-second probe could start. No strategy entrypoint, gateway, order
+  credential, alpha state, signal, sizing, broker, Kafka, Redis, SQLite or
+  query/stream role was changed. Disposable inspection containers used
+  `--rm`, a tmpfs state directory and no order-capable configuration.
+- Per the approved stop rule, only `market_data_service` was recreated back to
+  `tradingsystem-image:v1.2.0-9081397`
+  (`sha256:ab4e36aab9ef254b498edb75de25a3e4c19f50eb6eb23509c6483b0fed9b5a11`).
+  It is running with restart count zero. Post-rollback execution evidence is
+  exactly the C3.1 baseline: PostgreSQL `1179|6094|21|65352|430|430|0|0` for
+  orders, fills, positions, sessions, journal, dispatch outbox, execution
+  outbox and copy outbox; Redis `order.inbound=0` and
+  `commands.execution.paper=0`.
+- This packet is terminal and does not authorize a query catalog/bundle
+  mutation, V2 role recreate or another retry. The only honest next decision
+  is whether to approve a separately bounded server-catalog alignment that
+  materializes the already-sealed alpha `15m`/OKX `1h` routes; until then V1
+  remains the active Trading System route and 11.5-C is not accepted.
 
 ### 22.11 Phase 11 Completion Decision
 
