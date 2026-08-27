@@ -17619,6 +17619,42 @@ explicit handoff packet is approved and accepted.
   It may not be inferred from this evidence or executed without separate
   operator approval.
 
+**11.5-A.5 runtime-binding verification (`READ-ONLY FINDING / CUTOVER
+BLOCKED`):**
+
+- The Phase-11.5 manifest/policy is deliberately control-plane only: both its
+  source header and `scripts/phase115_prepare_universal_release.py` prohibit a
+  route mutation. The existing runtime file
+  `config/v2/stable-v2-release-routing.yaml` explicitly remains a static,
+  representative revision-`2` contract and says that it does not activate a
+  route. It does not reference the generated universal policy or manifest.
+- A targeted cross-repository configuration search found no deployed
+  `DATA_LAYER_CONSUMER_MODE`, `DATA_LAYER_V2_*`, `qdl-v2-query`,
+  `qdl-v2-stream`, or `V2_PRIMARY` setting in the currently checked Trading
+  System/Execution Alpha source/config trees. Existing reader roles can serve
+  V2, but they cannot infer a new 1,564-product consumer mapping from a
+  preflight JSON file. Recreating them now would therefore be a no-op for
+  universal consumer routing and would falsely look like a cutover.
+- **Required 11.5-B scope before any runtime packet:** materialize the sealed
+  universal manifest as a versioned, checksum-bound consumer-routing artifact;
+  add only the stable SDK/config adapter that resolves each declared consumer
+  requirement against it; reject absent/stale/cross-generation routes; and
+  test `V2_PRIMARY`, allowed V1 fallback-return and `BLOCKED` behavior using
+  no-order fixtures. The Trading System and representative alpha manifests
+  must then opt in by revision, rather than an environment-wide switch.
+- **Runtime gate after 11.5-B source exit:** a separate operator packet may
+  build one immutable image from the approved commit and recreate only the
+  named V2 query/stream readers plus explicitly opted-in paper consumers. It
+  must name every identity, port, consumer group, manifest revision, 300-second
+  no-order observation and exact V1 rollback revision. Kafka, Redis, SQLite,
+  Rust cores, ingestors, projectors, V1, order/broker paths, unrelated alpha
+  containers and DNSE/VN remain excluded unless separately approved.
+- **Status consequence:** Phase 11.5 is not closed and no universal V2
+  consumer cutover/release claim is valid yet. This is a real missing runtime
+  integration gate, not relabeled technical debt; the preflight remains
+  retained as the required source/provider evidence for the next bounded
+  slice.
+
 ### 22.11 Phase 11 Completion Decision
 
 Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the
