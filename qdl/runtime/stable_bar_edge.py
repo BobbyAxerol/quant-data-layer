@@ -634,12 +634,12 @@ class StableBinanceBarEdge:
             return
         failures = 0
         while not self._stopped.is_set():
-            now = self.clock()
-            ready_at = self._next_ready_at(now)
-            if not self._history_bootstrapped and now < ready_at:
-                self._stopped.wait(max(0.01, ready_at - now))
-                continue
             try:
+                # Bootstrap is a bounded latest-closed history read.  It must
+                # run immediately after process start; `_next_ready_at()` is
+                # deliberately a recurring-poll scheduler and moves a settled
+                # boundary to the next interval.  Using it here would defer an
+                # empty checkpoint forever at every boundary.
                 self.bootstrap_history()
                 if self._rest_fallback_active:
                     self.run_cycle()

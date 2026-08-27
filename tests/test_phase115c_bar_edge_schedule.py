@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock
 
 from qdl.adapters.intervals import canonical_interval_ms, latest_closed_boundary_ms
 from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
@@ -19,6 +20,41 @@ def _edge(*sources: SimpleNamespace) -> StableBinanceBarEdge:
 
 
 class Phase115CBarScheduleTests(unittest.TestCase):
+    def test_history_bootstrap_runs_before_recurring_scheduler_wait(self) -> None:
+        class StopAfterFirstWait:
+            def __init__(self) -> None:
+                self.waits: list[float] = []
+                self.stopped = False
+
+            def is_set(self) -> bool:
+                return self.stopped
+
+            def wait(self, seconds: float) -> bool:
+                self.waits.append(seconds)
+                self.stopped = True
+                return True
+
+        edge = object.__new__(StableBinanceBarEdge)
+        edge._history_bootstrap_active = True
+        edge._history_bootstrapped = False
+        edge._rest_fallback_active = False
+        edge._stopped = StopAfterFirstWait()
+        edge.clock = lambda: 1_785_600_120.0
+        edge._next_ready_at = Mock(return_value=1_785_600_180.0)
+
+        def bootstrap() -> int:
+            edge._history_bootstrapped = True
+            return 56
+
+        edge.bootstrap_history = Mock(side_effect=bootstrap)
+        edge.run_cycle = Mock()
+
+        edge.run_forever()
+
+        edge.bootstrap_history.assert_called_once_with()
+        edge.run_cycle.assert_not_called()
+        self.assertEqual(edge._stopped.waits, [60.0])
+
     def test_long_intervals_have_truthful_bounded_bootstrap_depth(self) -> None:
         edge = _edge()
         self.assertEqual(

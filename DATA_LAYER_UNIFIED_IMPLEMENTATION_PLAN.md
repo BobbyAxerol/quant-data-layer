@@ -18958,6 +18958,46 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
   activation remains intentionally outside this seven-role packet because
   Binance requires `ingestor_binance_usdm`, which is not an approved recreate
   target; no role is smuggled into this cutover.
+- **r11 exact-rollback packet prepared (2026-08-27, no runtime apply yet):**
+  `qdl.phase105c.final-bar-repair.v1` packet
+  `e9c3d2d39a2734850cd4fb44f376ca8ef076cf4dbafd2c78a0eb57d46b57ae54`
+  was rendered under the isolated C2 state namespace from source commit
+  `bcf8be4`. Its parser-validated rollback map SHA is
+  `2f5db4260ba1af59678cb0736c0fe4c96aeee133bfac0ff82bde119277813e0f`:
+  every one of the seven approved roles has its observed immutable image and
+  prior governed runtime directory; only `binance_bar_edge` has the observed
+  r10 checkpoint
+  `stable-crypto-bar-edge-r10-772919bf537869864ef3.json`. The new state path
+  is `.../final-bar-align-r11-exact-rollback-20260827T1810Z/runtime`; it has
+  exactly `56` Binance USD-M/OKX Swap final-BAR bindings and preserves
+  authority bytes SHA `1cd55d7...981fb1078`. Catalog inspection confirms the
+  legacy-looking `okx-swap-btcusdt-bar-1m` binding has canonical identity
+  `OKX.SWAP.PERPETUAL.BTC-USDT`, so it is not an unapproved instrument. This
+  preparation created only non-secret packet/runtime files; no container,
+  provider, Kafka, Redis, SQLite, V1, Trading System, alpha or order path has
+  changed.
+- **r11 runtime diagnosis and bounded source repair (`IN PROGRESS`,
+  2026-08-27):** the owner-approved rolling recreation of exactly the seven
+  named roles has now been applied with the sealed r11 runtime directory; V1,
+  Kafka topology/offsets, Redis, SQLite, Trading System, alpha and all order
+  paths remain outside the mutation set. The new bar-edge checkpoint correctly
+  records 56 Binance USD-M/OKX Swap bindings and a fresh connection generation,
+  but has zero acknowledged watermarks. Read-only process inspection proved it
+  is waiting in `threading.Event.wait()` with no provider/Kafka error. The
+  root cause is a scheduler bug: before history bootstrap, `run_forever()`
+  asks `_next_ready_at()` for the *next* close; at the settled boundary that
+  helper advances the candidate by one interval, so the initial bootstrap can
+  be deferred forever. The approved source repair is limited to bootstrapping
+  real latest-closed provider history immediately on process start, then using
+  `_next_ready_at()` only for recurring final-BAR polling. The added regression
+  proves there is no pre-bootstrap scheduler wait. In the current immutable
+  V2 Python image, the affected BAR bootstrap, final-BAR packet/handoff and
+  scheduling tests passed `38/38`, followed by the complete Phase 10.5
+  regression suite `48/48`, both with `--network none`. After the source
+  commit, the same seven-role packet may be rolled again using one immutable
+  Python image with the exact existing per-role rollback map. C2 remains
+  blocked until all 56 checkpoint watermarks are materialized and
+  gap/freshness evidence passes.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
