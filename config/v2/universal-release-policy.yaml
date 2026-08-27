@@ -30,6 +30,8 @@ consumer_classes:
     consumer_prefixes: [deep_momentum_, regressionportfolioA001_, rsiboundportfolioA001_]
   - class_id: SINGLE_SYMBOL_ALPHA
     consumer_prefixes:
+      - alpha.binance.paper.
+      - alpha.okx.paper.
       - adaptive_hma_cpp_
       - bb_salping_
       - combine_weight_sl_tp_

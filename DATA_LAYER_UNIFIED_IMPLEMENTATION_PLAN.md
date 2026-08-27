@@ -17770,14 +17770,100 @@ not infer global promotion from this source-only exit.
   is rejected before routing; this is source-only and does not alter any
   existing generated artifact.
 
-**11.5-C runtime handoff packet (`PENDING / REQUIRES SEPARATE APPROVAL`):**
-the next document must name the selected sealed binding SHA and universal
-manifest SHA, one Trading System paper consumer plus specifically selected
-Binance/OKX paper alpha consumer identities, immutable image digests, mounts,
-ports, consumer groups, source-policy/freshness bounds, 300-second no-order
-observation, V2->V1->V2 drill where the product permits it, terminal BLOCKED
-check, stop conditions and exact V1 rollback revision. It must not enable an
-alpha merely because its runtime can now parse a binding.
+#### 11.5-C - Rolling Paper/No-Order Handoff (`APPROVED / IN PROGRESS`)
+
+**Approved goal:** execute the final bounded, paper-only consumer handoff for
+Phase 11.5. It proves that the sealed V2 route serves one Trading System
+market-data reader and representative Binance/OKX alpha SDK readers for exactly
+300 seconds without any order, signal, sizing, risk, portfolio, broker or
+strategy action. This is not a new phase, a global route switch, or an alpha
+deployment.
+
+**Selected consumers and identities:**
+
+| Consumer | Workload identity | JWT key ID | Runtime form | Demand restriction |
+| --- | --- | --- | --- | --- |
+| `trading-system.paper.stable` | `spiffe://qdl/paper/trading-system-stable` | `stable-trading-system-rs256-v1` | rolling `market_data_service` | existing paper BTC/ETH Binance USD-M and OKX Swap demand only |
+| `alpha.binance.paper.stable` | `spiffe://qdl/paper/alpha-binance-stable` | `stable-alpha-binance-rs256-v1` | one disposable SDK probe | BTCUSDT/ETHUSDT `TRADE`, final `BAR 1m` and `15m` only |
+| `alpha.okx.paper.stable` | `spiffe://qdl/paper/alpha-okx-stable` | `stable-alpha-okx-rs256-v1` | one disposable SDK probe | BTC-USDT-SWAP/ETH-USDT-SWAP `TRADE`, final `BAR 1m` and `1h` only |
+
+The preflight first materializes those two existing paper-alpha identities in
+the universal demand input and classifies them as `SINGLE_SYMBOL_ALPHA`. This
+is a bounded control-plane correction, not a universe expansion: all twelve
+requested identities already exist in stable V2 manifests and duplicate
+approved BTC/ETH physical demand. The fresh universal artifact and its three
+bindings are generated only in private state. This journal records only their
+canonical SHA-256 values.
+
+**Topology and mutation boundary:**
+
+1. Keep `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+   `stream_v2_passive` unchanged on the existing attested image
+   `sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`.
+   No Data Layer role, Rust core, ingestor, Kafka topic/offset/group, Redis,
+   SQLite, V1 service or provider subscription is recreated or reset.
+2. Build exactly one immutable Trading System image from `7924a50` and one
+   alpha-runtime image from `8dce6bf`; record their inspected digests in the
+   private receipt. Do not create per-symbol/per-retry images or containers.
+3. Mount the exact Trading System binding only at
+   `/run/secrets/qdl-v2-binding/trading-system.paper.stable.json`; mount alpha
+   bindings only into `--rm` probes. Identity/trust/JWT paths are read-only and
+   no credential is printed, committed or copied into an environment capture.
+4. Rolling-recreate only `market_data_service`, using its existing scoped
+   cursor/group, internal V2 query `https://qdl-v2-query:8200` and streams
+   `qdl-v2-stream-a:8210,qdl-v2-stream-b:8210`. Alpha probe groups are
+   `phase115c-alpha-binance-no-order` and `phase115c-alpha-okx-no-order`.
+5. Observe exactly 300 seconds after all three consumers are V2-primary ready.
+   Record bounded identity/count/freshness/finality, cursor/reconnect/gap/lag,
+   CPU/RAM/disk and execution baseline/after counts only. Probes never start a
+   strategy entrypoint or mount gateway/order credentials.
+
+**Acceptance, stop and rollback:**
+
+- Bound data must preserve Decimal/timestamp/finality and pass warmup/batch,
+  signed-cursor replay/reconnect and stream checks. Cross-consumer, unbound or
+  stale routes fail before V1.
+- Only Binance USD-M `TRADE` performs `V2 -> V1 fallback -> V2` in a disposable
+  no-order client. Blocked Binance BAR and all selected OKX routes remain
+  terminal `BLOCKED` during forced V2 unavailability; DNSE/VN is excluded.
+- Baseline/after checks must prove unchanged orders, fills, positions,
+  execution sessions, command journal/outbox and execution streams. Any action
+  delta, consumer direct venue connection, identity/binding failure,
+  stale/non-final BAR, duplicate/gap breach, crash, unexpected fallback or
+  resource breach stops immediately.
+- On failure, remove probes and recreate only `market_data_service` with exact
+  V1 `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`
+  / rollback revision `v1.2.2-85c25df`. Do not restart V1 pre-emptively, reset
+  offsets, flush/delete durable state or alter any other service. Success keeps
+  one V1 rollback receipt and the private active binding.
+
+**Exit:** pass only when all three identities complete the exact 300-second
+no-order window and the fallback/block/return behavior matches the sealed
+policy. A failure returns only this Trading System reader to V1 and does not
+create a new rollout phase.
+
+**C0 control-plane input result (2026-08-27, `PASS / RUNTIME UNCHANGED`):**
+
+- Added the standalone `config/v2/phase115c-paper-consumer-demand.yaml` and
+  registered it with the active-demand compiler. It declares exactly 12
+  already-entitled paper routes: Binance USD-M BTC/ETH `TRADE`, final `BAR 1m`
+  and `15m`; OKX Swap BTC/ETH `TRADE`, final `BAR 1m` and `1h`. It does not
+  alter the frozen `stable-crypto-demand.yaml`, V1 route catalog, symbol
+  universe or runtime subscription topology.
+- The universal release policy now classifies only the two exact
+  `alpha.binance.paper.` / `alpha.okx.paper.` prefixes as
+  `SINGLE_SYMBOL_ALPHA`; `alpha.unknown.paper.stable` remains fail-closed.
+- In immutable `qdl-v2-python:2.0.0-747231f`
+  (`sha256:49f23850167269668b2c01c1f617fe1571a5bbda756a0a2d4ed7e685fe5cce2c`),
+  read-only/no-network `tests.test_phase115_universal_release` passed
+  **11/11**. A second read-only/no-network active-demand compile passed with
+  **95** total requirements: exactly **12** selected probe routes and **83**
+  pre-existing requirements; it performed zero provider/runtime writes.
+- Local host Python lacks the repository's `redis`/`protobuf` dependencies, so
+  its test/compile attempts failed before execution. The immutable-container
+  evidence above is authoritative. `git diff --check` passed. No provider,
+  image, process/container, route, credential, Kafka, Redis, SQLite,
+  PostgreSQL, Trading System, alpha, signal, order or broker state changed.
 
 ### 22.11 Phase 11 Completion Decision
 

@@ -203,6 +203,19 @@ def _manifest():
 
 
 class UniversalReleaseManifestTests(unittest.TestCase):
+    def test_stable_paper_alpha_identities_are_classified_without_broad_prefix(self):
+        policy = UniversalReleasePolicy.load(POLICY_PATH, manifest_root=ROOT)
+        self.assertEqual(
+            policy.classify("alpha.binance.paper.stable").value,
+            "SINGLE_SYMBOL_ALPHA",
+        )
+        self.assertEqual(
+            policy.classify("alpha.okx.paper.stable").value,
+            "SINGLE_SYMBOL_ALPHA",
+        )
+        with self.assertRaisesRegex(ValueError, "unclassified"):
+            policy.classify("alpha.unknown.paper.stable")
+
     def test_full_admitted_inventory_is_v2_primary_and_is_deterministic(self):
         manifest, inventory, admission, convergence, coverage, policy = _manifest()
         repeated = build_universal_release_manifest(

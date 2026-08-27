@@ -5808,3 +5808,31 @@ authority. The following runtime packet must name one sealed binding digest,
 paper-only consumers/identities, immutable image(s), ports and consumer groups,
 300-second no-order observation, stop criteria, and an exact V1 rollback
 revision.
+
+### J.9 Phase 11.5-C rolling paper/no-order handoff
+
+This packet is one consumer handoff, not a topology rewrite. Its identities are
+`trading-system.paper.stable`, `alpha.binance.paper.stable` and
+`alpha.okx.paper.stable`. Only `market_data_service` persists and rolls; the
+two alpha workloads are disposable SDK probes with no strategy entrypoint,
+gateway/order credential or execution capability. Each uses a distinct V2
+cursor/audit group and read-only mTLS/JWT/binding mount.
+
+Before a binding is mounted, generate one fresh universal artifact from
+declared demand and render exactly one canonical binding per consumer. The
+packet records artifact SHA, binding SHAs, image SHAs, endpoints, V1 rollback
+digest and execution-count baseline. It does not commit a binding or replace a
+universal artifact with a static BTC/ETH route file.
+
+The existing V2 query/stream replicas are the only data endpoints and are not
+recreated. After a bounded rolling recreate of `market_data_service`, observe
+300 seconds of admitted final BAR/trade, warmup/batch, signed cursor
+replay/reconnect, freshness/gap/lag and bounded resource metrics. Exercise
+V2-to-V1-to-V2 only for the compatible Binance USD-M trade route in a
+disposable client; blocked Binance BAR and selected OKX paths must block.
+DNSE is excluded.
+
+Rollback is narrow: remove probes and recreate only `market_data_service` with
+the attested V1 image/configuration. It never resets Kafka offsets, Redis,
+SQLite, PostgreSQL, provider state or unrelated services. A failed gate ends
+this packet; it does not create another rollout stage.
