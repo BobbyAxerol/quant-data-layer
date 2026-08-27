@@ -18177,6 +18177,99 @@ RUNTIME UNCHANGED`):**
   Python image and the generated bundle, followed by the previously-approved
   C no-order handoff. The current runtime remains the rollback coordinate.
 
+**C3.6 broad-universe, reference and L2 source expansion (`APPROVED /
+SOURCE-ONLY / RUNTIME UNCHANGED`):**
+
+- **Goal:** close the product gap before any V2-primary rolling handoff. V2
+  must expose the same provider-authentic building blocks needed by portfolio,
+  arbitrage, reactive-limit and conditional-order alpha families: broad
+  Binance USD-M and OKX Swap discovery/warmup, typed reference data, and a
+  reusable Rust L2 plane. This is an additive expansion of the canonical V2
+  contract, not a new topology, provider-specific fork, or execution feature.
+- **Declared crypto scope:** materialize the liquid perpetual family
+  `BTC`, `ETH`, `SOL`, `DOGE`, `BNB` independently on Binance USD-M and OKX
+  Swap for native final BAR, TRADE and BBO/QUOTE demand. Materialize L2 only
+  for `BTC`/`ETH` perpetuals plus provider-discovered current/next quarterly
+  contracts, with both snapshot and delta requirement rows. Funding, OI,
+  long/short, taker flow, mark/index, contract metadata and native/derived
+  basis are catalog-bound V2 reference products; an unavailable provider
+  product remains typed `UNAVAILABLE`, never zero or a substituted venue.
+- **Wide-universe rule:** introduce one provider-neutral top-volume resolver
+  with separate `BINANCE/USDM` and `OKX/SWAP` policies. Each resolves the top
+  350 live USDT-settled perpetual/swap instruments by the venue's documented
+  24-hour quote-volume field, writes an atomically replaced current manifest
+  plus bounded added/removed/retained audit record under an operator-supplied
+  host-visible state directory, and fails closed if a requested 350-member
+  universe cannot be proven. It does **not** turn 700 symbols into permanent
+  websocket subscriptions: membership authorizes bounded batch warmup/history;
+  live TRADE/BBO/BAR/L2 remains TTL-bound active demand compiled from actual
+  consumers. Delisted members are removed only by a newly signed/resolved
+  universe revision and are recorded in the audit.
+- **Provider-neutral invariants:** no native instrument ID is constructed from
+  a guessed date; Binance current/next quarterly and OKX Futures identities
+  are discovered from real exchange metadata. The common L2 compiler may use
+  Binance REST-snapshot plus diff-delta or OKX V5 `books` snapshot/update, but
+  exposes one canonical sequence/generation/resync contract. `OKX/FUTURES`
+  is admitted only after the same public `books` protocol is verified; no
+  provider field is silently cross-mixed between a perpetual and dated leg.
+- **Required source gates:** deterministic tests cover ranking/filter/tie,
+  atomic universe revision/audit, delist/add transition, separate venue
+  identities, exact five-asset catalog coverage, reference capability/missing
+  semantics, and L2 perpetual/dated topology without per-symbol workers.
+  Bounded authentic-provider tests must resolve 350 members per venue, verify
+  metadata/ticker eligibility for all 700, warm one final BAR in bounded
+  chunks, exercise reference products for the five liquid perpetuals, and
+  capture/replay live L2 for BTC/ETH perpetual plus each discovered quarterly
+  leg. Evidence records only counts, canonical identities, hashes, latency,
+  retry/rate-limit and resource summaries; raw provider payloads are never
+  committed or retained.
+- **Decision boundary / exclusions:** no V1 or V2 role recreate, authority
+  change, Kafka/Redis/SQLite write, runtime feature-flag change, alpha or
+  Trading System restart, direct venue connection from consumers, order,
+  signal or sizing action is authorized here. A later narrow rolling packet
+  must bind the generated catalog/universe SHA, exact query/stream/core roles,
+  reference gate, L2 demand scope, 300-second no-order observation and a V1
+  rollback revision. This source phase may not claim V2 primary until that
+  packet passes.
+- **Rollback / cleanup:** revert the additive source/config revision and
+  delete only isolated temporary provider-test directories. The current V1
+  route, V2 runtime roles, durable topics, Redis, SQLite and universe state
+  mounted by any existing runtime remain untouched.
+
+**C3.6-A top-volume universe resolver (`PASS / SOURCE-ONLY / RUNTIME
+UNCHANGED`, 2026-08-27):**
+
+- Added `qdl.universe` and the read-only/default
+  `scripts/refresh_top_volume_universes.py` control-plane command. It resolves
+  Binance USD-M and OKX Swap separately from four bounded public REST calls,
+  retries only transient failures, uses exact USDT perpetual/swap eligibility,
+  and ranks by native quote volume (`quoteVolume` for Binance; `volCcyQuote`,
+  then only a mathematically explicit `volCcy24h * last` fallback for OKX).
+  The legacy alpha helper's age-first ranking is intentionally not reused.
+- `--apply` is scoped solely to an operator-supplied state directory. It
+  atomically writes a current manifest plus bounded audit files, records
+  membership added/removed/retained, and distinguishes a still-eligible
+  rank-out from a no-longer-live/delisted removal. Dynamic universe state is
+  ignored by Git; no raw provider response is stored or committed.
+- Deterministic gate: `python3 -m unittest
+  tests.test_phasec36_top_volume_universe` passed **5/5** for filters,
+  deterministic ties, exact quote-notional fallback, insufficient-universe
+  fail-close, atomic state/digest and both removal classifications.
+  `python3 -m py_compile qdl/universe/__init__.py qdl/universe/top_volume.py
+  scripts/refresh_top_volume_universes.py` and `git diff --check` passed.
+- Authentic bounded gate: `python3 -B
+  scripts/refresh_top_volume_universes.py --state-dir
+  /tmp/qdl-c36-universe-readonly --top-n 350 --timeout-seconds 10
+  --max-attempts 3` ran as `DRY_RUN`: Binance resolved **350/524** eligible
+  USD-M perpetuals and OKX resolved **350/438** eligible USDT swaps. It did
+  not write the supplied directory, runtime state, Kafka, Redis, SQLite or
+  provider payload files.
+- **Next C3.6 slice:** materialize the five-liquid perpetual source records
+  and explicit reference/L2 admission declarations, including real
+  provider-discovered BTC/ETH dated contracts. The top-350 result remains an
+  on-demand eligibility inventory until a later active-consumer demand declares
+  its exact feeds and TTL.
+
 ### 22.11 Phase 11 Completion Decision
 
 Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the

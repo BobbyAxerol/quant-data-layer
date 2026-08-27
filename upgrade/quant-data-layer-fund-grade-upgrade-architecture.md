@@ -5879,3 +5879,50 @@ provider contract and canonical warmup only; it is not a runtime reload or
 consumer cutover. The concurrent DNSE V1 provider check was stale after a
 websocket pong timeout and direct-provider timeout, so DNSE remains excluded
 and fails closed pending a separate in-session V1 repair/certification.
+
+### J.10 C3.6 broad-universe, reference and L2 source expansion
+
+This source-only extension turns already-tested V2 primitives into an
+admitted product surface before a later rolling handoff. It deliberately
+separates three scales of demand:
+
+1. A live top-350 universe per `BINANCE/USDM` and `OKX/SWAP` is a versioned
+   eligibility and bounded-history/warmup inventory. It is resolved from real
+   venue metadata plus documented 24-hour quote volume, stored outside source
+   control in an atomically replaced manifest, and emits a bounded audit of
+   entrants and removals. It is not a 700-symbol websocket subscription.
+2. The five liquid perpetuals (`BTC`, `ETH`, `SOL`, `DOGE`, `BNB`) are a
+   compact standard realtime/finality/reference demand set on each venue.
+   They use the normal active-demand compiler, catalog and source-policy path;
+   a later consumer lease determines whether any particular feed remains live.
+3. BTC/ETH perpetual plus exchange-discovered current/next quarterly legs are
+   the initial L2 microstructure set. Each leg requests both book snapshot and
+   delta at one declared depth. The shared Rust L2 core creates one physical
+   subscription per venue/market/instrument, never a worker or container per
+   alpha, symbol or order.
+
+Reference products remain read-only alpha/research inputs. Binance USD-M
+supports its documented funding/OI/long-short/taker/mark-index/metadata/native
+or continuous basis semantics. OKX exposes only the products it can prove for
+the exact `SWAP` or `FUTURES` contract; long-short/taker remain explicit typed
+unavailable where the provider has no equivalent. A derived basis must name
+its perpetual and dated inputs and formula lineage. Reference products do not
+become order-price authority merely because their endpoint is enabled.
+
+The source gate must use live providers but persist no raw bytes. It proves all
+700 universe memberships, bounded batch history in chunks, five-asset
+reference results, and L2 snapshot/delta replay for every declared BTC/ETH
+perpetual/quarterly leg. A provider outage, under-sized universe, malformed
+contract identity, unavailable mandatory metric, continuity failure, 429/5xx
+budget breach, or cross-symbol/venue mix fails the candidate. No runtime
+service, credential, authority, durable store or consumer route changes during
+this section; promotion needs a separate signed rolling packet with a V1
+rollback coordinate.
+
+**C3.6-A evidence (2026-08-27):** the resolver's deterministic suite passed
+five cases and the bounded real-provider dry-run resolved Binance USD-M
+`350/524` and OKX Swap `350/438` live eligible USDT instruments. The run
+issued only the four public discovery/ticker reads, persisted no provider
+payload and did not mutate any runtime state. Its next source slice must use
+these discovery rules rather than copying the legacy age-prioritized alpha
+symbol helper.
