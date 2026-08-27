@@ -17328,6 +17328,297 @@ Preserve cursor/watermark/evidence for diagnosis. Do not delete durable data,
 reset offsets, flush Redis/SQLite, alter Trading System order state or restart
 unrelated consumers.
 
+#### 11.5-A - Universal Release Preflight And Scope Lock (`PASSED DARK`)
+
+**Approved scope:** implement and certify the source/configuration contract
+needed to materialize the complete approved Phase 11 Binance/OKX demand into
+one governed V2 release manifest. This starts with source-only and
+read-only-provider verification. It does **not** authorize a runtime cutover,
+service recreate, authority mutation, Kafka/Redis/SQLite mutation, Trading
+System change, alpha change, or order action; those remain a separate bounded
+packet after the exact affected identities and rollback revision are known.
+
+**Preflight finding:** the existing Phase 10.5 routing file is intentionally a
+small, representative release contract (revision `2`, static consumer
+manifests, 28 products). It cannot honestly certify the wider Phase 11
+inventory. The latest checked-in Phase 11 control-plane evidence instead has
+`1,633` declared requirements, `1,564` provider-admitted requirements and
+`69` explicitly missing/delisted requirements. Its converged physical demand
+is bounded to `658` selected slices across four venue/market roles. The
+missing/delisted set remains excluded, never fabricated or silently routed.
+
+**Implementation invariant:** derive the universal release artifact from the
+same checksum-bound `ActiveDemandInventory`, provider admission, convergence,
+universal realtime plan, universal warmup/reference admission, and L2 plan.
+Do not hand-maintain a BTC/ETH-only substitute. A release route is
+`V2_PRIMARY` only for an admitted Binance/OKX requirement; V1 is permitted
+only when a provider/feed/interval compatibility rule is explicitly proven;
+every other degraded V2 read is `BLOCKED`. Consumer classes are derived from
+declared owners/configuration and remain bounded to monitoring, Trading System,
+single-symbol alpha, portfolio/multi-symbol alpha, grid/reactive/bracket, and
+basis/arb. Unknown alpha families fail closed rather than inheriting a broad
+route.
+
+**11.5-A source tasks and test gates:**
+
+1. Add a versioned, deterministic universal release-manifest compiler and
+   public, payload-free release summary. Bind all input digests, class policy,
+   fallback eligibility, freshness/gap rule, capability revision, and a prior
+   V1 rollback revision.
+2. Add strict tests for full inventory coverage, rejected/missing exclusion,
+   duplicate/cross-consumer detection, unknown-class rejection, decimal/time
+   identity preservation, V1 fallback allow/block semantics, deterministic
+   artifact bytes and changed-input invalidation.
+3. Add a bounded source-only acceptance harness that validates every admitted
+   requirement has a V2 route and records the exact no-order acceptance scope;
+   it must not open a runtime route or connect an alpha directly to a venue.
+4. Run targeted unit/contract/golden and an existing read-only real-provider
+   admission against the complete approved inventory. Evidence stores only
+   identity/count/digest/latency/resource metadata; no raw provider payloads.
+
+**Runtime decision boundary after 11.5-A:** prepare, but do not execute, one
+review packet naming the immutable image digest, manifest revision/digest,
+specific V2 query/stream roles, ports, mTLS/JWT identities, consumer groups,
+paper-only consumer scopes, observation duration, stop conditions and exact
+V1 rollback revision. It must exclude Kafka, Redis, SQLite, V1, DNSE/VN,
+broker/order paths and unrelated alpha containers unless a later explicit
+approval expands that list.
+
+**11.5-A.1 implemented source slice (`TESTED`, runtime still unchanged):**
+
+- Added `config/v2/universal-release-policy.yaml`, a compact fail-closed
+  classification/fallback policy. It classifies every currently declared
+  Phase-11 consumer family without a per-symbol list: Trading System,
+  monitoring, single-symbol alpha, portfolio/multi-symbol alpha,
+  grid/reactive/bracket and basis/arb. New/unclassified alpha IDs fail
+  closed. The only automatic V1 fallback rule is the previously established
+  semantically compatible Binance USD-M perpetual `TRADE` route; BAR, BBO,
+  L2, reference and unproven venue paths stay `BLOCKED` on V2 failure.
+- Added `qdl/consumer/universal_release.py`: deterministic release compiler
+  binding policy/capability/V1 rollback/inventory/admission/convergence/
+  realtime/reference/L2 coverage digests. Every provider-admitted row gets a
+  `V2_PRIMARY` route; explicitly allowed `MISSING_INSTRUMENT` rows become
+  traceable exclusions, never zero/placeholder routes. It validates that each
+  admitted real-time requirement has a universal realtime binding, each book
+  requirement has an L2 binding and each reference requirement carries the
+  Phase-11.3 evidence binding.
+- Added `qdl/certification/phase115_universal_release.py` and
+  `scripts/phase115_prepare_universal_release.py`. They build the exact
+  payload-free no-order acceptance scope from a fresh provider metadata
+  admission; they do not create a service, socket route, Kafka record, cache,
+  order, broker call or alpha signal change. The script writes only its named
+  JSON evidence path.
+- Added focused regression tests in `tests/test_phase115_universal_release.py`
+  for complete coverage/determinism, explicit missing-instrument exclusion,
+  omitted coverage/unknown consumer/checksum rejection, V1 allow-vs-block
+  semantics and zero-order acceptance scope.
+- Executed in one existing disposable image (no build, `--rm`, `--read-only`,
+  tmpfs, mounted source read-only):
+  `docker run ... qdl-v2-python:2.0.0-747231f python -B -m unittest tests.test_phase115_universal_release -v`
+  -> `4 passed, 0 failed`. The first host-only attempt exposed missing local
+  Python dependency `redis`; the container test is the authoritative result.
+  No Docker image/container/volume/runtime state was retained or changed.
+
+**11.5-A next gates:** run the compatibility/contract matrix, then regenerate
+fresh bounded Phase-11.2/11.3 metadata/provider evidence and the new full
+manifest. The result remains `PREPARED`, not runtime primary, until the later
+explicit handoff packet is approved and accepted.
+
+**11.5-A.2 real-provider finding and bounded corrective slice (`IN PROGRESS / SOURCE-ONLY`):**
+
+- The first real Phase-11.3 run against the complete current inventory failed
+  closed on Binance USD-M `BTCUSDT` `FUNDING_RATE`: the query layer reported
+  `PARTIAL_RESULT` because strict generic coverage compared raw provider
+  timestamps directly to an exact calendar boundary.
+- A disposable, read-only public-provider probe verified the source behavior:
+  the requested 365-day window returned `1,096` unique observations over two
+  pages, from `2025-08-27T00:00:00.003Z` through
+  `2026-08-27T00:00:00.000Z`; the first settlement was three milliseconds
+  after its scheduled boundary. The source was complete, but the generic
+  `observed_min <= requested_start` predicate was too strict for provider
+  settlement-clock jitter. No raw payload was persisted and no runtime,
+  route, Kafka, Redis, SQLite, V1, Trading System, alpha or order state
+  changed.
+- **Approved in-scope correction:** keep every raw `fundingTime` unchanged;
+  add a bounded Binance funding-only coverage tolerance and schedule the
+  Phase-11.3 read window with a settled-event grace. The tolerance must not
+  alter identity/decimal/unit/timestamp values, admit an 8-hour-scale absence,
+  broaden non-funding products, or turn a provider/protocol error into a
+  success. Regression tests must prove a few-millisecond boundary jitter
+  passes while a gap beyond the bounded tolerance remains partial.
+- **Rollback:** revert only the funding coverage/source-test slice. The
+  corrective work remains source-only; no runtime handoff is authorized by
+  this entry.
+
+**11.5-A.3 evidence-coherence correction (`TESTED / COMPLETE`):**
+
+- The fresh Phase-11.3 proof binds inventory
+  `dae1c64a...3e0bc06`, while the checked-in Phase-11.2 realtime proof binds
+  the older inventory `c331a1...7452a2`. The old Phase-11.4 L2 capture also
+  accepts an explicit OKX symbol even when it is outside the current admitted
+  book demand. Neither artifact can certify the fresh universal release.
+- **In-scope work:** preserve the existing bounded provider scripts but make
+  their evidence coherent: emit the exact metadata-admission report from the
+  Phase-11.2 run; bind phase-11.2/11.3 evidence to its inventory and metadata
+  digests; derive L2 capture from every admitted current book requirement
+  across certified venue/market protocols rather than an arbitrary reference
+  symbol; and require Phase-11.5 preflight to reject a stale/mismatched/
+  incomplete evidence bundle before it writes a release artifact.
+- **Invariants:** no raw provider bytes are stored, no synthetic source is
+  accepted, no evidence may stand in for a different inventory/metadata
+  revision, and a venue with no active L2 demand has no forced subscription.
+  Unknown active L2 protocol fails closed. All work remains provider-read-only
+  and source/evidence-only; it does not start a role, change route/authority,
+  or mutate Kafka, Redis, SQLite, V1, Trading System, alpha or order state.
+- **Test/exit:** unit tests cover exact evidence identity, stale/missing
+  rejection, multi-venue book selection and no cross-mix. A fresh bounded
+  public Phase-11.2 realtime, Phase-11.3 warmup/reference and Phase-11.4 L2
+  capture must agree on one inventory/metadata admission before the universal
+  preflight can become `PREPARED`.
+
+**11.5-A.3b Binance L2 snapshot-gap repair (`TESTED / COMPLETE`):**
+
+- **Observed bounded failure:** final real-provider L2 reruns correctly failed
+  before writing evidence when buffered Binance diff-depth frames had already
+  advanced beyond the REST snapshot's `lastUpdateId + 1`. The old verifier
+  continued waiting for a bridge that can no longer exist and eventually hit
+  its per-symbol frame cap. Raising the cap alone is not a valid repair.
+- **Approved correction:** preserve the documented snapshot/delta protocol:
+  after a non-bridging delta proves `U > lastUpdateId + 1`, clear only the
+  disposable verifier buffer, fetch a fresh bounded REST snapshot while
+  continuing to buffer new deltas, and retry at most three snapshots within
+  the original deadline. Sequence/range/`pu` checks remain strict; exhaustion,
+  malformed frames or a persistent gap stay fail-closed. This is a test-plane
+  capture repair, not a runtime authority change.
+- **Tests/exit:** deterministic unit cases prove bridge/no-bridge/resnapshot
+  classification and the existing sequence tests remain strict. A fresh
+  two-symbol public Binance capture must pass after the repair; then regenerate
+  preflight only from that new evidence. No runtime, Kafka, Redis, SQLite, V1,
+  alpha, signal or order mutation is allowed.
+
+- **Result:** the new bridge/resnapshot classifier and strict existing
+  snapshot/range/`pu` tests passed. A final bounded public capture at the
+  original **64**-frame limit passed both admitted Binance sources in
+  **5,338 ms**; it is the only L2 artifact retained by the regenerated
+  preflight. The prior 64/128 failures are recorded as discarded no-evidence
+  fail-closed observations, not acceptance results.
+
+**11.5-A.4 demanded-metadata lineage correction (`TESTED / COMPLETE`):**
+
+- **Observed evidence:** a fresh Phase-11.2 report and a fresh Phase-11.3
+  report both compiled inventory `dae1c64a...3e0bc06`, but their Binance raw
+  `exchangeInfo` digests differed. The current parser hashes the entire
+  provider response before reducing it to active demand; Binance includes
+  volatile/global fields such as `serverTime` and unrelated listing changes.
+  That makes a valid same-demand generation look stale and would either block
+  every independent proof or tempt an unsafe digest bypass.
+- **Approved bounded correction:** canonical metadata lineage for an active
+  demand admission is the sorted, provider-authentic metadata of only the
+  resolved demanded instruments (including all symbol/filter/status fields
+  that determine identity, tick, step, multiplier and lifecycle), never the
+  full exchange universe envelope. The raw provider response is still parsed
+  only in memory and is not persisted. An unrelated listing/server timestamp
+  must not invalidate a route; a demanded instrument field change must change
+  the digest and require a fresh coherent admission.
+- **Scope/invariants:** this changes no public V1/V2 endpoint, provider row,
+  canonical decimal, route, authority, Kafka, Redis, SQLite, service, alpha or
+  order state. It only repairs the metadata provenance key used by the
+  source-only evidence bundle. The universal preflight continues to require
+  exact inventory plus canonical demanded-metadata equality; it does not relax
+  the gate.
+- **Tests/exit:** add deterministic tests for volatile-envelope invariance,
+  relevant demanded metadata invalidation, and Binance/OKX ordering stability;
+  rerun the focused source matrix and regenerate the same-generation
+  Phase-11.2/11.3/11.4 evidence. Stop after the source/evidence slice and its
+  coherent commit; runtime handoff still requires its separately named packet.
+
+#### 11.5-A Execution Closure - 2026-08-27 (`PASSED DARK / SOURCE + REAL-PROVIDER EVIDENCE`)
+
+- **Implemented source contract:** added the versioned universal release
+  policy/compiler, payload-free no-order scope and strict evidence bundle
+  validator. Preflight now rejects missing, stale or cross-generation
+  admission/realtime/reference/L2 evidence before materializing a route. The
+  manifest covers declared consumer classes rather than a hand-maintained
+  BTC/ETH list. `V1` remains an explicit fallback only for equivalent Binance
+  USD-M perpetual `TRADE`; all BAR/BBO/reference/L2 and unproven routes are
+  explicitly `BLOCKED` on V2 degradation.
+- **Metadata lineage repair:** active-demand metadata provenance now hashes a
+  canonical sorted subset of provider-authentic metadata for demanded
+  instruments, instead of the full Binance envelope. It excludes volatile
+  `serverTime` and unrelated listings while retaining all demanded instrument
+  status/filter fields. The new regression proves unchanged provenance across
+  envelope/listing churn and changed provenance when a demanded tick changes.
+  This is a correction to false invalidation only: no provider fact is
+  synthesized, rounded or hidden.
+- **Focused source/contract matrix:** disposable immutable-image run passed
+  **51/51** (`tests.test_phase111_active_demand_inventory`, reference batch,
+  realtime/provider admission, L2 demand/capture and universal-release
+  suites). It covered active-metadata lineage, exact decimals/units/funding
+  boundary, retry/partial/missing semantics, shared realtime topology,
+  sequence/reconnect L2 behavior, full-manifest coverage, V1 allow/block and
+  cross-generation evidence rejection. `git diff --check` and Python compile
+  checks passed.
+- **Fresh bounded real-provider evidence:** all values below are live public
+  provider reads and retain identifiers/hashes/metrics only, never raw frames.
+  The initial no-retained-container realtime attempt exited before emitting an
+  artifact; its result was discarded. One bounded diagnostic retry succeeded
+  and its exact exited container was removed after logs/evidence review.
+  - Phase 11.2: **654/654** bindings passed, comprising **295** multiplexed
+    WebSocket TRADE/QUOTE and **359** final closed BAR REST observations across
+    Binance Spot/USD-M and OKX Spot/Swap; **17** bounded sessions and **8**
+    intentional reconnect roles passed in **95.513 s**, CPU **11.156 s**,
+    max RSS **266,532 KiB**. No fallback, runtime mutation, production write
+    or raw frame retention occurred.
+  - Phase 11.3: **359** BAR warmups in four bounded batches plus **34**
+    reference requests passed in **53.860 s**, CPU **6.426 s**, max RSS
+    **278,252 KiB**. Results were 22 available, six provider-authentic typed
+    partial and six explicitly blocked, never numeric zero; writes/mutations
+    stayed zero.
+  - Phase 11.4: exactly the two admitted Binance USD-M book sources
+    (`BTCUSDT`, `BTCUSDT_260925`) captured snapshot/delta continuity in
+    **5,338 ms** at the original 64-frame bound, max RSS **49,152 KiB**. A
+    non-bridge snapshot gap now resnapshots at most three times within the
+    original deadline; the final capture passed snapshot bridge/range and
+    final sequence checks. No non-demanded OKX subscription was created.
+  All four artifacts agree on inventory
+  `dae1c64a...3e0bc06` and demanded-metadata lineage; the preflight validates
+  these equality constraints rather than trusting the filenames.
+- **Prepared universal manifest:**
+  `upgrade/evidence/phase115-universal-release-preflight.json` is
+  `PREPARED`, manifest `06ba4d78...ea8266`: **1,564** admitted V2-primary
+  requirements (`1,560` realtime, `2` reference, `2` L2), with **69** explicit
+  `MISSING_INSTRUMENT` exclusions. Consumer classes are Basis Arb 6, Grid 12,
+  Portfolio 1,448, Single Alpha 80 and Trading System 18. The no-order
+  acceptance scope has exactly the same 1,564 products, `direct_provider_connections=0`,
+  `order_actions=0` and `runtime_route_mutations=0`. The manifest records 601
+  declared V1 fallback drills and 963 routes that must block instead of using
+  a semantic-incompatible fallback.
+- **Cleanup and runtime impact:** all disposable test containers used
+  `--read-only`, tmpfs and named evidence paths; the two diagnostic retained
+  containers were removed exactly, and no test container remains. No Data
+  Layer role, image, Kafka topic/offset, Redis key, SQLite file, V1 endpoint,
+  Trading System, alpha, signal, broker or order was modified. This is
+  `PASSED DARK`, not an authority or consumer cutover.
+- **Tracked evidence hygiene:** the five generated Phase-11.5 JSON artifacts
+  (`phase115-active-demand-provider-admission.json`,
+  `phase115-universal-realtime-provider-admission.json`,
+  `phase115-warmup-reference-admission.json`,
+  `phase115-universal-l2-provider-capture.json`, and
+  `phase115-universal-release-preflight.json`) are disposable and are removed
+  after extracting their identity/count/metric hashes. They would otherwise add
+  about 85,000 generated lines to Git. The compact, committed audit record is
+  `upgrade/evidence/PHASE115_UNIVERSAL_RELEASE_PREFLIGHT_REPORT.md`; it
+  preserves all evidence SHA-256 values, the expected 69
+  `MISSING_INSTRUMENT` exclusions, test matrix, resource metrics and zero-write
+  proof without raw provider data or per-symbol generated state.
+- **Decision boundary / next legal action:** commit this coherent source and
+  evidence slice. A later Phase 11.5-B runtime packet must name the immutable
+  image digest built from that commit, manifest revision/digest, exact V2
+  query/stream roles, mTLS/JWT identities, paper-only scopes, no-order
+  duration/metrics, stop conditions and one V1 manifest rollback revision.
+  It may not be inferred from this evidence or executed without separate
+  operator approval.
+
 ### 22.11 Phase 11 Completion Decision
 
 Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the

@@ -183,8 +183,10 @@ class Phase113ProviderAdmissionTests(unittest.IsolatedAsyncioTestCase):
         funding = 8 * 3_600_000
         self.assertEqual(admission._last_closed_daily_open_ms(2 * day), day)
         self.assertEqual(admission._last_closed_daily_open_ms(2 * day + 1), day)
-        self.assertEqual(admission._last_closed_funding_ms(4 * funding), 4 * funding)
-        self.assertEqual(admission._last_closed_funding_ms(4 * funding + 1), 4 * funding)
+        grace = admission._FUNDING_SETTLEMENT_GRACE_MS
+        self.assertEqual(admission._last_closed_funding_ms(4 * funding), 3 * funding)
+        self.assertEqual(admission._last_closed_funding_ms(4 * funding + grace - 1), 3 * funding)
+        self.assertEqual(admission._last_closed_funding_ms(4 * funding + grace), 4 * funding)
 
     async def test_warmup_failure_names_the_exact_binding_without_provider_payload(self):
         binding = SimpleNamespace(

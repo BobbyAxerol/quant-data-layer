@@ -1349,13 +1349,13 @@ def _selected_metadata_payload(
     payload: Any,
     requirements: tuple[DataRequirement, ...] | None,
 ) -> Any:
-    """Limit parsing to declared selectors without mutating provider provenance.
+    """Limit parsing to declared selectors for active-demand provenance.
 
     Provider instrument endpoints enumerate far more products than the active
     manifest.  An unrelated prelisting or incomplete provider row must not
     poison a demanded slice; a selected row remains strictly parsed and fails
-    closed.  The caller still hashes the complete authentic response before
-    this narrowing, so evidence retains the exact metadata provenance.
+    closed.  The active-demand metadata digest is computed from this selected
+    provider-authentic projection, not a volatile full-universe envelope.
     """
     if requirements is None:
         return payload
@@ -1407,6 +1407,41 @@ def _selected_metadata_payload(
     ]
 
 
+def _active_metadata_digest_payload(
+    venue: str,
+    selected_payload: Any,
+    *,
+    requirements: tuple[DataRequirement, ...] | None,
+) -> Any:
+    """Return the stable provider-authentic subset that controls active demand.
+
+    Binance's full exchange-info envelope includes non-instrument fields such
+    as ``serverTime`` and unrelated listings.  Those values must not invalidate
+    an otherwise identical admitted universe.  The selected instrument rows
+    retain every provider field, including status and filters, and are sorted
+    deterministically so a relevant tick/step/lifecycle change still changes
+    the provenance digest.
+    """
+
+    if requirements is None:
+        return selected_payload
+    if venue == "BINANCE":
+        if not isinstance(selected_payload, Mapping) or not isinstance(selected_payload.get("symbols"), list):
+            raise InventoryError("selected Binance metadata must contain a symbols list")
+        return {
+            "symbols": sorted(
+                selected_payload["symbols"],
+                key=lambda row: str(row.get("symbol") if isinstance(row, Mapping) else ""),
+            ),
+        }
+    if not isinstance(selected_payload, list):
+        raise InventoryError("selected provider metadata must be a list")
+    return sorted(
+        selected_payload,
+        key=lambda row: str(row.get("instId") if isinstance(row, Mapping) else ""),
+    )
+
+
 def parse_provider_metadata(
     payloads: Mapping[tuple[str, str], Any],
     *,
@@ -1419,13 +1454,17 @@ def parse_provider_metadata(
     for (venue_raw, market_raw), payload in sorted(payloads.items()):
         venue, market = venue_raw.upper(), market_raw.upper()
         key = f"{venue}:{market}"
-        digests[key] = _digest(payload)
         selected_payload = _selected_metadata_payload(
             venue,
             market,
             payload,
             selected_requirements,
         )
+        digests[key] = _digest(_active_metadata_digest_payload(
+            venue,
+            selected_payload,
+            requirements=selected_requirements,
+        ))
         if venue == "BINANCE" and market == "USDM":
             if not isinstance(selected_payload, Mapping):
                 raise InventoryError("Binance USD-M metadata capture must be an object")

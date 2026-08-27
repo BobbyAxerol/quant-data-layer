@@ -56,6 +56,30 @@ class OkxReplay:
     frame_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class BookDemandBinding:
+    """One admitted physical L2 source, shared by its requirement owners."""
+
+    venue: str
+    market: str
+    product_type: str
+    native_symbol: str
+    instrument_uid: str
+    instrument_id: str
+    requirement_ids: tuple[str, ...]
+
+    def canonical_mapping(self) -> dict[str, object]:
+        return {
+            "venue": self.venue,
+            "market": self.market,
+            "product_type": self.product_type,
+            "native_symbol": self.native_symbol,
+            "instrument_uid": self.instrument_uid,
+            "instrument_id": self.instrument_id,
+            "requirement_ids": list(self.requirement_ids),
+        }
+
+
 def _json_object(raw: str | bytes) -> tuple[str, Mapping[str, Any]]:
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
@@ -82,24 +106,63 @@ def _digest(frames: Sequence[str]) -> str:
     return digest.hexdigest()
 
 
-def active_binance_book_symbols(document: Mapping[str, Any]) -> tuple[str, ...]:
-    """Return all currently admitted active Binance USD-M L2 requirements."""
+def active_book_bindings(document: Mapping[str, Any]) -> tuple[BookDemandBinding, ...]:
+    """Return every currently admitted L2 source with no reference-symbol fallback."""
 
     rows = document.get("rows")
     if not isinstance(rows, list):
         raise ProviderCaptureError("active-demand admission has no rows list")
-    symbols = {
-        str(row.get("native_symbol", "")).strip().upper()
-        for row in rows
-        if isinstance(row, Mapping)
-        and row.get("state") == "ADMITTED"
-        and row.get("venue") == "BINANCE"
-        and row.get("market") == "USDM"
-        and row.get("feed") in {"BOOK_SNAPSHOT", "BOOK_DELTA"}
-    }
-    if not symbols or "" in symbols:
+    selected: dict[tuple[str, str, str, str, str, str], list[str]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping) or row.get("state") != "ADMITTED":
+            continue
+        if row.get("feed") not in {"BOOK_SNAPSHOT", "BOOK_DELTA"}:
+            continue
+        fields = {
+            name: str(row.get(name) or "").strip()
+            for name in (
+                "venue", "market", "product_type", "native_symbol",
+                "instrument_uid", "instrument_id", "requirement_id",
+            )
+        }
+        if not all(fields.values()):
+            raise ProviderCaptureError("active L2 admission has incomplete identity")
+        fields["venue"] = fields["venue"].upper()
+        fields["market"] = fields["market"].upper()
+        fields["native_symbol"] = fields["native_symbol"].upper()
+        if (fields["venue"], fields["market"]) not in {
+            ("BINANCE", "USDM"),
+            ("OKX", "SWAP"),
+        }:
+            raise ProviderCaptureError(
+                "active L2 admission has no certified capture protocol for "
+                f"{fields['venue']}/{fields['market']}"
+            )
+        key = (
+            fields["venue"], fields["market"], fields["product_type"],
+            fields["native_symbol"], fields["instrument_uid"], fields["instrument_id"],
+        )
+        selected.setdefault(key, []).append(fields["requirement_id"])
+    result = tuple(
+        BookDemandBinding(*key, tuple(sorted(requirement_ids)))
+        for key, requirement_ids in sorted(selected.items())
+    )
+    if not result or any(len(item.requirement_ids) != len(set(item.requirement_ids)) for item in result):
+        raise ProviderCaptureError("active-demand admission has no valid L2 bindings")
+    return result
+
+
+def active_binance_book_symbols(document: Mapping[str, Any]) -> tuple[str, ...]:
+    """Compatibility helper for the Binance replay primitive's unit tests."""
+
+    values = tuple(
+        item.native_symbol
+        for item in active_book_bindings(document)
+        if (item.venue, item.market) == ("BINANCE", "USDM")
+    )
+    if not values:
         raise ProviderCaptureError("active-demand admission has no valid Binance L2 symbol")
-    return tuple(sorted(symbols))
+    return values
 
 
 def validate_binance_replay(
@@ -164,6 +227,33 @@ def validate_binance_replay(
         frame_count=accepted,
         frame_sha256=_digest(raw_frames),
     )
+
+
+def binance_resnapshot_required(
+    *,
+    symbol: str,
+    snapshot_sequence: int,
+    frames: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Tell whether buffered deltas can no longer bridge one REST snapshot.
+
+    A future event cannot repair a gap when the first event at or beyond the
+    expected sequence starts strictly after it. The caller must obtain a new
+    snapshot while preserving a bounded WebSocket buffer.
+    """
+
+    expected = snapshot_sequence + 1
+    for frame in frames:
+        if frame.get("e") != "depthUpdate" or str(frame.get("s", "")).upper() != symbol:
+            continue
+        start = _int(frame.get("U"), "U")
+        end = _int(frame.get("u"), "u")
+        if start > end:
+            raise ProviderCaptureError(f"Binance {symbol} has an invalid U/u range")
+        if end < expected:
+            continue
+        return start > expected
+    return False
 
 
 def validate_okx_replay(
@@ -287,6 +377,7 @@ async def capture_binance(symbols: Sequence[str], deadline: float, max_frames: i
                 frames[symbol].append(frame)
                 raw_frames[symbol].append(raw)
         snapshots = await snapshots_task
+        snapshot_attempts = 1
         while True:
             accepted = []
             for symbol in symbols:
@@ -300,6 +391,42 @@ async def capture_binance(symbols: Sequence[str], deadline: float, max_frames: i
                     accepted.append(replay)
             if len(accepted) == len(symbols):
                 return tuple(accepted)
+            if any(
+                binance_resnapshot_required(
+                    symbol=symbol,
+                    snapshot_sequence=_int(snapshots[symbol].get("lastUpdateId"), "lastUpdateId"),
+                    frames=frames[symbol],
+                )
+                for symbol in symbols
+            ):
+                if snapshot_attempts >= 3:
+                    raise ProviderCaptureError(
+                        "Binance snapshot/delta bridge remained unavailable after bounded resync"
+                    )
+                snapshot_attempts += 1
+                for symbol in symbols:
+                    frames[symbol].clear()
+                    raw_frames[symbol].clear()
+                snapshots_task = asyncio.create_task(_binance_snapshots(symbols))
+                while not snapshots_task.done():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ProviderCaptureError("Binance REST/resync capture timed out")
+                    try:
+                        raw = await asyncio.wait_for(socket.recv(), timeout=min(0.25, remaining))
+                    except TimeoutError:
+                        continue
+                    raw, frame = _json_object(raw)
+                    symbol = str(frame.get("s", "")).upper()
+                    if frame.get("e") == "depthUpdate" and symbol in frames:
+                        if len(frames[symbol]) >= max_frames:
+                            raise ProviderCaptureError(
+                                f"Binance {symbol} exceeded bounded resync capture frames"
+                            )
+                        frames[symbol].append(frame)
+                        raw_frames[symbol].append(raw)
+                snapshots = await snapshots_task
+                continue
             raw, frame = await _recv_json(socket, deadline)
             symbol = str(frame.get("s", "")).upper()
             if frame.get("e") == "depthUpdate" and symbol in frames:
@@ -332,38 +459,78 @@ async def capture_okx(symbol: str, deadline: float, max_frames: int) -> OkxRepla
                 return replay
 
 
+async def _capture_okx_symbols(
+    symbols: Sequence[str],
+    deadline: float,
+    max_frames: int,
+) -> tuple[OkxReplay, ...]:
+    return tuple(await asyncio.gather(
+        *(capture_okx(symbol, deadline, max_frames) for symbol in symbols)
+    ))
+
+
+async def _empty_capture() -> tuple[Any, ...]:
+    return ()
+
+
 async def run(
     *,
     admission_path: Path,
-    okx_symbol: str,
     timeout_seconds: float,
     max_frames: int,
 ) -> dict[str, Any]:
     document = json.loads(admission_path.read_text())
     if not isinstance(document, Mapping):
         raise ProviderCaptureError("active-demand admission document is invalid")
-    symbols = active_binance_book_symbols(document)
+    inventory_sha256 = str(document.get("inventory_sha256") or "").strip().lower()
+    metadata_sha256 = document.get("metadata_sha256")
+    if len(inventory_sha256) != 64 or not isinstance(metadata_sha256, Mapping):
+        raise ProviderCaptureError("active-demand admission lacks inventory/metadata identity")
+    bindings = active_book_bindings(document)
+    binance_symbols = tuple(
+        item.native_symbol for item in bindings
+        if (item.venue, item.market) == ("BINANCE", "USDM")
+    )
+    okx_symbols = tuple(
+        item.native_symbol for item in bindings
+        if (item.venue, item.market) == ("OKX", "SWAP")
+    )
     started_ns = time.time_ns()
     deadline = time.monotonic() + timeout_seconds
-    binance, okx = await asyncio.gather(
-        capture_binance(symbols, deadline, max_frames),
-        capture_okx(okx_symbol, deadline, max_frames),
+    binance_task = (
+        capture_binance(binance_symbols, deadline, max_frames)
+        if binance_symbols else _empty_capture()
     )
+    okx_task = (
+        _capture_okx_symbols(okx_symbols, deadline, max_frames)
+        if okx_symbols else _empty_capture()
+    )
+    binance, okx = await asyncio.gather(binance_task, okx_task)
     elapsed_ms = (time.time_ns() - started_ns) // 1_000_000
+    provenance = []
+    if binance_symbols:
+        provenance.append("REAL_BINANCE_USDM_PUBLIC_WS_REST")
+    if okx_symbols:
+        provenance.append("REAL_OKX_V5_PUBLIC_WS")
     return {
         "schema": "qdl.phase114.l2-real-provider-capture.v1",
         "status": "PASS",
-        "provenance": ["REAL_BINANCE_USDM_PUBLIC_WS_REST", "REAL_OKX_V5_PUBLIC_WS"],
+        "provenance": provenance,
         "runtime_mutations": 0,
         "production_writes": 0,
         "raw_provider_bytes_persisted": 0,
-        "admission_sha256": hashlib.sha256(admission_path.read_bytes()).hexdigest(),
+        "inventory_sha256": inventory_sha256,
+        "metadata_sha256": dict(sorted((str(key), str(value)) for key, value in metadata_sha256.items())),
+        "admission_sha256": hashlib.sha256(
+            json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
         "started_at_ns": started_ns,
         "elapsed_ms": int(elapsed_ms),
         "limits": {"timeout_seconds": timeout_seconds, "max_frames_per_symbol": max_frames},
         "resource": {"max_rss_kib": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)},
+        "required_bindings": [item.canonical_mapping() for item in bindings],
         "binance_usdm": [asdict(item) for item in binance],
-        "okx_swap": asdict(okx),
+        "okx_swap": [asdict(item) for item in okx],
     }
 
 
@@ -371,7 +538,6 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--admission", type=Path, default=DEFAULT_ADMISSION)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--okx-symbol", default="BTC-USDT-SWAP")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--max-frames", type=int, default=64)
     args = parser.parse_args()
@@ -382,7 +548,6 @@ def main() -> None:
     report = asyncio.run(
         run(
             admission_path=args.admission,
-            okx_symbol=str(args.okx_symbol).upper(),
             timeout_seconds=args.timeout_seconds,
             max_frames=args.max_frames,
         )
@@ -392,7 +557,7 @@ def main() -> None:
     print(json.dumps({
         "status": report["status"],
         "binance_symbols": len(report["binance_usdm"]),
-        "okx_updates": report["okx_swap"]["update_count"],
+        "okx_symbols": len(report["okx_swap"]),
         "elapsed_ms": report["elapsed_ms"],
     }, sort_keys=True))
 

@@ -40,6 +40,19 @@ from qdl.consumer.release import (
     evaluate_release_readiness,
     is_explicit_v1_exclusion,
 )
+from qdl.consumer.universal_release import (
+    ConsumerClassRule,
+    FallbackRule,
+    UniversalConsumerClass,
+    UniversalReleaseCoverage,
+    UniversalReleaseExclusion,
+    UniversalReleaseManifest,
+    UniversalReleasePolicy,
+    UniversalReleaseProduct,
+    UniversalResourceBudget,
+    UniversalV1Rollback,
+    build_universal_release_manifest,
+)
 
 if TYPE_CHECKING:
     from qdl.consumer.shadow import ManifestShadowConsumer, ShadowObservation
@@ -77,6 +90,17 @@ __all__ = [
     "V1FallbackReference",
     "evaluate_release_readiness",
     "is_explicit_v1_exclusion",
+    "ConsumerClassRule",
+    "FallbackRule",
+    "UniversalConsumerClass",
+    "UniversalReleaseCoverage",
+    "UniversalReleaseExclusion",
+    "UniversalReleaseManifest",
+    "UniversalReleasePolicy",
+    "UniversalReleaseProduct",
+    "UniversalResourceBudget",
+    "UniversalV1Rollback",
+    "build_universal_release_manifest",
 ]
 
 

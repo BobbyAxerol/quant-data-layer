@@ -195,6 +195,67 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(btc_result.coverage.complete_right)
         self.assertEqual(sorted(calls), [("BTCUSDT", 100), ("BTCUSDT", 201), ("BTCUSDT", 301), ("ETHUSDT", 100), ("ETHUSDT", 201), ("ETHUSDT", 301)])
 
+    async def test_funding_boundary_jitter_is_tolerated_without_rewriting_raw_time(self):
+        calls = []
+
+        def funding(symbol, *, start_time, end_time, limit, **kwargs):
+            del end_time, limit, kwargs
+            calls.append((symbol, start_time))
+            rows = {
+                1_000: [
+                    {"symbol": symbol, "fundingRate": "0.1", "fundingTime": "1003"},
+                    {"symbol": symbol, "fundingRate": "0.2", "fundingTime": "2000"},
+                ],
+                2_001: [
+                    {"symbol": symbol, "fundingRate": "0.3", "fundingTime": "3003"},
+                ],
+            }
+            return {"data": rows[start_time]}
+
+        result = await ReferenceBatch({("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
+            funding_fetcher=funding, max_attempts=1, sleep=no_sleep,
+        )}).fetch_one(ReferenceRequest(
+            instrument=self.btc,
+            product=ReferenceProduct.FUNDING_RATE,
+            start_ms=1_000,
+            end_ms=3_005,
+            limit=3,
+            page_size=2,
+            max_pages=2,
+        ))
+
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        self.assertEqual(
+            [item.observed_at_ns // 1_000_000 for item in result.observations],
+            [1_003, 2_000, 3_003],
+        )
+        self.assertTrue(result.coverage.complete_left)
+        self.assertTrue(result.coverage.complete_right)
+        self.assertEqual(calls, [("BTCUSDT", 1_000), ("BTCUSDT", 2_001)])
+
+    async def test_funding_boundary_gap_beyond_tolerance_remains_partial(self):
+        def funding(symbol, **kwargs):
+            del kwargs
+            return {"data": [
+                {"symbol": symbol, "fundingRate": "0.1", "fundingTime": "61001"},
+                {"symbol": symbol, "fundingRate": "0.2", "fundingTime": "200000"},
+            ]}
+
+        result = await ReferenceBatch({("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
+            funding_fetcher=funding, max_attempts=1, sleep=no_sleep,
+        )}).fetch_one(ReferenceRequest(
+            instrument=self.btc,
+            product=ReferenceProduct.FUNDING_RATE,
+            start_ms=1_000,
+            end_ms=200_000,
+            limit=2,
+            page_size=2,
+        ))
+
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        self.assertFalse(result.coverage.complete_left)
+        self.assertTrue(result.coverage.complete_right)
+
     async def test_retry_exhaustion_is_isolated_error_not_zero(self):
         calls = {"count": 0}
 

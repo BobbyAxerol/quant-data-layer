@@ -870,7 +870,7 @@ def _report(
             }
         )
     native_sessions = [item for item in sessions if item.transport == "WEBSOCKET"]
-    return {
+    report = {
         "schema": "qdl.phase112.universal-realtime-provider-admission.v1",
         "status": "PASS",
         "provenance": "REAL_PROVIDER_DIRECT_READ_ONLY",
@@ -900,6 +900,13 @@ def _report(
         "fallback_count": 0,
         "scope": "isolated provider protocol admission; no Data Layer runtime role was started",
     }
+    if admission_plan.admission is not None:
+        admission_payload = admission_plan.admission.report_payload()
+        report["metadata_sha256"] = dict(sorted(admission_plan.admission.metadata_sha256.items()))
+        report["admission_evidence_sha256"] = hashlib.sha256(
+            json.dumps(admission_payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    return report
 
 
 async def run(
@@ -913,6 +920,7 @@ async def run(
     native_timeout_seconds: float = 90.0,
     max_bindings_per_session: int = _MAX_NATIVE_BINDINGS_PER_SESSION,
     rest_concurrency: int = 16,
+    admission_output: Path | None = None,
 ) -> dict[str, Any]:
     if not 5.0 <= metadata_timeout_seconds <= 60.0:
         raise ValueError("metadata timeout is outside bounds")
@@ -945,7 +953,7 @@ async def run(
             timeout_seconds=native_timeout_seconds,
         ),
     )
-    return _report(
+    report = _report(
         admission_plan,
         rest_sessions + native_sessions,
         elapsed_seconds=time.monotonic() - started_wall,
@@ -954,6 +962,11 @@ async def run(
         max_bindings_per_session=max_bindings_per_session,
         rest_concurrency=rest_concurrency,
     )
+    if admission_output is not None:
+        if admission_plan.admission is None:
+            raise ProviderAdmissionError("provider admission evidence is unavailable")
+        _write_report(admission_output, admission_plan.admission.report_payload())
+    return report
 
 
 def _write_report(path: Path, report: Mapping[str, Any]) -> None:
@@ -972,6 +985,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--native-timeout-seconds", type=float, default=90.0)
     parser.add_argument("--max-bindings-per-session", type=int, default=_MAX_NATIVE_BINDINGS_PER_SESSION)
     parser.add_argument("--rest-concurrency", type=int, default=16)
+    parser.add_argument("--admission-output", type=Path)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:
@@ -985,6 +999,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             native_timeout_seconds=args.native_timeout_seconds,
             max_bindings_per_session=args.max_bindings_per_session,
             rest_concurrency=args.rest_concurrency,
+            admission_output=args.admission_output,
         ))
     except (ProviderAdmissionError, ValueError) as error:
         print(f"phase112 provider admission: FAIL: {error}")

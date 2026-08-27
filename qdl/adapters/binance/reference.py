@@ -29,6 +29,11 @@ from qdl.reference.contracts import (
 
 
 _ADAPTER_VERSION = "qdl-binance-reference/1"
+# Binance emits a provider-truthful funding settlement timestamp.  Its public
+# clock can land a few milliseconds either side of the nominal settlement
+# boundary, so coverage must not manufacture a gap from that clock jitter.
+# This does not alter the raw observation timestamp or relax any other product.
+_FUNDING_BOUNDARY_TOLERANCE_MS = 60_000
 
 
 def _fields(*items):
@@ -132,6 +137,7 @@ class BinanceUsdmReferenceAdapter:
             page=page,
             parser=lambda row: self._funding_observation(request, row),
             page_limit=1000,
+            boundary_tolerance_ms=_FUNDING_BOUNDARY_TOLERANCE_MS,
         )
 
     async def _open_interest_history(
@@ -476,12 +482,15 @@ class BinanceUsdmReferenceAdapter:
         page_limit: int,
         direction: str = "FORWARD",
         expected_interval_ms: int | None = None,
+        boundary_tolerance_ms: int = 0,
     ) -> ReferenceFetch:
         assert request.start_ms is not None and request.end_ms is not None
         if direction not in {"FORWARD", "BACKWARD"}:
             raise ValueError("Binance reference pagination direction is invalid")
         if expected_interval_ms is not None and expected_interval_ms <= 0:
             raise ValueError("Binance reference expected interval must be positive")
+        if not 0 <= boundary_tolerance_ms <= 300_000:
+            raise ValueError("Binance reference boundary tolerance must be between 0 and 300000ms")
         per_page = min(request.page_size or request.limit, page_limit)
         cursor_start = request.start_ms
         cursor_end = request.end_ms
@@ -561,8 +570,14 @@ class BinanceUsdmReferenceAdapter:
             requested_end_ms=request.end_ms,
             observed_min_ms=min(observed) if observed else None,
             observed_max_ms=max(observed) if observed else None,
-            complete_left=bool(observed) and min(observed) <= request.start_ms,
-            complete_right=bool(observed) and max(observed) >= request.end_ms,
+            complete_left=(
+                bool(observed)
+                and min(observed) <= request.start_ms + boundary_tolerance_ms
+            ),
+            complete_right=(
+                bool(observed)
+                and max(observed) >= request.end_ms - boundary_tolerance_ms
+            ),
             truncated=truncated,
             terminal_reason=terminal_reason,
         )

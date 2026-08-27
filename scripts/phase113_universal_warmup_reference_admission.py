@@ -83,6 +83,7 @@ _SCHEMA_DIGEST = hashlib.sha256(b"qdl.phase113.provider-only-query.v1").hexdiges
 _DAY_MS = 86_400_000
 _HOUR_MS = 3_600_000
 _FUNDING_MS = 8 * _HOUR_MS
+_FUNDING_SETTLEMENT_GRACE_MS = 60_000
 _METRIC_HISTORY_HOURS = 30 * 24
 
 
@@ -243,14 +244,19 @@ def _last_closed_daily_open_ms(now_ms: int) -> int:
 
 
 def _last_closed_funding_ms(now_ms: int) -> int:
-    """Return the latest completed provider funding event, not its prior bucket.
+    """Return the latest safely settled nominal funding boundary.
 
-    Binance timestamps the funding observation at the completed 8-hour event.
-    Asking for the preceding interval boundary drops a valid latest event and
-    can make an otherwise complete 365-day history look partial.
+    Binance timestamps the funding observation at the completed 8-hour event,
+    but its public settlement clock can lag the nominal boundary slightly.
+    Keep a bounded grace before treating the new nominal event as available;
+    callers extend the provider window by the same grace so the raw timestamp
+    remains visible without being rounded or rewritten.
     """
 
-    return (now_ms // _FUNDING_MS) * _FUNDING_MS
+    scheduled_ms = (now_ms // _FUNDING_MS) * _FUNDING_MS
+    if now_ms < scheduled_ms + _FUNDING_SETTLEMENT_GRACE_MS:
+        return scheduled_ms - _FUNDING_MS
+    return scheduled_ms
 
 
 def _demand_reference_work(
@@ -273,8 +279,11 @@ def _demand_reference_work(
         declared = source_requirement_for_admission(plan.inventory, row)
         grade, _purpose = _purpose_for_demand(declared.purpose)
         if declared.feed is DemandFeed.FUNDING_RATE:
-            end_ms = _last_closed_funding_ms(now_ms)
-            start_ms = end_ms - 365 * _DAY_MS
+            settled_end_ms = _last_closed_funding_ms(now_ms)
+            # Ask through the bounded provider settlement grace, while the
+            # historical horizon itself remains exactly 365 calendar days.
+            start_ms = settled_end_ms - 365 * _DAY_MS
+            end_ms = settled_end_ms + _FUNDING_SETTLEMENT_GRACE_MS
             result.append(_ReferenceWork(ReferenceDataRequirement(
                 instrument_uid=row.instrument_uid,
                 product=ReferenceProduct.FUNDING_RATE,
@@ -724,6 +733,7 @@ async def _run_async(
         "status": "PASS",
         "provenance": "REAL_PROVIDER_READ_ONLY",
         "inventory_sha256": admission_plan.plan.inventory_sha256,
+        "metadata_sha256": dict(sorted(admission_plan.admission.metadata_sha256.items())),
         "source_catalog_sha256": admission_plan.plan.bundle.provenance["source_catalog_sha256"],
         "production_writes": 0,
         "provider_writes": 0,

@@ -384,6 +384,54 @@ class ActiveDemandInventoryTests(unittest.TestCase):
         self.assertTrue(filtered_report.passed)
         self.assertEqual(filtered_report.rows[0].native_symbol, "BTC-USDT-SWAP")
 
+    def test_active_metadata_digest_ignores_volatile_envelope_but_not_demanded_contract_changes(self):
+        inventory = self._inventory(self._requirement(symbols=("BTCUSDT",)))
+        first_payload = {
+            "serverTime": 1,
+            "symbols": [
+                _binance_symbol("BTCUSDT"),
+                _binance_symbol("UNRELATEDUSDT", base="UNRELATED"),
+            ],
+        }
+        second_payload = json.loads(json.dumps(first_payload))
+        second_payload["serverTime"] = 2
+        second_payload["symbols"] = [
+            _binance_symbol("NEWLISTINGUSDT", base="NEW"),
+            second_payload["symbols"][1],
+            second_payload["symbols"][0],
+        ]
+        first = admit_provider_metadata(inventory, {("BINANCE", "USDM"): first_payload})
+        second = admit_provider_metadata(inventory, {("BINANCE", "USDM"): second_payload})
+        self.assertEqual(first.metadata_sha256, second.metadata_sha256)
+
+        changed_payload = json.loads(json.dumps(first_payload))
+        changed_payload["symbols"][0]["filters"][0]["tickSize"] = "0.20"
+        changed = admit_provider_metadata(
+            inventory,
+            {("BINANCE", "USDM"): changed_payload},
+        )
+        self.assertNotEqual(first.metadata_sha256, changed.metadata_sha256)
+
+        okx_requirement = self._requirement(
+            feed=DemandFeed.TRADE,
+            interval=None,
+            symbols=("BTC-USDT-SWAP", "ETH-USDT-SWAP"),
+            market="SWAP",
+            product_type="PERPETUAL",
+        )
+        btc = _okx_swap()
+        eth = _okx_swap("ETH-USDT-SWAP")
+        eth.update({"instFamily": "ETH-USDT", "ctValCcy": "ETH"})
+        first_okx = admit_provider_metadata(
+            self._inventory(okx_requirement),
+            {("OKX", "SWAP"): [btc, eth]},
+        )
+        second_okx = admit_provider_metadata(
+            self._inventory(okx_requirement),
+            {("OKX", "SWAP"): [eth, btc, {"instType": "SWAP", "instId": "UNRELATED-SWAP"}]},
+        )
+        self.assertEqual(first_okx.metadata_sha256, second_okx.metadata_sha256)
+
     def test_convergence_deduplicates_physical_slices_and_fails_closed_on_budget_or_metadata(self):
         alpha = self._requirement(
             feed=DemandFeed.TRADE,
