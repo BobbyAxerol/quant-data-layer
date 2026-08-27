@@ -19101,6 +19101,28 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
   After a bounded cache catch-up with no catalog rejection, repeat the
   disposable four-consumer C2 from its start for the full 300-second
   observation; failure remains rollback-only and fail-closed.
+- **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
+  2026-08-27):** current-source, network-disabled tests passed `51/51` for
+  V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
+  reference/L2/universal-release SDK behavior. The V2 OpenAPI snapshot has
+  `11` V2 paths, including public
+  `POST /v2/market-data/reference:batch`, typed reference schemas and additive
+  book generation/sequence/truncation fields. Serving query roles have
+  `QDL_STABLE_REFERENCE_DATA_ENABLED=true` and the private Rust admission
+  endpoint enabled. This proves capability and governed source behavior, not
+  an active paper-consumer product: the current release-routing manifest has
+  `32` realtime products and **zero** `REFERENCE` or `BOOK_*` routes.
+  Likewise, the current Binance ingestor remains config revision `9` with
+  exactly four `TRADE`/`QUOTE` bindings for BTC/ETH and zero book bindings;
+  the current OKX ingestor likewise has no book binding. The active-demand
+  registry currently declares capacity budgets for reference/book classes but
+  is not itself a live subscription request. Therefore C2 can truthfully
+  certify only its governed TRADE/QUOTE/final-BAR product set after projector
+  repair. Completing the broader consumer-ready objective later requires a
+  separately reviewed versioned consumer-route/identity manifest for approved
+  reference requirements and one exact L2 activation packet (including only
+  the required venue ingestor/core/projector/query/stream roles and current
+  rollback map); neither can be smuggled into this C2 repair.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
