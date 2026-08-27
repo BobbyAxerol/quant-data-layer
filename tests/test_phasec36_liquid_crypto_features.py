@@ -136,8 +136,16 @@ class PhaseC36LiquidCryptoFeatureTests(unittest.TestCase):
         self.records = _records()
 
     def test_policy_and_five_perpetuals_are_exact_and_venue_separated(self):
-        feature_set = select_liquid_crypto_feature_set(self.records, policy=self.policy)
+        usdc_duplicate = _record(
+            venue="BINANCE", market="USDM", product_type=ProductType.PERPETUAL,
+            native_symbol="BTCUSDC", base="BTC", settlement="USDC",
+            attributes={"contractType": "PERPETUAL"},
+        )
+        feature_set = select_liquid_crypto_feature_set(
+            (*self.records, usdc_duplicate), policy=self.policy
+        )
         self.assertEqual(self.policy.perpetual_base_assets, ("BTC", "ETH", "SOL", "DOGE", "BNB"))
+        self.assertEqual(self.policy.perpetual_settlement_asset, "USDT")
         self.assertEqual(len(feature_set.perpetuals), 10)
         by_venue = {
             (record.identity.venue, record.identity.market): {

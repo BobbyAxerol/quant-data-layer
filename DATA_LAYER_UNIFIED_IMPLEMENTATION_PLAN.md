@@ -18340,6 +18340,129 @@ RUNTIME UNCHANGED`, 2026-08-27):**
   liquid reference requests and BTC/ETH perp/dated L2 capture; it still does
   not authorize a rolling handoff.
 
+**C3.6-C authentic-provider product certification (`IN PROGRESS / APPROVED /
+READ-ONLY / RUNTIME UNCHANGED`, 2026-08-27):**
+
+- **Goal and guide:** certify the C3.6 product surface against current public
+  Binance USD-M and OKX V5 provider responses as specified by
+  `upgrade/quant-data-layer-fund-grade-upgrade-architecture.md` section J.10.
+  This is the final source/data proof before any later, separately-approved
+  binding or rolling handoff; it does not make any V2 route primary.
+- **Exact scope:** resolve top-350 USD-settled Binance USD-M perpetuals and
+  top-350 USDT-settled OKX swaps independently from real metadata/tickers;
+  issue one bounded final `1m` V2 provider-pass-through warmup for every one
+  of those 700 resolved records in batches of at most 100; exercise all
+  declared liquid-reference products for Binance USD-M and the truthful
+  available/unavailable subset for OKX Swap on BTC/ETH/SOL/DOGE/BNB; discover
+  BTC/ETH current/next Binance quarterlies and complete OKX Futures
+  `quarter`/`next_quarter` families from provider metadata; then capture and
+  replay their L2 snapshot/delta protocol with the existing shared Rust-L2
+  capture validator.
+- **Invariants:** all records retain their exact venue/market/native identity;
+  no dated symbol is constructed; final BAR outputs must be final, ordered,
+  gap-free within their bounded window, non-authoritative and
+  non-execution-eligible; reference availability follows each provider
+  capability exactly, with no numeric zero or cross-venue substitution for
+  unavailable OKX long/short, taker-flow or native basis; L2 requires actual
+  snapshot/delta continuity and bounded resync semantics. Top-350 remains
+  batch/history eligibility only, never a 700-symbol live WebSocket plan.
+- **Test/evidence gate:** deterministic unit tests must prove the verifier
+  rejects incomplete universe identity, cross-mixed outputs, non-final bars,
+  missing required Binance observations and falsely-successful unavailable
+  products. The authentic-provider run records only aggregate counts,
+  canonical identifiers, timestamps, semantic/frame digests, retry/rate-limit
+  metrics, elapsed time and process RSS. It retains no raw REST/WebSocket
+  body, writes only a disposable temporary directory, and removes that
+  directory before exit.
+- **Historical-metric truth rule:** public Binance metric endpoints may return
+  real, nonempty data whose coverage is explicitly partial at a provider
+  boundary. C3.6-C may certify that only as `PARTIAL_RESULT` with retained
+  observation/coverage semantics for OI, long/short and taker flow; it may
+  never relabel it `FULL` or fill missing periods. A future consumer with
+  `require_full_coverage=true` remains fail-closed through the existing V2
+  query contract.
+- **Provider-batch truth rule:** the certificate issues the 72 reference
+  requests through the real V2 reference service in bounded regular batches of
+  at most 12, plus five singleton batches for Binance provider-native basis.
+  This preserves the runtime provider lane, token budget, retry/circuit
+  behavior and per-item fail-closed semantics while avoiding a test-only mixed
+  product burst that turns one transient public endpoint response into a false
+  statement about another product. It does not change the public batch contract
+  or relax an individual request's deadline/identity/coverage gate.
+- **Certification plane order:** the low-frequency reference/L2 products run
+  before the top-350 final-BAR capacity sweep. This is not a fallback or an
+  evidence relaxation: all product gates still run against their real provider
+  paths. It prevents a deliberately broad history read from consuming the
+  shared IP quota immediately before the five isolated native-basis requests;
+  BAR remains the final, independently fail-closed capacity gate.
+- **Native-basis retry boundary:** public Binance may occasionally return an
+  HTTP-success envelope whose `data` is not the documented history list. The
+  Binance native-basis adapter retries only that exact transient envelope with
+  four attempts and `0.5s/1s/2s` exponential backoff under the existing
+  20-second request ceiling. A malformed row, wrong pair, wrong contract
+  selector, decimal or timestamp remains an immediate typed protocol failure;
+  exhausting the transient-envelope retry remains a typed source error, never
+  an empty/zero basis result.
+- **HTTP-success provider-error boundary:** the shared Binance USD-M REST
+  wrapper must inspect a top-level provider error envelope even when HTTP is
+  `200`. A nonzero documented provider `code` is never returned as market
+  data: the small curated transient set is retried within the existing request
+  attempt budget, while a permanent code fails immediately with a sanitized
+  code/status attempt record. This source-only correction applies consistently
+  to BAR, reference and metadata endpoints; it does not expand retries,
+  serialize unrelated products or alter V1/V2 routing.
+- **Provider rate-limit boundary:** Binance `418`/`429` and `-1003` are not
+  transient work to retry hot. The shared edge must stop the current request,
+  preserve a bounded `Retry-After` hint when the official response provides
+  one, and carry it through the V2 reference result/query problem so a caller
+  can defer safely. This prevents an isolated C3.6-C or alpha warmup from
+  extending an IP ban. Other transient transport/server codes retain the
+  existing bounded retry budget; no caller sleeps for an unbounded ban inside
+  a request worker.
+- **Native-basis concurrency boundary:** the same public `/futures/data/basis`
+  lane is serialized per Binance adapter process. This is deliberately scoped
+  to provider-native basis pair requests after real-provider evidence showed
+  malformed HTTP-success envelopes under parallel pair pressure; it does not
+  serialize BAR, funding, OI, ratio, taker, mark/index, metadata, continuous
+  basis or another venue. The adapter's normal bounded request timeout remains
+  the caller's fail-closed ceiling.
+- **Hard exclusions / rollback:** no Docker build or runtime role, provider
+  lease, Kafka topic/offset, Redis key, SQLite cache, V1/V2 endpoint route,
+  authority, consumer, Trading System, alpha, signal, sizing or order action
+  may change. A failed provider certificate is a fail-closed report only;
+  cleanup removes its temporary directory. Source rollback is revert of the
+  verifier commit. A successful result still requires a new reviewed runtime
+  packet that names its policy/catalog SHA, concrete consumer demand, 300s
+  no-order observation and V1 rollback coordinate.
+- **In-progress source evidence (2026-08-27):** the exact-USDT liquid policy,
+  700-member final-BAR/reference/L2 verifier, Binance HTTP-200 error-envelope
+  guard and native-basis serialization are implemented. `68` network-disabled
+  Python unit/contract tests passed in a read-only ephemeral container,
+  including transient `-1007` retry, permanent `-1121` fail-closed cases,
+  direct `418`/`429`/`-1003` no-hot-retry handling, and V2
+  reference/query `Retry-After` propagation without hot adapter retry. The
+  certificate now runs
+  reference/L2 before the independent final-BAR capacity plane. The verifier
+  also parses under the declared Python 3.10 grammar (the runtime image remains
+  Python 3.12), so the source gate does not silently narrow the published SDK
+  compatibility floor.
+  Exact source-gate evidence: a network-disabled, read-only ephemeral
+  `qdl-v2-python:2.0.0-747231f` container ran
+  `python -m unittest -q tests.test_binance_derivatives_contract
+  tests.test_phase104_reference_batch
+  tests.test_phase104_v2_query_stream_integration
+  tests.test_phasec36_liquid_crypto_features
+  tests.test_phasec36_real_provider_certification
+  tests.test_phase114_l2_provider_capture` with `68` passing cases in `4.175s`;
+  `ast.parse(..., feature_version=(3, 10))` and `git diff --check` also passed.
+  The first authentic run correctly stopped at Binance native BTC basis with
+  public `418` then `-1003` rate-limit evidence; ETH/SOL/DOGE/BNB each returned
+  the requested three real rows in the same bounded probe. This is a provider
+  cooldown condition, not a capability claim: C3.6-C remains `IN PROGRESS`
+  until one full aggregate-only run reaches its BAR, reference and L2 gates.
+  No runtime/durable mutation occurred and the ephemeral test container was
+  removed automatically.
+
 ### 22.11 Phase 11 Completion Decision
 
 Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the

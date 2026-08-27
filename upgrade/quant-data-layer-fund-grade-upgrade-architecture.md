@@ -5940,3 +5940,49 @@ passed against both baselines. No runtime route, service, durable store,
 provider request or container topology changed. C3.6-C alone may run bounded
 read-only provider evidence; it still cannot activate an endpoint, 700-symbol
 stream or consumer route.
+
+**C3.6-C certification scope (`APPROVED / READ-ONLY / RUNTIME UNCHANGED`,
+2026-08-27):** the verifier must prove the actual provider product, not a
+fixture: top-350 Binance USD-M and top-350 OKX Swap final `1m` warmups in
+bounded batches; all five liquid perpetual reference products according to
+their exact venue capability; and BTC/ETH perpetual plus provider-discovered
+dated L2 snapshot/delta replay. It must hold identity, finality, decimal/unit,
+typed-unavailable, lineage, sequence/gap and no-cross-mix invariants. The
+evidence is aggregate/digest-only and temporary; raw provider bytes are never
+retained. This validates one shared bounded product plane, not a 700-symbol
+permanent websocket topology or V2-primary authority. Runtime activation,
+lease creation and any consumer handoff remain a separately reviewed packet.
+Historical OI/long-short/taker evidence may be recorded only as an explicit
+typed partial with real observations and coverage when the documented provider
+does not cover both requested boundaries; it cannot be rounded up to full or
+zero-filled, and full-coverage consumers remain fail-closed.
+The verifier sends its 72 reference requests through the actual V2 service in
+regular provider-bounded batches of at most 12, with five Binance native-basis
+requests isolated to singleton batches. That exercises the existing
+token/circuit scheduler without treating a test-only mixed-product burst as a
+product capability, and keeps every item fail-closed on identity, typed
+availability or coverage failure.
+The certificate runs low-frequency reference and L2 product evidence before
+the independent top-350 final-BAR capacity sweep. This preserves every
+fail-closed product gate while preventing the intentionally broad history read
+from consuming shared provider IP quota immediately before native-basis proof.
+For Binance native basis only, an HTTP-success response whose `data` is not the
+documented history list is retried at most four times with
+`0.5s/1s/2s` bounded backoff inside the 20-second request ceiling. It is not
+accepted as data; malformed rows, cross-pair/contract values and
+decimal/timestamp errors remain immediate protocol failures.
+At the shared Binance USD-M provider edge, a top-level HTTP-success error
+envelope with a nonzero provider `code` is also typed as an error rather than
+accepted as data. Only the curated transient provider-code set consumes the
+existing retry budget; permanent codes fail immediately with sanitized
+code/status evidence. This keeps BAR, metadata and reference behavior
+consistent without widening concurrency or changing any runtime route.
+Binance `418`/`429` and `-1003` are rate-limit control responses, not a reason
+to retry immediately. The edge terminates that request, propagates an official
+`Retry-After` hint when present through the V2 reference/query result, and
+leaves scheduling the next attempt to the caller. It never sleeps a request
+worker for an unbounded provider ban or turns the response into an empty value.
+The fragile provider-native Binance basis lane is serialized only within one
+adapter process; all other reference products and venues retain their bounded
+concurrency. This prevents pressure-induced malformed envelopes without
+inventing a new worker or a per-symbol container.

@@ -13,10 +13,11 @@ from app.sdk.client import DataLayerClient
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, text=""):
+    def __init__(self, status_code=200, payload=None, text="", headers=None):
         self.status_code = status_code
         self._payload = payload if payload is not None else []
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -69,6 +70,115 @@ class TestBinanceDerivativesContract(unittest.TestCase):
 
         self.assertEqual(calls["count"], 2)
         self.assertEqual(payload["data"]["openInterest"], "10")
+
+    def test_http_success_transient_error_envelope_retries_before_returning_data(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return FakeResponse(payload={"code": -1007, "msg": "timeout"})
+            return FakeResponse(payload={"symbol": "BTCUSDT", "openInterest": "10", "time": 1})
+
+        payload = derivatives.fetch_open_interest(
+            "BTCUSDT",
+            http_get=fake_get,
+            max_attempts=2,
+            backoff_seconds=0,
+        )
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(payload["data"]["openInterest"], "10")
+        self.assertEqual(payload["attempts"][0]["provider_code"], -1007)
+
+    def test_rate_limit_envelope_stops_hot_retry_and_preserves_retry_after(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            return FakeResponse(
+                payload={"code": -1003, "msg": "rate limited"},
+                headers={"Retry-After": "120"},
+            )
+
+        with self.assertRaises(BinanceProviderError) as ctx:
+            derivatives.fetch_open_interest(
+                "BTCUSDT",
+                http_get=fake_get,
+                max_attempts=4,
+                backoff_seconds=0,
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(ctx.exception.retry_after_ms, 120_000)
+        self.assertEqual(ctx.exception.attempts[0]["provider_code"], -1003)
+
+    def test_ip_ban_stops_hot_retry_and_preserves_retry_after(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            return FakeResponse(
+                status_code=418,
+                text="banned",
+                headers={"Retry-After": "60"},
+            )
+
+        with self.assertRaises(BinanceProviderError) as ctx:
+            derivatives.fetch_open_interest(
+                "BTCUSDT",
+                http_get=fake_get,
+                max_attempts=4,
+                backoff_seconds=0,
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(ctx.exception.retry_after_ms, 60_000)
+
+    def test_http_rate_limit_stops_hot_retry_and_preserves_retry_after(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            return FakeResponse(
+                status_code=429,
+                text="rate limited",
+                headers={"Retry-After": "30"},
+            )
+
+        with self.assertRaises(BinanceProviderError) as ctx:
+            derivatives.fetch_open_interest(
+                "BTCUSDT",
+                http_get=fake_get,
+                max_attempts=4,
+                backoff_seconds=0,
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(ctx.exception.retry_after_ms, 30_000)
+        self.assertEqual(ctx.exception.attempts[0]["status_code"], 429)
+
+    def test_http_success_permanent_error_envelope_fails_closed(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            return FakeResponse(payload={"code": -1121, "msg": "invalid symbol"})
+
+        with self.assertRaises(BinanceProviderError) as ctx:
+            derivatives.fetch_open_interest(
+                "BTCUSDT",
+                http_get=fake_get,
+                max_attempts=3,
+                backoff_seconds=0,
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(ctx.exception.attempts, [{
+            "attempt": 1,
+            "status_code": 200,
+            "provider_code": -1121,
+        }])
 
     def test_mark_index_snapshot_uses_official_premium_index_endpoint(self):
         def fake_get(url, params=None, headers=None, timeout=None):

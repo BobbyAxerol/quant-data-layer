@@ -35,6 +35,7 @@ class LiquidCryptoFeaturePolicy:
 
     revision: int
     perpetual_base_assets: tuple[str, ...]
+    perpetual_settlement_asset: str
     perpetual_venue_markets: tuple[tuple[str, str], ...]
     l2_base_assets: tuple[str, ...]
     l2_dated_venue_markets: tuple[tuple[str, str], ...]
@@ -56,6 +57,10 @@ class LiquidCryptoFeaturePolicy:
             object.__setattr__(self, name, normalized)
         if not set(self.l2_base_assets).issubset(self.perpetual_base_assets):
             raise ValueError("l2_base_assets must be a subset of perpetual_base_assets")
+        settlement = str(self.perpetual_settlement_asset).strip().upper()
+        if not settlement.isalnum():
+            raise ValueError("perpetual_settlement_asset must be an asset code")
+        object.__setattr__(self, "perpetual_settlement_asset", settlement)
         for name, values in (
             ("perpetual_venue_markets", self.perpetual_venue_markets),
             ("l2_dated_venue_markets", self.l2_dated_venue_markets),
@@ -86,6 +91,7 @@ class LiquidCryptoFeaturePolicy:
             "schema",
             "revision",
             "perpetual_base_assets",
+            "perpetual_settlement_asset",
             "perpetual_venue_markets",
             "l2_base_assets",
             "l2_dated_venue_markets",
@@ -119,6 +125,7 @@ class LiquidCryptoFeaturePolicy:
         return cls(
             revision=int(raw["revision"]),
             perpetual_base_assets=assets("perpetual_base_assets"),
+            perpetual_settlement_asset=str(raw["perpetual_settlement_asset"]),
             perpetual_venue_markets=pairs("perpetual_venue_markets"),
             l2_base_assets=assets("l2_base_assets"),
             l2_dated_venue_markets=pairs("l2_dated_venue_markets"),
@@ -140,6 +147,7 @@ class LiquidCryptoFeaturePolicy:
             "schema": _SCHEMA,
             "revision": self.revision,
             "perpetual_base_assets": list(self.perpetual_base_assets),
+            "perpetual_settlement_asset": self.perpetual_settlement_asset,
             "perpetual_venue_markets": [
                 {"venue": venue, "market": market}
                 for venue, market in self.perpetual_venue_markets
@@ -227,6 +235,7 @@ def select_liquid_crypto_feature_set(
                     market=market,
                     product_type=ProductType.PERPETUAL,
                     base_asset=base,
+                    settlement_asset=policy.perpetual_settlement_asset,
                     label="liquid perpetual",
                 )
             )
@@ -288,6 +297,7 @@ def _exact_record(
     market: str,
     product_type: ProductType,
     base_asset: str,
+    settlement_asset: str,
     label: str,
 ) -> InstrumentRecord:
     matches = [
@@ -297,6 +307,8 @@ def _exact_record(
         and record.identity.market == market
         and record.identity.product_type is product_type
         and record.base_asset == base_asset
+        and record.quote_asset == settlement_asset
+        and record.settlement_asset == settlement_asset
     ]
     if len(matches) != 1:
         raise ValueError(

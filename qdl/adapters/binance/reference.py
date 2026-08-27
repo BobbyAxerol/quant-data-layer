@@ -34,6 +34,8 @@ _ADAPTER_VERSION = "qdl-binance-reference/1"
 # boundary, so coverage must not manufacture a gap from that clock jitter.
 # This does not alter the raw observation timestamp or relax any other product.
 _FUNDING_BOUNDARY_TOLERANCE_MS = 60_000
+_NATIVE_BASIS_TRANSIENT_ATTEMPTS = 4
+_NATIVE_BASIS_TRANSIENT_BACKOFF_SECONDS = 0.5
 
 
 def _fields(*items):
@@ -82,6 +84,10 @@ class BinanceUsdmReferenceAdapter:
         self._retry_backoff_seconds = retry_backoff_seconds
         self._sleep = sleep
         self._clock_ns = clock_ns
+        # Binance's public native-basis endpoint may emit an HTTP-200 error
+        # envelope under concurrent pair pressure. Keep that one fragile lane
+        # serial; all other reference products retain ReferenceBatch limits.
+        self._native_basis_lock = asyncio.Lock()
 
     async def fetch(
         self,
@@ -331,14 +337,40 @@ class BinanceUsdmReferenceAdapter:
                 end_ms,
             )
 
-        return await self._paginate(
-            request,
-            capability,
-            endpoint="/futures/data/basis",
-            page=page,
-            parser=lambda row: self._basis_observation(request, row, pair),
-            page_limit=500,
-        )
+        async def fetch_once() -> ReferenceFetch:
+            return await self._paginate(
+                request,
+                capability,
+                endpoint="/futures/data/basis",
+                page=page,
+                parser=lambda row: self._basis_observation(request, row, pair),
+                page_limit=500,
+            )
+
+        async with self._native_basis_lock:
+            return await self._retry_transient_native_basis_envelope(fetch_once)
+
+    async def _retry_transient_native_basis_envelope(
+        self,
+        fetch_once: Callable[[], Awaitable[ReferenceFetch]],
+    ) -> ReferenceFetch:
+        """Retry only Binance's occasional HTTP-200, non-list basis envelope."""
+
+        last_error: ReferenceProviderError | None = None
+        for attempt in range(_NATIVE_BASIS_TRANSIENT_ATTEMPTS):
+            try:
+                return await fetch_once()
+            except ReferenceProviderError as error:
+                if str(error) != "Binance /futures/data/basis history response is not a list":
+                    raise
+                last_error = error
+                if attempt + 1 < _NATIVE_BASIS_TRANSIENT_ATTEMPTS:
+                    await self._sleep(_NATIVE_BASIS_TRANSIENT_BACKOFF_SECONDS * (2**attempt))
+        assert last_error is not None
+        raise ReferenceProviderExhausted(
+            "Binance USD-M basis exhausted "
+            f"{_NATIVE_BASIS_TRANSIENT_ATTEMPTS} transient-envelope attempts"
+        ) from last_error
 
     async def _continuous_basis_history(
         self, request: ReferenceRequest, capability: FeedCapability
@@ -591,6 +623,7 @@ class BinanceUsdmReferenceAdapter:
         self, operation: str, fetcher: Callable[..., dict[str, Any]], *args, **kwargs
     ) -> dict[str, Any]:
         last_error: BaseException | None = None
+        retry_after_ms: int | None = None
         for attempt in range(self._max_attempts):
             try:
                 return await asyncio.to_thread(
@@ -602,10 +635,15 @@ class BinanceUsdmReferenceAdapter:
                 )
             except (BinanceProviderError, OSError) as error:
                 last_error = error
+                provider_hint = getattr(error, "retry_after_ms", None)
+                if provider_hint is not None:
+                    retry_after_ms = max(retry_after_ms or 0, int(provider_hint))
+                    break
                 if attempt + 1 < self._max_attempts:
                     await self._sleep(self._retry_backoff_seconds * (2**attempt))
         raise ReferenceProviderExhausted(
-            f"Binance USD-M {operation} exhausted {self._max_attempts} bounded attempts"
+            f"Binance USD-M {operation} exhausted {self._max_attempts} bounded attempts",
+            retry_after_ms=retry_after_ms,
         ) from last_error
 
     @staticmethod

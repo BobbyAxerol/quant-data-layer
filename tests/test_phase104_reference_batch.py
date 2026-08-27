@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +33,7 @@ from qdl.reference.contracts import (
     decimal_field,
     provider_lineage,
 )
+from qdl.query import ConsumerGrade, ReferenceDataRequirement, V2QueryService
 
 
 FIXTURE = Path(__file__).with_name("fixtures") / "phase104" / "binance_funding_pages.json"
@@ -465,6 +468,171 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
             {field.name: field.value.source_text for field in basis_result.observations[0].fields}["annualized_basis_rate"],
             "0.123400",
         )
+
+    async def test_native_basis_retries_only_a_transient_non_list_envelope(self):
+        calls = {"count": 0}
+
+        def basis(*_args, **_kwargs):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return {"data": {"code": "TRANSIENT"}}
+            return {"data": [
+                {
+                    "pair": "BTCUSDT",
+                    "contractType": "PERPETUAL",
+                    "basis": "10.0000",
+                    "timestamp": "701",
+                }
+            ]}
+
+        result = await ReferenceBatch({
+            ("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
+                basis_fetcher=basis,
+                max_attempts=2,
+                sleep=no_sleep,
+            )
+        }).fetch_one(ReferenceRequest(
+            instrument=self.btc,
+            product=ReferenceProduct.BASIS,
+            start_ms=700,
+            end_ms=701,
+            interval="1h",
+            limit=1,
+            page_size=1,
+            max_pages=1,
+            basis_series=BasisSeries.NATIVE,
+            basis_contract_type="PERPETUAL",
+        ))
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        self.assertEqual(result.observations[0].fields[0].value.source_text, "10.0000")
+
+    async def test_native_basis_transient_envelope_exhaustion_stays_typed_error(self):
+        calls = {"count": 0}
+
+        def basis(*_args, **_kwargs):
+            calls["count"] += 1
+            return {"data": {"code": "TRANSIENT"}}
+
+        result = await ReferenceBatch({
+            ("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
+                basis_fetcher=basis,
+                max_attempts=1,
+                sleep=no_sleep,
+            )
+        }).fetch_one(ReferenceRequest(
+            instrument=self.btc,
+            product=ReferenceProduct.BASIS,
+            start_ms=700,
+            end_ms=701,
+            interval="1h",
+            limit=1,
+            page_size=1,
+            max_pages=1,
+            basis_series=BasisSeries.NATIVE,
+            basis_contract_type="PERPETUAL",
+        ))
+
+        self.assertEqual(calls["count"], 4)
+        self.assertEqual(result.status, ReferenceStatus.ERROR)
+        self.assertEqual(result.error_code, "PROVIDER_RETRY_EXHAUSTED")
+        self.assertEqual(result.observations, ())
+
+    async def test_rate_limit_hint_propagates_without_hot_adapter_retry(self):
+        calls = {"count": 0}
+
+        def funding(*_args, **_kwargs):
+            calls["count"] += 1
+            raise BinanceProviderError(
+                "rate limited",
+                retry_after_ms=120_000,
+            )
+
+        result = await ReferenceBatch({
+            ("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
+                funding_fetcher=funding,
+                max_attempts=3,
+                sleep=no_sleep,
+            )
+        }).fetch_one(ReferenceRequest(
+            instrument=self.btc,
+            product=ReferenceProduct.FUNDING_RATE,
+            start_ms=100,
+            end_ms=200,
+            limit=1,
+            page_size=1,
+            max_pages=1,
+        ))
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(result.status, ReferenceStatus.ERROR)
+        self.assertEqual(result.error_code, "PROVIDER_RETRY_EXHAUSTED")
+        self.assertEqual(result.retry_after_ms, 120_000)
+
+        requirement = ReferenceDataRequirement(
+            instrument_uid=self.btc.instrument_uid,
+            product=ReferenceProduct.FUNDING_RATE,
+            start_time_ns=100 * 1_000_000,
+            end_time_ns=200 * 1_000_000,
+            limit=1,
+            page_size=1,
+            max_pages=1,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="test-rate-limit",
+        )
+        problem = V2QueryService._reference_problem(
+            None, requirement, result.request, result
+        )
+        self.assertIsNotNone(problem)
+        assert problem is not None
+        self.assertTrue(problem.retryable)
+        self.assertEqual(problem.retry_after_ms, 120_000)
+
+    async def test_native_basis_serializes_only_its_provider_pair_lane(self):
+        active = {"value": 0, "maximum": 0}
+        lock = threading.Lock()
+
+        def basis(pair, *_args, **_kwargs):
+            with lock:
+                active["value"] += 1
+                active["maximum"] = max(active["maximum"], active["value"])
+            time.sleep(0.01)
+            with lock:
+                active["value"] -= 1
+            return {"data": [
+                {
+                    "pair": pair,
+                    "contractType": "PERPETUAL",
+                    "basis": "10.0000",
+                    "timestamp": "701",
+                }
+            ]}
+
+        adapter = BinanceUsdmReferenceAdapter(
+            basis_fetcher=basis,
+            max_attempts=1,
+            sleep=no_sleep,
+        )
+        requests = tuple(
+            ReferenceRequest(
+                instrument=instrument,
+                product=ReferenceProduct.BASIS,
+                start_ms=700,
+                end_ms=701,
+                interval="1h",
+                limit=1,
+                page_size=1,
+                max_pages=1,
+                basis_series=BasisSeries.NATIVE,
+                basis_contract_type="PERPETUAL",
+            )
+            for instrument in (self.btc, self.eth)
+        )
+        left, right = await ReferenceBatch({("BINANCE", "USDM"): adapter}).fetch(requests)
+
+        self.assertEqual(active["maximum"], 1)
+        self.assertEqual((left.status, right.status), (ReferenceStatus.OK, ReferenceStatus.OK))
 
     async def test_continuous_vision_basis_is_memory_only_and_requires_a_complete_daily_window(self):
         day_ms = 86_400_000

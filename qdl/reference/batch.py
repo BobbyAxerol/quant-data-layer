@@ -264,7 +264,12 @@ class ReferenceBatch:
             )
         except ReferenceProviderExhausted as error:
             return self._error_result(
-                request, capability, received_at_ns, "PROVIDER_RETRY_EXHAUSTED", str(error)
+                request,
+                capability,
+                received_at_ns,
+                "PROVIDER_RETRY_EXHAUSTED",
+                str(error),
+                retry_after_ms=getattr(error, "retry_after_ms", None),
             )
         except ReferenceProviderError as error:
             return self._error_result(
@@ -328,6 +333,8 @@ class ReferenceBatch:
         received_at_ns: int,
         code: str,
         detail: str,
+        *,
+        retry_after_ms: int | None = None,
     ) -> ReferenceBatchResult:
         return ReferenceBatchResult(
             request=request,
@@ -346,6 +353,7 @@ class ReferenceBatch:
             received_at_ns=received_at_ns,
             error_code=code,
             error_detail=detail,
+            retry_after_ms=retry_after_ms,
         )
 
     @staticmethod

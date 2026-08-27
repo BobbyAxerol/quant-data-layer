@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import random
 import time
+from collections.abc import Mapping
 from typing import Any
 
 import requests
@@ -45,6 +46,19 @@ LONG_SHORT_KIND_TO_ENDPOINT = {
     "top_position": "top_long_short_position_ratio",
 }
 
+# Binance sometimes returns its documented `{code, msg}` error body with HTTP
+# 200. Treat it at the common provider edge so no downstream adapter can
+# mistake an error envelope for a product-specific payload.
+_TRANSIENT_PROVIDER_ERROR_CODES = frozenset({
+    -1000,  # UNKNOWN
+    -1001,  # DISCONNECTED
+    -1003,  # TOO_MANY_REQUESTS
+    -1004,  # SERVER_BUSY
+    -1006,  # UNEXPECTED_RESP
+    -1007,  # TIMEOUT
+    -1008,  # SERVER_BUSY
+})
+
 
 def normalize_period(period: str) -> str:
     value = str(period or "").strip()
@@ -80,6 +94,41 @@ def _headers(endpoint_key: str) -> dict[str, str]:
     return {"X-MBX-APIKEY": api_key}
 
 
+def _provider_error_code(payload: Any) -> int | None:
+    """Return a nonzero documented Binance error code, if this is one."""
+
+    if not isinstance(payload, Mapping) or "code" not in payload:
+        return None
+    try:
+        code = int(payload["code"])
+    except (TypeError, ValueError):
+        return None
+    return code if code else None
+
+
+def _retry_after_ms(response: Any) -> int | None:
+    """Read Binance's official rate-limit delay without exposing response text."""
+
+    headers = getattr(response, "headers", {}) or {}
+    if not isinstance(headers, Mapping):
+        return None
+    value = next(
+        (item for key, item in headers.items() if str(key).lower() == "retry-after"),
+        None,
+    )
+    if value is None:
+        return None
+    try:
+        seconds = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    # Binance documents Retry-After in seconds for 418/429. Keep malformed or
+    # unbounded provider values out of the caller's scheduling decision.
+    if not 0 <= seconds <= 3 * 24 * 60 * 60:
+        return None
+    return int(seconds * 1_000)
+
+
 def _public_get(
     endpoint_key: str,
     params: dict[str, Any] | None = None,
@@ -94,23 +143,55 @@ def _public_get(
     url = f"{BINANCE_FUTURES_BASE_URL}{BINANCE_DERIVATIVE_ENDPOINTS[endpoint_key]}"
     request_params = _clean_params(params or {})
     attempts: list[dict[str, Any]] = []
+    retry_after_ms: int | None = None
 
     for attempt in range(1, max_attempts + 1):
         try:
             resp = http_get(url, params=request_params, headers=_headers(endpoint_key), timeout=timeout)
             status_code = int(resp.status_code)
             if status_code == 200:
-                return {
-                    "endpoint": endpoint_key,
-                    "url_path": BINANCE_DERIVATIVE_ENDPOINTS[endpoint_key],
-                    "params": request_params,
-                    "data": resp.json(),
-                    "attempts": attempts + [{"attempt": attempt, "status_code": status_code}],
-                }
-            body = getattr(resp, "text", "")[:300]
-            attempts.append({"attempt": attempt, "status_code": status_code, "body": body})
-            if status_code not in {408, 418, 429, 500, 502, 503, 504}:
-                break
+                payload = resp.json()
+                provider_code = _provider_error_code(payload)
+                if provider_code is not None:
+                    attempt_record = {
+                        "attempt": attempt,
+                        "status_code": status_code,
+                        "provider_code": provider_code,
+                    }
+                    hint = _retry_after_ms(resp)
+                    if hint is not None:
+                        attempt_record["retry_after_ms"] = hint
+                        retry_after_ms = hint
+                    attempts.append(attempt_record)
+                    # -1003 is Binance's rate-limit control response. Do not
+                    # turn one rejected request into a burst of retries.
+                    if provider_code == -1003:
+                        break
+                    if provider_code not in _TRANSIENT_PROVIDER_ERROR_CODES:
+                        break
+                else:
+                    return {
+                        "endpoint": endpoint_key,
+                        "url_path": BINANCE_DERIVATIVE_ENDPOINTS[endpoint_key],
+                        "params": request_params,
+                        "data": payload,
+                        "attempts": attempts + [{"attempt": attempt, "status_code": status_code}],
+                    }
+            else:
+                body = getattr(resp, "text", "")[:300]
+                attempt_record = {"attempt": attempt, "status_code": status_code, "body": body}
+                hint = _retry_after_ms(resp)
+                if hint is not None:
+                    attempt_record["retry_after_ms"] = hint
+                    retry_after_ms = hint
+                attempts.append(attempt_record)
+                # 418 is an IP ban and 429 is an explicit rate limit. Both
+                # must be rescheduled by the caller using Retry-After rather
+                # than retried inside this request worker.
+                if status_code in {418, 429}:
+                    break
+                if status_code not in {408, 500, 502, 503, 504}:
+                    break
         except Exception as exc:
             attempts.append({"attempt": attempt, "error": str(exc)})
 
@@ -121,6 +202,7 @@ def _public_get(
     raise BinanceProviderError(
         f"Failed to fetch Binance derivatives endpoint {endpoint_key}",
         attempts=attempts,
+        retry_after_ms=retry_after_ms,
     )
 
 

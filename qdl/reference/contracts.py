@@ -49,6 +49,12 @@ class ReferenceProviderError(RuntimeError):
 class ReferenceProviderExhausted(RuntimeError):
     """A bounded retry policy was exhausted without a trustworthy reply."""
 
+    def __init__(self, detail: str, *, retry_after_ms: int | None = None) -> None:
+        super().__init__(detail)
+        if retry_after_ms is not None and retry_after_ms < 0:
+            raise ValueError("retry_after_ms must be non-negative")
+        self.retry_after_ms = retry_after_ms
+
 
 class ReferenceUnavailable(RuntimeError):
     """A truthful capability/product combination has no provider result."""
@@ -258,6 +264,7 @@ class ReferenceBatchResult:
     observations: tuple[ReferenceObservation, ...] = ()
     error_code: str | None = None
     error_detail: str | None = None
+    retry_after_ms: int | None = None
     cache_hit: bool = False
     coalesced: bool = False
 
@@ -276,6 +283,8 @@ class ReferenceBatchResult:
             raise ValueError("UNAVAILABLE reference result requires error_code")
         if self.status is ReferenceStatus.MISSING and self.error_code is not None:
             raise ValueError("MISSING reference result cannot claim an error")
+        if self.retry_after_ms is not None and self.retry_after_ms < 0:
+            raise ValueError("reference retry_after_ms must be non-negative")
 
 
 def decimal_field(name: str, value: object, unit: str) -> ReferenceField | None:

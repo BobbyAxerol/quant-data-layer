@@ -6,6 +6,7 @@ perpetual_base_assets:
   - SOL
   - DOGE
   - BNB
+perpetual_settlement_asset: USDT
 perpetual_venue_markets:
   - venue: BINANCE
     market: USDM

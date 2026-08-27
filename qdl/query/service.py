@@ -635,6 +635,7 @@ class V2QueryService:
             CanonicalErrorCode.SOURCE_UNAVAILABLE,
             result.error_detail or "reference provider request failed",
             result.error_code not in {"PROVIDER_PROTOCOL"},
+            result.retry_after_ms,
         )
 
     def status(self, requirement: DataRequirement) -> QualityMetadata:
