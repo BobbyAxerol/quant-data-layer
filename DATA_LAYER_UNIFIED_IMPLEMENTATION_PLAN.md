@@ -18528,6 +18528,115 @@ READ-ONLY / RUNTIME UNCHANGED`, 2026-08-27):**
   certificate. No additional provider burst was issued after that evidence;
   V2 remains non-primary and no runtime/durable state changed.
 
+**C3.6-C.1 shared provider-admission core (`PLANNED / SOURCE-FIRST / NO
+RUNTIME MUTATION UNTIL SEPARATE PACKET`, 2026-08-27):**
+
+- **Goal:** remove the remaining self-induced shared-egress failure mode before
+  repeating the authentic certificate. The durable decision authority is a
+  provider-neutral Rust core, not a Python-only throttle: add a canonical
+  `ProviderAdmission` state machine beside the existing deterministic token
+  bucket in `rust/qdl-core`, then let `qdl-realtime-core` own the runtime
+  coordination adapter. Python remains only the vendor HTTP/WebSocket adapter
+  and V1/V2 API projection; it submits normalized provider work and must honor
+  the Rust admission decision rather than maintaining a competing policy.
+- **Reusable boundary:** every request is classified by an explicit
+  `ProviderLaneKey(provider, market, endpoint_family)`, never by alpha,
+  symbol, container or test name. The initial capability table covers Binance
+  USD-M and OKX Swap/Futures `BAR_HISTORY`, `REFERENCE_NATIVE_BASIS`,
+  `REFERENCE_METRICS`, `BOOK_SNAPSHOT` and `BOOK_DELTA`; future DNSE, Deribit
+  and venue-specific products add declared lane policies without changing the
+  state machine. The key deliberately lets all Binance native-basis symbols
+  share the same public endpoint budget while retaining independent provider
+  and market identities.
+- **Architecture/invariants:** the Rust state machine decides token admission,
+  bounded in-flight work, cooldown, priority class and retry deadline using a
+  monotonic clock. `qdl-realtime-core` persists only that small coordination
+  state through one atomic, namespaced Redis operation in the existing V2
+  state store; no new service, broker, image family, per-symbol worker or raw
+  provider cache is introduced. Exact duplicate in-flight work may be
+  coalesced by its normalized request identity. Active admitted final-BAR/L2
+  demand has a reserved bounded share so bounded history/reference work cannot
+  starve it. A `418`, `429` or `-1003` atomically opens the relevant lane for
+  the official `Retry-After`, or the existing conservative 60-second fallback
+  when absent. All waiting callers receive a typed retryable defer result; no
+  request worker hot-retries, sleeps indefinitely, fabricates a datum, changes
+  venue, or silently falls back to V1.
+- **Scope/exclusions:** C3.6-C.1 is source and isolated-test work first. It
+  may add versioned policy/config schemas, Rust/Python bindings and test-only
+  Redis namespaces, but may not write the live `stable_redis` keys, recreate a
+  role, change a V1/V2 route, alter a consumer manifest or emit provider
+  traffic. Runtime use of the adapter is reserved for C3.6-C.2's exact packet.
+- **Required tests:** Rust golden tests cover token refill, weighted lane
+  priority, cooldown CAS, expiry and deterministic retry deadlines; contract
+  tests prove Python cannot widen/rewrite a Rust decision; isolated Redis
+  integration tests cover concurrent workers, duplicate coalescing, competing
+  endpoint families, `418/429/-1003` with and without `Retry-After`, and
+  namespace isolation. Failure tests prove no cross-venue/symbol mix, no
+  numeric zero/empty success and no extra provider attempt during cooldown.
+  Run the existing V2 query/reference/L2 suites plus Rust core tests,
+  `cargo fmt --check`, Buf gates, Python 3.10 parse and `git diff --check`.
+- **Exit/rollback/decision:** exit requires all deterministic and isolated
+  integration gates green, a documented policy digest, bounded metrics schema
+  (`admitted`, `deferred`, `coalesced`, `cooldown`, `wait_ms`) and no production
+  mutation. Rollback is a source revert and isolated namespace cleanup. This
+  phase does not itself claim authentic-provider certification or V2-primary;
+  only then is a compact C3.6-C.2 runtime packet eligible for approval.
+
+**C3.6-C.2 governed authentic certification and V2-primary handoff (`PLANNED /
+REQUIRES C3.6-C.1 EXIT AND EXPLICIT RUNTIME APPROVAL`, 2026-08-27):**
+
+- **Goal:** use the completed Rust admission core to obtain one complete,
+  provider-authentic certificate and then promote only its approved demand
+  manifest to V2-primary with V1 as the explicit rollback route. This closes
+  the current C3.6-C product gap; it is not a retry-until-lucky loop.
+- **Bounded runtime packet:** before any provider call, the packet must name
+  the immutable Rust/Python image digests, policy/catalog/manifest SHA,
+  existing V2 query/core roles and identities, a dedicated C3.6 coordination
+  prefix, fixed maximum concurrency/deadline, no-order consumer scope and the
+  exact prior V1 manifest revision. It reuses existing V2 roles and
+  `stable_redis`; it creates no per-venue/symbol container and does not touch
+  Kafka topology/offsets, SQLite, V1 processes, Trading System, alpha state or
+  order paths. Rollback is one manifest revision to V1 plus deletion of only
+  the C3.6 coordination keys after the observation window.
+- **Authentic certificate:** resolve the independent Binance USD-M and OKX
+  Swap top-350 inventories once, freeze their digest for the run, then execute
+  five Binance native-basis singletons, the remaining 72 reference requests,
+  six declared Binance perpetual/dated L2 snapshot-delta captures, the
+  corresponding declared OKX L2 captures, and all `700/700` final 1m BAR
+  warmups. The coordinator may defer pending work until a bounded global
+  certificate deadline after a documented provider cooldown; it must not issue
+  a second hot request or restart the certificate. A timeout, mandatory source
+  error, continuity/gap defect, identity/decimal/finality mismatch, missing
+  Binance observation or unaccounted BAR result fails closed.
+- **Evidence/acceptance:** retain aggregate counts and canonical/digest-only
+  evidence for every plane, plus p50/p95 request latency, freshness, BAR gap
+  count, L2 resync/sequence results, cooldown/defer/coalescing counts,
+  provider status, max concurrency, CPU/RAM and no-order assertions. Expected
+  provider capability absences remain typed unavailable only where declared by
+  the exact OKX capability contract; they never count as Binance success. The
+  certificate passes only at `700/700`, with all mandatory reference/L2 gates
+  and no active unaccounted fallback.
+- **Handoff gate:** only after the above pass, run a 300-second no-order paper
+  observation for the named Trading System/alpha consumer slices under a new
+  versioned manifest revision: V2 is primary, V1 fallback is used only where
+  the consumer contract permits it, and `BLOCKED` remains blocked. Verify
+  warmup, signed-cursor replay, reconnect, V2 -> allowed V1 -> V2 return,
+  freshness/gap/resource metrics and unchanged alpha signal/sizing/order
+  behavior. Promotion never changes public V1 schemas or endpoint semantics.
+- **External-provider boundary:** if a shared governor with no local
+  contention still receives persistent public `418`, the code is not allowed
+  to paper over it with a different venue, synthetic data or unreviewed URL.
+  The only completion path is an approved Binance capacity remedy (dedicated
+  egress/IP or documented provider entitlement/quota), followed by the same
+  governed certificate. That is an explicit external operating dependency,
+  not residual Data Layer correctness debt.
+- **Exit/rollback/decision:** C3.6-C closes only after the real certificate
+  and bounded handoff both pass, cleanup retains only hashes/metrics and one
+  immutable rollback image, and the plan records the exact manifest/image
+  revisions. A failed certificate leaves V2 non-primary and rolls no consumer;
+  a failed handoff rolls the named manifest back to V1 without deleting V2
+  evidence. No broader cutover is authorized by this phase.
+
 ### 22.11 Phase 11 Completion Decision
 
 Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the
