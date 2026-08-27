@@ -18829,6 +18829,158 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
   `git diff --check` passed. The certificate docstring now accurately limits
   its explicit Rust mode's mutable surface to the dedicated admission state;
   it does not claim source-only behavior after a runtime binding is supplied.
+- **Authentic certificate passed (2026-08-27):** after the fixed query roles
+  were running, exactly one repaired run passed with real public-provider
+  provenance: `700/700` top-350 final 1m BAR warmups, `72` reference requests
+  and `12` declared Binance/OKX L2 bindings. It completed in `134.362s` with
+  maximum RSS `195324 KiB`; no synthetic data, raw-payload persistence,
+  order action, V1 mutation, Kafka/SQLite mutation or unaccounted fallback was
+  used. The verifier's `runtime_mutations=0` field refers to market-data and
+  durable-data mutations; the separately named C3.6 admission prefix was
+  intentionally used for bounded `ADMIT`/`COMPLETE`/cooldown coordination and
+  is the only Redis state introduced by this packet. This satisfies the
+  provider certificate gate. The remaining approved C2 work is the existing
+  300-second no-order V2-primary consumer handoff with explicit V1 rollback.
+- **No-order handoff binding (2026-08-27):** C2 reuses the already-tested
+  `phase105_consumer_v2_identity_acceptance.py` contract rather than creating
+  a new consumer harness. It will create one fresh payload-free namespace
+  `/home/bobby/.local/state/qdl-v2/c36c2-20260827T165526Z/`, bind the currently
+  serving attested V1 image
+  `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`,
+  and render a new public-only handoff record pinned to Python image
+  `sha256:cdd7b8120b94b1e90400da5759be505f9bcfe2a0f71ec965e35dc2159aba3b2c`.
+  One disposable, non-root, read-only `--rm` client on the existing
+  `executor_network` will use only `query_v2_1:8200`, `query_v2_2:8200`,
+  `qdl-v2-stream-a:8210`, `qdl-v2-stream-b:8210`, and `data_layer:8100` for
+  the existing manifest-authorized V1 drill. Its exact identities are
+  monitoring, Trading System paper, Binance paper alpha and OKX paper alpha;
+  all client certificates were read-only checked valid through November 2026.
+  The existing query/stream trust extension remains mounted and valid, so no
+  fourth-reader reload is needed. No provider credential, Docker socket,
+  order/execution endpoint, route mutation, offset reset, Redis/SQLite/Kafka
+  mutation or alpha/Trading System container is permitted. The observation has
+  the harness's hard `300s` ceiling; rollback is removal of that client and
+  only this new evidence namespace if it fails.
+- **Historical packet fence observed (2026-08-27):** the old
+  `phase105_prepare_handoff_bundle.py` correctly rejected the new C2 Python
+  digest because its final-BAR packet is sealed to the historical reader
+  image. It created no output or runtime mutation. C2 does not rewrite or
+  bypass that historical packet: its fresh V1 runtime binding is
+  `PASS` for the currently serving attested V1 image, and the existing
+  no-order harness will emit a new payload-free receipt directly against the
+  named current V2 replicas. The receipt, C3.6 image/policy/binding digests,
+  identity names and explicit V1 rollback binding recorded here form the
+  governed C2 evidence; the historical final-BAR packet remains intact as its
+  own rollback provenance.
+- **Final-BAR runtime alignment required before the same C2 handoff
+  (2026-08-27):** inspection of the serving roles found deployment drift, not
+  a provider/data defect. `binance_bar_edge` still runs the historical
+  `3ad1244` Python image with `phase105c-final-bar-r10` and its old checkpoint;
+  the mounted Rust bundle likewise contains only the four BTC/ETH `BAR 1m`
+  bindings. The committed versioned catalog already declares the required
+  Binance/OKX `15m` and `1h` bindings, so a receipt for those intervals must
+  remain fail-closed until they are materialized by the shared edge/core plane.
+  The approved continuous C2 scope therefore reuses the existing governed
+  final-BAR repair renderer to create one new immutable runtime bundle and
+  checkpoint. Its bounded rolling action is exactly the seven existing roles:
+  `ingestor_okx_swap`, `binance_bar_edge`, `rust_core`, `query_v2_1`,
+  `query_v2_2`, `stream_v2_active`, `stream_v2_passive`. The `rust_core` roll
+  is mandatory and bounded: its strict canonical lookup uses generated
+  `core.bindings`, while the mounted r10 bundle has four final BAR bindings
+  and the rendered r11 bundle has fifty-six. Without it, the edge would
+  publish authentic new BAR rows that Rust correctly rejects as unknown
+  bindings. The packet renderer is corrected and regression-tested to require
+  that core roll. It changes no topology, image binary, authority record,
+  Kafka topic/offset/ACL, offset reset, Redis flush or SQLite deletion, V1
+  process, Trading System, alpha or order route. The approved real bootstrap
+  does write authentic closed BAR records through the existing V2
+  Kafka/canonical/projector/cache data plane; that normal data-plane write is
+  necessary and is not an administrative-state mutation. The existing C2 Rust
+  image is reused and the new
+  bundle preserves its byte-identical authority record. Rollback is a rolling
+  recreation of only those seven roles using the prior runtime directory,
+  checkpoint and Python image. Source-only packet validation and a bounded
+  real bootstrap must pass before repeating the one 300-second no-order
+  handoff.
+- **r11 packet preflight passed (2026-08-27):** network-disabled renderer and
+  schedule/materialization tests passed `11/11`. The prepared packet is
+  `qdl.phase105c.final-bar-repair.v1`, SHA
+  `6c3f3fa3c5210ce430bbeaceb6bdbac7213e59ff35b16f9a10e6ee48d2d56774`,
+  acquisition revision `11`, with byte-identical authority SHA
+  `1cd55d7bcefe586833b7b0d0e9d929b8515a0d7366c5b88f4fb9b6b981fb1078`.
+  It retains the current certified Python digest
+  `sha256:cdd7b8120b94b1e90400da5759be505f9bcfe2a0f71ec965e35dc2159aba3b2c`
+  and Rust digest
+  `sha256:c8f3c55342f127ed498e4bcde8204bace2e2a8cb35d9e84a80ea5d6d97ac4d16`.
+  Compose resolution proves each of the seven named roles mounts only
+  `/home/bobby/.local/state/qdl-v2/c36c2-20260827T165526Z/final-bar-align-r11-core/runtime`
+  (or its exact role JSON) and no unapproved role is selected. The rollback
+  selectors are superseded by the approved per-role rollback provenance below;
+  a generic prior Python image is insufficient because the seven serving roles
+  currently have mixed image/runtime revisions.
+
+**Approved C3.6-C.2 closure transaction (`IN PROGRESS / OWNER APPROVED`,
+2026-08-27):**
+
+- **Owner approval:** source fixes and commits, then rolling recreation of
+  exactly `ingestor_okx_swap`, `binance_bar_edge`, `rust_core`,
+  `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+  `stream_v2_passive`. Authentic final-BAR bootstrap writes to existing V2
+  Kafka/canonical/projector/cache are allowed. V1, Kafka topology/ACL/offsets,
+  Redis flushes, SQLite deletion, Trading System, alpha and every order path
+  are excluded. Binance USD-M and OKX crypto are the approved V2-primary
+  target; DNSE/VN remains `V1_PRIMARY` until a separate market-hours packet.
+- **Source closure before runtime:** (1) packet rollback must retain a
+  validated per-role image, runtime-directory and checkpoint map; (2) the V2
+  OpenAPI snapshot and SDK must expose `POST /v2/market-data/reference:batch`
+  and reject future router/artifact drift; (3) manifest-governed reference and
+  L2 requirements must be active for the approved Binance/OKX crypto demand,
+  preserve provider `UNAVAILABLE` rather than numeric zero, and retain no
+  execution/order permission. These are one continuous approved scope, not
+  new runtime topology or symbol-specific workers.
+- **Source slice evidence (2026-08-27, `IN PROGRESS`):** the final-BAR packet
+  renderer now requires an exact seven-role rollback map (`image_digest`,
+  prior governed `runtime_dir`, and the bar-edge-only prior checkpoint). Rust
+  roles do not expose a `QDL_CONFIG_REVISION`, so the packet deliberately does
+  not invent one; the immutable mounted runtime directory is its exact config
+  provenance. The handoff parser rejects a missing role, a new-runtime path
+  masquerading as rollback, a non-bar checkpoint, or a checkpoint mismatch.
+  The C2 compose assertion was corrected to allow the already-existing
+  `rust_core` provider-admission environment while proving it has no command,
+  image or volume override and is therefore not a C2 recreate target. The V2
+  OpenAPI snapshot was regenerated from the current router: it keeps all ten
+  previous routes, adds only `POST /v2/market-data/reference:batch`, adds the
+  fourteen reachable reference schemas, and exposes already-modelled additive
+  L2 `book_generation`, `sequence_verified` and `truncated` fields. The typed
+  SDK already calls this endpoint; no ad-hoc client surface was added. An
+  isolated, network-disabled V2 image ran `28/28` targeted
+  packet/handoff/OpenAPI/reference/L2 tests successfully. Live L2 binding
+  activation remains intentionally outside this seven-role packet because
+  Binance requires `ingestor_binance_usdm`, which is not an approved recreate
+  target; no role is smuggled into this cutover.
+- **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
+  final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
+  intervals). The two VN catalog entries are excluded from the acceptance
+  denominator while their route remains V1-primary. Then run the four named
+  disposable no-order consumers for 300 seconds: monitoring, Trading System
+  paper adapter, Binance paper alpha SDK and OKX paper alpha SDK. Verify
+  V2-primary route, warmup, signed cursor replay, reconnect, bounded allowed
+  V1 fallback and return-to-V2; blocked products must remain blocked. Assert
+  no direct venue connection by clients and no alpha signal/sizing/order
+  action.
+- **Required evidence:** source unit/contract/SDK tests, Rust L2/reference
+  tests, bounded real provider proof for requested reference/L2 products,
+  r11 bar continuity/freshness/gap and replica agreement, current CPU/RAM/lag,
+  exact role image/mount provenance, V1 fallback provenance and cleanup of
+  only disposable C2 evidence. A passing health process alone is not exit
+  evidence.
+- **Rollback:** before r11 apply, record the currently running seven-role map
+  in the sealed packet. Rollback recreates only those named roles from their
+  own prior image/runtime path and restores only the prior bar-edge checkpoint;
+  it does not delete market data. Consumer rollback is a reviewed manifest CAS
+  to the attested V1 revision. No broad V1 universe feed is disabled in this
+  transaction; demanded-slice health, not non-strict broad telemetry, is the
+  promotion authority.
 
 ### 22.11 Phase 11 Completion Decision
 

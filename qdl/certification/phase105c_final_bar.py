@@ -34,6 +34,7 @@ WARMUP_ROWS = 1_000
 RECREATED_SERVICES = (
     "ingestor_okx_swap",
     "binance_bar_edge",
+    "rust_core",
     "query_v2_1",
     "query_v2_2",
     "stream_v2_active",
@@ -42,6 +43,12 @@ RECREATED_SERVICES = (
 FINAL_BAR_FAMILIES = frozenset({("BINANCE", "USDM"), ("OKX", "SWAP")})
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{7,64}\Z")
+_ROLLBACK_SCHEMA = "qdl.phase105c.final-bar-repair.rollback.v1"
+_ROLLBACK_ENTRY_FIELDS = frozenset({
+    "image_digest",
+    "runtime_dir",
+    "checkpoint_path",
+})
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -71,6 +78,74 @@ def _require_absolute_path(value: Path, *, field: str) -> Path:
     if not value.is_absolute() or ".." in value.parts:
         raise ValueError(f"Phase 10.5-C1 {field} must be an absolute normalized path")
     return value
+
+
+def _require_governed_runtime_dir(value: object, *, field: str) -> str:
+    """Accept only a host V2 runtime directory suitable for exact rollback."""
+    if not isinstance(value, str) or not value or "\n" in value:
+        raise ValueError(f"Phase 10.5-C1 {field} must be a non-empty path")
+    path = Path(value)
+    if (
+        not path.is_absolute()
+        or ".." in path.parts
+        or path.parts[:5] != ("/", "home", "bobby", ".local", "state")
+        or "qdl-v2" not in path.parts
+    ):
+        raise ValueError(f"Phase 10.5-C1 {field} is outside the governed QDL V2 state root")
+    return value
+
+
+def _require_prior_checkpoint(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value or "\n" in value:
+        raise ValueError(f"Phase 10.5-C1 {field} must be a non-empty checkpoint path")
+    if not value.startswith("/var/lib/qdl-stable/runtime/"):
+        raise ValueError(f"Phase 10.5-C1 {field} is outside stable runtime")
+    return value
+
+
+def _validate_rollback_provenance(
+    value: Mapping[str, object],
+    *,
+    new_runtime_dir: Path,
+    previous_bar_state_path: str,
+) -> dict[str, dict[str, str | None]]:
+    """Validate the exact seven-role rollback map before it can be sealed.
+
+    Runtime images and mounts are intentionally mixed during this repair.  A
+    single "prior Python image" cannot restore them safely, so the packet
+    binds every recreated role to its own observed image/runtime revision.
+    """
+    if not isinstance(value, Mapping) or set(value) != set(RECREATED_SERVICES):
+        raise ValueError("Phase 10.5-C1 rollback provenance must name exactly recreated services")
+    result: dict[str, dict[str, str | None]] = {}
+    for service in RECREATED_SERVICES:
+        raw = value[service]
+        if not isinstance(raw, Mapping) or set(raw) != _ROLLBACK_ENTRY_FIELDS:
+            raise ValueError(f"Phase 10.5-C1 rollback provenance is invalid for {service}")
+        image_digest = raw.get("image_digest")
+        if not isinstance(image_digest, str):
+            raise ValueError(f"Phase 10.5-C1 rollback image is invalid for {service}")
+        _require_digest(image_digest, field=f"rollback image for {service}")
+        runtime_dir = _require_governed_runtime_dir(
+            raw.get("runtime_dir"), field=f"rollback runtime directory for {service}"
+        )
+        if runtime_dir == str(new_runtime_dir):
+            raise ValueError(f"Phase 10.5-C1 rollback runtime equals new runtime for {service}")
+        checkpoint_path = raw.get("checkpoint_path")
+        if service == "binance_bar_edge":
+            checkpoint_path = _require_prior_checkpoint(
+                checkpoint_path, field="rollback Binance bar checkpoint"
+            )
+            if checkpoint_path != previous_bar_state_path:
+                raise ValueError("Phase 10.5-C1 rollback checkpoint differs from prior bar state")
+        elif checkpoint_path is not None:
+            raise ValueError(f"Phase 10.5-C1 rollback checkpoint is only valid for binance_bar_edge")
+        result[service] = {
+            "image_digest": image_digest,
+            "runtime_dir": runtime_dir,
+            "checkpoint_path": checkpoint_path,
+        }
+    return result
 
 
 def _load_active_authority(active_runtime_dir: Path) -> tuple[dict[str, Any], bytes]:
@@ -181,8 +256,7 @@ def _new_checkpoint_path(
     acquisition_revision: int,
     previous_state_path: str,
 ) -> str:
-    if not previous_state_path.startswith("/var/lib/qdl-stable/runtime/"):
-        raise ValueError("Phase 10.5-C1 prior bar checkpoint path is outside stable runtime")
+    _require_prior_checkpoint(previous_state_path, field="prior bar checkpoint")
     nonce = _sha256_bytes(
         authority_bytes + b"\x00" + python_image_digest.encode("ascii")
     )[:20]
@@ -210,6 +284,7 @@ def prepare_final_bar_repair(
     rust_image_digest: str,
     source_commit: str,
     previous_bar_state_path: str,
+    rollback_provenance: Mapping[str, object],
 ) -> dict[str, Any]:
     """Write one isolated current-revision C1 packet without runtime side effects."""
 
@@ -223,6 +298,14 @@ def prepare_final_bar_repair(
     _require_digest(python_image_digest, field="Python image")
     _require_digest(rust_image_digest, field="Rust image")
     _require_commit(source_commit)
+    previous_bar_state_path = _require_prior_checkpoint(
+        previous_bar_state_path, field="prior bar checkpoint"
+    )
+    rollback = _validate_rollback_provenance(
+        rollback_provenance,
+        new_runtime_dir=host_runtime_dir,
+        previous_bar_state_path=previous_bar_state_path,
+    )
 
     authority, authority_bytes = _load_active_authority(active_runtime_dir)
     catalog, acquisition, final_bindings = _load_final_bar_acquisition()
@@ -271,7 +354,6 @@ def prepare_final_bar_repair(
             "acquisition_revision": acquisition.revision,
             "recreated_services": list(RECREATED_SERVICES),
             "excluded_services": [
-                "rust_core",
                 "rust_core_2",
                 "rust_core_3",
                 "kafka1",
@@ -315,8 +397,8 @@ def prepare_final_bar_repair(
                 "offset_reset",
             ],
             "rollback": {
-                "action": "recreate only recreated_services with prior runtime directory, "
-                "prior Python image and prior checkpoint path",
+                "schema": _ROLLBACK_SCHEMA,
+                "services": rollback,
                 "durable_data_deletion": False,
             },
         }

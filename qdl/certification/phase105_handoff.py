@@ -54,6 +54,21 @@ V1_RUNTIME_BINDING_FIELDS = frozenset({
 })
 _ACTIVE_RUNTIME_SCHEMA = "qdl.v2.shared-primary-handoff-packet.v2"
 _FINAL_BAR_RUNTIME_SCHEMA = "qdl.phase105c.final-bar-repair.v1"
+_FINAL_BAR_ROLLBACK_SCHEMA = "qdl.phase105c.final-bar-repair.rollback.v1"
+_FINAL_BAR_RECREATED_SERVICES = (
+    "ingestor_okx_swap",
+    "binance_bar_edge",
+    "rust_core",
+    "query_v2_1",
+    "query_v2_2",
+    "stream_v2_active",
+    "stream_v2_passive",
+)
+_FINAL_BAR_ROLLBACK_ENTRY_FIELDS = frozenset({
+    "image_digest",
+    "runtime_dir",
+    "checkpoint_path",
+})
 _ACTIVE_RUNTIME_SELECTORS = (
     "QDL_CONFIG_REVISION",
     "QDL_STABLE_AUTHORITY_MODE",
@@ -270,7 +285,7 @@ def _governed_runtime_path(value: object) -> str:
 
 
 def _final_bar_runtime_binding(packet: Mapping[str, object]) -> dict[str, object]:
-    """Accept only a self-consistent revision-10 final-BAR repair packet."""
+    """Accept only a self-consistent, exact-rollback final-BAR repair packet."""
     runtime = packet.get("runtime")
     compose = packet.get("compose_environment")
     if not isinstance(runtime, Mapping) or not isinstance(compose, Mapping):
@@ -306,6 +321,50 @@ def _final_bar_runtime_binding(packet: Mapping[str, object]) -> dict[str, object
     config_revision = compose.get("QDL_CONFIG_REVISION")
     if not isinstance(config_revision, str) or not config_revision or "\n" in config_revision:
         raise ValueError("Phase 10.5-C final-BAR config revision is invalid")
+    final_bar = packet.get("final_bar")
+    rollback = packet.get("rollback")
+    if not isinstance(final_bar, Mapping) or not isinstance(rollback, Mapping):
+        raise ValueError("Phase 10.5-C final-BAR rollback evidence is missing")
+    previous_checkpoint = final_bar.get("previous_checkpoint_path")
+    if (
+        not isinstance(previous_checkpoint, str)
+        or not previous_checkpoint.startswith("/var/lib/qdl-stable/runtime/")
+    ):
+        raise ValueError("Phase 10.5-C final-BAR previous checkpoint is invalid")
+    if (
+        set(rollback) != {"schema", "services", "durable_data_deletion"}
+        or rollback.get("schema") != _FINAL_BAR_ROLLBACK_SCHEMA
+        or rollback.get("durable_data_deletion") is not False
+        or not isinstance(rollback.get("services"), Mapping)
+    ):
+        raise ValueError("Phase 10.5-C final-BAR rollback schema is invalid")
+    raw_services = rollback["services"]
+    if set(raw_services) != set(_FINAL_BAR_RECREATED_SERVICES):
+        raise ValueError("Phase 10.5-C final-BAR rollback services differ from recreated roles")
+    sealed_services: dict[str, dict[str, object]] = {}
+    for service in _FINAL_BAR_RECREATED_SERVICES:
+        item = raw_services[service]
+        if not isinstance(item, Mapping) or set(item) != _FINAL_BAR_ROLLBACK_ENTRY_FIELDS:
+            raise ValueError(f"Phase 10.5-C final-BAR rollback entry is invalid for {service}")
+        image = item.get("image_digest")
+        prior_runtime = item.get("runtime_dir")
+        checkpoint = item.get("checkpoint_path")
+        if (
+            not isinstance(image, str)
+            or _DIGEST.fullmatch(image) is None
+            or _governed_runtime_path(prior_runtime) == host_runtime_dir
+        ):
+            raise ValueError(f"Phase 10.5-C final-BAR rollback entry mismatches packet for {service}")
+        if service == "binance_bar_edge":
+            if checkpoint != previous_checkpoint:
+                raise ValueError("Phase 10.5-C final-BAR rollback checkpoint mismatches packet")
+        elif checkpoint is not None:
+            raise ValueError("Phase 10.5-C final-BAR rollback checkpoint is not scoped to bar edge")
+        sealed_services[service] = {
+            "image_digest": image,
+            "runtime_dir": prior_runtime,
+            "checkpoint_path": checkpoint,
+        }
     selectors = {
         "QDL_CONFIG_REVISION": config_revision,
         "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
@@ -320,6 +379,11 @@ def _final_bar_runtime_binding(packet: Mapping[str, object]) -> dict[str, object
         ),
         "selectors": selectors,
         "python_image_digest": python_image,
+        "rollback_sha256": _canonical_sha256({
+            "schema": _FINAL_BAR_ROLLBACK_SCHEMA,
+            "services": sealed_services,
+            "durable_data_deletion": False,
+        }),
     }
 
 

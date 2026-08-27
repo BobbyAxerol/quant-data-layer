@@ -230,6 +230,14 @@
         "title": "BasisPayload",
         "type": "object"
       },
+      "BasisSeries": {
+        "enum": [
+          "NATIVE",
+          "CONTINUOUS"
+        ],
+        "title": "BasisSeries",
+        "type": "string"
+      },
       "BatchItemResponse": {
         "additionalProperties": false,
         "properties": {
@@ -345,6 +353,12 @@
       "BookDeltaPayload": {
         "additionalProperties": false,
         "properties": {
+          "book_generation": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Book Generation",
+            "type": "integer"
+          },
           "checksum": {
             "anyOf": [
               {
@@ -378,6 +392,11 @@
           "reset": {
             "default": false,
             "title": "Reset",
+            "type": "boolean"
+          },
+          "sequence_verified": {
+            "default": false,
+            "title": "Sequence Verified",
             "type": "boolean"
           },
           "snapshot_sequence": {
@@ -442,6 +461,12 @@
       "BookSnapshotPayload": {
         "additionalProperties": false,
         "properties": {
+          "book_generation": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Book Generation",
+            "type": "integer"
+          },
           "checksum": {
             "anyOf": [
               {
@@ -477,6 +502,16 @@
             "minLength": 1,
             "title": "Native Sequence",
             "type": "string"
+          },
+          "sequence_verified": {
+            "default": false,
+            "title": "Sequence Verified",
+            "type": "boolean"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -828,6 +863,15 @@
         "title": "GapView",
         "type": "object"
       },
+      "Grade": {
+        "enum": [
+          "EXECUTION",
+          "ALPHA",
+          "RESEARCH"
+        ],
+        "title": "Grade",
+        "type": "string"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1007,6 +1051,15 @@
         "title": "IntervalSourcePolicy",
         "type": "string"
       },
+      "LongShortKind": {
+        "enum": [
+          "GLOBAL_ACCOUNT",
+          "TOP_ACCOUNT",
+          "TOP_POSITION"
+        ],
+        "title": "LongShortKind",
+        "type": "string"
+      },
       "LongShortRatioPayload": {
         "additionalProperties": false,
         "properties": {
@@ -1056,6 +1109,15 @@
           "TOP_POSITION"
         ],
         "title": "LongShortRatioPopulation",
+        "type": "string"
+      },
+      "MarkIndexKind": {
+        "enum": [
+          "MARK",
+          "INDEX",
+          "BOTH"
+        ],
+        "title": "MarkIndexKind",
         "type": "string"
       },
       "MarkIndexPricePayload": {
@@ -1587,6 +1649,592 @@
         ],
         "title": "RecoveryPolicy",
         "type": "string"
+      },
+      "ReferenceBatchItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReferenceDataResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instrument_uid": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProblemDetails"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "product": {
+            "$ref": "#/components/schemas/ReferenceProduct"
+          },
+          "status": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "product",
+          "status"
+        ],
+        "title": "ReferenceBatchItemResponse",
+        "type": "object"
+      },
+      "ReferenceBatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "consumer_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Consumer Id",
+            "type": "string"
+          },
+          "require_all": {
+            "default": true,
+            "title": "Require All",
+            "type": "boolean"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceRequirement"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Requirements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "requirements"
+        ],
+        "title": "ReferenceBatchRequest",
+        "type": "object"
+      },
+      "ReferenceBatchResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error_count": {
+            "minimum": 0.0,
+            "title": "Error Count",
+            "type": "integer"
+          },
+          "partial": {
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "request_id": {
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceBatchItemResponse"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "schema": {
+            "default": "qdl.reference.batch.v2",
+            "title": "Schema",
+            "type": "string"
+          },
+          "success_count": {
+            "minimum": 0.0,
+            "title": "Success Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "partial",
+          "success_count",
+          "error_count",
+          "results"
+        ],
+        "title": "ReferenceBatchResponse",
+        "type": "object"
+      },
+      "ReferenceCoverageView": {
+        "additionalProperties": false,
+        "properties": {
+          "complete_left": {
+            "title": "Complete Left",
+            "type": "boolean"
+          },
+          "complete_right": {
+            "title": "Complete Right",
+            "type": "boolean"
+          },
+          "observed_max_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Max Ms"
+          },
+          "observed_min_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Min Ms"
+          },
+          "requested_end_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested End Ms"
+          },
+          "requested_start_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Start Ms"
+          },
+          "terminal_reason": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Terminal Reason",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "complete_left",
+          "complete_right",
+          "truncated",
+          "terminal_reason"
+        ],
+        "title": "ReferenceCoverageView",
+        "type": "object"
+      },
+      "ReferenceDataResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_hit": {
+            "title": "Cache Hit",
+            "type": "boolean"
+          },
+          "coalesced": {
+            "title": "Coalesced",
+            "type": "boolean"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/ReferenceCoverageView"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
+          },
+          "instrument_uid": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "lineage": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceLineageView"
+            },
+            "minItems": 1,
+            "title": "Lineage",
+            "type": "array"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceObservationView"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "product": {
+            "$ref": "#/components/schemas/ReferenceProduct"
+          },
+          "received_at_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "Received At Ns",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "OK",
+              "MISSING",
+              "UNAVAILABLE",
+              "ERROR"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "product",
+          "status",
+          "lineage",
+          "coverage",
+          "received_at_ns",
+          "cache_hit",
+          "coalesced"
+        ],
+        "title": "ReferenceDataResponse",
+        "type": "object"
+      },
+      "ReferenceFieldView": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "name",
+          "value",
+          "unit"
+        ],
+        "title": "ReferenceFieldView",
+        "type": "object"
+      },
+      "ReferenceLineageView": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Adapter Version",
+            "type": "string"
+          },
+          "capability_constraint": {
+            "anyOf": [
+              {
+                "maxLength": 240,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capability Constraint"
+          },
+          "capability_name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Capability Name",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_endpoint": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Provider Endpoint",
+            "type": "string"
+          },
+          "source_role": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Source Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "provider_endpoint",
+          "source_role",
+          "adapter_version",
+          "capability_name"
+        ],
+        "title": "ReferenceLineageView",
+        "type": "object"
+      },
+      "ReferenceObservationView": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceFieldView"
+            },
+            "minItems": 1,
+            "title": "Fields",
+            "type": "array"
+          },
+          "instrument_revision": {
+            "minimum": 1.0,
+            "title": "Instrument Revision",
+            "type": "integer"
+          },
+          "instrument_uid": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "object"
+          },
+          "observed_at_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "Observed At Ns",
+            "type": "integer"
+          },
+          "product": {
+            "$ref": "#/components/schemas/ReferenceProduct"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "instrument_revision",
+          "product",
+          "observed_at_ns",
+          "fields"
+        ],
+        "title": "ReferenceObservationView",
+        "type": "object"
+      },
+      "ReferenceProduct": {
+        "enum": [
+          "FUNDING_RATE",
+          "OPEN_INTEREST",
+          "LONG_SHORT_RATIO",
+          "TAKER_FLOW",
+          "MARK_INDEX_PRICE",
+          "CONTRACT_METADATA",
+          "BASIS"
+        ],
+        "title": "ReferenceProduct",
+        "type": "string"
+      },
+      "ReferenceRequirement": {
+        "additionalProperties": false,
+        "properties": {
+          "basis_contract_type": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basis Contract Type"
+          },
+          "basis_series": {
+            "$ref": "#/components/schemas/BasisSeries",
+            "default": "NATIVE"
+          },
+          "consumer_grade": {
+            "$ref": "#/components/schemas/Grade"
+          },
+          "deadline_ms": {
+            "default": 20000,
+            "maximum": 120000.0,
+            "minimum": 100.0,
+            "title": "Deadline Ms",
+            "type": "integer"
+          },
+          "end_time_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Time Ns"
+          },
+          "instrument_uid": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval"
+          },
+          "limit": {
+            "default": 100,
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "long_short_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LongShortKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mark_index_kind": {
+            "$ref": "#/components/schemas/MarkIndexKind",
+            "default": "BOTH"
+          },
+          "max_freshness_ms": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 86400000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Freshness Ms"
+          },
+          "max_pages": {
+            "default": 20,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Pages",
+            "type": "integer"
+          },
+          "page_size": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Size"
+          },
+          "product": {
+            "$ref": "#/components/schemas/ReferenceProduct"
+          },
+          "require_full_coverage": {
+            "default": true,
+            "title": "Require Full Coverage",
+            "type": "boolean"
+          },
+          "source_policy_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Source Policy Id",
+            "type": "string"
+          },
+          "start_time_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Time Ns"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "product",
+          "consumer_grade",
+          "source_policy_id"
+        ],
+        "title": "ReferenceRequirement",
+        "type": "object"
       },
       "RequirementModel": {
         "additionalProperties": false,
@@ -2509,6 +3157,65 @@
           }
         ],
         "summary": "Get Instrument",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/market-data/reference:batch": {
+      "post": {
+        "description": "Return bounded provider reference data for declared alpha/research use.\n\nUnlike the canonical spool route, this path is deliberately a typed,\nbounded provider query.  It carries coverage and lineage on every result,\nand never fabricates a missing metric as zero or silently substitutes a\ndifferent venue.",
+        "operationId": "reference_data_batch_v2_market_data_reference_batch_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-QDL-Purpose",
+            "required": true,
+            "schema": {
+              "title": "X-Qdl-Purpose",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReferenceBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
+        "summary": "Reference Data Batch",
         "tags": [
           "market-data-v2"
         ]

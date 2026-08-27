@@ -52,6 +52,24 @@ class Phase105HandoffTests(unittest.TestCase):
         rust_image = "sha256:" + "d" * 64
         python_image = "sha256:" + "e" * 64
         authority_sha256 = "f" * 64
+        services = {}
+        for service in (
+            "ingestor_okx_swap",
+            "binance_bar_edge",
+            "rust_core",
+            "query_v2_1",
+            "query_v2_2",
+            "stream_v2_active",
+            "stream_v2_passive",
+        ):
+            services[service] = {
+                "image_digest": "sha256:" + ("1" if service == "ingestor_okx_swap" else "2") * 64,
+                "runtime_dir": "/home/bobby/.local/state/qdl-v2/phase105c-r10/runtime",
+                "checkpoint_path": (
+                    "/var/lib/qdl-stable/runtime/stable-crypto-bar-edge-r10.json"
+                    if service == "binance_bar_edge" else None
+                ),
+            }
         return {
             "schema": "qdl.phase105c.final-bar-repair.v1",
             "compose_environment": {
@@ -69,6 +87,14 @@ class Phase105HandoffTests(unittest.TestCase):
                 "python_image_digest": python_image,
                 "rust_image_digest": rust_image,
                 "runtime_files": {"authority.json": authority_sha256},
+            },
+            "final_bar": {
+                "previous_checkpoint_path": "/var/lib/qdl-stable/runtime/stable-crypto-bar-edge-r10.json",
+            },
+            "rollback": {
+                "schema": "qdl.phase105c.final-bar-repair.rollback.v1",
+                "services": services,
+                "durable_data_deletion": False,
             },
         }
 
@@ -179,6 +205,24 @@ class Phase105HandoffTests(unittest.TestCase):
                     python_image="sha256:" + "1" * 64,
                     runtime_binding=binding,
                 )
+
+    def test_final_bar_runtime_packet_rejects_incomplete_or_ambiguous_rollback(self) -> None:
+        packet = self._final_bar_packet()
+        rollback = packet["rollback"]
+        assert isinstance(rollback, dict)
+        services = rollback["services"]
+        assert isinstance(services, dict)
+        services.pop("rust_core")
+        with self.assertRaisesRegex(ValueError, "rollback services"):
+            active_runtime_binding(self.base, packet)
+        packet = self._final_bar_packet()
+        rollback = packet["rollback"]
+        assert isinstance(rollback, dict)
+        services = rollback["services"]
+        assert isinstance(services, dict)
+        services["binance_bar_edge"]["checkpoint_path"] = "/var/lib/qdl-stable/runtime/other.json"
+        with self.assertRaisesRegex(ValueError, "rollback checkpoint"):
+            active_runtime_binding(self.base, packet)
 
     def test_prepare_cli_writes_only_a_public_overlay(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -403,7 +447,15 @@ class Phase105HandoffTests(unittest.TestCase):
         self.assertIn("query_v2_2:", c2)
         self.assertIn("stream_v2_active:", c2)
         self.assertIn("stream_v2_passive:", c2)
-        self.assertNotIn("rust_core:", c2)
+        # C3.6 makes the already-running core expose the bounded provider
+        # admission endpoint used by the query readers.  C2 does not recreate
+        # it: this overlay only adds its scoped environment, never a command,
+        # image or volume replacement.
+        self.assertIn("rust_core:", c2)
+        self.assertIn("QDL_PROVIDER_ADMISSION_ENABLED", c2)
+        self.assertNotIn("entrypoint:", c2)
+        self.assertNotIn("command:", c2)
+        self.assertNotIn("volumes:", c2)
         self.assertNotIn("data_layer_service:", c2)
         self.assertIn("build: !reset null", v1)
         self.assertIn("volumes: !override", v1)
