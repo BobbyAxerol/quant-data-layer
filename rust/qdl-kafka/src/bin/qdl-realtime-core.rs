@@ -12,7 +12,9 @@ use qdl_kafka::{
     shutdown_signal, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
     TransactionalKafkaBridge, TransactionalKafkaOutput, TransactionalShadowTopics,
 };
-use qdl_realtime_core::{CoreError, RealtimeCore, RealtimeCoreConfig};
+use qdl_realtime_core::{
+    provider_admission_server::ProviderAdmissionServer, CoreError, RealtimeCore, RealtimeCoreConfig,
+};
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use serde::Deserialize;
 use serde_json::json;
@@ -346,6 +348,10 @@ async fn main() -> Result<(), RuntimeError> {
         .ok_or("usage: qdl-realtime-core CONFIG.json")?;
     let config: RuntimeConfig = serde_json::from_slice(&tokio::fs::read(config_path).await?)?;
     config.validate()?;
+    // This listener is private to the existing stable-internal network and is
+    // absent unless the sealed C3.6 runtime binding enables it.  It survives
+    // Kafka generation retries so all query roles share one Rust coordinator.
+    let admission_server = ProviderAdmissionServer::start_from_environment().await?;
     let backoff = BackoffPolicy {
         initial_ms: 500,
         maximum_ms: 30_000,
@@ -355,10 +361,10 @@ async fn main() -> Result<(), RuntimeError> {
     .validate()?;
     let mut generation = 0_u64;
     let mut failures = 0_u32;
-    loop {
+    let result = loop {
         generation = generation.saturating_add(1);
         match run_generation(&config, generation).await {
-            Ok(()) => return Ok(()),
+            Ok(()) => break Ok(()),
             Err(error) if retryable_runtime_error(&error) => {
                 failures = failures.saturating_add(1);
                 eprintln!(
@@ -375,9 +381,13 @@ async fn main() -> Result<(), RuntimeError> {
                 ))
                 .await;
             }
-            Err(error) => return Err(error),
+            Err(error) => break Err(error),
         }
+    };
+    if let Some(server) = admission_server {
+        server.stop().await?;
     }
+    result
 }
 
 #[cfg(test)]

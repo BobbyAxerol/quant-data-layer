@@ -594,15 +594,18 @@ dependencies = [
 name = "qdl-realtime-core"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "prost",
  "qdl-contracts",
  "qdl-core",
  "qdl-provider-envelope",
  "qdl-venue-core",
  "redis",
+ "ring",
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
 ]
 
 [[package]]

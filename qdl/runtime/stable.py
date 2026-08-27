@@ -161,6 +161,10 @@ class StableRuntimeConfig:
     # Reference data is a distinct provider-authentic alpha/research product.
     # It remains dark until a reviewed stable-runtime config enables it.
     reference_data_enabled: bool = False
+    # Opt-in only: this is the existing internal Rust core, never a public or
+    # arbitrary provider endpoint.  When absent, V2 preserves its previous
+    # reference adapter construction and does not attempt a coordinator call.
+    provider_admission_url: str | None = None
     # Query/stream may trust an additive client-CA bundle while their own
     # client-side trust remains pinned to the server CA. Keeping this optional
     # preserves existing one-CA deployments.
@@ -198,6 +202,8 @@ class StableRuntimeConfig:
             raise ValueError("stable workload TLS files are unavailable")
         if len(self.internal_ingest_secret) < 32:
             raise ValueError("stable internal ingest secret must contain 256 bits")
+        if self.provider_admission_url not in {None, "http://rust_core:8300"}:
+            raise ValueError("stable provider admission URL must be private rust_core")
         if self.active_cursor_key_id not in self.cursor_keys or any(
             len(value) < 32 for value in self.cursor_keys.values()
         ):
@@ -304,6 +310,7 @@ class StableRuntimeConfig:
             reference_data_enabled=_env_flag(
                 env, "QDL_STABLE_REFERENCE_DATA_ENABLED", default=False
             ),
+            provider_admission_url=env.get("QDL_STABLE_PROVIDER_ADMISSION_URL"),
             tls_client_ca_path=Path(env.get(
                 "QDL_STABLE_TLS_CLIENT_CA_FILE", env["QDL_STABLE_TLS_CA_FILE"]
             )),
@@ -504,6 +511,8 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
         pass_through_enabled=config.pass_through_enabled,
         reference_data_enabled=config.reference_data_enabled,
+        provider_admission_url=config.provider_admission_url,
+        provider_admission_secret=config.internal_ingest_secret,
     )
     readiness = stable_readiness(
         config, manifests, spool, quota=identity.quota,
@@ -593,6 +602,8 @@ def create_stable_stream_runtime(
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
         pass_through_enabled=config.pass_through_enabled,
         reference_data_enabled=config.reference_data_enabled,
+        provider_admission_url=config.provider_admission_url,
+        provider_admission_secret=config.internal_ingest_secret,
     )
     grpc_service = GrpcMarketDataService(
         gateway=gateway, query_service=query_service,

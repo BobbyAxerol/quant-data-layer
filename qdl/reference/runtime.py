@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from qdl.adapters.binance.reference import BinanceUsdmReferenceAdapter
+from qdl.admission import ProviderAdmissionRuntime
 from qdl.adapters.okx.client import OkxRestClient
 from qdl.adapters.okx.reference import OkxSwapReferenceAdapter
 from qdl.domain.instrument import InstrumentRecord
@@ -68,7 +69,10 @@ class ReferenceRuntime:
         )
 
 
-def build_default_reference_runtime() -> ReferenceRuntime:
+def build_default_reference_runtime(
+    *,
+    native_basis_admission: ProviderAdmissionRuntime | None = None,
+) -> ReferenceRuntime:
     """Build supported public-provider adapters without making provider I/O.
 
     Adding a venue later is one registry entry plus an adapter and capability
@@ -79,7 +83,9 @@ def build_default_reference_runtime() -> ReferenceRuntime:
     okx = OkxSwapReferenceAdapter(OkxRestClient())
     return ReferenceRuntime(
         ReferenceBatch({
-            ("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(),
+            ("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
+                native_basis_admission=native_basis_admission
+            ),
             ("OKX", "SWAP"): okx,
             ("OKX", "FUTURES"): okx,
         })

@@ -58,6 +58,7 @@ pub trait RedisAdmissionExecutor: Send + Sync {
     fn eval(&self, script: &str, key: &str, args: [String; 3]) -> Result<i64, AdmissionStoreError>;
 }
 
+#[derive(Clone)]
 pub struct RedisAdmissionStore<E> {
     executor: E,
 }
@@ -120,6 +121,25 @@ impl RedisClientAdmissionExecutor {
             .query::<i64>(&mut connection)
             .map(|_| ())
             .map_err(redis_error)
+    }
+
+    /// Return the shared Redis wall clock in nanoseconds.  Runtime admission
+    /// transitions must never compare separate worker monotonic epochs.
+    pub fn time_ns(&self) -> Result<i64, AdmissionStoreError> {
+        let mut connection = self.connection()?;
+        let (seconds, microseconds): (i64, i64) =
+            cmd("TIME").query(&mut connection).map_err(redis_error)?;
+        if seconds <= 0 || !(0..1_000_000).contains(&microseconds) {
+            return Err(AdmissionStoreError::Protocol(
+                "Redis TIME returned an invalid wall-clock value".into(),
+            ));
+        }
+        seconds
+            .checked_mul(1_000_000_000)
+            .and_then(|value| value.checked_add(microseconds.saturating_mul(1_000)))
+            .ok_or_else(|| {
+                AdmissionStoreError::Protocol("Redis TIME overflowed nanoseconds".into())
+            })
     }
 
     fn connection(&self) -> Result<redis::Connection, AdmissionStoreError> {

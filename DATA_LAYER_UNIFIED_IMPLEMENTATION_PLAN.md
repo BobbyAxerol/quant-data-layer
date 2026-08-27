@@ -18634,13 +18634,37 @@ SOURCE-ONLY / RUNTIME UNCHANGED`, 2026-08-27):**
   roles. It remains separately approval-gated; source C1 neither schedules
   provider work nor changes a route.
 
-**C3.6-C.2 governed authentic certification and V2-primary handoff (`PLANNED /
-REQUIRES C3.6-C.1 EXIT AND EXPLICIT RUNTIME APPROVAL`, 2026-08-27):**
+**C3.6-C.2 governed authentic certification and V2-primary handoff (`IN
+PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
 
 - **Goal:** use the completed Rust admission core to obtain one complete,
   provider-authentic certificate and then promote only its approved demand
   manifest to V2-primary with V1 as the explicit rollback route. This closes
   the current C3.6-C product gap; it is not a retry-until-lucky loop.
+- **Approval and execution rule (2026-08-27):** owner approved this as the
+  continuous next part of C3.6-C. Do not invent further named subphases or
+  pause for routine source/test/deploy steps. Execute the bounded packet,
+  provider certificate and handoff consecutively; stop only on an actual
+  fail-closed provider/domain gate or a blast radius outside the exclusions,
+  then record exact evidence and the smallest corrective action.
+- **C2 runtime binding decision (2026-08-27):** the existing `rust_core`
+  process will expose one private, un-published internal admission RPC on the
+  existing `stable_internal` network. It authenticates the canonical request
+  body with the already-sealed `QDL_STABLE_INTERNAL_INGEST_SECRET`; it accepts
+  only declared `(provider, market, endpoint_family)` lanes from the immutable
+  Rust policy document, obtains transition time with Redis `TIME`, and calls
+  the C1 Rust coordinator/CAS. The existing query roles reuse their persistent
+  Python HTTP adapter solely to relay `ADMIT`, `COMPLETE` and typed
+  rate-limit reports for `BINANCE/USDM/REFERENCE_NATIVE_BASIS`; the legacy
+  process-local lock is retained only when this explicitly configured V2
+  binding is absent. There is no public endpoint, new service, worker,
+  container, symbol-specific state, raw-payload persistence or policy branch
+  in Python. This is the minimum route that makes Rust an actual authority,
+  rather than treating its C1 library as an uncalled implementation detail.
+  Unit gates cover strict wire/auth/policy rejection, Redis-time state
+  transitions, completion/rate-limit release, and Python relay failure-closed;
+  the bounded runtime packet then recreates only existing `rust_core` and V2
+  query roles with immutable images and an explicit rollback image/manifest.
 - **Bounded runtime packet:** before any provider call, the packet must name
   the immutable Rust/Python image digests, policy/catalog/manifest SHA,
   existing V2 query/core roles and identities, a dedicated C3.6 coordination
@@ -18690,6 +18714,43 @@ REQUIRES C3.6-C.1 EXIT AND EXPLICIT RUNTIME APPROVAL`, 2026-08-27):**
   revisions. A failed certificate leaves V2 non-primary and rolls no consumer;
   a failed handoff rolls the named manifest back to V1 without deleting V2
   evidence. No broader cutover is authorized by this phase.
+- **Implementation and source evidence (2026-08-27):** C2 now wires the C1
+  coordinator into the existing `rust_core` process as one HMAC-authenticated
+  private endpoint on `stable_internal`; it has no host port and admits only
+  the SHA-pinned `BINANCE/USDM/REFERENCE_NATIVE_BASIS` lane declared in
+  `config/v2/provider-admission-policy-v1.json`
+  (`e4a4330d503e3dd163b6ff7391f5e034a80555a23679ba30bb23ea78ca8053ad`).
+  The Rust service gets its transition timestamp from Redis `TIME`, performs
+  the C1 namespaced CAS, and rejects malformed body/auth/schema/lane requests.
+  The existing query roles contain only a bounded signed relay; their Binance
+  edge receives a Rust grant/defer, reports documented `418`/`429`/`-1003`,
+  completes the exact lease, and remains fail-closed on relay/contract faults.
+  The prior process-local lock/pacing path remains untouched when this binding
+  is absent. The C2 compose overlay changes only existing `rust_core`,
+  `query_v2_1`, and `query_v2_2`; it introduces no published port, service,
+  worker, per-symbol state, provider payload persistence, Kafka change or
+  consumer route.
+- **Tests actually run (source-only, 2026-08-27):**
+  `cargo test --offline -p qdl-realtime-core provider_admission` in isolated
+  `rust:1.82-slim` cache: `9 passed`, `0 failed`, `1 ignored` (the optional
+  test requires an explicitly named disposable Redis URL). Rust tests cover
+  exact policy/CAS, independent lanes, concurrency retry, rate-limit cooldown,
+  Rust `TIME` transitions, private wire `ADMIT`/`COMPLETE`/`RATE_LIMIT`, HMAC,
+  unknown lane/schema and malformed request rejection. `python3 -m compileall`
+  passed. Docker-isolated Python
+  `unittest tests.test_phasec36_admission_binding
+  tests.test_phase104_reference_batch tests.test_phaseb_stable_edge` passed
+  `67/67`, with one unrelated optional Redis integration skip; this covers
+  signed wire identity, bad transport fail-closed, grant completion, deferred
+  no-vendor-call/retry hint, documented rate-limit reporting, legacy fallback
+  behavior, and rejection of every non-private admission URL. `git diff
+  --check` passed. No image/runtime/provider/durable-state mutation occurred.
+- **Current position:** source binding is tested but not yet runtime-bound.
+  The continuous approved C2 scope proceeds with immutable Python/Rust image
+  builds, then its exact three-role bounded runtime packet, one authentic
+  certificate and the declared no-order handoff. Any external provider
+  rate-limit/deadline failure remains a real fail-closed stop, not a reason to
+  widen scope or fabricate evidence.
 
 ### 22.11 Phase 11 Completion Decision
 

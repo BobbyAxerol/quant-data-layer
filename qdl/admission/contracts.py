@@ -182,6 +182,28 @@ class ProviderAdmissionClient(Protocol):
     async def decide(self, request: Mapping[str, object]) -> Mapping[str, object]: ...
 
 
+class ProviderAdmissionRuntime(Protocol):
+    """Private Rust admission operations used by a provider edge.
+
+    This protocol intentionally exposes only exact Rust operations.  It has no
+    local policy, queue, retry, cooldown, or provider transport capability.
+    """
+
+    async def admit(self, request: AdmissionRequest) -> AdmissionDecision: ...
+
+    async def complete(self, lane: ProviderLane, request_id: str) -> bool: ...
+
+    async def record_rate_limit(
+        self,
+        lane: ProviderLane,
+        request_id: str | None,
+        *,
+        http_status: int | None,
+        provider_code: int | None,
+        retry_after_ms: int | None,
+    ) -> AdmissionDecision: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RustAdmissionProjection:
     """Thin adapter gate: submit exact request, validate exact Rust response."""

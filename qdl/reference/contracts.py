@@ -56,6 +56,26 @@ class ReferenceProviderExhausted(RuntimeError):
         self.retry_after_ms = retry_after_ms
 
 
+class ReferenceProviderRateLimited(ReferenceProviderExhausted):
+    """A documented provider rate-limit signal reached a bounded adapter edge."""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        http_status: int | None,
+        provider_code: int | None,
+        retry_after_ms: int | None = None,
+    ) -> None:
+        if http_status not in {None, 418, 429} or provider_code not in {None, -1003}:
+            raise ValueError("reference provider rate-limit signal is not recognized")
+        if http_status is None and provider_code is None:
+            raise ValueError("reference provider rate-limit signal is empty")
+        super().__init__(detail, retry_after_ms=retry_after_ms)
+        self.http_status = http_status
+        self.provider_code = provider_code
+
+
 class ReferenceUnavailable(RuntimeError):
     """A truthful capability/product combination has no provider result."""
 

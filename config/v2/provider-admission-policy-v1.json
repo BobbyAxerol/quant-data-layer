@@ -1,0 +1,23 @@
+{
+  "schema": "qdl.provider_admission.policy.v1",
+  "revision": 1,
+  "lanes": [
+    {
+      "lane": {
+        "provider": "BINANCE",
+        "market": "USDM",
+        "endpoint_family": "REFERENCE_NATIVE_BASIS"
+      },
+      "policy": {
+        "token_capacity": 1,
+        "refill_tokens": 1,
+        "refill_interval_ns": 1000000000,
+        "max_inflight": 1,
+        "reserved_realtime_inflight": 0,
+        "max_lease_ns": 30000000000,
+        "default_cooldown_ns": 60000000000,
+        "idle_ttl_ns": 600000000000
+      }
+    }
+  ]
+}

@@ -943,6 +943,8 @@ def build_stable_query_stack(
     cursor_ttl_seconds: int,
     pass_through_enabled: bool = False,
     reference_data_enabled: bool = False,
+    provider_admission_url: str | None = None,
+    provider_admission_secret: bytes | None = None,
 ) -> tuple[V2QueryService, StableSpoolQueryBackend, StableConsumerCursorIssuer]:
     """Build the query stack, optionally including the pass-through product.
 
@@ -965,9 +967,20 @@ def build_stable_query_stack(
         # This is deliberately independent from BAR pass-through.  It only
         # enables catalog-bound provider reference products and grants no
         # execution purpose; no catalog declaration can turn it on by itself.
+        from qdl.admission import RustHttpProviderAdmission
         from qdl.reference.runtime import build_default_reference_runtime
 
-        reference_runtime = build_default_reference_runtime()
+        native_basis_admission = None
+        if provider_admission_url is not None:
+            if provider_admission_secret is None:
+                raise ValueError("stable Rust provider admission secret is unavailable")
+            native_basis_admission = RustHttpProviderAdmission(
+                base_url=provider_admission_url,
+                secret=provider_admission_secret,
+            )
+        reference_runtime = build_default_reference_runtime(
+            native_basis_admission=native_basis_admission
+        )
         entitlements = entitlements.with_grants(reference_runtime.entitlement_grants())
         reference_batch = reference_runtime.batch
         reference_source_id = reference_runtime.source_id_for

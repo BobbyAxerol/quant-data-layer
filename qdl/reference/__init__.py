@@ -12,6 +12,7 @@ from qdl.reference.contracts import (
     ReferenceLineage,
     ReferenceObservation,
     ReferenceProduct,
+    ReferenceProviderRateLimited,
     ReferenceRequest,
     ReferenceStatus,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "ReferenceLineage",
     "ReferenceObservation",
     "ReferenceProduct",
+    "ReferenceProviderRateLimited",
     "ReferenceRequest",
     "ReferenceStatus",
 ]

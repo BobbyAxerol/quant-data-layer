@@ -49,5 +49,6 @@ COPY --from=builder /src/target/release/qdl-realtime-core /usr/local/bin/qdl-rea
 COPY --from=builder /src/target/release/qdl-production-core /usr/local/bin/qdl-production-core
 COPY --from=builder /src/target/release/qdl-parity-replay /usr/local/bin/qdl-parity-replay
 COPY --from=builder /src/target/release/qdl-venue-core-certify /usr/local/bin/qdl-venue-core-certify
+COPY config/v2/provider-admission-policy-v1.json /opt/qdl/config/v2/provider-admission-policy-v1.json
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/qdl-kafka-smoke"]

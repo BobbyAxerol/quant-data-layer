@@ -1722,6 +1722,17 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "differs from generated record"):
                 StableRuntimeConfig.from_environment("query_v2", values)
 
+    def test_provider_admission_url_is_limited_to_private_rust_core(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            values = self.environment(root)
+            values["QDL_STABLE_PROVIDER_ADMISSION_URL"] = "http://rust_core:8300"
+            config = StableRuntimeConfig.from_environment("query_v2", values)
+            self.assertEqual(config.provider_admission_url, "http://rust_core:8300")
+            values["QDL_STABLE_PROVIDER_ADMISSION_URL"] = "http://provider.example:8300"
+            with self.assertRaisesRegex(ValueError, "private rust_core"):
+                StableRuntimeConfig.from_environment("query_v2", values)
+
     def test_query_client_trust_may_be_additive_without_changing_server_trust(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

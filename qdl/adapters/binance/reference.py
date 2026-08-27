@@ -2,12 +2,23 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+import hashlib
+import json
 import time
 from typing import Any
 
 from app.providers.binance import derivatives as legacy_derivatives
 from app.providers.binance import basis_continuous as legacy_continuous_basis
 from app.providers.binance.rest import BinanceProviderError
+from qdl.admission import (
+    AdmissionContractError,
+    AdmissionDisposition,
+    AdmissionPriority,
+    AdmissionRequest,
+    AdmissionTransportError,
+    ProviderAdmissionRuntime,
+    ProviderLane,
+)
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.domain.capabilities import FeedCapability
 from qdl.domain.instrument import ProductType
@@ -20,6 +31,7 @@ from qdl.reference.contracts import (
     ReferenceProduct,
     ReferenceProviderError,
     ReferenceProviderExhausted,
+    ReferenceProviderRateLimited,
     ReferenceRequest,
     ReferenceUnavailable,
     decimal_field,
@@ -41,6 +53,21 @@ _NATIVE_BASIS_MIN_START_INTERVAL_NS = 500_000_000
 
 def _fields(*items):
     return tuple(item for item in items if item is not None)
+
+
+def _rate_limit_signal(error: BinanceProviderError) -> tuple[int | None, int | None] | None:
+    """Extract only Binance's documented 418/429/-1003 control signals."""
+
+    for attempt in reversed(error.attempts):
+        if not isinstance(attempt, Mapping):
+            continue
+        status = attempt.get("status_code")
+        code = attempt.get("provider_code")
+        http_status = int(status) if isinstance(status, int) and status in {418, 429} else None
+        provider_code = int(code) if isinstance(code, int) and code == -1003 else None
+        if http_status is not None or provider_code is not None:
+            return http_status, provider_code
+    return None
 
 
 class BinanceUsdmReferenceAdapter:
@@ -68,6 +95,7 @@ class BinanceUsdmReferenceAdapter:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock_ns: Callable[[], int] = time.time_ns,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
+        native_basis_admission: ProviderAdmissionRuntime | None = None,
     ) -> None:
         if not 1 <= max_attempts <= 5:
             raise ValueError("Binance reference attempts must be between 1 and 5")
@@ -87,6 +115,7 @@ class BinanceUsdmReferenceAdapter:
         self._sleep = sleep
         self._clock_ns = clock_ns
         self._monotonic_ns = monotonic_ns
+        self._native_basis_admission = native_basis_admission
         # Binance's public native-basis endpoint may emit an HTTP-200 error
         # envelope under concurrent pair pressure. Keep that one fragile lane
         # serial; all other reference products retain ReferenceBatch limits.
@@ -351,9 +380,103 @@ class BinanceUsdmReferenceAdapter:
                 page_limit=500,
             )
 
-        async with self._native_basis_lock:
-            await self._pace_native_basis_start()
-            return await self._retry_transient_native_basis_envelope(fetch_once)
+        if self._native_basis_admission is None:
+            # Legacy/V1-compatible construction remains process-local only
+            # when a reviewed V2 Rust admission binding is absent.
+            async with self._native_basis_lock:
+                await self._pace_native_basis_start()
+                return await self._retry_transient_native_basis_envelope(fetch_once)
+        return await self._governed_native_basis(request, fetch_once)
+
+    async def _governed_native_basis(
+        self,
+        request: ReferenceRequest,
+        fetch_once: Callable[[], Awaitable[ReferenceFetch]],
+    ) -> ReferenceFetch:
+        """Use the shared Rust lane authority before one native-basis call.
+
+        This method never sleeps/retries a deferred grant locally. Rust owns
+        cooldown, capacity, coalescing and lease state across query replicas;
+        the adapter only reports a documented provider rate limit or completes
+        its exact lease after the bounded vendor wrapper returns.
+        """
+
+        assert self._native_basis_admission is not None
+        admission_request = self._native_basis_admission_request(request)
+        try:
+            decision = await self._native_basis_admission.admit(admission_request)
+        except (AdmissionTransportError, AdmissionContractError) as error:
+            raise ReferenceProviderExhausted(
+                "Binance native basis Rust admission is unavailable"
+            ) from error
+        if decision.disposition is not AdmissionDisposition.GRANTED:
+            raise ReferenceProviderExhausted(
+                "Binance native basis deferred by Rust admission "
+                f"reason={decision.defer_reason.value if decision.defer_reason else 'UNKNOWN'}",
+                retry_after_ms=decision.retry_after_ms,
+            )
+        try:
+            result = await self._retry_transient_native_basis_envelope(fetch_once)
+        except ReferenceProviderRateLimited as error:
+            try:
+                await self._native_basis_admission.record_rate_limit(
+                    admission_request.lane,
+                    admission_request.request_id,
+                    http_status=error.http_status,
+                    provider_code=error.provider_code,
+                    retry_after_ms=error.retry_after_ms,
+                )
+            except (AdmissionTransportError, AdmissionContractError) as admission_error:
+                raise ReferenceProviderExhausted(
+                    "Binance native basis rate-limit coordination failed"
+                ) from admission_error
+            raise
+        except BaseException:
+            await self._complete_native_basis_admission(admission_request)
+            raise
+        await self._complete_native_basis_admission(admission_request)
+        return result
+
+    async def _complete_native_basis_admission(
+        self, request: AdmissionRequest
+    ) -> None:
+        assert self._native_basis_admission is not None
+        try:
+            completed = await self._native_basis_admission.complete(
+                request.lane, request.request_id
+            )
+        except (AdmissionTransportError, AdmissionContractError) as error:
+            raise ReferenceProviderExhausted(
+                "Binance native basis Rust admission completion failed"
+            ) from error
+        if not completed:
+            raise ReferenceProviderExhausted(
+                "Binance native basis Rust admission lease was not active at completion"
+            )
+
+    @staticmethod
+    def _native_basis_admission_request(request: ReferenceRequest) -> AdmissionRequest:
+        fingerprint = json.dumps(
+            {
+                "basis_contract_type": request.basis_contract_type,
+                "basis_series": request.basis_series.value if request.basis_series else None,
+                "end_ms": request.end_ms,
+                "instrument_uid": request.instrument.instrument_uid,
+                "interval": request.interval,
+                "limit": request.limit,
+                "max_pages": request.max_pages,
+                "page_size": request.page_size,
+                "start_ms": request.start_ms,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return AdmissionRequest(
+            lane=ProviderLane("BINANCE", "USDM", "REFERENCE_NATIVE_BASIS"),
+            request_id="basis:" + hashlib.sha256(fingerprint).hexdigest(),
+            priority=AdmissionPriority.BATCH,
+            token_cost=1,
+        )
 
     async def _pace_native_basis_start(self) -> None:
         """Respect a tiny process-local spacing for Binance's fragile basis lane."""
@@ -640,6 +763,7 @@ class BinanceUsdmReferenceAdapter:
     ) -> dict[str, Any]:
         last_error: BaseException | None = None
         retry_after_ms: int | None = None
+        rate_limit: tuple[int | None, int | None] | None = None
         for attempt in range(self._max_attempts):
             try:
                 return await asyncio.to_thread(
@@ -651,16 +775,23 @@ class BinanceUsdmReferenceAdapter:
                 )
             except (BinanceProviderError, OSError) as error:
                 last_error = error
+                if isinstance(error, BinanceProviderError):
+                    rate_limit = rate_limit or _rate_limit_signal(error)
                 provider_hint = getattr(error, "retry_after_ms", None)
                 if provider_hint is not None:
                     retry_after_ms = max(retry_after_ms or 0, int(provider_hint))
                     break
                 if attempt + 1 < self._max_attempts:
                     await self._sleep(self._retry_backoff_seconds * (2**attempt))
-        raise ReferenceProviderExhausted(
-            f"Binance USD-M {operation} exhausted {self._max_attempts} bounded attempts",
-            retry_after_ms=retry_after_ms,
-        ) from last_error
+        detail = f"Binance USD-M {operation} exhausted {self._max_attempts} bounded attempts"
+        if rate_limit is not None:
+            raise ReferenceProviderRateLimited(
+                detail,
+                http_status=rate_limit[0],
+                provider_code=rate_limit[1],
+                retry_after_ms=retry_after_ms,
+            ) from last_error
+        raise ReferenceProviderExhausted(detail, retry_after_ms=retry_after_ms) from last_error
 
     @staticmethod
     def _response_data(response: object, operation: str) -> object:
