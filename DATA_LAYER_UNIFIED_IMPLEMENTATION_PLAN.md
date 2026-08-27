@@ -18778,6 +18778,57 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
   `qdl-v2-python:2.0.0-c36-c2-8e6ade8`
   (`sha256:57abf8a5be7d2797a889e3409713058ce6badf56330b8798b1eb1003c6b2165f`).
   They are build/provenance evidence only; no C2 runtime role was recreated.
+- **Bounded runtime preflight (2026-08-27):** the approved C2 packet is
+  pinned to Rust image
+  `qdl-v2-rust:2.0.0-c36-c2-8e6ade8`
+  (`sha256:c8f3c55342f127ed498e4bcde8204bace2e2a8cb35d9e84a80ea5d6d97ac4d16`,
+  source `8e6ade8`) and Python image
+  `qdl-v2-python:2.0.0-c36-c2-9840b45`
+  (`sha256:815b5319d52c73038b2212bff205a3fb2bf1838f76c6575404c976e880a52a74`,
+  source `9840b45`). The sealed stable binding digest is
+  `5becd16b37b2f5f7023c15721ecfbb61368160be520278d5da7da128c83939bd`;
+  the immutable policy digest is
+  `e4a4330d503e3dd163b6ff7391f5e034a80555a23679ba30bb23ea78ca8053ad`;
+  and the C2 overlay digest is
+  `e6ca64e7263e093809035da6f765c65e8af90c3d1487718cd2defb205ecb48eb`.
+  The dedicated state prefix is
+  `qdl:stable:v2:paper:candidate:c36:admission:v1`. Read-only Docker
+  inspection recorded the exact rollback images already serving the three
+  roles: `rust_core=sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`
+  (revision `7b7388348615ba37c4a8d63b1f560fbdad91e658`) and
+  `query_v2_1/query_v2_2=sha256:3a60f3acf59dd9ed1bafe0cc59c1cee8fa8d775c35d248eb0e43209b02082407`
+  (revision `3ad1244145d23a27984c044ce8cd9744949bfea1`). All three have the
+  existing `512 MiB` memory limit and the existing `stable_internal` network;
+  the packet preserves that capacity and network. It recreates only these
+  three named roles with `--no-deps`; no other compose service is selected.
+- **First bounded runtime observation (2026-08-27):** the packet recreated
+  exactly `rust_core`, `query_v2_1` and `query_v2_2`; each started on its
+  pinned image, Rust logged `qdl_provider_admission_started`, and a signed
+  internal `ADMIT -> COMPLETE` probe returned `GRANTED`/`completed=true` under
+  only the dedicated C3.6 prefix. The first authentic certificate then stopped
+  fail-closed on one Binance native-basis request with the typed inner result
+  `PROVIDER_RETRY_EXHAUSTED` and `retry_after_ms=801`; it issued no second
+  provider request. Investigation proved a narrow verifier defect rather than
+  a widened provider action: `QueryService` correctly wraps the provider
+  result in outer `SOURCE_UNAVAILABLE`, while the verifier recognized only the
+  unwrapped test-double code. The in-scope repair is strictly to recognize
+  this exact `SOURCE_UNAVAILABLE + ERROR + PROVIDER_RETRY_EXHAUSTED` shape for
+  an already-isolated native-basis singleton, honor the one bounded
+  Redis-authoritative wait, and reject every other outer/inner combination.
+  It requires one regression test and one replacement immutable Python image;
+  Rust, the three-role topology, V1 and all durable stores remain unchanged.
+- **Typed retry repair verified (2026-08-27):** the verifier now recognizes
+  only the runtime QueryService representation above in addition to its
+  existing direct batch seam. It still requires a native perpetual-basis
+  singleton and positive retry hint before waiting once; a generic
+  `SOURCE_UNAVAILABLE` cannot retry. The bounded Docker no-network suite
+  `tests.test_phasec36_real_provider_certification
+  tests.test_phase113_provider_admission tests.test_phasec36_admission_binding
+  tests.test_phase104_reference_batch tests.test_phaseb_stable_edge` passed
+  `83/83` with one named optional Redis integration skip. `compileall` and
+  `git diff --check` passed. The certificate docstring now accurately limits
+  its explicit Rust mode's mutable surface to the dedicated admission state;
+  it does not claim source-only behavior after a runtime binding is supplied.
 
 ### 22.11 Phase 11 Completion Decision
 

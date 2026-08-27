@@ -284,6 +284,53 @@ class PhaseC36CertificationTests(unittest.TestCase):
         self.assertEqual(deferred_ms, 500)
         self.assertEqual(sleeps, [0.5])
 
+    def test_native_basis_deferral_unwraps_query_service_retry_once(self):
+        native_chunk = _reference_certification_batches(_reference_work(
+            self.feature_set,
+            policy=self.policy,
+            now_ms=1_800_000_000_000,
+            deadline_ms=60_000,
+        ))[0]
+
+        class Service:
+            def __init__(self):
+                self.calls = 0
+
+            async def reference_data_batch_async(self, _batch, *, purpose):
+                del purpose
+                self.calls += 1
+                if self.calls == 1:
+                    return SimpleNamespace(results=(SimpleNamespace(
+                        result=SimpleNamespace(
+                            status=ReferenceStatus.ERROR,
+                            error_code="PROVIDER_RETRY_EXHAUSTED",
+                        ),
+                        problem=SimpleNamespace(
+                            code=SimpleNamespace(value="SOURCE_UNAVAILABLE"),
+                            retry_after_ms=500,
+                        ),
+                    ),))
+                return SimpleNamespace(results=(SimpleNamespace(result=object(), problem=None),))
+
+        service = Service()
+        sleeps = []
+
+        async def sleep(seconds):
+            sleeps.append(seconds)
+
+        _result, attempts, deferred_ms = asyncio.run(_reference_batch_until_terminal(
+            service,
+            native_chunk,
+            batch_index=1,
+            deadline_monotonic=5.0,
+            clock=lambda: 0.0,
+            sleep=sleep,
+        ))
+        self.assertEqual(service.calls, 2)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(deferred_ms, 500)
+        self.assertEqual(sleeps, [0.5])
+
     def test_native_basis_deferral_fails_before_deadline_without_extra_provider_call(self):
         native_chunk = _reference_certification_batches(_reference_work(
             self.feature_set,

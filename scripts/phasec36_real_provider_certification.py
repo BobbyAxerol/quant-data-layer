@@ -4,8 +4,10 @@
 This verifier is intentionally a source-gate tool, not a runtime component. It
 uses the existing V2 query/reference and L2 replay contracts in memory, reads
 only documented public Binance/OKX provider endpoints, and retains no raw
-provider body. It neither creates leases nor writes Kafka, Redis, SQLite, V1,
-or V2 runtime state.
+provider body. Its default mode neither creates leases nor writes Kafka,
+Redis, SQLite, V1, or V2 runtime state. The explicit C3.6 runtime mode writes
+only its named Rust-admission coordination state; it never writes market data,
+orders, or durable provider payloads.
 """
 from __future__ import annotations
 
@@ -831,6 +833,33 @@ def _is_native_basis_singleton(chunk: Sequence[_ReferenceWork]) -> bool:
     )
 
 
+def _native_basis_retry_after_ms(item: Any) -> int | None:
+    """Return only the exact retryable shape emitted through QueryService.
+
+    The direct reference-batch unit seam exposes ``PROVIDER_RETRY_EXHAUSTED``
+    as the outer problem.  At runtime, QueryService preserves the typed cause
+    in an ``ERROR`` result while exposing its own ``SOURCE_UNAVAILABLE``
+    problem.  Both representations name the same bounded provider cooldown;
+    no other source error may acquire a certificate retry.
+    """
+
+    problem = getattr(item, "problem", None)
+    retry_after_ms = getattr(problem, "retry_after_ms", None)
+    if not isinstance(retry_after_ms, int) or retry_after_ms <= 0:
+        return None
+    outer_code = getattr(getattr(problem, "code", None), "value", None)
+    if outer_code == "PROVIDER_RETRY_EXHAUSTED":
+        return retry_after_ms
+    result = getattr(item, "result", None)
+    if (
+        outer_code == "SOURCE_UNAVAILABLE"
+        and getattr(result, "status", None) is ReferenceStatus.ERROR
+        and getattr(result, "error_code", None) == "PROVIDER_RETRY_EXHAUSTED"
+    ):
+        return retry_after_ms
+    return None
+
+
 async def _reference_batch_until_terminal(
     service,
     chunk: Sequence[_ReferenceWork],
@@ -857,15 +886,8 @@ async def _reference_batch_until_terminal(
         if not _is_native_basis_singleton(chunk):
             return result, attempts, deferred_ms
         item = result.results[0]
-        problem = item.problem
-        retry_after_ms = getattr(problem, "retry_after_ms", None)
-        if (
-            item.result is not None
-            or problem is None
-            or problem.code.value != "PROVIDER_RETRY_EXHAUSTED"
-            or not isinstance(retry_after_ms, int)
-            or retry_after_ms <= 0
-        ):
+        retry_after_ms = _native_basis_retry_after_ms(item)
+        if retry_after_ms is None:
             return result, attempts, deferred_ms
         remaining_ms = int((deadline_monotonic - clock()) * 1_000)
         # Preserve a final request window. Sleeping until the deadline would
