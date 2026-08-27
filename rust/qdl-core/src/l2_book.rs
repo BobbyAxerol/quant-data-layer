@@ -295,12 +295,26 @@ pub enum SnapshotOrigin {
     Rest,
 }
 
+/// Admission rule for the authoritative snapshot that seeds a book
+/// generation.  The generic core deliberately does not infer this from a
+/// venue name: an adapter selects the documented provider rule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SnapshotAdmissionPolicy {
+    /// Stateful websocket channels (for example OKX `books`) must establish
+    /// continuity from their own websocket snapshot.
+    WebSocketOnly,
+    /// Diff-depth protocols may bootstrap from a REST sequence anchor, but
+    /// remain unreadable until the first websocket range proves continuity.
+    RestBootstrapAllowed,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BookConfig {
     pub identity: BookIdentity,
     pub sequence_policy: SequencePolicy,
     pub checksum_policy: ChecksumPolicy,
     pub view_depth_per_side: usize,
+    pub snapshot_admission_policy: SnapshotAdmissionPolicy,
 }
 
 impl BookConfig {
@@ -318,7 +332,26 @@ impl BookConfig {
             sequence_policy,
             checksum_policy,
             view_depth_per_side,
+            snapshot_admission_policy: SnapshotAdmissionPolicy::WebSocketOnly,
         })
+    }
+
+    /// Opt into the only non-websocket snapshot shape currently supported by
+    /// the core.  It is valid solely for range-bridged diff-depth protocols;
+    /// a REST snapshot never becomes a readable book by itself.
+    pub fn with_snapshot_admission_policy(
+        mut self,
+        snapshot_admission_policy: SnapshotAdmissionPolicy,
+    ) -> Result<Self, BookError> {
+        if snapshot_admission_policy == SnapshotAdmissionPolicy::RestBootstrapAllowed
+            && self.sequence_policy != SequencePolicy::RangeBridgeThenPrevious
+        {
+            return Err(BookError::InvalidIdentity(
+                "rest_bootstrap_requires_range_bridge_policy",
+            ));
+        }
+        self.snapshot_admission_policy = snapshot_admission_policy;
+        Ok(self)
     }
 }
 
@@ -346,6 +379,9 @@ pub struct BookDelta {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BookStatus {
     AwaitingSnapshot,
+    /// A REST bootstrap anchor is loaded, but no websocket delta has yet
+    /// proven the required sequence bridge. `view()` remains fail-closed.
+    Bootstrapping,
     Ready,
     Gapped,
     Resyncing,
@@ -356,6 +392,7 @@ impl BookStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::AwaitingSnapshot => "AWAITING_SNAPSHOT",
+            Self::Bootstrapping => "BOOTSTRAPPING",
             Self::Ready => "READY",
             Self::Gapped => "GAPPED",
             Self::Resyncing => "RESYNCING",
@@ -367,6 +404,7 @@ impl BookStatus {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BookOutcome {
     SnapshotApplied,
+    BootstrapApplied,
     DeltaApplied,
     Keepalive,
     Duplicate,
@@ -377,6 +415,9 @@ pub enum BookOutcome {
     IdentityMismatch,
     IgnoredStaleGeneration,
     RejectedAwaitingSnapshot,
+    /// Adapter-owned race buffering retained the delta before an authoritative
+    /// snapshot exists. It is not a readable or durable book transition.
+    BufferedAwaitingBootstrap,
     SnapshotSourceRejected,
     DeltaUnsupported,
     ResyncRequested,
@@ -387,6 +428,7 @@ impl BookOutcome {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::SnapshotApplied => "SNAPSHOT_APPLIED",
+            Self::BootstrapApplied => "BOOTSTRAP_APPLIED",
             Self::DeltaApplied => "DELTA_APPLIED",
             Self::Keepalive => "KEEPALIVE",
             Self::Duplicate => "DUPLICATE",
@@ -397,6 +439,7 @@ impl BookOutcome {
             Self::IdentityMismatch => "IDENTITY_MISMATCH",
             Self::IgnoredStaleGeneration => "IGNORED_STALE_GENERATION",
             Self::RejectedAwaitingSnapshot => "REJECTED_AWAITING_SNAPSHOT",
+            Self::BufferedAwaitingBootstrap => "BUFFERED_AWAITING_BOOTSTRAP",
             Self::SnapshotSourceRejected => "SNAPSHOT_SOURCE_REJECTED",
             Self::DeltaUnsupported => "DELTA_UNSUPPORTED",
             Self::ResyncRequested => "RESYNC_REQUESTED",
@@ -425,6 +468,7 @@ pub struct BookViewLevel {
 pub struct BookView {
     pub identity: BookIdentity,
     pub generation: u64,
+    pub snapshot_sequence: u64,
     pub last_sequence: u64,
     pub bids: Vec<BookViewLevel>,
     pub asks: Vec<BookViewLevel>,
@@ -449,6 +493,7 @@ pub struct L2BookCore {
     config: BookConfig,
     generation: u64,
     status: BookStatus,
+    snapshot_sequence: Option<u64>,
     last_sequence: Option<u64>,
     range_bridge_complete: bool,
     bids: BTreeMap<ExactDecimal, BookLevel>,
@@ -462,6 +507,7 @@ impl L2BookCore {
             config,
             generation: 0,
             status: BookStatus::AwaitingSnapshot,
+            snapshot_sequence: None,
             last_sequence: None,
             range_bridge_complete: false,
             bids: BTreeMap::new(),
@@ -482,6 +528,13 @@ impl L2BookCore {
         self.last_sequence
     }
 
+    /// The provider sequence of the snapshot that anchors the current
+    /// generation.  It remains stable across valid deltas and is cleared on
+    /// every gap, resync, disconnect or generation change.
+    pub fn snapshot_sequence(&self) -> Option<u64> {
+        self.snapshot_sequence
+    }
+
     pub fn last_error(&self) -> Option<&BookError> {
         self.last_error.as_ref()
     }
@@ -490,7 +543,7 @@ impl L2BookCore {
         if frame.identity != self.config.identity {
             return BookOutcome::IdentityMismatch;
         }
-        if frame.origin != SnapshotOrigin::WebSocket {
+        if !self.snapshot_origin_accepted(frame.origin) {
             return BookOutcome::SnapshotSourceRejected;
         }
         if !self.accept_generation(frame.generation) {
@@ -510,11 +563,21 @@ impl L2BookCore {
 
         self.bids = bids;
         self.asks = asks;
+        self.snapshot_sequence = Some(frame.sequence_end);
         self.last_sequence = Some(frame.sequence_end);
         self.range_bridge_complete = false;
-        self.status = BookStatus::Ready;
+        let is_rest_bootstrap = frame.origin == SnapshotOrigin::Rest;
+        self.status = if is_rest_bootstrap {
+            BookStatus::Bootstrapping
+        } else {
+            BookStatus::Ready
+        };
         self.last_error = None;
-        BookOutcome::SnapshotApplied
+        if is_rest_bootstrap {
+            BookOutcome::BootstrapApplied
+        } else {
+            BookOutcome::SnapshotApplied
+        }
     }
 
     pub fn apply_delta(&mut self, frame: &BookDelta) -> BookOutcome {
@@ -527,7 +590,9 @@ impl L2BookCore {
         if self.config.sequence_policy == SequencePolicy::SnapshotOnly {
             return BookOutcome::DeltaUnsupported;
         }
-        if self.status != BookStatus::Ready || self.last_sequence.is_none() {
+        if !matches!(self.status, BookStatus::Ready | BookStatus::Bootstrapping)
+            || self.last_sequence.is_none()
+        {
             return BookOutcome::RejectedAwaitingSnapshot;
         }
 
@@ -572,8 +637,9 @@ impl L2BookCore {
         BookOutcome::DeltaApplied
     }
 
-    /// Request a transport-level resubscribe. A following `apply_snapshot`
-    /// must be a fresh WebSocket snapshot; this core exposes no REST bridge.
+    /// Request a transport-level resubscribe. The adapter supplies the next
+    /// provider-valid snapshot: websocket-only for stateful protocols, or a
+    /// new REST bootstrap plus websocket bridge for diff-depth protocols.
     pub fn request_resync(&mut self, generation: u64) -> BookOutcome {
         if generation < self.generation {
             return BookOutcome::IgnoredStaleGeneration;
@@ -597,12 +663,14 @@ impl L2BookCore {
         if self.status != BookStatus::Ready {
             return None;
         }
+        let snapshot_sequence = self.snapshot_sequence?;
         let last_sequence = self.last_sequence?;
         let truncated = self.bids.len() > self.config.view_depth_per_side
             || self.asks.len() > self.config.view_depth_per_side;
         Some(BookView {
             identity: self.config.identity.clone(),
             generation: self.generation,
+            snapshot_sequence,
             last_sequence,
             bids: self
                 .bids
@@ -639,6 +707,17 @@ impl L2BookCore {
             ChecksumPolicy::Ignore => true,
             ChecksumPolicy::VerifyIfPresent => evidence != ChecksumEvidence::Failed,
             ChecksumPolicy::RequireVerified => evidence == ChecksumEvidence::Verified,
+        }
+    }
+
+    fn snapshot_origin_accepted(&self, origin: SnapshotOrigin) -> bool {
+        match origin {
+            SnapshotOrigin::WebSocket => true,
+            SnapshotOrigin::Rest => {
+                self.config.snapshot_admission_policy
+                    == SnapshotAdmissionPolicy::RestBootstrapAllowed
+                    && self.config.sequence_policy == SequencePolicy::RangeBridgeThenPrevious
+            }
         }
     }
 
@@ -708,6 +787,7 @@ impl L2BookCore {
     fn clear_book(&mut self) {
         self.bids.clear();
         self.asks.clear();
+        self.snapshot_sequence = None;
         self.last_sequence = None;
         self.range_bridge_complete = false;
     }
@@ -815,7 +895,8 @@ fn to_view_level(level: &BookLevel) -> BookViewLevel {
 mod tests {
     use super::{
         BookConfig, BookDelta, BookIdentity, BookLevelInput, BookOutcome, BookSide, BookSnapshot,
-        ChecksumEvidence, ChecksumPolicy, ExactDecimal, L2BookCore, SequencePolicy, SnapshotOrigin,
+        ChecksumEvidence, ChecksumPolicy, ExactDecimal, L2BookCore, SequencePolicy,
+        SnapshotAdmissionPolicy, SnapshotOrigin,
     };
     use serde::Deserialize;
 
@@ -839,6 +920,8 @@ mod tests {
         sequence_policy: String,
         checksum_policy: String,
         view_depth_per_side: usize,
+        #[serde(default)]
+        snapshot_admission_policy: Option<String>,
     }
 
     #[derive(Clone, Deserialize)]
@@ -938,6 +1021,14 @@ mod tests {
         }
     }
 
+    fn snapshot_admission_policy(value: Option<&str>) -> SnapshotAdmissionPolicy {
+        match value.unwrap_or("WEBSOCKET_ONLY") {
+            "WEBSOCKET_ONLY" => SnapshotAdmissionPolicy::WebSocketOnly,
+            "REST_BOOTSTRAP_ALLOWED" => SnapshotAdmissionPolicy::RestBootstrapAllowed,
+            other => panic!("unknown snapshot admission policy {other}"),
+        }
+    }
+
     fn levels(values: &[FixtureLevel]) -> Vec<BookLevelInput> {
         values
             .iter()
@@ -1008,6 +1099,10 @@ mod tests {
                 checksum_policy(&case.config.checksum_policy),
                 case.config.view_depth_per_side,
             )
+            .unwrap()
+            .with_snapshot_admission_policy(snapshot_admission_policy(
+                case.config.snapshot_admission_policy.as_deref(),
+            ))
             .unwrap();
             let mut core = L2BookCore::new(config);
             for action in &case.actions {

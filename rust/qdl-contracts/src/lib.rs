@@ -179,6 +179,8 @@ mod tests {
             depth_levels: 0,
             configuration_revision: 7,
             warmup: None,
+            basis_contract_type: String::new(),
+            basis_series: String::new(),
         }
     }
 

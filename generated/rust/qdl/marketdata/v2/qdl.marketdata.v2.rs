@@ -96,6 +96,19 @@ pub struct OrderBookSnapshot {
     pub levels: ::prost::alloc::vec::Vec<BookLevel>,
     #[prost(uint32, tag="4")]
     pub depth: u32,
+    /// Monotonic per `(provider profile, instrument, channel)` resync generation.
+    /// A value of zero is legacy/unverified and cannot be execution-grade.
+    #[prost(uint64, tag="5")]
+    pub book_generation: u64,
+    /// True only after the provider-specific snapshot/sequence admission rule has
+    /// been proven. For a Binance REST bootstrap this stays false until a WS diff
+    /// range bridges its `lastUpdateId`.
+    #[prost(bool, tag="6")]
+    pub sequence_verified: bool,
+    /// The readable projection contains the requested top-N depth rather than
+    /// every provider level. Clients must not assume omitted levels are absent.
+    #[prost(bool, tag="7")]
+    pub truncated: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OrderBookDelta {
@@ -111,6 +124,13 @@ pub struct OrderBookDelta {
     pub updates: ::prost::alloc::vec::Vec<BookLevel>,
     #[prost(bool, tag="6")]
     pub reset: bool,
+    /// Must match the snapshot generation used to reconstruct this delta chain.
+    #[prost(uint64, tag="7")]
+    pub book_generation: u64,
+    /// The delta was admitted only after continuity with `snapshot_sequence` was
+    /// proven; false is non-execution-grade legacy/bootstrap evidence.
+    #[prost(bool, tag="8")]
+    pub sequence_verified: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FundingRate {

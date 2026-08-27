@@ -103,6 +103,16 @@ message OrderBookSnapshot {
   string checksum = 2;
   repeated BookLevel levels = 3;
   uint32 depth = 4;
+  // Monotonic per `(provider profile, instrument, channel)` resync generation.
+  // A value of zero is legacy/unverified and cannot be execution-grade.
+  uint64 book_generation = 5;
+  // True only after the provider-specific snapshot/sequence admission rule has
+  // been proven. For a Binance REST bootstrap this stays false until a WS diff
+  // range bridges its `lastUpdateId`.
+  bool sequence_verified = 6;
+  // The readable projection contains the requested top-N depth rather than
+  // every provider level. Clients must not assume omitted levels are absent.
+  bool truncated = 7;
 }
 
 message OrderBookDelta {
@@ -112,6 +122,11 @@ message OrderBookDelta {
   string checksum = 4;
   repeated BookLevel updates = 5;
   bool reset = 6;
+  // Must match the snapshot generation used to reconstruct this delta chain.
+  uint64 book_generation = 7;
+  // The delta was admitted only after continuity with `snapshot_sequence` was
+  // proven; false is non-execution-grade legacy/bootstrap evidence.
+  bool sequence_verified = 8;
 }
 
 message FundingRate {

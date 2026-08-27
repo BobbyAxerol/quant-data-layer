@@ -13,6 +13,7 @@ from qdl.l2.conformance import (
     ChecksumPolicy,
     L2BookReference,
     SequencePolicy,
+    SnapshotAdmissionPolicy,
     SnapshotOrigin,
     _parse_exact_decimal,
     canonical_decimal_text,
@@ -55,6 +56,9 @@ class Phase104L2BookConformanceTests(unittest.TestCase):
                         sequence_policy=SequencePolicy(config["sequence_policy"]),
                         checksum_policy=ChecksumPolicy(config["checksum_policy"]),
                         view_depth_per_side=config["view_depth_per_side"],
+                        snapshot_admission_policy=SnapshotAdmissionPolicy(
+                            config.get("snapshot_admission_policy", "WEBSOCKET_ONLY")
+                        ),
                     )
                 )
                 for action in case["actions"]:

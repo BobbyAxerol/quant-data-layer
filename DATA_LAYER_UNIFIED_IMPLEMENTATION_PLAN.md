@@ -17090,6 +17090,180 @@ revision and retain quote/trade/bar paths. No order group, broker, alpha state,
 Kafka offset or V1 route changes. Stop after evidence/plan journal/one coherent
 commit.
 
+**Phase 11.4 implementation preflight - 2026-08-27 (`APPROVED / SOURCE AND
+ISOLATED PROVIDER TEST ONLY / RUNTIME UNCHANGED`):**
+
+- **Approved boundary:** complete the already-existing provider-neutral Rust
+  `L2BookCore` path for Binance USD-M diff-depth and OKX Swap `books`, then
+  carry its ready/gap/generation state through the existing V2 canonical,
+  catalog, query, stream and SDK path. This is one shared state machine and
+  one V2 representation, not a per-symbol service, image, topic, cache or
+  alpha-specific adapter.
+- **Provider invariants:** Binance may use a REST depth snapshot only as a
+  tagged bootstrap anchor followed by a buffered diff range that proves
+  `U <= snapshot_last_update_id + 1 <= u`; every later delta must chain using
+  `pu`. A gap or reconnect invalidates the book and requires a new generation
+  plus a new verified bootstrap. OKX may become ready only from its public
+  WebSocket `action=snapshot`; `prevSeqId == lastSeqId` (including its defined
+  maintenance reset behaviour) governs updates, while fixed/deprecated normal
+  `checksum=0` is not fabricated into integrity evidence. Neither provider's
+  wire rule is exposed to alpha code.
+- **Contract boundary:** extend V2 additively only where needed to surface
+  `book_generation`, `sequence_verified` and requested-depth `truncated`.
+  Existing V1 and existing V2 readers remain valid. A non-ready, gapped,
+  stale, unverified or cross-generation book is not execution eligible and
+  cannot be returned as a usable latest book view. Existing signed cursor and
+  partition replay remain the replay contract.
+- **Actual demand inventory:** Phase 11.1 admits exactly two active
+  `BOOK_SNAPSHOT` rows, both for `basis_arb_binance_1d`, Binance USD-M,
+  requested depth `100`; they are the real-demand acceptance target. OKX has
+  no active L2 demand in the frozen inventory, so this phase verifies its
+  adapter with a bounded read-only public-provider capture but does not claim
+  active-demand certification for an absent OKX demand.
+- **Test gates:** deterministic Rust/Python-independent oracle coverage for
+  the two provider policies, duplicate/out-of-order/gap/checksum/reconnect/
+  resnapshot/generation/depth/cross-symbol cases; V2 catalog-query-stream-SDK
+  readiness/gap/replay and slow-consumer isolation; read-only basis/grid/
+  reactive SDK integration with no order action; bounded real Binance USD-M
+  and OKX Swap L2 capture/replay retaining only count/timestamp/digest metrics;
+  and bounded concurrent book/trade/bar resource checks. Provider failure or
+  unavailable network is an explicit failed/blocked external gate, never
+  replaced by synthetic evidence.
+- **Runtime exclusion and rollback:** do not build/deploy/recreate a runtime
+  image, mutate a manifest/route/authority, or touch Kafka, Redis, SQLite,
+  V1, Trading System, alpha, broker or order state. Tests use only temporary
+  isolated paths/containers and are cleaned by exact name. A source revert of
+  the coherent Phase 11.4 commit is the only rollback in this phase. Stop for
+  user approval before any later Phase 11.5 runtime cutover.
+
+**Phase 11.4 slice A - Rust provider-edge state semantics - 2026-08-27
+(`IMPLEMENTED / TESTED / RUNTIME UNCHANGED`):**
+
+- Added the provider-neutral `SnapshotAdmissionPolicy` and explicit
+  `BOOTSTRAPPING` state to `L2BookCore`. Its default remains websocket-only;
+  only a range-bridge configuration can opt into REST bootstrap. Such a
+  snapshot retains its anchor sequence but returns no `view()` until the first
+  accepted websocket range proves continuity. A gap/resync/disconnect clears
+  both anchor and readable state.
+- Added `rust/qdl-core/src/l2_adapter.rs`: compact Binance USD-M diff-depth
+  and OKX public `books` edge parsers around the same core. They validate raw
+  symbol/channel identity, source sequence/timestamp/levels, model Binance
+  `lastUpdateId` + `U/u/pu`, and model OKX `action`, `seqId/prevSeqId` and
+  normal public checksum semantics. The adapter owns neither socket, REST call,
+  durable write nor execution action.
+- Extended the shared test-only Rust/Python fixture to prove the Binance REST
+  bootstrap stays unreadable and becomes ready only after its valid range
+  bridge. The Python oracle remains independent from runtime code.
+- **Executed:**
+  `docker run --rm -v "$PWD:/workspace" -w /workspace rust:1.82-slim cargo test -p qdl-core --locked`
+  -> `28 passed, 0 failed`. Coverage includes REST bootstrap, bounded
+  pre-snapshot buffer, gap,
+  cross-symbol rejection, OKX snapshot/update, generic duplicate/order/gap,
+  checksum, generation, truncation and exact-decimal conformance.
+- **Not yet claimed:** no runtime binding, V2 route, provider session,
+  durable event or consumer changed. The next slice is the additive V2
+  `book_generation`/verification/truncation contract plus catalog/query/SDK
+  fail-closed projection.
+
+**Phase 11.4 slice B preflight - V2 projection, active-demand plan and
+real-provider capture - 2026-08-27 (`IN PROGRESS / SOURCE AND READ-ONLY
+PROVIDER TEST ONLY / RUNTIME UNCHANGED`):**
+
+- Extend the additive V2 book payload only through the existing generated
+  protobuf, stable catalog/query/stream and public SDK projection. An execution
+  consumer must receive `DATA_NOT_READY` for an unverified or zero-generation
+  book even when a stale template claims a primary source.
+- Compile exactly one inactive `L2DemandPlan` from admitted `BOOK_SNAPSHOT` /
+  `BOOK_DELTA` demand. Coalesce same-instrument feeds into one physical
+  binding and shared venue/market role; this plans no socket, provider call,
+  container, cache, topic, worker, service or per-symbol process.
+- Add one bounded read-only public-provider verifier. It derives every active
+  Binance USD-M book symbol from the frozen Phase 11.1 admission evidence,
+  captures WebSocket diff-depth before its REST anchor and verifies a range
+  bridge; it separately captures OKX public `books` snapshot/update semantics.
+  Evidence holds only identifiers, frame digests, timestamps and bounded
+  counters. Provider bytes, credentials, durable writes and runtime mutations
+  are prohibited. A provider failure remains an explicit failed test gate.
+- **Exit tests:** Rust core/adapter oracle; Python independent oracle;
+  SDK/query/stream verified-vs-unverified gate; active-demand topology and
+  cross-symbol coalescing; bounded real Binance/OKX capture/replay; existing
+  slow-book-versus-final-bar isolation. Stop after exact test cleanup, evidence,
+  journal and one coherent source commit. Runtime binding/authority/cutover is
+  deferred to explicit Phase 11.5 approval.
+
+**Phase 11.4 slice B and source/test closure - 2026-08-27
+(`IMPLEMENTED / TESTED / RUNTIME UNCHANGED`):**
+
+- **One provider-neutral core, not one worker per symbol:**
+  `rust/qdl-core/src/l2_adapter.rs` wraps the existing shared Rust book state
+  machine with exact Binance diff-depth and OKX public-`books` edge parsers.
+  Binance keeps a bounded pre-snapshot buffer (`2,048` entries by default),
+  accepts REST only as a bootstrap anchor, and publishes no durable book until
+  a buffered/live `U <= lastUpdateId + 1 <= u` bridge then `pu` chain makes the
+  generation readable. OKX accepts only public WebSocket snapshots, validates
+  `prevSeqId`, handles documented `-1` maintenance reset by dropping readiness,
+  and never fabricates a normal checksum. Gap/resync/disconnect clears the
+  anchor and readable state.
+- **Additive V2 contract and fail-closed public projection:**
+  `OrderBookSnapshot` now carries `book_generation`, `sequence_verified` and
+  `truncated`; `OrderBookDelta` carries generation/verification. Generated
+  Python/Rust sources, canonical projection, stable catalog/query source,
+  REST router and `qdl_sdk` preserve those fields. A zero-generation or
+  unverified book is `SYNCING`, incomplete and non-execution-eligible;
+  execution SDK stream projection returns typed `DATA_NOT_READY` rather than
+  using a seemingly-primary template to bypass readiness. Existing fields and
+  V1 paths remain unchanged.
+- **Inactive demand topology:** added `qdl/runtime/l2_demand.py`. It compiles
+  admitted `BOOK_SNAPSHOT`/`BOOK_DELTA` requirements into exact physical
+  provider bindings, coalescing snapshot/delta and all consumer owners of one
+  instrument into one subscription plus shared `(venue, market)` role. It
+  opens no WebSocket/REST call and creates no service, topic, container, cache
+  or per-symbol worker. Tests prove basis/grid/reactive/limit-price consumers
+  share one Binance binding while their depth/TTL/grade domain constraints are
+  retained.
+- **Bounded real-provider evidence:** added
+  `scripts/phase114_l2_real_provider_capture.py` and committed only
+  `upgrade/evidence/phase114-l2-real-provider-capture.json` (identifiers,
+  counts, timestamps and SHA-256 digests; zero raw provider bytes). It derives
+  every active Binance USD-M L2 symbol from the frozen admission instead of
+  hard-coding BTC. The successful run captured `BTCUSDT` and
+  `BTCUSDT_260925` REST anchors, range bridges and at least one subsequent
+  `pu` continuation each; it also captured an OKX `BTC-USDT-SWAP` public
+  `books` snapshot followed by a valid update. It completed in `4,899 ms`,
+  observed `50,952 KiB` max RSS, had `runtime_mutations=0`,
+  `production_writes=0` and `raw_provider_bytes_persisted=0`.
+- **Verifier defects caught before evidence:** initial provider smoke rejected
+  a normal OKX subscription acknowledgement as book state, then exposed a
+  test-side Binance race caused by awaiting REST without draining buffered WS
+  deltas. Both were fixed in the verifier: ACKs are ignored and REST fetch
+  runs concurrently with bounded WS buffering. Neither defect reached a
+  Data Layer runtime or durable path.
+- **Executed and passed:**
+  - Buf V2 format/lint/breaking against both frozen Phase 1 and Phase 7
+    baselines: passed.
+  - Python regression matrix:
+    `tests.test_phase104_contract_foundation`, L2 oracle/reference/query-stream,
+    Phase 11.2 realtime/provider, Phase 11.3 reference/provider, SDK stream,
+    demand-plan and provider-capture tests -> `63 passed, 0 failed`.
+  - Rust `qdl-contracts`, `qdl-core`, `qdl-realtime-core`,
+    `qdl-provider-envelope` and `qdl-venue-core` packages -> passed; an
+    existing Rust fixture omission for proto-default `basis_contract_type` /
+    `basis_series` was repaired with explicit empty defaults, preserving golden
+    wire bytes. `qdl-kafka` then passed in a disposable full native build
+    toolchain (its 20 integration and 9 additional tests passed); no build
+    image was retained.
+  - Real public provider command:
+    `docker run --rm --user 1001:1001 -v "$PWD:/workspace" -w /workspace qdl-v2-python:2.0.0-e0bedff python scripts/phase114_l2_real_provider_capture.py --timeout-seconds 30 --max-frames 64 --output upgrade/evidence/phase114-l2-real-provider-capture.json`
+    -> passed as recorded above. Every Docker test container used `--rm`.
+- **Closure decision:** the Phase 11.4 source/contract/demand/provider-test
+  gate is **PASSED**. It is not a runtime cutover or a claim that any live
+  query/stream role is serving L2: no service, image, manifest, route,
+  authority, Kafka offset, Redis, SQLite, V1, Trading System, alpha or broker
+  state changed. The only permitted next step is an explicitly approved
+  Phase 11.5 bounded runtime handoff; rollback for this slice is one source
+  revert and deletion only of the named test evidence if that evidence must be
+  superseded.
+
 ### 22.10 Phase 11.5 - Full Consumer Cutover And Universal V2 Release
 
 **Goal:** Make V2/Rust the primary market-data route for the complete approved

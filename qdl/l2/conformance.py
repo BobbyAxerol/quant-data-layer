@@ -40,8 +40,14 @@ class SnapshotOrigin(str, Enum):
     REST = "REST"
 
 
+class SnapshotAdmissionPolicy(str, Enum):
+    WEBSOCKET_ONLY = "WEBSOCKET_ONLY"
+    REST_BOOTSTRAP_ALLOWED = "REST_BOOTSTRAP_ALLOWED"
+
+
 class BookStatus(str, Enum):
     AWAITING_SNAPSHOT = "AWAITING_SNAPSHOT"
+    BOOTSTRAPPING = "BOOTSTRAPPING"
     READY = "READY"
     GAPPED = "GAPPED"
     RESYNCING = "RESYNCING"
@@ -66,10 +72,16 @@ class BookConfig:
     sequence_policy: SequencePolicy
     checksum_policy: ChecksumPolicy
     view_depth_per_side: int
+    snapshot_admission_policy: SnapshotAdmissionPolicy = SnapshotAdmissionPolicy.WEBSOCKET_ONLY
 
     def __post_init__(self) -> None:
         if self.view_depth_per_side <= 0:
             raise ValueError("view_depth_per_side must be positive")
+        if (
+            self.snapshot_admission_policy is SnapshotAdmissionPolicy.REST_BOOTSTRAP_ALLOWED
+            and self.sequence_policy is not SequencePolicy.RANGE_BRIDGE_THEN_PREVIOUS
+        ):
+            raise ValueError("REST bootstrap requires the range-bridge sequence policy")
 
 
 @dataclass(frozen=True)
@@ -91,6 +103,7 @@ class _BookLevel:
 @dataclass(frozen=True)
 class BookView:
     generation: int
+    snapshot_sequence: int
     last_sequence: int
     bids: tuple[_BookLevel, ...]
     asks: tuple[_BookLevel, ...]
@@ -178,6 +191,7 @@ class L2BookReference:
         self.config = config
         self.generation = 0
         self.status = BookStatus.AWAITING_SNAPSHOT
+        self.snapshot_sequence: int | None = None
         self.last_sequence: int | None = None
         self._range_bridge_complete = False
         self._bids: dict[Decimal, _BookLevel] = {}
@@ -196,7 +210,7 @@ class L2BookReference:
     ) -> str:
         if identity != self.config.identity:
             return "IDENTITY_MISMATCH"
-        if origin is not SnapshotOrigin.WEBSOCKET:
+        if not self._snapshot_origin_accepted(origin):
             return "SNAPSHOT_SOURCE_REJECTED"
         if not self._accept_generation(generation):
             return "IGNORED_STALE_GENERATION"
@@ -210,11 +224,13 @@ class L2BookReference:
             return "INVALID_FRAME"
         self._bids = bids
         self._asks = asks
+        self.snapshot_sequence = sequence_end
         self.last_sequence = sequence_end
         self._range_bridge_complete = False
-        self.status = BookStatus.READY
+        is_rest_bootstrap = origin is SnapshotOrigin.REST
+        self.status = BookStatus.BOOTSTRAPPING if is_rest_bootstrap else BookStatus.READY
         self.last_error = None
-        return "SNAPSHOT_APPLIED"
+        return "BOOTSTRAP_APPLIED" if is_rest_bootstrap else "SNAPSHOT_APPLIED"
 
     def apply_delta(
         self,
@@ -233,7 +249,7 @@ class L2BookReference:
             return "IGNORED_STALE_GENERATION"
         if self.config.sequence_policy is SequencePolicy.SNAPSHOT_ONLY:
             return "DELTA_UNSUPPORTED"
-        if self.status is not BookStatus.READY or self.last_sequence is None:
+        if self.status not in {BookStatus.READY, BookStatus.BOOTSTRAPPING} or self.last_sequence is None:
             return "REJECTED_AWAITING_SNAPSHOT"
 
         continuity = self._continuity(
@@ -291,7 +307,11 @@ class L2BookReference:
         return "DISCONNECTED"
 
     def view(self) -> BookView | None:
-        if self.status is not BookStatus.READY or self.last_sequence is None:
+        if (
+            self.status is not BookStatus.READY
+            or self.snapshot_sequence is None
+            or self.last_sequence is None
+        ):
             return None
         bids = tuple(
             level
@@ -307,6 +327,7 @@ class L2BookReference:
         )
         return BookView(
             generation=self.generation,
+            snapshot_sequence=self.snapshot_sequence,
             last_sequence=self.last_sequence,
             bids=bids,
             asks=asks,
@@ -332,6 +353,14 @@ class L2BookReference:
         if self.config.checksum_policy is ChecksumPolicy.VERIFY_IF_PRESENT:
             return evidence is not ChecksumEvidence.FAILED
         return evidence is ChecksumEvidence.VERIFIED
+
+    def _snapshot_origin_accepted(self, origin: SnapshotOrigin) -> bool:
+        return origin is SnapshotOrigin.WEBSOCKET or (
+            origin is SnapshotOrigin.REST
+            and self.config.snapshot_admission_policy
+            is SnapshotAdmissionPolicy.REST_BOOTSTRAP_ALLOWED
+            and self.config.sequence_policy is SequencePolicy.RANGE_BRIDGE_THEN_PREVIOUS
+        )
 
     def _continuity(
         self,
@@ -418,6 +447,7 @@ class L2BookReference:
     def _clear_book(self) -> None:
         self._bids.clear()
         self._asks.clear()
+        self.snapshot_sequence = None
         self.last_sequence = None
         self._range_bridge_complete = False
 

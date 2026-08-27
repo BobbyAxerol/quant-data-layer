@@ -8,6 +8,7 @@ from .conformance import (
     ChecksumPolicy,
     L2BookReference,
     SequencePolicy,
+    SnapshotAdmissionPolicy,
     SnapshotOrigin,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "ChecksumPolicy",
     "L2BookReference",
     "SequencePolicy",
+    "SnapshotAdmissionPolicy",
     "SnapshotOrigin",
 ]

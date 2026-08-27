@@ -71,6 +71,8 @@ def payload_fixture(feed: Feed) -> dict:
             "native_sequence": "1",
             "levels": [level()],
             "depth": 1,
+            "book_generation": 1,
+            "sequence_verified": True,
         },
         Feed.BOOK_DELTA: {
             **common,
@@ -79,6 +81,8 @@ def payload_fixture(feed: Feed) -> dict:
             "snapshot_sequence": "1",
             "updates": [level()],
             "reset": False,
+            "book_generation": 1,
+            "sequence_verified": True,
         },
         Feed.FUNDING_RATE: {**common, "rate": dv(), "funding_time_ns": NOW},
         Feed.OPEN_INTEREST: {**common, "quantity": dv(), "quantity_unit": "CONTRACT"},
@@ -258,6 +262,8 @@ def envelope(feed: Feed) -> market_data_pb2.EventEnvelope:
                     )
                 ],
                 depth=1,
+                book_generation=1,
+                sequence_verified=True,
             )
         )
     elif feed is Feed.BOOK_DELTA:
@@ -275,6 +281,8 @@ def envelope(feed: Feed) -> market_data_pb2.EventEnvelope:
                         quantity_unit=common_pb2.QUANTITY_UNIT_BASE_ASSET,
                     )
                 ],
+                book_generation=1,
+                sequence_verified=True,
             )
         )
     elif feed is Feed.FUNDING_RATE:
@@ -398,6 +406,30 @@ class SdkStreamProjectionTests(unittest.TestCase):
                 now_ns=NOW + 2_000_000_000,
             )
         self.assertEqual(stale.exception.code, "DATA_STALE")
+
+    def test_execution_book_requires_verified_generation(self):
+        unverified = envelope(Feed.BOOK_SNAPSHOT)
+        unverified.book_snapshot.sequence_verified = False
+        unverified.book_snapshot.book_generation = 0
+        with self.assertRaises(ContinuityError) as blocked:
+            market_data_view_from_stream(
+                StreamEvent(11, "signed", unverified),
+                template=template(Feed.BOOK_SNAPSHOT),
+                requirement=self.requirement(Feed.BOOK_SNAPSHOT),
+                now_ns=NOW + 100_000_000,
+            )
+        self.assertEqual(blocked.exception.code, "DATA_NOT_READY")
+
+        verified = envelope(Feed.BOOK_SNAPSHOT)
+        view = market_data_view_from_stream(
+            StreamEvent(12, "signed", verified),
+            template=template(Feed.BOOK_SNAPSHOT),
+            requirement=self.requirement(Feed.BOOK_SNAPSHOT),
+            now_ns=NOW + 100_000_000,
+        )
+        self.assertTrue(view.payload.sequence_verified)
+        self.assertEqual(view.payload.book_generation, 1)
+        self.assertTrue(view.quality.execution_eligible)
 
     def test_gap_and_stale_alpha_events_obey_typed_policies(self):
         requirement = DataRequirement(

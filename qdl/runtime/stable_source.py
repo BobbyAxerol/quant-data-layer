@@ -432,15 +432,24 @@ class StableSpoolQueryBackend:
                 binding.instrument.session_calendar_id
             ).is_open_ns(self._clock_ns())
         stale = freshness_ms > binding.stale_after_ms
+        payload_name = envelope.WhichOneof("payload")
+        book_unverified = payload_name in {"book_snapshot", "book_delta"} and not (
+            bool(getattr(envelope, payload_name).sequence_verified)
+            and int(getattr(envelope, payload_name).book_generation) >= 1
+        )
+        if book_unverified:
+            flags = flags + ("BOOK_SEQUENCE_UNVERIFIED",)
         if market_closed:
             state = "MARKET_CLOSED"
         elif gap_open:
             state = "GAPPED"
+        elif book_unverified:
+            state = "SYNCING"
         elif stale:
             state = "STALE"
         else:
             state = "LIVE"
-        complete = not gap_open
+        complete = not gap_open and not book_unverified
         execution_eligible = (
             binding.authoritative
             and binding.source_role == "PRIMARY"
@@ -608,6 +617,9 @@ class StableSpoolQueryBackend:
                     "checksum": envelope.book_snapshot.checksum or None,
                     "levels": _book_level_fields(envelope.book_snapshot.levels),
                     "depth": int(envelope.book_snapshot.depth),
+                    "book_generation": int(envelope.book_snapshot.book_generation),
+                    "sequence_verified": bool(envelope.book_snapshot.sequence_verified),
+                    "truncated": bool(envelope.book_snapshot.truncated),
                 },
                 **common,
             )
@@ -621,6 +633,8 @@ class StableSpoolQueryBackend:
                     "checksum": envelope.book_delta.checksum or None,
                     "updates": _book_level_fields(envelope.book_delta.updates),
                     "reset": bool(envelope.book_delta.reset),
+                    "book_generation": int(envelope.book_delta.book_generation),
+                    "sequence_verified": bool(envelope.book_delta.sequence_verified),
                 },
                 **common,
             )

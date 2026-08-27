@@ -66,6 +66,11 @@ def canonicalize_okx_book(
         *_levels(row.get("asks", []), common_pb2.BOOK_SIDE_ASK, unit),
     ]
     checksum = str(row.get("checksum") or "")
+    generation = int(context.connection_generation)
+    # Legacy/test callers may not provide a connection generation.  Preserve
+    # their additive wire compatibility, but never label that book as sequence
+    # verified; the V2 quality projection will keep it out of execution use.
+    sequence_verified = generation >= 1
     if action == "snapshot":
         envelope.book_snapshot.CopyFrom(
             market_data_pb2.OrderBookSnapshot(
@@ -73,6 +78,9 @@ def canonicalize_okx_book(
                 checksum=checksum,
                 levels=levels,
                 depth=max(len(row.get("bids", [])), len(row.get("asks", []))),
+                book_generation=generation,
+                sequence_verified=sequence_verified,
+                truncated=False,
             )
         )
     else:
@@ -88,6 +96,8 @@ def canonicalize_okx_book(
                 checksum=checksum,
                 updates=levels,
                 reset=False,
+                book_generation=generation,
+                sequence_verified=sequence_verified,
             )
         )
     _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))
@@ -139,6 +149,9 @@ def canonicalize_deribit_option_book_fixture(
             native_sequence=sequence,
             levels=levels,
             depth=max(len(frame.get("bids", [])), len(frame.get("asks", []))),
+            book_generation=int(context.connection_generation),
+            sequence_verified=False,
+            truncated=False,
         )
     )
     _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))

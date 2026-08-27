@@ -333,6 +333,15 @@ class BookSnapshotPayload(ClosedModel):
     checksum: str | None = Field(default=None, max_length=200)
     levels: list[BookLevel]
     depth: int = Field(ge=1)
+    book_generation: int = Field(default=0, ge=0)
+    sequence_verified: bool = False
+    truncated: bool = False
+
+    @model_validator(mode="after")
+    def verified_snapshot_has_generation(self):
+        if self.sequence_verified and self.book_generation < 1:
+            raise ValueError("verified book snapshot requires a positive book_generation")
+        return self
 
 
 class BookDeltaPayload(ClosedModel):
@@ -343,6 +352,14 @@ class BookDeltaPayload(ClosedModel):
     checksum: str | None = Field(default=None, max_length=200)
     updates: list[BookLevel]
     reset: bool = False
+    book_generation: int = Field(default=0, ge=0)
+    sequence_verified: bool = False
+
+    @model_validator(mode="after")
+    def verified_delta_has_generation(self):
+        if self.sequence_verified and self.book_generation < 1:
+            raise ValueError("verified book delta requires a positive book_generation")
+        return self
 
 
 class FundingRatePayload(ClosedModel):

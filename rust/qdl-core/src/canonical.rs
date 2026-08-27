@@ -4,8 +4,8 @@ use qdl_contracts::qdl::common::v1::{
     SourceRole,
 };
 use qdl_contracts::qdl::marketdata::v2::{
-    event_envelope, Bar, BarLifecycle, BookLevel, EventEnvelope, OrderBookSnapshot, Quote, Trade,
-    TradeIdentityKind,
+    event_envelope, Bar, BarLifecycle, BookLevel, EventEnvelope, OrderBookDelta, OrderBookSnapshot,
+    Quote, Trade, TradeIdentityKind,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -13,6 +13,8 @@ use sha2::{Digest, Sha256};
 
 use crate::decimal::parse_decimal;
 use crate::event_id::deterministic_event_id;
+use crate::l2_adapter::{BookPublication, BookTransition, BookTransitionKind};
+use crate::l2_book::{BookSide as CoreBookSide, BookViewLevel};
 use crate::okx::candle_interval;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -262,9 +264,7 @@ fn quantity_unit(context: &TradeContext) -> Result<QuantityUnit, String> {
     }
     if venue == "BINANCE" {
         return match (market.as_str(), product.as_str()) {
-            ("SPOT", "SPOT") | ("USDM", "PERPETUAL" | "FUTURE") => {
-                Ok(QuantityUnit::BaseAsset)
-            }
+            ("SPOT", "SPOT") | ("USDM", "PERPETUAL" | "FUTURE") => Ok(QuantityUnit::BaseAsset),
             _ => Err("unsupported Binance quantity-unit identity".into()),
         };
     }
@@ -746,9 +746,162 @@ fn canonicalize_deribit_fixture(fixture: &TradeFixture) -> Result<EventEnvelope,
         depth: depth
             .try_into()
             .map_err(|_| "Deribit depth exceeds uint32".to_owned())?,
+        book_generation: 0,
+        sequence_verified: false,
+        truncated: false,
     }));
     set_payload_hash(&mut envelope)?;
     Ok(envelope)
+}
+
+/// Canonicalize the current top-N view only after the Rust L2 core has proven
+/// sequence continuity. A REST bootstrap or gapped/disconnected transition has
+/// no readable view and is rejected instead of becoming a stale book snapshot.
+pub fn canonicalize_l2_ready_snapshot(
+    fixture: &TradeFixture,
+    transition: &BookTransition,
+) -> Result<EventEnvelope, String> {
+    let view = transition
+        .view
+        .as_ref()
+        .filter(|_| transition.sequence_verified())
+        .ok_or_else(|| "L2 snapshot requires a verified readable book view".to_owned())?;
+    let source_time_ms = l2_source_time_ms(fixture, transition)?;
+    let source_sequence = format!("g{}:{}", view.generation, view.last_sequence);
+    let mut envelope = base_envelope(fixture, "book_snapshot", source_sequence, source_time_ms)?;
+    let unit = quantity_unit(&fixture.context)?;
+    let mut levels = l2_levels(&view.bids, unit)?;
+    levels.extend(l2_levels(&view.asks, unit)?);
+    if levels.is_empty() {
+        return Err("verified L2 snapshot has no readable levels".into());
+    }
+    envelope.payload = Some(event_envelope::Payload::BookSnapshot(OrderBookSnapshot {
+        native_sequence: view.last_sequence.to_string(),
+        checksum: String::new(),
+        levels,
+        depth: view
+            .bids
+            .len()
+            .max(view.asks.len())
+            .try_into()
+            .map_err(|_| "L2 depth exceeds uint32".to_owned())?,
+        book_generation: view.generation,
+        sequence_verified: true,
+        truncated: view.truncated,
+    }));
+    set_payload_hash(&mut envelope)?;
+    Ok(envelope)
+}
+
+/// Convert only a publication-approved L2 transition into its canonical V2
+/// representation.  A caller can persist raw bootstrap/gap lifecycle records
+/// for audit, but those transitions intentionally yield no readable book event.
+pub fn canonicalize_l2_publication(
+    fixture: &TradeFixture,
+    transition: &BookTransition,
+) -> Result<Option<EventEnvelope>, String> {
+    match transition.publication {
+        BookPublication::None => Ok(None),
+        BookPublication::Snapshot => canonicalize_l2_ready_snapshot(fixture, transition).map(Some),
+        BookPublication::Delta => canonicalize_l2_delta(fixture, transition).map(Some),
+    }
+}
+
+/// Canonicalize a lossless L2 delta admitted by the Rust core. The output
+/// carries the generation and original snapshot anchor required for an SDK to
+/// replay it; it is never emitted for a bootstrap, duplicate, gap or lifecycle
+/// transition.
+pub fn canonicalize_l2_delta(
+    fixture: &TradeFixture,
+    transition: &BookTransition,
+) -> Result<EventEnvelope, String> {
+    if transition.kind != BookTransitionKind::Delta || !transition.sequence_verified() {
+        return Err("L2 delta requires a verified delta transition".into());
+    }
+    let view = transition
+        .view
+        .as_ref()
+        .ok_or_else(|| "verified L2 delta lacks a readable view".to_owned())?;
+    let native_sequence_start = transition
+        .native_sequence_start
+        .or(transition.previous_sequence)
+        .ok_or_else(|| "L2 delta lacks a sequence start".to_owned())?;
+    let source_time_ms = l2_source_time_ms(fixture, transition)?;
+    let source_sequence = format!("g{}:{}", view.generation, view.last_sequence);
+    let mut envelope = base_envelope(fixture, "book_delta", source_sequence, source_time_ms)?;
+    envelope.payload = Some(event_envelope::Payload::BookDelta(OrderBookDelta {
+        native_sequence_start: native_sequence_start.to_string(),
+        native_sequence_end: view.last_sequence.to_string(),
+        snapshot_sequence: view.snapshot_sequence.to_string(),
+        checksum: String::new(),
+        updates: l2_input_levels(&transition.updates, quantity_unit(&fixture.context)?)?,
+        reset: false,
+        book_generation: view.generation,
+        sequence_verified: true,
+    }));
+    set_payload_hash(&mut envelope)?;
+    Ok(envelope)
+}
+
+fn l2_source_time_ms(fixture: &TradeFixture, transition: &BookTransition) -> Result<i64, String> {
+    let value = transition
+        .observed_at_ms
+        .unwrap_or(fixture.context.received_at_ns / 1_000_000);
+    if value <= 0 {
+        return Err("L2 source/receipt timestamp must be positive".into());
+    }
+    Ok(value)
+}
+
+fn l2_levels(
+    levels: &[BookViewLevel],
+    quantity_unit: QuantityUnit,
+) -> Result<Vec<BookLevel>, String> {
+    levels
+        .iter()
+        .map(|level| {
+            Ok(BookLevel {
+                side: l2_side(level.side) as i32,
+                price: Some(parse_decimal(&level.price.canonical_text())?),
+                quantity: Some(parse_decimal(&level.quantity.canonical_text())?),
+                order_count: level
+                    .order_count
+                    .unwrap_or(0)
+                    .try_into()
+                    .map_err(|_| "L2 order count exceeds uint32".to_owned())?,
+                quantity_unit: quantity_unit as i32,
+            })
+        })
+        .collect()
+}
+
+fn l2_input_levels(
+    levels: &[crate::l2_book::BookLevelInput],
+    quantity_unit: QuantityUnit,
+) -> Result<Vec<BookLevel>, String> {
+    levels
+        .iter()
+        .map(|level| {
+            Ok(BookLevel {
+                side: l2_side(level.side) as i32,
+                price: Some(parse_decimal(&level.price)?),
+                quantity: Some(parse_decimal(&level.quantity)?),
+                order_count: level
+                    .order_count
+                    .unwrap_or(0)
+                    .try_into()
+                    .map_err(|_| "L2 order count exceeds uint32".to_owned())?,
+                quantity_unit: quantity_unit as i32,
+            })
+        })
+        .collect()
+}
+
+fn l2_side(side: CoreBookSide) -> BookSide {
+    match side {
+        CoreBookSide::Bid => BookSide::Bid,
+        CoreBookSide::Ask => BookSide::Ask,
+    }
 }
 
 struct TradeInput {
@@ -864,8 +1017,12 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use super::{
-        canonical_bytes, canonicalize_trade, set_payload_hash, EventEnvelope, TradeFixture,
+        canonical_bytes, canonicalize_l2_publication, canonicalize_trade, set_payload_hash,
+        EventEnvelope, TradeFixture,
     };
+    use crate::l2_adapter::{BookPublication, L2BookAdapter};
+    use crate::l2_book::BookIdentity;
+    use serde_json::json;
 
     fn decimal(value: i64, scale: i32) -> DecimalValue {
         DecimalValue {
@@ -968,6 +1125,88 @@ mod tests {
         };
         assert_eq!(bar.volume_unit, QuantityUnit::BaseAsset as i32);
         assert_eq!(bar.volume.expect("volume").source_text, "12.500");
+    }
+
+    #[test]
+    fn l2_bootstrap_emits_only_verified_snapshot_then_lossless_delta() {
+        let fixture_path = format!(
+            "{}/../../tests/fixtures/phase2/binance_usdm_trade.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut fixture: TradeFixture =
+            serde_json::from_slice(&std::fs::read(fixture_path).expect("read fixture"))
+                .expect("decode fixture");
+        fixture.provider_kind = "binance_usdm_diff_depth".into();
+        fixture.context.connection_generation = 4;
+        fixture.context.partition_sequence = 51;
+        let identity = BookIdentity::new(
+            "BINANCE_USDM_DIFF_DEPTH",
+            fixture.context.instrument_uid.clone(),
+            "depth",
+        )
+        .expect("book identity");
+        let mut adapter =
+            L2BookAdapter::binance_diff_depth(identity, "BTCUSDT", 2).expect("binance adapter");
+
+        let buffered = adapter
+            .apply_binance_ws_delta(
+                &json!({
+                    "s":"BTCUSDT", "U":101, "u":101, "pu":100, "E":1001,
+                    "b":[["60000.1","2"]], "a":[["60000.2","3"]]
+                }),
+                4,
+            )
+            .expect("buffer delta");
+        assert_eq!(buffered.publication, BookPublication::None);
+        assert!(canonicalize_l2_publication(&fixture, &buffered)
+            .expect("bootstrap publication")
+            .is_none());
+
+        let bridge = adapter
+            .apply_binance_rest_snapshot(
+                &json!({
+                    "lastUpdateId":100,
+                    "bids":[["60000.1","1"]],
+                    "asks":[["60000.2","1"]]
+                }),
+                4,
+                1000,
+            )
+            .expect("bridge snapshot");
+        assert_eq!(bridge.publication, BookPublication::Snapshot);
+        let snapshot = canonicalize_l2_publication(&fixture, &bridge)
+            .expect("snapshot publication")
+            .expect("verified snapshot");
+        let event_envelope::Payload::BookSnapshot(book) = snapshot.payload.expect("book snapshot")
+        else {
+            panic!("expected book snapshot");
+        };
+        assert_eq!(book.native_sequence, "101");
+        assert_eq!(book.book_generation, 4);
+        assert!(book.sequence_verified);
+        assert_eq!(book.depth, 1);
+
+        let delta = adapter
+            .apply_binance_ws_delta(
+                &json!({
+                    "s":"BTCUSDT", "U":102, "u":102, "pu":101, "E":1002,
+                    "b":[["60000.1","0"]], "a":[["60000.3","4"]]
+                }),
+                4,
+            )
+            .expect("chained delta");
+        assert_eq!(delta.publication, BookPublication::Delta);
+        let event = canonicalize_l2_publication(&fixture, &delta)
+            .expect("delta publication")
+            .expect("verified delta");
+        let event_envelope::Payload::BookDelta(book) = event.payload.expect("book delta") else {
+            panic!("expected book delta");
+        };
+        assert_eq!(book.snapshot_sequence, "100");
+        assert_eq!(book.native_sequence_start, "102");
+        assert_eq!(book.native_sequence_end, "102");
+        assert_eq!(book.book_generation, 4);
+        assert!(book.sequence_verified);
     }
 
     #[test]

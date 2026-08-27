@@ -162,6 +162,9 @@ def _payload(
                 "checksum": envelope.book_snapshot.checksum or None,
                 "levels": [_book_level(item) for item in envelope.book_snapshot.levels],
                 "depth": int(envelope.book_snapshot.depth),
+                "book_generation": int(envelope.book_snapshot.book_generation),
+                "sequence_verified": bool(envelope.book_snapshot.sequence_verified),
+                "truncated": bool(envelope.book_snapshot.truncated),
             },
         )
     if name == "book_delta":
@@ -177,6 +180,8 @@ def _payload(
                 "checksum": envelope.book_delta.checksum or None,
                 "updates": [_book_level(item) for item in envelope.book_delta.updates],
                 "reset": bool(envelope.book_delta.reset),
+                "book_generation": int(envelope.book_delta.book_generation),
+                "sequence_verified": bool(envelope.book_delta.sequence_verified),
             },
         )
     if name == "funding_rate":
@@ -414,7 +419,20 @@ def market_data_view_from_stream(
         requirement.max_freshness_ms is not None
         and freshness_ms > requirement.max_freshness_ms
     )
-    state = "GAPPED" if gap_open else "STALE" if stale else "LIVE"
+    book_unverified = feed in {Feed.BOOK_SNAPSHOT, Feed.BOOK_DELTA} and not (
+        bool(payload["sequence_verified"]) and int(payload["book_generation"]) >= 1
+    )
+    if book_unverified:
+        flags.append("BOOK_SEQUENCE_UNVERIFIED")
+    state = (
+        "GAPPED"
+        if gap_open
+        else "SYNCING"
+        if book_unverified
+        else "STALE"
+        if stale
+        else "LIVE"
+    )
     if gap_open and requirement.gap_policy.value in {"BLOCK", "PAUSE"}:
         raise ContinuityError(
             "OPEN_SEQUENCE_GAP", "stream event violates the requested gap policy"
@@ -435,6 +453,8 @@ def market_data_view_from_stream(
             if gap_open
             else "DATA_STALE"
             if stale
+            else "DATA_NOT_READY"
+            if book_unverified
             else "SOURCE_NON_AUTHORITATIVE"
         )
         raise ContinuityError(code, "stream event is not execution eligible")
@@ -469,7 +489,7 @@ def market_data_view_from_stream(
                 "state": state,
                 "freshness_ms": int(freshness_ms),
                 "gap_open": gap_open,
-                "complete": not gap_open,
+                "complete": not gap_open and not book_unverified,
                 "execution_eligible": (
                     authoritative and feed in EXECUTION_PRICE_VALIDATION_FEEDS
                 ),

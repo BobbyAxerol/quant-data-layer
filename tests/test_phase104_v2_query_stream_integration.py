@@ -39,6 +39,7 @@ from qdl.l2 import (
     SequencePolicy,
     SnapshotOrigin,
 )
+from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import (
     AccessPurpose,
     BatchRequirement,
@@ -596,8 +597,26 @@ class Phase104V2QueryStreamIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         self._append(delta_binding, delta)
         self.assertEqual(delta.book_delta.snapshot_sequence, "42")
-        self.assertEqual(self._backend().latest(_requirement(snapshot_binding)).payload["native_sequence"], "42")
-        self.assertEqual(self._backend().latest(_requirement(delta_binding)).payload["snapshot_sequence"], "42")
+        ready_snapshot = self._backend().latest(_requirement(snapshot_binding))
+        ready_delta = self._backend().latest(_requirement(delta_binding))
+        self.assertEqual(ready_snapshot.payload["native_sequence"], "42")
+        self.assertEqual(ready_delta.payload["snapshot_sequence"], "42")
+        self.assertEqual(ready_snapshot.quality.state, "LIVE")
+        self.assertTrue(ready_snapshot.quality.complete)
+        self.assertTrue(ready_snapshot.quality.execution_eligible)
+
+        unverified = market_data_pb2.EventEnvelope()
+        unverified.CopyFrom(snapshot)
+        unverified.event_id = b"unverified-book!"
+        unverified.source_event_time_ns += 1
+        unverified.book_snapshot.book_generation = 0
+        unverified.book_snapshot.sequence_verified = False
+        self._append(snapshot_binding, unverified)
+        blocked = self._backend().latest(_requirement(snapshot_binding))
+        self.assertEqual(blocked.quality.state, "SYNCING")
+        self.assertFalse(blocked.quality.complete)
+        self.assertFalse(blocked.quality.execution_eligible)
+        self.assertIn("BOOK_SEQUENCE_UNVERIFIED", blocked.quality.flags)
 
     def test_unrepresentable_reference_values_fail_closed(self):
         taker_binding = self._binding_for(FeedType.TAKER_FLOW)
@@ -638,6 +657,7 @@ class Phase104V2QueryStreamIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         book = self._binding_for(FeedType.BOOK_SNAPSHOT, record=self.okx_btc)
         bar_partition = f"{self.binance_btc.instrument_uid}/bar/binance-primary"
+        trade_partition = f"{self.binance_btc.instrument_uid}/trade/binance-primary"
         book_token = handoff.issue(
             consumer_id="slow-book",
             snapshot_id="phase104d-book",
@@ -656,6 +676,15 @@ class Phase104V2QueryStreamIntegrationTests(unittest.IsolatedAsyncioTestCase):
             ),
             ttl_seconds=60,
         ).token
+        trade_token = handoff.issue(
+            consumer_id="trade-peer",
+            snapshot_id="phase104d-trade",
+            snapshot_watermark=handoff.capture_watermark(
+                stream=STREAM,
+                partition_key=trade_partition,
+            ),
+            ttl_seconds=60,
+        ).token
         slow = await gateway.open(
             consumer_id="slow-book", stream=STREAM, partition_key=book.partition_key,
             token=book_token, max_buffer_events=1,
@@ -663,6 +692,10 @@ class Phase104V2QueryStreamIntegrationTests(unittest.IsolatedAsyncioTestCase):
         peer = await gateway.open(
             consumer_id="bar-peer", stream=STREAM, partition_key=bar_partition,
             token=bar_token, max_buffer_events=1,
+        )
+        trade_peer = await gateway.open(
+            consumer_id="trade-peer", stream=STREAM, partition_key=trade_partition,
+            token=trade_token, max_buffer_events=1,
         )
         for index in (1, 2):
             await gateway.publish(
@@ -676,10 +709,16 @@ class Phase104V2QueryStreamIntegrationTests(unittest.IsolatedAsyncioTestCase):
         bar_event = DurableEvent(
             STREAM, bar_partition, b"b" * 16, b"phase104d-bar", NOW + 3
         )
+        trade_event = DurableEvent(
+            STREAM, trade_partition, b"t" * 16, b"phase104d-trade", NOW + 4
+        )
         await gateway.publish(bar_event)
+        await gateway.publish(trade_event)
         self.assertEqual((await peer.next_live()).stored.event.event_id, b"b" * 16)
+        self.assertEqual((await trade_peer.next_live()).stored.event.event_id, b"t" * 16)
         await slow.close()
         await peer.close()
+        await trade_peer.close()
 
 
 if __name__ == "__main__":

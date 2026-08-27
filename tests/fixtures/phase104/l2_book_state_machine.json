@@ -182,25 +182,25 @@
         },
         "sequence_policy": "RANGE_BRIDGE_THEN_PREVIOUS",
         "checksum_policy": "IGNORE",
-        "view_depth_per_side": 2
+        "view_depth_per_side": 2,
+        "snapshot_admission_policy": "REST_BOOTSTRAP_ALLOWED"
       },
       "actions": [
         {
           "kind": "snapshot",
           "generation": 7,
           "sequence_end": 200,
+          "origin": "REST",
           "levels": [
             {"side": "BID", "price": "100", "quantity": "2"},
             {"side": "ASK", "price": "101", "quantity": "2"}
           ],
           "expect": {
-            "outcome": "SNAPSHOT_APPLIED",
-            "status": "READY",
+            "outcome": "BOOTSTRAP_APPLIED",
+            "status": "BOOTSTRAPPING",
             "generation": 7,
             "last_sequence": 200,
-            "ready": true,
-            "bids": [["100", "2"]],
-            "asks": [["101", "2"]],
+            "ready": false,
             "truncated": false
           }
         },

@@ -263,6 +263,9 @@ def _typed_payload(item) -> dict:
             "checksum": value.get("checksum"),
             "levels": _book_levels(value["levels"]),
             "depth": int(value["depth"]),
+            "book_generation": int(value.get("book_generation", 0)),
+            "sequence_verified": bool(value.get("sequence_verified", False)),
+            "truncated": bool(value.get("truncated", False)),
         }
     if item.feed is FeedType.BOOK_DELTA:
         return {
@@ -273,6 +276,8 @@ def _typed_payload(item) -> dict:
             "checksum": value.get("checksum"),
             "updates": _book_levels(value["updates"]),
             "reset": bool(value.get("reset", False)),
+            "book_generation": int(value.get("book_generation", 0)),
+            "sequence_verified": bool(value.get("sequence_verified", False)),
         }
     if item.feed is FeedType.FUNDING_RATE:
         return {

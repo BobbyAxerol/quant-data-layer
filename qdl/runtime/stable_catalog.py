@@ -468,6 +468,11 @@ class StableSourceCatalog:
                 raise ValueError("stable book snapshot has no readable levels")
             for level in envelope.book_snapshot.levels:
                 StableSourceCatalog._book_level(level, positive_quantity=True)
+            if (
+                envelope.book_snapshot.sequence_verified
+                and envelope.book_snapshot.book_generation < 1
+            ):
+                raise ValueError("verified book snapshot requires a positive generation")
         elif payload_name == "book_delta":
             if not all(
                 (
@@ -479,6 +484,11 @@ class StableSourceCatalog:
                 raise ValueError("stable book delta lacks continuity/snapshot sequence")
             for level in envelope.book_delta.updates:
                 StableSourceCatalog._book_level(level, positive_quantity=False)
+            if (
+                envelope.book_delta.sequence_verified
+                and envelope.book_delta.book_generation < 1
+            ):
+                raise ValueError("verified book delta requires a positive generation")
         elif payload_name == "funding_rate":
             StableSourceCatalog._decimal(envelope.funding_rate.rate, "funding rate")
             if envelope.funding_rate.funding_time_ns <= 0:
