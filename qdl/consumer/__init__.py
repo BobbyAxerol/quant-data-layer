@@ -41,6 +41,7 @@ from qdl.consumer.release import (
     is_explicit_v1_exclusion,
 )
 from qdl.consumer.universal_release import (
+    ConsumerRouteBinding,
     ConsumerClassRule,
     FallbackRule,
     UniversalConsumerClass,
@@ -90,6 +91,7 @@ __all__ = [
     "V1FallbackReference",
     "evaluate_release_readiness",
     "is_explicit_v1_exclusion",
+    "ConsumerRouteBinding",
     "ConsumerClassRule",
     "FallbackRule",
     "UniversalConsumerClass",

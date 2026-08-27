@@ -17655,6 +17655,130 @@ BLOCKED`):**
   retained as the required source/provider evidence for the next bounded
   slice.
 
+#### 11.5-B - Consumer-Scoped Universal Route Binding (`SOURCE COMPLETE / RUNTIME HANDOFF PENDING / SOURCE ONLY`)
+
+**Goal:** turn the checksum-bound Phase 11.5 universal release manifest into
+one minimal, consumer-specific routing artifact that the existing Trading
+System V2 facade and shared alpha runtime can enforce. This closes the source
+integration gap without changing a provider route, endpoint, deployment,
+credential, authority, order path, or active consumer.
+
+**Approved scope:**
+
+1. Add a deterministic `qdl.v2.consumer-route-binding.v1` renderer derived
+   only from a validated `qdl.v2.universal-release-manifest.v1`. A binding
+   contains exactly one `consumer_id`'s admitted canonical identities
+   (`venue`, `market`, `product_type`, `native_symbol`, `feed`, `interval`),
+   source-policy/lineage identifiers, freshness/finality/live requirements,
+   execution-grade flag, `V2_PRIMARY` route, explicit fallback rule, release
+   revision, universal-manifest digest, rollback reference and its own
+   canonical SHA-256. It never carries a credential, cursor, provider payload,
+   another consumer's demand, or generated provider evidence.
+2. Reject unknown consumers, malformed/duplicate identities, mixed release
+   revision, stale/tampered binding digest, invalid fallback, or any
+   Binance/OKX demand absent from the binding. An independently declared V1
+   venue (currently DNSE/VN) is explicitly V1-only; it does not grant a hidden
+   Binance/OKX fallback. `BLOCKED` remains terminal.
+3. Add a pure caller-named renderer CLI for a private future runtime bundle.
+   Its tests use temporary files only; generated bindings are not committed,
+   mounted, applied, or treated as a route mutation in this phase.
+4. Add a portable parser/selector in Trading System `alpha_sdk`, then adapt
+   the existing Trading System route facade and shared alpha `DataLayerGateway`
+   to use it when a binding path is explicitly configured. Existing static
+   route-manifest schemas and `V1` defaults remain byte/behavior compatible.
+   The alpha adapter must use the same decision for latest trade/bar, single
+   and batch warmup, and recognised crypto stream subscriptions. It must not
+   rewrite strategy, signal, sizing, portfolio, risk, order, or execution code.
+5. In `V2_PRIMARY`, an exact binding invokes V2 first; an explicitly allowed
+   V1 route may fall back only after the existing semantic validation and must
+   return to V2 on recovery. A `BLOCKED` or unbound Binance/OKX route fails
+   closed before any V1 call. `DUAL_READ` may compare only an admitted route;
+   it cannot use V1 to conceal a blocked route.
+
+**Required source gates:** deterministic render and cross-parser digest
+agreement; consumer isolation; exact identity/feed/interval selection;
+duplicate/tamper/stale-revision rejection; `V2_PRIMARY`; permitted
+`V2 -> V1 -> V2`; terminal `BLOCKED`; DNSE independent V1; warmup/batch/final
+bar Decimal payload compatibility; stream selection/ACK behavior; legacy static
+manifest compatibility; no-order test doubles proving no HTTP order mutation.
+Run targeted Data Layer, Trading System and alpha-runtime suites, formatting
+and `git diff --check`. Record exact pass/fail/skip counts and do not call a
+same-host unit result a runtime handoff.
+
+**Exclusions / rollback / decision boundary:** no generated private binding is
+deployed, no image is built, and no process/container/Kafka/Redis/SQLite/DB/
+provider/credential/manifest authority changes. Rollback is reverting the three
+source commits. A later, separately approved runtime packet may name one sealed
+binding digest, exact paper consumers and identities, ports, a 300-second
+no-order observation, stop conditions, and one V1 rollback revision. It may
+not infer global promotion from this source-only exit.
+
+**11.5-B source-only result (`PASS / RUNTIME UNCHANGED`):**
+
+- Implemented the deterministic local renderer
+  `scripts/phase115_render_consumer_route_binding.py` and strict canonical
+  `ConsumerRouteBinding` parser. The renderer takes a prevalidated universal
+  release artifact plus one named consumer, emits only that consumer's
+  products, and reports no runtime/order actions. The artifact is written only
+  to caller-selected temporary/private output; no generated binding was
+  committed, mounted or applied.
+- Added portable `alpha_sdk.data_layer_release_binding` with an exact
+  checksum, consumer/header consistency, immutable generation SHA, canonical
+  ordering, duplicate identity, boolean/unit and fallback validation. Binding
+  activation now requires a configured manifest SHA; static V1/V2 route
+  manifests remain unchanged when the binding schema is absent.
+- Trading System's route facade maps the sealed binding to the existing
+  versioned client without changing public endpoints. Exact V2 calls receive
+  the binding's source-policy/freshness values; declared V1 fallback is guarded
+  and recovers back to V2; `BLOCKED` and unbound Binance/OKX stop before V1.
+- Shared alpha runtime applies the identical decision to latest trade/BAR,
+  warmup single/batch and Binance/OKX streams. It rejects incompatible batch
+  requirements, blocks mixed stream authorities, filters/ACKs open BARs for a
+  final-BAR binding, and lazily creates the V2 coroutine only after policy
+  admission. The latter fixed a real no-side-effect test finding: a blocked
+  route previously created an unawaited coroutine even though it never called
+  V2 or V1.
+- Actual isolated, no-network evidence: Data Layer
+  `python -m unittest tests.test_phase115_universal_release -v` passed **10/10**;
+  cross-repository renderer-to-`alpha_sdk` digest/route agreement passed;
+  alpha runtime `python -m unittest discover -s runtime/tests -p
+  test_data_layer_v2_runtime.py -v` passed **31/31**. The immutable Trading
+  System production image does not ship `pytest`; its focused no-order
+  in-memory contract smoke passed exact V2, allowed `V2 -> V1 -> V2`, unbound
+  block, DNSE independent V1 and sealed source-policy/freshness propagation.
+  Separate static V1/V2 route-manifest compatibility smoke also passed. Python
+  compilation and `git diff --check` passed in all three worktrees.
+- No provider, process/container, image, Kafka, Redis, SQLite, PostgreSQL,
+  credential, authority, order, execution-session or alpha state changed. All
+  temporary Docker test containers used `--rm --read-only --network none` and
+  tmpfs only; no cleanup of shared runtime state was necessary.
+- Final source gate commands were rerun after the implementation slice:
+  `docker run --rm --read-only --network none ... qdl-v2-python:2.0.0-747231f
+  python -m unittest tests.test_phase115_universal_release -v` passed **10/10**;
+  the same image rendered a real in-memory Data Layer binding and the mounted
+  Trading System `alpha_sdk` parsed the exact digest/identity successfully.
+  The full alpha-runtime command passed **31/31** after mounting `alpha_sdk`
+  separately and exposing the image's `/app/qdl_sdk`; this was a test-harness
+  mount correction only, not a source/runtime change. Trading System's
+  immutable image intentionally lacks `pytest`; its parser/client in-memory
+  smoke and static-manifest compatibility smoke are recorded as focused local
+  evidence, while the committed pytest modules remain a CI/dev gate.
+- A final strictness regression closes Python's `True == 1` edge case: the
+  canonical manifest and consumer binding now require real positive integers
+  for revisions/freshness/budgets and real booleans for liveness/finality/
+  execution flags. The added test re-signs a malformed binding and confirms it
+  is rejected before routing; this is source-only and does not alter any
+  existing generated artifact.
+
+**11.5-C runtime handoff packet (`PENDING / REQUIRES SEPARATE APPROVAL`):**
+the next document must name the selected sealed binding SHA and universal
+manifest SHA, one Trading System paper consumer plus specifically selected
+Binance/OKX paper alpha consumer identities, immutable image digests, mounts,
+ports, consumer groups, source-policy/freshness bounds, 300-second no-order
+observation, V2->V1->V2 drill where the product permits it, terminal BLOCKED
+check, stop conditions and exact V1 rollback revision. It must not enable an
+alpha merely because its runtime can now parse a binding.
+
 ### 22.11 Phase 11 Completion Decision
 
 Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the

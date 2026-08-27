@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 import hashlib
 import json
@@ -14,6 +15,8 @@ from qdl.certification.phase115_universal_release import (
     build_universal_no_order_acceptance_scope,
 )
 from qdl.consumer.universal_release import (
+    ConsumerRouteBinding,
+    UniversalReleaseManifest,
     UniversalReleaseCoverage,
     UniversalReleasePolicy,
     build_universal_release_manifest,
@@ -34,6 +37,7 @@ from qdl.runtime.l2_demand import build_l2_demand_plan
 from qdl.runtime.production_catalog import ProductionCatalogBuilder
 from qdl.runtime.universal_realtime import build_universal_realtime_plan
 from scripts.phase115_prepare_universal_release import validate_evidence_bundle
+from scripts.phase115_render_consumer_route_binding import main as render_consumer_binding
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -301,6 +305,106 @@ class UniversalReleaseManifestTests(unittest.TestCase):
             {item.requirement_id for item in scope.items},
             {item.requirement_id for item in manifest.products},
         )
+
+    def test_consumer_route_binding_is_deterministic_isolated_and_round_trips(self):
+        manifest, *_ = _manifest()
+        consumer_id = manifest.products[0].consumer_id
+        binding = ConsumerRouteBinding.from_manifest(manifest, consumer_id=consumer_id)
+        repeated = ConsumerRouteBinding.from_manifest(manifest, consumer_id=consumer_id)
+        self.assertEqual(binding.binding_sha256, repeated.binding_sha256)
+        self.assertEqual(binding.universal_manifest_sha256, manifest.digest)
+        self.assertTrue(binding.products)
+        self.assertTrue(all(item.consumer_id == consumer_id for item in binding.products))
+        self.assertEqual(binding.independent_v1_venues, ("DNSE",))
+        parsed = ConsumerRouteBinding.from_canonical_mapping(binding.canonical_mapping())
+        self.assertEqual(parsed.canonical_mapping(), binding.canonical_mapping())
+        self.assertEqual(
+            UniversalReleaseManifest.from_canonical_mapping(manifest.canonical_mapping()).digest,
+            manifest.digest,
+        )
+
+    def test_consumer_route_binding_rejects_unknown_tampered_and_duplicate_routes(self):
+        manifest, *_ = _manifest()
+        with self.assertRaisesRegex(ValueError, "no admitted product"):
+            ConsumerRouteBinding.from_manifest(manifest, consumer_id="unknown.consumer")
+        binding = ConsumerRouteBinding.from_manifest(
+            manifest, consumer_id=manifest.products[0].consumer_id
+        )
+        tampered = binding.canonical_mapping()
+        tampered["products"][0]["native_symbol"] = "TAMPERED"
+        with self.assertRaisesRegex(ValueError, "checksum differs"):
+            ConsumerRouteBinding.from_canonical_mapping(tampered)
+        duplicate = binding.canonical_mapping()
+        duplicate["products"].append(dict(duplicate["products"][0]))
+        duplicate["binding_sha256"] = hashlib.sha256(
+            json.dumps(
+                {
+                    key: item
+                    for key, item in duplicate.items()
+                    if key != "binding_sha256"
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        with self.assertRaisesRegex(ValueError, "duplicate route identities"):
+            ConsumerRouteBinding.from_canonical_mapping(duplicate)
+
+    def test_canonical_manifest_and_binding_reject_boolean_numeric_coercion(self):
+        manifest, *_ = _manifest()
+
+        invalid_manifest_revision = manifest.canonical_mapping()
+        invalid_manifest_revision["revision"] = True
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            UniversalReleaseManifest.from_canonical_mapping(invalid_manifest_revision)
+
+        invalid_manifest_boolean = manifest.canonical_mapping()
+        invalid_manifest_boolean["products"][0]["require_live"] = "true"
+        with self.assertRaisesRegex(ValueError, "must be boolean"):
+            UniversalReleaseManifest.from_canonical_mapping(invalid_manifest_boolean)
+
+        binding = ConsumerRouteBinding.from_manifest(
+            manifest, consumer_id=manifest.products[0].consumer_id
+        )
+        invalid_binding = copy.deepcopy(binding.canonical_mapping())
+        invalid_binding["release_revision"] = True
+        invalid_binding["binding_sha256"] = hashlib.sha256(
+            json.dumps(
+                {
+                    key: item
+                    for key, item in invalid_binding.items()
+                    if key != "binding_sha256"
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            ConsumerRouteBinding.from_canonical_mapping(invalid_binding)
+
+    def test_pure_renderer_writes_only_one_named_consumer_binding(self):
+        manifest, *_ = _manifest()
+        consumer_id = manifest.products[0].consumer_id
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            artifact = root / "release.json"
+            output = root / "consumer-binding.json"
+            artifact.write_text(json.dumps({
+                "schema": "qdl.phase115.universal-release-preflight.v1",
+                "release_manifest": manifest.canonical_mapping(),
+                "release_summary": manifest.report_payload(),
+            }), encoding="utf-8")
+            self.assertEqual(render_consumer_binding([
+                "--release-artifact", str(artifact),
+                "--consumer-id", consumer_id,
+                "--output", str(output),
+            ]), 0)
+            self.assertTrue(output.is_file())
+            parsed = ConsumerRouteBinding.from_canonical_mapping(
+                json.loads(output.read_text(encoding="utf-8"))
+            )
+            self.assertEqual(parsed.consumer_id, consumer_id)
+            self.assertTrue(all(item.consumer_id == consumer_id for item in parsed.products))
 
 
 class UniversalReleaseEvidenceTests(unittest.TestCase):

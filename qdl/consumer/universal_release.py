@@ -34,6 +34,7 @@ from qdl.runtime.universal_realtime import UniversalRealtimePlan
 _SCHEMA = "qdl.v2.universal-release-manifest.v1"
 _POLICY_SCHEMA = "qdl.v2.universal-release-policy.v1"
 _COVERAGE_SCHEMA = "qdl.v2.universal-release-coverage.v1"
+_CONSUMER_ROUTE_BINDING_SCHEMA = "qdl.v2.consumer-route-binding.v1"
 _V2_VENUES = frozenset({"BINANCE", "OKX"})
 _REALTIME_FEEDS = frozenset({DemandFeed.TRADE, DemandFeed.QUOTE, DemandFeed.BAR})
 _BOOK_FEEDS = frozenset({DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA})
@@ -59,6 +60,24 @@ def _text(value: object, field: str) -> str:
     if not result:
         raise ValueError(f"{field} is required")
     return result
+
+
+def _positive_int(value: object, field: str) -> int:
+    """Accept canonical JSON integers only; bool is never a numeric revision."""
+
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{field} must be a positive integer")
+    return value
+
+
+def _optional_positive_int(value: object, field: str) -> int | None:
+    return None if value is None else _positive_int(value, field)
+
+
+def _strict_bool(value: object, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be boolean")
+    return value
 
 
 def _relative_path(root: Path, value: object, field: str) -> Path:
@@ -157,6 +176,8 @@ class UniversalResourceBudget:
     max_rss_bytes: int
 
     def __post_init__(self) -> None:
+        for field in ("max_consumer_lag", "max_cpu_millicores", "max_rss_bytes"):
+            _positive_int(getattr(self, field), f"universal release resource budget {field}")
         if (
             not 1 <= self.max_consumer_lag <= 1_000_000
             or not 1 <= self.max_cpu_millicores <= 100_000
@@ -474,8 +495,10 @@ class UniversalReleaseProduct:
                 raise ValueError("V1 fallback needs one explicit compatibility rule")
         elif self.fallback_rule_id is not None or not self.blocked_reason:
             raise ValueError("blocked fallback needs a reason and no compatibility rule")
-        if self.max_freshness_ms is not None and self.max_freshness_ms <= 0:
-            raise ValueError("universal release freshness must be positive")
+        if self.max_freshness_ms is not None:
+            _positive_int(self.max_freshness_ms, "universal release freshness")
+        for field in ("require_final_bars", "require_live", "execution_grade"):
+            _strict_bool(getattr(self, field), f"universal release {field}")
 
     def canonical_mapping(self) -> dict[str, object]:
         return {
@@ -558,8 +581,11 @@ class UniversalReleaseManifest:
     exclusions: tuple[UniversalReleaseExclusion, ...]
 
     def __post_init__(self) -> None:
-        if self.revision < 1 or self.capability_matrix_revision < 1:
-            raise ValueError("universal release revision is invalid")
+        _positive_int(self.revision, "universal release revision")
+        _positive_int(
+            self.capability_matrix_revision,
+            "universal release capability matrix revision",
+        )
         for field in (
             "policy_sha256", "capability_matrix_sha256", "inventory_sha256",
             "provider_admission_sha256", "convergence_sha256",
@@ -619,6 +645,388 @@ class UniversalReleaseManifest:
             "runtime_mutations": 0,
             "order_actions": 0,
         }
+
+    @classmethod
+    def from_canonical_mapping(
+        cls, value: Mapping[str, object]
+    ) -> "UniversalReleaseManifest":
+        """Parse a sealed manifest without consulting a provider or runtime.
+
+        The pure route-binding renderer consumes the exact artifact emitted by
+        Phase 11.5-A.  Re-parsing the typed source contract here prevents it
+        from creating a consumer bundle from a hand-edited summary payload.
+        """
+
+        expected = {
+            "schema", "revision", "contract_version", "policy_sha256",
+            "capability_matrix", "inventory_sha256", "provider_admission_sha256",
+            "convergence_sha256", "coverage", "v1_rollback", "resource_budget",
+            "products", "exclusions",
+        }
+        if set(value) != expected or value.get("schema") != _SCHEMA:
+            raise ValueError("universal release manifest schema or fields are invalid")
+        if value.get("contract_version") != "2.0.0":
+            raise ValueError("universal release manifest contract version is invalid")
+        capability = value["capability_matrix"]
+        coverage_raw = value["coverage"]
+        rollback_raw = value["v1_rollback"]
+        budget_raw = value["resource_budget"]
+        products_raw = value["products"]
+        exclusions_raw = value["exclusions"]
+        if (
+            not isinstance(capability, Mapping)
+            or set(capability) != {"sha256", "revision"}
+            or not isinstance(coverage_raw, Mapping)
+            or not isinstance(rollback_raw, Mapping)
+            or not isinstance(budget_raw, Mapping)
+            or not isinstance(products_raw, list)
+            or not isinstance(exclusions_raw, list)
+        ):
+            raise ValueError("universal release manifest nested fields are invalid")
+        coverage_expected = {
+            "schema", "inventory_sha256", "realtime_plan_sha256",
+            "realtime_evidence_sha256", "realtime_requirement_ids",
+            "reference_evidence_sha256", "reference_requirement_ids",
+            "l2_plan_sha256", "l2_evidence_sha256", "l2_requirement_ids",
+        }
+        if set(coverage_raw) != coverage_expected or coverage_raw.get("schema") != _COVERAGE_SCHEMA:
+            raise ValueError("universal release coverage schema or fields are invalid")
+        coverage = UniversalReleaseCoverage(
+            inventory_sha256=str(coverage_raw["inventory_sha256"]),
+            realtime_plan_sha256=str(coverage_raw["realtime_plan_sha256"]),
+            realtime_evidence_sha256=str(coverage_raw["realtime_evidence_sha256"]),
+            realtime_requirement_ids=tuple(str(item) for item in coverage_raw["realtime_requirement_ids"]),
+            reference_evidence_sha256=str(coverage_raw["reference_evidence_sha256"]),
+            reference_requirement_ids=tuple(str(item) for item in coverage_raw["reference_requirement_ids"]),
+            l2_plan_sha256=(
+                str(coverage_raw["l2_plan_sha256"])
+                if coverage_raw["l2_plan_sha256"] is not None else None
+            ),
+            l2_evidence_sha256=(
+                str(coverage_raw["l2_evidence_sha256"])
+                if coverage_raw["l2_evidence_sha256"] is not None else None
+            ),
+            l2_requirement_ids=tuple(str(item) for item in coverage_raw["l2_requirement_ids"]),
+        )
+        rollback_expected = {
+            "release_tag", "source_commit", "image_reference", "manifest_revision"
+        }
+        budget_expected = {"max_consumer_lag", "max_cpu_millicores", "max_rss_bytes"}
+        if set(rollback_raw) != rollback_expected or set(budget_raw) != budget_expected:
+            raise ValueError("universal release rollback or budget fields are invalid")
+
+        product_expected = {
+            "consumer_id", "consumer_class", "requirement_id", "instrument_uid",
+            "instrument_id", "venue", "market", "product_type", "native_symbol",
+            "feed", "interval", "source_policy_id", "provider_plane",
+            "max_freshness_ms", "require_final_bars", "require_live",
+            "execution_grade", "route", "fallback", "fallback_rule_id",
+            "blocked_reason", "gap_policy",
+        }
+        products = []
+        for raw in products_raw:
+            if not isinstance(raw, Mapping) or set(raw) != product_expected:
+                raise ValueError("universal release product fields are invalid")
+            if raw["gap_policy"] != "BLOCK":
+                raise ValueError("universal release product gap policy is invalid")
+            products.append(UniversalReleaseProduct(
+                consumer_id=str(raw["consumer_id"]),
+                consumer_class=UniversalConsumerClass(str(raw["consumer_class"])),
+                requirement_id=str(raw["requirement_id"]),
+                instrument_uid=str(raw["instrument_uid"]),
+                instrument_id=str(raw["instrument_id"]),
+                venue=str(raw["venue"]),
+                market=str(raw["market"]),
+                product_type=str(raw["product_type"]),
+                native_symbol=str(raw["native_symbol"]),
+                feed=str(raw["feed"]),
+                interval=str(raw["interval"]) if raw["interval"] is not None else None,
+                source_policy_id=str(raw["source_policy_id"]),
+                provider_plane=str(raw["provider_plane"]),
+                max_freshness_ms=_optional_positive_int(
+                    raw["max_freshness_ms"],
+                    "universal release product max_freshness_ms",
+                ),
+                require_final_bars=_strict_bool(
+                    raw["require_final_bars"],
+                    "universal release product require_final_bars",
+                ),
+                require_live=_strict_bool(
+                    raw["require_live"],
+                    "universal release product require_live",
+                ),
+                execution_grade=_strict_bool(
+                    raw["execution_grade"],
+                    "universal release product execution_grade",
+                ),
+                route=str(raw["route"]),
+                fallback=str(raw["fallback"]),
+                fallback_rule_id=(
+                    str(raw["fallback_rule_id"])
+                    if raw["fallback_rule_id"] is not None else None
+                ),
+                blocked_reason=(
+                    str(raw["blocked_reason"])
+                    if raw["blocked_reason"] is not None else None
+                ),
+            ))
+
+        exclusion_expected = {
+            "consumer_id", "consumer_class", "requirement_id", "venue", "market",
+            "product_type", "native_symbol", "feed", "interval", "state", "reason",
+        }
+        exclusions = []
+        for raw in exclusions_raw:
+            if not isinstance(raw, Mapping) or set(raw) != exclusion_expected:
+                raise ValueError("universal release exclusion fields are invalid")
+            exclusions.append(UniversalReleaseExclusion(
+                consumer_id=str(raw["consumer_id"]),
+                consumer_class=UniversalConsumerClass(str(raw["consumer_class"])),
+                requirement_id=str(raw["requirement_id"]),
+                venue=str(raw["venue"]),
+                market=str(raw["market"]),
+                product_type=str(raw["product_type"]),
+                native_symbol=str(raw["native_symbol"]),
+                feed=str(raw["feed"]),
+                interval=str(raw["interval"]) if raw["interval"] is not None else None,
+                state=str(raw["state"]),
+                reason=str(raw["reason"]),
+            ))
+        manifest = cls(
+            revision=_positive_int(value["revision"], "universal release revision"),
+            policy_sha256=str(value["policy_sha256"]),
+            capability_matrix_sha256=str(capability["sha256"]),
+            capability_matrix_revision=_positive_int(
+                capability["revision"],
+                "universal release capability matrix revision",
+            ),
+            inventory_sha256=str(value["inventory_sha256"]),
+            provider_admission_sha256=str(value["provider_admission_sha256"]),
+            convergence_sha256=str(value["convergence_sha256"]),
+            coverage=coverage,
+            v1_rollback=UniversalV1Rollback(**{key: str(item) for key, item in rollback_raw.items()}),
+            resource_budget=UniversalResourceBudget(
+                max_consumer_lag=_positive_int(
+                    budget_raw["max_consumer_lag"],
+                    "universal release resource budget max_consumer_lag",
+                ),
+                max_cpu_millicores=_positive_int(
+                    budget_raw["max_cpu_millicores"],
+                    "universal release resource budget max_cpu_millicores",
+                ),
+                max_rss_bytes=_positive_int(
+                    budget_raw["max_rss_bytes"],
+                    "universal release resource budget max_rss_bytes",
+                ),
+            ),
+            products=tuple(products),
+            exclusions=tuple(exclusions),
+        )
+        if manifest.canonical_mapping() != dict(value):
+            raise ValueError("universal release manifest is not canonical")
+        return manifest
+
+
+@dataclass(frozen=True, slots=True)
+class ConsumerRouteBinding:
+    """One sealed universal-release slice for exactly one workload consumer."""
+
+    consumer_id: str
+    consumer_class: UniversalConsumerClass
+    release_revision: int
+    universal_manifest_sha256: str
+    policy_sha256: str
+    capability_matrix_sha256: str
+    capability_matrix_revision: int
+    inventory_sha256: str
+    v1_rollback: UniversalV1Rollback
+    independent_v1_venues: tuple[str, ...]
+    products: tuple[UniversalReleaseProduct, ...]
+    binding_sha256: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "consumer_id", _text(self.consumer_id, "binding consumer_id"))
+        _positive_int(self.release_revision, "consumer route binding release revision")
+        _positive_int(
+            self.capability_matrix_revision,
+            "consumer route binding capability matrix revision",
+        )
+        for field in (
+            "universal_manifest_sha256", "policy_sha256", "capability_matrix_sha256",
+            "inventory_sha256",
+        ):
+            object.__setattr__(self, field, _sha256(getattr(self, field), field))
+        venues = tuple(sorted({_text(item, "independent V1 venue").upper() for item in self.independent_v1_venues}))
+        if not venues or any(item in _V2_VENUES for item in venues):
+            raise ValueError("consumer route binding independent V1 venues are invalid")
+        object.__setattr__(self, "independent_v1_venues", venues)
+        if not self.products:
+            raise ValueError("consumer route binding needs at least one product")
+        if any(item.consumer_id != self.consumer_id for item in self.products):
+            raise ValueError("consumer route binding leaked another consumer product")
+        if any(item.consumer_class is not self.consumer_class for item in self.products):
+            raise ValueError("consumer route binding has mixed consumer classes")
+        identities = [
+            (item.venue, item.market, item.product_type, item.native_symbol, item.feed, item.interval)
+            for item in self.products
+        ]
+        if len(identities) != len(set(identities)):
+            raise ValueError("consumer route binding has duplicate route identities")
+        sorted_products = tuple(sorted(self.products, key=lambda item: item.requirement_id))
+        if self.products != sorted_products:
+            raise ValueError("consumer route binding products are not canonical")
+        expected = _digest(self._canonical_without_digest())
+        if self.binding_sha256 is not None and _sha256(self.binding_sha256, "binding_sha256") != expected:
+            raise ValueError("consumer route binding checksum differs")
+        object.__setattr__(self, "binding_sha256", expected)
+
+    def _canonical_without_digest(self) -> dict[str, object]:
+        return {
+            "schema": _CONSUMER_ROUTE_BINDING_SCHEMA,
+            "contract_version": "2.0.0",
+            "consumer_id": self.consumer_id,
+            "consumer_class": self.consumer_class.value,
+            "release_revision": self.release_revision,
+            "universal_manifest_sha256": self.universal_manifest_sha256,
+            "policy_sha256": self.policy_sha256,
+            "capability_matrix": {
+                "sha256": self.capability_matrix_sha256,
+                "revision": self.capability_matrix_revision,
+            },
+            "inventory_sha256": self.inventory_sha256,
+            "v1_rollback": self.v1_rollback.canonical_mapping(),
+            "independent_v1_venues": list(self.independent_v1_venues),
+            "products": [item.canonical_mapping() for item in self.products],
+        }
+
+    def canonical_mapping(self) -> dict[str, object]:
+        return {**self._canonical_without_digest(), "binding_sha256": self.binding_sha256}
+
+    @classmethod
+    def from_manifest(
+        cls,
+        manifest: UniversalReleaseManifest,
+        *,
+        consumer_id: str,
+        independent_v1_venues: tuple[str, ...] = ("DNSE",),
+    ) -> "ConsumerRouteBinding":
+        selected = tuple(
+            item for item in manifest.products if item.consumer_id == _text(consumer_id, "binding consumer_id")
+        )
+        if not selected:
+            raise ValueError("consumer route binding has no admitted product for consumer")
+        consumer_classes = {item.consumer_class for item in selected}
+        if len(consumer_classes) != 1:
+            raise ValueError("consumer route binding has ambiguous consumer class")
+        return cls(
+            consumer_id=consumer_id,
+            consumer_class=next(iter(consumer_classes)),
+            release_revision=manifest.revision,
+            universal_manifest_sha256=manifest.digest,
+            policy_sha256=manifest.policy_sha256,
+            capability_matrix_sha256=manifest.capability_matrix_sha256,
+            capability_matrix_revision=manifest.capability_matrix_revision,
+            inventory_sha256=manifest.inventory_sha256,
+            v1_rollback=manifest.v1_rollback,
+            independent_v1_venues=independent_v1_venues,
+            products=tuple(sorted(selected, key=lambda item: item.requirement_id)),
+        )
+
+    @classmethod
+    def from_canonical_mapping(cls, value: Mapping[str, object]) -> "ConsumerRouteBinding":
+        expected = {
+            "schema", "contract_version", "consumer_id", "consumer_class",
+            "release_revision", "universal_manifest_sha256", "policy_sha256",
+            "capability_matrix", "inventory_sha256", "v1_rollback",
+            "independent_v1_venues", "products", "binding_sha256",
+        }
+        if set(value) != expected or value.get("schema") != _CONSUMER_ROUTE_BINDING_SCHEMA:
+            raise ValueError("consumer route binding schema or fields are invalid")
+        if value.get("contract_version") != "2.0.0":
+            raise ValueError("consumer route binding contract version is invalid")
+        capability = value["capability_matrix"]
+        rollback = value["v1_rollback"]
+        products_raw = value["products"]
+        venues = value["independent_v1_venues"]
+        if (
+            not isinstance(capability, Mapping)
+            or set(capability) != {"sha256", "revision"}
+            or not isinstance(rollback, Mapping)
+            or not isinstance(products_raw, list)
+            or not isinstance(venues, list)
+        ):
+            raise ValueError("consumer route binding nested fields are invalid")
+        rollback_expected = {
+            "release_tag", "source_commit", "image_reference", "manifest_revision"
+        }
+        if set(rollback) != rollback_expected:
+            raise ValueError("consumer route binding rollback fields are invalid")
+        product_expected = {
+            "consumer_id", "consumer_class", "requirement_id", "instrument_uid",
+            "instrument_id", "venue", "market", "product_type", "native_symbol",
+            "feed", "interval", "source_policy_id", "provider_plane",
+            "max_freshness_ms", "require_final_bars", "require_live",
+            "execution_grade", "route", "fallback", "fallback_rule_id",
+            "blocked_reason", "gap_policy",
+        }
+        products = []
+        for raw in products_raw:
+            if not isinstance(raw, Mapping) or set(raw) != product_expected:
+                raise ValueError("consumer route binding product fields are invalid")
+            if raw["gap_policy"] != "BLOCK":
+                raise ValueError("consumer route binding product gap policy is invalid")
+            products.append(UniversalReleaseProduct(
+                consumer_id=str(raw["consumer_id"]),
+                consumer_class=UniversalConsumerClass(str(raw["consumer_class"])),
+                requirement_id=str(raw["requirement_id"]),
+                instrument_uid=str(raw["instrument_uid"]),
+                instrument_id=str(raw["instrument_id"]),
+                venue=str(raw["venue"]), market=str(raw["market"]),
+                product_type=str(raw["product_type"]), native_symbol=str(raw["native_symbol"]),
+                feed=str(raw["feed"]),
+                interval=str(raw["interval"]) if raw["interval"] is not None else None,
+                source_policy_id=str(raw["source_policy_id"]),
+                provider_plane=str(raw["provider_plane"]),
+                max_freshness_ms=_optional_positive_int(
+                    raw["max_freshness_ms"],
+                    "universal release product max_freshness_ms",
+                ),
+                require_final_bars=_strict_bool(
+                    raw["require_final_bars"],
+                    "universal release product require_final_bars",
+                ),
+                require_live=_strict_bool(
+                    raw["require_live"],
+                    "universal release product require_live",
+                ),
+                execution_grade=_strict_bool(
+                    raw["execution_grade"],
+                    "universal release product execution_grade",
+                ),
+                route=str(raw["route"]), fallback=str(raw["fallback"]),
+                fallback_rule_id=(str(raw["fallback_rule_id"]) if raw["fallback_rule_id"] is not None else None),
+                blocked_reason=(str(raw["blocked_reason"]) if raw["blocked_reason"] is not None else None),
+            ))
+        return cls(
+            consumer_id=str(value["consumer_id"]),
+            consumer_class=UniversalConsumerClass(str(value["consumer_class"])),
+            release_revision=_positive_int(
+                value["release_revision"],
+                "consumer route binding release revision",
+            ),
+            universal_manifest_sha256=str(value["universal_manifest_sha256"]),
+            policy_sha256=str(value["policy_sha256"]),
+            capability_matrix_sha256=str(capability["sha256"]),
+            capability_matrix_revision=_positive_int(
+                capability["revision"],
+                "consumer route binding capability matrix revision",
+            ),
+            inventory_sha256=str(value["inventory_sha256"]),
+            v1_rollback=UniversalV1Rollback(**{key: str(item) for key, item in rollback.items()}),
+            independent_v1_venues=tuple(str(item) for item in venues),
+            products=tuple(products),
+            binding_sha256=str(value["binding_sha256"]),
+        )
 
 
 def build_universal_release_manifest(

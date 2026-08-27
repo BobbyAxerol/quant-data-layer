@@ -5760,3 +5760,51 @@ No scope may use a mutable V1 tag as evidence, make a V1-incompatible BBO/OKX
 product silently fall back, or promote VN before its independent real-provider
 gate. Each scope stops after its declared evidence/rollback gate and records
 the result in the main journal.
+
+### J.8 Phase 11.5 consumer-scoped universal route binding
+
+The universal release manifest is a release-control artifact, not an
+environment-wide routing switch. Before an individual consumer may use its
+coverage, the Data Layer renders exactly one
+`qdl.v2.consumer-route-binding.v1` document for that consumer. The document is
+canonical JSON and carries the universal-manifest SHA-256, release revision,
+V1 rollback reference, independent V1 venues, and only the consumer's exact
+canonical route identities. It carries no credential, cursor, provider byte,
+or another consumer's demand.
+
+`alpha_sdk.data_layer_release_binding` is the portable parser shared by Trading
+System and alpha runtime. Enabling a binding requires both
+`DATA_LAYER_V2_ROUTE_MANIFEST_FILE` and
+`DATA_LAYER_V2_RELEASE_MANIFEST_SHA256`; a missing, stale, tampered,
+cross-consumer, duplicate, non-canonical, or semantically malformed binding
+fails before a route is selected. Existing static
+`trading-system.data-layer-v2-routes.v1/v2` files remain compatible when the
+new binding schema is absent.
+
+For an enabled binding, Binance/OKX are exact-identity allowlists. In
+`V2_PRIMARY`, an admitted requirement invokes V2 with its sealed source policy
+and freshness bound. An explicitly declared V1 compatibility rule may take the
+existing guarded fallback after V2 failure and returns to V2 on the next
+successful call. An unbound or `BLOCKED` Binance/OKX slice fails before V1 is
+called. `DUAL_READ` likewise may not use V1 as an oracle to hide a blocked
+slice. DNSE/VN remains an explicitly independent V1 venue until its own V2
+admission, never a hidden crypto fallback.
+
+The alpha runtime applies this same selection to latest trade/bar, single and
+batch warmup, and recognized Binance/OKX stream channels. A final-BAR binding
+does not deliver an open bar; it ACKs that non-actionable stream event internally
+so the durable cursor does not stall. The V2 stream intentionally fails closed
+on transport failure rather than silently replacing a cursor-bearing stream
+with Redis Pub/Sub; V1 fallback-return is exercised by snapshot/warmup calls
+and any stream transport switch requires the later explicit runtime handoff.
+Mixed V2 and independent-V1 channels in one alpha subscription are rejected.
+
+Exit evidence for this source-only stage is deterministic renderer output,
+cross-parser digest agreement, exact selection, allowed `V2 -> V1 -> V2`,
+terminal block, DNSE independent V1, final-BAR filtering/ACK, static-manifest
+compatibility and no-order test doubles. It does not build an image, generate a
+private mounted binding, alter a role, contact a provider, or change runtime
+authority. The following runtime packet must name one sealed binding digest,
+paper-only consumers/identities, immutable image(s), ports and consumer groups,
+300-second no-order observation, stop criteria, and an exact V1 rollback
+revision.
