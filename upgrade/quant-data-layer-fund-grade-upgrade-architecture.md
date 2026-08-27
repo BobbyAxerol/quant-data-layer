@@ -5986,3 +5986,31 @@ The fragile provider-native Binance basis lane is serialized only within one
 adapter process; all other reference products and venues retain their bounded
 concurrency. This prevents pressure-induced malformed envelopes without
 inventing a new worker or a per-symbol container.
+
+**C3.6-C protocol hardening evidence (2026-08-27):** the USD-M diff-depth
+contract includes `pu`, the final update ID of the previous stream event. The
+shared capture state machine must accept a snapshot bridge either when the
+snapshot boundary lies in one event's `U/u` range or when the event's `pu`
+equals the REST `lastUpdateId`; every later event still requires
+`pu == previous_u`. A resync is a full bootstrap: buffer at least one exact
+delta per admitted symbol before each new REST snapshot, then keep buffering
+while the snapshot is in flight. Any other sequence remains a typed gap and
+bounded resync. This is required for provider-discovered dated contracts and
+is not a Spot-rule relaxation. See the official
+[USD-M diff-depth contract](https://developers.binance.info/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/public).
+
+The Binance native-basis adapter remains one process-local serialized lane and
+starts calls at least `500ms` apart. For documented rate-limit responses
+`418`, `429` and `-1003`, it never hot-retries; an official `Retry-After` is
+propagated unchanged, while a missing header receives only a conservative
+local `60s` defer hint. This is a typed scheduling signal, not a synthetic
+datum or alternate-provider fallback. It leaves all non-native reference
+products, BAR, L2 and other venues concurrent.
+
+The aggregate C3.6-C provider certificate is still fail-closed until one run
+passes its five-native-reference, complete reference, L2 and 700 final-BAR
+planes in one bounded read-only execution. Current real evidence proves the
+six Binance BTC/ETH perpetual/current-quarter/next-quarter L2 bridges, but
+also records intermittent headerless `418` native-basis responses under shared
+public-IP pressure. No V2 route or consumer authority follows from partial
+evidence.

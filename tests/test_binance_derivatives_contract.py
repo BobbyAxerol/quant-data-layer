@@ -158,6 +158,25 @@ class TestBinanceDerivativesContract(unittest.TestCase):
         self.assertEqual(ctx.exception.retry_after_ms, 30_000)
         self.assertEqual(ctx.exception.attempts[0]["status_code"], 429)
 
+    def test_rate_limit_without_header_uses_bounded_local_retry_hint(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            return FakeResponse(status_code=418, text="banned")
+
+        with self.assertRaises(BinanceProviderError) as ctx:
+            derivatives.fetch_open_interest(
+                "BTCUSDT",
+                http_get=fake_get,
+                max_attempts=4,
+                backoff_seconds=0,
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(ctx.exception.retry_after_ms, 60_000)
+        self.assertEqual(ctx.exception.attempts[0]["retry_after_ms"], 60_000)
+
     def test_http_success_permanent_error_envelope_fails_closed(self):
         calls = {"count": 0}
 

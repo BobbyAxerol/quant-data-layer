@@ -166,6 +166,28 @@ def active_binance_book_symbols(document: Mapping[str, Any]) -> tuple[str, ...]:
     return values
 
 
+def _binance_snapshot_bridge(
+    *,
+    snapshot_sequence: int,
+    start: int,
+    end: int,
+    frame: Mapping[str, Any],
+) -> bool:
+    """Return whether one USD-M diff event can follow a REST snapshot exactly.
+
+    USD-M futures exposes both the regular update range and ``pu``, the final
+    update ID of the previous stream event. Some low-frequency delivery books
+    use a range that begins after ``snapshot + 1`` while their predecessor is
+    exactly the REST snapshot. ``pu == snapshot`` is therefore a documented
+    continuity proof, not a gap bypass.
+    """
+
+    expected = snapshot_sequence + 1
+    if start <= expected <= end:
+        return True
+    return _int(frame.get("pu"), "pu") == snapshot_sequence
+
+
 def validate_binance_replay(
     *,
     symbol: str,
@@ -197,7 +219,12 @@ def validate_binance_replay(
         if final_sequence is None:
             if end < expected:
                 continue
-            if start <= expected <= end:
+            if _binance_snapshot_bridge(
+                snapshot_sequence=snapshot_sequence,
+                start=start,
+                end=end,
+                frame=frame,
+            ):
                 bridge_start, bridge_end, final_sequence = start, end, end
                 accepted = 1
             continue
@@ -253,7 +280,14 @@ def binance_resnapshot_required(
             raise ProviderCaptureError(f"Binance {symbol} has an invalid U/u range")
         if end < expected:
             continue
-        return start > expected
+        if _binance_snapshot_bridge(
+            snapshot_sequence=snapshot_sequence,
+            start=start,
+            end=end,
+            frame=frame,
+        ):
+            return False
+        return True
     return False
 
 
@@ -343,6 +377,50 @@ async def _binance_snapshots(symbols: Sequence[str]) -> dict[str, Mapping[str, A
     return snapshots
 
 
+def _append_binance_delta(
+    *,
+    raw: str,
+    frame: Mapping[str, Any],
+    frames: Mapping[str, list[Mapping[str, Any]]],
+    raw_frames: Mapping[str, list[str]],
+    max_frames: int,
+    phase: str,
+) -> None:
+    """Keep one exact Binance depth delta without crossing the capture bound."""
+
+    symbol = str(frame.get("s", "")).upper()
+    if frame.get("e") != "depthUpdate" or symbol not in frames:
+        return
+    if len(frames[symbol]) >= max_frames:
+        raise ProviderCaptureError(f"Binance {symbol} exceeded bounded {phase} frames")
+    frames[symbol].append(frame)
+    raw_frames[symbol].append(raw)
+
+
+async def _buffer_binance_pre_snapshot_deltas(
+    socket,
+    *,
+    symbols: Sequence[str],
+    frames: Mapping[str, list[Mapping[str, Any]]],
+    raw_frames: Mapping[str, list[str]],
+    deadline: float,
+    max_frames: int,
+    phase: str,
+) -> None:
+    """Establish the documented per-symbol delta buffer before every snapshot."""
+
+    while any(not frames[symbol] for symbol in symbols):
+        raw, frame = await _recv_json(socket, deadline)
+        _append_binance_delta(
+            raw=raw,
+            frame=frame,
+            frames=frames,
+            raw_frames=raw_frames,
+            max_frames=max_frames,
+            phase=phase,
+        )
+
+
 async def capture_binance(symbols: Sequence[str], deadline: float, max_frames: int) -> tuple[BinanceReplay, ...]:
     frames: dict[str, list[Mapping[str, Any]]] = {symbol: [] for symbol in symbols}
     raw_frames: dict[str, list[str]] = {symbol: [] for symbol in symbols}
@@ -352,12 +430,15 @@ async def capture_binance(symbols: Sequence[str], deadline: float, max_frames: i
             "params": [f"{symbol.lower()}@depth@100ms" for symbol in symbols],
             "id": 114,
         }))
-        while any(not values for values in frames.values()):
-            raw, frame = await _recv_json(socket, deadline)
-            symbol = str(frame.get("s", "")).upper()
-            if frame.get("e") == "depthUpdate" and symbol in frames:
-                frames[symbol].append(frame)
-                raw_frames[symbol].append(raw)
+        await _buffer_binance_pre_snapshot_deltas(
+            socket,
+            symbols=symbols,
+            frames=frames,
+            raw_frames=raw_frames,
+            deadline=deadline,
+            max_frames=max_frames,
+            phase="bootstrap",
+        )
         # Keep draining the diff stream while REST establishes its sequence
         # anchor. Awaiting REST directly here creates exactly the race that the
         # documented Binance bootstrap algorithm is intended to prevent.
@@ -371,12 +452,14 @@ async def capture_binance(symbols: Sequence[str], deadline: float, max_frames: i
             except TimeoutError:
                 continue
             raw, frame = _json_object(raw)
-            symbol = str(frame.get("s", "")).upper()
-            if frame.get("e") == "depthUpdate" and symbol in frames:
-                if len(frames[symbol]) >= max_frames:
-                    raise ProviderCaptureError(f"Binance {symbol} exceeded bounded capture frames")
-                frames[symbol].append(frame)
-                raw_frames[symbol].append(raw)
+            _append_binance_delta(
+                raw=raw,
+                frame=frame,
+                frames=frames,
+                raw_frames=raw_frames,
+                max_frames=max_frames,
+                phase="bootstrap",
+            )
         snapshots = await snapshots_task
         snapshot_attempts = 1
         while True:
@@ -408,6 +491,19 @@ async def capture_binance(symbols: Sequence[str], deadline: float, max_frames: i
                 for symbol in symbols:
                     frames[symbol].clear()
                     raw_frames[symbol].clear()
+                # A resync is a complete bootstrap, not merely another REST
+                # request. Re-establish a bounded delta buffer for every exact
+                # symbol before taking the next snapshot, particularly for
+                # low-frequency dated contracts.
+                await _buffer_binance_pre_snapshot_deltas(
+                    socket,
+                    symbols=symbols,
+                    frames=frames,
+                    raw_frames=raw_frames,
+                    deadline=deadline,
+                    max_frames=max_frames,
+                    phase="resync",
+                )
                 snapshots_task = asyncio.create_task(_binance_snapshots(symbols))
                 while not snapshots_task.done():
                     remaining = deadline - time.monotonic()
@@ -418,23 +514,25 @@ async def capture_binance(symbols: Sequence[str], deadline: float, max_frames: i
                     except TimeoutError:
                         continue
                     raw, frame = _json_object(raw)
-                    symbol = str(frame.get("s", "")).upper()
-                    if frame.get("e") == "depthUpdate" and symbol in frames:
-                        if len(frames[symbol]) >= max_frames:
-                            raise ProviderCaptureError(
-                                f"Binance {symbol} exceeded bounded resync capture frames"
-                            )
-                        frames[symbol].append(frame)
-                        raw_frames[symbol].append(raw)
+                    _append_binance_delta(
+                        raw=raw,
+                        frame=frame,
+                        frames=frames,
+                        raw_frames=raw_frames,
+                        max_frames=max_frames,
+                        phase="resync",
+                    )
                 snapshots = await snapshots_task
                 continue
             raw, frame = await _recv_json(socket, deadline)
-            symbol = str(frame.get("s", "")).upper()
-            if frame.get("e") == "depthUpdate" and symbol in frames:
-                if len(frames[symbol]) >= max_frames:
-                    raise ProviderCaptureError(f"Binance {symbol} exceeded bounded capture frames")
-                frames[symbol].append(frame)
-                raw_frames[symbol].append(raw)
+            _append_binance_delta(
+                raw=raw,
+                frame=frame,
+                frames=frames,
+                raw_frames=raw_frames,
+                max_frames=max_frames,
+                phase="capture",
+            )
 
 
 async def capture_okx(symbol: str, deadline: float, max_frames: int) -> OkxReplay:

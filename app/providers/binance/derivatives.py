@@ -58,6 +58,7 @@ _TRANSIENT_PROVIDER_ERROR_CODES = frozenset({
     -1007,  # TIMEOUT
     -1008,  # SERVER_BUSY
 })
+_RATE_LIMIT_FALLBACK_RETRY_AFTER_MS = 60_000
 
 
 def normalize_period(period: str) -> str:
@@ -159,6 +160,8 @@ def _public_get(
                         "provider_code": provider_code,
                     }
                     hint = _retry_after_ms(resp)
+                    if provider_code == -1003 and hint is None:
+                        hint = _RATE_LIMIT_FALLBACK_RETRY_AFTER_MS
                     if hint is not None:
                         attempt_record["retry_after_ms"] = hint
                         retry_after_ms = hint
@@ -181,6 +184,8 @@ def _public_get(
                 body = getattr(resp, "text", "")[:300]
                 attempt_record = {"attempt": attempt, "status_code": status_code, "body": body}
                 hint = _retry_after_ms(resp)
+                if status_code in {418, 429} and hint is None:
+                    hint = _RATE_LIMIT_FALLBACK_RETRY_AFTER_MS
                 if hint is not None:
                     attempt_record["retry_after_ms"] = hint
                     retry_after_ms = hint

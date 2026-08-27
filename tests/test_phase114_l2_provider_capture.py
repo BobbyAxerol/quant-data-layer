@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import time
 import unittest
 
 from scripts.phase114_l2_real_provider_capture import (
     ProviderCaptureError,
+    _buffer_binance_pre_snapshot_deltas,
     active_book_bindings,
     active_binance_book_symbols,
     binance_resnapshot_required,
@@ -12,7 +16,42 @@ from scripts.phase114_l2_real_provider_capture import (
 )
 
 
+class _Socket:
+    def __init__(self, frames):
+        self._frames = iter(frames)
+
+    async def recv(self):
+        return next(self._frames)
+
+
 class Phase114L2ProviderCaptureTests(unittest.TestCase):
+    def test_binance_resync_prebuffer_waits_for_every_exact_symbol(self):
+        async def check() -> None:
+            frames = {"BTCUSDT": [], "ETHUSDT_261225": []}
+            raw_frames = {"BTCUSDT": [], "ETHUSDT_261225": []}
+            socket = _Socket((
+                json.dumps({"e": "depthUpdate", "s": "IGNORE", "U": 1, "u": 1, "pu": 0}),
+                json.dumps({"e": "depthUpdate", "s": "BTCUSDT", "U": 2, "u": 2, "pu": 1}),
+                json.dumps({"e": "depthUpdate", "s": "ETHUSDT_261225", "U": 3, "u": 3, "pu": 2}),
+            ))
+            await _buffer_binance_pre_snapshot_deltas(
+                socket,
+                symbols=("BTCUSDT", "ETHUSDT_261225"),
+                frames=frames,
+                raw_frames=raw_frames,
+                deadline=time.monotonic() + 1.0,
+                max_frames=4,
+                phase="resync",
+            )
+            self.assertEqual([row["s"] for row in frames["BTCUSDT"]], ["BTCUSDT"])
+            self.assertEqual(
+                [row["s"] for row in frames["ETHUSDT_261225"]], ["ETHUSDT_261225"]
+            )
+            self.assertEqual(len(raw_frames["BTCUSDT"]), 1)
+            self.assertEqual(len(raw_frames["ETHUSDT_261225"]), 1)
+
+        asyncio.run(check())
+
     def test_active_symbols_are_derived_from_admitted_l2_inventory(self):
         document = {
             "rows": [
@@ -87,6 +126,32 @@ class Phase114L2ProviderCaptureTests(unittest.TestCase):
             symbol="BTCUSDT",
             snapshot_sequence=100,
             frames=[{"e": "depthUpdate", "s": "BTCUSDT", "U": 99, "u": 100, "pu": 98}],
+        ))
+
+    def test_binance_futures_pu_exactly_equal_to_snapshot_is_a_valid_bridge(self):
+        frames = [
+            {"e": "depthUpdate", "s": "BTCUSDT_261225", "U": 500, "u": 503, "pu": 100},
+            {"e": "depthUpdate", "s": "BTCUSDT_261225", "U": 504, "u": 506, "pu": 503},
+        ]
+        replay = validate_binance_replay(
+            symbol="BTCUSDT_261225",
+            snapshot_sequence=100,
+            frames=frames,
+            raw_frames=["first", "second"],
+        )
+        assert replay is not None
+        self.assertEqual((replay.bridge_start, replay.final_sequence), (500, 506))
+        self.assertFalse(binance_resnapshot_required(
+            symbol="BTCUSDT_261225",
+            snapshot_sequence=100,
+            frames=frames,
+        ))
+
+    def test_binance_futures_pu_mismatch_remains_a_resnapshot(self):
+        self.assertTrue(binance_resnapshot_required(
+            symbol="BTCUSDT_261225",
+            snapshot_sequence=100,
+            frames=[{"e": "depthUpdate", "s": "BTCUSDT_261225", "U": 500, "u": 503, "pu": 99}],
         ))
 
     def test_okx_snapshot_update_and_maintenance_reset_are_not_cross_mixed(self):

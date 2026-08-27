@@ -129,6 +129,12 @@ class PhaseC36CertificationTests(unittest.TestCase):
         batches = _reference_certification_batches(work)
         self.assertEqual(sum(len(chunk) for chunk in batches), len(work))
         self.assertTrue(all(len(chunk) <= 12 for chunk in batches))
+        self.assertTrue(all(
+            len(chunk) == 1
+            and chunk[0].requirement.product.value == "BASIS"
+            and chunk[0].requirement.basis_series.value == "NATIVE"
+            for chunk in batches[:5]
+        ))
         self.assertEqual(
             sum(
                 len(chunk) == 1

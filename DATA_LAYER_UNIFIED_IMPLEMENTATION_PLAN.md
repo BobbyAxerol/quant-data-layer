@@ -18436,7 +18436,7 @@ READ-ONLY / RUNTIME UNCHANGED`, 2026-08-27):**
   no-order observation and V1 rollback coordinate.
 - **In-progress source evidence (2026-08-27):** the exact-USDT liquid policy,
   700-member final-BAR/reference/L2 verifier, Binance HTTP-200 error-envelope
-  guard and native-basis serialization are implemented. `68` network-disabled
+  guard and native-basis serialization are implemented. `73` network-disabled
   Python unit/contract tests passed in a read-only ephemeral container,
   including transient `-1007` retry, permanent `-1121` fail-closed cases,
   direct `418`/`429`/`-1003` no-hot-retry handling, and V2
@@ -18453,7 +18453,7 @@ READ-ONLY / RUNTIME UNCHANGED`, 2026-08-27):**
   tests.test_phase104_v2_query_stream_integration
   tests.test_phasec36_liquid_crypto_features
   tests.test_phasec36_real_provider_certification
-  tests.test_phase114_l2_provider_capture` with `68` passing cases in `4.175s`;
+  tests.test_phase114_l2_provider_capture` with `73` passing cases in `4.365s`;
   `ast.parse(..., feature_version=(3, 10))` and `git diff --check` also passed.
   The first authentic run correctly stopped at Binance native BTC basis with
   public `418` then `-1003` rate-limit evidence; ETH/SOL/DOGE/BNB each returned
@@ -18462,6 +18462,71 @@ READ-ONLY / RUNTIME UNCHANGED`, 2026-08-27):**
   until one full aggregate-only run reaches its BAR, reference and L2 gates.
   No runtime/durable mutation occurred and the ephemeral test container was
   removed automatically.
+- **Authentic L2 failure analysis (2026-08-27):** after a later one-attempt
+  BTC native-basis recovery probe returned three real rows, the full aggregate
+  certificate progressed through its reference plane and stopped fail-closed
+  at Binance L2 before the final-BAR sweep. A six-contract, sequence/digest-only
+  diagnostic passed BTC/ETH perpetuals and BTC current/next quarter plus ETH
+  current quarter; only `ETHUSDT_261225` exhausted its bounded bridge resync.
+  Source inspection found that the resync branch cleared all deltas and started
+  the REST snapshot immediately, unlike the documented initial bootstrap which
+  first buffers at least one delta per symbol. This can leave a low-frequency
+  dated contract with no bridge interval around a fast snapshot. The in-scope
+  correction is to share that bounded pre-snapshot buffer barrier across both
+  initial bootstrap and every resync, with a no-network unit test proving the
+  barrier waits for every exact admitted symbol. It does not change the
+  sequence/`pu` validation, retry ceiling, provider topology or runtime route.
+- **USD-M `pu` bridge correction (2026-08-27):** sequence-only diagnostics for
+  `BTCUSDT_261225` showed the provider REST `lastUpdateId` exactly equal to the
+  next diff event's documented `pu`, while that event's `U/u` interval began
+  after `lastUpdateId + 1`. The official USD-M depth-stream contract defines
+  `pu` as the final update ID of the previous stream event. The existing
+  Spot-style initial bridge predicate therefore produced a false gap for a
+  valid futures snapshot boundary. The in-scope correction accepts an initial
+  event only when either its `U/u` range contains `snapshot + 1`, or its `pu`
+  exactly equals the snapshot sequence; subsequent events still require
+  `pu == prior_u`. Any other sequence remains a fail-closed resync. This is a
+  protocol-specific correctness repair, not a relaxed gap policy.
+- **Provider scheduling correction (2026-08-27):** after the `pu` repair, all
+  six real Binance perpetual/current-quarter/next-quarter L2 bridges passed.
+  The next full certificate then stopped at one Binance native-basis request
+  with typed `SOURCE_UNAVAILABLE` after the regular reference batches had
+  already consumed the shared public lane. The certificate must exercise all
+  products, but it need not self-inflict this ordering pressure: the five
+  singleton native-basis requests will run first, followed by bounded regular
+  batches, then L2 and final-BAR. The count, identity, deadlines, typed error
+  semantics and fail-closed outcome are unchanged; this only protects the
+  fragile documented provider lane from unrelated certificate traffic.
+- **Native-lane pacing correction (2026-08-27):** the exact bounded BNB native
+  basis request succeeded in an isolated one-attempt probe, while the same
+  product failed only after several immediate singleton requests in the
+  certificate. The adapter will therefore use its existing process-local
+  native-basis lock to enforce a bounded `500ms` minimum start interval for
+  that endpoint only. The interval is not a global sleep, new worker, or
+  provider substitution; funding/OI/ratios/taker/mark/metadata/continuous
+  basis, BAR and all other venues retain existing concurrency. A deterministic
+  test proves only one native caller waits and a certification error retains
+  the typed code plus bounded `Retry-After` hint when one exists.
+- **Missing-header rate-limit fallback (2026-08-27):** a five-pair real native
+  diagnostic observed a public `418` for SOL without a `Retry-After` header;
+  the surrounding pairs remained independently readable. Header absence must
+  not invite immediate repeat traffic. For `418`/`429`/`-1003` only, the
+  shared Binance edge will attach a conservative local `60s` retry hint when
+  the documented header is absent, retaining the header value whenever it is
+  present. The V2 problem remains typed/retryable and fail-closed; no value is
+  fabricated, no provider is substituted, and the next scheduling decision is
+  left to the caller.
+- **Current C3.6-C exit status (2026-08-27):** the no-network gate is `73/73`
+  passing, Python-3.10 grammar and `git diff --check` pass, and the real
+  six-contract Binance L2 diagnostic is `6/6` passing after the shared
+  resync/`pu` repairs. The aggregate certificate remains `IN PROGRESS`: its
+  two latest authentic runs stopped fail-closed in the native-basis plane with
+  typed `SOURCE_UNAVAILABLE` (`DOGE`, then `BNB`), and a controlled five-pair
+  direct diagnostic observed one real headerless `418` for `SOL` while the
+  other four pairs returned three rows. It has therefore not reached the
+  top-350 final-BAR gate and may not be described as an all-plane provider
+  certificate. No additional provider burst was issued after that evidence;
+  V2 remains non-primary and no runtime/durable state changed.
 
 ### 22.11 Phase 11 Completion Decision
 

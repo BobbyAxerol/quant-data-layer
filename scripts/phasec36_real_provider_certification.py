@@ -639,7 +639,10 @@ def _reference_certification_batches(
             native_basis.append((work,))
         else:
             regular.append(work)
-    return (*_chunks(tuple(regular), _REFERENCE_CERTIFICATION_BATCH_ITEMS), *native_basis)
+    # Native basis is the provider's most fragile public reference lane. It is
+    # intentionally isolated and runs before unrelated regular products so a
+    # certification-wide history burst cannot manufacture a false failure.
+    return (*native_basis, *_chunks(tuple(regular), _REFERENCE_CERTIFICATION_BATCH_ITEMS))
 
 
 def _reference_digest(result) -> str:
@@ -723,8 +726,13 @@ async def _admit_references(
                 continue
             if item.result is None:
                 code = item.problem.code.value if item.problem is not None else "MISSING_RESULT"
+                retry_after_ms = (
+                    item.problem.retry_after_ms if item.problem is not None else None
+                )
                 raise CertificationError(
-                    f"V2 reference request failed: {request.product.value}:{request.instrument_uid}:{code}"
+                    "V2 reference request failed: "
+                    f"{request.product.value}:{request.instrument_uid}:{code}:"
+                    f"retry_after_ms={retry_after_ms}"
                 )
             data = item.result
             if item.problem is not None:
@@ -734,8 +742,11 @@ async def _admit_references(
                     or not _is_truthful_partial_history(data)
                 ):
                     raise CertificationError(
-                        f"V2 reference request failed: {request.product.value}:"
-                        f"{request.instrument_uid}:{item.problem.code.value}"
+                        "V2 reference request failed: "
+                        f"{request.product.value}:{request.instrument_uid}:"
+                        f"{item.problem.code.value}:status={data.status.value}:"
+                        f"error_code={data.error_code}:retry_after_ms="
+                        f"{item.problem.retry_after_ms}"
                     )
                 partial.append({
                     "instrument_uid": request.instrument_uid,

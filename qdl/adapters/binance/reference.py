@@ -36,6 +36,7 @@ _ADAPTER_VERSION = "qdl-binance-reference/1"
 _FUNDING_BOUNDARY_TOLERANCE_MS = 60_000
 _NATIVE_BASIS_TRANSIENT_ATTEMPTS = 4
 _NATIVE_BASIS_TRANSIENT_BACKOFF_SECONDS = 0.5
+_NATIVE_BASIS_MIN_START_INTERVAL_NS = 500_000_000
 
 
 def _fields(*items):
@@ -66,6 +67,7 @@ class BinanceUsdmReferenceAdapter:
         retry_backoff_seconds: float = 0.25,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock_ns: Callable[[], int] = time.time_ns,
+        monotonic_ns: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         if not 1 <= max_attempts <= 5:
             raise ValueError("Binance reference attempts must be between 1 and 5")
@@ -84,10 +86,12 @@ class BinanceUsdmReferenceAdapter:
         self._retry_backoff_seconds = retry_backoff_seconds
         self._sleep = sleep
         self._clock_ns = clock_ns
+        self._monotonic_ns = monotonic_ns
         # Binance's public native-basis endpoint may emit an HTTP-200 error
         # envelope under concurrent pair pressure. Keep that one fragile lane
         # serial; all other reference products retain ReferenceBatch limits.
         self._native_basis_lock = asyncio.Lock()
+        self._next_native_basis_start_ns = 0
 
     async def fetch(
         self,
@@ -348,7 +352,19 @@ class BinanceUsdmReferenceAdapter:
             )
 
         async with self._native_basis_lock:
+            await self._pace_native_basis_start()
             return await self._retry_transient_native_basis_envelope(fetch_once)
+
+    async def _pace_native_basis_start(self) -> None:
+        """Respect a tiny process-local spacing for Binance's fragile basis lane."""
+
+        now_ns = self._monotonic_ns()
+        wait_ns = self._next_native_basis_start_ns - now_ns
+        if wait_ns > 0:
+            await self._sleep(wait_ns / 1_000_000_000)
+        self._next_native_basis_start_ns = (
+            self._monotonic_ns() + _NATIVE_BASIS_MIN_START_INTERVAL_NS
+        )
 
     async def _retry_transient_native_basis_envelope(
         self,

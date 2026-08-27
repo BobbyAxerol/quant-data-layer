@@ -634,6 +634,47 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(active["maximum"], 1)
         self.assertEqual((left.status, right.status), (ReferenceStatus.OK, ReferenceStatus.OK))
 
+    async def test_native_basis_paces_only_the_second_start(self):
+        sleeps = []
+        monotonic_values = iter((0, 0, 0, 500_000_000))
+
+        async def paced_sleep(seconds):
+            sleeps.append(seconds)
+
+        def basis(pair, *_args, **_kwargs):
+            return {"data": [{
+                "pair": pair,
+                "contractType": "PERPETUAL",
+                "basis": "10.0000",
+                "timestamp": "701",
+            }]}
+
+        adapter = BinanceUsdmReferenceAdapter(
+            basis_fetcher=basis,
+            max_attempts=1,
+            sleep=paced_sleep,
+            monotonic_ns=lambda: next(monotonic_values),
+        )
+        requests = tuple(
+            ReferenceRequest(
+                instrument=instrument,
+                product=ReferenceProduct.BASIS,
+                start_ms=700,
+                end_ms=701,
+                interval="1h",
+                limit=1,
+                page_size=1,
+                max_pages=1,
+                basis_series=BasisSeries.NATIVE,
+                basis_contract_type="PERPETUAL",
+            )
+            for instrument in (self.btc, self.eth)
+        )
+        left, right = await ReferenceBatch({("BINANCE", "USDM"): adapter}).fetch(requests)
+
+        self.assertEqual((left.status, right.status), (ReferenceStatus.OK, ReferenceStatus.OK))
+        self.assertEqual(sleeps, [0.5])
+
     async def test_continuous_vision_basis_is_memory_only_and_requires_a_complete_daily_window(self):
         day_ms = 86_400_000
         start_ms = 20_000 * day_ms
