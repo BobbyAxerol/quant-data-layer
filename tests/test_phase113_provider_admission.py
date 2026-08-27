@@ -141,6 +141,21 @@ class _TypedPartialReferenceService:
 
 
 class Phase113ProviderAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    def test_trade_bar_only_handoff_has_no_declared_reference_requirement(self):
+        plan = SimpleNamespace(
+            inventory=object(),
+            admission=SimpleNamespace(rows=()),
+        )
+
+        self.assertEqual(
+            admission._demand_reference_work(
+                plan,
+                now_ms=1_800_000_000_000,
+                deadline_ms=60_000,
+            ),
+            (),
+        )
+
     async def test_reference_admission_executes_every_bounded_chunk(self):
         available = tuple(
             admission._ReferenceWork(ReferenceDataRequirement(

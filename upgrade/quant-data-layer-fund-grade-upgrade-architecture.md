@@ -5819,7 +5819,10 @@ gateway/order credential or execution capability. Each uses a distinct V2
 cursor/audit group and read-only mTLS/JWT/binding mount.
 
 Before a binding is mounted, generate one fresh universal artifact from
-declared demand and render exactly one canonical binding per consumer. The
+declared packet demand and render exactly one canonical binding per consumer.
+For this packet, the source registry contains only the three approved paper
+consumer identities and their declared Binance USD-M/OKX Swap BTC/ETH routes;
+it must not inherit unrelated broad alpha-compose or L2 demand. The
 packet records artifact SHA, binding SHAs, image SHAs, endpoints, V1 rollback
 digest and execution-count baseline. It does not commit a binding or replace a
 universal artifact with a static BTC/ETH route file.

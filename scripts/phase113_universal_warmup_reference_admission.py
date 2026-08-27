@@ -320,6 +320,12 @@ def _demand_reference_work(
             continue
         raise Phase113AdmissionError("reference admission selected an unsupported demand feed")
     feeds = {item.requirement.product for item in result}
+    # A bounded consumer handoff may legitimately declare only trade/BAR
+    # routes. Keep the representative reference matrix below, but do not
+    # invent a funding/basis requirement that the sealed consumer binding did
+    # not request. A partial declared reference set is still a contract error.
+    if not feeds:
+        return ()
     if not {ReferenceProduct.FUNDING_RATE, ReferenceProduct.BASIS} <= feeds:
         raise Phase113AdmissionError(
             "active demand did not resolve both funding and basis reference contracts"

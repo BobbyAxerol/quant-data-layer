@@ -6,6 +6,93 @@
 schema: qdl.v2.production-demand.v1
 revision: 1
 consumers:
+  - consumer_id: trading-system.paper.stable
+    consumer_grade: EXECUTION
+    requirements:
+      - venue: BINANCE
+        market: USDM
+        product_type: PERPETUAL
+        native_symbol: BTCUSDT
+        feed: TRADE
+        interval: null
+        source_policy_id: crypto_primary_v2
+      - venue: BINANCE
+        market: USDM
+        product_type: PERPETUAL
+        native_symbol: ETHUSDT
+        feed: TRADE
+        interval: null
+        source_policy_id: crypto_primary_v2
+      - venue: BINANCE
+        market: USDM
+        product_type: PERPETUAL
+        native_symbol: BTCUSDT
+        feed: QUOTE
+        interval: null
+        source_policy_id: crypto_primary_v2
+      - venue: BINANCE
+        market: USDM
+        product_type: PERPETUAL
+        native_symbol: ETHUSDT
+        feed: QUOTE
+        interval: null
+        source_policy_id: crypto_primary_v2
+      - venue: BINANCE
+        market: USDM
+        product_type: PERPETUAL
+        native_symbol: BTCUSDT
+        feed: BAR
+        interval: 1m
+        source_policy_id: crypto_primary_v2
+      - venue: BINANCE
+        market: USDM
+        product_type: PERPETUAL
+        native_symbol: ETHUSDT
+        feed: BAR
+        interval: 1m
+        source_policy_id: crypto_primary_v2
+      - venue: OKX
+        market: SWAP
+        product_type: PERPETUAL
+        native_symbol: BTC-USDT-SWAP
+        feed: TRADE
+        interval: null
+        source_policy_id: crypto_primary_v2
+      - venue: OKX
+        market: SWAP
+        product_type: PERPETUAL
+        native_symbol: ETH-USDT-SWAP
+        feed: TRADE
+        interval: null
+        source_policy_id: crypto_primary_v2
+      - venue: OKX
+        market: SWAP
+        product_type: PERPETUAL
+        native_symbol: BTC-USDT-SWAP
+        feed: QUOTE
+        interval: null
+        source_policy_id: crypto_primary_v2
+      - venue: OKX
+        market: SWAP
+        product_type: PERPETUAL
+        native_symbol: ETH-USDT-SWAP
+        feed: QUOTE
+        interval: null
+        source_policy_id: crypto_primary_v2
+      - venue: OKX
+        market: SWAP
+        product_type: PERPETUAL
+        native_symbol: BTC-USDT-SWAP
+        feed: BAR
+        interval: 1m
+        source_policy_id: crypto_primary_v2
+      - venue: OKX
+        market: SWAP
+        product_type: PERPETUAL
+        native_symbol: ETH-USDT-SWAP
+        feed: BAR
+        interval: 1m
+        source_policy_id: crypto_primary_v2
   - consumer_id: alpha.binance.paper.stable
     consumer_grade: ALPHA
     requirements:

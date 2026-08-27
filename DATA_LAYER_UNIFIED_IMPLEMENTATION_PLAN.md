@@ -17865,6 +17865,91 @@ create a new rollout phase.
   image, process/container, route, credential, Kafka, Redis, SQLite,
   PostgreSQL, Trading System, alpha, signal, order or broker state changed.
 
+**C1 consumer source wiring (`IN PROGRESS / RUNTIME UNCHANGED`):**
+
+- The Trading System has one Phase 11.5-C compose overlay which changes only
+  `market_data_service`: it replaces the static route file with the private
+  sealed binding and injects the universal artifact SHA. Its existing V2
+  identity, JWT revision, endpoints, scoped cursor/audit paths and paper-only
+  service identity remain unchanged.
+- The alpha runtime has one generic, execution-disabled SDK probe. It admits
+  only the two named alpha identities, rejects strategy/gateway configuration
+  before any request, performs only bound trade/final-BAR/batch/stream reads,
+  and records `order_actions=0`. The source test gate is being completed before
+  any fresh artifact, identity mount, image, container or runtime handoff.
+- This is the sole source preparation required by the approved packet. It does
+  not add a consumer class, strategy compose file, provider route, image per
+  symbol, or any new rollout stage.
+
+**C1 source gate result (2026-08-27, `PASS / RUNTIME HANDOFF NOT YET RUN`):**
+
+- The sole Trading System overlay rendered successfully with the canonical base
+  compose, release overlay and V2-primary overlay using placeholder private
+  paths; it changes only `market_data`. The immutable image built from the
+  approved Trading System source has digest
+  `sha256:b54f024f1d89d0fd3fb418dbda34623dc43641ea0a9ffa7cb124d6665bdc39dd`.
+- One alpha image built from the shared runtime has digest
+  `sha256:cdc90031f6478c9f5423f0af9f212afa07b2810a85fe707674ecd3a340345f4b`
+  and runs as the non-root `alpha` user. Its no-network CLI-import gate passed;
+  the new probe unit suite passed **4/4** and the existing shared V2 alpha
+  client suite passed **31/31**. The tests cover execution-environment refusal,
+  the sole Binance fallback branch, terminal OKX no-fallback, final-BAR/batch
+  checks, cursor ACK behavior and V2 return behavior.
+- No source test created a service, provider subscription, order, signal,
+  execution session or durable data mutation. The fresh real-provider artifact
+  and sealed bindings remain a separate C2 preflight before rolling the one
+  permitted service.
+
+**C2 packet-boundary correction (`IN PROGRESS / RUNTIME UNCHANGED`):**
+
+- A bounded real-provider preflight over the broad active registry admitted
+  the selected trade/BAR plane, but its L2 capture correctly failed on the
+  unrelated Basis-Arb dated-contract book `BINANCE/USDM/BTCUSDT_260925`.
+  That route is not one of this packet's three consumers and must not be
+  silently certified or made a prerequisite for their paper handoff.
+- The C artifact will therefore use a dedicated source registry containing
+  only the approved Trading System BTC/ETH Binance USD-M/OKX Swap routes and
+  the two exactly named alpha consumer route sets. It intentionally contains no
+  `BOOK_*` demand, so a release artifact from it has no L2 evidence input. The
+  broad inventory remains evidence for Phase 11 universal coverage; it is not
+  edited, downgraded or used to hide the dated-contract failure.
+- This is a manifest boundary fix within 11.5-C, not a new phase, global
+  demand change, provider topology change or waiver of the L2 protocol gate.
+
+**C2 scoped artifact result (2026-08-27, `PASS / RUNTIME HANDOFF NOT YET RUN`):**
+
+- `config/v2/phase115c-paper-consumer-source-registry.yaml` now compiles only
+  the three approved consumer identities. The declared input has exactly **24**
+  requirements: 12 Trading System BTC/ETH Binance USD-M/OKX Swap
+  `TRADE`/`QUOTE`/final `BAR 1m`, plus the two alpha six-route sets. It has no
+  book, direct-provider runtime or execution demand. Offline compilation passed
+  with 24 requirements, zero exclusions and zero runtime writes.
+- The zero-declared-reference case was corrected in the generic Phase 11.3
+  verifier: a trade/BAR-only sealed binding no longer invents funding/basis
+  requirements, while a partial declared reference set still fails closed. The
+  focused no-network suite passed **17/17**.
+- Fresh real-provider evidence passed: metadata/admission **24/24**;
+  realtime **16** bindings (8 WebSocket trade/quote, 8 REST final-BAR) in
+  18.647 seconds; warmup **8** final BAR bindings in one batch with three rows;
+  the bounded representative reference matrix returned 22 typed results
+  (14 available, 2 partial typed, 6 expected blocked). All report zero
+  provider writes and zero runtime mutations.
+- Private sealed artifact SHA-256 is
+  `61cd408cd44ef7eb18a3885dbbbf544e0c679845c046a2a2375d3ad442fbaf87`.
+  Its only bindings are: `trading-system.paper.stable`
+  `0caae0c170c3e00392274c1ad6fdee5a489fd0fd46c0854d34edb368c289c3d3`
+  (12 routes), `alpha.binance.paper.stable`
+  `d81f96e146786c3e7c41149db26fbf226003e8456c6b0dff197cbdc08c2117f9`
+  (6), and `alpha.okx.paper.stable`
+  `dee4203bbbbb2a4e08833d471095c501f4a25d8c587d2ea3fa677f8cc17031b7`
+  (6). Each parsed successfully through the intended immutable
+  Trading System image or alpha SDK image offline.
+- The broad 95-requirement provider evidence is retained only as diagnostic
+  evidence: its 69 `MISSING_INSTRUMENT` exclusions and unrelated dated L2
+  bridge failure did not alter C's scoped route or silently pass another
+  consumer. No runtime role, Kafka, Redis, SQLite, PostgreSQL, V1, alpha,
+  order, signal or broker state has changed.
+
 ### 22.11 Phase 11 Completion Decision
 
 Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the
