@@ -1,15 +1,67 @@
 schema: qdl.v2.authority-promotion-scope.v1
-revision: 2
+revision: 3
 binding_ids:
-  - binance-usdm-btcusdt-bar-1m
-  - binance-usdm-btcusdt-quote
-  - binance-usdm-btcusdt-trade
-  - binance-usdm-ethusdt-bar-1m
-  - binance-usdm-ethusdt-quote
-  - binance-usdm-ethusdt-trade
-  - okx-swap-btcusdt-bar-1m
-  - okx-swap-btcusdt-quote
-  - okx-swap-btcusdt-trade
-  - okx-swap-eth-usdt-swap-bar-1m
-  - okx-swap-eth-usdt-swap-quote
-  - okx-swap-eth-usdt-swap-trade
+- binance-usdm-btcusdt-bar-12h
+- binance-usdm-btcusdt-bar-15m
+- binance-usdm-btcusdt-bar-1d
+- binance-usdm-btcusdt-bar-1h
+- binance-usdm-btcusdt-bar-1m
+- binance-usdm-btcusdt-bar-1w
+- binance-usdm-btcusdt-bar-2h
+- binance-usdm-btcusdt-bar-30m
+- binance-usdm-btcusdt-bar-3d
+- binance-usdm-btcusdt-bar-3m
+- binance-usdm-btcusdt-bar-4h
+- binance-usdm-btcusdt-bar-5m
+- binance-usdm-btcusdt-bar-6h
+- binance-usdm-btcusdt-bar-8h
+- binance-usdm-btcusdt-quote
+- binance-usdm-btcusdt-trade
+- binance-usdm-ethusdt-bar-12h
+- binance-usdm-ethusdt-bar-15m
+- binance-usdm-ethusdt-bar-1d
+- binance-usdm-ethusdt-bar-1h
+- binance-usdm-ethusdt-bar-1m
+- binance-usdm-ethusdt-bar-1w
+- binance-usdm-ethusdt-bar-2h
+- binance-usdm-ethusdt-bar-30m
+- binance-usdm-ethusdt-bar-3d
+- binance-usdm-ethusdt-bar-3m
+- binance-usdm-ethusdt-bar-4h
+- binance-usdm-ethusdt-bar-5m
+- binance-usdm-ethusdt-bar-6h
+- binance-usdm-ethusdt-bar-8h
+- binance-usdm-ethusdt-quote
+- binance-usdm-ethusdt-trade
+- okx-swap-btc-usdt-swap-bar-12h
+- okx-swap-btc-usdt-swap-bar-15m
+- okx-swap-btc-usdt-swap-bar-1d
+- okx-swap-btc-usdt-swap-bar-1h
+- okx-swap-btc-usdt-swap-bar-1w
+- okx-swap-btc-usdt-swap-bar-2d
+- okx-swap-btc-usdt-swap-bar-2h
+- okx-swap-btc-usdt-swap-bar-30m
+- okx-swap-btc-usdt-swap-bar-3d
+- okx-swap-btc-usdt-swap-bar-3m
+- okx-swap-btc-usdt-swap-bar-4h
+- okx-swap-btc-usdt-swap-bar-5m
+- okx-swap-btc-usdt-swap-bar-6h
+- okx-swap-btcusdt-bar-1m
+- okx-swap-btcusdt-quote
+- okx-swap-btcusdt-trade
+- okx-swap-eth-usdt-swap-bar-12h
+- okx-swap-eth-usdt-swap-bar-15m
+- okx-swap-eth-usdt-swap-bar-1d
+- okx-swap-eth-usdt-swap-bar-1h
+- okx-swap-eth-usdt-swap-bar-1m
+- okx-swap-eth-usdt-swap-bar-1w
+- okx-swap-eth-usdt-swap-bar-2d
+- okx-swap-eth-usdt-swap-bar-2h
+- okx-swap-eth-usdt-swap-bar-30m
+- okx-swap-eth-usdt-swap-bar-3d
+- okx-swap-eth-usdt-swap-bar-3m
+- okx-swap-eth-usdt-swap-bar-4h
+- okx-swap-eth-usdt-swap-bar-5m
+- okx-swap-eth-usdt-swap-bar-6h
+- okx-swap-eth-usdt-swap-quote
+- okx-swap-eth-usdt-swap-trade

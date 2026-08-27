@@ -1,9 +1,11 @@
-"""Deterministic packet preparation for Phase 10.5-C1 final-BAR repair.
+"""Deterministic packet preparation for Phase 10.5-C final-BAR alignment.
 
-The deployed revision-9 bundle assigned an OKX final BAR to the native
-ingestor.  Revision 10 makes the bounded Python REST edge the final-BAR owner
-for every enabled Binance/OKX BAR.  C1 must repair that ownership without
-changing the Rust authority record already mounted by the running core.
+The original C1 repair moved the initial Binance/OKX final BAR set from the
+native ingestor to the bounded Python REST edge.  The catalog is now
+versioned and may contain more provider-native intervals, so this packet
+derives that complete active BAR set from the catalog rather than pinning a
+historical revision or four binding IDs.  It never changes the Rust authority
+record already mounted by the running core.
 
 This module is deliberately source-only.  It writes a non-secret packet and
 runtime bundle, but never starts containers or talks to a provider, Kafka,
@@ -28,7 +30,6 @@ from qdl.runtime.stable_deployment import (
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "qdl.phase105c.final-bar-repair.v1"
-ACQUISITION_REVISION = 10
 WARMUP_ROWS = 1_000
 RECREATED_SERVICES = (
     "ingestor_okx_swap",
@@ -38,12 +39,7 @@ RECREATED_SERVICES = (
     "stream_v2_active",
     "stream_v2_passive",
 )
-FINAL_BAR_BINDINGS = frozenset({
-    "binance-usdm-btcusdt-bar-1m",
-    "binance-usdm-ethusdt-bar-1m",
-    "okx-swap-btcusdt-bar-1m",
-    "okx-swap-eth-usdt-swap-bar-1m",
-})
+FINAL_BAR_FAMILIES = frozenset({("BINANCE", "USDM"), ("OKX", "SWAP")})
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{7,64}\Z")
 
@@ -90,27 +86,54 @@ def _load_active_authority(active_runtime_dir: Path) -> tuple[dict[str, Any], by
     return payload, encoded
 
 
-def _load_revision_ten_acquisition() -> tuple[StableSourceCatalog, StableAcquisitionPlan]:
+def final_bar_binding_ids(
+    catalog: StableSourceCatalog,
+    acquisition: StableAcquisitionPlan,
+) -> frozenset[str]:
+    """Return every active provider-native crypto BAR owned by the REST edge.
+
+    The catalog, rather than a prior repair revision, is the source of truth.
+    This keeps a new native interval from silently bypassing final-bar closure
+    or from being omitted from a later bounded runtime packet.
+    """
+    source_by_id = {item.binding_id: item for item in catalog.bindings}
+    result = frozenset(
+        item.binding_id
+        for item in acquisition.bindings
+        if item.enabled
+        and item.mode == "PYTHON_REST"
+        and source_by_id[item.binding_id].feed.value == "BAR"
+        and (
+            source_by_id[item.binding_id].instrument.identity.venue,
+            source_by_id[item.binding_id].instrument.identity.market,
+        ) in FINAL_BAR_FAMILIES
+    )
+    if not result:
+        raise ValueError("Phase 10.5-C1 final-BAR binding set is empty")
+    return result
+
+
+def _load_final_bar_acquisition() -> tuple[
+    StableSourceCatalog,
+    StableAcquisitionPlan,
+    frozenset[str],
+]:
     catalog = StableSourceCatalog.load(ROOT / "config/v2/stable-source-bindings.yaml")
     acquisition = StableAcquisitionPlan.load(
         ROOT / "config/v2/stable-acquisition-bindings.yaml", catalog=catalog
     )
-    if acquisition.revision != ACQUISITION_REVISION:
-        raise ValueError(
-            "Phase 10.5-C1 requires stable acquisition revision "
-            f"{ACQUISITION_REVISION}, got {acquisition.revision}"
-        )
+    if acquisition.revision < 1:
+        raise ValueError("Phase 10.5-C1 acquisition revision is invalid")
     by_id = {item.binding_id: item for item in acquisition.bindings}
-    if not FINAL_BAR_BINDINGS <= set(by_id):
-        raise ValueError("Phase 10.5-C1 final-BAR binding set is incomplete")
-    for binding_id in sorted(FINAL_BAR_BINDINGS):
+    final_bindings = final_bar_binding_ids(catalog, acquisition)
+    for binding_id in sorted(final_bindings):
         item = by_id[binding_id]
         if not item.enabled or item.mode != "PYTHON_REST":
             raise ValueError(
                 "Phase 10.5-C1 final BAR is not owned by the Python REST edge: "
                 + binding_id
             )
-    return catalog, acquisition
+    return catalog, acquisition, final_bindings
 
 
 def _validate_generated_bundle(
@@ -155,6 +178,7 @@ def _new_checkpoint_path(
     *,
     authority_bytes: bytes,
     python_image_digest: str,
+    acquisition_revision: int,
     previous_state_path: str,
 ) -> str:
     if not previous_state_path.startswith("/var/lib/qdl-stable/runtime/"):
@@ -162,7 +186,10 @@ def _new_checkpoint_path(
     nonce = _sha256_bytes(
         authority_bytes + b"\x00" + python_image_digest.encode("ascii")
     )[:20]
-    result = f"/var/lib/qdl-stable/runtime/stable-crypto-bar-edge-r10-{nonce}.json"
+    result = (
+        "/var/lib/qdl-stable/runtime/"
+        f"stable-crypto-bar-edge-r{acquisition_revision}-{nonce}.json"
+    )
     if result == previous_state_path:
         raise ValueError("Phase 10.5-C1 new bar checkpoint must differ from the prior path")
     return result
@@ -184,7 +211,7 @@ def prepare_final_bar_repair(
     source_commit: str,
     previous_bar_state_path: str,
 ) -> dict[str, Any]:
-    """Write one isolated revision-10 C1 packet without runtime side effects."""
+    """Write one isolated current-revision C1 packet without runtime side effects."""
 
     active_runtime_dir = _require_absolute_path(
         active_runtime_dir, field="active runtime directory"
@@ -198,10 +225,11 @@ def prepare_final_bar_repair(
     _require_commit(source_commit)
 
     authority, authority_bytes = _load_active_authority(active_runtime_dir)
-    catalog, acquisition = _load_revision_ten_acquisition()
+    catalog, acquisition, final_bindings = _load_final_bar_acquisition()
     checkpoint_path = _new_checkpoint_path(
         authority_bytes=authority_bytes,
         python_image_digest=python_image_digest,
+        acquisition_revision=acquisition.revision,
         previous_state_path=previous_bar_state_path,
     )
 
@@ -226,7 +254,7 @@ def prepare_final_bar_repair(
         )
 
         compose_environment = {
-            "QDL_CONFIG_REVISION": "phase105c-final-bar-r10",
+            "QDL_CONFIG_REVISION": f"phase105c-final-bar-r{acquisition.revision}",
             "QDL_STABLE_BAR_STATE_PATH": checkpoint_path,
             "QDL_STABLE_PYTHON_IMAGE": python_image_digest,
             "QDL_STABLE_RUST_IMAGE": rust_image_digest,
@@ -268,7 +296,7 @@ def prepare_final_bar_repair(
                 "rust_image_digest": rust_image_digest,
             },
             "final_bar": {
-                "binding_ids": sorted(FINAL_BAR_BINDINGS),
+                "binding_ids": sorted(final_bindings),
                 "owner": "PYTHON_REST",
                 "native_okx_bar_bindings": 0,
                 "warmup_rows_max": WARMUP_ROWS,

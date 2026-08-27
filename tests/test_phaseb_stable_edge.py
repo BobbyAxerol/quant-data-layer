@@ -274,7 +274,19 @@ class StableCatalogContractTests(unittest.TestCase):
 
     def test_catalog_covers_equal_source_baseline_with_deterministic_identity(self):
         catalog = StableSourceCatalog.load(CATALOG_PATH)
-        self.assertEqual(len(catalog.bindings), 22)
+        # The base capability catalog has 22 rows; C3.5 adds each additional
+        # provider-native BAR interval for two Binance USD-M and two OKX Swap
+        # instruments.  Keep this strict without pinning a historical revision.
+        from qdl.adapters.intervals import (
+            BINANCE_USDM_NATIVE_INTERVALS,
+            OKX_NATIVE_INTERVALS,
+        )
+        self.assertEqual(
+            len(catalog.bindings),
+            22
+            + 2 * (len(BINANCE_USDM_NATIVE_INTERVALS) - 1)
+            + 2 * (len(OKX_NATIVE_INTERVALS) - 1),
+        )
         self.assertEqual(
             {(item.instrument.identity.venue, item.feed.value) for item in catalog.bindings},
             {

@@ -18086,6 +18086,97 @@ COMPLETE`):**
   materializes the already-sealed alpha `15m`/OKX `1h` routes; until then V1
   remains the active Trading System route and 11.5-C is not accepted.
 
+**C3.5 user-approved all-interval server binding alignment (`IN PROGRESS`):**
+
+- The owner explicitly expanded this final packet to materialize every
+  fixed-duration native BAR interval for every already-active V2 crypto
+  instrument: Binance USD-M BTCUSDT/ETHUSDT uses
+  `1m,3m,5m,15m,30m,1h,2h,4h,6h,8h,12h,1d,3d,1w`; OKX Swap
+  BTC-USDT-SWAP/ETH-USDT-SWAP uses
+  `1m,3m,5m,15m,30m,1h,2h,4h,6h,12h,1d,2d,3d,1w`. This adds durable
+  server source/acquisition bindings, not client-only permissions.
+- Scope remains demand-bounded: the currently disabled Binance/OKX Spot
+  profiles are not activated, and an exchange-wide symbol enumeration is not
+  a scalable stable catalog. New symbols are admitted through the same
+  versioned demand compiler. DNSE's certified V2 native BAR plane is `1m`
+  only; `5m,10m,15m,30m,1h,4h` remain legacy derived/materialized products
+  until a distinct V2 aggregation contract exists. They must not be labeled
+  native bindings.
+- Before any role roll: generate source/acquisition config from capability
+  constants, prove exact per-venue interval coverage and no cross-venue or
+  disabled-Spot activation, validate catalog/acquisition/authority coherence,
+  then run bounded real-provider final-BAR reads. The DNSE live check is
+  separate real-provider evidence and fails closed on stale/provider timeout.
+- Runtime blast radius after source gates is one immutable Python V2 image and
+  a bounded rolling recreate of the existing V2 Python catalog consumers/BAR
+  edge **and the existing three Rust core roles whose immutable config must
+  recognise the added raw binding IDs**. This is a config reload of existing
+  roles, not a topology expansion and not a new authority ceremony. Kafka,
+  Redis, SQLite, V1, Trading System, alpha containers, credentials and volumes
+  remain untouched. The current image/config remains the rollback coordinate.
+  No order or strategy action is ever in scope.
+- The BAR edge must bootstrap/poll by canonical close boundary: a `1w` BAR is
+  not fetched once per minute. Its bootstrap is bounded by real provider
+  history (the edge's maximum remains 1,000 rows, with a documented
+  interval-aware lookback cap); a request that needs deeper history continues
+  through the existing bounded provider-history product and must not receive
+  fabricated rows.
+
+**C3.5 source/materialization and real-provider result (2026-08-27, `PASS /
+RUNTIME UNCHANGED`):**
+
+- `scripts/phase115c_materialize_active_native_bars.py` compiled the checked-in
+  authentic Binance/OKX instrument captures into revisioned config only. It
+  added **52** BAR requirements: catalog `4 -> 5` with **74** total bindings,
+  acquisition `10 -> 11`, demand `1 -> 2`, promotion scope `2 -> 3`, and
+  release routing `2 -> 3`. The active crypto authority scope is **64**
+  bindings: 56 final BARs (28 Binance USD-M, 28 OKX Swap) plus eight native
+  trade/quote bindings. Disabled Spot stays disabled; it is not promoted or
+  subscribed by this change.
+- The final-BAR packet and BAR edge no longer pin historic revision `10` or
+  four `1m` bindings. They derive every enabled Binance/OKX `PYTHON_REST` BAR
+  from the loaded catalog; long intervals bootstrap only to the bounded real
+  history cap and the recurring poll wakes on their own next closed boundary.
+  Checkpoint validation remains strict per interval, including the `2d`/`3d`/
+  `1w` alignment case.
+- Immutable image `3a60f3acf59d` ran the focused catalog/finality/compatibility
+  regression group **143 passed, 1 skipped**. This includes the C3.5 compiler
+  idempotence/exact-coverage tests, current-revision final-BAR packet,
+  authority scope, durable checkpoint/retry and V1 release compatibility
+  checks. The expected parser negative-test usage line and injected recovery
+  test logs were observed; there were no unexpected failures.
+- Exact source gate: `python -B -m unittest` ran the catalog, production
+  catalog, regeneration, compatibility, stable deployment/edge/bootstrap,
+  final-BAR, release/handoff and C3.5 materialization/schedule modules inside
+  that read-only image. The bounded provider gate was
+  `python -B scripts/phase10_warmup_admission.py --demand-file
+  config/v2/stable-crypto-demand.yaml --catalog-file
+  config/v2/stable-source-bindings.yaml --rows 2 --timeout-seconds 20`.
+  Both commands are source/read-only verification; neither creates a runtime
+  container, writes a provider payload, or changes a production cursor.
+- Bounded real-provider warmup admission ran read-only for **58/58** demand
+  slices with two closed bars each: the 56 newly materialized Binance USD-M /
+  OKX Swap slices plus two deliberately disabled-Spot provider pass-through
+  rows. It returned `PASS`, provider source calls 58, source failures 0,
+  HTTP 429 0, HTTP 5xx 0, retry 0, p50 97.6 ms, p95 317.7 ms, RSS peak
+  84,480 KiB and zero provider/runtime writes. Provider data was real; no
+  synthetic or generated bar was used.
+- DNSE was separately checked against the running real V1 service during the
+  afternoon session. Canonical `VN30F1M` `1m` and `15m` preload responses were
+  structurally valid, but the live `quote-last` was `is_live=false` and the
+  final websocket feed was stale after a DNSE pong timeout/reconnect. A direct
+  DNSE historical request also timed out and the existing V1 `vnstock`
+  fallback returned historical bars. At `15:09 +07` the exchange was already
+  closed. This is **not** a DNSE V2 pass: DNSE remains V1-only and excluded
+  from C3.5/V2 authority until an in-session freshness/reconnect repair is
+  separately approved and certified.
+- No container/image, Kafka topic/offset, Redis, SQLite, V1 endpoint, Trading
+  System, alpha, order, signal, credential or authority record changed. The
+  only next legal C3.5 action is a separately exact bounded runtime reload of
+  the already-existing V2 BAR-edge/query/stream/core roles using one immutable
+  Python image and the generated bundle, followed by the previously-approved
+  C no-order handoff. The current runtime remains the rollback coordinate.
+
 ### 22.11 Phase 11 Completion Decision
 
 Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the

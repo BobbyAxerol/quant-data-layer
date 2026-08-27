@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 
-from qdl.adapters.intervals import canonical_interval_ms
+from qdl.adapters.intervals import canonical_interval_ms, latest_closed_boundary_ms
 from qdl.adapters.binance import (
     BinanceBarRawBinding,
     fetch_closed_bar_history_raw_envelopes as fetch_binance_history,
@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 _STATE_SCHEMA_V2 = "qdl.stable-bar-edge-state.v2"
 _STATE_SCHEMA_V3 = "qdl.stable-bar-edge-state.v3"
 _MAX_CONNECTION_GENERATION = (1 << 64) - 1
+# A durable BAR binding is not a promise that every venue has unlimited
+# history.  Three years keeps the default bootstrap useful for daily/weekly
+# research while remaining below the proven BTC/ETH history on both providers.
+# Consumers requiring more retain the bounded provider-history path, which
+# reports real coverage rather than inventing missing rows.
+_BOOTSTRAP_HISTORY_LOOKBACK_DAYS = 1_095
+_BOOTSTRAP_HISTORY_LOOKBACK_MS = _BOOTSTRAP_HISTORY_LOOKBACK_DAYS * 86_400_000
 
 
 def _bar_interval_ms(interval: str) -> int:
@@ -360,12 +367,14 @@ class StableBinanceBarEdge:
         source: StableSourceBinding,
         acquisition: StableAcquisitionBinding,
         envelopes,
+        *,
+        expected_rows: int,
     ) -> int:
         values = tuple(envelopes)
-        if len(values) != self.warmup_rows:
+        if len(values) != expected_rows:
             raise RuntimeError(
                 f"stable BAR bootstrap coverage mismatch binding={source.binding_id} "
-                f"expected={self.warmup_rows} actual={len(values)}"
+                f"expected={expected_rows} actual={len(values)}"
             )
         acknowledgements = self.publisher.publish_many(values)
         if len(acknowledgements) != len(values):
@@ -392,6 +401,21 @@ class StableBinanceBarEdge:
         )
         return len(acknowledgements)
 
+    def _bootstrap_rows_for(self, source: StableSourceBinding) -> int:
+        """Return the real-history bound for one fixed-duration BAR.
+
+        `warmup_rows` stays a global upper bound, but a weekly provider request
+        for 1,000 rows would require roughly nineteen years that neither
+        Binance nor OKX can truthfully supply.  The interval-aware cap makes
+        a long BAR bootstrap bounded and honest while keeping minute/hour
+        warmups at the configured maximum.
+        """
+        interval_ms = _bar_interval_ms(source.interval or "")
+        return min(
+            self.warmup_rows,
+            max(1, _BOOTSTRAP_HISTORY_LOOKBACK_MS // interval_ms),
+        )
+
     def _settled_observed_ms(self) -> int:
         return int(
             self.clock() * 1000 - self.settlement_delay_seconds * 1000
@@ -407,29 +431,33 @@ class StableBinanceBarEdge:
         for source, acquisition in self.history_bindings:
             if source.binding_id in self._last_open_ms:
                 continue
+            bootstrap_rows = self._bootstrap_rows_for(source)
             published += self._publish_history(
                 source,
                 acquisition,
                 fetch_binance_history(
                     self._binance_binding(source),
-                    limit=self.warmup_rows,
+                    limit=bootstrap_rows,
                     now_ms=observed_ms,
                     attempts=4,
                     test_provenance=False,
                 ),
+                expected_rows=bootstrap_rows,
             )
         for source, acquisition in self.history_okx_bindings:
             if source.binding_id in self._last_open_ms:
                 continue
+            bootstrap_rows = self._bootstrap_rows_for(source)
             published += self._publish_history(
                 source,
                 acquisition,
                 asyncio.run(fetch_okx_history(
                     self._okx_binding(source),
-                    limit=self.warmup_rows,
+                    limit=bootstrap_rows,
                     now_ms=observed_ms,
                     test_provenance=False,
                 )),
+                expected_rows=bootstrap_rows,
             )
         self._history_bootstrapped = (
             set(self._last_open_ms) == set(self._binding_ids)
@@ -518,12 +546,38 @@ class StableBinanceBarEdge:
             )
         return tuple(zip(values, opens, strict=True))
 
+    def _binding_is_due(self, source: StableSourceBinding, *, observed_ms: int) -> bool:
+        """Return whether a new final BAR can exist after the settled clock."""
+        interval_ms = _bar_interval_ms(source.interval or "")
+        newest_closed_open = (
+            latest_closed_boundary_ms(source.interval or "", observed_ms)
+            - interval_ms
+        )
+        previous_open = self._last_open_ms.get(source.binding_id)
+        return previous_open is None or previous_open < newest_closed_open
+
+    def _next_ready_at(self, now: float) -> float:
+        """Wake at the earliest configured BAR close plus settlement delay."""
+        candidates = []
+        for source, _acquisition in self.bindings + self.okx_bindings:
+            interval_ms = _bar_interval_ms(source.interval or "")
+            boundary_ms = latest_closed_boundary_ms(
+                source.interval or "", int(now * 1000)
+            )
+            ready_at = boundary_ms / 1000 + self.settlement_delay_seconds
+            if ready_at <= now:
+                ready_at += interval_ms / 1000
+            candidates.append(ready_at)
+        return min(candidates) if candidates else now + 60.0
+
     def run_cycle(self) -> int:
         if not self._rest_fallback_active:
             return 0
         observed_ms = self._settled_observed_ms()
         latest = []
         for source, acquisition in self.bindings:
+            if not self._binding_is_due(source, observed_ms=observed_ms):
+                continue
             envelope = fetch_latest_closed_bar_raw_envelope(
                 self._binance_binding(source),
                 now_ms=observed_ms,
@@ -532,6 +586,8 @@ class StableBinanceBarEdge:
             )
             latest.append((source, acquisition, envelope))
         for source, acquisition in self.okx_bindings:
+            if not self._binding_is_due(source, observed_ms=observed_ms):
+                continue
             envelope = asyncio.run(fetch_okx_latest(
                 self._okx_binding(source),
                 now_ms=observed_ms,
@@ -579,9 +635,7 @@ class StableBinanceBarEdge:
         failures = 0
         while not self._stopped.is_set():
             now = self.clock()
-            ready_at = (
-                (int(now) // 60) * 60 + self.settlement_delay_seconds
-            )
+            ready_at = self._next_ready_at(now)
             if not self._history_bootstrapped and now < ready_at:
                 self._stopped.wait(max(0.01, ready_at - now))
                 continue
@@ -597,10 +651,7 @@ class StableBinanceBarEdge:
                 )
             now = self.clock()
             if self._rest_fallback_active:
-                next_boundary = (
-                    (int(now) // 60 + 1) * 60 + self.settlement_delay_seconds
-                )
-                delay = max(0.25, next_boundary - now)
+                delay = max(0.25, self._next_ready_at(now) - now)
             else:
                 delay = 60.0
             if failures:

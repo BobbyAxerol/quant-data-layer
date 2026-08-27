@@ -1,6 +1,6 @@
 schema: qdl.v2.stable-source-bindings.v1
 canonical_stream: md.canonical.v2
-catalog_revision: 4
+catalog_revision: 5
 source_policy_revision: 1
 authority_revision: 1
 instruments:
@@ -156,58 +156,39 @@ instruments:
     instIdCode: '10461'
     uly: ETH-USDT
 bindings:
-- binding_id: binance-usdm-btcusdt-trade
-  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
-  feed: TRADE
-  interval: null
-  source:
-    provider: BINANCE_DIRECT
-    source_id: binance-usdm-btcusdt-trade-stable-001
-    source_role: PRIMARY
-    source_policy_id: crypto_primary_v2
-    authoritative: true
-    adapter_version: binance-usdm/2.0.0
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 15000
-    require_final_bar: false
-    continuous_calendar: true
-  v1_compatibility: BINANCE_TRADE_MARKET_AND_GENERIC
-- binding_id: binance-usdm-btcusdt-quote
-  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
-  feed: QUOTE
-  interval: null
-  source:
-    provider: BINANCE_DIRECT
-    source_id: binance-usdm-btcusdt-quote-stable-001
-    source_role: PRIMARY
-    source_policy_id: crypto_primary_v2
-    authoritative: true
-    adapter_version: binance-usdm/2.0.0
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 5000
-    require_final_bar: false
-    continuous_calendar: true
-  v1_compatibility: NONE
-- binding_id: binance-usdm-btcusdt-bar-1m
-  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+- binding_id: binance-spot-btcusdt-bar-1m
+  instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
   feed: BAR
   interval: 1m
   source:
     provider: BINANCE_DIRECT
-    source_id: binance-usdm-btcusdt-bar-stable-001
+    source_id: binance-spot-btcusdt-bar-stable-001
     source_role: PRIMARY
     source_policy_id: crypto_primary_v2
     authoritative: true
-    adapter_version: binance-usdm/2.0.0
+    adapter_version: binance-spot/2.0.0
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: true
-  # V1 only exposes the currently-open cache entry, not a durable latest-final
-  # candle. A V2 final-BAR reader must block rather than receive this mismatch.
+  v1_compatibility: NONE
+- binding_id: binance-spot-btcusdt-quote
+  instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
+  feed: QUOTE
+  interval: null
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-spot-btcusdt-quote-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-spot/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5000
+    require_final_bar: false
+    continuous_calendar: true
   v1_compatibility: NONE
 - binding_id: binance-spot-btcusdt-trade
   instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
@@ -226,210 +207,346 @@ bindings:
     require_final_bar: false
     continuous_calendar: true
   v1_compatibility: BINANCE_TRADE_MARKET_ONLY
-- binding_id: binance-spot-btcusdt-quote
-  instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
+- binding_id: binance-usdm-btcusdt-bar-12h
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 12h
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-12h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 129600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-15m
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 15m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-15m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 2700000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-1d
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 1d
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-1d-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 259200000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-1h
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 1h
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-1h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 10800000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-1m
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 1m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: binance-usdm-btcusdt-bar-1w
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 1w
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-1w-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 1814400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-2h
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 2h
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-2h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 21600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-30m
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 30m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-30m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-3d
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 3d
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-3d-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 777600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-3m
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 3m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-3m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 540000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-4h
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 4h
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-4h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 43200000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-5m
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 5m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-5m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 900000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-6h
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 6h
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-6h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 64800000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-bar-8h
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: BAR
+  interval: 8h
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-btcusdt-bar-8h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 86400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-btcusdt-quote
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
   feed: QUOTE
   interval: null
   source:
     provider: BINANCE_DIRECT
-    source_id: binance-spot-btcusdt-quote-stable-001
+    source_id: binance-usdm-btcusdt-quote-stable-001
     source_role: PRIMARY
     source_policy_id: crypto_primary_v2
     authoritative: true
-    adapter_version: binance-spot/2.0.0
+    adapter_version: binance-usdm/2.0.0
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 5000
     require_final_bar: false
     continuous_calendar: true
   v1_compatibility: NONE
-- binding_id: binance-spot-btcusdt-bar-1m
-  instrument_uid: 26edfffd-6824-5e75-a620-5a122b3e1086
-  feed: BAR
-  interval: 1m
+- binding_id: binance-usdm-btcusdt-trade
+  instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+  feed: TRADE
+  interval: null
   source:
     provider: BINANCE_DIRECT
-    source_id: binance-spot-btcusdt-bar-stable-001
+    source_id: binance-usdm-btcusdt-trade-stable-001
     source_role: PRIMARY
     source_policy_id: crypto_primary_v2
     authoritative: true
-    adapter_version: binance-spot/2.0.0
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 180000
-    require_final_bar: true
-    continuous_calendar: true
-  v1_compatibility: NONE
-- binding_id: okx-swap-btcusdt-trade
-  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
-  feed: TRADE
-  interval: null
-  source:
-    provider: OKX_DIRECT
-    source_id: okx-swap-btcusdt-trade-stable-001
-    source_role: PRIMARY
-    source_policy_id: crypto_primary_v2
-    authoritative: true
-    adapter_version: okx-v5/2.0.0
+    adapter_version: binance-usdm/2.0.0
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 15000
     require_final_bar: false
     continuous_calendar: true
-  v1_compatibility: NONE
-- binding_id: okx-swap-btcusdt-quote
-  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
-  feed: QUOTE
-  interval: null
-  source:
-    provider: OKX_DIRECT
-    source_id: okx-swap-btcusdt-quote-stable-001
-    source_role: PRIMARY
-    source_policy_id: crypto_primary_v2
-    authoritative: true
-    adapter_version: okx-v5/2.0.0
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 5000
-    require_final_bar: false
-    continuous_calendar: true
-  v1_compatibility: NONE
-- binding_id: okx-swap-btcusdt-bar-1m
-  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  v1_compatibility: BINANCE_TRADE_MARKET_AND_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-12h
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
   feed: BAR
-  interval: 1m
+  interval: 12h
   source:
-    provider: OKX_DIRECT
-    source_id: okx-swap-btcusdt-bar-stable-001
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-12h-primary-v2
     source_role: PRIMARY
     source_policy_id: crypto_primary_v2
     authoritative: true
-    adapter_version: okx-v5/2.0.0
+    adapter_version: binance-usdm/2.0.0
     normalizer_version: qdl-rust-core/2.0.0
   quality:
-    stale_after_ms: 180000
+    stale_after_ms: 129600000
     require_final_bar: true
     continuous_calendar: true
-  v1_compatibility: NONE
-- binding_id: okx-spot-btcusdt-trade
-  instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
-  feed: TRADE
-  interval: null
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-15m
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 15m
   source:
-    provider: OKX_DIRECT
-    source_id: okx-spot-btcusdt-trade-stable-001
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-15m-primary-v2
     source_role: PRIMARY
     source_policy_id: crypto_primary_v2
     authoritative: true
-    adapter_version: okx-v5/2.0.0
+    adapter_version: binance-usdm/2.0.0
     normalizer_version: qdl-rust-core/2.0.0
   quality:
-    stale_after_ms: 15000
-    require_final_bar: false
+    stale_after_ms: 2700000
+    require_final_bar: true
     continuous_calendar: true
-  v1_compatibility: NONE
-- binding_id: okx-spot-btcusdt-quote
-  instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
-  feed: QUOTE
-  interval: null
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-1d
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 1d
   source:
-    provider: OKX_DIRECT
-    source_id: okx-spot-btcusdt-quote-stable-001
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-1d-primary-v2
     source_role: PRIMARY
     source_policy_id: crypto_primary_v2
     authoritative: true
-    adapter_version: okx-v5/2.0.0
+    adapter_version: binance-usdm/2.0.0
     normalizer_version: qdl-rust-core/2.0.0
   quality:
-    stale_after_ms: 5000
-    require_final_bar: false
+    stale_after_ms: 259200000
+    require_final_bar: true
     continuous_calendar: true
-  v1_compatibility: NONE
-- binding_id: okx-spot-btcusdt-bar-1m
-  instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-1h
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
   feed: BAR
-  interval: 1m
+  interval: 1h
   source:
-    provider: OKX_DIRECT
-    source_id: okx-spot-btcusdt-bar-stable-001
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-1h-primary-v2
     source_role: PRIMARY
     source_policy_id: crypto_primary_v2
     authoritative: true
-    adapter_version: okx-v5/2.0.0
+    adapter_version: binance-usdm/2.0.0
     normalizer_version: qdl-rust-core/2.0.0
   quality:
-    stale_after_ms: 180000
+    stale_after_ms: 10800000
     require_final_bar: true
     continuous_calendar: true
-  v1_compatibility: NONE
-- binding_id: dnse-vn30f1m-trade
-  instrument_uid: d0ac3d4c-2374-5690-8af5-b970448f91d3
-  feed: TRADE
-  interval: null
-  source:
-    provider: DNSE_DIRECT
-    source_id: dnse-vn30f1m-trade-stable-001
-    source_role: PRIMARY
-    source_policy_id: vn_primary_v2
-    authoritative: true
-    adapter_version: dnse-openapi/2.0.1
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 15000
-    require_final_bar: false
-    continuous_calendar: false
-  v1_compatibility: VN_TRADE_GENERIC
-- binding_id: dnse-vn30f1m-bar-1m
-  instrument_uid: d0ac3d4c-2374-5690-8af5-b970448f91d3
-  feed: BAR
-  interval: 1m
-  source:
-    provider: DNSE_DIRECT
-    source_id: dnse-vn30f1m-bar-stable-001
-    source_role: PRIMARY
-    source_policy_id: vn_primary_v2
-    authoritative: true
-    adapter_version: dnse-openapi/2.0.1
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 180000
-    require_final_bar: true
-    continuous_calendar: false
-  v1_compatibility: NONE
-- binding_id: dnse-fpt-trade
-  instrument_uid: 6f025ab7-c0b4-5e08-866d-34ce62aef52f
-  feed: TRADE
-  interval: null
-  source:
-    provider: DNSE_DIRECT
-    source_id: dnse-fpt-trade-stable-001
-    source_role: PRIMARY
-    source_policy_id: vn_primary_v2
-    authoritative: true
-    adapter_version: dnse-openapi/2.0.1
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 15000
-    require_final_bar: false
-    continuous_calendar: false
-  v1_compatibility: VN_TRADE_GENERIC
-- binding_id: dnse-fpt-bar-1m
-  instrument_uid: 6f025ab7-c0b4-5e08-866d-34ce62aef52f
-  feed: BAR
-  interval: 1m
-  source:
-    provider: DNSE_DIRECT
-    source_id: dnse-fpt-bar-stable-001
-    source_role: PRIMARY
-    source_policy_id: vn_primary_v2
-    authoritative: true
-    adapter_version: dnse-openapi/2.0.1
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 180000
-    require_final_bar: true
-    continuous_calendar: false
-  v1_compatibility: NONE
+  v1_compatibility: BINANCE_BAR_GENERIC
 - binding_id: binance-usdm-ethusdt-bar-1m
   instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
   feed: BAR
@@ -446,9 +563,160 @@ bindings:
     stale_after_ms: 180000
     require_final_bar: true
     continuous_calendar: true
-  # V1 only exposes the currently-open cache entry, not a durable latest-final
-  # candle. A V2 final-BAR reader must block rather than receive this mismatch.
   v1_compatibility: NONE
+- binding_id: binance-usdm-ethusdt-bar-1w
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 1w
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-1w-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 1814400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-2h
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 2h
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-2h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 21600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-30m
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 30m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-30m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-3d
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 3d
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-3d-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 777600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-3m
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 3m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-3m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 540000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-4h
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 4h
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-4h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 43200000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-5m
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 5m
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-5m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 900000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-6h
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 6h
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-6h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 64800000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
+- binding_id: binance-usdm-ethusdt-bar-8h
+  instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  feed: BAR
+  interval: 8h
+  source:
+    provider: BINANCE_DIRECT
+    source_id: binance-usdm-ethusdt-bar-8h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: binance-usdm/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 86400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: BINANCE_BAR_GENERIC
 - binding_id: binance-usdm-ethusdt-quote
   instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
   feed: QUOTE
@@ -483,6 +751,465 @@ bindings:
     require_final_bar: false
     continuous_calendar: true
   v1_compatibility: BINANCE_TRADE_MARKET_AND_GENERIC
+- binding_id: dnse-fpt-bar-1m
+  instrument_uid: 6f025ab7-c0b4-5e08-866d-34ce62aef52f
+  feed: BAR
+  interval: 1m
+  source:
+    provider: DNSE_DIRECT
+    source_id: dnse-fpt-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: vn_primary_v2
+    authoritative: true
+    adapter_version: dnse-openapi/2.0.1
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: false
+  v1_compatibility: NONE
+- binding_id: dnse-fpt-trade
+  instrument_uid: 6f025ab7-c0b4-5e08-866d-34ce62aef52f
+  feed: TRADE
+  interval: null
+  source:
+    provider: DNSE_DIRECT
+    source_id: dnse-fpt-trade-stable-001
+    source_role: PRIMARY
+    source_policy_id: vn_primary_v2
+    authoritative: true
+    adapter_version: dnse-openapi/2.0.1
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: false
+  v1_compatibility: VN_TRADE_GENERIC
+- binding_id: dnse-vn30f1m-bar-1m
+  instrument_uid: d0ac3d4c-2374-5690-8af5-b970448f91d3
+  feed: BAR
+  interval: 1m
+  source:
+    provider: DNSE_DIRECT
+    source_id: dnse-vn30f1m-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: vn_primary_v2
+    authoritative: true
+    adapter_version: dnse-openapi/2.0.1
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: false
+  v1_compatibility: NONE
+- binding_id: dnse-vn30f1m-trade
+  instrument_uid: d0ac3d4c-2374-5690-8af5-b970448f91d3
+  feed: TRADE
+  interval: null
+  source:
+    provider: DNSE_DIRECT
+    source_id: dnse-vn30f1m-trade-stable-001
+    source_role: PRIMARY
+    source_policy_id: vn_primary_v2
+    authoritative: true
+    adapter_version: dnse-openapi/2.0.1
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: false
+  v1_compatibility: VN_TRADE_GENERIC
+- binding_id: okx-spot-btcusdt-bar-1m
+  instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
+  feed: BAR
+  interval: 1m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-spot-btcusdt-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-spot-btcusdt-quote
+  instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
+  feed: QUOTE
+  interval: null
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-spot-btcusdt-quote-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5000
+    require_final_bar: false
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-spot-btcusdt-trade
+  instrument_uid: 9e996914-aa98-5ea0-b0a0-a78dc51e1f8d
+  feed: TRADE
+  interval: null
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-spot-btcusdt-trade-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-12h
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 12h
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-12h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 129600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-15m
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 15m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-15m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 2700000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-1d
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 1d
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-1d-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 259200000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-1h
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 1h
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-1h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 10800000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-1w
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 1w
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-1w-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 1814400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-2d
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 2d
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-2d-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 518400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-2h
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 2h
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-2h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 21600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-30m
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 30m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-30m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-3d
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 3d
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-3d-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 777600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-3m
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 3m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-3m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 540000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-4h
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 4h
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-4h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 43200000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-5m
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 5m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-5m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 900000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btc-usdt-swap-bar-6h
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 6h
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btc-usdt-swap-bar-6h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 64800000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btcusdt-bar-1m
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: BAR
+  interval: 1m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btcusdt-bar-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btcusdt-quote
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: QUOTE
+  interval: null
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btcusdt-quote-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5000
+    require_final_bar: false
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-btcusdt-trade
+  instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+  feed: TRADE
+  interval: null
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-btcusdt-trade-stable-001
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 15000
+    require_final_bar: false
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-12h
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 12h
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-12h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 129600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-15m
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 15m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-15m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 2700000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-1d
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 1d
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-1d-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 259200000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-1h
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 1h
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-1h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 10800000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
 - binding_id: okx-swap-eth-usdt-swap-bar-1m
   instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
   feed: BAR
@@ -497,6 +1224,159 @@ bindings:
     normalizer_version: qdl-rust-core/2.0.0
   quality:
     stale_after_ms: 180000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-1w
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 1w
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-1w-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 1814400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-2d
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 2d
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-2d-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 518400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-2h
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 2h
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-2h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 21600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-30m
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 30m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-30m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 5400000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-3d
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 3d
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-3d-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 777600000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-3m
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 3m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-3m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 540000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-4h
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 4h
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-4h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 43200000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-5m
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 5m
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-5m-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 900000
+    require_final_bar: true
+    continuous_calendar: true
+  v1_compatibility: NONE
+- binding_id: okx-swap-eth-usdt-swap-bar-6h
+  instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+  feed: BAR
+  interval: 6h
+  source:
+    provider: OKX_DIRECT
+    source_id: okx-swap-eth-usdt-swap-bar-6h-primary-v2
+    source_role: PRIMARY
+    source_policy_id: crypto_primary_v2
+    authoritative: true
+    adapter_version: okx-v5/2.0.0
+    normalizer_version: qdl-rust-core/2.0.0
+  quality:
+    stale_after_ms: 64800000
     require_final_bar: true
     continuous_calendar: true
   v1_compatibility: NONE

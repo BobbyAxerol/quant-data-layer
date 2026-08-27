@@ -8,6 +8,7 @@ import yaml
 from qdl.consumer.manifest import ConsumerManifestLoader
 from qdl.query.contracts import RecoveryPolicy
 from qdl.runtime.provider_history import pass_through_eligible
+from qdl.runtime.production_catalog import ProductionDemandManifest
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 ACQUISITION_PATH = ROOT / "config/v2/stable-acquisition-bindings.yaml"
 CONSUMER_DIR = ROOT / "consumers/stable"
+DEMAND_PATH = ROOT / "config/v2/stable-crypto-demand.yaml"
 
 # Bindings that no registered consumer requires. Program rule 6 says demand
 # controls cost, so a zero-demand feed should be disabled by configuration
@@ -46,6 +48,42 @@ def _requirement_keys() -> dict[tuple[str, str, str | None], set[str]]:
             )
             keys.setdefault(key, set()).add(consumer_id)
     return keys
+
+
+def _production_demand_keys(
+    catalog: StableSourceCatalog,
+) -> set[tuple[str, str, str | None]]:
+    """Resolve the versioned stable demand into catalog requirement keys."""
+    by_provider_identity = {
+        (
+            item.instrument.identity.venue,
+            item.instrument.identity.market,
+            item.instrument.native_symbol,
+            item.feed.value,
+            item.interval or None,
+        ): (
+            item.instrument.identity.instrument_uid,
+            item.feed.value,
+            item.interval or None,
+        )
+        for item in catalog.bindings
+    }
+    result = set()
+    for requirement in ProductionDemandManifest.load_many([DEMAND_PATH]).demands:
+        key = (
+            requirement.venue,
+            requirement.market,
+            requirement.native_symbol,
+            requirement.feed.value,
+            requirement.interval or None,
+        )
+        try:
+            result.add(by_provider_identity[key])
+        except KeyError as error:
+            raise AssertionError(
+                "versioned production demand has no catalog binding: " + repr(key)
+            ) from error
+    return result
 
 
 class CatalogDemandConsistencyTests(unittest.TestCase):
@@ -141,7 +179,11 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
         self.assertTrue(pass_through_eligible(self.catalog, served))
 
         # Asking for replay continuity: only a binding can promise that.
-        replay = replace(served, recovery=RecoveryPolicy.SNAPSHOT_AND_REPLAY)
+        replay = replace(
+            served,
+            interval="2d",
+            recovery=RecoveryPolicy.SNAPSHOT_AND_REPLAY,
+        )
         self.assertNotIn(
             (replay.instrument_uid, replay.feed.value, replay.interval),
             self.binding_keys,
@@ -173,7 +215,7 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
         self.assertEqual(declared - referenced, set())
 
     def test_zero_demand_bindings_do_not_grow(self):
-        demanded = set(_requirement_keys())
+        demanded = set(_requirement_keys()) | _production_demand_keys(self.catalog)
         zero_demand = {
             binding_id
             for key, binding_id in self.binding_keys.items()

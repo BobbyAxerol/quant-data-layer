@@ -508,6 +508,12 @@ class StableBarBootstrapTests(unittest.TestCase):
                 return tuple(range(len(batch)))
 
         with tempfile.TemporaryDirectory(prefix="qdl-stable-bar-state-") as directory:
+            # C3.5 spans OKX 2d, Binance 3d and weekly bars.  Forty-two days
+            # is their least common fixed-duration boundary, so the fixture
+            # watermark is valid for the complete catalog rather than only the
+            # original 1m bindings.
+            first_open = 3_628_800_000
+            latest_open = 7_257_600_000
             state_path = Path(directory) / "bar-edge.json"
             first_publisher = Publisher()
             first = StableBinanceBarEdge(
@@ -523,15 +529,15 @@ class StableBarBootstrapTests(unittest.TestCase):
             with patch(
                 "qdl.runtime.stable_bar_edge.fetch_binance_history",
                 return_value=(
-                    Envelope("BINANCE", 60_000),
-                    Envelope("BINANCE", 120_000),
+                    Envelope("BINANCE", first_open),
+                    Envelope("BINANCE", latest_open),
                 ),
             ), patch(
                 "qdl.runtime.stable_bar_edge.fetch_okx_history",
                 new_callable=AsyncMock,
                 return_value=(
-                    Envelope("OKX", 60_000),
-                    Envelope("OKX", 120_000),
+                    Envelope("OKX", first_open),
+                    Envelope("OKX", latest_open),
                 ),
             ):
                 expected_bindings = len(first.bindings) + len(first.okx_bindings)
@@ -542,7 +548,7 @@ class StableBarBootstrapTests(unittest.TestCase):
             self.assertEqual(persisted["connection_generation"], 100)
             self.assertEqual(persisted["warmup_rows"], 2)
             self.assertEqual(set(persisted["last_open_ms"]), set(first._binding_ids))
-            self.assertEqual(set(persisted["last_open_ms"].values()), {120_000})
+            self.assertEqual(set(persisted["last_open_ms"].values()), {latest_open})
             okx_source = next(
                 source for source, _acquisition in first.history_okx_bindings
                 if source.instrument.native_symbol == "BTC-USDT-SWAP"

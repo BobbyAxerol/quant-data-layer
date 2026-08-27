@@ -16,6 +16,8 @@ from qdl.consumer import (
     StableReleaseRoutePlan,
     evaluate_release_readiness,
 )
+from qdl.runtime.production_catalog import ProductionDemandManifest
+from qdl.runtime.stable_catalog import StableSourceCatalog
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +52,7 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
                         for item in consumer.manifest.requirements
                     },
                 )
-                self.assertEqual(consumer.demand_revision, 1)
+                self.assertEqual(consumer.demand_revision, plan.crypto_demand.revision)
 
         products = {
             (consumer_id, item.requirement_key): item
@@ -148,8 +150,18 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
         second = self.load()
         self.assertEqual(first.digest, second.digest)
         self.assertEqual(len(first.digest), 64)
-        self.assertEqual(first.source_catalog.revision, 4)
-        self.assertEqual(first.crypto_demand.revision, 1)
+        self.assertEqual(
+            first.source_catalog.revision,
+            StableSourceCatalog.load(
+                ROOT / "config/v2/stable-source-bindings.yaml"
+            ).catalog_revision,
+        )
+        self.assertEqual(
+            first.crypto_demand.revision,
+            ProductionDemandManifest.load_many([
+                ROOT / "config/v2/stable-crypto-demand.yaml"
+            ]).revision,
+        )
         self.assertEqual(first.capability_matrix.revision, 5)
         self.assertEqual(first.resource_budget.max_consumer_lag, 10_000)
         self.assertEqual(first.resource_budget.max_cpu_millicores, 750)

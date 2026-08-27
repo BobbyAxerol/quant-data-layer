@@ -5855,3 +5855,27 @@ eligible for a client-side fallback or parser workaround: a future separately
 approved catalog alignment must first prove every declared final-BAR route is
 materialized server-side. Until that happens, this handoff remains blocked and
 V1 remains active.
+
+**C3.5 approved interval alignment:** materialize each fixed-duration native
+BAR interval only for instruments already active in the versioned stable
+demand, using the capability constants as the single source of interval truth.
+For this packet that is Binance USD-M BTCUSDT/ETHUSDT and OKX Swap
+BTC-USDT-SWAP/ETH-USDT-SWAP. Do not turn an exchange-wide symbol list or a
+disabled Spot profile into an implicit subscription. DNSE is tested against its
+real provider, but only its certified V2-native `1m` BAR may be catalogued;
+legacy derived intervals require a separate aggregation contract. The catalog,
+acquisition plan and runtime bundle must move together, with an immutable
+Python image plus a bounded reload of the existing Python roles and three Rust
+core configs; client permissions alone never substitute for source
+materialization. The shared BAR edge fetches only on each canonical interval's
+closed boundary and caps long-interval bootstrap to real provider history; it
+does not issue minute-by-minute REST calls for daily or weekly bars.
+
+**C3.5 recorded result (2026-08-27):** source materialization passed with 52
+new active Binance USD-M/OKX Swap BAR requirements and a 58-slice bounded
+real-provider warmup matrix (56 active crypto slices plus two disabled-Spot
+pass-through slices): zero source failures, retries, 429s or 5xxs. This proves
+provider contract and canonical warmup only; it is not a runtime reload or
+consumer cutover. The concurrent DNSE V1 provider check was stale after a
+websocket pong timeout and direct-provider timeout, so DNSE remains excluded
+and fails closed pending a separate in-session V1 repair/certification.

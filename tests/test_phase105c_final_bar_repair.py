@@ -9,12 +9,12 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from qdl.certification.phase105c_final_bar import (
-    ACQUISITION_REVISION,
-    FINAL_BAR_BINDINGS,
     RECREATED_SERVICES,
+    final_bar_binding_ids,
     prepare_final_bar_repair,
 )
-from qdl.runtime.stable_deployment import stable_authority_record
+from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_deployment import StableAcquisitionPlan, stable_authority_record
 from scripts.phase105c_prepare_final_bar_repair import main
 
 
@@ -22,6 +22,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Phase105CFinalBarRepairTests(unittest.TestCase):
+    def _acquisition(self) -> tuple[StableSourceCatalog, StableAcquisitionPlan]:
+        catalog = StableSourceCatalog.load(ROOT / "config/v2/stable-source-bindings.yaml")
+        return catalog, StableAcquisitionPlan.load(
+            ROOT / "config/v2/stable-acquisition-bindings.yaml", catalog=catalog
+        )
+
     def _active_runtime(self, root: Path) -> tuple[Path, bytes]:
         active = root / "active-runtime"
         active.mkdir()
@@ -61,21 +67,28 @@ class Phase105CFinalBarRepairTests(unittest.TestCase):
     def test_prepare_preserves_authority_and_moves_okx_final_bar_to_rest(self):
         with tempfile.TemporaryDirectory() as raw:
             packet, output, authority_bytes = self._prepare(Path(raw))
+            catalog, acquisition = self._acquisition()
             self.assertEqual((output / "runtime" / "authority.json").read_bytes(), authority_bytes)
             self.assertTrue(packet["runtime"]["authority_bytes_preserved"])
-            self.assertEqual(packet["acquisition_revision"], ACQUISITION_REVISION)
+            self.assertEqual(packet["acquisition_revision"], acquisition.revision)
             self.assertEqual(packet["recreated_services"], list(RECREATED_SERVICES))
-            self.assertEqual(packet["final_bar"]["binding_ids"], sorted(FINAL_BAR_BINDINGS))
+            self.assertEqual(
+                packet["final_bar"]["binding_ids"],
+                sorted(final_bar_binding_ids(catalog, acquisition)),
+            )
             self.assertEqual(packet["final_bar"]["warmup_rows_max"], 1000)
             self.assertNotEqual(
                 packet["final_bar"]["previous_checkpoint_path"],
                 packet["final_bar"]["new_checkpoint_path"],
             )
             okx = json.loads((output / "runtime" / "ingestor-okx-swap.json").read_text())
-            self.assertEqual(okx["config_revision"], ACQUISITION_REVISION)
+            self.assertEqual(okx["config_revision"], acquisition.revision)
             self.assertFalse(any(item["feed"] == "BAR" for item in okx["bindings"]))
             compose = (output / "compose.env").read_text()
-            self.assertIn("QDL_CONFIG_REVISION=phase105c-final-bar-r10\n", compose)
+            self.assertIn(
+                f"QDL_CONFIG_REVISION=phase105c-final-bar-r{acquisition.revision}\n",
+                compose,
+            )
             self.assertIn("QDL_STABLE_BAR_STATE_PATH=", compose)
 
     def test_rejects_malformed_active_authority_without_creating_packet(self):
