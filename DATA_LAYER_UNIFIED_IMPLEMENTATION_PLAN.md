@@ -17950,6 +17950,43 @@ create a new rollout phase.
   consumer. No runtime role, Kafka, Redis, SQLite, PostgreSQL, V1, alpha,
   order, signal or broker state has changed.
 
+**C3 SDK contract repair (`IN PROGRESS / ROLLBACK COMPLETE`):**
+
+- The permitted `market_data_service` roll was attempted once and stopped
+  before alpha probes: all eight selected V2 stream bootstraps failed closed
+  with `SCHEMA_NOT_SUPPORTED`. A read-only authenticated query proved the V2
+  server returns HTTP 200 and the canonical `received_at_ns` field. The
+  installed Trading System wheel rejected that field as extra input: the
+  vendored SDK schema was older than the running V2 response contract.
+- Exact rollback completed immediately: only `market_data_service` was
+  recreated to pre-handoff image `tradingsystem-image:v1.2.0-9081397`
+  (`sha256:ab4e36aab9ef254b498edb75de25a3e4c19f50eb6eb23509c6483b0fed9b5a11`).
+  Post-rollback DB counts exactly equal the baseline (orders 1179, fills 6094,
+  positions 21, sessions 65352, journal 430, dispatch outbox 430 and both
+  execution streams length 0). No alpha probe started.
+- Repair scope is one regenerated reproducible `qdl_sdk-2.0.0` wheel from this
+  source, replacing the two consumer vendor bundles only. It must prove typed
+  parsing of the live response before two replacement immutable consumer images
+  are built. No V2 server/Rust/Kafka/Redis/SQLite role or endpoint changes are
+  allowed.
+
+**C3 source repair result (`PASS / RUNTIME NOT RETRIED`):**
+
+- The canonical release builder produced one reproducible `qdl_sdk-2.0.0`
+  wheel with SHA-256
+  `5cdcb86aacb31520d4721b2507a23f020403852e2fabcb8f6ee96e32b6d6d27a`,
+  SDK-source digest
+  `28d823fa539baf6a9cbc0a8c0aaf82dd0da9d40877957fa2d75083162762d6ea`
+  and generated-contract digest
+  `6d2eaf4e95cbb7213e0c48794c7e9fcaa49168a72f909fd6719240f2d74322d3`.
+  Its manifest/SBOM and identical wheel were copied mechanically into the two
+  tracked consumer vendor directories.
+- One authenticated, read-only V2 BTC/ETH-plane snapshot through the new wheel
+  typed-validated `PASS`; it accepts the server's canonical `received_at_ns`
+  field. No query/server/Rust image, role, route, provider subscription or
+  durable store was changed. Replacement consumer images are the only next
+  source/runtime prerequisites for retrying this same packet.
+
 ### 22.11 Phase 11 Completion Decision
 
 Phase 11 is complete only after Phase 11.5 exits. Completion authorizes the

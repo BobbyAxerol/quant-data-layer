@@ -5835,6 +5835,12 @@ V2-to-V1-to-V2 only for the compatible Binance USD-M trade route in a
 disposable client; blocked Binance BAR and selected OKX paths must block.
 DNSE is excluded.
 
+The consumer wheel must be rebuilt from the same canonical SDK source/schema as
+the sealed V2 response before the roll. A typed client that rejects an added
+canonical field is an immediate stop-and-rollback condition; it is repaired by
+one shared SDK artifact, never by stripping server fields or adding a consumer
+specific parser exception.
+
 Rollback is narrow: remove probes and recreate only `market_data_service` with
 the attested V1 image/configuration. It never resets Kafka offsets, Redis,
 SQLite, PostgreSQL, provider state or unrelated services. A failed gate ends
