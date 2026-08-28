@@ -20483,6 +20483,49 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         actual publication is config-driven and verified here. Correct that
         log field in the next immutable Rust maintenance image rather than
         widening this completed one-role recovery packet.
+      - **Runtime-convergence closure (`APPROVED / IN PROGRESS`,
+        2026-08-28):** bounded inspection found a real mixed-revision fault:
+        `ingestor_binance_usdm`, `ingestor_okx_swap` and `rust_core` already
+        emit/accept catalog revision `6` (acquisition revision `12/13`), while
+        all three `projector_v2` replicas, both query replicas and both stream
+        replicas still mount the retired r11 catalog. The projector guard is
+        correctly fail-closed, repeatedly rejecting canonical events as
+        outside the catalog or with mismatched lineage; this is not a provider
+        outage and cannot be accepted as a healthy V2 handoff. The approved
+        closure is one freshly sealed, current-state successor bundle and a
+        serial rolling recreate of the already-declared eleven roles only:
+        `ingestor_binance_usdm`, `ingestor_okx_swap`, `rust_core`,
+        `binance_bar_edge`, `projector_v2`, `projector_v2_2`,
+        `projector_v2_3`, `query_v2_1`, `query_v2_2`,
+        `stream_v2_active`, `stream_v2_passive`. It preserves the exact
+        `RUST_PRIMARY` authority bytes and current Kafka topology/offsets,
+        Redis, SQLite, V1, Trading System, alpha and order paths. A single
+        current Python image is required because every running Python image
+        predates the committed Reference/L2 manifest/catalog reader; no new
+        service, topic, worker or topology is permitted. The Rust image is
+        reused at committed `e897db8` because it already contains the two
+        approved L2 repairs. Before any recreate, the compiler must render a
+        rollback map from the *currently running* image/runtime/checkpoint for
+        every role, verify catalog/acquisition/trust/JWT semantics and pass the
+        targeted offline source matrix. Runtime exit requires bounded
+        catch-up with zero new catalog/lineage rejects, real Binance/OKX
+        final-bar and L2 observations, then the existing C2 300-second
+        no-order four-consumer acceptance including the governed V1 fallback
+        drill. Rollback is per-role to the exact recorded image/mount and
+        restores only the prior bar checkpoint; it never deletes durable
+        market data or changes authority/consumer routing.
+      - **Preflight regression (`PASS / ISOLATED`, 2026-08-28):** after the
+        journal update, a source-mounted immutable Python container ran the
+        targeted catalog, pass-through, reference batch/API/SDK,
+        Reference/L2 materialization, universal realtime/provider-admission,
+        successor-bundle and stable-deployment matrix: **92/92 passed in
+        13.520s**. The test had `--network none`, `--read-only`, non-root UID
+        `10001`, no host state mount and only an ephemeral `tmpfs /tmp`; it
+        cannot touch provider, Kafka, Redis, SQLite or runtime roles. An
+        earlier attempt omitted that required ephemeral `/tmp`, so 27 tests
+        stopped at `TemporaryDirectory` creation before exercising product
+        logic. It is recorded as invalid harness setup, not a source failure;
+        the corrected run is the evidence for this gate.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
