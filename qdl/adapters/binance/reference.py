@@ -266,6 +266,8 @@ class BinanceUsdmReferenceAdapter:
     async def _taker_history(
         self, request: ReferenceRequest, capability: FeedCapability
     ) -> ReferenceFetch:
+        interval_ms = canonical_interval_ms(request.interval or "")
+
         async def page(start_ms: int | None, end_ms: int | None, limit: int) -> dict[str, Any]:
             return await self._call(
                 "taker_long_short_ratio",
@@ -285,7 +287,10 @@ class BinanceUsdmReferenceAdapter:
             parser=lambda row: self._taker_observation(request, row),
             page_limit=500,
             direction="BACKWARD",
-            expected_interval_ms=canonical_interval_ms(request.interval or ""),
+            expected_interval_ms=interval_ms,
+            # Binance documents this timestamp as the start of the sampling
+            # period. A row at t covers [t, t + interval), not only t.
+            right_boundary_period_ms=interval_ms,
         )
 
     async def _mark_index_snapshot(
@@ -371,6 +376,7 @@ class BinanceUsdmReferenceAdapter:
             )
 
         async def fetch_once() -> ReferenceFetch:
+            interval_ms = canonical_interval_ms(request.interval or "")
             return await self._paginate(
                 request,
                 capability,
@@ -378,6 +384,9 @@ class BinanceUsdmReferenceAdapter:
                 page=page,
                 parser=lambda row: self._basis_observation(request, row, pair),
                 page_limit=500,
+                expected_interval_ms=interval_ms,
+                # Binance documents native-basis timestamps as period starts.
+                right_boundary_period_ms=interval_ms,
             )
 
         if self._native_basis_admission is None:
@@ -654,6 +663,7 @@ class BinanceUsdmReferenceAdapter:
         direction: str = "FORWARD",
         expected_interval_ms: int | None = None,
         boundary_tolerance_ms: int = 0,
+        right_boundary_period_ms: int | None = None,
     ) -> ReferenceFetch:
         assert request.start_ms is not None and request.end_ms is not None
         if direction not in {"FORWARD", "BACKWARD"}:
@@ -662,6 +672,8 @@ class BinanceUsdmReferenceAdapter:
             raise ValueError("Binance reference expected interval must be positive")
         if not 0 <= boundary_tolerance_ms <= 300_000:
             raise ValueError("Binance reference boundary tolerance must be between 0 and 300000ms")
+        if right_boundary_period_ms is not None and right_boundary_period_ms <= 0:
+            raise ValueError("Binance reference right-boundary period must be positive")
         per_page = min(request.page_size or request.limit, page_limit)
         cursor_start = request.start_ms
         cursor_end = request.end_ms
@@ -710,8 +722,18 @@ class BinanceUsdmReferenceAdapter:
                 terminal_reason = "REACHED_REQUEST_START"
                 break
             if len(selected) >= request.limit:
-                terminal_reason = "MAX_RECORDS"
-                truncated = True
+                # For period-start feeds the last row represents the whole
+                # completed period. Do not label an exactly covered request
+                # as truncated merely because the row cap was reached.
+                reaches_right_boundary = newest >= request.end_ms or (
+                    right_boundary_period_ms is not None
+                    and newest + right_boundary_period_ms >= request.end_ms
+                )
+                if direction == "FORWARD" and reaches_right_boundary:
+                    terminal_reason = "REACHED_REQUEST_END"
+                else:
+                    terminal_reason = "MAX_RECORDS"
+                    truncated = True
                 break
             if len(data) < per_page:
                 terminal_reason = "PROVIDER_EXHAUSTED"
@@ -736,6 +758,9 @@ class BinanceUsdmReferenceAdapter:
             if not cadence_ok:
                 truncated = True
                 terminal_reason = "INTERNAL_GAP"
+        right_observed_ms = max(observed) if observed else None
+        if right_observed_ms is not None and right_boundary_period_ms is not None:
+            right_observed_ms += right_boundary_period_ms
         coverage = ReferenceCoverage(
             requested_start_ms=request.start_ms,
             requested_end_ms=request.end_ms,
@@ -747,7 +772,8 @@ class BinanceUsdmReferenceAdapter:
             ),
             complete_right=(
                 bool(observed)
-                and max(observed) >= request.end_ms - boundary_tolerance_ms
+                and right_observed_ms is not None
+                and right_observed_ms >= request.end_ms - boundary_tolerance_ms
             ),
             truncated=truncated,
             terminal_reason=terminal_reason,

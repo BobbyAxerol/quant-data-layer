@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
 from qdl.certification.phase103_consumer_acceptance import DeliveryClass
 from qdl.certification.reference_l2_acceptance import (
     build_reference_l2_acceptance_scope,
+    reference_acceptance_batches,
     validate_reference_batch,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -65,42 +66,42 @@ async def _certify_references(scope, *, identity, args, state_dir: Path) -> list
         timeout_seconds=args.timeout_seconds,
     )
     try:
-        primary_started = time.perf_counter()
-        primary_response = await primary.reference_batch(
-            [item.sdk_requirement for item in scope.references], require_all=True
-        )
-        primary_latency_ms = (time.perf_counter() - primary_started) * 1_000
-        primary_hashes = validate_reference_batch(
-            scope.references,
-            primary_response,
-            observed_at_ns=time.time_ns(),
-        )
+        async def certify(client):
+            values = {}
+            for batch in reference_acceptance_batches(scope.references):
+                started = time.perf_counter()
+                response = await client.reference_batch(
+                    [item.sdk_requirement for item in batch], require_all=True
+                )
+                latency_ms = (time.perf_counter() - started) * 1_000
+                hashes = validate_reference_batch(
+                    batch,
+                    response,
+                    observed_at_ns=time.time_ns(),
+                )
+                for product, content_hash in zip(batch, hashes, strict=True):
+                    if product.identity in values:
+                        raise AssertionError("Reference/L2 receipt batch duplicated a product")
+                    values[product.identity] = (content_hash, latency_ms)
+            if len(values) != len(scope.references):
+                raise AssertionError("Reference/L2 receipt batch lost a product")
+            return values
 
-        secondary_started = time.perf_counter()
-        secondary_response = await secondary.reference_batch(
-            [item.sdk_requirement for item in scope.references], require_all=True
-        )
-        secondary_latency_ms = (time.perf_counter() - secondary_started) * 1_000
-        secondary_hashes = validate_reference_batch(
-            scope.references,
-            secondary_response,
-            observed_at_ns=time.time_ns(),
-        )
+        primary_results = await certify(primary)
+        secondary_results = await certify(secondary)
     finally:
         await primary.close()
         await secondary.close()
     return [
         {
             **product.evidence(),
-            "primary_content_sha256": primary_hash,
-            "secondary_content_sha256": secondary_hash,
-            "primary_latency_ms": round(primary_latency_ms, 3),
-            "secondary_latency_ms": round(secondary_latency_ms, 3),
+            "primary_content_sha256": primary_results[product.identity][0],
+            "secondary_content_sha256": secondary_results[product.identity][0],
+            "primary_latency_ms": round(primary_results[product.identity][1], 3),
+            "secondary_latency_ms": round(secondary_results[product.identity][1], 3),
             "v1_fallback_attempted": False,
         }
-        for product, primary_hash, secondary_hash in zip(
-            scope.references, primary_hashes, secondary_hashes, strict=True
-        )
+        for product in scope.references
     ]
 
 

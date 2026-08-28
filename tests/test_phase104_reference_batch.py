@@ -316,6 +316,57 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(taker_flow.status, ReferenceStatus.OK)
         self.assertEqual({field.name: field.unit for field in taker_flow.observations[0].fields}["buy_volume"], "PROVIDER_NATIVE_VOLUME")
 
+    async def test_period_start_taker_and_basis_cover_their_completed_right_boundary(self):
+        hour_ms = 3_600_000
+
+        def taker(symbol, period, limit, start_time, end_time, **kwargs):
+            del period, limit, start_time, end_time, kwargs
+            return {"data": [
+                {"symbol": symbol, "buySellRatio": "1.1", "buyVol": "2", "sellVol": "3", "timestamp": str(hour_ms)},
+                {"symbol": symbol, "buySellRatio": "1.2", "buyVol": "4", "sellVol": "5", "timestamp": str(2 * hour_ms)},
+            ]}
+
+        def basis(pair, contract_type, period, limit, start_time, end_time, **kwargs):
+            del contract_type, period, limit, start_time, end_time, kwargs
+            return {"data": [
+                {"pair": pair, "contractType": "PERPETUAL", "basis": "1", "timestamp": str(hour_ms)},
+                {"pair": pair, "contractType": "PERPETUAL", "basis": "2", "timestamp": str(2 * hour_ms)},
+            ]}
+
+        adapter = BinanceUsdmReferenceAdapter(
+            taker_fetcher=taker,
+            basis_fetcher=basis,
+            max_attempts=1,
+            sleep=no_sleep,
+        )
+        batch = ReferenceBatch({("BINANCE", "USDM"): adapter})
+        taker_result, basis_result = await batch.fetch((
+            ReferenceRequest(
+                instrument=self.btc,
+                product=ReferenceProduct.TAKER_FLOW,
+                start_ms=hour_ms,
+                end_ms=3 * hour_ms - 1,
+                interval="1h",
+                limit=2,
+            ),
+            ReferenceRequest(
+                instrument=self.btc,
+                product=ReferenceProduct.BASIS,
+                start_ms=hour_ms,
+                end_ms=3 * hour_ms - 1,
+                interval="1h",
+                limit=2,
+                basis_contract_type="PERPETUAL",
+            ),
+        ))
+
+        self.assertTrue(taker_result.coverage.complete_left)
+        self.assertTrue(taker_result.coverage.complete_right)
+        self.assertFalse(taker_result.coverage.truncated)
+        self.assertTrue(basis_result.coverage.complete_left)
+        self.assertTrue(basis_result.coverage.complete_right)
+        self.assertFalse(basis_result.coverage.truncated)
+
     async def test_latest_first_metric_history_paginates_backward_without_losing_left_coverage(self):
         calls = []
 

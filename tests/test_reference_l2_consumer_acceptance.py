@@ -10,9 +10,12 @@ from types import SimpleNamespace
 from qdl.certification.reference_l2_acceptance import (
     _DAY_NS,
     _FUNDING_NS,
+    _FUNDING_SETTLEMENT_JITTER_NS,
+    _MILLISECOND_NS,
     _history_bounds,
     REFERENCE_L2_CONSUMER_ID,
     build_reference_l2_acceptance_scope,
+    reference_acceptance_batches,
     reference_evidence,
 )
 from qdl.certification.phase103_consumer_acceptance import _validate_payload
@@ -86,12 +89,33 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
         funding_boundary = (NOW_NS // _FUNDING_NS) * _FUNDING_NS
         self.assertEqual(
             _history_bounds(FeedType.FUNDING_RATE, NOW_NS),
-            (funding_boundary - 2 * _FUNDING_NS, funding_boundary - _FUNDING_NS),
+            (funding_boundary - _FUNDING_NS, funding_boundary + _FUNDING_SETTLEMENT_JITTER_NS),
         )
         self.assertEqual(
             _history_bounds(FeedType.TAKER_FLOW, NOW_NS),
-            (daily_boundary - 2 * _DAY_NS, daily_boundary - _DAY_NS),
+            (daily_boundary - 2 * _DAY_NS, daily_boundary - _MILLISECOND_NS),
         )
+        self.assertEqual(
+            _history_bounds(FeedType.BASIS, NOW_NS),
+            (daily_boundary - 2 * _DAY_NS, daily_boundary - _MILLISECOND_NS),
+        )
+        self.assertEqual(
+            _history_bounds(FeedType.OPEN_INTEREST, NOW_NS),
+            (daily_boundary - _DAY_NS, daily_boundary),
+        )
+
+    def test_reference_acceptance_batches_preserve_every_product_and_isolate_basis(self):
+        batches = reference_acceptance_batches(self.scope.references)
+        flattened = tuple(item for batch in batches for item in batch)
+        self.assertEqual({item.identity for item in flattened}, {item.identity for item in self.scope.references})
+        self.assertEqual(len(flattened), len(self.scope.references))
+        self.assertTrue(all(1 <= len(batch) <= 12 for batch in batches))
+        isolated = [
+            batch for batch in batches
+            if batch[0].venue == "BINANCE" and batch[0].requirement.feed is FeedType.BASIS
+        ]
+        self.assertEqual(len(isolated), 5)
+        self.assertTrue(all(len(batch) == 1 for batch in isolated))
 
     def test_reference_evidence_accepts_zero_decimal_but_rejects_blank_unit(self):
         product = next(item for item in self.scope.references if item.requirement.feed.value == "FUNDING_RATE")

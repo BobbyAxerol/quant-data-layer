@@ -45,6 +45,9 @@ REFERENCE_FEEDS = frozenset({
 BOOK_FEEDS = frozenset({FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA})
 _DAY_NS = 86_400_000_000_000
 _FUNDING_NS = 8 * 3_600_000_000_000
+_MILLISECOND_NS = 1_000_000
+_FUNDING_SETTLEMENT_JITTER_NS = 60_000 * _MILLISECOND_NS
+_REFERENCE_ACCEPTANCE_BATCH_SIZE = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,15 +127,46 @@ def _history_bounds(feed: FeedType, now_ns: int) -> tuple[int, int]:
     if now_ns <= _DAY_NS:
         raise ValueError("reference acceptance clock is invalid")
     if feed is FeedType.FUNDING_RATE:
-        # The current eight-hour funding interval is not complete yet.  This
-        # receipt proves full coverage only over two settled observations.
-        end = (now_ns // _FUNDING_NS) * _FUNDING_NS - _FUNDING_NS
-        return end - _FUNDING_NS, end
-    # Daily metrics are likewise requested only through the last fully closed
-    # provider day; asking for today's right edge would turn a truthful partial
-    # reply into a false acceptance failure.
-    end = (now_ns // _DAY_NS) * _DAY_NS - _DAY_NS
-    return end - _DAY_NS, end
+        # Funding records are settlement observations. Binance may report the
+        # raw settlement timestamp a few milliseconds either side of its clock
+        # boundary, matching the adapter's existing 60-second coverage guard.
+        settled = (now_ns // _FUNDING_NS) * _FUNDING_NS
+        return settled - _FUNDING_NS, settled + _FUNDING_SETTLEMENT_JITTER_NS
+
+    settled_day = (now_ns // _DAY_NS) * _DAY_NS
+    if feed in {FeedType.TAKER_FLOW, FeedType.BASIS}:
+        # Binance documents these rows at period open. Request two fully
+        # closed daily periods and exclude the current open period by one ms.
+        return settled_day - 2 * _DAY_NS, settled_day - _MILLISECOND_NS
+
+    # OI and long/short rows are documented at period end, so the latest
+    # daily boundary is already the end of the last fully closed period.
+    return settled_day - _DAY_NS, settled_day
+
+
+def reference_acceptance_batches(
+    products: tuple[ReferenceAcceptanceProduct, ...],
+) -> tuple[tuple[ReferenceAcceptanceProduct, ...], ...]:
+    """Split the real receipt without changing its complete product scope.
+
+    Native Binance basis uses one Rust-admitted provider lane, so each request
+    is intentionally isolated. Every other reference requirement stays in a
+    bounded batch; no product is dropped or retried through another provider.
+    """
+
+    native_basis = tuple(
+        product
+        for product in products
+        if product.venue == "BINANCE"
+        and product.requirement.feed is FeedType.BASIS
+        and product.sdk_requirement.basis_series is BasisSeries.NATIVE
+    )
+    ordinary = tuple(product for product in products if product not in native_basis)
+    chunks = tuple(
+        ordinary[offset:offset + _REFERENCE_ACCEPTANCE_BATCH_SIZE]
+        for offset in range(0, len(ordinary), _REFERENCE_ACCEPTANCE_BATCH_SIZE)
+    )
+    return tuple((product,) for product in native_basis) + chunks
 
 
 def _reference_request(requirement: DataRequirement, *, now_ns: int) -> ReferenceRequirement:

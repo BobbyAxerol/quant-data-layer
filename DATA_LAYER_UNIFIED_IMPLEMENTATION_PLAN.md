@@ -21732,6 +21732,81 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         runtime role, image, Kafka, Redis, SQLite, V1, Trading System, alpha
         or order state changed. Next action is one immutable reader image and
         serial recreation of the two query replicas only.
+        **C2 trust-overlay restoration (`APPROVED / IN PROGRESS`, 2026-08-28):**
+        the first post-image receipt proved its external identity file
+        ownership boundary before any V2 call, then the owner-UID retry reached
+        V2 and observed `RemoteDisconnected` from query/stream. Inspection
+        proved the existing `stable_tls` volume already contains the approved,
+        world-readable `client-ca-bundle.crt` for both query and stream, and
+        the committed `docker-compose.phase105c-c2.override.yml` already wires
+        those exact paths. The immediate cause was an operator base-Compose
+        recreate that omitted this existing C2 overlay, so the reader roles
+        fell back to their older single-CA defaults. Restore only the existing
+        C2 override while serially recreating `query_v2_1`, `query_v2_2`,
+        `stream_v2_active` and `stream_v2_passive` on the already-tested
+        `qdl-v2-python:2.0.0-fcd156e` image. Do not regenerate certificates,
+        run `stable_tls_init`, modify the TLS volume, recreate `rust_core`, or
+        change Kafka, Redis, SQLite, V1, authority, Trading System, alpha or
+        order paths. Rollback remains the recorded per-role `31a66d5` image
+        map plus removal of this existing overlay. The next receipt is exactly
+        the same bounded V2-only 79-product probe.
+        **Reference timestamp/coverage and bounded-batch correction
+        (`APPROVED / IN PROGRESS`, 2026-08-28):** bounded V2-only metadata
+        probes against the restored query role established the remaining
+        failures are semantic request construction, not a provider, Rust,
+        TLS, identity or topology failure. Binance funding rows can land one
+        millisecond beyond the nominal settlement boundary; the existing
+        adapter already accepts up to sixty seconds of raw-clock jitter, but
+        the receipt requested the exact boundary and filtered that row before
+        the tolerance could apply. Binance documents `takerlongshortRatio` and
+        native basis timestamps as **period starts**, while its OI and
+        long/short endpoints are **period ends**. The old universal daily
+        window therefore requested one period too old for end-timestamped
+        products and falsely required a start-timestamped row to equal the
+        period end. Direct V2 metadata evidence showed: corrected Binance
+        OI/long-short succeeds; funding succeeds when the established jitter
+        allowance is included; taker has the truthful completed period but is
+        marked partial only by the wrong right-boundary interpretation; native
+        basis succeeds alone and fails only when mixed into an oversized
+        provider batch.
+
+        **Approved source correction:** preserve every raw provider timestamp,
+        decimal, unit and provider result. Make the acceptance builder select
+        the latest fully settled window per declared timestamp semantic;
+        model period-start right coverage only for Binance native BASIS and
+        TAKER_FLOW; and issue reference acceptance in provider-bounded chunks
+        of at most twelve with each Binance native BASIS request as its own
+        batch. The latter is already required by the detailed guide and avoids
+        turning an intentional Rust-admission lane into a test-only burst.
+        This is not a freshness relaxation, data substitution or Python
+        admission bypass. Scope is limited to the existing Binance reference
+        adapter coverage calculation and the existing Reference/L2 receipt
+        builder/client test. No service, worker, image family, topic, volume,
+        public port, V1 route, Rust admission behavior, Kafka/Redis/SQLite,
+        Trading System, alpha or order path change is authorized. Source exit
+        requires deterministic timestamp-semantic, complete-coverage,
+        singleton-basis/bounded-batch and full focused Reference/L2 tests;
+        then build one replacement reader image, roll only the same four
+        reader roles with the existing C2 overlay, and rerun the exact
+        real-provider 79-product V2-only receipt. Rollback is the current
+        `fcd156e` reader image/runtime map.
+        **Source gate (`PASS`, 2026-08-28):** retained raw provider timestamps
+        and added only declared period semantics: Binance funding uses the
+        existing sixty-second settlement tolerance; OI/long-short use the
+        last closed period end; native BASIS/TAKER_FLOW use period-start right
+        coverage without falsely becoming `truncated`. The real receipt now
+        preserves all products while using max-12 ordinary batches and five
+        singleton native-BASIS batches. In an immutable, non-root,
+        network-disabled, read-only Python image with a tmpfs `/tmp`,
+        `python -m unittest tests.test_reference_l2_consumer_acceptance
+        tests.test_phase104_reference_batch tests.test_phaseb_stable_edge
+        tests.test_active_reference_l2_demand` passed **80 tests** with **one
+        documented isolated-Redis skip** in `8.527s`; `python -m py_compile`
+        and `git diff --check` passed. This is deterministic source evidence
+        only: no provider/runtime/Kafka/Redis/SQLite/V1/authority/consumer or
+        order mutation occurred. The next bounded step remains exactly one
+        replacement reader image, the existing four-reader C2 roll and the
+        real V2-only 79-product receipt.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
