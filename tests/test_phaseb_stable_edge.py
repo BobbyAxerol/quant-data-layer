@@ -872,6 +872,53 @@ class StableCursorScopeValidatorTests(unittest.TestCase):
             )
 
 
+class StableProjectionAllowlistTests(unittest.TestCase):
+    namespace = "qdl:test:phaseb:stable:v2"
+
+    def target(self):
+        # _command is pure validation/serialization; avoid a Redis dependency.
+        target = object.__new__(RedisStableProjectionTarget)
+        target._namespace = self.namespace
+        target._cache_id = "ab" * 16
+        return target
+
+    def record(self, key: str) -> StableProjectionRecord:
+        return StableProjectionRecord(
+            partition_key="phase-b/allowlist/partition",
+            offset=1,
+            event_id_hex="cd" * 16,
+            shard_id="phase-b-allowlist",
+            lease_epoch=1,
+            items=(StableProjectionItem(key, b"payload"),),
+        )
+
+    def test_every_catalog_legacy_bar_interval_is_admitted(self):
+        catalog = StableSourceCatalog.load(CATALOG_PATH)
+        bindings = tuple(
+            binding for binding in catalog.bindings
+            if binding.v1_compatibility == "BINANCE_BAR_GENERIC"
+        )
+        self.assertTrue(bindings)
+        self.assertEqual(
+            {binding.interval[-1] for binding in bindings if binding.interval},
+            {"m", "h", "d", "w"},
+        )
+        target = self.target()
+        for binding in bindings:
+            with self.subTest(binding=binding.binding_id):
+                current = f"kline:{binding.interval}:{binding.instrument.native_symbol}"
+                last = f"kline:last:{binding.interval}:{binding.instrument.native_symbol}"
+                target._command(self.record(current))
+                target._command(self.record(last))
+
+    def test_undeclared_suffix_and_unscoped_key_remain_rejected(self):
+        target = self.target()
+        for key in ("kline:1M:BTCUSDT", "kline:1w:BTCUSDT:extra", "foreign:key"):
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, "escapes its allowlist"):
+                    target._command(self.record(key))
+
+
 class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()

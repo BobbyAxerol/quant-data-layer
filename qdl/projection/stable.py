@@ -19,7 +19,7 @@ from qdl.transport import StoredEvent
 _KEY_PATTERNS = tuple(re.compile(value) for value in (
     r"trade:price:(?:last:)?(?:binance_usdm|binance_spot):[A-Z0-9_-]+",
     r"trade:price:(?:last:)?[A-Z0-9_-]+",
-    r"kline:(?:last:)?[0-9]+[smhd]:[A-Z0-9_-]+",
+    r"kline:(?:last:)?[0-9]+[smhdw]:[A-Z0-9_-]+",
     r"vn:quote:(?:last:)?[A-Z0-9_-]+",
 ))
 _CHANNEL_PATTERNS = tuple(re.compile(value) for value in (

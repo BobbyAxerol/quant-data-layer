@@ -19155,6 +19155,31 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
     immutable Python image and then request a new exact three-projector
     rolling packet. The rerun must start C2 from zero; it may not reuse this
     failed handoff as evidence.
+  - **Allowlist source repair (`IN PROGRESS / SOURCE-ONLY`, 2026-08-28):**
+    resolve the runtime-discovered r11 defect without mutating a service or
+    durable store. The stable projector's legacy BAR key grammar will accept
+    the interval suffixes declared by current `BINANCE_BAR_GENERIC` catalog
+    entries (`m`, `h`, `d`, `w`) and no other Redis namespace. A deterministic
+    conformance test must enumerate every catalog-backed compatibility BAR,
+    prove each resulting `kline` current/last key is admitted, and prove an
+    undeclared suffix/key remains rejected. After focused source tests, build
+    and attest one immutable Python candidate only. No Compose render,
+    container recreate, consumer C2 run, provider request, Kafka offset,
+    Redis or SQLite mutation is part of this source slice. A later exact
+    three-projector re-roll and C2 packet remains a separate runtime decision.
+    - **Implementation and test result:** updated only the legacy `kline`
+      suffix grammar from `smhd` to `smhdw`. Added catalog-conformance tests
+      that enumerate every current `BINANCE_BAR_GENERIC` binding and validate
+      both current/last keys through the real projection command serializer;
+      they also prove `1M`, malformed weekly keys and foreign namespaces still
+      fail closed. In the existing immutable Python image with worktree
+      read-only and `--network none`, the exact stable-edge, final-BAR packet
+      and C2 handoff suite passed `58/58`; its one Redis integration skip is
+      explicitly environment-gated because no named disposable Redis was
+      configured. No provider, runtime role, Kafka, Redis, SQLite, V1,
+      Trading System, alpha or order state changed. The next source-only step
+      is one immutable image build/attestation from the committed repair;
+      runtime re-roll remains unapproved.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
