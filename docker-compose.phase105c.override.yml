@@ -2,6 +2,14 @@ services:
   rust_core:
     mem_limit: ${QDL_PHASE105C_RUST_CORE_MEMORY_LIMIT:?set to 512m}
 
+  # These are the three declared members of one six-partition consumer group.
+  # Keep the recovery limit uniform; this adds no worker or topology.
+  rust_core_2:
+    mem_limit: ${QDL_PHASE105C_RUST_CORE_MEMORY_LIMIT:?set to 512m}
+
+  rust_core_3:
+    mem_limit: ${QDL_PHASE105C_RUST_CORE_MEMORY_LIMIT:?set to 512m}
+
   query_v2_1:
     environment:
       QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/query/client-ca-bundle.crt

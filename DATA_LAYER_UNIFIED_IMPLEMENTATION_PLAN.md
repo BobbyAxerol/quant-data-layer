@@ -21215,6 +21215,69 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         immutable Python image from this source revision, then serially
         recreate only the three existing projectors, without changing Kafka
         offsets, Redis, SQLite, V1, Trading System, alpha or order state.
+        **Final projector recovery packet (`APPROVED / READY`, 2026-08-28):**
+        immutable Python image `qdl-v2-python:2.0.0-213c9666e3f`
+        (`sha256:a2d3b56f558d320cc19d9a96fdb5fba157d5da0fb1e6ab12a3e06628602275a4`)
+        is bound to source `213c9666e3f157bbc7608acbafaab6d8fe2ae479` and its
+        image-only matrix is `37/37 PASS`. Render the existing successor
+        `rollout.env` plus `phase105c` with only
+        `QDL_STABLE_PYTHON_IMAGE` replaced and the existing Rust `512 MiB`
+        value. Serially recreate only `projector_v2`, `projector_v2_2` and
+        `projector_v2_3` with `--no-deps`, observing each before the next. Each
+        keeps its existing consumer group, offsets, volume, TLS identity and
+        runtime directory and returns to the base `512 MiB` cgroup. Stop and
+        roll back only the failed projector to image
+        `sha256:a4fedf5ada3b905daab2ddd58de119467d5d7afde7d4ab277e29cfa5b695ec6e`
+        if any has OOM, byte-bound ingest error or unexpected non-zero exit.
+        **Recovery observation (`IN PROGRESS / NO POLICY RELAXATION`,
+        2026-08-28):** all three projectors now run the bound image at `512
+        MiB` with no restart or byte-bound HTTP error. The first disposable
+        79-product receipt correctly failed closed at the `60s` L2 freshness
+        gate; it made no V1 request, provider connection, order action or
+        durable test write. A bounded V2-SDK-only diagnostic and a separate
+        read-only twelve-row cache query prove the data plane is catching up,
+        not missing a binding: all twelve physical books are
+        sequence-verified/generation-positive; three had current source time,
+        while nine still exposed prior source times from their individual
+        replay partitions. `accepted_at` is intentionally not used to mask
+        this, because query quality is governed by provider source time. The
+        only permitted next action is wait for those partitions to converge,
+        then rerun the one V2-only receipt. A documented disposable Kafka
+        admin lag query separately failed mTLS trust validation and made no
+        Kafka mutation; it is not used to alter offsets or certify freshness.
+        **Core-worker convergence correction (`APPROVED / IN PROGRESS`,
+        2026-08-28):** bounded inspection proved the apparent nine-book
+        catch-up delay is not a missing binding: the declared stable topology
+        has exactly three pre-existing Rust workers for the six-partition
+        `qdl-v2-realtime-core-v2` group, but only worker `001` was running.
+        Workers `002` and `003` were stale, stopped historical instances
+        which had OOM-killed at the inherited `256 MiB` limit. This is a
+        recovery defect in the existing three-worker topology, not authority
+        expansion. Extend the existing `phase105c` memory override uniformly
+        to `rust_core`, `rust_core_2` and `rust_core_3` at the already-approved
+        `512 MiB` bound; keep the same current Rust image, successor
+        `core*.json`, shared group, Kafka offsets, TLS and all other runtime
+        state. Source tests must assert exactly these three existing roles and
+        no additional worker. Runtime apply serially recreates only workers
+        `002` and `003`, then observes group convergence and the exact
+        79-product V2-only receipt. Rollback recreates only either affected
+        worker with the prior `256 MiB` definition; it never resets offsets,
+        deletes cache, alters V1, or creates a new service/container.
+        **Three-worker source gate (`PASS / SOURCE-ONLY`, 2026-08-28):** the
+        existing bounded override now names exactly `rust_core`,
+        `rust_core_2` and `rust_core_3`, each with the one
+        `QDL_PHASE105C_RUST_CORE_MEMORY_LIMIT=512m` control. Its regression
+        forbids any fourth core role. The isolated non-root, read-only,
+        network-disabled source matrix passed **83/83** with **1 documented
+        isolated integration skip** in `12.925s`, covering the phase-10.5
+        handoff/rollback boundary, stable deployment topology and byte-bound
+        projector recovery. `docker compose config --services` rendered only
+        the declared existing services; it added no topology. This gate made
+        no runtime or data-plane mutation. The next action is the explicitly
+        bounded runtime recovery: recreate only stopped workers `002` and
+        `003` from the current immutable Rust image/runtime files at `512 MiB`,
+        let Kafka rebalance naturally, then use the existing 60-second
+        freshness gate and one V2-only receipt.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
