@@ -20428,6 +20428,61 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         occurred in this source gate. The exact root-owned offline Cargo target
         `/tmp/qdl-okx-book-recovery-target` (2.2 GiB) was removed after the
         matrix; no disposable test container remains.
+      - **r13 sealed one-role packet (`PREFLIGHT PASS / APPLY APPROVED`,
+        2026-08-28):** packet
+        `/home/bobby/.local/state/qdl-v2/okx-book-recovery-r13-20260828T101628Z/packet.json`
+        has SHA-256 `97717feca49ff9540176c8886ef84cf1dbb927e21a179324a2cf32a0f965cf06`.
+        It renders the committed `e897db8` Rust image
+        `sha256:11a2819fae4d8cc0bcbaa9473e59d612b1f0aea82fca34768c585a865e8282a1`
+        into **only** existing `ingestor_okx_swap`. The semantic config diff
+        (`1a1fc473…7273bc76`) proves `config_revision 12 -> 13`, six `BOOK`
+        bindings gain only `snapshot_refresh_seconds=30`, and the four
+        `TRADE`/`QUOTE` bindings, raw stream, shard/lease/partition epochs,
+        generation path and authority remain byte/semantic-equivalent. Compose
+        preflight (`dae9f552…a856490a`) rendered the new read-only config bind,
+        immutable image, UID/GID `10001:10001`, existing dependencies and no
+        other selected role. Rollback is exactly that service to r12 image
+        `sha256:34b12c11a78acaf22fd13d0c62fe268f397dd4055b3bd9efe9781ca9d991e669`
+        and its recorded r12 config. The apply permits normal authentic
+        market-data bootstrap writes through existing V2 data-plane only; V1,
+        Kafka topology/offsets, Redis/SQLite, authority, every other V2 role,
+        Trading System, alpha and orders remain excluded. Runtime acceptance is
+        a 90-second aggregate-only observer: six exact OKX books must regain
+        canonical, sequence-verified state, observe a 30-second renewal, have
+        zero new L2 quarantine, and leave the role at `restart=0`, `oom=false`.
+      - **r13 bounded runtime recovery (`PASS / AUTHENTIC PROVIDER`,
+        2026-08-28):** the approved Compose command recreated only
+        `ingestor_okx_swap`; it now runs image
+        `sha256:11a2819fae4d8cc0bcbaa9473e59d612b1f0aea82fca34768c585a865e8282a1`
+        with r13 config, `restart=0`, `oom=false`. No V1, Kafka
+        topology/offset, Redis, SQLite, authority, core, projector, query,
+        stream, Trading System, alpha or order role was recreated. Aggregate
+        receipt
+        `/home/bobby/.local/state/qdl-v2/okx-book-recovery-r13-20260828T101628Z/evidence/acceptance-summary.json`
+        has SHA-256 `d977d171d901f4bb075d954a8bc702e2e985f8b90ac953e23578dbfd6e6dad25`.
+        In a read-committed 30-second canonical observation, all six exact
+        OKX books (BTC/ETH Swap plus current/next USD Futures) were present;
+        `1,793/1,793` book events were sequence-verified, with `6` real
+        snapshots, `1,787` deltas, zero unverified and zero parse errors. The
+        matching raw observation saw all six native `books` sources with
+        `1,803` book records and zero parse errors. The full uncapped
+        90-second quarantine observation saw `3,137` records with zero
+        `SEQUENCE_GAP` and zero `UNKNOWN_INSTRUMENT`; its observer used no
+        group commit or offset store. Structured ingestor logs show repeated
+        provider websocket snapshot renewals for all six books at 30 seconds
+        (generations `39..54`). A separate 30-second raw aggregate saw
+        `1,613` OKX Swap `TRADE/BBO` records, proving that renewal leaves the
+        independent Trade/Quote lanes connected. Role memory moved from
+        `11.55 MiB` to `13.57 MiB` under its `256 MiB` limit; unchanged
+        `rust_core` stayed at `127.7 MiB/256 MiB`. The first observer attempt
+        correctly failed before Kafka metadata because it used a retired CA;
+        the current rotated trust rerun passed, and neither attempt wrote
+        offsets or data. One non-data-plane observability correction remains:
+        the native ingestor's startup JSON still prints a static
+        `RUST_SHADOW` label even though the sealed config is `RUST_PRIMARY`;
+        actual publication is config-driven and verified here. Correct that
+        log field in the next immutable Rust maintenance image rather than
+        widening this completed one-role recovery packet.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
