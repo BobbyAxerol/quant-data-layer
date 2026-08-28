@@ -20715,6 +20715,25 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         lease. No new role, image, trust rotation, authority/CAS, Kafka/Redis/
         SQLite operation, V1, query, ingestion, Rust core, Trading System,
         alpha or order action is permitted.
+      - **Projector/stream runtime alignment (`IN PROGRESS / DURABLE CATCH-UP`,
+        2026-08-28):** all three projectors and the two existing stream roles
+        now run the sealed `45008b...92fef41` image and the new private
+        runtime. `stream_v2_active` reacquired the existing lease at epoch
+        `23`; passive is cleanly standby. Every role is `running`,
+        `restart=0`, `OOMKilled=false`; the stream cache advanced from about
+        `133,954` to `145,589` records. The only observed projector failures
+        after rolling were expected Kafka assignment-epoch fences while the
+        last old replica left the shared group; no new permission, catalog,
+        lineage or gateway rejection was emitted after the fully aligned group
+        settled. An ACL-neutral Kafka admin read measured retained backlog
+        falling from approximately `2,146,000` to `1,936,934` records without
+        an offset reset. CPU is temporarily catch-up-bound (about 43--56% of
+        each existing 0.75-core projector cgroup), while RSS remains bounded
+        at about 288--320 MiB of 512 MiB. This is authentic retained market
+        data draining through the existing projection path, not synthetic
+        replay. Do not recreate query or begin C2 until the group reaches its
+        bounded catch-up gate with no fresh catalog/lineage error; rollback
+        remains per projector/stream to the exact recorded r13 map.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
