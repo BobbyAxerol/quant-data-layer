@@ -22003,6 +22003,102 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         diagnostics. The final receipt and all prior historical evidence stay
         intact; no Docker prune/image removal, volume, cache, Kafka, Redis,
         SQLite or V1 cleanup occurred.
+        **Final closure C2 re-attestation (`APPROVED / IN PROGRESS`, 2026-08-28):**
+        the earlier C2 receipt proved the 28 realtime paper products and
+        bounded V1 fallback at the then-current reader revision. The accepted
+        Reference/L2 semantic repair subsequently moved only the four reader
+        roles to immutable `b355b1df` / `sha256:ddebac59ad8808902673cc8dee3e52c7eb10aa8a9f8557656a757e675805d473`.
+        To close one coherent release revision rather than borrow an older
+        receipt, rerun the existing C2 harness once from a fresh, private
+        evidence namespace. It may write only a new mode-`0600`, payload-free
+        V1 current-container binding, V1 provenance copy and C2 receipt; the
+        disposable non-root client has no provider, Docker, execution or order
+        capability and is bounded to 300 seconds. It must exercise exactly the
+        four existing paper identities, all 28 realtime products, V2-primary
+        warmup/signed replay/reconnect, the six declared V1 fallback-return
+        probes, and 22 blocked routes with zero V1 reads. It does not recreate
+        V1/V2 roles, alter authority/manifest/Kafka/Redis/SQLite, or touch
+        Trading System, alpha, signals, sizing or orders. Failure removes only
+        its fresh namespace; the existing V1 route and four reader-role
+        `c5dc92a` image rollback remain intact. Exit requires this receipt plus
+        the already-passing 79-product Reference/L2 receipt, current role
+        provenance and exact-scope cleanup evidence.
+        **C2 client mount preflight (`FAIL-CLOSED / ONE RETRY PERMITTED`,
+        2026-08-28):** the first disposable invocation exited in under five
+        seconds before any V2/V1 query, stream, provider or order request
+        because its `/evidence/../runtime/authority.json` path resolved inside
+        the isolated container rather than to the host successor runtime.
+        The bounded stderr contains only that missing-file traceback; the
+        zero-byte receipt is non-acceptance. All four readers and V1 stayed
+        `running`, `restart=0`, `OOMKilled=false`. Correct only the disposable
+        invocation by mounting the already-sealed `authority.json` explicitly
+        read-only at `/authority.json`; no source, image, service, identity,
+        route or data-plane change is needed. After this journal entry remove
+        only this failed evidence namespace and repeat C2 once from zero.
+        **C2 V1 fallback transient rejection (`FAIL-CLOSED / ONE CLEAN RETRY`,
+        2026-08-28):** the corrected disposable client reached the governed
+        fallback stage but rejected one of its six allowed local V1 Binance
+        TRADE responses because `price` was not a positive decimal. It emitted
+        no receipt, did not reach an order path, and all V1/V2 readers and
+        projectors remained `running`, `restart=0`, `OOMKilled=false` with no
+        bounded reader error. A separate read-only schema probe immediately
+        afterward observed both BTCUSDT and ETHUSDT V1 cached endpoints at
+        HTTP 200 with the expected fields, `binance_usdm` identity, positive
+        numeric price and integer trade time; it retained only response hashes
+        and type/validity flags, not values. This confirms the C2 validator
+        correctly fails closed for an invalid transient cache response, but is
+        not evidence to weaken V1 validation or to change V1 routing. Remove
+        this failed namespace after the journal and run one fresh C2 from zero;
+        any further invalid fallback response remains terminal for this
+        closure packet.
+        **C2 final-BAR replica divergence (`FAIL-CLOSED / ONE FINAL RETRY`,
+        2026-08-28):** the next fresh client stopped before fallback/order on
+        `alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.BTC-USDT / BAR
+        1m` because the sequential primary/secondary warmup fingerprints
+        differed. This is a real data-plane invariant and was not bypassed.
+        A follow-up read-only SDK probe using the same alpha identity made the
+        same two warmup calls: both replicas returned `500` final BARs, the
+        same latest closed boundary, same `8597` watermark, same ordered
+        warmup SHA-256 and no open gap; each reader/projector/V1 role remained
+        `running`, `restart=0`, `OOMKilled=false`. Therefore no persistent
+        replica/cache drift is evidenced and no cache reset, restart, retry
+        relaxation or source change is authorized. Remove the failed namespace
+        and run one final clean C2 from zero. A further divergence is terminal
+        for this closure packet and must be diagnosed separately.
+        **Final C2 current-release acceptance (`PASS_V2_DATA_PLANE_ONLY`,
+        2026-08-28):** the final disposable C2 run on the serving immutable
+        `b355b1df` reader image passed in `99.267s`. Its compact mode-`0600`
+        receipt is
+        `successor/evidence/c2-final-b355b1df-20260828T204306Z/receipt.json`
+        (SHA-256 `7007cdbbc3faa5a137c8ebab030f045b164ccb1559c1af1126a948553037d697`).
+        It covers all **28/28** durable realtime products for Monitoring `4`,
+        Trading System paper `12`, Alpha-Binance paper `6` and Alpha-OKX paper
+        `6`, with zero open quality gaps and advancing replay/resume evidence.
+        The six manifest-allowed Binance USD-M trade drills completed
+        `V2_PRIMARY -> V1_FALLBACK -> V2_PRIMARY` (maximum V1 cached-read
+        latency `15.484ms`, maximum fallback source age `259ms`); all **22**
+        `BLOCKED` routes made zero V1 reads. The client recorded
+        `provider_connections=0`, `order_actions=0`, no retained cursor and
+        no secret values; it used `58` millicores and `202,973,184` bytes RSS.
+        Fresh mode-`0600` V1 provenance/container binding names the serving
+        immutable `v1.2.2` image `sha256:d17085e...f7f0b50`; the four reader
+        roles remain on `sha256:ddebac59...805d473`, all `running`,
+        `restart=0`, `OOMKilled=false`. A bounded post-C2 reader log scan had
+        no permission/catalog/lineage/fatal/OOM record. Exact cleanup retained
+        only `receipt.json`, `v1-provenance.json` and
+        `v1-runtime-binding.json`; the disposable container, empty stderr,
+        exit code and duplicate stdout files are gone. This completes the
+        realtime C2 evidence for the same reader revision as the already
+        passing **55/55** reference and **24/24** durable L2 receipt.
+        **Phase 11 closure (`COMPLETE`, 2026-08-28):** all required current
+        gates now agree: r11 final-BAR materialization, exact role
+        rollback/provenance, public V2 contract/SDK, Rust-primary authority,
+        active governed Reference/L2 products, and the bounded four-consumer
+        no-order handoff with observed V1 rollback-return. The certified
+        statement is limited to the approved Binance USD-M/OKX Swap crypto
+        demand manifest. DNSE/VN remains independently `V1_PRIMARY`; broad
+        universe or future venue/product activation remains a new manifest
+        admission, not an unrecorded extension of this closure.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
