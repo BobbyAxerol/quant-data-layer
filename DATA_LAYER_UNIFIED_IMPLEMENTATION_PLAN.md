@@ -20180,6 +20180,14 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       Python roles, `f92d...` for projectors and `c8f3...` for Rust. The
       override SHA is recorded in the public packet; it carries no secret and
       is used only when an actual rollback is invoked.
+    - **Rollback selector completion (`APPROVED / SOURCE-ONLY`, 2026-08-28):**
+      role image/runtime alone does not restore the stateful final-BAR edge.
+      The successor packet must also preserve the active non-secret
+      `QDL_CONFIG_REVISION` and the prior `QDL_STABLE_BAR_STATE_PATH`, write a
+      private two-field rollback environment overlay and hash it in the public
+      packet. The live roll never uses this overlay; it is applied only with
+      the corresponding per-role image/runtime and legacy-manifest override if
+      a rollback is actually required.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

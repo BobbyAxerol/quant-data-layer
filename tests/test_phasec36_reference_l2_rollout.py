@@ -110,10 +110,14 @@ class ReferenceL2RolloutTests(unittest.TestCase):
             "QDL_STABLE_SCHEMA_DIGEST": "a" * 64,
             "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
             "QDL_STABLE_AUTHORITY_REVISION": "5",
+            "QDL_CONFIG_REVISION": "phase105c-final-bar-r11",
         })
         checkpoint = "/var/lib/qdl-stable/runtime/current.json"
         bar_env = root / "bar.env"
-        self._write_env(bar_env, {"QDL_STABLE_BAR_STATE_PATH": checkpoint})
+        self._write_env(bar_env, {
+            "QDL_STABLE_BAR_STATE_PATH": checkpoint,
+            "QDL_CONFIG_REVISION": "phase105c-final-bar-r11",
+        })
         return {
             "base_compose_env": base_env,
             "active_query_env": query_env,
@@ -161,6 +165,14 @@ class ReferenceL2RolloutTests(unittest.TestCase):
                 self.assertEqual(
                     packet["rollback"]["compose_override"]["python_services"],
                     list(PYTHON_ROLLBACK_SERVICES),
+                )
+                self.assertEqual(
+                    packet["rollback"]["runtime_environment"]["config_revision"],
+                    "phase105c-final-bar-r11",
+                )
+                self.assertEqual(
+                    packet["rollback"]["runtime_environment"]["bar_state_path"],
+                    "/var/lib/qdl-stable/runtime/current.json",
                 )
                 rendered = (output / "rollout-packet.json").read_text()
                 self.assertNotIn("PRIVATE KEY", rendered)

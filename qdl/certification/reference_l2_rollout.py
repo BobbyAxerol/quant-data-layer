@@ -264,6 +264,7 @@ def _build_environment(
         "QDL_STABLE_SCHEMA_DIGEST",
         "QDL_STABLE_AUTHORITY_MODE",
         "QDL_STABLE_AUTHORITY_REVISION",
+        "QDL_CONFIG_REVISION",
     }
     missing = sorted(required_query - set(active_query_environment))
     if missing:
@@ -275,6 +276,10 @@ def _build_environment(
     previous_checkpoint = active_bar_environment.get("QDL_STABLE_BAR_STATE_PATH")
     if not isinstance(previous_checkpoint, str) or not previous_checkpoint:
         raise ValueError("Reference/L2 rollout active bar environment lacks its checkpoint path")
+    if active_bar_environment.get("QDL_CONFIG_REVISION") != active_query_environment[
+        "QDL_CONFIG_REVISION"
+    ]:
+        raise ValueError("Reference/L2 rollout active query/bar config revisions differ")
 
     environment = dict(base_environment)
     for key in (
@@ -416,6 +421,13 @@ def prepare_reference_l2_rollout(
         env_path.write_text(render_dotenv(environment), encoding="utf-8")
         env_path.chmod(0o600)
         rollback_override = _write_rollback_manifest_override(output_dir)
+        rollback_environment = {
+            "QDL_CONFIG_REVISION": active_query_environment["QDL_CONFIG_REVISION"],
+            "QDL_STABLE_BAR_STATE_PATH": previous_checkpoint,
+        }
+        rollback_env_path = output_dir / "rollback-runtime.env"
+        rollback_env_path.write_text(render_dotenv(rollback_environment), encoding="utf-8")
+        rollback_env_path.chmod(0o640)
 
         reference_manifest = ROOT / "config/v2/stable-reference-l2-demand.yaml"
         packet_body: dict[str, object] = {
@@ -479,6 +491,12 @@ def prepare_reference_l2_rollout(
                     "legacy_manifest_sha256": sha256_bytes(
                         LEGACY_CONSUMER_MANIFESTS.encode("utf-8")
                     ),
+                },
+                "runtime_environment": {
+                    "path": rollback_env_path.name,
+                    "sha256": _sha256_file(rollback_env_path),
+                    "config_revision": rollback_environment["QDL_CONFIG_REVISION"],
+                    "bar_state_path": rollback_environment["QDL_STABLE_BAR_STATE_PATH"],
                 },
                 "durable_data_deletion": False,
             },
