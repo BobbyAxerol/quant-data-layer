@@ -19225,6 +19225,20 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
   reference requirements and one exact L2 activation packet (including only
   the required venue ingestor/core/projector/query/stream roles and current
   rollback map); neither can be smuggled into this C2 repair.
+- **Candidate revalidation (`SOURCE PASS / NO RUNTIME MUTATION`, 2026-08-28):**
+  the corrected immutable projector candidate
+  `sha256:e46084ced87a59c1f6d6c65c907ab841a54c20b29d8f4b515adbf7da4249e7fa`
+  ran the bounded network-disabled gate
+  `tests.test_phasec36_liquid_crypto_features`,
+  `tests.test_phase104_reference_batch`,
+  `tests.test_phase113_reference_v2`, `tests.test_phase114_l2_demand` and
+  `tests.test_phase115_universal_release`: `53/53` passed. This rechecks the
+  five-asset Binance/OKX reference policy, typed unavailable semantics,
+  provider-neutral BTC/ETH L2 demand and universal release binding without
+  claiming they are active runtime routes. The disposable container used
+  `--rm`, `--network none`, read-only source and tmpfs only; it issued no
+  provider request and changed no service, Kafka, Redis, SQLite, V1, Trading
+  System, alpha or order state.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
