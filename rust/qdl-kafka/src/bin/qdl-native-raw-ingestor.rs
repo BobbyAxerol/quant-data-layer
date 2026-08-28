@@ -55,6 +55,16 @@ enum RawFeed {
     Trade,
     Quote,
     Bar,
+    Book,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawL2Config {
+    provider_protocol: String,
+    depth_per_side: usize,
+    rest_snapshot_url: Option<String>,
+    snapshot_refresh_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -71,6 +81,8 @@ struct RawBinding {
     instrument_catalog_revision: u64,
     feed: RawFeed,
     delivery_class: DeliveryClass,
+    #[serde(default)]
+    l2: Option<RawL2Config>,
 }
 
 impl RawBinding {
@@ -99,7 +111,10 @@ impl RawBinding {
         if !matches!(
             (self.feed, self.delivery_class),
             (RawFeed::Quote, DeliveryClass::LatestState)
-                | (RawFeed::Trade | RawFeed::Bar, DeliveryClass::Lossless)
+                | (
+                    RawFeed::Trade | RawFeed::Bar | RawFeed::Book,
+                    DeliveryClass::Lossless
+                )
         ) {
             return Err("raw binding feed/delivery class is invalid".into());
         }
@@ -109,10 +124,46 @@ impl RawBinding {
                     return Err("Binance raw binding identity is invalid".into());
                 }
                 validate_binance_stream(&self.native_channel)?;
+                if self.feed == RawFeed::Book {
+                    let Some(l2) = &self.l2 else {
+                        return Err("Binance BOOK binding requires L2 configuration".into());
+                    };
+                    if l2.provider_protocol != "BINANCE_DIFF_DEPTH"
+                        || !matches!(l2.depth_per_side, 5 | 10 | 20 | 50 | 100 | 500 | 1_000)
+                        || l2.rest_snapshot_url.as_deref()
+                            != Some(match self.market.as_str() {
+                                "USDM" => "https://fapi.binance.com/fapi/v1/depth",
+                                "SPOT" => "https://api.binance.com/api/v3/depth",
+                                _ => unreachable!("Binance market validated above"),
+                            })
+                        || !matches!(l2.snapshot_refresh_seconds, Some(5..=300))
+                    {
+                        return Err("Binance BOOK binding L2 configuration is invalid".into());
+                    }
+                } else if self.l2.is_some() {
+                    return Err("non-BOOK raw binding cannot carry L2 configuration".into());
+                }
             }
             ProviderRuntime::Okx => {
-                if self.venue != "OKX" || !matches!(self.market.as_str(), "SWAP" | "SPOT") {
+                if self.venue != "OKX"
+                    || !matches!(self.market.as_str(), "SWAP" | "FUTURES" | "SPOT")
+                {
                     return Err("OKX raw binding identity is invalid".into());
+                }
+                if self.feed == RawFeed::Book {
+                    let Some(l2) = &self.l2 else {
+                        return Err("OKX BOOK binding requires L2 configuration".into());
+                    };
+                    if l2.provider_protocol != "OKX_PUBLIC_BOOKS"
+                        || !(1..=10_000).contains(&l2.depth_per_side)
+                        || l2.rest_snapshot_url.is_some()
+                        || l2.snapshot_refresh_seconds.is_some()
+                        || self.native_channel != "books"
+                    {
+                        return Err("OKX BOOK binding L2 configuration is invalid".into());
+                    }
+                } else if self.l2.is_some() {
+                    return Err("non-BOOK raw binding cannot carry L2 configuration".into());
                 }
             }
         }
@@ -162,7 +213,7 @@ fn partition_binance_bindings(
     // Keep low-rate final BARs and lossless trades out of a high-rate quote
     // socket. One worker still owns the complete venue/market demand; these
     // are stable internal connection lanes, not per-symbol processes.
-    [RawFeed::Bar, RawFeed::Trade, RawFeed::Quote]
+    [RawFeed::Book, RawFeed::Bar, RawFeed::Trade, RawFeed::Quote]
         .into_iter()
         .flat_map(|feed| {
             let lane = bindings
@@ -337,6 +388,7 @@ impl RawPublisher {
         generation: u64,
         raw_frame: &[u8],
         received_at_ns: i64,
+        transport_protocol: TransportProtocol,
     ) -> DurableRecord {
         let capture_id = capture_id(session_id, generation, received_at_ns, raw_frame);
         let raw = RawProviderEnvelope {
@@ -357,7 +409,7 @@ impl RawPublisher {
             authority_revision: self.authority.revision,
             partition_plan_epoch: self.partition_plan_epoch,
             received_at_ns,
-            transport_protocol: TransportProtocol::Websocket as i32,
+            transport_protocol: transport_protocol as i32,
             transport_compression: TransportCompression::None as i32,
             capture_boundary: CaptureBoundary::PostDecompression as i32,
             raw_frame_sha256: Sha256::digest(raw_frame).to_vec(),
@@ -404,9 +456,17 @@ impl RawPublisher {
         generation: u64,
         raw_frame: &[u8],
         received_at_ns: i64,
+        transport_protocol: TransportProtocol,
         stopped: &AtomicBool,
     ) -> Result<PendingKafkaAppend, KafkaTransportError> {
-        let record = self.record(binding, session_id, generation, raw_frame, received_at_ns);
+        let record = self.record(
+            binding,
+            session_id,
+            generation,
+            raw_frame,
+            received_at_ns,
+            transport_protocol,
+        );
         let publication = self.publication();
         let backoff = BackoffPolicy {
             initial_ms: 10,
@@ -460,6 +520,7 @@ struct PendingRawFrame {
     generation: u64,
     raw_frame: Vec<u8>,
     received_at_ns: i64,
+    transport_protocol: TransportProtocol,
 }
 
 fn pending_binance_frame(
@@ -483,6 +544,7 @@ fn pending_binance_frame(
         generation,
         raw_frame: raw_text.into_bytes(),
         received_at_ns,
+        transport_protocol: TransportProtocol::Websocket,
     })
 }
 
@@ -529,7 +591,126 @@ fn pending_okx_frame(
         generation,
         raw_frame: raw_text.into_bytes(),
         received_at_ns,
+        transport_protocol: TransportProtocol::Websocket,
     })
+}
+
+const MAX_BOOK_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+
+async fn fetch_binance_book_snapshot(
+    client: reqwest::Client,
+    binding: RawBinding,
+    session_id: String,
+    generation: u64,
+) -> Result<PendingRawFrame, String> {
+    let l2 = binding
+        .l2
+        .as_ref()
+        .ok_or_else(|| "Binance BOOK binding is missing L2 configuration".to_owned())?;
+    let endpoint = l2
+        .rest_snapshot_url
+        .as_deref()
+        .ok_or_else(|| "Binance BOOK binding is missing REST snapshot URL".to_owned())?;
+    let policy = BackoffPolicy {
+        initial_ms: 100,
+        maximum_ms: 1_000,
+        multiplier: 2,
+        jitter_bps: 2_000,
+    }
+    .validate()
+    .map_err(|error| error.to_string())?;
+    let mut last_error = "Binance depth snapshot did not run".to_owned();
+    for attempt in 1..=4_u32 {
+        let response = client
+            .get(endpoint)
+            .query(&[
+                ("symbol", binding.native_symbol.as_str()),
+                ("limit", &l2.depth_per_side.to_string()),
+            ])
+            .send()
+            .await;
+        match response {
+            Ok(response) if response.status().is_success() => {
+                let bytes = response
+                    .bytes()
+                    .await
+                    .map_err(|error| format!("Binance depth snapshot body failed: {error}"))?;
+                if bytes.is_empty() || bytes.len() > MAX_BOOK_SNAPSHOT_BYTES {
+                    return Err("Binance depth snapshot body is outside bounded size".into());
+                }
+                let payload: Value = serde_json::from_slice(&bytes)
+                    .map_err(|_| "Binance depth snapshot is not JSON".to_owned())?;
+                if payload
+                    .get("lastUpdateId")
+                    .and_then(Value::as_u64)
+                    .is_none()
+                    || payload.get("bids").and_then(Value::as_array).is_none()
+                    || payload.get("asks").and_then(Value::as_array).is_none()
+                {
+                    return Err("Binance depth snapshot misses documented fields".into());
+                }
+                return Ok(PendingRawFrame {
+                    binding,
+                    session_id,
+                    generation,
+                    raw_frame: bytes.to_vec(),
+                    received_at_ns: now_ns().map_err(|error| error.to_string())?,
+                    transport_protocol: TransportProtocol::Http,
+                });
+            }
+            Ok(response) => {
+                let status = response.status();
+                last_error = format!("Binance depth snapshot returned HTTP {status}");
+                if !(status.as_u16() == 429 || status.is_server_error()) {
+                    return Err(last_error);
+                }
+            }
+            Err(error) => last_error = format!("Binance depth snapshot transport failed: {error}"),
+        }
+        if attempt < 4 {
+            tokio::time::sleep(Duration::from_millis(
+                policy.delay_ms(attempt, attempt as u16),
+            ))
+            .await;
+        }
+    }
+    Err(last_error)
+}
+
+async fn fetch_binance_book_snapshots(
+    client: &reqwest::Client,
+    bindings: &HashMap<String, RawBinding>,
+    session_id: &str,
+    generation: u64,
+) -> Result<Vec<PendingRawFrame>, String> {
+    let requests = bindings
+        .values()
+        .filter(|binding| binding.feed == RawFeed::Book)
+        .cloned()
+        .map(|binding| {
+            fetch_binance_book_snapshot(client.clone(), binding, session_id.to_owned(), generation)
+        });
+    let mut frames = try_join_all(requests).await?;
+    frames.sort_by(|left, right| {
+        left.binding
+            .native_channel
+            .cmp(&right.binding.native_channel)
+    });
+    Ok(frames)
+}
+
+fn binance_book_snapshot_period(bindings: &HashMap<String, RawBinding>) -> Option<Duration> {
+    bindings
+        .values()
+        .filter(|binding| binding.feed == RawFeed::Book)
+        .filter_map(|binding| {
+            binding
+                .l2
+                .as_ref()
+                .and_then(|l2| l2.snapshot_refresh_seconds)
+        })
+        .min()
+        .map(Duration::from_secs)
 }
 
 #[derive(Default)]
@@ -581,6 +762,7 @@ async fn enqueue_lossless_frame(
             frame.generation,
             &frame.raw_frame,
             frame.received_at_ns,
+            frame.transport_protocol,
             stopped,
         )
         .await;
@@ -708,6 +890,11 @@ async fn run_binance_connection(
     let streams = bindings.keys().cloned().collect::<Vec<_>>();
     let url = config.websocket_url.clone();
     let publisher = RawPublisher::new(&config, &format!("binance-{shard_index:03}"))?;
+    let snapshot_client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let snapshot_period = binance_book_snapshot_period(&bindings);
     let backoff = BackoffPolicy {
         initial_ms: 250,
         maximum_ms: 30_000,
@@ -769,6 +956,13 @@ async fn run_binance_connection(
                     tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
                 latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 latest_tick.tick().await;
+                let mut book_snapshot_tick = snapshot_period.map(tokio::time::interval);
+                if let Some(tick) = book_snapshot_tick.as_mut() {
+                    // Consume the interval's immediate first tick. The initial
+                    // REST snapshot below is explicit and ordered after any
+                    // pre-ACK deltas, so the Rust adapter can bridge it.
+                    tick.tick().await;
+                }
                 let mut disconnected = false;
                 let mut publish_error = None;
                 let mut exhausted = false;
@@ -797,6 +991,36 @@ async fn run_binance_connection(
                     {
                         exhausted = true;
                         break;
+                    }
+                }
+                if !exhausted && snapshot_period.is_some() {
+                    for frame in fetch_binance_book_snapshots(
+                        &snapshot_client,
+                        &bindings,
+                        &session_id,
+                        generation,
+                    )
+                    .await
+                    .map_err(|error| std::io::Error::new(ErrorKind::Other, error))?
+                    {
+                        if !publish_pending_frame(
+                            frame,
+                            &mut PendingPublishWindow {
+                                publisher: &publisher,
+                                latest: &mut latest,
+                                inflight: &mut inflight,
+                                accepted: &accepted,
+                                coalesced_latest: &coalesced_latest,
+                                max_events: config.max_events,
+                                max_inflight: config.max_inflight_publishes,
+                                stopped: &stopped,
+                            },
+                        )
+                        .await?
+                        {
+                            exhausted = true;
+                            break;
+                        }
                     }
                 }
                 while !exhausted && !should_stop(&stopped, &accepted, config.max_events, expires) {
@@ -833,6 +1057,45 @@ async fn run_binance_connection(
                                 &stopped,
                             ).await? {
                                 break;
+                            }
+                            failures = 0;
+                            continue;
+                        }
+                        _ = async {
+                            match book_snapshot_tick.as_mut() {
+                                Some(tick) => {
+                                    tick.tick().await;
+                                }
+                                None => std::future::pending::<()>().await,
+                            }
+                        }, if snapshot_period.is_some() => {
+                            for frame in fetch_binance_book_snapshots(
+                                &snapshot_client,
+                                &bindings,
+                                &session_id,
+                                generation,
+                            )
+                            .await
+                            .map_err(|error| std::io::Error::new(ErrorKind::Other, error))?
+                            {
+                                if !publish_pending_frame(
+                                    frame,
+                                    &mut PendingPublishWindow {
+                                        publisher: &publisher,
+                                        latest: &mut latest,
+                                        inflight: &mut inflight,
+                                        accepted: &accepted,
+                                        coalesced_latest: &coalesced_latest,
+                                        max_events: config.max_events,
+                                        max_inflight: config.max_inflight_publishes,
+                                        stopped: &stopped,
+                                    },
+                                )
+                                .await?
+                                {
+                                    exhausted = true;
+                                    break;
+                                }
                             }
                             failures = 0;
                             continue;
@@ -1617,6 +1880,7 @@ mod tests {
                 RawFeed::Trade => "btcusdt@trade",
                 RawFeed::Quote => "btcusdt@bookTicker",
                 RawFeed::Bar => "btcusdt@kline_1m",
+                RawFeed::Book => "btcusdt@depth@100ms",
             }
             .into(),
             subscription_id: "test-source".into(),
@@ -1624,6 +1888,7 @@ mod tests {
             instrument_catalog_revision: 1,
             feed,
             delivery_class,
+            l2: None,
         }
     }
 
@@ -1647,7 +1912,7 @@ mod tests {
     }
 
     #[test]
-    fn binance_feed_lanes_isolate_bars_and_trades_from_quotes() {
+    fn binance_feed_lanes_isolate_lossless_books_bars_trades_from_quotes() {
         let mut trade = binding(RawFeed::Trade, DeliveryClass::Lossless);
         trade.native_symbol = "ETHUSDT".into();
         trade.native_channel = "ethusdt@trade".into();
@@ -1658,17 +1923,26 @@ mod tests {
         bar.native_symbol = "ETHUSDT".into();
         bar.native_channel = "ethusdt@kline_1m".into();
 
+        let mut book = binding(RawFeed::Book, DeliveryClass::Lossless);
+        book.l2 = Some(super::RawL2Config {
+            provider_protocol: "BINANCE_DIFF_DEPTH".into(),
+            depth_per_side: 100,
+            rest_snapshot_url: Some("https://fapi.binance.com/fapi/v1/depth".into()),
+            snapshot_refresh_seconds: Some(30),
+        });
         let values = vec![
+            book,
             trade.clone(),
             quote.clone(),
             bar.clone(),
             binding(RawFeed::Bar, DeliveryClass::Lossless),
         ];
         let lanes = partition_binance_bindings(&values, 100);
-        assert_eq!(lanes.len(), 3);
-        assert!(lanes[0].iter().all(|item| item.feed == RawFeed::Bar));
-        assert!(lanes[1].iter().all(|item| item.feed == RawFeed::Trade));
-        assert!(lanes[2].iter().all(|item| item.feed == RawFeed::Quote));
+        assert_eq!(lanes.len(), 4);
+        assert!(lanes[0].iter().all(|item| item.feed == RawFeed::Book));
+        assert!(lanes[1].iter().all(|item| item.feed == RawFeed::Bar));
+        assert!(lanes[2].iter().all(|item| item.feed == RawFeed::Trade));
+        assert!(lanes[3].iter().all(|item| item.feed == RawFeed::Quote));
         assert_eq!(lanes.into_iter().flatten().count(), values.len());
     }
 
@@ -1683,6 +1957,14 @@ mod tests {
         assert!(binding(RawFeed::Bar, DeliveryClass::Lossless)
             .validate(ProviderRuntime::Binance)
             .is_ok());
+        let mut book = binding(RawFeed::Book, DeliveryClass::Lossless);
+        book.l2 = Some(super::RawL2Config {
+            provider_protocol: "BINANCE_DIFF_DEPTH".into(),
+            depth_per_side: 100,
+            rest_snapshot_url: Some("https://fapi.binance.com/fapi/v1/depth".into()),
+            snapshot_refresh_seconds: Some(30),
+        });
+        assert!(book.validate(ProviderRuntime::Binance).is_ok());
         assert!(binding(RawFeed::Trade, DeliveryClass::LatestState)
             .validate(ProviderRuntime::Binance)
             .is_err());
@@ -1712,6 +1994,21 @@ mod tests {
         okx_quote.delivery_class = DeliveryClass::Lossless;
         assert!(okx_trade.validate(ProviderRuntime::Okx).is_err());
         assert!(okx_quote.validate(ProviderRuntime::Okx).is_err());
+
+        let mut okx_book = binding(RawFeed::Book, DeliveryClass::Lossless);
+        okx_book.provider = "OKX_DIRECT".into();
+        okx_book.venue = "OKX".into();
+        okx_book.market = "SWAP".into();
+        okx_book.product_type = "PERPETUAL".into();
+        okx_book.native_symbol = "BTC-USDT-SWAP".into();
+        okx_book.native_channel = "books".into();
+        okx_book.l2 = Some(super::RawL2Config {
+            provider_protocol: "OKX_PUBLIC_BOOKS".into(),
+            depth_per_side: 100,
+            rest_snapshot_url: None,
+            snapshot_refresh_seconds: None,
+        });
+        assert!(okx_book.validate(ProviderRuntime::Okx).is_ok());
     }
 
     #[test]
@@ -1723,6 +2020,7 @@ mod tests {
             generation: 1,
             raw_frame: br#"{"u":1}"#.to_vec(),
             received_at_ns: 10,
+            transport_protocol: qdl_contracts::qdl::provider::v1::TransportProtocol::Websocket,
         };
         let mut last = first.clone();
         last.raw_frame = br#"{"u":2}"#.to_vec();

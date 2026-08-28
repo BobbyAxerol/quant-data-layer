@@ -19760,8 +19760,92 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       `NON_USDM_SYMBOL_IN_MIXED_DECLARATION` filters; no in-scope requirement
       was silently dropped. No provider, runtime, image, service, Kafka,
       Redis, SQLite, identity, consumer route, Trading System, alpha or order
-      mutation occurred. Rollback is a source revert; runtime activation
-      remains separately gated.
+	  mutation occurred. Rollback is a source revert; runtime activation
+	  remains separately gated.
+- **Active Reference/L2 runtime completion (`APPROVED / IMPLEMENTATION IN
+  PROGRESS`, 2026-08-28):**
+  - **Goal:** turn the already admitted Binance USD-M and OKX market-data
+    products into one real V2 product plane: five-liquid-perpetual reference
+    batches (`BTC`, `ETH`, `SOL`, `DOGE`, `BNB`) and the bounded BTC/ETH
+    perpetual plus provider-discovered current/next-quarter L2 books. Rust is
+    the only canonical L2 state/sequence/generation authority; Python remains
+    the provider REST/reference and public query/SDK adapter. No price, book
+    level, missing metric, or dated identifier may be fabricated.
+  - **Topology invariant:** reuse only the existing Binance/OKX ingestor,
+    `rust_core*`, projector, query and stream roles. One physical subscription
+    serves one `(venue, market, instrument, declared depth)` book; its logical
+    `BOOK_SNAPSHOT` and `BOOK_DELTA` products are aliases of that single raw
+    input. No role/container/worker is created per symbol, alpha or consumer.
+    Reference remains bounded on-demand REST batch data, not a polling worker
+    or durable synthetic replay plane.
+  - **Approved implementation:** extend the stable catalog/acquisition
+    projection additively for provider-neutral book aliases; teach the
+    existing native raw ingestor to retain lossless book frames; teach the
+    existing Rust realtime core to apply the already-tested generic L2 adapter
+    and emit only verified/gap-free canonical snapshot/delta publications.
+    Add the named read-only `REFERENCE_L2` consumer manifest/identity route for
+    `qdl.crypto.reference-l2.stable`, V2-primary with `BLOCKED` fallback for
+    reference/L2. Existing V1 endpoints, consumer routes, Trading System,
+    alpha runtime, order path, Kafka topology, Redis prefixes and SQLite state
+    stay unchanged unless the later bounded runtime packet names a role.
+  - **Required tests:** catalog alias/coalescing; Binance snapshot bridge and
+    OKX snapshot/update; duplicate/out-of-order/gap/resync/generation/
+    truncation; no cross-venue/symbol source identity; reference entitlement/
+    typed-unavailable; query/stream/SDK; Rust compile/clippy; then bounded
+    real-provider proof for five assets and every declared BTC/ETH L2 leg.
+    Evidence is aggregate/hash/identity/freshness/latency/resource only.
+  - **Runtime and rollback:** generate one sealed bundle/identity/route
+    revision, record exact prior role image/runtime coordinates, and
+    rolling-recreate only existing roles whose mounted config or binary
+    changed. Observe a disposable read-only consumer for 300 seconds:
+    V2-primary, signed cursor replay/reconnect, no client direct-provider
+    connection, no order/signal/sizing action, bounded CPU/RAM/lag, and
+    `BLOCKED` rather than semantic V1 fallback. Roll back to the prior sealed
+    V2 runtime/route revision; V1 remains untouched.
+  - **Exclusions:** DNSE/VN, Spot, permanent 700-symbol websocket demand,
+    execution-grade book pricing and all broker/order capability remain out of
+    scope. Stop after this product is implemented, tested and journaled; do
+    not add topology or a bypass path for a provider/credential failure.
+  - **Source implementation / offline exit (`IMPLEMENTED / TESTED / RUNTIME
+    UNCHANGED`, 2026-08-28):** the existing catalog/acquisition projection now
+    represents `BOOK_SNAPSHOT` and `BOOK_DELTA` as exact logical aliases of one
+    physical `book` partition and one native subscription. Binance USD-M/Spot
+    uses documented `@depth@100ms` plus a bounded FAPI/Spot REST snapshot
+    bridge; OKX Swap/Futures/Spot uses documented public `books` frames. The
+    generic Rust adapter remains the sole sequence/generation/checksum/resync
+    authority. The shared existing native ingestor publishes the captured HTTP
+    snapshot and websocket deltas losslessly through the existing raw topic;
+    it creates no per-symbol worker, socket process, topic, Redis key or
+    container. Python query filtering scans at most `10,000` physical events,
+    then returns only the requested logical tail, so a `latest` snapshot read
+    cannot be hidden by a newer delta in the shared partition.
+  - **Strictness and compatibility:** provider identity, documented protocol,
+    depth, snapshot endpoint and refresh bounds are validated before a binding
+    is admitted. Invalid/out-of-order/gapped/checksum-invalid L2 frames are
+    quarantined and force a resync; they never become a canonical book event.
+    `reqwest` is pinned to `0.11.27` in the Rust-1.82 workspace because the
+    otherwise valid `0.12` resolution pulls optional HTTP/3 crates requiring
+    edition 2024. The regenerated `Cargo.lock` adds only the compatible async
+    HTTP/TLS graph; this is an MSRV preservation, not a compiler upgrade.
+  - **Exact source evidence:** network-disabled/read-only Python container
+    `qdl-v2-python:2.0.0-c2-replay-42aa401` passed `57/57` catalog, admission,
+    reference, L2, query/stream and universal-release tests. A disposable Rust
+    1.82 container built the exact lockfile and passed `qdl-realtime-core`
+    `26/26` with one explicitly skipped isolated-Redis integration test
+    (`QDL_TEST_REDIS_URL` absent), plus `qdl-native-raw-ingestor` `9/9`.
+    `git diff --check` and Python compilation passed. The available 1.82 image
+    lacks `cargo-fmt`; a disposable formatter check then formatted only the
+    three changed Rust files. No source test requested a provider, created an
+    image, or changed Kafka, Redis, SQLite, V1/V2 routing, identities,
+    services, Trading System, alpha or order state.
+  - **Remaining approved work / decision boundary:** materialize the authentic
+    five-asset and discovered dated-leg catalog from bounded provider metadata,
+    render the `qdl.crypto.reference-l2.stable` identity/manifest and run the
+    named real-provider and later rolling acceptance. These source tests are
+    necessary but not provider or runtime certification; this entry does not
+    authorize any role recreation or authority change. Source rollback is this
+    coherent commit; runtime rollback remains the previously recorded sealed
+    r11 route/config revision.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

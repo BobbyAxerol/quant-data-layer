@@ -368,15 +368,32 @@ class StableSpoolQueryBackend:
         self, requirement: DataRequirement, *, limit: int
     ) -> tuple[StoredEvent, ...]:
         binding = self.catalog.binding_for(requirement)
+        # BOOK_SNAPSHOT and BOOK_DELTA deliberately share one physical
+        # partition for replay ordering.  A one-row ``latest`` read can
+        # therefore land on a delta and incorrectly report that the most
+        # recent verified snapshot does not exist.  Scan a bounded physical
+        # tail before applying the public logical-feed filter.  The runtime
+        # refreshes Binance anchors at most every 30 seconds and this cap is
+        # explicit; it is not an unbounded recovery scan.
+        physical_limit = limit
+        if binding.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}:
+            physical_limit = min(10_000, max(limit, limit * 512))
         rows = self.spool.read_tail(
             stream=binding.canonical_stream,
             partition_key=binding.partition_key,
-            limit=limit,
+            limit=physical_limit,
         )
         selected = []
         for row in rows:
             envelope = market_data_pb2.EventEnvelope.FromString(row.event.payload)
-            if canonical_payload_interval(envelope) == binding.interval:
+            # BOOK_SNAPSHOT and BOOK_DELTA intentionally share a durable
+            # partition.  Keep the public logical feed exact at the query
+            # boundary so a snapshot read can never return a delta (or vice
+            # versa) merely because both belong to the same physical book.
+            if (
+                envelope.WhichOneof("payload") == binding.feed.value.lower()
+                and canonical_payload_interval(envelope) == binding.interval
+            ):
                 selected.append(row)
         if binding.feed is FeedType.BAR:
             selected.sort(key=lambda item: (
@@ -385,7 +402,10 @@ class StableSpoolQueryBackend:
                 ).bar.open_time_ns,
                 item.cursor.offset,
             ))
-        return tuple(selected)
+        # ``read_tail`` is chronological. Keep only the requested logical
+        # tail after filtering the shared physical book partition so callers
+        # retain the same bounded/latest semantics as every other feed.
+        return tuple(selected[-limit:])
 
     def _items(
         self,

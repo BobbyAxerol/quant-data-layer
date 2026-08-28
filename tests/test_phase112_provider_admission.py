@@ -75,6 +75,7 @@ def _binding(
         native_channel=native_channel,
         websocket_url=websocket_url,
         business_websocket_url=None,
+        l2=None,
         catalog_revision=11,
         demand_revision=11,
     )

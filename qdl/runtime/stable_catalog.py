@@ -129,9 +129,19 @@ class StableSourceBinding:
 
     @property
     def partition_key(self) -> str:
+        # The public schema has distinct snapshot and delta payloads, but both
+        # are transitions of one physical book.  Keeping them in one durable
+        # partition is what preserves snapshot -> delta ordering through
+        # projector/query/replay.  The query backend filters the requested
+        # logical payload after it reads this shared physical partition.
+        feed_type = (
+            "BOOK"
+            if self.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}
+            else self.feed.value
+        )
         return partition_key(
             instrument_uid=self.instrument.instrument_uid,
-            feed_type=self.feed.value,
+            feed_type=feed_type,
             source_id=self.source_id,
         )
 

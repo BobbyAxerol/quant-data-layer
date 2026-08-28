@@ -34,6 +34,9 @@ _SUPPORTED_MARKETS = {
     ("BINANCE", "USDM", "FUTURE"),
     ("BINANCE", "SPOT", "SPOT"),
     ("OKX", "SWAP", "PERPETUAL"),
+    # OKX dated legs share the documented public market-data socket with
+    # swaps, but retain their own canonical market/product identity.
+    ("OKX", "FUTURES", "FUTURE"),
     ("OKX", "SPOT", "SPOT"),
 }
 _BINANCE_STREAM_URL = {
@@ -43,7 +46,13 @@ _BINANCE_STREAM_URL = {
     "USDM": "wss://fstream.binance.com/ws",
     "SPOT": "wss://stream.binance.com:9443/ws",
 }
-_SUPPORTED_FEEDS = {FeedType.TRADE, FeedType.QUOTE, FeedType.BAR}
+_BOOK_FEEDS = frozenset({FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA})
+_SUPPORTED_FEEDS = {FeedType.TRADE, FeedType.QUOTE, FeedType.BAR, *_BOOK_FEEDS}
+_BINANCE_DEPTH_REST = {
+    "USDM": "https://fapi.binance.com/fapi/v1/depth",
+    "SPOT": "https://api.binance.com/api/v3/depth",
+}
+_OKX_PUBLIC_WS = "wss://ws.okx.com:8443/ws/v5/public"
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -57,6 +66,12 @@ class ProductionDemand:
     feed: FeedType
     interval: str | None
     source_policy_id: str
+    # Book feeds are physical provider subscriptions represented by two public
+    # logical products.  These values are carried through the catalog rather
+    # than rediscovered by an adapter at runtime.
+    depth_per_side: int = 0
+    max_freshness_ms: int | None = None
+    require_live: bool = False
 
     def __post_init__(self) -> None:
         if (self.venue, self.market, self.product_type) not in _SUPPORTED_MARKETS:
@@ -69,8 +84,19 @@ class ProductionDemand:
                 market=self.market,
                 interval=self.interval,
             )
+        elif self.feed in _BOOK_FEEDS:
+            if self.interval is not None:
+                raise ValueError("interval is invalid for BOOK demand")
+            if not 1 <= self.depth_per_side <= 10_000:
+                raise ValueError("BOOK demand requires an explicit bounded depth")
+            if self.max_freshness_ms is None or self.max_freshness_ms <= 0:
+                raise ValueError("BOOK demand requires an explicit freshness bound")
+            if not self.require_live:
+                raise ValueError("BOOK demand must require a live provider feed")
         elif self.interval is not None:
             raise ValueError("interval is valid only for BAR demand")
+        elif self.depth_per_side or self.max_freshness_ms is not None or self.require_live:
+            raise ValueError("non-BOOK demand cannot carry BOOK acquisition fields")
         if not self.consumer_id.strip() or not self.native_symbol.strip() or not self.source_policy_id.strip():
             raise ValueError("production demand identity/source policy is incomplete")
 
@@ -458,6 +484,10 @@ class ProductionCatalogBuilder:
             stale_after_ms = 15_000
         elif item.feed is FeedType.QUOTE:
             stale_after_ms = 5_000
+        elif item.feed in _BOOK_FEEDS:
+            # Book freshness is an explicit demand property.  Do not quietly
+            # reduce it to a generic trade/BBO threshold.
+            stale_after_ms = int(item.max_freshness_ms or 0)
         else:
             # Final BAR freshness must scale with its canonical interval. The
             # former fixed three-minute limit mislabeled a valid 1h/1d BAR as
@@ -480,7 +510,14 @@ class ProductionCatalogBuilder:
             "interval": item.interval,
             "source": {
                 "provider": f"{item.venue}_DIRECT",
-                "source_id": f"{binding_id}-primary-v2",
+                # Snapshot and delta are aliases of exactly one provider book
+                # and must remain in one durable partition.  Their binding
+                # IDs are intentionally distinct, their source identity is not.
+                "source_id": (
+                    f"{self._book_source_stem(item)}-primary-v2"
+                    if item.feed in _BOOK_FEEDS
+                    else f"{binding_id}-primary-v2"
+                ),
                 "source_role": "PRIMARY",
                 "source_policy_id": item.source_policy_id,
                 "authoritative": True,
@@ -494,6 +531,11 @@ class ProductionCatalogBuilder:
             },
             "v1_compatibility": compatibility,
         }
+
+    @staticmethod
+    def _book_source_stem(item: ProductionDemand) -> str:
+        symbol = re.sub(r"[^a-z0-9]+", "-", item.native_symbol.lower()).strip("-")
+        return f"{item.venue.lower()}-{item.market.lower()}-{symbol}-book"
 
     @staticmethod
     def _acquisition(binding_id: str, item: ProductionDemand) -> dict[str, Any]:
@@ -511,6 +553,11 @@ class ProductionCatalogBuilder:
                 mode, kind, channel, sequence = (
                     "RUST_NATIVE", f"binance_{family}_bbo",
                     f"{item.native_symbol.lower()}@bookTicker", "MONOTONIC",
+                )
+            elif item.feed in _BOOK_FEEDS:
+                mode, kind, channel, sequence = (
+                    "RUST_NATIVE", f"binance_{family}_book",
+                    f"{item.native_symbol.lower()}@depth@100ms", "CONTIGUOUS",
                 )
             else:
                 # The current provider/host certification proves direct Binance
@@ -533,6 +580,8 @@ class ProductionCatalogBuilder:
                 mode, kind, channel, sequence = "RUST_NATIVE", "okx_trade", "trades", "MONOTONIC"
             elif item.feed is FeedType.QUOTE:
                 mode, kind, channel, sequence = "RUST_NATIVE", "okx_bbo", "bbo-tbt", "NONE"
+            elif item.feed in _BOOK_FEEDS:
+                mode, kind, channel, sequence = "RUST_NATIVE", "okx_book", "books", "CONTIGUOUS"
             else:
                 # Final BAR ownership stays at the bounded provider REST edge for
                 # every crypto venue. The Python edge publishes the same raw
@@ -545,9 +594,9 @@ class ProductionCatalogBuilder:
                     "PYTHON_REST", "okx_bar",
                     okx_candle_channel(item.interval or "1m"), "NONE",
                 )
-            websocket = "wss://ws.okx.com:8443/ws/v5/public" if mode == "RUST_NATIVE" else None
+            websocket = _OKX_PUBLIC_WS if mode == "RUST_NATIVE" else None
             business = "wss://ws.okx.com:8443/ws/v5/business" if mode == "RUST_NATIVE" else None
-        return {
+        result = {
             "binding_id": binding_id,
             "mode": mode,
             "runtime": item.venue,
@@ -557,6 +606,22 @@ class ProductionCatalogBuilder:
             "websocket_url": websocket,
             "business_websocket_url": business,
         }
+        if item.feed in _BOOK_FEEDS:
+            result["l2"] = {
+                "provider_protocol": (
+                    "BINANCE_DIFF_DEPTH" if item.venue == "BINANCE" else "OKX_PUBLIC_BOOKS"
+                ),
+                "depth_per_side": item.depth_per_side,
+                "rest_snapshot_url": (
+                    _BINANCE_DEPTH_REST[item.market] if item.venue == "BINANCE" else None
+                ),
+                # Binance's documented diff-depth bootstrap needs a bounded
+                # fresh REST anchor. OKX public books supplies the snapshot on
+                # the same websocket stream and must not be polled as if it
+                # were Binance.
+                "snapshot_refresh_seconds": 30 if item.venue == "BINANCE" else None,
+            }
+        return result
 
 
 def load_binance_exchange_info(path: str | Path) -> BinanceDiscovery:

@@ -30,14 +30,79 @@ _PROVIDER_KINDS = {
         "binance_usdm_rest_bar",
         "binance_spot_rest_bar",
     }),
+    ("BINANCE", "BOOK_SNAPSHOT"): frozenset({"binance_usdm_book", "binance_spot_book"}),
+    ("BINANCE", "BOOK_DELTA"): frozenset({"binance_usdm_book", "binance_spot_book"}),
     ("OKX", "TRADE"): frozenset({"okx_trade"}),
     ("OKX", "QUOTE"): frozenset({"okx_bbo"}),
     ("OKX", "BAR"): frozenset({"okx_bar"}),
+    ("OKX", "BOOK_SNAPSHOT"): frozenset({"okx_book"}),
+    ("OKX", "BOOK_DELTA"): frozenset({"okx_book"}),
     ("HNX", "TRADE"): frozenset({"dnse_trade"}),
     ("HNX", "BAR"): frozenset({"dnse_bar"}),
     ("HOSE", "TRADE"): frozenset({"dnse_trade"}),
     ("HOSE", "BAR"): frozenset({"dnse_bar"}),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class StableL2Acquisition:
+    """One physical L2 edge shared by logical snapshot/delta bindings.
+
+    The catalog deliberately keeps the two public products distinct.  This
+    small runtime record is the complementary physical identity: it lets the
+    existing venue ingestor and Rust core own exactly one subscription/state
+    machine for that book.
+    """
+
+    provider_protocol: str
+    depth_per_side: int
+    rest_snapshot_url: str | None
+    snapshot_refresh_seconds: int | None
+
+    def validate(self, source: StableSourceBinding, acquisition: "StableAcquisitionBinding") -> None:
+        if source.feed not in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}:
+            raise ValueError("L2 acquisition can only back book bindings")
+        if not 1 <= self.depth_per_side <= 10_000:
+            raise ValueError("L2 depth is outside bounded range")
+        if acquisition.mode != "RUST_NATIVE" or acquisition.sequence_policy != "CONTIGUOUS":
+            raise ValueError("L2 acquisition requires lossless Rust-native continuity")
+        if self.provider_protocol == "BINANCE_DIFF_DEPTH":
+            if (
+                source.instrument.identity.venue != "BINANCE"
+                or source.instrument.identity.market not in {"USDM", "SPOT"}
+                or acquisition.provider_kind
+                != f"binance_{source.instrument.identity.market.lower()}_book"
+                or acquisition.native_channel
+                != f"{source.instrument.native_symbol.lower()}@depth@100ms"
+                or self.rest_snapshot_url
+                != (
+                    "https://fapi.binance.com/fapi/v1/depth"
+                    if source.instrument.identity.market == "USDM"
+                    else "https://api.binance.com/api/v3/depth"
+                )
+                or self.snapshot_refresh_seconds is None
+                or not 5 <= self.snapshot_refresh_seconds <= 300
+            ):
+                raise ValueError("Binance L2 acquisition differs from documented provider edge")
+            return
+        if self.provider_protocol == "OKX_PUBLIC_BOOKS":
+            if (
+                source.instrument.identity.venue != "OKX"
+                or source.instrument.identity.market not in {"SWAP", "FUTURES", "SPOT"}
+                or acquisition.provider_kind != "okx_book"
+                or acquisition.native_channel != "books"
+                or self.rest_snapshot_url is not None
+                or self.snapshot_refresh_seconds is not None
+            ):
+                raise ValueError("OKX L2 acquisition differs from documented provider edge")
+            return
+        raise ValueError("L2 provider protocol is not certified")
+
+    def core_mapping(self) -> dict[str, object]:
+        return {
+            "provider_protocol": self.provider_protocol,
+            "depth_per_side": self.depth_per_side,
+        }
 
 
 def validate_shared_authority_record(authority: Mapping[str, Any]) -> None:
@@ -145,6 +210,7 @@ class StableAcquisitionBinding:
     sequence_policy: str
     websocket_url: str | None
     business_websocket_url: str | None
+    l2: StableL2Acquisition | None = None
     # Program rule 6: an unused feed is disabled by configuration and
     # zero-demand evidence, never deleted. The catalog keeps the capability so a
     # reviewed DataRequirement can re-enable it without a code change; this flag
@@ -168,6 +234,10 @@ class StableAcquisitionBinding:
         )
         if self.provider_kind not in allowed:
             raise ValueError("stable acquisition provider kind differs from catalog feed")
+        if self.l2 is not None:
+            self.l2.validate(source, self)
+        elif source.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}:
+            raise ValueError("book binding requires an explicit L2 acquisition")
         if self.provider_kind == "okx_bbo" and self.sequence_policy != "NONE":
             raise ValueError("OKX bbo-tbt is replace-only and cannot require sequence continuity")
         if self.mode == "RUST_NATIVE":
@@ -202,6 +272,16 @@ class StableAcquisitionBinding:
             or self.websocket_url is not None
         ):
             raise ValueError("Python vendor SDK acquisition is reserved for VN sources")
+
+    def l2_mapping(self) -> dict[str, object] | None:
+        if self.l2 is None:
+            return None
+        return {
+            "provider_protocol": self.l2.provider_protocol,
+            "depth_per_side": self.l2.depth_per_side,
+            "rest_snapshot_url": self.l2.rest_snapshot_url,
+            "snapshot_refresh_seconds": self.l2.snapshot_refresh_seconds,
+        }
 
     @staticmethod
     def _require_wss(value: str | None) -> None:
@@ -253,12 +333,35 @@ class StableAcquisitionPlan:
                 "sequence_policy", "websocket_url", "business_websocket_url",
             }
             if not isinstance(value, dict) or not required <= set(value) or (
-                set(value) - required - {"enabled"}
+                set(value) - required - {"enabled", "l2"}
             ):
                 raise ValueError("stable acquisition binding fields are incomplete or unknown")
             enabled = value.get("enabled", True)
             if not isinstance(enabled, bool):
                 raise ValueError("stable acquisition 'enabled' must be a boolean")
+            l2_raw = value.get("l2")
+            if l2_raw is not None:
+                if not isinstance(l2_raw, dict) or set(l2_raw) != {
+                    "provider_protocol", "depth_per_side", "rest_snapshot_url",
+                    "snapshot_refresh_seconds",
+                }:
+                    raise ValueError("stable L2 acquisition fields are incomplete or unknown")
+                l2 = StableL2Acquisition(
+                    provider_protocol=str(l2_raw["provider_protocol"]).upper(),
+                    depth_per_side=int(l2_raw["depth_per_side"]),
+                    rest_snapshot_url=(
+                        str(l2_raw["rest_snapshot_url"])
+                        if l2_raw["rest_snapshot_url"] is not None
+                        else None
+                    ),
+                    snapshot_refresh_seconds=(
+                        int(l2_raw["snapshot_refresh_seconds"])
+                        if l2_raw["snapshot_refresh_seconds"] is not None
+                        else None
+                    ),
+                )
+            else:
+                l2 = None
             bindings.append(StableAcquisitionBinding(
                 binding_id=str(value["binding_id"]),
                 mode=str(value["mode"]).upper(),
@@ -273,6 +376,7 @@ class StableAcquisitionPlan:
                     str(value["business_websocket_url"])
                     if value["business_websocket_url"] is not None else None
                 ),
+                l2=l2,
                 enabled=enabled,
             ))
         result = cls(
@@ -288,9 +392,94 @@ class StableAcquisitionPlan:
             raise ValueError("stable acquisition and source catalog binding sets differ")
         for item in result.bindings:
             item.validate(source_by_id[item.binding_id])
+        result._validate_l2_aliases(source_by_id)
         if result.canonical_topic != catalog.canonical_stream:
             raise ValueError("stable acquisition canonical topic differs from catalog")
         return result
+
+    def _validate_l2_aliases(
+        self, source_by_id: Mapping[str, StableSourceBinding]
+    ) -> None:
+        """Require a complete, equivalent snapshot/delta alias pair.
+
+        A source identifier is intentionally shared only by the two logical
+        book products.  Any partial/mismatched pair would let one public feed
+        claim a different physical state machine, so reject it before a role
+        can be configured.
+        """
+        grouped: dict[str, list[StableAcquisitionBinding]] = {}
+        for item in self.bindings:
+            if item.l2 is not None:
+                grouped.setdefault(source_by_id[item.binding_id].source_id, []).append(item)
+        for source_id, values in grouped.items():
+            sources = [source_by_id[item.binding_id] for item in values]
+            if (
+                len(values) != 2
+                or {item.feed for item in sources}
+                != {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}
+                or len({item.runtime for item in values}) != 1
+                or len({item.provider_kind for item in values}) != 1
+                or len({item.native_channel for item in values}) != 1
+                or len({item.l2 for item in values}) != 1
+                or len({item.instrument.instrument_uid for item in sources}) != 1
+            ):
+                raise ValueError(
+                    "stable L2 source aliases must be one complete equivalent book pair: "
+                    + source_id
+                )
+
+    @staticmethod
+    def _runtime_lane(
+        acquisition: StableAcquisitionBinding,
+        source: StableSourceBinding,
+    ) -> tuple[str, str]:
+        """Map provider metadata to an existing shared role, never a symbol role."""
+        if acquisition.runtime == "OKX" and source.instrument.identity.market in {"SWAP", "FUTURES"}:
+            # OKX public books/trades use the same documented public socket.
+            # Keep the long-lived role name stable while its binding set grows.
+            return "OKX", "SWAP"
+        return acquisition.runtime, source.instrument.identity.market
+
+    def _physical_entries(
+        self,
+        *,
+        source_by_id: Mapping[str, StableSourceBinding],
+        selected_ids: frozenset[str],
+    ) -> tuple[tuple[StableSourceBinding, StableAcquisitionBinding], ...]:
+        """Coalesce only the two logical aliases of one L2 book.
+
+        The core and native ingestor consume physical provider inputs. Public
+        query still receives distinct canonical BOOK_SNAPSHOT/BOOK_DELTA
+        payloads, produced from that one input/state machine.
+        """
+        aliases_by_source: dict[str, frozenset[str]] = {}
+        for item in self.bindings:
+            if item.l2 is not None:
+                source_id = source_by_id[item.binding_id].source_id
+                aliases_by_source[source_id] = frozenset(
+                    value.binding_id
+                    for value in self.bindings
+                    if value.l2 is not None
+                    and source_by_id[value.binding_id].source_id == source_id
+                )
+        result: list[tuple[StableSourceBinding, StableAcquisitionBinding]] = []
+        seen: set[tuple[str, str]] = set()
+        for binding_id in sorted(selected_ids):
+            source = source_by_id[binding_id]
+            acquisition = next(item for item in self.bindings if item.binding_id == binding_id)
+            if acquisition.l2 is None:
+                identity = ("binding", binding_id)
+            else:
+                aliases = aliases_by_source[source.source_id]
+                if not aliases.issubset(selected_ids):
+                    raise ValueError(
+                        "stable L2 runtime selection must include both snapshot/delta aliases"
+                    )
+                identity = ("l2", source.source_id)
+            if identity not in seen:
+                seen.add(identity)
+                result.append((source, acquisition))
+        return tuple(result)
 
     def core_config(
         self,
@@ -317,11 +506,11 @@ class StableAcquisitionPlan:
         if not selected_ids or not selected_ids.issubset(source_by_id):
             raise ValueError("stable core binding selection is empty or unknown")
         bindings = []
-        for binding_id in sorted(selected_ids):
-            source = source_by_id[binding_id]
-            acquisition = acquisitions[binding_id]
+        for source, acquisition in self._physical_entries(
+            source_by_id=source_by_id, selected_ids=selected_ids
+        ):
             identity = source.instrument.identity
-            bindings.append({
+            item = {
                 "provider": source.provider,
                 "venue": identity.venue,
                 "market": identity.market,
@@ -338,7 +527,10 @@ class StableAcquisitionPlan:
                 "normalizer_version": source.normalizer_version,
                 "require_final_bar": source.require_final_bar,
                 "sequence_policy": acquisition.sequence_policy,
-            })
+            }
+            if acquisition.l2 is not None:
+                item["l2"] = acquisition.l2.core_mapping()
+            bindings.append(item)
         return {
             "core": {
                 "canonical_stream": self.canonical_topic,
@@ -443,25 +635,21 @@ class StableAcquisitionPlan:
         disabled_ids = selected_ids - enabled_ids
         if disabled_ids:
             raise ValueError("native ingestor selection contains disabled bindings")
-        grouped: dict[tuple[str, str], list[StableAcquisitionBinding]] = {}
-        for acquisition in self.bindings:
-            if (
-                acquisition.binding_id in selected_ids
-                and acquisition.enabled
-                and acquisition.mode == "RUST_NATIVE"
-            ):
-                source = source_by_id[acquisition.binding_id]
-                grouped.setdefault(
-                    (acquisition.runtime, source.instrument.identity.market), []
-                ).append(acquisition)
+        grouped: dict[tuple[str, str], list[tuple[StableSourceBinding, StableAcquisitionBinding]]] = {}
+        for source, acquisition in self._physical_entries(
+            source_by_id=source_by_id, selected_ids=frozenset(selected_ids)
+        ):
+            if acquisition.enabled and acquisition.mode == "RUST_NATIVE":
+                grouped.setdefault(self._runtime_lane(acquisition, source), []).append(
+                    (source, acquisition)
+                )
         result = {}
         for (runtime, market), values in sorted(grouped.items()):
-            first = values[0]
+            _first_source, first = values[0]
             bindings = []
-            for acquisition in sorted(values, key=lambda item: item.binding_id):
-                source = source_by_id[acquisition.binding_id]
+            for source, acquisition in sorted(values, key=lambda item: item[1].binding_id):
                 identity = source.instrument.identity
-                bindings.append({
+                binding = {
                     "provider": source.provider,
                     "venue": identity.venue,
                     "market": identity.market,
@@ -471,13 +659,18 @@ class StableAcquisitionPlan:
                     "subscription_id": source.source_id,
                     "adapter_version": source.adapter_version,
                     "instrument_catalog_revision": catalog.catalog_revision,
-                    "feed": source.feed.value,
+                    "feed": (
+                        "BOOK" if acquisition.l2 is not None else source.feed.value
+                    ),
                     "delivery_class": (
                         "LATEST_STATE"
-                        if source.feed is FeedType.QUOTE
+                        if source.feed is FeedType.QUOTE and acquisition.l2 is None
                         else "LOSSLESS"
                     ),
-                })
+                }
+                if acquisition.l2 is not None:
+                    binding["l2"] = acquisition.l2_mapping()
+                bindings.append(binding)
             key = f"{runtime.lower()}-{market.lower()}"
             result[key] = {
                 "runtime": runtime,

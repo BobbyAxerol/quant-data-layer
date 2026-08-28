@@ -81,6 +81,7 @@ def _requirement(
     symbol: str,
     feed: DemandFeed,
     interval: str | None = None,
+    depth_levels: int = 0,
     basis_contract_type: str | None = None,
     basis_series: str | None = None,
 ) -> DataRequirement:
@@ -101,13 +102,15 @@ def _requirement(
         warmup_limit=700 if feed is DemandFeed.BAR else 0,
         max_freshness_ms=(
             3 * {"15m": 900_000, "1h": 3_600_000, "1d": 86_400_000}[interval]
-            if feed is DemandFeed.BAR else 15_000
+            if feed is DemandFeed.BAR else 60_000
+            if feed in {DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA} else 15_000
         ),
         priority=100,
         ttl_seconds=180,
         require_final_bars=feed is DemandFeed.BAR,
-        require_live=True,
+        require_live=feed in {DemandFeed.TRADE, DemandFeed.QUOTE, DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA},
         execution_grade=False,
+        depth_levels=depth_levels,
         configuration_revision=11,
         basis_contract_type=basis_contract_type,
         basis_series=basis_series,
@@ -317,6 +320,104 @@ class UniversalRealtimePlanTests(unittest.TestCase):
             1,
         )
         self.assertLessEqual(next_topology.service_role_count, plan.topology.service_role_count)
+
+    def test_book_aliases_share_one_native_subscription_and_one_core_state_machine(self):
+        requirements = (
+            _requirement(
+                consumer_id="alpha.binance.book",
+                venue="BINANCE",
+                market="USDM",
+                product_type="PERPETUAL",
+                symbol="BTCUSDT",
+                feed=DemandFeed.BOOK_SNAPSHOT,
+                depth_levels=100,
+            ),
+            _requirement(
+                consumer_id="alpha.binance.book",
+                venue="BINANCE",
+                market="USDM",
+                product_type="PERPETUAL",
+                symbol="BTCUSDT",
+                feed=DemandFeed.BOOK_DELTA,
+                depth_levels=100,
+            ),
+            _requirement(
+                consumer_id="alpha.okx.book",
+                venue="OKX",
+                market="SWAP",
+                product_type="PERPETUAL",
+                symbol="SOL-USDT-SWAP",
+                feed=DemandFeed.BOOK_SNAPSHOT,
+                depth_levels=100,
+            ),
+            _requirement(
+                consumer_id="alpha.okx.book",
+                venue="OKX",
+                market="SWAP",
+                product_type="PERPETUAL",
+                symbol="SOL-USDT-SWAP",
+                feed=DemandFeed.BOOK_DELTA,
+                depth_levels=100,
+            ),
+        )
+        inventory = ActiveDemandInventory(
+            revision=12,
+            requirements=requirements,
+            source_documents=(),
+            candidates=(),
+            exclusions=(),
+            input_sha256="b" * 64,
+        )
+        admission = admit_provider_metadata(inventory, self._metadata())
+        convergence = converge_active_demand(inventory, admission, self._policy(inventory))
+        plan = build_universal_realtime_plan(
+            inventory=inventory,
+            admission=admission,
+            convergence=convergence,
+            builder=ProductionCatalogBuilder(
+                catalog_revision=12,
+                source_policy_revision=12,
+                authority_revision=12,
+            ),
+        )
+        self.assertEqual(plan.binding_count, 4)
+        self.assertEqual(len(plan.topology.subscriptions), 2)
+        self.assertEqual({item.feed.value for item in plan.topology.subscriptions}, {"book"})
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = plan.bundle.write(Path(directory) / "books")
+            catalog = StableSourceCatalog.load(paths["source_catalog"])
+            acquisition = StableAcquisitionPlan.load(paths["acquisition_plan"], catalog=catalog)
+            book_pairs = {}
+            for source in catalog.bindings:
+                if source.feed.value.startswith("BOOK_"):
+                    book_pairs.setdefault(source.source_id, []).append(source)
+            self.assertEqual({len(items) for items in book_pairs.values()}, {2})
+            self.assertEqual(
+                {items[0].partition_key for items in book_pairs.values()},
+                {items[1].partition_key for items in book_pairs.values()},
+            )
+            authority = {
+                "schema": "qdl.authority-record.v1",
+                "slice_id": "phase112-book-test",
+                "revision": 12,
+                "mode": "RUST_SHADOW",
+                "candidate_image_digest": "sha256:" + "1" * 64,
+                "capability_manifest_digest": "2" * 64,
+                "contract_digest": "3" * 64,
+                "partition_plan_digest": "4" * 64,
+                "public_write_allowed": False,
+                "legacy_write_allowed": False,
+                "approved_by": "phase112-book-test",
+                "effective_at_ns": 1,
+            }
+            core = acquisition.core_config(
+                catalog=catalog,
+                authority=authority,
+                binding_ids=frozenset(plan.owners_by_binding),
+            )
+            self.assertEqual(len(core["core"]["bindings"]), 2)
+            self.assertTrue(all(item["l2"]["depth_per_side"] == 100 for item in core["core"]["bindings"]))
 
 
 if __name__ == "__main__":

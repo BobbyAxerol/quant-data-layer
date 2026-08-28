@@ -3,7 +3,7 @@
 The Phase 11 control plane owns selector resolution, capability admission and
 sharding.  This module deliberately does not rediscover symbols, invent a
 second catalog, or create a role per alpha/symbol.  It turns only admitted,
-selected TRADE/QUOTE/BAR slices into the existing stable catalog/acquisition
+selected TRADE/QUOTE/BAR/BOOK slices into the existing stable catalog/acquisition
 contracts used by the Rust canonical core and provider edges.
 """
 from __future__ import annotations
@@ -32,7 +32,8 @@ from qdl.runtime.production_catalog import (
 from qdl.demand.topology import DemandTopology
 
 
-_REALTIME_FEEDS = frozenset({DemandFeed.TRADE, DemandFeed.QUOTE, DemandFeed.BAR})
+_BOOK_FEEDS = frozenset({DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA})
+_REALTIME_FEEDS = frozenset({DemandFeed.TRADE, DemandFeed.QUOTE, DemandFeed.BAR, *_BOOK_FEEDS})
 _PURPOSE_TO_GRADE = {
     DemandPurpose.EXECUTION: ConsumerGrade.EXECUTION,
     DemandPurpose.ALPHA: ConsumerGrade.ALPHA,
@@ -43,6 +44,8 @@ _INGESTION_FEED = {
     DemandFeed.TRADE: IngestionFeedType.TRADE,
     DemandFeed.QUOTE: IngestionFeedType.BBO,
     DemandFeed.BAR: IngestionFeedType.BAR,
+    DemandFeed.BOOK_SNAPSHOT: IngestionFeedType.BOOK,
+    DemandFeed.BOOK_DELTA: IngestionFeedType.BOOK,
 }
 _GRADE_RANK = {
     ConsumerGrade.EXECUTION: 0,
@@ -55,10 +58,10 @@ _GRADE_RANK = {
 class UniversalRealtimePlan:
     """One dark catalog/acquisition projection for all admitted realtime demand.
 
-    ``topology`` contains only native TRADE/BBO subscriptions. Final BAR is
+    ``topology`` contains native TRADE/BBO/BOOK subscriptions. Final BAR is
     owned by the shared REST close-confirmation edge and is accounted for
-    separately. Reference data and L2 remain explicitly outside the Phase
-    11.2 plane rather than being accidentally claimed as served.
+    separately. Snapshot/delta book aliases coalesce into one physical
+    provider subscription; reference remains bounded on-demand REST data.
     """
 
     schema: str
@@ -165,6 +168,7 @@ class ProviderRealtimeBinding:
     native_channel: str
     websocket_url: str | None
     business_websocket_url: str | None
+    l2: Mapping[str, object] | None
     catalog_revision: int
     demand_revision: int
 
@@ -197,8 +201,8 @@ class ProviderRealtimeBinding:
             ):
                 raise ValueError("final BAR must use the shared REST close-confirmation edge")
             return
-        if self.feed not in {FeedType.TRADE, FeedType.QUOTE}:
-            raise ValueError("provider realtime binding feed is outside Phase 11.2")
+        if self.feed not in {FeedType.TRADE, FeedType.QUOTE, FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}:
+            raise ValueError("provider realtime binding feed is unsupported")
         if (
             self.mode != "RUST_NATIVE"
             or self.require_final_bar
@@ -206,6 +210,12 @@ class ProviderRealtimeBinding:
             or not self.websocket_url
         ):
             raise ValueError("native provider binding contract is invalid")
+        if self.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}:
+            if not isinstance(self.l2, Mapping):
+                raise ValueError("BOOK provider binding has no L2 acquisition contract")
+            return
+        if self.l2 is not None:
+            raise ValueError("non-BOOK provider binding cannot carry L2 acquisition")
 
 
 def provider_realtime_bindings(
@@ -266,6 +276,7 @@ def provider_realtime_bindings(
                     str(acquisition["business_websocket_url"])
                     if acquisition["business_websocket_url"] is not None else None
                 ),
+                l2=(dict(acquisition["l2"]) if acquisition.get("l2") is not None else None),
                 catalog_revision=int(plan.bundle.source_catalog["catalog_revision"]),
                 demand_revision=plan.demand.revision,
             )
@@ -336,6 +347,14 @@ def build_universal_realtime_plan(
             requirement.feed,
             requirement.interval,
         )
+        book_fields = (
+            {
+                "depth_per_side": requirement.depth_levels,
+                "max_freshness_ms": requirement.max_freshness_ms,
+                "require_live": requirement.require_live,
+            }
+            if requirement.feed in _BOOK_FEEDS else {}
+        )
         demand = ProductionDemand(
             consumer_id=requirement.consumer_id,
             consumer_grade=grade,
@@ -346,6 +365,7 @@ def build_universal_realtime_plan(
             feed=feed,
             interval=requirement.interval,
             source_policy_id=requirement.source_policy_id,
+            **book_fields,
         )
         existing = selected.get(key)
         if existing is None:
@@ -367,6 +387,15 @@ def build_universal_realtime_plan(
                     feed=demand.feed,
                     interval=demand.interval,
                     source_policy_id=demand.source_policy_id,
+                    **(
+                        {
+                            "depth_per_side": demand.depth_per_side,
+                            "max_freshness_ms": demand.max_freshness_ms,
+                            "require_live": demand.require_live,
+                        }
+                        if demand.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}
+                        else {}
+                    ),
                 ),
                 owners,
             )

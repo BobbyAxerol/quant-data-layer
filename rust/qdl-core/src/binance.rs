@@ -50,6 +50,7 @@ pub fn validate_stream(stream: &str) -> Result<(), String> {
     }
     if !(normalized.ends_with("@trade")
         || normalized.ends_with("@bookTicker")
+        || normalized.ends_with("@depth@100ms")
         || normalized.contains("@kline_"))
     {
         return Err(format!("unsupported Binance USD-M stream: {normalized}"));
@@ -112,6 +113,11 @@ fn native_stream(decoded: &Value) -> Result<String, String> {
         // discriminator. Infer only the documented full BBO shape; no
         // incomplete/control frame can be promoted to a quote subscription.
         None if is_direct_book_ticker(decoded) => format!("{symbol}@bookTicker"),
+        // Diff-depth frames also omit the generic event discriminator on the
+        // documented direct control socket.  Require the complete sequence and
+        // side-update shape; a generic JSON/control frame cannot become an L2
+        // subscription by inference.
+        None if is_direct_diff_depth(decoded) => format!("{symbol}@depth@100ms"),
         None => return Err("Binance native frame missing event type".into()),
     };
     validate_stream(&stream)?;
@@ -126,6 +132,13 @@ fn is_direct_book_ticker(decoded: &Value) -> bool {
                 .and_then(Value::as_str)
                 .is_some_and(|value| !value.is_empty())
         })
+}
+
+fn is_direct_diff_depth(decoded: &Value) -> bool {
+    decoded.get("U").and_then(Value::as_u64).is_some()
+        && decoded.get("u").and_then(Value::as_u64).is_some()
+        && decoded.get("b").and_then(Value::as_array).is_some()
+        && decoded.get("a").and_then(Value::as_array).is_some()
 }
 
 /// Decode either a legacy combined stream frame or a direct frame received
@@ -233,5 +246,10 @@ mod tests {
             decode_subscribed(r#"{"e":"kline","s":"BTCUSDT","k":{"i":"1m","x":true}}"#.into())
                 .unwrap();
         assert_eq!(bar.stream, "btcusdt@kline_1m");
+        let book = decode_subscribed(
+            r#"{"s":"BTCUSDT","U":10,"u":10,"pu":9,"b":[["1","2"]],"a":[["3","4"]]}"#.into(),
+        )
+        .unwrap();
+        assert_eq!(book.stream, "btcusdt@depth@100ms");
     }
 }
