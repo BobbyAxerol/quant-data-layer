@@ -136,8 +136,35 @@ class StableRuntimeRefreshTests(unittest.TestCase):
             self.assertEqual(
                 len(production["slices"]), result["promotion_binding_count"]
             )
+            catalog = StableSourceCatalog.load(CATALOG_PATH)
+            acquisition = StableAcquisitionPlan.load(
+                ACQUISITION_PATH, catalog=catalog
+            )
+            all_bindings_core = acquisition.core_config(
+                catalog=catalog,
+                authority=json.loads((bundle / "runtime/authority.json").read_text()),
+            )
+            l2_bindings = [
+                item["l2"]
+                for item in all_bindings_core["core"]["bindings"]
+                if item.get("l2") is not None
+            ]
+            self.assertTrue(l2_bindings)
+            self.assertTrue(
+                all(item["snapshot_refresh_seconds"] == 30 for item in l2_bindings)
+            )
             self.assertTrue(generic_subscriptions.isdisjoint(production_subscriptions))
-            self.assertEqual(len(production_subscriptions), len(scope.binding_ids))
+            # The promotion scope is logical: each L2 snapshot/delta product
+            # remains independently authorized. The runtime coalesces that
+            # pair onto one physical provider subscription/state machine.
+            self.assertEqual(
+                production_subscriptions,
+                {
+                    item["source_id"]
+                    for item in production["core"]["bindings"]
+                },
+            )
+            self.assertLessEqual(len(production_subscriptions), len(scope.binding_ids))
             self.assertEqual(
                 production["promotion_scope_digest"], scope.digest()
             )

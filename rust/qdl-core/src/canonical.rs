@@ -158,21 +158,32 @@ fn base_envelope(
     source_sequence: String,
     source_event_time_ms: i64,
 ) -> Result<EventEnvelope, String> {
+    base_envelope_with_discriminator(fixture, feed, source_sequence, source_event_time_ms, None)
+}
+
+fn base_envelope_with_discriminator(
+    fixture: &TradeFixture,
+    feed: &str,
+    source_sequence: String,
+    source_event_time_ms: i64,
+    event_discriminator: Option<&[u8]>,
+) -> Result<EventEnvelope, String> {
     let context = &fixture.context;
     validate_shadow_context(context)?;
     let raw_bytes = canonical_json(&fixture.raw)?;
-    let event_id = deterministic_event_id(
-        &[
-            b"2",
-            context.venue.as_bytes(),
-            context.market.as_bytes(),
-            context.instrument_uid.as_bytes(),
-            feed.as_bytes(),
-            context.source_id.as_bytes(),
-            source_sequence.as_bytes(),
-        ],
-        16,
-    )?;
+    let mut event_identity = vec![
+        b"2".as_slice(),
+        context.venue.as_bytes(),
+        context.market.as_bytes(),
+        context.instrument_uid.as_bytes(),
+        feed.as_bytes(),
+        context.source_id.as_bytes(),
+        source_sequence.as_bytes(),
+    ];
+    if let Some(value) = event_discriminator {
+        event_identity.push(value);
+    }
+    let event_id = deterministic_event_id(&event_identity, 16)?;
     Ok(EventEnvelope {
         schema_name: format!("qdl.marketdata.{feed}"),
         schema_major: 2,
@@ -768,7 +779,16 @@ pub fn canonicalize_l2_ready_snapshot(
         .ok_or_else(|| "L2 snapshot requires a verified readable book view".to_owned())?;
     let source_time_ms = l2_source_time_ms(fixture, transition)?;
     let source_sequence = format!("g{}:{}", view.generation, view.last_sequence);
-    let mut envelope = base_envelope(fixture, "book_snapshot", source_sequence, source_time_ms)?;
+    let materialization_discriminator = transition
+        .materialized_snapshot_at_ms
+        .map(|value| format!("materialized:{value}"));
+    let mut envelope = base_envelope_with_discriminator(
+        fixture,
+        "book_snapshot",
+        source_sequence,
+        source_time_ms,
+        materialization_discriminator.as_deref().map(str::as_bytes),
+    )?;
     let unit = quantity_unit(&fixture.context)?;
     let mut levels = l2_levels(&view.bids, unit)?;
     levels.extend(l2_levels(&view.asks, unit)?);

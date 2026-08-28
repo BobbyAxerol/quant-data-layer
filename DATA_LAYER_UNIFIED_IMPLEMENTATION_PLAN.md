@@ -21334,6 +21334,111 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         only `query_v2_1`, `query_v2_2`, `stream_v2_active` and
         `stream_v2_passive` under the existing r11 runtime. Run the same
         79-product V2-only receipt only after those readers report ready.
+        **Reader r11 packet (`APPROVED / IN PROGRESS`, 2026-08-28):** source
+        commit `b116c7271e355122ef9199978455811999c82918` was built once as
+        `qdl-v2-python:2.0.0-b116c72`
+        (`sha256:25f74a0aa5b0f151e6c7352335c807ec0f1ad80af387869f1f0179e76abd0ba6`).
+        The exact role set is `query_v2_1`, `query_v2_2`,
+        `stream_v2_active`, and `stream_v2_passive`, each currently on the
+        rollback image `qdl-v2-python:2.0.0-32fa3cc`
+        (`sha256:a4fedf5ada3b905daab2ddd58de119467d5d7afde7d4ab277e29cfa5b695ec6e`).
+        Apply uses the existing `qdl_v2_stable_candidate` project, successor
+        r11 rollout environment and `--no-deps --force-recreate`, one reader
+        at a time. After every recreate, require container running,
+        `OOMKilled=false`, `restart=0` and its existing readiness endpoint;
+        the peer stream lease remains the only writer during a stream handoff.
+        Rollback is the inverse role-by-role recreate to the exact `32fa3cc`
+        image. This packet excludes every other role, Kafka/Redis/SQLite,
+        durable offsets, provider ingress, Rust/core/projector, V1, Trading
+        System, alpha and all order paths. It permits no cache flush, state
+        deletion, topology mutation or authority-route change.
+        **Reference capability correction (`CONFIRMED / IN PROGRESS`,
+        2026-08-28):** the first post-reader receipt failed closed before any
+        product read with `V2 reference-data batch is not enabled for this
+        runtime`. Sanitized runtime inspection proved both
+        `QDL_STABLE_REFERENCE_DATA_ENABLED` and
+        `QDL_STABLE_PROVIDER_ADMISSION_URL` were unset. The source already
+        contains the reviewed `docker-compose.phase105c-c2.override.yml` for
+        exactly this C2 product: it enables reference data and the private
+        `rust_core` admission URL only on `query_v2_1` and `query_v2_2`.
+        It does not change stream, Rust, projector, ingress, V1, offsets,
+        cache, identities, topology, Trading System, alpha or order handling.
+        The failed disposable client wrote no receipt and its exact empty
+        evidence namespace is the only disposable state eligible for cleanup.
+        Apply only this existing override while role-by-role recreating the two
+        query replicas on `b116c72`; verify TLS readiness and then rerun the
+        same 79-product V2-only receipt. Rollback recreates only these two
+        query roles on `32fa3cc` without the C2 override.
+        **Verified-L2 snapshot materialization correction (`APPROVED / IN
+        PROGRESS`, 2026-08-28):** the corrected receipt then reached the real
+        V2 book products but failed closed at the existing `60s` freshness
+        contract for `BOOK_SNAPSHOT`. A bounded read-only canonical-cache
+        probe proves all twelve physical books have fresh, sequence-verified
+        `BOOK_DELTA` events; the defect is semantic: the acquisition catalog
+        already declares `snapshot_refresh_seconds: 30`, but the generated
+        Rust core binding discarded that field. The core therefore retained a
+        valid book and streamed deltas while the last consumer-visible
+        snapshot aged indefinitely. This is not a provider outage, missing
+        subscription, quality-policy failure or reason to relax freshness.
+
+        **Approved minimum repair:** carry the existing bounded refresh field
+        through the stable runtime compiler into the provider-neutral Rust L2
+        core. For a READY, sequence-verified book, the next real accepted
+        provider frame at or after the declared interval materializes the
+        current verified top-N view as `BOOK_SNAPSHOT`; ordinary frames remain
+        lossless `BOOK_DELTA`, and a Binance REST keepalive never overwrites
+        the bridged book. The shared physical partition, generation, native
+        sequence, depth truncation, idempotency/dedup guard and signed cursor
+        semantics remain unchanged. This applies identically to Binance
+        diff-depth and OKX public-books, so it does not turn a venue-specific
+        workaround into a new product surface.
+
+        **Source/test gate:** reject absent/out-of-range refresh values;
+        prove compiler propagation; prove Binance keepalive and OKX update
+        materialize only when due, preserve the verified view/sequence, and
+        never publish a snapshot after gap/resync; retain existing L2 and
+        stable-deployment regressions. Run the smallest locked Rust/Python
+        scope matrix before build. No synthetic provider datum may certify the
+        runtime repair.
+
+        **Bounded runtime packet after source gate:** build exactly one
+        immutable Rust image and refresh only the existing successor runtime
+        JSON files, preserving `stable.env`, identities, Kafka offsets,
+        Redis, SQLite and all volumes. Serially recreate only `rust_core`,
+        `rust_core_2` and `rust_core_3` at their existing `512 MiB` bound;
+        their existing group naturally rebalances. The only permitted
+        data-plane effect is normal canonical materialized snapshots from
+        already admitted real raw frames. Rollback is role-by-role to
+        `sha256:11a2819fae4d8cc0bcbaa9473e59d612b1f0aea82fca34768c585a865e8282a1`
+        and the exact backed-up runtime directory. V1, ingress, projectors,
+        query/stream readers, Kafka topology/offsets, Redis/SQLite state,
+        Trading System, alpha and order paths remain excluded. Acceptance is
+        the same V2-only 79-product receipt after all twelve books expose a
+        fresh verified snapshot and delta; no SLA relaxation or alternate
+        provider is permitted.
+        **Verified-L2 source gate (`PASS / SOURCE-ONLY`, 2026-08-28):** the
+        stable compiler now carries the already validated `30s` L2 refresh
+        cadence into every generated core binding. The provider-neutral Rust
+        core records only the last successfully durable snapshot observation
+        per physical book. A due `DELTA` now publishes its original delta
+        *and* one materialized verified snapshot with the next logical
+        partition sequence; a due Binance REST keepalive publishes only that
+        snapshot and never replaces the live bridged book. The snapshot keeps
+        its native generation/sequence and top-N view; an internal
+        observation discriminator makes an unchanged native sequence
+        idempotency-distinct without changing the public `source_sequence`
+        format. Gap/resync/duplicate transitions remain non-materializable.
+
+        Source evidence: focused Rust realtime-core tests **29 passed, 1
+        documented ignore**, Rust canonical/L2 tests **38 passed**, and the
+        stable-runtime compiler plus V2 query/stream/handoff matrix **83
+        passed**. `rustfmt --edition 2021 --check` passed for every edited
+        Rust file. The isolated containers mounted source read-only; the
+        Python matrix used `--network none`. Expected injected test diagnostics
+        (CLI argument validation, DNSE queue exhaustion and local gRPC GOAWAY)
+        did not produce a failure. No runtime role, image, provider request,
+        Kafka/Redis/SQLite state, V1, Trading System, alpha or order path has
+        changed in this source gate.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

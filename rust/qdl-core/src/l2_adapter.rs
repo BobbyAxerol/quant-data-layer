@@ -50,6 +50,10 @@ pub struct BookTransition {
     pub previous_sequence: Option<u64>,
     pub updates: Vec<BookLevelInput>,
     pub view: Option<BookView>,
+    /// Set only when the runtime emits a periodic materialized snapshot from
+    /// an already verified current view. It keeps native sequence semantics
+    /// intact while making the periodic observation idempotency-distinct.
+    pub materialized_snapshot_at_ms: Option<i64>,
 }
 
 impl BookTransition {
@@ -419,6 +423,7 @@ impl L2BookAdapter {
             previous_sequence,
             updates,
             view: self.core.view(),
+            materialized_snapshot_at_ms: None,
         }
     }
 

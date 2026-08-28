@@ -103,6 +103,7 @@ class StableL2Acquisition:
         return {
             "provider_protocol": self.provider_protocol,
             "depth_per_side": self.depth_per_side,
+            "snapshot_refresh_seconds": self.snapshot_refresh_seconds,
         }
 
 

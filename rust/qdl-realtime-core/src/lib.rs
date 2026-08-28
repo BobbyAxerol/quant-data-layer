@@ -11,7 +11,7 @@ use qdl_contracts::qdl::provider::v1::{
 use qdl_core::canonical::{
     canonicalize_l2_publication, canonicalize_trade, TradeContext, TradeFixture,
 };
-use qdl_core::l2_adapter::L2BookAdapter;
+use qdl_core::l2_adapter::{BookPublication, BookTransition, L2BookAdapter};
 use qdl_core::l2_book::{BookIdentity, BookOutcome};
 use qdl_core::okx::expand_data_frame;
 use qdl_core::transport::DurableRecord;
@@ -38,11 +38,13 @@ pub enum L2ProviderProtocol {
 pub struct L2Binding {
     pub provider_protocol: L2ProviderProtocol,
     pub depth_per_side: usize,
+    pub snapshot_refresh_seconds: u64,
 }
 
 impl L2Binding {
     fn validate(&self, binding: &CoreBinding) -> Result<(), CoreError> {
         if !(1..=10_000).contains(&self.depth_per_side)
+            || !(5..=300).contains(&self.snapshot_refresh_seconds)
             || binding.sequence_policy != SequencePolicy::Contiguous
         {
             return Err(CoreError::Configuration(
@@ -237,6 +239,7 @@ pub struct RealtimeCore {
     config: RealtimeCoreConfig,
     bindings: BTreeMap<String, CoreBinding>,
     l2_adapters: BTreeMap<String, L2BookAdapter>,
+    l2_snapshot_observed_at_ms: BTreeMap<String, i64>,
     partition_sequences: BTreeMap<String, u64>,
     ordering: OrderingTracker,
     seen_ids: HashSet<Vec<u8>>,
@@ -278,6 +281,7 @@ impl RealtimeCore {
             config,
             bindings,
             l2_adapters,
+            l2_snapshot_observed_at_ms: BTreeMap::new(),
             partition_sequences: BTreeMap::new(),
             ordering: OrderingTracker::new(4096),
             seen_ids: HashSet::new(),
@@ -656,7 +660,7 @@ impl RealtimeCore {
         };
 
         let canonical = match canonicalize_l2_publication(
-            &l2_fixture(binding, &raw, fixture_payload, partition_sequence),
+            &l2_fixture(binding, &raw, fixture_payload.clone(), partition_sequence),
             &transition,
         ) {
             Ok(value) => value,
@@ -672,37 +676,114 @@ impl RealtimeCore {
                 );
             }
         };
-        let Some(canonical) = canonical else {
+        let materialized_snapshot =
+            self.due_l2_materialized_snapshot(binding_key, l2, &raw, &transition);
+        let mut publications = Vec::new();
+        if let Some(canonical) = canonical {
+            let snapshot_observed_at_ms = if transition.publication == BookPublication::Snapshot {
+                l2_observed_at_ms(&transition, &raw)
+            } else {
+                None
+            };
+            publications.push((canonical, snapshot_observed_at_ms));
+        }
+        if let Some(snapshot_transition) = materialized_snapshot {
+            let Some(snapshot_partition_sequence) = partition_sequence.checked_add(1) else {
+                return self.quarantine(
+                    &raw,
+                    QuarantineReason::SemanticInvalid,
+                    "L2 materialized snapshot partition sequence overflow",
+                    materialized_at_ns,
+                );
+            };
+            let canonical = match canonicalize_l2_publication(
+                &l2_fixture(binding, &raw, fixture_payload, snapshot_partition_sequence),
+                &snapshot_transition,
+            ) {
+                Ok(Some(value)) => value,
+                Ok(None) | Err(_) => {
+                    if let Some(adapter) = self.l2_adapters.get_mut(binding_key) {
+                        adapter.request_resync(raw.connection_generation);
+                    }
+                    return self.quarantine(
+                        &raw,
+                        QuarantineReason::SemanticInvalid,
+                        "L2 materialized snapshot failed strict canonical projection",
+                        materialized_at_ns,
+                    );
+                }
+            };
+            publications.push((canonical, snapshot_transition.materialized_snapshot_at_ms));
+        }
+        if publications.is_empty() {
             return ProcessBatch {
                 canonical: vec![],
                 quarantines: vec![],
                 duplicates: usize::from(transition.outcome == BookOutcome::Duplicate),
                 filtered: usize::from(transition.outcome != BookOutcome::Duplicate),
             };
-        };
-        if self.seen_ids.contains(&canonical.event_id) {
-            return ProcessBatch {
-                canonical: vec![],
-                quarantines: vec![],
-                duplicates: 1,
-                filtered: 0,
-            };
         }
         let partition_key = l2_partition_key(binding);
-        let partition_sequence = canonical.partition_sequence;
-        self.partition_sequences
-            .insert(partition_key, partition_sequence);
-        self.remember(canonical.event_id.clone());
-        ProcessBatch {
-            canonical: vec![canonical_record(
+        let mut durable = Vec::new();
+        let mut duplicates = usize::from(transition.outcome == BookOutcome::Duplicate);
+        for (canonical, snapshot_observed_at_ms) in publications {
+            if self.seen_ids.contains(&canonical.event_id) {
+                duplicates = duplicates.saturating_add(1);
+                continue;
+            }
+            self.partition_sequences
+                .insert(partition_key.clone(), canonical.partition_sequence);
+            self.remember(canonical.event_id.clone());
+            if let Some(observed_at_ms) = snapshot_observed_at_ms {
+                self.l2_snapshot_observed_at_ms
+                    .insert(binding_key.to_owned(), observed_at_ms);
+            }
+            durable.push(canonical_record(
                 &self.config.canonical_stream,
                 canonical,
                 materialized_at_ns,
-            )],
+            ));
+        }
+        ProcessBatch {
+            canonical: durable,
             quarantines: vec![],
-            duplicates: 0,
+            duplicates,
             filtered: 0,
         }
+    }
+
+    fn due_l2_materialized_snapshot(
+        &self,
+        binding_key: &str,
+        l2: &L2Binding,
+        raw: &RawProviderEnvelope,
+        transition: &BookTransition,
+    ) -> Option<BookTransition> {
+        if transition.publication == BookPublication::Snapshot
+            || !transition.sequence_verified()
+            || !matches!(
+                transition.outcome,
+                BookOutcome::DeltaApplied | BookOutcome::Keepalive
+            )
+        {
+            return None;
+        }
+        let observed_at_ms = l2_observed_at_ms(transition, raw)?;
+        let refresh_ms = i64::try_from(l2.snapshot_refresh_seconds)
+            .ok()?
+            .saturating_mul(1_000);
+        let due = self
+            .l2_snapshot_observed_at_ms
+            .get(binding_key)
+            .map(|previous| observed_at_ms.saturating_sub(*previous) >= refresh_ms)
+            .unwrap_or(true);
+        if !due {
+            return None;
+        }
+        let mut snapshot = transition.clone();
+        snapshot.publication = BookPublication::Snapshot;
+        snapshot.materialized_snapshot_at_ms = Some(observed_at_ms);
+        Some(snapshot)
     }
 
     fn next_l2_partition_sequence(
@@ -768,6 +849,13 @@ impl RealtimeCore {
             filtered: 0,
         }
     }
+}
+
+fn l2_observed_at_ms(transition: &BookTransition, raw: &RawProviderEnvelope) -> Option<i64> {
+    let observed_at_ms = transition
+        .observed_at_ms
+        .unwrap_or(raw.received_at_ns / 1_000_000);
+    (observed_at_ms > 0).then_some(observed_at_ms)
 }
 
 fn binding_key(
@@ -1014,6 +1102,7 @@ mod tests {
         result.l2 = Some(L2Binding {
             provider_protocol: L2ProviderProtocol::BinanceDiffDepth,
             depth_per_side: 100,
+            snapshot_refresh_seconds: 30,
         });
         result
     }
@@ -1034,6 +1123,7 @@ mod tests {
         result.l2 = Some(L2Binding {
             provider_protocol: L2ProviderProtocol::OkxPublicBooks,
             depth_per_side: 100,
+            snapshot_refresh_seconds: 30,
         });
         result
     }
@@ -1110,6 +1200,143 @@ mod tests {
     }
 
     #[test]
+    fn binance_l2_due_materialized_snapshot_keeps_delta_continuity() {
+        let binding = binance_book_binding();
+        let mut core = core(binding.clone(), true);
+        let _ = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":99,"u":101,"pu":98,"E":1001,"b":[["60000","2"]],"a":[["60001","1"]]}"#,
+                    1,
+                ),
+                10,
+            )
+            .unwrap();
+        let ready = core
+            .process(
+                with_transport(
+                    raw(
+                        &binding,
+                        br#"{"lastUpdateId":100,"E":1000,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#,
+                        1,
+                    ),
+                    TransportProtocol::Http,
+                ),
+                11,
+            )
+            .unwrap();
+        assert_eq!(ready.canonical.len(), 1);
+
+        let early = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":102,"u":102,"pu":101,"E":2000,"b":[["60000","3"]],"a":[]}"#,
+                    1,
+                ),
+                12,
+            )
+            .unwrap();
+        assert_eq!(early.canonical.len(), 1);
+        let early_event = EventEnvelope::decode(early.canonical[0].payload.as_slice()).unwrap();
+        assert!(matches!(
+            early_event.payload,
+            Some(event_envelope::Payload::BookDelta(_))
+        ));
+
+        let due = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":103,"u":103,"pu":102,"E":31001,"b":[["60000","4"]],"a":[]}"#,
+                    1,
+                ),
+                13,
+            )
+            .unwrap();
+        assert_eq!(due.canonical.len(), 2);
+        let delta = EventEnvelope::decode(due.canonical[0].payload.as_slice()).unwrap();
+        let snapshot = EventEnvelope::decode(due.canonical[1].payload.as_slice()).unwrap();
+        assert!(matches!(
+            delta.payload,
+            Some(event_envelope::Payload::BookDelta(_))
+        ));
+        assert!(matches!(
+            snapshot.payload,
+            Some(event_envelope::Payload::BookSnapshot(_))
+        ));
+        assert_eq!(delta.source_sequence, snapshot.source_sequence);
+        assert_ne!(delta.event_id, snapshot.event_id);
+        assert_eq!(snapshot.partition_sequence, delta.partition_sequence + 1);
+    }
+
+    #[test]
+    fn binance_l2_due_keepalive_materializes_current_verified_view() {
+        let binding = binance_book_binding();
+        let mut core = core(binding.clone(), true);
+        let _ = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":99,"u":101,"pu":98,"E":1001,"b":[["60000","2"]],"a":[["60001","1"]]}"#,
+                    1,
+                ),
+                10,
+            )
+            .unwrap();
+        let initial = core
+            .process(
+                with_transport(
+                    raw(
+                        &binding,
+                        br#"{"lastUpdateId":100,"E":1000,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#,
+                        1,
+                    ),
+                    TransportProtocol::Http,
+                ),
+                11,
+            )
+            .unwrap();
+        let initial_snapshot =
+            EventEnvelope::decode(initial.canonical[0].payload.as_slice()).unwrap();
+
+        let updated = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":102,"u":102,"pu":101,"E":2000,"b":[["60000","3"]],"a":[]}"#,
+                    1,
+                ),
+                12,
+            )
+            .unwrap();
+        assert_eq!(updated.canonical.len(), 1);
+
+        let keepalive = core
+            .process(
+                with_transport(
+                    raw(
+                        &binding,
+                        br#"{"lastUpdateId":102,"E":31001,"bids":[["1","1"]],"asks":[["2","1"]]}"#,
+                        1,
+                    ),
+                    TransportProtocol::Http,
+                ),
+                13,
+            )
+            .unwrap();
+        assert_eq!(keepalive.canonical.len(), 1);
+        let snapshot = EventEnvelope::decode(keepalive.canonical[0].payload.as_slice()).unwrap();
+        let Some(event_envelope::Payload::BookSnapshot(book)) = snapshot.payload else {
+            panic!("due Binance keepalive must materialize a verified snapshot");
+        };
+        assert_eq!(book.native_sequence, "102");
+        assert_eq!(book.levels[0].price.as_ref().unwrap().source_text, "60000");
+        assert_ne!(initial_snapshot.event_id, snapshot.event_id);
+    }
+
+    #[test]
     fn binance_l2_gap_is_quarantined_and_requires_resync() {
         let binding = binance_book_binding();
         let mut core = core(binding.clone(), true);
@@ -1177,6 +1404,59 @@ mod tests {
             snapshot.canonical[0].partition_key,
             update.canonical[0].partition_key
         );
+    }
+
+    #[test]
+    fn okx_l2_due_materialized_snapshot_does_not_drop_update() {
+        let binding = okx_book_binding();
+        let mut core = core(binding.clone(), true);
+        let snapshot = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"arg":{"channel":"books","instId":"BTC-USDT-SWAP"},"action":"snapshot","data":[{"seqId":"30","prevSeqId":"-1","ts":"10","bids":[["60000","1","0","1"]],"asks":[["60001","1","0","1"]]}]}"#,
+                    7,
+                ),
+                10,
+            )
+            .unwrap();
+        assert_eq!(snapshot.canonical.len(), 1);
+        let early = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"arg":{"channel":"books","instId":"BTC-USDT-SWAP"},"action":"update","data":[{"seqId":"31","prevSeqId":"30","ts":"11","bids":[["60000","2","0","1"]],"asks":[]}]}"#,
+                    7,
+                ),
+                11,
+            )
+            .unwrap();
+        assert_eq!(early.canonical.len(), 1);
+
+        let due = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"arg":{"channel":"books","instId":"BTC-USDT-SWAP"},"action":"update","data":[{"seqId":"32","prevSeqId":"31","ts":"30010","bids":[["60000","3","0","1"]],"asks":[]}]}"#,
+                    7,
+                ),
+                12,
+            )
+            .unwrap();
+        assert_eq!(due.canonical.len(), 2);
+        let delta = EventEnvelope::decode(due.canonical[0].payload.as_slice()).unwrap();
+        let materialized = EventEnvelope::decode(due.canonical[1].payload.as_slice()).unwrap();
+        assert!(matches!(
+            delta.payload,
+            Some(event_envelope::Payload::BookDelta(_))
+        ));
+        let Some(event_envelope::Payload::BookSnapshot(book)) = materialized.payload else {
+            panic!("due OKX update must materialize a verified snapshot");
+        };
+        assert_eq!(book.native_sequence, "32");
+        assert!(book.sequence_verified);
+        assert_eq!(delta.source_sequence, materialized.source_sequence);
+        assert_ne!(delta.event_id, materialized.event_id);
     }
 
     #[test]
