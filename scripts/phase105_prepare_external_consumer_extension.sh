@@ -9,6 +9,7 @@ set -euo pipefail
 OUTPUT_DIR="${1:?usage: phase105_prepare_external_consumer_extension.sh OUTPUT_DIR SERVER_CA_FILE}"
 SERVER_CA_FILE="${2:?usage: phase105_prepare_external_consumer_extension.sh OUTPUT_DIR SERVER_CA_FILE}"
 CERT_DAYS="${QDL_PHASE105_EXTERNAL_CERT_DAYS:-90}"
+REQUESTED_ROLES="${QDL_PHASE105_EXTERNAL_ROLES:-monitoring,alpha-okx,reference-l2}"
 
 if [[ ! -f "${SERVER_CA_FILE}" ]]; then
   printf 'server CA file is unavailable: %s\n' "${SERVER_CA_FILE}" >&2
@@ -71,12 +72,26 @@ issue_jwt_key() {
   chmod 0444 "${directory}/public.pem"
 }
 
-issue_client monitoring 'spiffe://qdl/paper/monitoring-multivenue-stable'
-issue_client alpha-okx 'spiffe://qdl/paper/alpha-okx-stable'
-issue_client reference-l2 'spiffe://qdl/paper/reference-l2-stable'
-issue_jwt_key monitoring
-issue_jwt_key alpha-okx
-issue_jwt_key reference-l2
+IFS=',' read -r -a roles <<<"${REQUESTED_ROLES}"
+if [[ "${#roles[@]}" -eq 0 ]]; then
+  printf 'at least one approved external role is required\n' >&2
+  exit 64
+fi
+declare -A subjects=(
+  [monitoring]='spiffe://qdl/paper/monitoring-multivenue-stable'
+  [alpha-okx]='spiffe://qdl/paper/alpha-okx-stable'
+  [reference-l2]='spiffe://qdl/paper/reference-l2-stable'
+)
+declare -A seen=()
+for role in "${roles[@]}"; do
+  if [[ -z "${subjects[${role}]:-}" || -n "${seen[${role}]:-}" ]]; then
+    printf 'external role list is invalid: %s\n' "${role}" >&2
+    exit 64
+  fi
+  seen["${role}"]=1
+  issue_client "${role}" "${subjects[${role}]}"
+  issue_jwt_key "${role}"
+done
 
 # The first PEM is the active CA trusted by existing paper clients. The second
 # is additive and signs only the newly introduced external consumers.

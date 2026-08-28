@@ -20104,6 +20104,69 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       the workspace UID being `1001`; it left no temp file or source change.
       This is source-contract evidence only, not an image/bundle publication
       or runtime promotion.
+    - **Publication preflight/rollback map (`RECORDED`, 2026-08-28):** before
+      any new image build or role recreation, Docker metadata records the
+      exact current rollback selectors: `projector_v2`, `_2`, `_3` use
+      `sha256:f92d436aca46e564e1a043862e30676e072b5d02734fbcf0853e4681c635bdb0`;
+      `binance_bar_edge`, `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+      `stream_v2_passive` use
+      `sha256:0416d26b3b3832b5467e01cd50daa4e33f8539e99380280cf44ef536e75264b9`;
+      `ingestor_binance_usdm`, `ingestor_okx_swap` and `rust_core` use
+      `sha256:c8f3c55342f127ed498e4bcde8204bace2e2a8cb35d9e84a80ea5d6d97ac4d16`.
+      Their current config mounts resolve under
+      `/home/bobby/.local/state/qdl-v2/c36c2-20260827T165526Z/r11-barfix-b965276-20260827T1822Z/runtime`
+      (`/runtime` for Python, per-role `config.json`/`core.json` for Rust).
+      These are the only rollback selectors for this transaction; Kafka,
+      Redis, SQLite, V1, Trading System, alpha and data volumes are excluded.
+    - **Successor-bundle construction (`APPROVED / SOURCE-ONLY PREPARE`,
+      2026-08-28):** prepare one private, sealed successor directory from the
+      exact active r11 authority bytes and a private snapshot of the active
+      query environment. It may change only the two immutable image selectors,
+      the mounted runtime path, the public JWT key/subject map and the two
+      query/stream client-CA bundle files. The helper must retain all existing
+      public JWT keys and append exactly `stable-reference-l2-rs256-v1`; it
+      must fail closed on any key-ID or subject conflict. The active runtime
+      currently has the four pre-existing identities only, so its monitoring
+      and alpha-OKX certificates/keys remain valid.
+    - **Additive trust invariant:** create only the Reference/L2 external
+      identity under the private successor state; concatenate its public CA
+      with the currently mounted query/stream client-CA bundle, preserving the
+      prior external CA rather than rotating or invalidating monitoring and
+      alpha-OKX. Server CA/certificates, Kafka mesh material, internal client
+      identities and all existing private key bytes remain unchanged. The
+      successor packet records public SHA-256 values for the old/new trust
+      bundles, runtime files, image IDs, manifest and exact eleven-role rollback
+      map, never secret values. Dry-run and deterministic source tests must
+      prove authority-byte preservation, no identity conflict, no duplicated
+      PEM certificate, exact role scope and an invalid-input cleanup path
+      before any runtime action.
+    - **Successor compiler evidence (`PASS / SOURCE-ONLY`, 2026-08-28):**
+      added `qdl.certification.reference_l2_rollout` and its narrow CLI. The
+      compiler accepts only a private active-environment snapshot, current r11
+      authority/runtime, the prior external monitoring/alpha-OKX material, a
+      reference-only extension, public current client-CA snapshots and the
+      exact eleven-role rollback map. It writes a `0700` private output only
+      on `--apply`; its public packet contains hashes/role selectors only.
+      It preserves `authority.json` byte-for-byte, rebuilds the revision-6
+      runtime, generates a new bar-edge checkpoint path, normalizes the active
+      query's derived `QDL_DATA_JWT_*` values back into the Compose selector,
+      appends only the Reference/L2 key and appends its CA without dropping the
+      existing trust chain. The extension helper now supports a bounded
+      `QDL_PHASE105_EXTERNAL_ROLES` list; default behavior remains the prior
+      three identities, while this packet requests only `reference-l2`.
+    - **Source test evidence:** `python -m py_compile`, `bash -n` and
+      `git diff --check` passed. In a disposable `network=none`, read-only
+      Python image with the worktree mounted read-only, the focused bundle,
+      handoff, final-BAR and stable-deployment matrix passed `46/46` in
+      `5.927s`. It covers authority-byte preservation, exact key IDs, trust
+      append/de-duplication, key-conflict fail-closed cleanup, dry-run cleanup,
+      final-BAR ownership, stable Compose contract and existing C2 identity
+      behavior. A real temporary OpenSSL run of
+      `QDL_PHASE105_EXTERNAL_ROLES=reference-l2` created only requested
+      Reference/L2 identity material, retained no external CA private key and
+      verified the client certificate; its `/tmp` namespace was removed. No provider,
+      Docker runtime role, Kafka, Redis, SQLite, V1, Trading System, alpha or
+      order state was changed.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

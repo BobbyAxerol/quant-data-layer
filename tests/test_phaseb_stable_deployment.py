@@ -210,9 +210,9 @@ class StableDeploymentContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         for value in (
-            "issue_client monitoring",
-            "issue_client alpha-okx",
-            "issue_client reference-l2",
+            "QDL_PHASE105_EXTERNAL_ROLES",
+            "issue_client \"${role}\"",
+            "issue_jwt_key \"${role}\"",
             "spiffe://qdl/paper/monitoring-multivenue-stable",
             "spiffe://qdl/paper/alpha-okx-stable",
             "spiffe://qdl/paper/reference-l2-stable",
