@@ -20939,6 +20939,38 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         temporary V1 binding files only. No V1/V2 runtime, Kafka, Redis,
         SQLite, market-data, identity, authority or consumer state was
         removed.
+      - **Post-roll C2 freshness settle (`FAIL-CLOSED / RETRY FROM ZERO`,
+        2026-08-28):** the first C2 immediately after the four-reader stream
+        lease handoff passed mTLS/authentication but rejected the strict
+        `3,000ms` execution freshness requirement for Trading System / OKX
+        ETH `TRADE`. It made no V1 fallback, provider, order or consumer-route
+        mutation. A follow-up disposable read-only probe of that exact
+        requirement against **both** query replicas passed, proving the
+        rejection was the brief post-roll data-plane settle rather than a
+        persistent missing OKX feed. Do not weaken freshness policy. Remove
+        only this failed C2 namespace and start a fresh C2 after the current
+        strict queried slice is healthy.
+      - **C2 real no-order consumer acceptance (`PASS_V2_DATA_PLANE_ONLY`,
+        2026-08-28):** fresh receipt
+        `.../c2-accepted-20260828T125007Z/c2-receipt.json` passed after
+        `118.615s`. It covers exactly `28/28` manifest products across the
+        four named paper identities: Monitoring `4`, Trading System `12`,
+        Alpha-Binance `6`, Alpha-OKX `6` (`12` TRADE, `4` QUOTE, `12` BAR;
+        all recorded quality states `LIVE`). Both query replicas and the two
+        stream aliases participated in V2-primary warmup/signed replay and
+        reconnect. The six manifest-authorized Binance TRADE products passed
+        `V2_PRIMARY -> V1_FALLBACK -> V2_PRIMARY`; all `22` blocked fallback
+        routes made `0` V1 request. Receipt invariants are
+        `provider_connections=0`, `order_actions=0`, no secret values, no
+        synthetic provenance, and temporary client cursor removal. The
+        disposable client exited and left only its compact receipt (`35,440`
+        bytes) plus the secret-free current V1 runtime binding (`394` bytes);
+        empty stderr/exit/stdout artifacts were removed. It consumed about
+        `51` millicores and `204,197,888` bytes RSS. Post-run all four reader
+        and three projector roles are `running`, `restart=0`, `OOMKilled=false`,
+        bounded errors are clean, and projector lag is live-only `35` across
+        `6/6` partitions. This is same-host no-order acceptance, not a live
+        broker, independent-HA or order-path certification.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
