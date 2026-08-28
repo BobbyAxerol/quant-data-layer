@@ -20628,6 +20628,42 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         sealed successor packet that recreates only the three projector roles
         first. Query roles remain untouched until projector catch-up has zero
         new catalog/lineage rejects.
+      - **Historical-lineage immutable-image gate (`PASS / PROJECTOR-ONLY
+        PACKET NEXT`, 2026-08-28):** built exactly one new non-root Python
+        image from source commit `aad78f474efc1a9284d37f859fa87d300a13a1a4`:
+        `qdl-v2-python:2.0.0-aad78f4`, digest
+        `sha256:45008b1985263dd0e5bd28e5a08676f32ddab11db9d914a89d498e5cc92fef41`.
+        The image itself, with no source mount, network disabled, read-only
+        root, UID/GID `10001` and tmpfs-only `/tmp`, passed the rollout /
+        deployment / catalog-demand matrix **37/37** in `7.484s` and the
+        projector/catalog edge matrix **48/48** in `7.077s` with `1`
+        documented isolated-Redis skip. Expected negative-path fixture output
+        did not affect either exit status. This gate made no provider, Kafka,
+        Redis, SQLite or runtime mutation. The only next operation is a fresh
+        private successor packet whose rollback map is captured from the
+        currently running roles, followed by serial recreation of exactly
+        `projector_v2`, `projector_v2_2` and `projector_v2_3`; query, stream,
+        ingestor, Rust core, V1 and all execution paths remain excluded until
+        projector catch-up proves zero new catalog/lineage rejects.
+      - **Historical-lineage projector packet (`PREFLIGHT PASS / APPROVED TO
+        APPLY`, 2026-08-28):** sealed private packet
+        `/home/bobby/.local/state/qdl-v2/historical-lineage-aad78f4-20260828T112339Z/successor/rollout-packet.json`
+        has packet SHA-256
+        `5806b29dbe98003f40a7f7f0f501c5690b9ff98cc2f76a5f7b7b9149ea77527e`
+        and file SHA-256
+        `857aebe771bedbc314c8eed280783608db51a3f7785a4fc699b43158f24e78e7`.
+        It pins Python
+        `sha256:45008b1985263dd0e5bd28e5a08676f32ddab11db9d914a89d498e5cc92fef41`,
+        retains Rust
+        `sha256:11a2819fae4d8cc0bcbaa9473e59d612b1f0aea82fca34768c585a865e8282a1`,
+        catalog `6`, acquisition `13` and byte-identical `RUST_PRIMARY`
+        authority. Compose preflight passed. Its recorded rollback map pins
+        each projector to the observed `6bb6939...f0c91a5` image and the exact
+        r13 runtime directory; query remains r11 and is excluded from this
+        apply. The generated packet carries no secret values. Only the three
+        projector services may now be serially recreated with `--no-deps
+        --force-recreate`; a failure restores only already-rolled projectors
+        from this map before any query role is considered.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
