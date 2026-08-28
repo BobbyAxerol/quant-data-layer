@@ -21969,6 +21969,32 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         serially roll the same four approved reader roles, then repeat the
         single 79-product receipt. No other runtime role or data-plane state
         is authorized to change.
+        **Runtime exit (`PASS / SCOPE CLOSED`, 2026-08-28):** built the exact
+        committed reader image `qdl-v2-python:2.0.0-b355b1df`, digest
+        `sha256:ddebac59ad8808902673cc8dee3e52c7eb10aa8a9f8557656a757e675805d473`,
+        from `b355b1dfd0f885c0783aa3dfe26f80d6404df9a2`. After its isolated
+        image matrix passed **95/95** with **1 documented isolated-Redis
+        skip** in **8.795s**, serially recreated only `query_v2_1`,
+        `query_v2_2`, `stream_v2_active` and `stream_v2_passive`; all four are
+        now running that image. The real, bounded, V2-only acceptance receipt
+        at `reference-l2-final-b355b1df-20260828T201730Z/receipt.json`
+        (`sha256=cab5c5953561d079db8e1ee43073c20b87b5e8e1849daf2ec18f008f5600c568`)
+        passed **55/55** provider-backed reference products and **24/24**
+        durable L2 snapshot/delta products in **256.202s**. It recorded
+        `provider_connections=0`, `v1_requests=0`, `order_actions=0`, process
+        CPU `9` millicores and peak RSS `110944256` bytes. Native-BASIS
+        cooldowns were observed and recovered only through the one allowed
+        retry: BNB secondary once, SOL on both replicas once, ETH primary
+        once; every other product completed in one attempt. Every L2 product
+        had a digest and `gap_open=false`; snapshot routes can legitimately
+        resume at a later durable offset because an updated snapshot arrives
+        during reconnect, while the receipt's typed identity, replay and
+        sequence validation still passed. No V1/core/ingestor/projector,
+        Kafka, Redis, SQLite, Trading System, alpha or order role changed.
+        The previous c5dc92a reader image is the exact four-reader rollback;
+        the earlier mislabeled unused candidate is not a runtime dependency.
+        Cleanup removes only failed disposable receipt directories and `/tmp`
+        probes after this evidence is recorded.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
