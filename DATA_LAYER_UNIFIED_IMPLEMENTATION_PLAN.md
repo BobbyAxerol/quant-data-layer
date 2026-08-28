@@ -20902,6 +20902,43 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         approved serial four-reader roll using this already-built image and
         the existing C2 override; it must not recreate `rust_core` despite the
         query adapter's read-only internal admission URL reference.
+      - **C2 reader-roll preflight (`PASS / APPLY ORDER SEALED`, 2026-08-28):**
+        private rollback receipt
+        `.../historical-lineage-aad78f4-20260828T112339Z/c2-trust-roll-20260828T124050Z/rollback-map.json`
+        records the four live containers, exact image/runtime mounts and clean
+        state. `query_v2_1`/`query_v2_2` currently run
+        `sha256:3149e...a3f7eb2`; `stream_v2_active`/`stream_v2_passive`
+        currently run `sha256:45008b...92fef41`; all share the sealed
+        successor runtime and report `restart=0`, `OOMKilled=false`. Base plus
+        C2 override render the exact four reader roles with the expected
+        client-CA paths and no `rust_core` service override. Apply only in
+        order `query_v2_1 -> query_v2_2 -> stream_v2_passive ->
+        stream_v2_active`; the latter ordering keeps the named active stream
+        available while its passive peer reloads. Any failed role restores only
+        itself from this receipt and stops this packet.
+      - **C2 four-reader trust handoff (`PASS / FRESH C2 PERMITTED`,
+        2026-08-28):** recreated only `query_v2_1`, `query_v2_2`,
+        `stream_v2_passive`, then `stream_v2_active` with the existing
+        immutable `3149e...a3f7eb2` image, sealed successor runtime and C2
+        override. Both query replicas returned local-server and external
+        Monitoring mTLS `/health/ready=200`; both stream roles expose the
+        intended client-CA path and external Monitoring mTLS reached the
+        active `qdl-v2-stream-b` readiness endpoint with `200`. Stream lease
+        handoff is cleanly singular: `stream_v2_passive=READY`,
+        `stream_v2_active=STANDBY`. All four roles report `running`,
+        `restart=0`, `OOMKilled=false`; a 180-second bounded error scan has
+        zero permission/catalog/lineage/fatal/OOM matches. Projector consumer
+        lag remains live-only at `48` over `6/6` assigned partitions. No V1,
+        Kafka topology/offset, Redis, SQLite, authority, projector, ingestor,
+        Rust, Trading System, alpha or order component changed. The old failed
+        C2 evidence namespace is now eligible for exact-scope cleanup; then a
+        fresh C2 client may run from zero.
+      - **Failed-C2 cleanup (`PASS`, 2026-08-28):** removed only
+        `.../c2-retry-20260828T123038Z/` after recording its root cause. It
+        contained the zero-byte C2 receipt, bounded `6,595`-byte stderr and
+        temporary V1 binding files only. No V1/V2 runtime, Kafka, Redis,
+        SQLite, market-data, identity, authority or consumer state was
+        removed.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
