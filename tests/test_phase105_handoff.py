@@ -484,10 +484,11 @@ class Phase105HandoffTests(unittest.TestCase):
         self.assertIn("query_v2_2:", c2)
         self.assertIn("stream_v2_active:", c2)
         self.assertIn("stream_v2_passive:", c2)
-        self.assertNotRegex(c2, r"(?m)^  rust_core:\\s*$")
-        # C3.6 keeps the existing admission endpoint available to the query
-        # adapters. C2 can reference that endpoint but must never configure or
-        # recreate rust_core itself.
+        # C3.6 uses the already-existing Rust core as the private admission
+        # authority. C2 enables only its sealed listener; it creates no role,
+        # port, volume or alternate coordinator.
+        self.assertRegex(c2, r"(?m)^  rust_core:\s*$")
+        self.assertIn('QDL_PROVIDER_ADMISSION_ENABLED: "true"', c2)
         self.assertIn("QDL_STABLE_PROVIDER_ADMISSION_URL: http://rust_core:8300", c2)
         self.assertNotIn("entrypoint:", c2)
         self.assertNotIn("command:", c2)

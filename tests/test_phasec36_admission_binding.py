@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import unittest
+from pathlib import Path
 
 import httpx
 
@@ -47,6 +48,7 @@ from qdl.reference.contracts import (
 
 _SECRET = b"c36-provider-admission-test-secret-32"
 _LANE = ProviderLane("BINANCE", "USDM", "REFERENCE_NATIVE_BASIS")
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _instrument(symbol: str = "BTCUSDT") -> InstrumentRecord:
@@ -221,6 +223,29 @@ class RustAdmissionHttpTests(unittest.IsolatedAsyncioTestCase):
                 token_cost=1,
             ))
         await client.aclose()
+
+
+class RustAdmissionRuntimeComposeTests(unittest.TestCase):
+    def test_private_listener_is_image_sealed_and_c2_only_enables_existing_core(self):
+        policy = ROOT / "config/v2/provider-admission-policy-v1.json"
+        digest = hashlib.sha256(policy.read_bytes()).hexdigest()
+        stable = (ROOT / "docker-compose.v2-stable.yml").read_text(encoding="utf-8")
+        c2 = (ROOT / "docker-compose.phase105c-c2.override.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "QDL_PROVIDER_ADMISSION_ENABLED: ${QDL_STABLE_PROVIDER_ADMISSION_ENABLED:-false}",
+            stable,
+        )
+        self.assertIn(
+            "QDL_PROVIDER_ADMISSION_POLICY_PATH: /opt/qdl/config/v2/provider-admission-policy-v1.json",
+            stable,
+        )
+        self.assertIn(f"QDL_PROVIDER_ADMISSION_POLICY_SHA256: {digest}", stable)
+        self.assertIn(
+            "COPY config/v2/provider-admission-policy-v1.json /opt/qdl/config/v2/provider-admission-policy-v1.json",
+            (ROOT / "Dockerfile.phase8-rust").read_text(encoding="utf-8"),
+        )
+        self.assertIn("  rust_core:\n    environment:\n      QDL_PROVIDER_ADMISSION_ENABLED: \"true\"", c2)
+        self.assertNotIn("ports:", c2)
 
 
 class GovernedNativeBasisTests(unittest.IsolatedAsyncioTestCase):

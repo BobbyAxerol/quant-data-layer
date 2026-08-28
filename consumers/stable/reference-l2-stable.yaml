@@ -5,7 +5,7 @@ metadata:
   owner: data-platform
   subject: spiffe://qdl/paper/reference-l2-stable
   environment: paper
-  revision: 2
+  revision: 3
 spec:
   sdk_major: 2
   rollback_contract: V2
@@ -147,7 +147,7 @@ spec:
     feed: OPEN_INTEREST
     consumer_grade: RESEARCH
     source_policy_id: crypto_liquid_v2
-    interval: 1d
+    interval: null
     warmup_limit: 0
     max_freshness_ms: 86400000
     require_full_coverage: true
@@ -368,7 +368,7 @@ spec:
     feed: OPEN_INTEREST
     consumer_grade: RESEARCH
     source_policy_id: crypto_liquid_v2
-    interval: 1d
+    interval: null
     warmup_limit: 0
     max_freshness_ms: 86400000
     require_full_coverage: true
@@ -680,7 +680,7 @@ spec:
     feed: OPEN_INTEREST
     consumer_grade: RESEARCH
     source_policy_id: crypto_liquid_v2
-    interval: 1d
+    interval: null
     warmup_limit: 0
     max_freshness_ms: 86400000
     require_full_coverage: true
@@ -966,7 +966,7 @@ spec:
     feed: OPEN_INTEREST
     consumer_grade: RESEARCH
     source_policy_id: crypto_liquid_v2
-    interval: 1d
+    interval: null
     warmup_limit: 0
     max_freshness_ms: 86400000
     require_full_coverage: true
@@ -1044,7 +1044,7 @@ spec:
     feed: OPEN_INTEREST
     consumer_grade: RESEARCH
     source_policy_id: crypto_liquid_v2
-    interval: 1d
+    interval: null
     warmup_limit: 0
     max_freshness_ms: 86400000
     require_full_coverage: true

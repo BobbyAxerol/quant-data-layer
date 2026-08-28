@@ -582,7 +582,7 @@ class V2QueryService:
         request: ReferenceRequest,
         result: ReferenceBatchResult,
     ) -> QueryProblem | None:
-        if result.request is not request:
+        if result.request != request:
             return QueryProblem(
                 CanonicalErrorCode.CONFLICT,
                 "reference batch returned a result for a different request identity",

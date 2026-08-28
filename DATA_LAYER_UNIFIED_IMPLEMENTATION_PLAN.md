@@ -21496,6 +21496,98 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         explicit apply. No provider, container, Kafka/Redis/SQLite, V1,
         Trading System, alpha or order state changed in the source/dry-run
         gate.
+        **Runtime acceptance capacity repair (`APPROVED / IN PROGRESS`,
+        2026-08-28):** after the three-core roll, both query replicas became
+        `READY`, but the V2-only 79-product client still failed closed on a
+        durable book freshness check. Bounded diagnostics identify the actual
+        downstream cause: `stream_v2_active` rejects projector ingest with
+        `BackpressureRequired: bridge physical storage bound would be
+        violated`. Its durable spool contains `254,462` canonical records and
+        `589,124,183` payload bytes, zero consumer checkpoints, an
+        approximately `850 MB` SQLite main file and `2.36 GB` WAL against the
+        configured `3 GB` physical guard. No provider outage, V1 fallback,
+        data fabrication or relaxed freshness is involved. First perform a
+        non-destructive SQLite WAL checkpoint diagnostic/maintenance only; it
+        changes no logical event, offset, cache identity or retention policy.
+        If a reader pins the WAL, rolling-recreate only the existing active
+        stream role while passive remains available, then retry the same
+        checkpoint. No delete, flush, VACUUM, retention shortening, Kafka
+        operation, Redis/SQLite data deletion, V1, Trading System, alpha or
+        order mutation is permitted by this repair.
+        **Checkpoint and catch-up evidence (`PASS / IN PROGRESS`,
+        2026-08-28):** `PRAGMA wal_checkpoint(PASSIVE)` returned
+        `(0,574172,574172)` (no reader pinned the WAL); the bounded
+        `TRUNCATE` follow-up returned `(0,0,0)`. The main spool remained about
+        `855 MB`, its WAL became `0` before resuming normal bounded growth, and
+        no logical event, Kafka offset, consumer checkpoint, cache identity or
+        retention row was deleted. The existing active stream immediately
+        resumed projector admission. A V2-only mTLS/JWT probe then proved the
+        remaining freshness failures are a finite canonical backlog rather
+        than a provider or query schema failure: all twelve physical BOOK
+        partitions continue advancing, while source-time lag falls under live
+        catch-up (for example the slowest `1386s -> 1363s` in `20s`; several
+        other partitions reduce faster). Fresh partitions already return both
+        typed `BOOK_SNAPSHOT` and `BOOK_DELTA` through V2. Do not reset an
+        offset, delete cache or relax freshness to force this gate; wait for
+        the same durable backlog to reach the current watermark, then rerun
+        the exact 79-product V2-only acceptance.
+        **Reference/L2 semantic closure (`APPROVED / IN PROGRESS`,
+        2026-08-28):** the first current-watermark receipt exposed three
+        bounded defects, all inside the declared Reference/L2 product rather
+        than a reason to add topology. (1) `ReferenceBatch` is intentionally
+        allowed to return an immutable `replace(...)` result after cache or
+        singleflight coalescing, while the query boundary incorrectly compares
+        `ReferenceRequest` object identity with `is`; it must compare the
+        complete value contract instead. (2) Binance USD-M open interest is
+        a certified bounded history product, but OKX public open interest is
+        an explicitly snapshot-only provider product; the active demand and
+        acceptance builder must preserve `interval=null` for OKX rather than
+        sending a false `1d` history request or fabricating a series. (3) the
+        Rust admission server is already compiled into the existing
+        `rust_core` binary, but its sealed private listener was never enabled:
+        read-only inspection found every `QDL_PROVIDER_ADMISSION_*` variable
+        unset and `rust_core:8300` refused connection. Enable only that
+        existing private listener with its image-sealed policy SHA and the
+        existing stable-internal secret/Redis namespace; Python remains a
+        signed vendor adapter and Rust remains the only admission authority.
+
+        **Scope/invariants:** source changes are limited to the query batch
+        identity guard, provider-capability-aware Reference/L2 materialization
+        and acceptance request construction, plus the existing stable Compose
+        `rust_core` private admission binding. No new service, worker, image
+        family, topic, volume, public port, V1 route, Kafka offset/topology,
+        Redis flush, SQLite deletion, Trading System, alpha or order mutation
+        is authorized. The admission listener stays disabled by default for
+        ordinary stable deployments and is enabled only by the existing
+        Reference/L2 C2 override. Source exit requires focused query,
+        materializer, manifest, admission-binding and contract tests, including
+        copied/cache result identity and both Binance-history/OKX-snapshot OI
+        cases. Only after source exit may one immutable Python image be built
+        and the existing `rust_core`, `query_v2_1` and `query_v2_2` roles be
+        serially recreated with the C2 override; rollback is their exact
+        previous image/runtime map with the override removed. The final gate is
+        the same V2-only 79-product real-provider receipt, with no V1 read,
+        no direct provider credential in the consumer and `order_actions=0`.
+        **Source exit (`PASS / NO RUNTIME MUTATION`, 2026-08-28):** the query
+        guard now compares immutable request values, so a cache/singleflight
+        copy is accepted only when its complete request contract is equal;
+        a distinct instrument or product still fails closed. The demand and
+        materialized manifest now declare exactly five OKX Swap OI products as
+        snapshots (`interval=null`) while retaining five Binance USD-M OI
+        histories at `1d`; the public manifest advanced from revision `2` to
+        `3`. The materializer rejects any future snapshot-only capability that
+        is incorrectly declared as historical OI. The existing Rust image
+        already contains the verified policy at
+        `/opt/qdl/config/v2/provider-admission-policy-v1.json` with SHA-256
+        `e4a4330d…ca8053ad`; stable Compose now passes that sealed policy only
+        to the existing `rust_core`, disabled by default, and C2 enables the
+        listener without a new port, role, volume or coordinator. Read-only,
+        network-disabled focused tests passed **49/49 in 8.084s** across V2
+        query cache identity, OI capability/manifest/materializer, Rust
+        admission wire/Compose, handoff and active-demand consistency.
+        `py_compile` and `git diff --check` passed. No provider, Docker role,
+        image, Kafka, Redis, SQLite, V1, Trading System, alpha or order state
+        changed in this source gate.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

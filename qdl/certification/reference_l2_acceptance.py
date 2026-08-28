@@ -144,13 +144,16 @@ def _reference_request(requirement: DataRequirement, *, now_ns: int) -> Referenc
         "require_full_coverage": requirement.require_full_coverage,
         "deadline_ms": 20_000,
     }
-    if product in {
+    history_product = product in {
         ReferenceProduct.FUNDING_RATE,
-        ReferenceProduct.OPEN_INTEREST,
         ReferenceProduct.LONG_SHORT_RATIO,
         ReferenceProduct.TAKER_FLOW,
         ReferenceProduct.BASIS,
-    }:
+    } or (
+        product is ReferenceProduct.OPEN_INTEREST
+        and requirement.interval is not None
+    )
+    if history_product:
         start_ns, end_ns = _history_bounds(requirement.feed, now_ns)
         values.update({
             "start_time_ns": start_ns,

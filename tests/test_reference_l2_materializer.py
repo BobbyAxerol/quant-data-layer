@@ -281,6 +281,15 @@ class ReferenceL2MaterializerTests(unittest.TestCase):
             and by_uid[row["instrument_uid"]]["market"] == "SWAP"
             for row in requirements
         ))
+        for requirement in requirements:
+            if requirement["feed"] != FeedType.OPEN_INTEREST.value:
+                continue
+            instrument = by_uid[requirement["instrument_uid"]]
+            if instrument["venue"] == "BINANCE":
+                self.assertEqual(requirement["interval"], "1d")
+            else:
+                self.assertEqual(instrument["venue"], "OKX")
+                self.assertIsNone(requirement["interval"])
 
     def test_output_is_idempotent_against_its_own_documents(self):
         first = self._materialize(_metadata())

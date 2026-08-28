@@ -83,7 +83,9 @@ requirements:
     configuration_revision: 1
   - <<: *okx_reference
     feed: OPEN_INTEREST
-    interval: 1d
+    # OKX public OI is a current snapshot. Do not claim a synthetic 1d
+    # history window; a future durable OI series is a separate product.
+    interval: null
     max_freshness_ms: 86400000
   - <<: *okx_reference
     feed: MARK_PRICE

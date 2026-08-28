@@ -57,10 +57,20 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
             self.assertEqual(request.instrument_uid, item.instrument_uid)
             self.assertEqual(request.source_policy_id, "crypto_liquid_v2")
             self.assertEqual(request.consumer_grade.value, "RESEARCH")
-            if item.requirement.feed.value in {"OPEN_INTEREST", "LONG_SHORT_RATIO", "TAKER_FLOW", "BASIS"}:
+            if item.requirement.feed.value in {"LONG_SHORT_RATIO", "TAKER_FLOW", "BASIS"}:
                 self.assertEqual(request.interval, "1d")
                 self.assertIsNotNone(request.start_time_ns)
                 self.assertIsNotNone(request.end_time_ns)
+            if item.requirement.feed.value == "OPEN_INTEREST":
+                if item.venue == "BINANCE":
+                    self.assertEqual(request.interval, "1d")
+                    self.assertIsNotNone(request.start_time_ns)
+                    self.assertIsNotNone(request.end_time_ns)
+                else:
+                    self.assertEqual(item.venue, "OKX")
+                    self.assertIsNone(request.interval)
+                    self.assertIsNone(request.start_time_ns)
+                    self.assertIsNone(request.end_time_ns)
             if item.requirement.feed.value == "LONG_SHORT_RATIO":
                 self.assertEqual(request.long_short_kind.value, "GLOBAL_ACCOUNT")
             if item.requirement.feed.value == "BASIS":

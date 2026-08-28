@@ -34,6 +34,7 @@ from qdl.demand import (
     source_requirement_for_admission,
 )
 from qdl.query import ConsumerGrade, FeedType
+from qdl.reference.batch import default_capability_resolver
 from qdl.runtime.l2_demand import L2DemandPlan, build_l2_demand_plan
 from qdl.runtime.production_catalog import ProductionCatalogBuilder
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -209,6 +210,7 @@ def _manifest_requirement(
     *,
     row: object,
     requirement: object,
+    instrument: object,
 ) -> dict[str, Any]:
     demand_feed = requirement.feed
     try:
@@ -217,6 +219,13 @@ def _manifest_requirement(
         raise InventoryError(f"Reference/L2 manifest has unsupported feed: {demand_feed}") from error
     if requirement.purpose.value != "RESEARCH" or requirement.execution_grade:
         raise InventoryError("Reference/L2 consumer must remain research/non-execution")
+    if demand_feed is DemandFeed.OPEN_INTEREST and requirement.interval is not None:
+        capability = default_capability_resolver(instrument).capability("open_interest")
+        if not capability.rest_history:
+            raise InventoryError(
+                "Reference/L2 open-interest history is not certified for "
+                f"{row.venue}/{row.market}; declare a fresh snapshot instead"
+            )
     is_book = demand_feed in _BOOK_FEEDS
     return {
         "instrument_uid": str(row.instrument_uid),
@@ -250,7 +259,19 @@ def _render_consumer_manifest(
         if row.state != "ADMITTED" or row.instrument_uid is None:
             raise InventoryError("Reference/L2 consumer has a non-admitted provider identity")
         requirement = source_requirement_for_admission(inventory, row)
-        item = _manifest_requirement(row=row, requirement=requirement)
+        try:
+            instrument = admission.records[
+                (row.venue, row.market, row.product_type, row.native_symbol)
+            ]
+        except KeyError as error:
+            raise InventoryError(
+                "Reference/L2 admitted row has no canonical instrument record"
+            ) from error
+        item = _manifest_requirement(
+            row=row,
+            requirement=requirement,
+            instrument=instrument,
+        )
         key = (
             item["instrument_uid"],
             item["feed"],

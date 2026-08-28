@@ -296,6 +296,29 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(partial.results[0].problem.code.value, "UNSUPPORTED_FEED")
         self.assertEqual(partial.results[0].result.status.value, "UNAVAILABLE")
 
+    async def test_cached_reference_result_matches_by_value_not_python_identity(self):
+        first = await self.service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "phase113-alpha",
+                (self.funding_requirement(self.binance.instrument_uid),),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        second = await self.service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "phase113-alpha",
+                (self.funding_requirement(self.binance.instrument_uid),),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertFalse(first.partial)
+        self.assertFalse(second.partial)
+        self.assertTrue(second.results[0].result.cache_hit)
+        self.assertEqual(
+            second.results[0].result.request.instrument.instrument_uid,
+            self.binance.instrument_uid,
+        )
+
     async def test_stale_reference_result_fails_closed(self):
         registry = InstrumentRegistry()
         registry.register(self.binance, [])
