@@ -63,6 +63,23 @@ _EXTERNAL_COPY_DIRS = (
     "reference-l2",
     "reference-l2-jwt",
 )
+PYTHON_ROLLBACK_SERVICES = (
+    "binance_bar_edge",
+    "projector_v2",
+    "projector_v2_2",
+    "projector_v2_3",
+    "query_v2_1",
+    "query_v2_2",
+    "stream_v2_active",
+    "stream_v2_passive",
+)
+LEGACY_CONSUMER_MANIFESTS = (
+    "/app/consumers/stable/monitoring-multivenue.yaml:"
+    "/app/consumers/stable/alpha-binance-paper.yaml:"
+    "/app/consumers/stable/alpha-okx-paper.yaml:"
+    "/app/consumers/stable/alpha-vn-paper.yaml:"
+    "/app/consumers/stable/trading-system-paper.yaml"
+)
 
 
 def _sha256_file(path: Path) -> str:
@@ -202,6 +219,28 @@ def _runtime_digests(runtime_dir: Path) -> dict[str, str]:
         for path in sorted(runtime_dir.iterdir())
         if path.is_file()
     }
+
+
+def _write_rollback_manifest_override(output_dir: Path) -> Path:
+    """Render the exact old manifest set only for Python rollback roles.
+
+    The retained C2 projector image predates the new Reference/L2 manifest.
+    Reusing the current Compose file without this narrow override would make a
+    recovery fail at config load even though its image/runtime provenance is
+    otherwise valid. Rust roles do not load consumer manifests and are omitted.
+    """
+    lines = ["services:\n"]
+    encoded_manifests = json.dumps(LEGACY_CONSUMER_MANIFESTS)
+    for service in PYTHON_ROLLBACK_SERVICES:
+        lines.extend((
+            f"  {service}:\n",
+            "    environment:\n",
+            f"      QDL_STABLE_CONSUMER_MANIFESTS: {encoded_manifests}\n",
+        ))
+    path = output_dir / "rollback-legacy-manifests.override.yml"
+    path.write_text("".join(lines), encoding="utf-8")
+    path.chmod(0o640)
+    return path
 
 
 def _build_environment(
@@ -376,6 +415,7 @@ def prepare_reference_l2_rollout(
         env_path = output_dir / "rollout.env"
         env_path.write_text(render_dotenv(environment), encoding="utf-8")
         env_path.chmod(0o600)
+        rollback_override = _write_rollback_manifest_override(output_dir)
 
         reference_manifest = ROOT / "config/v2/stable-reference-l2-demand.yaml"
         packet_body: dict[str, object] = {
@@ -432,6 +472,14 @@ def prepare_reference_l2_rollout(
                 "services": rollback,
                 "restore_query_client_ca": _sha256_file(current_query_client_ca),
                 "restore_stream_client_ca": _sha256_file(current_stream_client_ca),
+                "compose_override": {
+                    "path": rollback_override.name,
+                    "sha256": _sha256_file(rollback_override),
+                    "python_services": list(PYTHON_ROLLBACK_SERVICES),
+                    "legacy_manifest_sha256": sha256_bytes(
+                        LEGACY_CONSUMER_MANIFESTS.encode("utf-8")
+                    ),
+                },
                 "durable_data_deletion": False,
             },
             "forbidden_operations": [

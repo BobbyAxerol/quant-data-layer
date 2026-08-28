@@ -20167,6 +20167,19 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       verified the client certificate; its `/tmp` namespace was removed. No provider,
       Docker runtime role, Kafka, Redis, SQLite, V1, Trading System, alpha or
       order state was changed.
+    - **Rollback compatibility correction (`APPROVED / SOURCE-ONLY`,
+      2026-08-28):** offline inspection proved the recorded regular Python
+      rollback image `0416...75264b9` predates
+      `reference-l2-stable.yaml`; using today's Compose file without an
+      override would make an attempted rollback fail before application start.
+      This is not a reason to change the V1 route or deploy a new service. The
+      successor compiler must therefore emit one private rollback Compose
+      override for exactly the eight Python roles in this packet, restoring the
+      five pre-existing consumer manifests. Rollback remains role-by-role and
+      uses each recorded image/runtime selector: `0416...` for the regular
+      Python roles, `f92d...` for projectors and `c8f3...` for Rust. The
+      override SHA is recorded in the public packet; it carries no secret and
+      is used only when an actual rollback is invoked.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 from qdl.certification import reference_l2_rollout
 from qdl.certification.reference_l2_rollout import (
+    LEGACY_CONSUMER_MANIFESTS,
+    PYTHON_ROLLBACK_SERVICES,
     ROLLING_SERVICES,
     dry_run_reference_l2_rollout,
     prepare_reference_l2_rollout,
@@ -151,6 +153,15 @@ class ReferenceL2RolloutTests(unittest.TestCase):
                 self.assertEqual((output / "trust/stream-client-ca-bundle.crt").read_bytes(), PEM_ONE + PEM_TWO)
                 self.assertTrue((output / "external-identities/monitoring-jwt/public.pem").is_file())
                 self.assertTrue((output / "external-identities/reference-l2-jwt/private.key").is_file())
+                rollback_override = (output / "rollback-legacy-manifests.override.yml").read_text()
+                self.assertNotIn("reference-l2-stable.yaml", rollback_override)
+                self.assertIn(LEGACY_CONSUMER_MANIFESTS, rollback_override)
+                for service in PYTHON_ROLLBACK_SERVICES:
+                    self.assertIn(f"  {service}:\n", rollback_override)
+                self.assertEqual(
+                    packet["rollback"]["compose_override"]["python_services"],
+                    list(PYTHON_ROLLBACK_SERVICES),
+                )
                 rendered = (output / "rollout-packet.json").read_text()
                 self.assertNotIn("PRIVATE KEY", rendered)
                 self.assertNotIn("database-secret", rendered)
