@@ -21995,6 +21995,14 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         the earlier mislabeled unused candidate is not a runtime dependency.
         Cleanup removes only failed disposable receipt directories and `/tmp`
         probes after this evidence is recorded.
+        **Cleanup evidence (`COMPLETE`, 2026-08-28):** updated the scoped
+        `.reference_l2_current_evidence` pointer to the passing b355b1df
+        receipt, then removed only the empty c5dc92a receipt namespace, the
+        failed `9d81e5c-20260828T195457Z` namespace (`stdout.json` empty plus
+        one bounded stderr record), and five named `/tmp/qdl_*_probe.py`
+        diagnostics. The final receipt and all prior historical evidence stay
+        intact; no Docker prune/image removal, volume, cache, Kafka, Redis,
+        SQLite or V1 cleanup occurred.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
