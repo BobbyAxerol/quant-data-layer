@@ -19078,8 +19078,8 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
   projector roles, their sealed compatible runtime mount/image rollback map,
   existing consumer groups and no offset reset; after a gap-free cache catch-up
   C2 must be rerun from the beginning for its full 300-second observation.
-- **Required bounded projector repair packet (`PENDING OWNER APPROVAL`,
-  2026-08-27):** read-only image inspection proves the three running
+- **Required bounded projector repair packet (`FAILED CLOSED / ROLLED BACK`,
+  2026-08-28):** read-only image inspection proves the three running
   projectors use immutable Python image
   `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`
   (source `e0bedff`) whose embedded stable catalog has only `22` bindings;
@@ -19101,6 +19101,60 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
   After a bounded cache catch-up with no catalog rejection, repeat the
   disposable four-consumer C2 from its start for the full 300-second
   observation; failure remains rollback-only and fail-closed.
+  - **Approved execution boundary:** rolling-recreate exactly
+    `projector_v2`, `projector_v2_2` and `projector_v2_3` with the immutable
+    barfix image and r11 runtime above. Preserve their existing
+    `stable-projector-v1` consumer group and offsets. Do not recreate or
+    mutate V1, Kafka topology/ACLs, Redis, SQLite, Trading System, alpha or
+    any order path. Normal canonical-to-cache catch-up writes by these three
+    existing projectors are expected; cache deletion, offset reset, replay
+    widening and topology changes remain forbidden.
+  - **Pre-roll proof:** on 2026-08-28 all three exact target containers were
+    `running`, restart count `0`, OOM `false`, on rollback digest
+    `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`
+    and the Phase 10.3 runtime mount. The rendered r11 Compose target resolves
+    only those three services to
+    `sha256:0416d26b3b3832b5467e01cd50daa4e33f8539e99380280cf44ef536e75264b9`
+    with the r11 runtime read-only at `/runtime`; dependency recreation is
+    explicitly excluded with `--no-deps`.
+  - **Exit gate:** each projector must remain running without OOM or catalog
+    rejection after cooperative catch-up. Then rerun the disposable C2
+    no-order acceptance and its allowed V2 -> V1 -> V2 fallback drill, plus a
+    bounded 300-second continuity observation of the three projectors and the
+    already-approved seven-role r11 data plane. Any failed C2 probe, stale
+    demanded slice, unexpected role mutation or projector failure stops this
+    packet and uses the exact three-role rollback map above.
+  - **Runtime result before C2:** the three-role r11 roll completed exactly as
+    rendered, but projector catch-up failed closed before any C2 client was
+    started. All three remained process-running with restart count `0` and no
+    OOM, while their fresh logs repeatedly reported `stable projection key
+    escapes its allowlist`; cooperative `Kafka assignment changed before
+    stable checkpoint` messages were secondary churn, not the root cause.
+    The source allowlist independently reproduces the defect: it accepts
+    `kline:1m:BTCUSDT` and `kline:1d:BTCUSDT` but rejects
+    `kline:1w:BTCUSDT`, although the new catalog contains V1-compatible
+    weekly final-BAR bindings. No freshness threshold, catalog permissiveness,
+    offset or cache state will be relaxed to make this pass. Per the approved
+    exit policy, the exact three projectors are being restored to their
+    prior image/runtime map; C2 is not run against this failed cache plane.
+  - **Rollback evidence:** the exact three projectors were restored with
+    `--no-deps --no-build --force-recreate` to rollback image
+    `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`
+    and the Phase 10.3 runtime directory. Post-rollback all three are
+    `running`, restart count `0`, OOM `false`; their expected legacy catalog
+    rejection is again `canonical event is outside the stable catalog`, not
+    the r11 allowlist defect. V1 `data_layer_service` retained the same
+    container ID, image, start time and restart count throughout. No C2
+    disposable container exists, so there is no client receipt, provider
+    connection, consumer-route, order or test-data cleanup mutation.
+  - **Next decision boundary:** this packet cannot continue to C2. A separate
+    source-only approval is required for the narrow stable-projector allowlist
+    repair: accept every interval suffix explicitly permitted by the stable
+    catalog (at minimum `w` for the active weekly BAR) without broadening
+    Redis key namespaces, add golden allow/reject tests, build one new
+    immutable Python image and then request a new exact three-projector
+    rolling packet. The rerun must start C2 from zero; it may not reuse this
+    failed handoff as evidence.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
