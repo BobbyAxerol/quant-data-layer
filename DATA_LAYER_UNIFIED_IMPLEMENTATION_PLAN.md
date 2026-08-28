@@ -19266,6 +19266,25 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       skip. This candidate is the sole approved retry image for the exact same
       three-projector r11 roll; V1 and all durable/runtime exclusions remain
       unchanged.
+    - **Fresh C2 retry packet (`APPROVED / IN PROGRESS`, 2026-08-28):** after
+      projector catch-up has no catalog rejection, run one disposable,
+      non-root, read-only client named
+      `qdl-c2-channel-20260828T035452Z` using candidate
+      `sha256:96f271c574f3f4d6bf8c6597b5a87872fdd0bbdbce537f2442c4edddf7f8da5b`.
+      It joins only `executor_network`, receives only the existing Monitoring,
+      Trading-System paper, Alpha-Binance paper and Alpha-OKX paper identity
+      files, the r11 authority record, current V1 provenance/binding and a
+      writable `0700` payload-free evidence directory. It has a read-only root,
+      tmpfs-only cursor state, no Docker socket, provider credential or
+      execution endpoint. It may call only `query_v2_1:8200`,
+      `query_v2_2:8200`, `qdl-v2-stream-a:8210`,
+      `qdl-v2-stream-b:8210` and the manifest-authorized local fallback
+      `data_layer:8100`; observation is hard-capped at 300 seconds with
+      concurrency 8. It must prove V2 primary warmup/replay/reconnect and
+      allowed V2 -> V1 -> V2 fallback-return, while `BLOCKED` products issue
+      zero V1 requests. Rollback is removal of this client and only its fresh
+      namespace on failure; no service, route, offset, cache, V1, Trading
+      System, alpha or order mutation is permitted.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
