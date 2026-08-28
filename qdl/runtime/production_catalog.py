@@ -376,6 +376,44 @@ class ProductionCatalogBuilder:
         }
         return ProductionCatalogBundle(source, acquisition, provenance)
 
+    @classmethod
+    def merge_authoritative_instruments(
+        cls,
+        *,
+        records: Iterable[InstrumentRecord],
+        previous_catalog: StableSourceCatalog,
+    ) -> list[dict[str, Any]]:
+        """Merge a bounded authoritative metadata view without dropping history.
+
+        A catalog can intentionally retain an unbound expired dated instrument
+        for replay/cursor lineage while a new provider-discovered contract is
+        added for active acquisition.  This helper therefore overlays only the
+        supplied authoritative records, carries unchanged prior records
+        forward, and increments ``metadata_revision`` only when the canonical
+        instrument payload truly changes.
+        """
+        previous = cls._previous_records(previous_catalog)
+        incoming: dict[str, InstrumentRecord] = {}
+        for record in records:
+            existing = incoming.get(record.instrument_id)
+            if existing is not None and existing != record:
+                raise ValueError(
+                    "conflicting authoritative metadata for instrument: "
+                    + record.instrument_id
+                )
+            incoming[record.instrument_id] = record
+
+        merged = dict(previous)
+        for instrument_id, record in incoming.items():
+            merged[instrument_id] = cls._revisioned(
+                record,
+                previous.get(instrument_id),
+            )
+        return [
+            cls._instrument(record)
+            for record in sorted(merged.values(), key=lambda item: item.instrument_id)
+        ]
+
     @staticmethod
     def _metadata(
         binance_usdm: BinanceDiscovery | None,

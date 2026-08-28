@@ -19846,6 +19846,86 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
     authorize any role recreation or authority change. Source rollback is this
     coherent commit; runtime rollback remains the previously recorded sealed
     r11 route/config revision.
+  - **Materialization slice (`APPROVED / IMPLEMENTATION IN PROGRESS / SOURCE
+    ONLY`, 2026-08-28):** add one deterministic compiler, fed only by the
+    existing active-demand inventory plus one bounded provider-metadata view
+    per required venue/market. It must: (1) retain every already-declared
+    catalog/binding ID byte-for-byte where its authoritative identity is
+    unchanged; (2) add the five Binance USD-M and five OKX Swap perpetual
+    records as catalog-bound reference instruments; (3) resolve, never format,
+    Binance USD-M and OKX Futures current/next BTC/ETH quarterly records; (4)
+    emit exactly twelve physical L2 books / twenty-four logical snapshot-delta
+    bindings at declared depth; and (5) render the least-privilege
+    `qdl.crypto.reference-l2.stable` consumer manifest from the admitted
+    records, so a dated-contract roll cannot retain a stale literal ID.
+    Reference records remain unbound to realtime acquisition; L2 is the only
+    added acquisition path. The compiler has dry-run as default and writes
+    all changed documents through same-filesystem atomic replace only with
+    `--apply`; it stores no raw provider response. It must reject missing,
+    duplicate, cross-venue, inactive, wrong-product or ambiguous continuous
+    identities, and it must be idempotent against its own rendered output.
+    Source test gates cover exact identity/decimal/expiry, physical-alias
+    coalescing, static-identity preservation, quarterly roll replacement,
+    manifest entitlement/purpose restrictions and no direct provider/runtime
+    action. A bounded real-provider run is separate and records aggregate
+    digest/count/freshness only. No service, container, authority, Kafka,
+    Redis, SQLite, V1 route, Trading System, alpha or order path is changed in
+    this slice. Rollback is revert of the materializer/config commit or leaving
+    dry-run output unapplied; a later exact packet alone may mount/recreate the
+    existing roles.
+  - **Implementation evidence (`SOURCE COMPILER COMPLETE / SOURCE APPLY
+    PENDING`, 2026-08-28):** added
+    `qdl/runtime/reference_l2_materializer.py` and the bounded CLI
+    `scripts/phasec36_materialize_reference_l2.py`. The compiler consumes only
+    the admitted universal demand and metadata records; it preserves unrelated
+    stable cursor/source IDs, keeps expired dated instruments catalog-visible
+    but unbound for replay lineage, replaces only managed L2 acquisition on a
+    quarterly roll, and renders the V2-only, non-execution
+    `qdl.crypto.reference-l2.stable` manifest. It creates no runtime role,
+    provider socket, Kafka record, cache entry, route or order action.
+  - **Source tests (`PASS`, 2026-08-28):** isolated immutable Python image,
+    `--network none --read-only`, ran
+    `python -m unittest -v tests.test_reference_l2_materializer`: **4/4
+    passed**. Coverage proves: 60 reference entitlements plus 24 logical
+    snapshot/delta products coalesce to 12 physical books across exactly three
+    shared venue/market roles; static bindings retain byte-equivalent identity;
+    missing quarterly metadata fails closed; a discovered quarterly roll removes
+    stale acquisition while retaining the old catalog record unbound; and a
+    second materialization is byte/idempotent. Fixture data is test provenance
+    only and cannot be applied by the CLI.
+  - **Bounded real-provider dry run (`PASS / READ ONLY`, 2026-08-28):**
+    `python scripts/phasec36_materialize_reference_l2.py --provider-metadata
+    --timeout-seconds 10 --attempts 3` made exactly three public metadata reads
+    and persisted no raw reply. Admission returned 22 catalog instruments, 98
+    catalog bindings after projection, 60 reference entitlements, 24 logical /
+    12 physical L2 bindings and three shared roles. Provider payload digests:
+    Binance USD-M `1dab0c8842fe…6f09492587`, OKX Swap
+    `805ac6097b56…c4244b982`, OKX Futures
+    `3049905ad98…51e05dec5`. The next permitted action is the already-approved
+    source-only `--apply --confirm MATERIALIZE_REFERENCE_L2`; it writes four
+    versioned config/manifest documents atomically and still has zero runtime
+    mutation. Runtime activation remains separately evidenced and packeted.
+  - **Source apply and idempotency (`PASS / NO RUNTIME MUTATION`,
+    2026-08-28):** applied the same bounded authentic provider view with
+    `--apply --confirm MATERIALIZE_REFERENCE_L2`. Only these source artifacts
+    changed: `stable-source-bindings.yaml` catalog revision **5 -> 6** (8 ->
+    22 instruments; 74 -> 98 bindings), `stable-acquisition-bindings.yaml`
+    revision **11 -> 12**, `stable-authority-promotion-scope.yaml` revision
+    **3 -> 4** (88 selected logical bindings), and new
+    `consumers/stable/reference-l2-stable.yaml` revision **1** (84 V2-only
+    requirements: 60 reference, 24 L2). A second authentic dry run returned
+    all `*_changed=false`, identical four artifact digests and zero writes.
+    No provider reply bytes, credentials, runtime state, service/container,
+    Kafka/Redis/SQLite/V1/Trading System/alpha/order mutation were persisted.
+  - **Regression gate (`PASS`, 2026-08-28):** after apply, immutable isolated
+    test execution (`--network none --read-only`) ran **19/19** tests across
+    `test_reference_l2_materializer`, `test_active_reference_l2_demand`,
+    `test_phase112_universal_realtime`, and
+    `test_phase112_provider_admission`. A fixture-isolation defect was found
+    and fixed in the new test: provider-discovered quarterly catalog state is
+    now removed only from the test baseline, so a deterministic fixture cannot
+    accidentally assert today's expiry as immutable. This was test-only; the
+    real applied artifacts were not altered by that correction.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

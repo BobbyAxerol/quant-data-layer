@@ -1,6 +1,10 @@
 schema: qdl.v2.authority-promotion-scope.v1
-revision: 3
+revision: 4
 binding_ids:
+- binance-usdm-btcusdt-260925-book_delta
+- binance-usdm-btcusdt-260925-book_snapshot
+- binance-usdm-btcusdt-261225-book_delta
+- binance-usdm-btcusdt-261225-book_snapshot
 - binance-usdm-btcusdt-bar-12h
 - binance-usdm-btcusdt-bar-15m
 - binance-usdm-btcusdt-bar-1d
@@ -15,8 +19,14 @@ binding_ids:
 - binance-usdm-btcusdt-bar-5m
 - binance-usdm-btcusdt-bar-6h
 - binance-usdm-btcusdt-bar-8h
+- binance-usdm-btcusdt-book_delta
+- binance-usdm-btcusdt-book_snapshot
 - binance-usdm-btcusdt-quote
 - binance-usdm-btcusdt-trade
+- binance-usdm-ethusdt-260925-book_delta
+- binance-usdm-ethusdt-260925-book_snapshot
+- binance-usdm-ethusdt-261225-book_delta
+- binance-usdm-ethusdt-261225-book_snapshot
 - binance-usdm-ethusdt-bar-12h
 - binance-usdm-ethusdt-bar-15m
 - binance-usdm-ethusdt-bar-1d
@@ -31,8 +41,18 @@ binding_ids:
 - binance-usdm-ethusdt-bar-5m
 - binance-usdm-ethusdt-bar-6h
 - binance-usdm-ethusdt-bar-8h
+- binance-usdm-ethusdt-book_delta
+- binance-usdm-ethusdt-book_snapshot
 - binance-usdm-ethusdt-quote
 - binance-usdm-ethusdt-trade
+- okx-futures-btc-usd-261225-book_delta
+- okx-futures-btc-usd-261225-book_snapshot
+- okx-futures-btc-usd-270326-book_delta
+- okx-futures-btc-usd-270326-book_snapshot
+- okx-futures-eth-usd-261225-book_delta
+- okx-futures-eth-usd-261225-book_snapshot
+- okx-futures-eth-usd-270326-book_delta
+- okx-futures-eth-usd-270326-book_snapshot
 - okx-swap-btc-usdt-swap-bar-12h
 - okx-swap-btc-usdt-swap-bar-15m
 - okx-swap-btc-usdt-swap-bar-1d
@@ -46,6 +66,8 @@ binding_ids:
 - okx-swap-btc-usdt-swap-bar-4h
 - okx-swap-btc-usdt-swap-bar-5m
 - okx-swap-btc-usdt-swap-bar-6h
+- okx-swap-btc-usdt-swap-book_delta
+- okx-swap-btc-usdt-swap-book_snapshot
 - okx-swap-btcusdt-bar-1m
 - okx-swap-btcusdt-quote
 - okx-swap-btcusdt-trade
@@ -63,5 +85,7 @@ binding_ids:
 - okx-swap-eth-usdt-swap-bar-4h
 - okx-swap-eth-usdt-swap-bar-5m
 - okx-swap-eth-usdt-swap-bar-6h
+- okx-swap-eth-usdt-swap-book_delta
+- okx-swap-eth-usdt-swap-book_snapshot
 - okx-swap-eth-usdt-swap-quote
 - okx-swap-eth-usdt-swap-trade
