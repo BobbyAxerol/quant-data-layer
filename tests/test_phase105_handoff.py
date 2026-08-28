@@ -484,12 +484,11 @@ class Phase105HandoffTests(unittest.TestCase):
         self.assertIn("query_v2_2:", c2)
         self.assertIn("stream_v2_active:", c2)
         self.assertIn("stream_v2_passive:", c2)
-        # C3.6 makes the already-running core expose the bounded provider
-        # admission endpoint used by the query readers.  C2 does not recreate
-        # it: this overlay only adds its scoped environment, never a command,
-        # image or volume replacement.
-        self.assertIn("rust_core:", c2)
-        self.assertIn("QDL_PROVIDER_ADMISSION_ENABLED", c2)
+        self.assertNotRegex(c2, r"(?m)^  rust_core:\\s*$")
+        # C3.6 keeps the existing admission endpoint available to the query
+        # adapters. C2 can reference that endpoint but must never configure or
+        # recreate rust_core itself.
+        self.assertIn("QDL_STABLE_PROVIDER_ADMISSION_URL: http://rust_core:8300", c2)
         self.assertNotIn("entrypoint:", c2)
         self.assertNotIn("command:", c2)
         self.assertNotIn("volumes:", c2)

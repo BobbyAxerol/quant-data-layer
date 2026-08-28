@@ -20811,6 +20811,97 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         immutable Python image from this config/plan revision, followed by a
         new sealed reader-only packet and fresh C2 from zero. Do not reuse the
         failed receipt or widen any route.
+      - **Minimal reader retry boundary (`APPROVED / READY`, 2026-08-28):**
+        this correction changes only the packaged release-routing artifact;
+        it does not change authority bytes, catalog runtime files, trust, JWT,
+        acquisition, stream/projector code or any data-plane binding. Therefore
+        do **not** generate a second bundle, CA set, service, image family or
+        topology. Reuse the already-sealed successor runtime
+        `/home/bobby/.local/state/qdl-v2/historical-lineage-aad78f4-20260828T112339Z/successor/runtime`
+        and authority SHA `1cd55d...fb1078`; serially recreate only
+        `query_v2_1` then `query_v2_2` with immutable Python image
+        `sha256:3149e4099696f9b5dfdf6f2f201e22577da90ddc5280ead9556a0f9a0a3f7eb2`
+        (`ccc1090`). The exact rollback remains each query's r11 image
+        `sha256:0416d26b3b3832b5467e01cd50daa4e33f8539e99380280cf44ef536e75264b9`
+        and r11 runtime path already recorded above. Validate mTLS readiness
+        and logs; then run fresh C2 from zero with the new immutable image.
+        No projector/stream/ingestor/Rust/V1/Kafka/Redis/SQLite/Trading
+        System/alpha/order component may change in this retry.
+      - **Minimal reader retry, replica one (`PASS / SECOND REPLICA ONLY`,
+        2026-08-28):** serial recreation of only `query_v2_1` on immutable
+        Python image `sha256:3149e...a3f7eb2` and the already-sealed successor
+        runtime completed. Docker reports `running`, `healthy`, `restart=0`
+        and `OOMKilled=false`; direct local mTLS `/health/ready` returned
+        `200`. The bounded post-start error scan had no
+        permission/catalog/lineage/fatal/OOM match. No V1, Kafka, Redis,
+        SQLite, authority, projector, stream, ingestor, Rust core, Trading
+        System, alpha or order component changed. The sole next runtime action
+        remains the same serial recreation and validation of `query_v2_2`.
+      - **Minimal reader retry, replica two (`PASS / FRESH C2 PERMITTED`,
+        2026-08-28):** serial recreation of only `query_v2_2` on the same
+        immutable `3149e...a3f7eb2` image and sealed successor runtime
+        completed. Its immediate socket probe raced ordinary startup and was
+        refused once; an eight-second bounded retry returned mTLS
+        `/health/ready=200`. Docker reports `running`, `restart=0`,
+        `OOMKilled=false` and the bounded post-start error scan has no
+        permission/catalog/lineage/fatal/OOM match. This is readiness timing,
+        not a data-plane error. Both query replicas now carry release-routing
+        revision `5`; no other role or durable/V1/execution component changed.
+        A new disposable C2 four-consumer no-order acceptance may now start
+        from zero with a fresh V1 binding receipt.
+      - **Fresh C2 query-admission failure (`FAIL-CLOSED / QUERY DIAGNOSIS
+        REQUIRED`, 2026-08-28):** a new private C2 namespace successfully
+        bound the current attested V1 serving image, then the disposable
+        non-root client failed on its first V2 read for
+        `monitoring.multivenue.stable` / Binance USD-M BTC `TRADE` with
+        `RemoteProtocolError: Server disconnected without sending a response`.
+        It did not reach V1 fallback, provider access, stream replay, alpha
+        logic, signal/sizing or any order action; its output receipt is empty.
+        Both query replicas remained `running`, `restart=0`, `OOMKilled=false`.
+        This is non-acceptance. Inspect only the bounded query server logs and
+        request/authentication path; do not retry, widen routing or alter V1,
+        Kafka, Redis, SQLite, authority, projectors, streams, ingestors, Rust,
+        Trading System, alpha or order state until a fail-closed root cause is
+        established. The failed C2 namespace is exact-scope cleanup after the
+        bounded diagnostic is recorded.
+      - **C2 root cause and bounded repair (`APPROVED / FOUR READER ROLES
+        ONLY`, 2026-08-28):** the C2 client certificate is issued by the
+        deliberately additive external client CA. Both query containers mount
+        the correct three-PEM `client-ca-bundle.crt`, but their active
+        environment omitted `QDL_STABLE_TLS_CLIENT_CA_FILE`; `StableRuntimeConfig`
+        therefore correctly fell back to `/stable-certs/query/ca.crt`, which
+        trusts only the original CA and caused the TLS server disconnect.
+        `docker-compose.phase105c-c2.override.yml` already supplies the exact
+        query/stream client-CA paths and is the approved repair. Render and
+        inspect the public JWT key/subject-map shape first, then serially
+        recreate only `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+        `stream_v2_passive` with the existing `3149e...a3f7eb2` image,
+        successor runtime and this narrow override. No new image, bundle,
+        identity, authority, provider setting, topology or data-plane
+        component is authorized. Validate mTLS/readiness and one active stream
+        lease, then start a new C2 namespace from zero.
+      - **C2 override scope correction (`IMPLEMENTED / SOURCE TEST NEXT`,
+        2026-08-28):** `docker-compose.phase105c-c2.override.yml` contradicted
+        its own four-reader contract by retaining a `rust_core` block from an
+        earlier C3.6 packet. Compose interpolated that excluded block and
+        required unrelated C3.6 variables even when only query/stream targets
+        were selected. Removed only that block and added a structural test that
+        C2 contains `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+        `stream_v2_passive`, never `rust_core`. This neither changes Rust nor
+        any provider/data-plane behavior; it restores the narrow C2 scope.
+      - **C2 override source gate (`PASS / FOUR-READER ROLL PERMITTED`,
+        2026-08-28):** rendered the base Compose plus C2 override against the
+        sealed successor environment without the former unrelated C3.6
+        variables. The four governed reader roles resolve the intended query
+        and stream `client-ca-bundle.crt` paths. An immutable `3149e...a3f7eb2`
+        image, source mounted read-only, network disabled, non-root, read-only
+        root, tmpfs `/tmp`, dropped capabilities and bounded CPU/RAM passed the
+        focused C2/release/projector edge matrix **77/77**, with one explicit
+        isolated-Redis skip, in `29.616s`. No runtime service or market-data
+        state changed during this source gate. The next operation is the
+        approved serial four-reader roll using this already-built image and
+        the existing C2 override; it must not recreate `rust_core` despite the
+        query adapter's read-only internal admission URL reference.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
