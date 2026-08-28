@@ -191,18 +191,37 @@ impl L2BookAdapter {
         self.require_protocol(ProviderBookProtocol::BinanceUsdmDiffDepth)?;
         positive_time(received_at_ms, "received_at_ms")?;
         validate_optional_symbol(raw, "symbol", &self.native_symbol)?;
+        let sequence_end = unsigned(raw, "lastUpdateId")?;
+        let levels = side_levels(raw, "bids", BookSide::Bid, None)?
+            .into_iter()
+            .chain(side_levels(raw, "asks", BookSide::Ask, None)?)
+            .collect();
+        let observed_at_ms = optional_time(raw, &["E", "T"])?.or(Some(received_at_ms));
+
+        // A periodic REST read is a recovery anchor, not an instruction to
+        // overwrite a continuous websocket book. Resetting a READY book with
+        // a snapshot captured while deltas are still arriving loses the bridge
+        // window and can manufacture a false sequence gap. We still parse the
+        // snapshot strictly so malformed provider data is never hidden.
+        if generation == self.core.generation() && self.core.status() == BookStatus::Ready {
+            return Ok(self.transition(
+                BookTransitionKind::Snapshot,
+                BookPublication::None,
+                BookOutcome::Keepalive,
+                observed_at_ms,
+                None,
+                None,
+                vec![],
+            ));
+        }
         let outcome = self.core.apply_snapshot(&BookSnapshot {
             identity: self.core_identity(),
             generation,
-            sequence_end: unsigned(raw, "lastUpdateId")?,
+            sequence_end,
             checksum: ChecksumEvidence::NotProvided,
             origin: SnapshotOrigin::Rest,
-            levels: side_levels(raw, "bids", BookSide::Bid, None)?
-                .into_iter()
-                .chain(side_levels(raw, "asks", BookSide::Ask, None)?)
-                .collect(),
+            levels,
         });
-        let observed_at_ms = optional_time(raw, &["E", "T"])?.or(Some(received_at_ms));
         if outcome != BookOutcome::BootstrapApplied {
             return Ok(self.transition(
                 BookTransitionKind::Snapshot,
@@ -771,6 +790,71 @@ mod tests {
         assert!(adapter
             .apply_binance_ws_delta(&json!({"s":"BTCUSDT","U":21,"u":21,"E":3,"b":[],"a":[]}), 1,)
             .is_err());
+    }
+
+    #[test]
+    fn binance_ready_refresh_keeps_verified_book_and_post_gap_snapshot_recovers() {
+        let mut adapter = L2BookAdapter::binance_usdm_diff_depth(
+            identity("BINANCE_USDM_DIFF_DEPTH", "BTCUSDT", "depth"),
+            "BTCUSDT",
+            2,
+        )
+        .unwrap();
+        adapter
+            .apply_binance_rest_snapshot(
+                &json!({"lastUpdateId": 100, "bids": [["10", "1"]], "asks": [["11", "1"]]}),
+                1,
+                1,
+            )
+            .unwrap();
+        let ready = adapter
+            .apply_binance_ws_delta(
+                &json!({"s":"BTCUSDT","U":100,"u":101,"pu":99,"E":2,"b":[["10","2"]],"a":[]}),
+                1,
+            )
+            .unwrap();
+        assert_eq!(ready.outcome, BookOutcome::DeltaApplied);
+        let refresh = adapter
+            .apply_binance_rest_snapshot(
+                &json!({"lastUpdateId": 99, "bids": [["10", "99"]], "asks": [["11", "99"]]}),
+                1,
+                3,
+            )
+            .unwrap();
+        assert_eq!(refresh.outcome, BookOutcome::Keepalive);
+        assert_eq!(refresh.status, BookStatus::Ready);
+        assert_eq!(refresh.snapshot_sequence, Some(100));
+        assert_eq!(refresh.last_sequence, Some(101));
+        assert_eq!(refresh.view.unwrap().bids[0].quantity.canonical_text(), "2");
+        assert!(adapter
+            .apply_binance_rest_snapshot(&json!({"bids": [], "asks": []}), 1, 4)
+            .is_err());
+
+        let gap = adapter
+            .apply_binance_ws_delta(
+                &json!({"s":"BTCUSDT","U":103,"u":103,"pu":102,"E":5,"b":[],"a":[]}),
+                1,
+            )
+            .unwrap();
+        assert_eq!(gap.outcome, BookOutcome::SequenceGap);
+        adapter.request_resync(1);
+        let buffered = adapter
+            .apply_binance_ws_delta(
+                &json!({"s":"BTCUSDT","U":104,"u":104,"pu":103,"E":6,"b":[["10","3"]],"a":[]}),
+                1,
+            )
+            .unwrap();
+        assert_eq!(buffered.outcome, BookOutcome::BufferedAwaitingBootstrap);
+        let recovered = adapter
+            .apply_binance_rest_snapshot(
+                &json!({"lastUpdateId": 103, "bids": [["10", "2"]], "asks": [["11", "1"]]}),
+                1,
+                7,
+            )
+            .unwrap();
+        assert_eq!(recovered.outcome, BookOutcome::SnapshotApplied);
+        assert!(recovered.sequence_verified());
+        assert_eq!(recovered.last_sequence, Some(104));
     }
 
     #[test]

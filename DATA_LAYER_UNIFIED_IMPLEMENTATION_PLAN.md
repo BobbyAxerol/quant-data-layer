@@ -20225,6 +20225,87 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       path used for the successor image. No provider, Docker role, Kafka,
       Redis, SQLite, V1, Trading System, alpha or order mutation occurred
       during this source test.
+    - **Repaired-Rust partial runtime preflight (`IN PROGRESS / BOUNDED`,
+      2026-08-28):** built exactly one replacement immutable Rust image
+      `sha256:34b12c11a78acaf22fd13d0c62fe268f397dd4055b3bd9efe9781ca9d991e669`
+      from source commit `85daaf9`, and regenerated one sealed successor
+      packet `ae1d707846ab7f89381ab9ec7463ef283f559e70c819f25b321c6e51430669dc`.
+      Only existing `rust_core` and `ingestor_binance_usdm` were recreated so
+      far; each is running with `restart=0` and no OOM. The old OKX ingestor
+      and Python bar edge are deliberately still on the r11 catalog while the
+      serial upstream handoff is in progress. No Python role, trust mount,
+      V1, Kafka topology/offset, Redis, SQLite, Trading System, alpha or order
+      path has changed.
+    - **Mixed-revision quarantine diagnosis (`PASS / READ-ONLY`, 2026-08-28):**
+      a disposable manual-assignment Kafka observer with auto-commit disabled
+      read only the five newest metadata records per quarantine partition;
+      no raw payload, offset or durable state was retained or changed. Of the
+      `19` bounded tail records, `14` were historical/ongoing catalog-revision
+      `5` raw frames rejected by the r12 core as `UNKNOWN_INSTRUMENT` (old
+      Binance bar edge or old OKX ingress), and `5` were declared Binance L2
+      `SEQUENCE_GAP` records routed into the generic resync/quarantine path.
+      `scope_quarantines=0`: strict source fencing itself is not the cause.
+      This is a fail-closed mixed-roll observation, not a provider substitute
+      or data loss claim. The next permitted serial actions remain the already
+      packeted `ingestor_okx_swap` and `binance_bar_edge` recreations using the
+      successor runtime; only after all upstream sources emit catalog revision
+      `6` may a fresh bounded window decide whether any L2 sequence gap is a
+      real adapter defect. Quarantine evidence is retained; nothing is
+      terminalized, reset, flushed or deleted.
+    - **Binance L2 refresh-bridge repair (`APPROVED / IN PROGRESS`,
+      2026-08-28):** after the two remaining upstream roles emitted only
+      catalog revision `6` and core lag fell to `66` records, bounded live
+      evidence isolated fresh `SEQUENCE_GAP` records on Binance perpetual and
+      quarterly `@depth@100ms` books. The generic core correctly quarantined
+      them; the venue-adapter defect is that its periodic REST snapshot refresh
+      re-seeded an already `READY` diff-depth book. Deltas that arrived while
+      that REST request was in flight had already been applied and were no
+      longer available for the mandatory snapshot bridge, so the next delta
+      could legitimately fail continuity. The approved narrow repair is in the
+      existing Rust Binance adapter only: validate every REST snapshot, but
+      treat a same-generation refresh while `READY` as a non-mutating
+      keepalive; accept a REST anchor only while awaiting/bootstraping or
+      resyncing. Gap-triggered resync still clears state, buffers subsequent
+      websocket deltas and uses the next validated REST snapshot to bridge
+      before a book becomes readable. Tests must prove initial bridge, ready
+      refresh non-mutation, malformed refresh rejection, true gap quarantine
+      and post-gap recovery. Runtime scope after source exit is exactly one
+      replacement immutable Rust image and one serial `rust_core` recreate;
+      the already-successful three source roles stay on r12, and every Python
+      role/trust/client route remains untouched. Rollback is the current
+      `85daaf9` Rust image/runtime selector; no data, offset or source role is
+      reset or deleted.
+      The immutable Rust builder also copies the existing
+      `tests/fixtures/phase104` oracle directory because `qdl-core` consumes
+      that tracked synthetic protocol fixture. Builder-target tests must fail
+      if the oracle is absent; the fixture remains build-test only and does
+      not enter the non-root runtime image or alter a provider, route or
+      durable state.
+      - **Source exit evidence (`PASS / NO RUNTIME MUTATION`, 2026-08-28):**
+        a disposable Rust builder ran with `--network none`, source mounted
+        read-only and only its disposable container-layer target directory
+        writable. `rustfmt --check` passed and `cargo test --locked
+        --workspace` passed: `qdl-contracts 3/3`, `qdl-core 38/38` (including
+        ready-refresh non-mutation, malformed-refresh rejection, true-gap
+        quarantine and post-gap recovery), `qdl-kafka 20/20` plus native
+        ingestor `10/10`, `qdl-realtime-core 26 pass / 1 explicit isolated
+        Redis skip`, and `qdl-venue-core 37/37`; remaining bin/doc targets had
+        zero test cases and passed. The test image was disconnected from all
+        providers/Kafka/Redis, auto-committed nothing, and was removed on exit.
+        This exits the source gate only. The next bounded action is to commit,
+        build one immutable replacement Rust image, regenerate the successor
+        packet and serially recreate **only** `rust_core`; no Python role is
+        eligible until a fresh real-provider sequence window proves that no
+        new L2 gap is manufactured by refresh.
+      - **Baseline quality boundary:** `cargo fmt --all -- --check` reports
+        only pre-existing formatting in unmodified `rust/qdl-venue-core/src/
+        demand.rs`; the edited adapter passes direct `rustfmt --check`.
+        Strict `qdl-core` Clippy similarly stops at two pre-existing structural
+        lints outside this diff (`transition` argument count and an `l2_book`
+        return type). Re-running Clippy with only those two named baseline
+        exemptions and `-D warnings` passes. Neither exception is a release
+        claim or a new debt hidden by this repair; both remain outside the
+        approved adapter/runtime boundary.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
