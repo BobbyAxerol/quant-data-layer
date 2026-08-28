@@ -20547,6 +20547,28 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         checkpoint remains rejected, then passed once fixture rollback
         provenance matched the observed bar state. No provider/runtime/durable
         data operation occurred.
+      - **Fresh successor packet (`PREFLIGHT PASS / APPROVED TO APPLY`,
+        2026-08-28):** private packet
+        `/home/bobby/.local/state/qdl-v2/reference-l2-convergence-12f0861-20260828T104846Z/successor/rollout-packet.json`
+        has SHA-256 `95d5af5f01b3cc3ee7838fdbcf106063c3f5574ae3a6b7d1b5cbc9fb974a54fa`.
+        It pins current Python image
+        `sha256:6bb6939d76460bba30a081bf729e397dcf5535dc6bb97fa2d6792ed33f0c91a5`
+        (revision `12f0861`, self-tested **37/37**) and already-certified Rust
+        image `sha256:11a2819fae4d8cc0bcbaa9473e59d612b1f0aea82fca34768c585a865e8282a1`
+        (revision `e897db8`). It preserves authority SHA
+        `1cd55d7bcefe586833b7b0d0e9d929b8515a0d7366c5b88f4fb9b6b981fb1078`,
+        emits catalog `6` / acquisition `13`, records no secret value, and
+        captures the exact live rollback image/runtime/checkpoint selector for
+        every one of the eleven roles. Current query/stream client-CA digest
+        `931e12cf2d2b63ea0cc46d148d24ca74972ae909e9293f456984338be84c199a`
+        already equals the additive successor bundle, so no CA rotation or
+        `stable_tls` mutation is required. `docker compose config` rendered
+        all eleven selected roles with only the new immutable image and the
+        sealed r13 runtime bind; it selected no dependency, V1, authority,
+        Kafka, Redis, SQLite, Trading System, alpha or order role. The actual
+        apply remains serial, `--no-deps --force-recreate`, upstream first,
+        followed by projector, query and stream replicas; normal authentic
+        V2 market-data writes are the only permitted data-plane effect.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
