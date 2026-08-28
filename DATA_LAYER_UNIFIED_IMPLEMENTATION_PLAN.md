@@ -19315,6 +19315,41 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       *new* C2 namespace for the full 300 seconds. No reset, seek, flush,
       cache deletion, broad replay or topology change is permitted. The failed
       C2 namespace is disposable and must be removed after this diagnosis.
+    - **C2 source-plane diagnosis and bounded Binance repair (`APPROVED / IN
+      PROGRESS`, 2026-08-28):** the second fresh C2 retry again failed closed
+      at the first Monitoring Binance USD-M BTC perpetual `TRADE` snapshot.
+      The new projector candidate caught its six canonical partitions down to
+      `28 -> 24 -> 9` records with no restart/OOM, but the exact Redis latest
+      canonical records for BTC/ETH remained about `36,751` seconds old. This
+      proves a source-plane fault, not a projector-lag or freshness-policy
+      fault. Read-only runtime/config provenance identified the cause: the
+      running `ingestor_binance_usdm` still mounts the Phase 10.3 runtime
+      (`config_revision=9`, `instrument_catalog_revision=3`) while the running
+      r11 Rust core enforces revision `5` under strict subscription scope.
+      Its accepted raw frames are consequently quarantined instead of becoming
+      canonical records; the core progress counters showed this explicitly.
+      The ingestor also recorded bounded Binance WebSocket heartbeat failures,
+      but the catalog revision mismatch is sufficient to fence every recovered
+      frame and is repaired first.
+
+      The approved corrective scope is exactly one role:
+      `ingestor_binance_usdm`. Recreate it with the already running attested
+      Rust image
+      `sha256:c8f3c55342f127ed498e4bcde8204bace2e2a8cb35d9e84a80ea5d6d97ac4d16`
+      and the existing r11/barfix runtime
+      `/home/bobby/.local/state/qdl-v2/c36c2-20260827T165526Z/r11-barfix-b965276-20260827T1822Z/runtime`.
+      Permit only ordinary real-provider raw/canonical/cache writes. Preserve
+      Kafka topics/offsets/ACLs, Redis, SQLite, V1, all other V2 roles,
+      Trading System, alpha and every order route. Exact rollback recreates
+      only this role with its current image
+      `sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`
+      and Phase 10.3 runtime
+      `/home/bobby/.local/state/qdl-v2/phase103-shared-primary-e0bedff-retry-20260825T054740Z/runtime`.
+      Exit requires new BTC/ETH Binance canonical event timestamps, bounded
+      zero growth of catalog-revision quarantines after the handoff, no
+      restart/OOM, then a fresh three-projector r11 catch-up and C2 restart
+      from zero. On any source/schema/session failure, rollback this one role;
+      no cache/offset reset or policy relaxation is permitted.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
