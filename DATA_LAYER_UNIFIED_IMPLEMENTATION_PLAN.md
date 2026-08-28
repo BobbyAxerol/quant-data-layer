@@ -20971,6 +20971,123 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         bounded errors are clean, and projector lag is live-only `35` across
         `6/6` partitions. This is same-host no-order acceptance, not a live
         broker, independent-HA or order-path certification.
+      - **Reference/L2 consumer acceptance continuation (`APPROVED / IN
+        PROGRESS`, 2026-08-28):** C2's four paper identities certify the
+        Trading System and representative alpha TRADE/QUOTE/final-BAR routes,
+        but deliberately cannot certify the separately materialized
+        `qdl.crypto.reference-l2.stable` manifest because the older shared
+        acceptance helper accepts only `TRADE`/`QUOTE`/`BAR`. Complete this
+        remaining product proof through one provider-neutral extension of the
+        shared acceptance contract, not a parallel client or a synthetic
+        fixture-only claim. It must read all declared Reference/L2 products
+        through both V2 query replicas, prove Decimal/unit/identity/lineage
+        and typed availability, and prove signed cursor replay/reconnect for
+        every durable `BOOK_SNAPSHOT`/`BOOK_DELTA` route. Provider pass-through
+        reference rows are V2-only fresh snapshots; they never enter a V1
+        fallback drill. The disposable client mounts only the existing
+        `stable-reference-l2` mTLS/JWT identity, runs read-only with tmpfs
+        cursor state for at most 300 seconds, has no provider credential,
+        Docker socket, alpha entrypoint or execution configuration, and
+        records `order_actions=0`. A failed run removes only its exact
+        evidence namespace; it does not recreate a V2 role, alter Kafka,
+        Redis, SQLite, V1, Trading System, alpha, authority or routes. Exit is
+        a compact aggregate receipt covering every declared manifest product,
+        zero hidden V1 reads, no cross-symbol/venue mix, no unresolved L2
+        sequence/gap, bounded client resources, and a targeted source/test
+        matrix. This is the final consumer-proof gap in the approved
+        Reference/L2 packet; it does not authorize a new phase or topology.
+      - **Reference/L2 provider-identity correction (`APPROVED / IN
+        PROGRESS`, 2026-08-28):** a bounded read-only OKX public-instrument
+        check established the relevant actual contract topology before the
+        consumer probe: `BTC/ETH-USD-SWAP` and dated
+        `BTC/ETH-USD-YYMMDD` are live, while the five liquid default swaps are
+        `*-USDT-SWAP` and have no matching USDT-settled dated futures. The
+        existing five `OKX/SWAP` `BASIS NATIVE/PERPETUAL` declarations are
+        therefore false product claims: the OKX adapter correctly returns
+        `DERIVED_ONLY` rather than silently treating USD and USDT as the same
+        quote/settlement unit. Correct this active Reference/L2 demand by
+        removing only those five invalid basis requirements; its accepted
+        denominator becomes **79** exact products: **55** provider-backed
+        reference products and **24** durable BOOK snapshot/delta products.
+        The public Basis contract and `DERIVED_ONLY` capability remain intact;
+        a future derived-basis product must declare exact same-family
+        perpetual and dated inputs, a formula identifier and a separately
+        admitted runtime catalog. It is not smuggled into this USDT liquid
+        product or represented as `0`/cross-currency data. The source gate
+        also verifies the existing `ReferenceBatch` singleflight path makes
+        exactly one bounded vendor call for one admitted request (unless its
+        documented retry policy itself runs).
+        Tests must prove the 79-product denominator, absence of the five
+        invalid requirements, no USD/USDT cross-mix, and one-call batch
+        semantics. No V2 role, provider request beyond the bounded discovery
+        check already completed, Kafka, Redis, SQLite, V1, Trading System,
+        alpha, authority or order route changes are authorized by this source
+        correction. Only after this source gate may the existing read-only
+        `stable-reference-l2` acceptance client be run.
+        **Source exit (`PASS`, 2026-08-28):** removed only the five invalid
+        `OKX/SWAP/*-USDT-SWAP` BASIS declarations, retained all five Binance
+        native BASIS products, and materialized `reference-l2-stable` manifest
+        revision `2` with exactly `79` requirements: `55` reference plus `24`
+        logical BOOK snapshot/delta routes. The policy regression asserts an
+        OKX USDT swap cannot gain BASIS through the liquid feature helper;
+        the materializer regression asserts the exact `55/24/79` denominator,
+        V2-only research semantics and absence of any OKX SWAP BASIS output.
+        In existing immutable Python image
+        `sha256:3149e4099696f9b5dfdf6f2f201e22577da90ddc5280ead9556a0f9a0a3f7eb2`,
+        source mounted read-only, `--network none`, non-root UID/GID `10001`,
+        read-only root, no capabilities and tmpfs-only `/tmp`,
+        `tests.test_active_reference_l2_demand`,
+        `tests.test_reference_l2_materializer`,
+        `tests.test_phasec36_liquid_crypto_features` and
+        `tests.test_phase104_reference_batch` passed **42/42** in `4.470s`.
+        The existing coalescing regression proves one provider fetch for one
+        inflight request. YAML structural validation confirmed revision `2`,
+        `79` requirements and feed counts `BASIS=5`, `BOOK_DELTA=12`,
+        `BOOK_SNAPSHOT=12`. `git diff --check` passed. This source gate made
+        no provider request, runtime, Kafka, Redis, SQLite, V1, Trading
+        System, alpha, authority or order mutation. The next and only
+        remaining product-proof action is the governed `stable-reference-l2`
+        read-only V2 acceptance.
+        **Acceptance implementation (`APPROVED / IN PROGRESS`, 2026-08-28):**
+        add one provider-neutral scope/receipt helper and one disposable CLI
+        which reuse the public V2 SDK and the existing Phase-10.3 book
+        validators. The helper must compile exactly the revision-2 manifest
+        into 55 V2-only reference reads plus 24 durable book routes, preserve
+        typed `MISSING`/`UNAVAILABLE` rather than coercing a decimal to zero,
+        validate instrument/venue/units/lineage and book generation/sequence,
+        and retain only hashes and bounded metrics. Source tests run with
+        network disabled. Runtime use is limited to the existing four reader
+        roles reading the revised manifest; the disposable identity may call
+        only V2 query/stream endpoints for at most 300 seconds. It has no V1
+        URL, provider credential, execution configuration or Docker socket.
+        Rollback is the prior four-reader image/runtime map already recorded
+        by C2; V1, Kafka, Redis, SQLite, Trading System, alpha and orders are
+        excluded. The decision boundary is a fail-closed receipt over all 79
+        products; no new phase, service, worker, topic or authority rule is
+        authorized.
+        The public reference SDK freshness bound must accept the already
+        approved three-day (`259200000ms`) research policy before the receipt
+        can represent its manifest exactly; this is an additive contract-bound
+        correction, not a relaxation of the manifest or a provider fallback.
+        **Source implementation exit (`PASS`, 2026-08-28):** added the
+        compact `reference_l2_acceptance` scope/validator and one disposable
+        CLI receipt path. It reuses the Phase-10.3 public SDK client and its
+        cursor/reconnect helper rather than adding a new transport. Book
+        validation now requires verified generation plus sequence continuity;
+        snapshot levels require positive size and delta deletes may carry a
+        truthful zero size. The public reference SDK now accepts the manifest's
+        existing three-day freshness bound exactly; it does not relax full
+        coverage, identity, unit, Decimal or lineage checks. In immutable
+        Python image `sha256:3149e4099696f9b5dfdf6f2f201e22577da90ddc5280ead9556a0f9a0a3f7eb2`,
+        with source mounted read-only, network disabled, non-root UID/GID
+        `10001`, no capabilities and tmpfs-only `/tmp`, the focused
+        Reference/L2, V2 API/SDK, materializer, policy and provider-contract
+        matrix passed **54/54** in `6.611s`. `py_compile` and
+        `git diff --check` passed. This source evidence made no provider,
+        Docker runtime, Kafka, Redis, SQLite, V1, route, authority, Trading
+        System, alpha or order mutation. Next permitted action remains only
+        one immutable Python reader image, a four-reader rolling handoff with
+        its recorded rollback map, then the bounded V2-only receipt.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

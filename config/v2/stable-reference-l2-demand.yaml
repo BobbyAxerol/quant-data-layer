@@ -94,12 +94,12 @@ requirements:
   - <<: *okx_reference
     feed: CONTRACT_METADATA
     max_freshness_ms: 86400000
-  - <<: *okx_reference
-    feed: BASIS
-    interval: 1d
-    max_freshness_ms: 259200000
-    basis_contract_type: PERPETUAL
-    basis_series: NATIVE
+
+  # No OKX `*-USDT-SWAP` BASIS is declared here. The provider's dated BTC/ETH
+  # contracts are `*-USD-YYMMDD`, so treating their spread as a USDT-swap
+  # basis would silently cross quote/settlement units. A future derived-basis
+  # product must declare an exact same-family perpetual/future input pair and
+  # formula lineage before it can become an active V2 demand.
 
   # Perpetual L2 uses native identifiers. Dated contracts are resolved only
   # from live instrument metadata below; no date-formatted symbol is authored.

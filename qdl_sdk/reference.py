@@ -16,6 +16,13 @@ from pydantic import Field, model_validator
 from qdl_sdk.models import ClosedModel, DecimalValue, Grade, ProblemDetails
 
 
+# Reference products may be deliberately less frequent than price data. The
+# stable research manifest currently declares a three-day freshness window for
+# low-frequency historical metrics; keep the public SDK aligned with that
+# governed contract rather than rejecting an otherwise valid request locally.
+MAX_REFERENCE_FRESHNESS_MS = 259_200_000
+
+
 class _StringEnum(str, Enum):
     pass
 
@@ -62,7 +69,11 @@ class ReferenceRequirement(ClosedModel):
     mark_index_kind: MarkIndexKind = MarkIndexKind.BOTH
     basis_series: BasisSeries = BasisSeries.NATIVE
     basis_contract_type: str | None = Field(default=None, max_length=40)
-    max_freshness_ms: int | None = Field(default=None, gt=0, le=86_400_000)
+    max_freshness_ms: int | None = Field(
+        default=None,
+        gt=0,
+        le=MAX_REFERENCE_FRESHNESS_MS,
+    )
     require_full_coverage: bool = True
     deadline_ms: int = Field(default=20_000, ge=100, le=120_000)
 

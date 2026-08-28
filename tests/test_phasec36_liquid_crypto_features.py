@@ -217,6 +217,8 @@ class PhaseC36LiquidCryptoFeatureTests(unittest.TestCase):
         future = next(item for item in self.records if item.native_symbol == "BTC-USD-260925")
         self.assertIn(DemandFeed.CONTRACT_METADATA, reference_feeds_for(future))
         self.assertNotIn(DemandFeed.FUNDING_RATE, reference_feeds_for(future))
+        usdt_swap = next(item for item in self.records if item.native_symbol == "BTC-USDT-SWAP")
+        self.assertNotIn(DemandFeed.BASIS, reference_feeds_for(usdt_swap))
 
     def test_contract_metadata_demand_proto_roundtrip_is_additive(self):
         record = next(item for item in self.records if item.native_symbol == "BTCUSDT")

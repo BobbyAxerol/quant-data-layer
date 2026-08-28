@@ -225,7 +225,7 @@ class ReferenceL2MaterializerTests(unittest.TestCase):
         self.assertEqual(materialized.summary["provider_requests"], 0)
         self.assertEqual(materialized.summary["physical_l2_book_count"], 12)
         self.assertEqual(materialized.summary["logical_l2_binding_count"], 24)
-        self.assertEqual(materialized.summary["reference_entitlement_count"], 60)
+        self.assertEqual(materialized.summary["reference_entitlement_count"], 55)
         self.assertEqual(materialized.summary["l2_shared_runtime_role_count"], 3)
         self.assertEqual(
             {tuple(item) for item in materialized.summary["l2_runtime_roles"]},
@@ -267,10 +267,20 @@ class ReferenceL2MaterializerTests(unittest.TestCase):
         self.assertEqual(manifest["spec"]["rollback_contract"], "V2")
         self.assertEqual(manifest["spec"]["execution_dependency"], "FORBIDDEN")
         requirements = manifest["spec"]["requirements"]
-        self.assertEqual(len(requirements), 84)
+        self.assertEqual(len(requirements), 79)
         self.assertEqual(sum(row["feed"] == FeedType.MARK_INDEX_PRICE.value for row in requirements), 10)
         self.assertEqual(sum(row["feed"] in {"BOOK_SNAPSHOT", "BOOK_DELTA"} for row in requirements), 24)
         self.assertTrue(all(row["consumer_grade"] == "RESEARCH" for row in requirements))
+        by_uid = {
+            row["instrument_uid"]: row
+            for row in materialized.source_catalog["instruments"]
+        }
+        self.assertFalse(any(
+            row["feed"] == FeedType.BASIS.value
+            and by_uid[row["instrument_uid"]]["venue"] == "OKX"
+            and by_uid[row["instrument_uid"]]["market"] == "SWAP"
+            for row in requirements
+        ))
 
     def test_output_is_idempotent_against_its_own_documents(self):
         first = self._materialize(_metadata())

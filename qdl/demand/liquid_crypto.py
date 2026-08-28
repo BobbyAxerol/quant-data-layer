@@ -202,7 +202,6 @@ def reference_feeds_for(record: InstrumentRecord) -> tuple[DemandFeed, ...]:
             DemandFeed.MARK_PRICE,
             DemandFeed.INDEX_PRICE,
             DemandFeed.CONTRACT_METADATA,
-            DemandFeed.BASIS,
         )
     if key == ("OKX", "FUTURES"):
         return (

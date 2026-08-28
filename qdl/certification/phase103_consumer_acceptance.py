@@ -436,6 +436,40 @@ def _validate_payload(product: AcceptanceProduct, view) -> None:
         }:
             raise ValueError("V2 BAR receipt is not final")
         return
+    if feed is FeedType.BOOK_SNAPSHOT:
+        if (
+            not payload.native_sequence
+            or payload.depth < 1
+            or not payload.levels
+            or not payload.sequence_verified
+            or payload.book_generation < 1
+        ):
+            raise ValueError("V2 BOOK_SNAPSHOT receipt lacks verified snapshot state")
+        for level in payload.levels:
+            if (
+                _decimal_value(level.price) <= 0
+                or _decimal_value(level.quantity) <= 0
+                or not str(level.quantity_unit.value).strip()
+            ):
+                raise ValueError("V2 BOOK_SNAPSHOT receipt has an invalid level")
+        return
+    if feed is FeedType.BOOK_DELTA:
+        if (
+            not payload.native_sequence_start
+            or not payload.native_sequence_end
+            or not payload.snapshot_sequence
+            or not payload.sequence_verified
+            or payload.book_generation < 1
+        ):
+            raise ValueError("V2 BOOK_DELTA receipt lacks verified sequence state")
+        for level in payload.updates:
+            if (
+                _decimal_value(level.price) <= 0
+                or _decimal_value(level.quantity) < 0
+                or not str(level.quantity_unit.value).strip()
+            ):
+                raise ValueError("V2 BOOK_DELTA receipt has an invalid update")
+        return
     raise ValueError("Phase 10.3 receipt received an unsupported feed")
 
 
