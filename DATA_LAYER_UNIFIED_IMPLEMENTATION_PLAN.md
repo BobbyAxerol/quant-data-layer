@@ -20774,6 +20774,43 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         acceptance using a freshly bound current V1 fallback receipt; a failed
         C2 removes only its own namespace and returns reader roles via the
         sealed per-role rollback map.
+      - **Historical-lineage C2 pre-query failure (`FAIL-CLOSED / READER
+        ROLLBACK REQUIRED`, 2026-08-28):** a fresh, payload-free V1 runtime
+        binding passed against the still-serving attested V1 image
+        `sha256:d17085e...f7f0b50`. The disposable non-root C2 client then
+        exited *before its first query, stream, V1 fallback, provider or order
+        request*: the packaged `stable-v2-release-routing.yaml` still declared
+        the pre-lineage `source_catalog.sha256`
+        `089263...07995ff4`, whereas the signed source catalog in the
+        `aad78f4` image is `94200f...d4c41e98c`. `StableReleaseRoutePlan`
+        correctly rejected that mismatch. The empty receipt and bounded
+        traceback are non-acceptance evidence; the `--rm` client is gone and
+        the only mutation was its private evidence namespace. Per packet,
+        immediately restore only `query_v2_1` and `query_v2_2` to their exact
+        r11 image/runtime map; keep the already-correct projector/stream
+        aligned runtime and its live-only durable watermark. Then correct the
+        versioned release-routing catalog reference, run its strict source and
+        immutable-image matrix, build exactly one successor Python image,
+        seal a new per-role packet, and retry C2 from zero. No checksum is to
+        be bypassed, and V1, Kafka offsets/topology, Redis, SQLite, Rust,
+        ingestors, Trading System, alpha and every order path remain excluded.
+      - **Release-routing rebind source gate (`PASS / ONE IMAGE REQUIRED`,
+        2026-08-28):** bumped the versioned release-routing artifact from
+        revision `4` to `5` and rebound only its signed source-catalog digest
+        to `94200f...d4c41e98c`; catalog revision remains `6` and no consumer
+        route/fallback policy changed. The isolated immutable `aad78f4` image,
+        with source mounted read-only, network disabled, non-root/read-only
+        root and tmpfs-only `/tmp`, passed **64/64** focused release-routing,
+        C2 scope/fallback/certification and catalog/projector/query/stream
+        regressions with one explicit isolated-Redis skip. This exact test set
+        includes the parser which rejected the stale reference, so the failure
+        is now a permanent fail-closed contract test rather than an unchecked
+        packaging assumption. The empty failed-C2 namespace (including fresh
+        binding and bounded stderr) was removed after this receipt; no runtime
+        data or service was removed. The next source action is exactly one
+        immutable Python image from this config/plan revision, followed by a
+        new sealed reader-only packet and fresh C2 from zero. Do not reuse the
+        failed receipt or widen any route.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

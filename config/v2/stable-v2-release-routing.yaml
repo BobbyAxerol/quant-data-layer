@@ -1,9 +1,9 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 4
+revision: 5
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
-  sha256: 089263eff350e3017ec76c9c82cab973967e7a29b8b32f3dfdd25ecc07995ff4
+  sha256: 94200f3e9739c2d7b0c60cd2819b02a31c9f620277fb6b31e88bc18d4c41e98c
   revision: 6
 crypto_demand:
   path: /app/config/v2/stable-crypto-demand.yaml
