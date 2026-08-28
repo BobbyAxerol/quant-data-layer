@@ -19926,6 +19926,39 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
     now removed only from the test baseline, so a deterministic fixture cannot
     accidentally assert today's expiry as immutable. This was test-only; the
     real applied artifacts were not altered by that correction.
+  - **Identity/bundle wiring (`APPROVED / IMPLEMENTATION IN PROGRESS / SOURCE
+    ONLY`, 2026-08-28):** add exactly one least-privilege client identity,
+    `stable-reference-l2`, and one public JWT key,
+    `stable-reference-l2-rs256-v1`, for the already-rendered consumer manifest.
+    The identity generator, sealed-candidate bundler, handoff verifier and
+    Compose manifest registry must agree on its fixed SPIFFE subject
+    `spiffe://qdl/paper/reference-l2-stable`. This only makes the manifest
+    loadable by the existing query/stream roles after a later sealed bundle
+    regeneration; it does **not** regenerate current secret material, recreate
+    a role, enable reference queries, open an L2 socket or promote an authority.
+    Existing identities/key IDs remain immutable. Tests must reject a missing,
+    extra, private, mismatched or wrong-subject key. Rollback is revert of this
+    source commit; a later runtime packet can continue mounting the prior bundle.
+    Bundle and production-core tests compare logical binding IDs with logical
+    slices, and physical `source_id` values with physical subscriptions: a
+    `BOOK_SNAPSHOT`/`BOOK_DELTA` pair is deliberately one physical provider
+    book and must never be treated as a dropped binding. Static pre-L2 counts
+    are replaced only by catalog-derived invariants; this remains source-only.
+    - **Exit evidence (`PASS / SOURCE ONLY`, 2026-08-28):** immutable Python
+      test runner `qdl-v2-python:2.0.0-c36-c2-8e6ade8` ran with `--network
+      none`, read-only source/root filesystem and tmpfs `/tmp`. The exact
+      bundle/handoff/release plus reference/L2 regression selection passed
+      **62/62**: candidate generation, immutable image IDs, client/JWT paths,
+      public-only keyring, exact SPIFFE key-subject map, logical-vs-physical
+      book coalescing, production bundle scope, rollback-bundle compatibility,
+      demand/admission and quarterly-roll behavior. Negative identity cases
+      reject a missing, extra, private, mismatched or wrong-subject key. Python
+      compilation and `git diff --check` passed. The runner was `--rm`; no
+      provider request, image build, secret generation, role recreate, Kafka,
+      Redis, SQLite, V1/V2 route, Trading System, alpha or order mutation
+      occurred. The source slice is ready for a separately recorded bounded
+      real-provider/bundle runtime packet; rollback remains this commit revert
+      or mounting the prior sealed bundle.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

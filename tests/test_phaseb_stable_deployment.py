@@ -198,6 +198,9 @@ class StableDeploymentContractTests(unittest.TestCase):
             "stable-alpha-okx",
             "stable-alpha-okx-jwt",
             "stable-alpha-okx-jwt.public.pem",
+            "stable-reference-l2",
+            "stable-reference-l2-jwt",
+            "stable-reference-l2-jwt.public.pem",
         ):
             with self.subTest(artifact=artifact):
                 self.assertIn(artifact, script)
@@ -209,8 +212,10 @@ class StableDeploymentContractTests(unittest.TestCase):
         for value in (
             "issue_client monitoring",
             "issue_client alpha-okx",
+            "issue_client reference-l2",
             "spiffe://qdl/paper/monitoring-multivenue-stable",
             "spiffe://qdl/paper/alpha-okx-stable",
+            "spiffe://qdl/paper/reference-l2-stable",
             "client-ca-bundle.crt",
             "external-client-ca.key",
             "rm -f \"${EXTERNAL_CA_KEY}\"",
@@ -243,16 +248,23 @@ class StableDeploymentContractTests(unittest.TestCase):
             },
         )
         core_bindings = runtime["core"]["bindings"]
+        source_by_id = {item.binding_id: item for item in self.catalog.bindings}
+        expected_physical = self.acquisition._physical_entries(
+            source_by_id=source_by_id,
+            selected_ids=frozenset(expected),
+        )
         self.assertEqual(
             {
                 (item["venue"], item["market"], item["native_symbol"])
                 for item in core_bindings
             },
             {
-                ("BINANCE", "USDM", "BTCUSDT"),
-                ("BINANCE", "USDM", "ETHUSDT"),
-                ("OKX", "SWAP", "BTC-USDT-SWAP"),
-                ("OKX", "SWAP", "ETH-USDT-SWAP"),
+                (
+                    source.instrument.identity.venue,
+                    source.instrument.identity.market,
+                    source.instrument.native_symbol,
+                )
+                for source, _acquisition in expected_physical
             },
         )
         self.assertFalse(any(
@@ -290,7 +302,22 @@ class StableDeploymentContractTests(unittest.TestCase):
         # Spot is disabled by configuration, so no role is generated for it
         # while its capability stays declared in the catalog.
         self.assertEqual(set(native), {"binance-usdm", "okx-swap"})
-        self.assertEqual(sum(len(item["bindings"]) for item in native.values()), 8)
+        source_by_id = {item.binding_id: item for item in self.catalog.bindings}
+        enabled_ids = frozenset(
+            item.binding_id for item in self.acquisition.bindings if item.enabled
+        )
+        expected_native = tuple(
+            (source, acquisition)
+            for source, acquisition in self.acquisition._physical_entries(
+                source_by_id=source_by_id,
+                selected_ids=enabled_ids,
+            )
+            if acquisition.mode == "RUST_NATIVE"
+        )
+        self.assertEqual(
+            sum(len(item["bindings"]) for item in native.values()),
+            len(expected_native),
+        )
         self.assertTrue(all(item["authority"]["mode"] == "RUST_SHADOW" for item in native.values()))
         self.assertEqual(
             {item["max_inflight_publishes"] for item in native.values()}, {512}
@@ -323,9 +350,10 @@ class StableDeploymentContractTests(unittest.TestCase):
             {
                 "TRADE": "LOSSLESS",
                 "QUOTE": "LATEST_STATE",
+                "BOOK": "LOSSLESS",
             },
         )
-        sources = {item.binding_id: item for item in self.catalog.bindings}
+        sources = source_by_id
         final_crypto_bars = {
             item.binding_id
             for item in self.acquisition.bindings
@@ -386,24 +414,19 @@ class StableDeploymentContractTests(unittest.TestCase):
             catalog=self.catalog, authority=self.authority, worker_index=1
         )
         self.assertEqual(current_core, previous_core)
-        self.assertEqual(
-            sum(
-                len(item["bindings"])
-                for item in previous.native_ingestor_configs(
-                    catalog=self.catalog, authority=self.authority
-                ).values()
-            ),
-            10,
+        current_native_count = sum(
+            len(item["bindings"])
+            for item in self.acquisition.native_ingestor_configs(
+                catalog=self.catalog, authority=self.authority
+            ).values()
         )
-        self.assertEqual(
-            sum(
-                len(item["bindings"])
-                for item in self.acquisition.native_ingestor_configs(
-                    catalog=self.catalog, authority=self.authority
-                ).values()
-            ),
-            8,
+        previous_native_count = sum(
+            len(item["bindings"])
+            for item in previous.native_ingestor_configs(
+                catalog=self.catalog, authority=self.authority
+            ).values()
         )
+        self.assertEqual(previous_native_count, current_native_count + 2)
 
     def test_core_bundle_uses_stable_identity_lineage_and_never_enables_public_writes(self):
         core = self.acquisition.core_config(
@@ -534,9 +557,25 @@ class StableDeploymentContractTests(unittest.TestCase):
             )
             self.assertEqual(
                 {item["feed"] for item in okx["bindings"]},
-                {"TRADE", "QUOTE"},
+                {"TRADE", "QUOTE", "BOOK"},
             )
-            self.assertEqual(len(okx["bindings"]), 4)
+            expected_okx_native = sum(
+                1
+                for source, acquisition in self.acquisition._physical_entries(
+                    source_by_id={
+                        item.binding_id: item for item in self.catalog.bindings
+                    },
+                    selected_ids=frozenset(
+                        item.binding_id
+                        for item in self.acquisition.bindings
+                        if item.enabled
+                    ),
+                )
+                if acquisition.mode == "RUST_NATIVE"
+                and self.acquisition._runtime_lane(acquisition, source)
+                == ("OKX", "SWAP")
+            )
+            self.assertEqual(len(okx["bindings"]), expected_okx_native)
             persisted = json.loads((Path(directory) / "core.json").read_text())
             self.assertEqual(persisted, core)
             persisted_workers = [
@@ -1401,6 +1440,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 "stable-trading-system",
                 "stable-alpha-binance",
                 "stable-alpha-okx",
+                "stable-reference-l2",
                 "stable-query",
                 "stable-stream",
             ):
@@ -1429,6 +1469,12 @@ class StableComposeAndBundleTests(unittest.TestCase):
             )
             (certs / "stable-alpha-okx-jwt.public.pem").write_text(
                 "okx-public", encoding="ascii"
+            )
+            (certs / "stable-reference-l2-jwt.key").write_text(
+                "reference-private", encoding="ascii"
+            )
+            (certs / "stable-reference-l2-jwt.public.pem").write_text(
+                "reference-public", encoding="ascii"
             )
             with tempfile.TemporaryDirectory(prefix="qdl-phaseb-output-") as parent:
                 output = Path(parent) / "candidate"
@@ -1500,6 +1546,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 )
                 self.assertIn("stable-monitoring-rs256-v1", env_text)
                 self.assertIn("stable-alpha-okx-rs256-v1", env_text)
+                self.assertIn("stable-reference-l2-rs256-v1", env_text)
                 self.assertIn("QDL_STABLE_JWT_KEY_SUBJECTS_JSON", env_text)
                 self.assertIn("QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON", env_text)
                 self.assertIn(
@@ -1520,6 +1567,16 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertIn(
                     "QDL_STABLE_ALPHA_OKX_CERT_DIR="
                     "/host/qdl/candidate/identities/alpha-okx",
+                    env_text,
+                )
+                self.assertIn(
+                    "QDL_STABLE_REFERENCE_L2_CERT_DIR="
+                    "/host/qdl/candidate/identities/reference-l2",
+                    env_text,
+                )
+                self.assertIn(
+                    "QDL_STABLE_REFERENCE_L2_JWT_PRIVATE_KEY="
+                    "/host/qdl/candidate/identities/reference-l2-jwt/private.key",
                     env_text,
                 )
                 public_manifest = (output / "candidate-manifest.json").read_text()
@@ -1548,7 +1605,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertTrue(alpha_jwt_key.is_file())
                 self.assertEqual(alpha_key.stat().st_mode & 0o777, 0o440)
                 self.assertEqual(alpha_jwt_key.stat().st_mode & 0o777, 0o440)
-                for role in ("monitoring", "alpha-okx"):
+                for role in ("monitoring", "alpha-okx", "reference-l2"):
                     with self.subTest(role=role):
                         self.assertTrue(
                             (output / f"identities/{role}/client.key").is_file()

@@ -21,6 +21,10 @@ EXTERNAL_IDENTITY_SPECS = {
         "subject": "spiffe://qdl/paper/alpha-okx-stable",
         "public_key": "alpha-okx-jwt/public.pem",
     },
+    "stable-reference-l2-rs256-v1": {
+        "subject": "spiffe://qdl/paper/reference-l2-stable",
+        "public_key": "reference-l2-jwt/public.pem",
+    },
 }
 
 ALL_KEY_SUBJECTS = {
@@ -526,7 +530,7 @@ def prepare_handoff_environment(
     python_image: str,
     runtime_binding: Mapping[str, object] | None = None,
 ) -> dict[str, str]:
-    """Append only the two approved external public signing keys.
+    """Append only approved external public signing keys.
 
     Private key paths deliberately never enter the query/stream environment.
     """
@@ -559,7 +563,10 @@ def prepare_handoff_environment(
     except json.JSONDecodeError as error:
         raise ValueError("stable JWT public keyring is invalid JSON") from error
     if not isinstance(keys, dict) or not all(
-        isinstance(key, str) and isinstance(value, str) and "BEGIN PUBLIC KEY" in value
+        isinstance(key, str)
+        and isinstance(value, str)
+        and "BEGIN PUBLIC KEY" in value
+        and "PRIVATE KEY" not in value
         for key, value in keys.items()
     ):
         raise ValueError("stable JWT public keyring is invalid")
@@ -568,9 +575,39 @@ def prepare_handoff_environment(
     )
     if missing_existing:
         raise ValueError(f"stable JWT public keyring misses existing identities {missing_existing}")
+    prior_subjects_raw = result.get("QDL_STABLE_JWT_KEY_SUBJECTS_JSON")
+    if prior_subjects_raw is not None:
+        try:
+            prior_subjects = json.loads(prior_subjects_raw)
+        except json.JSONDecodeError as error:
+            raise ValueError("stable JWT key-subject bindings are invalid JSON") from error
+        if not isinstance(prior_subjects, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in prior_subjects.items()
+        ):
+            raise ValueError("stable JWT key-subject bindings are invalid")
+        unknown_subjects = sorted(set(prior_subjects) - set(ALL_KEY_SUBJECTS))
+        if unknown_subjects:
+            raise ValueError(
+                "stable JWT key-subject bindings contain unapproved identities "
+                f"{unknown_subjects}"
+            )
+        mismatched_subjects = sorted(
+            key
+            for key, subject in prior_subjects.items()
+            if ALL_KEY_SUBJECTS[key] != subject
+        )
+        if mismatched_subjects:
+            raise ValueError(
+                "stable JWT key-subject bindings conflict with approved identities "
+                f"{mismatched_subjects}"
+            )
     extension = Path(extension_dir)
     for key_id, spec in EXTERNAL_IDENTITY_SPECS.items():
-        public_key = (extension / str(spec["public_key"])).read_text(encoding="utf-8")
+        public_key_path = extension / str(spec["public_key"])
+        if not public_key_path.is_file():
+            raise ValueError(f"Phase 10.5-C {key_id} public key is missing")
+        public_key = public_key_path.read_text(encoding="utf-8")
         if "BEGIN PUBLIC KEY" not in public_key or "PRIVATE KEY" in public_key:
             raise ValueError(f"Phase 10.5-C {key_id} public key is invalid")
         prior = keys.get(key_id)

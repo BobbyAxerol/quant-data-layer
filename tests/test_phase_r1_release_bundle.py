@@ -148,7 +148,19 @@ class R1ReleaseBundleTests(unittest.TestCase):
                 ROOT / "config/v2/stable-authority-promotion-scope.yaml",
                 catalog=StableSourceCatalog.load(ROOT / "config/v2/stable-source-bindings.yaml"),
             )
-            self.assertEqual(len(production_ids), len(scope.binding_ids))
+            self.assertEqual(
+                len(production["slices"]), len(scope.binding_ids),
+            )
+            self.assertEqual(
+                production_ids,
+                {
+                    item.source_id
+                    for item in StableSourceCatalog.load(
+                        ROOT / "config/v2/stable-source-bindings.yaml"
+                    ).bindings
+                    if item.binding_id in scope.binding_ids
+                },
+            )
             self.assertTrue(generic_ids.isdisjoint(production_ids))
 
     def test_same_image_retries_receive_disjoint_generation_bound_group_and_key(self) -> None:

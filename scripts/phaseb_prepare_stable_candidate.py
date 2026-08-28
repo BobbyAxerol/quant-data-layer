@@ -147,6 +147,7 @@ def prepare_candidate(
         ("trading-system", "stable-trading-system"),
         ("alpha-binance", "stable-alpha-binance"),
         ("alpha-okx", "stable-alpha-okx"),
+        ("reference-l2", "stable-reference-l2"),
     ):
         copy_client_identity(cert_dir, identities_dir / role, principal)
     copy_server_identity(cert_dir, identities_dir / "query", "stable-query")
@@ -171,6 +172,11 @@ def prepare_candidate(
         identities_dir / "alpha-okx-jwt",
         "stable-alpha-okx-jwt",
     )
+    copy_jwt_identity(
+        cert_dir,
+        identities_dir / "reference-l2-jwt",
+        "stable-reference-l2-jwt",
+    )
 
     schema_digest = hashlib.sha256(
         (ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto").read_bytes()
@@ -191,6 +197,9 @@ def prepare_candidate(
     ).read_text(encoding="utf-8")
     alpha_okx_jwt_public_key = (
         identities_dir / "alpha-okx-jwt/public.pem"
+    ).read_text(encoding="utf-8")
+    reference_l2_jwt_public_key = (
+        identities_dir / "reference-l2-jwt/public.pem"
     ).read_text(encoding="utf-8")
     compose_cert_dir = (host_cert_dir or cert_dir).resolve()
     compose_output_dir = (host_output_dir or output_dir).resolve()
@@ -216,6 +225,7 @@ def prepare_candidate(
                 "stable-alpha-binance-rs256-v1": alpha_binance_jwt_public_key,
                 "stable-monitoring-rs256-v1": monitoring_jwt_public_key,
                 "stable-alpha-okx-rs256-v1": alpha_okx_jwt_public_key,
+                "stable-reference-l2-rs256-v1": reference_l2_jwt_public_key,
             },
             separators=(",", ":"),
         ),
@@ -225,6 +235,7 @@ def prepare_candidate(
                 "stable-alpha-binance-rs256-v1": "spiffe://qdl/paper/alpha-binance-stable",
                 "stable-monitoring-rs256-v1": "spiffe://qdl/paper/monitoring-multivenue-stable",
                 "stable-alpha-okx-rs256-v1": "spiffe://qdl/paper/alpha-okx-stable",
+                "stable-reference-l2-rs256-v1": "spiffe://qdl/paper/reference-l2-stable",
             },
             separators=(",", ":"),
         ),
@@ -266,6 +277,12 @@ def prepare_candidate(
         ),
         "QDL_STABLE_ALPHA_OKX_JWT_PRIVATE_KEY": str(
             compose_output_dir / "identities/alpha-okx-jwt/private.key"
+        ),
+        "QDL_STABLE_REFERENCE_L2_CERT_DIR": str(
+            compose_output_dir / "identities/reference-l2"
+        ),
+        "QDL_STABLE_REFERENCE_L2_JWT_PRIVATE_KEY": str(
+            compose_output_dir / "identities/reference-l2-jwt/private.key"
         ),
         "QDL_STABLE_CONTROL_DB_PASSWORD": control_db_password,
         "QDL_STABLE_DISPATCHER_DB_PASSWORD": dispatcher_db_password,

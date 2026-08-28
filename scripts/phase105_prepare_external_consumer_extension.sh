@@ -73,11 +73,13 @@ issue_jwt_key() {
 
 issue_client monitoring 'spiffe://qdl/paper/monitoring-multivenue-stable'
 issue_client alpha-okx 'spiffe://qdl/paper/alpha-okx-stable'
+issue_client reference-l2 'spiffe://qdl/paper/reference-l2-stable'
 issue_jwt_key monitoring
 issue_jwt_key alpha-okx
+issue_jwt_key reference-l2
 
 # The first PEM is the active CA trusted by existing paper clients. The second
-# is additive and signs only the two newly introduced external consumers.
+# is additive and signs only the newly introduced external consumers.
 cat "${SERVER_CA_FILE}" "${EXTERNAL_CA_CERT}" >"${OUTPUT_DIR}/client-ca-bundle.crt"
 chmod 0444 "${OUTPUT_DIR}/client-ca-bundle.crt" "${EXTERNAL_CA_CERT}"
 rm -f "${EXTERNAL_CA_KEY}" "${OUTPUT_DIR}/external-client-ca.srl"

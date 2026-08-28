@@ -37,7 +37,11 @@ class Phase105HandoffTests(unittest.TestCase):
         }
 
     def _extension(self, root: Path) -> Path:
-        for relative in ("monitoring-jwt/public.pem", "alpha-okx-jwt/public.pem"):
+        for relative in (
+            "monitoring-jwt/public.pem",
+            "alpha-okx-jwt/public.pem",
+            "reference-l2-jwt/public.pem",
+        ):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
@@ -110,7 +114,7 @@ class Phase105HandoffTests(unittest.TestCase):
         self.assertEqual(values["QDL_STABLE_JWT_KEYS_JSON"], '{"key":"value"}')
         self.assertEqual(values["QDL_STABLE_RUNTIME_DIR"], "/runtime")
 
-    def test_environment_has_exact_four_key_subject_bindings(self) -> None:
+    def test_environment_has_exact_five_key_subject_bindings(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             values = prepare_handoff_environment(
                 self.base,
@@ -374,17 +378,50 @@ class Phase105HandoffTests(unittest.TestCase):
                 base, current, runtime, json.loads(expected["QDL_STABLE_JWT_KEYS_JSON"])
             )
 
-    def test_environment_rejects_unapproved_existing_key(self) -> None:
+    def test_environment_rejects_missing_extra_private_mismatched_and_wrong_subject_keys(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            base = dict(self.base)
-            base["QDL_STABLE_JWT_KEYS_JSON"] = json.dumps({
-                **json.loads(base["QDL_STABLE_JWT_KEYS_JSON"]),
+            root = self._extension(Path(raw))
+            cases = []
+
+            missing = Path(raw) / "missing"
+            self._extension(missing)
+            (missing / "reference-l2-jwt/public.pem").unlink()
+            cases.append((dict(self.base), missing, "public key is missing"))
+
+            extra = dict(self.base)
+            extra["QDL_STABLE_JWT_KEYS_JSON"] = json.dumps({
+                **json.loads(extra["QDL_STABLE_JWT_KEYS_JSON"]),
                 "unexpected": "-----BEGIN PUBLIC KEY-----\\nx\\n-----END PUBLIC KEY-----",
             })
-            with self.assertRaisesRegex(ValueError, "exactly match"):
-                prepare_handoff_environment(
-                    base, extension_dir=self._extension(Path(raw)), python_image="image"
-                )
+            cases.append((extra, root, "exactly match"))
+
+            private = Path(raw) / "private"
+            self._extension(private)
+            (private / "reference-l2-jwt/public.pem").write_text(
+                "-----BEGIN PRIVATE KEY-----\\nprivate\\n-----END PRIVATE KEY-----\\n",
+                encoding="utf-8",
+            )
+            cases.append((dict(self.base), private, "public key is invalid"))
+
+            mismatched = dict(self.base)
+            mismatched["QDL_STABLE_JWT_KEYS_JSON"] = json.dumps({
+                **json.loads(mismatched["QDL_STABLE_JWT_KEYS_JSON"]),
+                "stable-reference-l2-rs256-v1": "-----BEGIN PUBLIC KEY-----\\nwrong\\n-----END PUBLIC KEY-----",
+            })
+            cases.append((mismatched, root, "conflicts"))
+
+            wrong_subject = dict(self.base)
+            wrong_subject["QDL_STABLE_JWT_KEY_SUBJECTS_JSON"] = json.dumps({
+                "stable-alpha-binance-rs256-v1": "spiffe://qdl/paper/wrong",
+            })
+            cases.append((wrong_subject, root, "conflict with approved"))
+
+            for base, extension, error in cases:
+                with self.subTest(error=error):
+                    with self.assertRaisesRegex(ValueError, error):
+                        prepare_handoff_environment(
+                            base, extension_dir=extension, python_image="image"
+                        )
 
     def test_v1_attestation_requires_all_frozen_labels(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

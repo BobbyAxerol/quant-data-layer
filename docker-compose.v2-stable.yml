@@ -66,7 +66,7 @@ x-stable-env: &stable-env
   QDL_STABLE_STATE_DIR: /var/lib/qdl-stable/runtime
   QDL_STABLE_DURABLE_STATE_DIR: /var/lib/qdl-stable/shared
   QDL_STABLE_SOURCE_BINDINGS: /app/config/v2/stable-source-bindings.yaml
-  QDL_STABLE_CONSUMER_MANIFESTS: /app/consumers/stable/monitoring-multivenue.yaml:/app/consumers/stable/alpha-binance-paper.yaml:/app/consumers/stable/alpha-okx-paper.yaml:/app/consumers/stable/alpha-vn-paper.yaml:/app/consumers/stable/trading-system-paper.yaml
+  QDL_STABLE_CONSUMER_MANIFESTS: /app/consumers/stable/monitoring-multivenue.yaml:/app/consumers/stable/alpha-binance-paper.yaml:/app/consumers/stable/alpha-okx-paper.yaml:/app/consumers/stable/alpha-vn-paper.yaml:/app/consumers/stable/trading-system-paper.yaml:/app/consumers/stable/reference-l2-stable.yaml
   QDL_STABLE_INTERNAL_INGEST_SECRET: ${QDL_STABLE_INTERNAL_INGEST_SECRET:?set QDL_STABLE_INTERNAL_INGEST_SECRET}
   QDL_STABLE_REDIS_URL: redis://stable_redis:6379/0
   QDL_STABLE_REDIS_PREFIX: qdl:stable:v2:paper:candidate
