@@ -19155,7 +19155,8 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
     immutable Python image and then request a new exact three-projector
     rolling packet. The rerun must start C2 from zero; it may not reuse this
     failed handoff as evidence.
-  - **Allowlist source repair (`IN PROGRESS / SOURCE-ONLY`, 2026-08-28):**
+  - **Allowlist source repair (`SOURCE/PACKAGING PASS / RUNTIME RE-ROLL
+    REQUIRED`, 2026-08-28):**
     resolve the runtime-discovered r11 defect without mutating a service or
     durable store. The stable projector's legacy BAR key grammar will accept
     the interval suffixes declared by current `BINANCE_BAR_GENERIC` catalog
@@ -19180,6 +19181,28 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       Trading System, alpha or order state changed. The next source-only step
       is one immutable image build/attestation from the committed repair;
       runtime re-roll remains unapproved.
+    - **Immutable candidate:** commit `6ed390e1f624f1bcfea7db17eb121ca38aa157d9`
+      (`fix(projector): admit catalog weekly bars`) built
+      `qdl-v2-python:2.0.0-c2-r11-allowlist-6ed390e`, immutable image
+      `sha256:e46084ced87a59c1f6d6c65c907ab841a54c20b29d8f4b515adbf7da4249e7fa`.
+      OCI revision exactly matches the source commit, release label is
+      `2.0.0-c2-r11-allowlist-6ed390e`, and the image runs as `qdl:qdl`.
+      The same 58-case suite passed again directly from that image with no
+      source bind mount, read-only root filesystem and no network. The image
+      is retained as the only candidate; existing active r11 image and exact
+      rollback image remain retained. No container, service, provider,
+      Kafka, Redis, SQLite, V1, Trading System, alpha or order mutation was
+      made by build or tests.
+    - **Required next approval:** rolling-recreate only `projector_v2`,
+      `projector_v2_2`, `projector_v2_3` with candidate
+      `sha256:e46084ced87a59c1f6d6c65c907ab841a54c20b29d8f4b515adbf7da4249e7fa`
+      and the existing r11/barfix runtime directory. Preserve
+      `stable-projector-v1` offsets/group, Kafka topology/ACLs, Redis, SQLite,
+      V1, Trading System, alpha and order path; permit only ordinary
+      canonical-cache catch-up. Exact rollback is only those three roles back
+      to `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`
+      and the Phase 10.3 runtime directory. Only after a clean catch-up may
+      C2 begin its fresh 300-second no-order V2/V1/V2 observation.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
