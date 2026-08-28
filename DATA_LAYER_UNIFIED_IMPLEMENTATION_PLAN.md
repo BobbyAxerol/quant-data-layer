@@ -21464,6 +21464,38 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         invalid-record fail-closed behavior. `python3 -m py_compile` and
         `git diff --check` passed. No image, provider, runtime role,
         Kafka/Redis/SQLite, V1, Trading System, alpha or order state changed.
+        **Active-layout correction (`APPROVED / IN PROGRESS / SOURCE-ONLY`,
+        2026-08-28):** a read-only dry run proved the active r13 successor is
+        a role-runtime directory plus sibling `rollout.env`, not the older
+        generic bundle layout with `stable.env`. Therefore the generic helper
+        is deliberately **not** used for this rollout. Add one narrow core
+        runtime refresher that renders through the existing stable compiler,
+        accepts only the three current core JSON files, proves every non-L2
+        byte/semantic field is unchanged and each L2 change is exactly
+        `snapshot_refresh_seconds: null -> 30`, then atomically replaces only
+        those three files plus the one `QDL_STABLE_RUST_IMAGE` selector. It
+        writes exact rollback copies and a digest-only receipt under the
+        private QDL state root. It never writes authority, identities, trust,
+        reader/projector/ingestor config, Kafka, Redis, SQLite or V1.
+        **Narrow refresher source/dry-run exit (`PASS / NO RUNTIME MUTATION`,
+        2026-08-28):** `refresh_v2_rust_core_runtime.py` renders through the
+        existing stable compiler, refuses all non-L2 or binding-membership
+        changes, keeps `authority.json` byte-identical, atomically backs up its
+        four allowed files on apply, and leaves every other runtime file
+        untouched. Isolated source tests passed **22/22 in 5.884s** across the
+        new refresher, generic authority preservation and Reference/L2 packet
+        contracts. A read-only, no-network dry run against the actual r13
+        runtime passed: the active authority SHA is
+        `1cd55d7…1fb1078`; exactly the three core files change and each lists
+        the same twelve physical L2 sources (Binance USD-M BTC/ETH perpetual +
+        current/next dated, OKX Swap BTC/ETH and OKX Futures BTC/ETH
+        current/next dated). Every validated transition is only nested
+        `l2.snapshot_refresh_seconds: absent -> 30`; old/new core hashes and
+        rollout-env hashes are emitted in the dry-run JSON. The selector moves
+        only from Rust image `11a2819…8282a1` to `e07e6da…fff05d4` after
+        explicit apply. No provider, container, Kafka/Redis/SQLite, V1,
+        Trading System, alpha or order state changed in the source/dry-run
+        gate.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
