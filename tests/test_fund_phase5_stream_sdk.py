@@ -9,6 +9,7 @@ from pathlib import Path
 
 import grpc
 
+from qdl.common.v1 import common_pb2
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
     AssetClass,
@@ -70,6 +71,7 @@ from tests.phase7_support import make_identity, make_token, manifest_mapping
 
 
 STREAM = "md.canonical.v2.bar"
+BOOK_STREAM = "md.canonical.v2.book_snapshot"
 
 
 def instrument() -> InstrumentRecord:
@@ -136,6 +138,65 @@ def durable(record: InstrumentRecord, index: int, *, revision: int = 0) -> Durab
         STREAM,
         f"{record.instrument_uid}/bar/BINANCE_DIRECT",
         index.to_bytes(16, "big"),
+        message.SerializeToString(),
+        1_000_000_000 + index,
+    )
+
+
+def book_envelope(
+    record: InstrumentRecord, index: int, *, snapshot: bool,
+) -> market_data_pb2.EventEnvelope:
+    result = market_data_pb2.EventEnvelope(
+        schema_name="qdl.marketdata.book",
+        schema_major=2,
+        event_id=index.to_bytes(16, "big"),
+        instrument_uid=record.instrument_uid,
+        instrument_id=record.instrument_id,
+        instrument_revision=1,
+        venue="BINANCE",
+        market="USDM",
+        product_type="PERPETUAL",
+        native_symbol="BTCUSDT",
+        provider="BINANCE_DIRECT",
+        source_id="BINANCE_DIRECT",
+        source_role=1,
+        lease_epoch=1,
+        source_event_time_ns=1_000_000_000 + index,
+        received_at_ns=1_000_000_100 + index,
+        normalized_at_ns=1_000_000_200 + index,
+        published_at_ns=1_000_000_300 + index,
+        source_sequence=str(index),
+        partition_sequence=index,
+        normalizer_version="phase5-test",
+        adapter_version="fixture-v1",
+        config_revision=1,
+    )
+    level = market_data_pb2.BookLevel(
+        side=common_pb2.BOOK_SIDE_BID,
+        price=common_pb2.DecimalValue(mantissa=100, scale=0, source_text="100"),
+        quantity=common_pb2.DecimalValue(mantissa=1, scale=0, source_text="1"),
+        quantity_unit=common_pb2.QUANTITY_UNIT_BASE_ASSET,
+    )
+    if snapshot:
+        result.book_snapshot.CopyFrom(market_data_pb2.OrderBookSnapshot(
+            native_sequence=str(index), levels=[level], depth=1,
+            book_generation=1, sequence_verified=True,
+        ))
+    else:
+        result.book_delta.CopyFrom(market_data_pb2.OrderBookDelta(
+            native_sequence_start=str(index), native_sequence_end=str(index),
+            snapshot_sequence="1", updates=[level], book_generation=1,
+            sequence_verified=True,
+        ))
+    return result
+
+
+def durable_book(record: InstrumentRecord, index: int, *, snapshot: bool) -> DurableEvent:
+    message = book_envelope(record, index, snapshot=snapshot)
+    return DurableEvent(
+        BOOK_STREAM,
+        f"{record.instrument_uid}/book_snapshot/BINANCE_DIRECT",
+        bytes(message.event_id),
         message.SerializeToString(),
         1_000_000_000 + index,
     )
@@ -344,6 +405,67 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         await self.gateway.publish(durable(self.record, 2))
         self.assertEqual((await restarted.next_live()).stored.cursor.offset, 2)
         await restarted.close()
+
+    async def test_grpc_filters_interleaved_book_feeds_before_buffering(self):
+        partition = f"{self.record.instrument_uid}/book_snapshot/BINANCE_DIRECT"
+        token = self.handoff.issue(
+            consumer_id=self.consumer_id,
+            snapshot_id="book-snapshot-0",
+            snapshot_watermark=Cursor(BOOK_STREAM, partition, 0),
+            ttl_seconds=3600,
+        ).token
+        manifest_payload = manifest_mapping(
+            consumer_id=self.consumer_id,
+            subject=self.subject,
+            instrument_uid=self.record.instrument_uid,
+            feed="BOOK_SNAPSHOT",
+            interval=None,
+            source_policy_id="alpha_binance_v1",
+        )
+        manifest_payload["spec"]["requirements"][0].update({
+            "require_final_bars": False,
+            "bar_revision_policy": "LATEST",
+        })
+        identity = make_identity(ConsumerManifestLoader.from_mapping(manifest_payload))
+        await self.gateway.publish(durable_book(self.record, 1, snapshot=False))
+        await self.gateway.publish(durable_book(self.record, 2, snapshot=True))
+        server = create_grpc_server(
+            GrpcMarketDataService(
+                gateway=self.gateway,
+                query_service=None,
+                snapshot_loader=SnapshotLoader(self.record, token),
+            ),
+            identity_service=identity,
+        )
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}", allow_insecure_loopback=True,
+            credential_provider=StaticBearerCredential(make_token(self.subject)),
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BOOK_SNAPSHOT, Grade.ALPHA,
+            "alpha_binance_v1", warmup_limit=1,
+        )
+        events = transport.subscribe(
+            requirement, consumer_id=self.consumer_id, cursor_token=token,
+            max_buffer_events=1,
+        ).__aiter__()
+        try:
+            self.assertEqual((await events.__anext__()).code, "REPLAYING")
+            first = await events.__anext__()
+            self.assertEqual(first.logical_offset, 2)
+            self.assertEqual(first.event.WhichOneof("payload"), "book_snapshot")
+            self.assertEqual((await events.__anext__()).code, "LIVE")
+            await self.gateway.publish(durable_book(self.record, 3, snapshot=False))
+            await self.gateway.publish(durable_book(self.record, 4, snapshot=True))
+            second = await events.__anext__()
+            self.assertEqual(second.logical_offset, 4)
+            self.assertEqual(second.event.WhichOneof("payload"), "book_snapshot")
+        finally:
+            await events.aclose()
+            await transport.close()
+            await server.stop(grace=0)
 
     async def test_slow_consumer_is_disconnected_without_durable_loss_or_peer_block(self):
         slow = await self.gateway.open(

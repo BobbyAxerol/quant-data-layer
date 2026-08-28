@@ -9,6 +9,7 @@ from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import AccessPurpose, DataRequirement, QueryServiceError, V2QueryService
 from qdl.query.v2 import query_pb2
 from qdl.replay import ReplayGapError
+from qdl.runtime.stable_catalog import canonical_payload_interval
 from qdl.security import (
     DataPlaneAccessError,
     DataPlaneIdentityService,
@@ -158,6 +159,18 @@ class GrpcMarketDataService:
             event=envelope,
         )
 
+    @staticmethod
+    def _matches_requirement(
+        stored: StoredEvent, requirement: DataRequirement,
+    ) -> bool:
+        """Keep logical products exact when they share a physical partition."""
+
+        envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+        return (
+            envelope.WhichOneof("payload") == requirement.feed.value.lower()
+            and canonical_payload_interval(envelope) == requirement.interval
+        )
+
     async def subscribe(self, request: query_pb2.SubscribeRequest, context):
         subscription = None
         stream = ""
@@ -188,6 +201,7 @@ class GrpcMarketDataService:
                 max_buffer_events=buffer_events,
                 max_consumer_streams=request_access.access.manifest.quotas.max_streams,
                 replay_limit=self.gateway.max_replay_events,
+                accepts=lambda stored: self._matches_requirement(stored, requirement),
             )
             high = (await self.gateway.capture_watermark(
                 stream=stream, partition_key=partition_key
@@ -202,7 +216,10 @@ class GrpcMarketDataService:
                 ),
             ))
             for stored in subscription.initial:
+                matches = subscription.accepts(stored)
                 record = await subscription.record(stored)
+                if not matches:
+                    continue
                 yield query_pb2.SubscribeResponse(
                     record=self._event(record.stored, record.resume_token)
                 )

@@ -21278,6 +21278,62 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         `003` from the current immutable Rust image/runtime files at `512 MiB`,
         let Kafka rebalance naturally, then use the existing 60-second
         freshness gate and one V2-only receipt.
+        **Three-worker runtime recovery (`IN PROGRESS / BOUNDED`,
+        2026-08-28):** recreated only the stopped `rust_core_2` and
+        `rust_core_3` with `--no-deps`, the current immutable Rust image
+        `sha256:11a2819fae4d8cc0bcbaa9473e59d612b1f0aea82fca34768c585a865e8282a1`,
+        their existing successor `core-002.json`/`core-003.json`, original
+        consumer group and the approved `512 MiB` cgroup. All three core
+        workers and all three projectors are `running`, `OOMKilled=false`,
+        `restart=0`. Kafka emitted one bounded transactional
+        generation-invalid retry during natural group rebalance; workers then
+        resumed canonical progress. No Kafka offset was reset, no cache or
+        Redis was cleared, and V1, Trading System, alpha and order paths were
+        untouched. The bounded twelve-book probe remains sequence-clean and
+        shows real replay convergence; the `60s` freshness policy remains in
+        force until all twelve are current.
+        **Logical-book stream correction (`APPROVED / IN PROGRESS`,
+        2026-08-28):** the first final receipt reached fresh, gap-free data
+        and then correctly failed closed with `ContinuityError` because one
+        physical L2 partition intentionally carries both `BOOK_SNAPSHOT` and
+        `BOOK_DELTA`, while `Subscribe` forwarded the first physical record
+        without applying the signed logical requirement. The query edge was
+        already exact; the stream edge must match it. Fix only the generic
+        subscription filter boundary: a subscription advances its physical
+        cursor over every durable record but delivers only records matching
+        the request's canonical feed and interval. This preserves ordered
+        replay/resume, signed cursor continuity, bounded buffering and shared
+        physical-book ordering; it does not change the public schema, cursor
+        format, provider behavior, data authority or query result. Add
+        focused tests for initial replay and live fan-out with interleaved
+        snapshot/delta events, proving skipped records are not exposed yet
+        their physical cursor is safely advanced. Then build one immutable
+        Python image, recreate only the V2 query/stream reader roles, and
+        rerun the same V2-only receipt. V1, Kafka, Redis, SQLite, Rust core,
+        ingestors, Trading System, alpha and order paths remain excluded.
+        **Logical-book source gate (`PASS / RUNTIME NOT YET CHANGED`,
+        2026-08-28):** `StreamSubscription` now accepts one optional generic
+        event matcher. `GrpcMarketDataService.Subscribe` matches the decoded
+        canonical payload feed and interval to the admitted `DataRequirement`.
+        During durable replay it advances the signed physical cursor through
+        every stored record before suppressing a non-matching sibling; during
+        live fan-out it suppresses that sibling before it enters the bounded
+        outbound queue. This is the minimum correct behavior for shared
+        snapshot/delta partitions: no logical cross-feed leak, no artificial
+        cursor gap, and no slow-consumer overflow caused by data that the
+        consumer is not entitled to receive. Isolated non-root,
+        read-only/network-disabled tests passed: the direct replay/live
+        regression plus two adjacent guards passed **3/3 in 0.051s**; the
+        bounded stream/projector/handoff matrix passed **83/83 with 1
+        documented isolated integration skip in 10.704s**. The test harness
+        printed expected injected recovery diagnostics only; it reported no
+        failure. No provider, runtime service, data-plane state, V1,
+        Kafka/Redis/SQLite, Trading System, alpha or order path changed.
+        **Next bounded action:** commit this source correction; build one
+        immutable Python reader image from that commit; then rolling-recreate
+        only `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+        `stream_v2_passive` under the existing r11 runtime. Run the same
+        79-product V2-only receipt only after those readers report ready.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
