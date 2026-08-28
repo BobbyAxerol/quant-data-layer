@@ -19959,6 +19959,70 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       occurred. The source slice is ready for a separately recorded bounded
       real-provider/bundle runtime packet; rollback remains this commit revert
       or mounting the prior sealed bundle.
+  - **Next gate (`APPROVED / READ-ONLY REAL PROVIDER`, 2026-08-28):** run the
+    existing `phasec36_real_provider_certification.py` once against documented
+    public Binance USD-M and OKX APIs with top-volume inventory size `350`, a
+    bounded `120s` provider certificate deadline, `60s` L2 capture and at most `64`
+    frames per declared book. It must prove current metadata admission, five
+    perpetual reference assets, 700 final-bar reads (350 per venue) and the 12
+    declared BTC/ETH physical books. The process is disposable/read-only:
+    `/tmp` evidence only, no raw payload retention, Kafka/Redis/SQLite write,
+    role/recreate, bundle regeneration, route/authority, Trading System, alpha
+    or order mutation. A provider `418`/rate limit/timeout/gap is fail-closed,
+    never a reason to fabricate, substitute or relax the gate.
+    - **Attempt 1 (`FAIL-CLOSED`, 2026-08-28):** the disposable 1 CPU / 768 MiB
+      runner exited after 9 seconds with `Rust native-basis admission cooldown
+      exceeds the bounded certificate deadline`. No runtime mutation occurred.
+      This is the verifier preserving Binance's documented `418/429` cooldown,
+      not a semantic error or source substitution. The one permitted retry uses
+      the verifier's maximum bounded `120s` certificate window, still serial for
+      the fragile native-basis lane. A second rate-limit/cooldown failure blocks
+      activation and is reported as provider evidence rather than retried in a
+      loop.
+    - **Post-cooldown admission probe (`PASS / READ-ONLY`, 2026-08-28):** one
+      documented Binance native-basis GET for `BTCUSDT/PERPETUAL/1d/limit=1`
+      returned HTTP `200`, `199` bytes, no `Retry-After`; only the response
+      SHA-256 `c8457bc1d8debd243b5244b5cf0791c4d998ceb00960b8845612a941026e6975`
+      was retained and the temporary response body was removed. The next full
+      certificate retains only its bounded aggregate stdout long enough to
+      journal pass/fail evidence, then removes it; it remains a single
+      read-only run rather than a retry loop.
+    - **Runtime-bound certificate packet (`APPROVED / READY`, 2026-08-28):**
+      the current `query_v2_1` replica is already on Python image
+      `sha256:0416d26b3b3832b5467e01cd50daa4e33f8539e99380280cf44ef536e75264b9`
+      and has the sealed private `QDL_STABLE_PROVIDER_ADMISSION_URL` plus
+      internal secret. Its in-container verifier SHA-256 is byte-identical to
+      this worktree: `c9d1c86a1d5bda05f7cfffbcfb8f6b677302c7eb2fcaebdd9103118cd0540f1d`.
+      One bounded `--require-rust-admission` process may therefore run inside
+      that existing replica with the declared `350`, `120s`, `60s`, `64-frame`
+      limits. It uses only the already-approved
+      `BINANCE/USDM/REFERENCE_NATIVE_BASIS` Rust admission prefix; it neither
+      creates a container/image/service nor recreates a role, changes a
+      manifest/route/authority, writes Kafka/SQLite/market data, exposes a
+      secret, or touches V1, Trading System, alpha or orders. Its sole mutable
+      state is the bounded Rust `ADMIT`/`COMPLETE`/cooldown coordination
+      already approved for C3.6-C.2. Rollback is no process to retain and
+      deletion of only that named coordination prefix after the recorded
+      observation if the certificate fails.
+    - **Authentic provider certificate (`PASS / BOUNDED RUNTIME`, 2026-08-28):**
+      the one permitted process ran inside the existing `query_v2_1` replica
+      with `--require-rust-admission` and passed. Aggregate result:
+      `700/700` provider-final `1m` bars across independent Binance USD-M and
+      OKX Swap top-350 inventories, `72` bounded reference requests and `12`
+      declared BTC/ETH perpetual/dated physical L2 books. It completed in
+      `134.839s`, with `193880 KiB` maximum RSS. The verifier retained no raw
+      provider bytes and reported `runtime_mutations=0`, `production_writes=0`
+      and no V1, Kafka, SQLite, route, Trading System, alpha or order action.
+      The only separately approved coordination was Rust's scoped admission
+      `ADMIT`/`COMPLETE` state; it did not create a service, image, worker or
+      data-plane write. This is real Binance/OKX provider evidence for the
+      exact reference/L2 and final-BAR products, not a BTC-only smoke and not
+      yet a V2-primary consumer promotion.
+    - **Post-certificate cleanup:** the two temporary aggregate-only files
+      from the earlier failed unbound attempts
+      (`/tmp/qdl-c36-provider-cert-20260828.out` and `.status`) are removed
+      after this journal entry. No provider body, credential, runtime state or
+      durable record is retained by that cleanup.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
