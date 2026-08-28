@@ -19216,7 +19216,7 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       and the recorded Phase 10.3 runtime if continuity, catalog admission or
       C2 fails. On clean catch-up, run C2 afresh for its full 300-second
       no-order V2 -> V1 -> V2 observation; do not reuse the failed attempt.
-    - **Candidate runtime result (`FAIL-CLOSED / ROLLBACK IN PROGRESS`,
+    - **Candidate runtime result (`FAIL-CLOSED / ROLLED BACK`,
       2026-08-28):** exactly the three approved projector roles were recreated
       with `e460...4249e7fa`, the r11 runtime and no dependencies. Image/mount
       provenance and V1 invariants initially passed, but projector generations
@@ -19224,7 +19224,7 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       any C2 client started: `stable compatibility channel escapes its
       allowlist`. This is not the previously repaired `kline:1w` key grammar,
       so the r11 catch-up gate has not passed. Per the approved exit policy,
-      restore only the same three roles to the recorded Phase 10.3
+      The same three roles were restored to the recorded Phase 10.3
       image/runtime map before investigating the source-level channel grammar.
       Kafka offsets/topology, Redis, SQLite, V1, Trading System, alpha and all
       order paths remain excluded; no C2 consumer, provider route or order
@@ -19252,9 +19252,20 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       final-BAR packet, C2 handoff and identity suite passed `65/65` with one
       explicitly environment-gated Redis skip. No provider connection,
       runtime role, Kafka, Redis, SQLite, V1, consumer route, Trading System,
-      alpha or order state changed during this source test. Next: commit the
-      narrow repair, build/attest one immutable Python candidate, then repeat
-      the already-approved three-projector packet from clean rollback state.
+      alpha or order state changed during this source test.
+    - **Compatibility-channel candidate (`SOURCE/PACKAGING PASS / RUNTIME
+      RETRY APPROVED`, 2026-08-28):** source repair commit
+      `b64e3a7f0f6b8b6e18b249adbe52145f10229e06`
+      (`fix(projector): admit weekly compatibility channels`) built exactly one
+      image, `qdl-v2-python:2.0.0-c2-r11-channel-b64e3a7`, immutable digest
+      `sha256:96f271c574f3f4d6bf8c6597b5a87872fdd0bbdbce537f2442c4edddf7f8da5b`.
+      OCI revision/version labels match the source commit and release; it runs
+      as non-root `qdl:qdl`. Direct image execution, no source bind mount,
+      `--network none`, read-only root and tmpfs-only `/tmp`, passed the same
+      `65/65` regression matrix with the one named environment-gated Redis
+      skip. This candidate is the sole approved retry image for the exact same
+      three-projector r11 roll; V1 and all durable/runtime exclusions remain
+      unchanged.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
