@@ -118,6 +118,7 @@ instruments:
 - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
   instrument_id: BINANCE.USDM.PERPETUAL.BTC-USDT
   metadata_revision: 2
+  historical_metadata_revisions: [1]
   venue: BINANCE
   market: USDM
   product_type: PERPETUAL
@@ -377,6 +378,7 @@ instruments:
 - instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
   instrument_id: OKX.SWAP.PERPETUAL.BTC-USDT
   metadata_revision: 2
+  historical_metadata_revisions: [1]
   venue: OKX
   market: SWAP
   product_type: PERPETUAL

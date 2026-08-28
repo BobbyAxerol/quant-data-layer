@@ -75,6 +75,9 @@ class StableSourceBinding:
     continuous_calendar: bool
     v1_compatibility: str
     canonical_stream: str
+    # Explicitly signed historical revisions are replay-only lineage.  They
+    # never change the current instrument metadata returned to consumers.
+    historical_metadata_revisions: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         required = (
@@ -112,6 +115,21 @@ class StableSourceBinding:
             raise ValueError("require_final_bar is valid only for BAR")
         if self.stale_after_ms <= 0:
             raise ValueError("stable source freshness bound must be positive")
+        if (
+            not isinstance(self.historical_metadata_revisions, tuple)
+            or not all(type(value) is int for value in self.historical_metadata_revisions)
+            or tuple(sorted(self.historical_metadata_revisions))
+            != self.historical_metadata_revisions
+            or len(set(self.historical_metadata_revisions))
+            != len(self.historical_metadata_revisions)
+            or any(
+                type(value) is not int
+                or value < 1
+                or value >= self.instrument.metadata_revision
+                for value in self.historical_metadata_revisions
+            )
+        ):
+            raise ValueError("stable historical instrument revisions are invalid")
         policies = {
             "NONE",
             "BINANCE_TRADE_MARKET_AND_GENERIC",
@@ -148,6 +166,9 @@ class StableSourceBinding:
     @property
     def requirement_key(self) -> tuple[str, FeedType, str | None]:
         return self.instrument.instrument_uid, self.feed, self.interval
+
+    def accepts_instrument_revision(self, revision: int) -> bool:
+        return revision == self.instrument.metadata_revision or revision in self.historical_metadata_revisions
 
 
 class StableSourceCatalog:
@@ -255,10 +276,15 @@ class StableSourceCatalog:
         instruments_raw = raw.get("instruments")
         if not isinstance(instruments_raw, list) or not 1 <= len(instruments_raw) <= 10_000:
             raise ValueError("stable source catalog requires 1..10000 instruments")
-        instruments = tuple(cls._instrument(value) for value in instruments_raw)
+        declarations = tuple(cls._instrument(value) for value in instruments_raw)
+        instruments = tuple(item[0] for item in declarations)
         by_uid = {item.instrument_uid: item for item in instruments}
         if len(by_uid) != len(instruments):
             raise ValueError("stable source instrument UIDs must be unique")
+        history_by_uid = {
+            record.instrument_uid: revisions
+            for record, revisions in declarations
+        }
         values = raw.get("bindings")
         if not isinstance(values, list) or not 1 <= len(values) <= 100_000:
             raise ValueError("stable source catalog requires 1..100000 bindings")
@@ -266,7 +292,8 @@ class StableSourceCatalog:
         return cls(
             canonical_stream=canonical_stream,
             bindings=tuple(
-                cls._binding(value, canonical_stream, by_uid) for value in values
+                cls._binding(value, canonical_stream, by_uid, history_by_uid)
+                for value in values
             ),
             catalog_revision=int(raw["catalog_revision"]),
             source_policy_revision=int(raw["source_policy_revision"]),
@@ -275,7 +302,7 @@ class StableSourceCatalog:
         )
 
     @staticmethod
-    def _instrument(raw: Any) -> InstrumentRecord:
+    def _instrument(raw: Any) -> tuple[InstrumentRecord, tuple[int, ...]]:
         if not isinstance(raw, dict):
             raise ValueError("stable instrument must be a mapping")
         required = {
@@ -284,7 +311,9 @@ class StableSourceCatalog:
             "base_asset", "quote_asset", "settlement_asset", "price_tick",
             "quantity_step", "contract_multiplier", "session_calendar_id", "attributes",
         }
-        if not required <= set(raw) or set(raw) - required - {"expiry_time_ns"}:
+        if not required <= set(raw) or set(raw) - required - {
+            "expiry_time_ns", "historical_metadata_revisions",
+        }:
             raise ValueError("stable instrument fields are incomplete or unknown")
         identity = InstrumentIdentity.create(
             venue=str(raw["venue"]),
@@ -297,12 +326,25 @@ class StableSourceCatalog:
             or identity.instrument_id != str(raw["instrument_id"]).upper()
         ):
             raise ValueError("stable instrument UID/ID is not deterministic")
+        metadata_revision = int(raw["metadata_revision"])
+        history = raw.get("historical_metadata_revisions", [])
+        if (
+            not isinstance(history, list)
+            or not all(type(value) is int for value in history)
+            or tuple(sorted(history)) != tuple(history)
+            or len(set(history)) != len(history)
+            or any(
+                type(value) is not int or value < 1 or value >= metadata_revision
+                for value in history
+            )
+        ):
+            raise ValueError("stable historical instrument revisions are invalid")
         attributes = raw["attributes"]
         if not isinstance(attributes, dict):
             raise ValueError("stable instrument attributes must be a mapping")
         return InstrumentRecord(
             identity=identity,
-            metadata_revision=int(raw["metadata_revision"]),
+            metadata_revision=metadata_revision,
             asset_class=AssetClass(str(raw["asset_class"]).upper()),
             native_symbol=str(raw["native_symbol"]).upper(),
             base_asset=str(raw["base_asset"]).upper(),
@@ -318,13 +360,14 @@ class StableSourceCatalog:
                 else None
             ),
             attributes={str(key): str(value) for key, value in attributes.items()},
-        )
+        ), tuple(history)
 
     @staticmethod
     def _binding(
         raw: Any,
         canonical_stream: str,
         instruments: dict[str, InstrumentRecord],
+        history_by_uid: dict[str, tuple[int, ...]],
     ) -> StableSourceBinding:
         if not isinstance(raw, dict) or set(raw) != {
             "binding_id", "instrument_uid", "feed", "interval", "source", "quality",
@@ -365,6 +408,7 @@ class StableSourceCatalog:
             continuous_calendar=bool(quality["continuous_calendar"]),
             v1_compatibility=str(raw["v1_compatibility"]).upper(),
             canonical_stream=canonical_stream,
+            historical_metadata_revisions=history_by_uid[instrument.instrument_uid],
         )
 
     def binding_for(self, requirement: DataRequirement) -> StableSourceBinding:
@@ -391,7 +435,7 @@ class StableSourceCatalog:
         expected_role = getattr(common_pb2, f"SOURCE_ROLE_{binding.source_role}")
         if (
             envelope.instrument_id != binding.instrument.instrument_id
-            or envelope.instrument_revision != binding.instrument.metadata_revision
+            or not binding.accepts_instrument_revision(envelope.instrument_revision)
             or envelope.venue != binding.instrument.identity.venue
             or envelope.market != binding.instrument.identity.market
             or envelope.product_type != binding.instrument.identity.product_type.value

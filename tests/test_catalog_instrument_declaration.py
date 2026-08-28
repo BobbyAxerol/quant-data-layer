@@ -36,13 +36,13 @@ class CatalogInstrumentDeclarationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.catalog = StableSourceCatalog.load(CATALOG_PATH)
 
-    def test_declared_instruments_are_retained(self):
+    def test_declared_instruments_cover_all_materialised_bindings(self):
         declared = {item.identity.instrument_uid for item in self.catalog.instruments}
         bound = {
             binding.instrument.identity.instrument_uid
             for binding in self.catalog.bindings
         }
-        self.assertEqual(declared, bound, "today every instrument is still bound")
+        self.assertTrue(bound <= declared)
         self.assertTrue(declared)
 
     def test_a_bound_instrument_resolves(self):
@@ -60,13 +60,18 @@ class CatalogInstrumentDeclarationTests(unittest.TestCase):
             venue="BINANCE",
             market="USDM",
             product_type=ProductType("PERPETUAL"),
-            canonical_symbol="SOL-USDT",
+            canonical_symbol="UNITTEST-USDT",
         )
         spare["instrument_uid"] = identity.instrument_uid
         spare["instrument_id"] = identity.instrument_id
-        spare["canonical_symbol"] = "SOL-USDT"
-        spare["native_symbol"] = "SOLUSDT"
-        spare["base_asset"] = "SOL"
+        spare["market"] = "USDM"
+        spare["product_type"] = "PERPETUAL"
+        spare["canonical_symbol"] = "UNITTEST-USDT"
+        spare["native_symbol"] = "UNITTESTUSDT"
+        spare["asset_class"] = "DERIVATIVE"
+        spare["base_asset"] = "UNITTEST"
+        spare["attributes"] = {"contractType": "PERPETUAL"}
+        spare.pop("historical_metadata_revisions", None)
         payload["instruments"].append(spare)
         with tempfile.TemporaryDirectory() as raw:
             catalog = _write(Path(raw), payload)
@@ -76,7 +81,7 @@ class CatalogInstrumentDeclarationTests(unittest.TestCase):
             }
             self.assertNotIn(identity.instrument_uid, bound)
             resolved = catalog.instrument_for(identity.instrument_uid)
-            self.assertEqual(resolved.native_symbol, "SOLUSDT")
+            self.assertEqual(resolved.native_symbol, "UNITTESTUSDT")
             self.assertEqual(len(catalog.instruments), len(payload["instruments"]))
 
     def test_an_undeclared_instrument_uid_fails_closed(self):

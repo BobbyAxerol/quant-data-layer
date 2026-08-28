@@ -20569,6 +20569,65 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         apply remains serial, `--no-deps --force-recreate`, upstream first,
         followed by projector, query and stream replicas; normal authentic
         V2 market-data writes are the only permitted data-plane effect.
+      - **Historical instrument-lineage correction (`APPROVED / IN PROGRESS`,
+        2026-08-28):** after the upstream/projector/stream r13 roll, a
+        read-only, no-commit observer sampled exact `stable-projector-v1`
+        committed offsets. Current ETH/Binance/OKX and L2 envelopes matched
+        all catalog fields, but the retained canonical backlog also contains
+        authentic BTC Binance USD-M and OKX Swap events from acquisition
+        revision `11`, whose immutable `instrument_revision=1` predates the
+        current signed instrument metadata revision `2`. The current catalog
+        validator knows only the current record, so it correctly fail-closes
+        those retained records rather than silently rewriting their identity.
+
+        The approved correction is deliberately bounded and provider-neutral:
+        extend the *signed catalog declaration* with an explicit, strictly
+        older `historical_metadata_revisions` allow-list per instrument; carry
+        that allow-list into every binding; and accept an envelope only when
+        every normal identity/authority/provider/adapter/normalizer field
+        matches and its revision is either the current revision or a declared
+        historical revision. Arbitrary older/future revisions, altered IDs,
+        source lineage and current acquisition remain fail-closed. This is
+        durable replay compatibility, not a V1 fallback or a relaxation of
+        source authority. Scope is catalog/parser/validator/config/tests only;
+        no Kafka offset reset, Redis/SQLite mutation, route/authority change,
+        provider request, role recreation, V1, Trading System, alpha or order
+        operation is allowed until a new immutable Python image and exact
+        successor packet pass their isolated gates.
+
+        Exit requires strict parser tests, a golden current envelope, a
+        declared historical envelope, and negative arbitrary/future/tampered
+        revision cases; then the existing offline rollout matrix. Rollback is
+        a source revert before runtime apply. The runtime exit remains zero
+        new catalog/lineage rejects, bounded catch-up, then query rolling and
+        the existing C2 no-order acceptance/fallback drill.
+      - **Historical-lineage source exit (`PASS / IMMUTABLE PYTHON IMAGE
+        REQUIRED`, 2026-08-28):** catalog declarations now explicitly retain
+        revision `1` only for the two current revision-`2` BTC derivatives
+        (`BINANCE.USDM.PERPETUAL.BTC-USDT` and
+        `OKX.SWAP.PERPETUAL.BTC-USDT`). `StableSourceBinding` carries that
+        signed replay-only allow-list and validates it is integer, sorted,
+        unique, positive and strictly below the current metadata revision.
+        Current revisions and only declared historical revisions pass; future,
+        implicit, malformed and tampered revisions remain rejected alongside
+        all other identity/lineage checks. Declared instruments are now
+        correctly tested as a superset of materialised bindings, preserving
+        pass-through/reference declarations without pretending every declared
+        instrument has an active feed.
+
+        Isolated source evidence used immutable
+        `qdl-v2-python:2.0.0-12f0861`, source mounted read-only, UID/GID
+        `10001`, read-only root, network disabled and tmpfs-only `/tmp`:
+        strict parser/current+historical/future goldens and declaration tests
+        **12/12 passed** in `2.365s`; Reference/L2 rollout, stable deployment
+        and catalog-demand matrix **37/37 passed** in `7.116s`; stable
+        projector/query/stream edge matrix **43/43 passed** in `5.417s`
+        (`1` documented isolated-Redis integration skip). These tests made no
+        provider, Kafka, Redis, SQLite or runtime mutation. The next bounded
+        action is one immutable Python image from this commit, then a freshly
+        sealed successor packet that recreates only the three projector roles
+        first. Query roles remain untouched until projector catch-up has zero
+        new catalog/lineage rejects.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

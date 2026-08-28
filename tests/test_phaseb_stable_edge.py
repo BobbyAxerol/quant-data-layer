@@ -329,6 +329,41 @@ class StableCatalogContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provenance is incomplete"):
             catalog.binding_for_envelope(event)
 
+    def test_catalog_accepts_only_declared_historical_instrument_revision(self):
+        catalog = StableSourceCatalog.load(CATALOG_PATH)
+        binding = next(
+            item for item in catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-trade"
+        )
+        self.assertEqual(binding.instrument.metadata_revision, 2)
+        self.assertEqual(binding.historical_metadata_revisions, (1,))
+        current = _stable_event(
+            catalog, "binance_usdm_trade.json", binding.binding_id
+        )
+        self.assertIs(catalog.binding_for_envelope(current), binding)
+        historical = market_data_pb2.EventEnvelope()
+        historical.CopyFrom(current)
+        historical.instrument_revision = 1
+        self.assertIs(catalog.binding_for_envelope(historical), binding)
+        future = market_data_pb2.EventEnvelope()
+        future.CopyFrom(current)
+        future.instrument_revision = 3
+        with self.assertRaisesRegex(ValueError, "identity/lineage"):
+            catalog.binding_for_envelope(future)
+
+    def test_catalog_rejects_implicit_or_current_historical_revision(self):
+        payload = yaml.safe_load(CATALOG_PATH.read_text())
+        btc = next(
+            item for item in payload["instruments"]
+            if item["instrument_id"] == "BINANCE.USDM.PERPETUAL.BTC-USDT"
+        )
+        btc["historical_metadata_revisions"] = [2]
+        with self.assertRaisesRegex(ValueError, "historical instrument revisions"):
+            StableSourceCatalog.from_mapping(payload)
+        btc["historical_metadata_revisions"] = ["1"]
+        with self.assertRaisesRegex(ValueError, "historical instrument revisions"):
+            StableSourceCatalog.from_mapping(payload)
+
     def test_continuous_future_is_explicit_and_dated_future_still_requires_expiry(self):
         identity = InstrumentIdentity.create(
             venue="HNX", market="VN_DERIVATIVES",
