@@ -20734,6 +20734,46 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         replay. Do not recreate query or begin C2 until the group reaches its
         bounded catch-up gate with no fresh catalog/lineage error; rollback
         remains per projector/stream to the exact recorded r13 map.
+      - **Historical-lineage durable catch-up (`PASS / QUERY ROLL PERMITTED`,
+        2026-08-28):** after the aligned projectors consumed authentic retained
+        Kafka data without any reset/seek, `stable-projector-v1` fell from
+        approximately `2,146,000` records to a live-only `46` records across
+        all `6/6` `md.canonical.v2` partitions. Three bounded decreasing
+        observations (including `115,711`, `50,834`, `9,582`, then `46`) show
+        genuine forward progress rather than an offset manipulation. Each
+        projector and both existing stream replicas remains `running`,
+        `restart=0`, `OOMKilled=false`; the last bounded projector error scan
+        contains zero permission/catalog/lineage/gateway/fatal records. At
+        steady state projector RSS is approximately `87--90 MiB` of `512 MiB`
+        and stream RSS is `115--125 MiB` of `512 MiB`, with no sustained
+        catch-up saturation. This admits only the next packet step: serially
+        recreate `query_v2_1`, validate it, then `query_v2_2`, validate it,
+        using image `sha256:45008b1985263dd0e5bd28e5a08676f32ddab11db9d914a89d498e5cc92fef41`
+        and successor runtime
+        `/home/bobby/.local/state/qdl-v2/historical-lineage-aad78f4-20260828T112339Z/successor/runtime`.
+        The exact rollback for each query remains its own recorded r11 image
+        `sha256:0416d26b3b3832b5467e01cd50daa4e33f8539e99380280cf44ef536e75264b9`
+        and r11 runtime path from the sealed packet. Do not recreate any
+        other role; V1, Kafka topology/offsets, Redis, SQLite, Trading System,
+        alpha and order paths remain excluded. Only after both replicas pass
+        mTLS/readiness and a fresh bounded error window may a new C2 no-order
+        acceptance begin.
+      - **Historical-lineage reader alignment (`PASS / FRESH C2 PERMITTED`,
+        2026-08-28):** serially recreated only `query_v2_1`, then
+        `query_v2_2`, with the sealed `45008b...92fef41` Python image and
+        successor runtime. Both exact prior r11 image/runtime selectors remain
+        in the packet as their individual rollback. Each is `running`,
+        `restart=0`, `OOMKilled=false`; direct local mTLS
+        `/health/ready` checks returned `200` for both and a 120-second
+        bounded error scan found zero permission/catalog/lineage/fatal/OOM
+        records. Projector lag remained live-only (`198` across `6/6`
+        partitions) during the serial reader handoff. This operation recreated
+        no ingestor, Rust core, stream, V1, Kafka, Redis, SQLite, Trading
+        System, alpha or order component. The only permitted next action is a
+        *new*, disposable Phase-10.5 C2 four-consumer, no-order V2-primary
+        acceptance using a freshly bound current V1 fallback receipt; a failed
+        C2 removes only its own namespace and returns reader roles via the
+        sealed per-role rollback map.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
