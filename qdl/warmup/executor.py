@@ -187,7 +187,12 @@ class BoundedWarmupExecutor(Generic[T, R]):
                 inflight = self._inflight.get(key)
                 if inflight is None:
                     task = asyncio.create_task(
-                        self._run_with_policy(item, work, provider_key)
+                        self._run_with_policy(
+                            item,
+                            work,
+                            provider_key,
+                            deadline_at=started + deadline_ms / 1000,
+                        )
                     )
                     inflight = _Inflight(task=task, waiters=1)
                     self._inflight[key] = inflight
@@ -257,6 +262,8 @@ class BoundedWarmupExecutor(Generic[T, R]):
         item: T,
         work: Callable[[T], Awaitable[R]],
         provider: str,
+        *,
+        deadline_at: float | None = None,
     ) -> tuple[R, int]:
         policy = self.provider_policies.get(provider, self.default_policy)
         semaphore = self._semaphores.setdefault(
@@ -280,10 +287,17 @@ class BoundedWarmupExecutor(Generic[T, R]):
                     break
                 if attempt == policy.max_attempts:
                     break
-                self.retry_count += 1
                 provider_delay = (error.retry_after_ms or 0) / 1000
                 exponential = min(4.0, 0.1 * (2 ** (attempt - 1)))
-                await self._sleep(max(provider_delay, exponential) + self._random() * 0.05)
+                delay = max(provider_delay, exponential) + self._random() * 0.05
+                if deadline_at is not None and self._clock() + delay >= deadline_at:
+                    raise RetryableWarmupError(
+                        "provider retry delay exceeds the remaining bounded deadline",
+                        retry_after_ms=error.retry_after_ms,
+                        cause=error,
+                    ) from error
+                self.retry_count += 1
+                await self._sleep(delay)
         assert last_error is not None
         raise last_error
 

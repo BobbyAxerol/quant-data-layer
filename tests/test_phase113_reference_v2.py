@@ -155,6 +155,22 @@ class RetryOnceReferenceAdapter(FixtureReferenceAdapter):
         )
 
 
+class DeferredReferenceAdapter(FixtureReferenceAdapter):
+    """A provider retry hint that cannot fit the caller's item deadline."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts = 0
+
+    async def fetch(self, request, *, capability, received_at_ns):
+        del request, capability, received_at_ns
+        self.attempts += 1
+        raise ReferenceProviderExhausted(
+            "fixture Rust admission deferred provider work",
+            retry_after_ms=60_000,
+        )
+
+
 def fixture_batch(*, observed_at_ns: int = NOW_NS, policy=None) -> ReferenceBatch:
     return ReferenceBatch(
         {
@@ -269,7 +285,13 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
             clock_ns=lambda: NOW_NS,
         )
 
-    def funding_requirement(self, instrument_uid: str, *, freshness_ms: int | None = None):
+    def funding_requirement(
+        self,
+        instrument_uid: str,
+        *,
+        freshness_ms: int | None = None,
+        deadline_ms: int = 20_000,
+    ):
         return ReferenceDataRequirement(
             instrument_uid=instrument_uid,
             product=ReferenceProduct.FUNDING_RATE,
@@ -279,6 +301,7 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
             end_time_ns=NOW_NS,
             limit=10,
             max_freshness_ms=freshness_ms,
+            deadline_ms=deadline_ms,
         )
 
     async def test_multi_venue_service_keeps_identity_coverage_and_missing_typed(self):
@@ -407,6 +430,56 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapter.attempts, 2)
         self.assertEqual(executor.retry_count, 1)
         self.assertGreaterEqual(max(sleeps), 0.25)
+
+    async def test_retry_hint_outside_reference_deadline_returns_without_sleep(self):
+        adapter = DeferredReferenceAdapter()
+        sleeps: list[float] = []
+
+        async def sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        executor = BoundedWarmupExecutor(
+            default_policy=ProviderBudgetPolicy(
+                max_concurrency=1,
+                requests_per_second=100.0,
+                burst_requests=1,
+                max_attempts=4,
+            ),
+            sleep=sleep,
+            random_value=lambda: 0.0,
+        )
+        registry = InstrumentRegistry()
+        registry.register(self.binance, [])
+        service = V2QueryService(
+            instruments=InstrumentQuery(registry),
+            backend=MemoryMarketDataBackend(),
+            entitlements=grants(),
+            warmup_executor=executor,
+            reference_batch=ReferenceBatch(
+                {("BINANCE", "USDM"): adapter},
+                clock_ns=lambda: NOW_NS,
+            ),
+            reference_source_id=lambda item: f"{item.identity.venue}_DIRECT",
+            clock_ns=lambda: NOW_NS,
+        )
+
+        started = time.monotonic()
+        result = await service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "phase113-alpha",
+                (self.funding_requirement(self.binance.instrument_uid, deadline_ms=5_000),),
+                require_all=False,
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+
+        self.assertLess(time.monotonic() - started, 0.5)
+        self.assertTrue(result.partial)
+        self.assertEqual(result.results[0].problem.code.value, "SOURCE_UNAVAILABLE")
+        self.assertEqual(result.results[0].problem.retry_after_ms, 60_000)
+        self.assertEqual(adapter.attempts, 1)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(executor.retry_count, 0)
 
     async def test_rest_api_checks_manifest_and_serializes_exact_decimals(self):
         consumer_id = "phase113-api-alpha"

@@ -447,6 +447,47 @@ class WarmupExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(max(sleeps), 0.75)
         self.assertEqual(executor.stats()["retry_count"], 1)
 
+    async def test_retry_after_outside_item_deadline_returns_typed_without_sleep(self):
+        now = [0.0]
+        sleeps = []
+
+        async def sleep(delay):
+            sleeps.append(delay)
+            now[0] += delay
+
+        executor = BoundedWarmupExecutor[int, int](
+            default_policy=ProviderBudgetPolicy(
+                max_concurrency=1,
+                requests_per_second=100.0,
+                burst_requests=1,
+                max_attempts=4,
+            ),
+            sleep=sleep,
+            clock=lambda: now[0],
+            random_value=lambda: 0.0,
+        )
+        calls = 0
+
+        async def deferred(_):
+            nonlocal calls
+            calls += 1
+            raise RetryableWarmupError("provider defer", retry_after_ms=60_000)
+
+        result = await executor.execute(
+            (1,),
+            work=deferred,
+            identity=lambda value: value,
+            provider=lambda _: "BINANCE",
+            deadline_ms=lambda _: 5_000,
+        )
+
+        self.assertFalse(result[0].ok)
+        self.assertIsInstance(result[0].error, RetryableWarmupError)
+        self.assertEqual(result[0].error.retry_after_ms, 60_000)
+        self.assertEqual(calls, 1)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(executor.stats()["retry_count"], 0)
+
     async def test_circuit_opens_after_consecutive_failures(self):
         executor = BoundedWarmupExecutor[int, int](
             default_policy=ProviderBudgetPolicy(

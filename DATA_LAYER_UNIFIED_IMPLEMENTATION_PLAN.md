@@ -21854,6 +21854,51 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         Kafka/Redis/SQLite/V1, authority, Trading System, alpha or order state
         changed. The next action is exactly one tool-only image and the same
         receipt; no reader roll is authorized or needed.
+        **Retry/deadline closure (`APPROVED / IN PROGRESS`, 2026-08-28):** the
+        tool-only rerun proved the failure is not an HTTP transport grace
+        issue. A five-second V2-only native-BASIS probe returned one authentic
+        result, then four typed `SOURCE_UNAVAILABLE` results at the exact item
+        deadline. A signed direct Rust `ADMIT -> COMPLETE` on the same existing
+        lane completed in `33.803ms`, so Rust authority, its shared Redis
+        coordinator and the lane policy remain live. The fault is the shared
+        Python bounded executor: it can enter an approved retryable provider
+        path, sleep a `retry_after` that consumes the entire remaining item
+        deadline, and only then be cancelled by its outer deadline. Correct
+        that one generic scheduler behavior: before sleeping, compare the
+        governed retry delay with the item's remaining monotonic deadline; if
+        it cannot fit, return the existing typed retryable result immediately
+        with its original `retry_after_ms`. This does not add a retry, relax
+        freshness/coverage, change Rust admission, call another provider,
+        create a worker/container, or alter V1/Kafka/Redis/SQLite/Trading
+        System/alpha/order state. Source exit requires deterministic executor
+        and V2 reference-bridge regression proving one provider call, no sleep
+        beyond deadline and retained retry hint. Then build one replacement
+        reader image, roll only the same four approved C2 reader roles, rerun
+        the same 79-product V2-only receipt, and clean only its exact evidence
+        namespace. Rollback remains the current `930409b` four-reader image
+        map and existing C2 overlay.
+        **Source exit (`PASS / NO RUNTIME MUTATION`, 2026-08-28):**
+        `BoundedWarmupExecutor` now compares a governed retry delay with the
+        originating item's monotonic deadline before sleeping. A delay that
+        cannot fit returns the same `RetryableWarmupError` immediately with
+        its original `retry_after_ms`; it makes one provider attempt, records
+        no retry sleep and leaves the Rust coordinator as the sole authority.
+        The V2 reference bridge regression proves that result reaches the
+        caller as typed `SOURCE_UNAVAILABLE` with the intact retry hint rather
+        than an HTTP timeout. In an immutable, non-root, read-only,
+        network-disabled Python container with tmpfs `/tmp`, the focused
+        scheduler, V2 reference/API/SDK, active-demand, edge and materializer
+        matrix passed **96 tests** with **1 documented isolated integration
+        skip** in **7.850s**. `git diff --check` and `python3 -m py_compile`
+        passed. No provider request was made by this source gate and no
+        runtime role, Rust authority, Kafka, Redis, SQLite, V1, Trading
+        System, alpha or order state changed. The next bounded action is one
+        immutable replacement reader image, serial recreation of only
+        `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+        `stream_v2_passive` with the existing C2 override, then exactly one
+        79-product V2-only receipt. A typed provider deferral remains a
+        fail-closed certificate result, not a reason to extend a request or
+        synthesize data.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
