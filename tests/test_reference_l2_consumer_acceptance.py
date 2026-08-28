@@ -93,7 +93,7 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(
             _history_bounds(FeedType.TAKER_FLOW, NOW_NS),
-            (daily_boundary - 2 * _DAY_NS, daily_boundary - _MILLISECOND_NS),
+            (daily_boundary - 2 * _DAY_NS, daily_boundary - _DAY_NS - _MILLISECOND_NS),
         )
         self.assertEqual(
             _history_bounds(FeedType.BASIS, NOW_NS),

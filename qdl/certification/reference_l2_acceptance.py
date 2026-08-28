@@ -134,7 +134,12 @@ def _history_bounds(feed: FeedType, now_ns: int) -> tuple[int, int]:
         return settled - _FUNDING_NS, settled + _FUNDING_SETTLEMENT_JITTER_NS
 
     settled_day = (now_ns // _DAY_NS) * _DAY_NS
-    if feed in {FeedType.TAKER_FLOW, FeedType.BASIS}:
+    if feed is FeedType.TAKER_FLOW:
+        # Binance publishes daily taker flow at the next provider daily
+        # boundary. Certify the latest known published completed period rather
+        # than treating the not-yet-published next row as a partial history.
+        return settled_day - 2 * _DAY_NS, settled_day - _DAY_NS - _MILLISECOND_NS
+    if feed is FeedType.BASIS:
         # Binance documents these rows at period open. Request two fully
         # closed daily periods and exclude the current open period by one ms.
         return settled_day - 2 * _DAY_NS, settled_day - _MILLISECOND_NS

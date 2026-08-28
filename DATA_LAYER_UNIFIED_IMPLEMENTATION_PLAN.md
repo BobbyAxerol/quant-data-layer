@@ -21807,6 +21807,30 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         order mutation occurred. The next bounded step remains exactly one
         replacement reader image, the existing four-reader C2 roll and the
         real V2-only 79-product receipt.
+        **Live receipt correction (`APPROVED / IN PROGRESS`, 2026-08-28):** the
+        first post-roll V2-only receipt reached the actual query plane and
+        failed only on all five Binance `TAKER_FLOW` products. A disposable
+        metadata-only probe found one truthful row at the latest provider
+        published daily period, with `complete_left=true`, `truncated=false`
+        and `complete_right=false` only because the receipt also requested the
+        next daily period which Binance had not published yet. The row is
+        within the manifest's explicit `259200000ms` freshness limit. Correct
+        only the TAKER_FLOW acceptance window to the latest known published
+        completed daily period, retaining full coverage and the same 72-hour
+        freshness gate; do not relax coverage, fabricate a row, alter BASIS,
+        add a retry/worker, or change provider admission. This is the one
+        remaining provider-semantic correction. It requires the same focused
+        source matrix, one replacement reader image because the binary changes,
+        the same four-reader C2 roll, then the same 79-product V2-only receipt.
+        **Source exit (`PASS`, 2026-08-28):** the TAKER window now selects one
+        fully completed known-published daily period; its maximum age remains
+        bounded by the unchanged 72-hour manifest policy. The identical
+        non-root, read-only, network-disabled source matrix passed **80 tests**
+        with **one documented isolated-Redis skip** in `7.956s`; `py_compile`
+        and `git diff --check` passed. This source result does not certify a
+        provider route by itself and made no runtime or durable-state change.
+        The one remaining action is to build the corrected reader image, roll
+        the same four C2 reader roles, and run the real receipt.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
