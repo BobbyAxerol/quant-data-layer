@@ -97,6 +97,7 @@ REQUIRED_CRYPTO_EVIDENCE = (
     "cpu_ram_io",
     "fallback_count",
 )
+SHARED_PRIMARY_CRYPTO_BINDING_COUNT = 64
 TRADING_SYSTEM_HANDOFF_LOCK_SCHEMA = "qdl.v2.external-consumer-route-lock.v1"
 TRADING_SYSTEM_HANDOFF_CONSUMER_ID = "trading-system.paper.stable"
 TRADING_SYSTEM_HANDOFF_SERVICE = "market_data"
@@ -425,7 +426,7 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
     }:
         raise ValueError("shared primary packet acceptance fields are invalid")
     if (
-        acceptance.get("crypto_binding_count") != 12
+        acceptance.get("crypto_binding_count") != SHARED_PRIMARY_CRYPTO_BINDING_COUNT
         or acceptance.get("required_crypto_evidence") != list(REQUIRED_CRYPTO_EVIDENCE)
         or not isinstance(acceptance.get("observation_seconds"), int)
         or not 60 <= acceptance["observation_seconds"] <= 1_800

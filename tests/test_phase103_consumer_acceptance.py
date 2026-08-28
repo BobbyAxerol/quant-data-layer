@@ -63,22 +63,28 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         self.assertEqual(len(scope.products), 18)
         self.assertEqual(
             sum(item.delivery is DeliveryClass.DURABLE for item in scope.products),
-            16,
+            18,
         )
         pass_through = [
             item
             for item in scope.products
             if item.delivery is DeliveryClass.PROVIDER_PASS_THROUGH
         ]
-        self.assertEqual(len(pass_through), 2)
-        self.assertTrue(
-            all(
-                item.consumer_id == "alpha.binance.paper.stable"
-                and item.feed.value == "BAR"
-                and item.interval == "15m"
-                and item.binding_id is None
-                for item in pass_through
-            )
+        self.assertEqual(pass_through, [])
+        self.assertEqual(
+            {
+                item.binding_id
+                for item in scope.products
+                if (
+                    item.consumer_id == "alpha.binance.paper.stable"
+                    and item.feed.value == "BAR"
+                    and item.interval == "15m"
+                )
+            },
+            {
+                "binance-usdm-btcusdt-bar-15m",
+                "binance-usdm-ethusdt-bar-15m",
+            },
         )
         self.assertEqual(len(scope.excluded), 1)
         excluded = scope.excluded[0]
@@ -163,11 +169,23 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             "source_text": text,
         }
 
-    def _product(self, *, feed: str, delivery: DeliveryClass = DeliveryClass.DURABLE):
+    def _product(
+        self,
+        *,
+        feed: str,
+        delivery: DeliveryClass = DeliveryClass.DURABLE,
+        consumer_id: str | None = None,
+        interval: str | None = None,
+    ):
         return next(
             item
             for item in self.scope().products
-            if item.feed.value == feed and item.delivery is delivery
+            if (
+                item.feed.value == feed
+                and item.delivery is delivery
+                and (consumer_id is None or item.consumer_id == consumer_id)
+                and (interval is None or item.interval == interval)
+            )
         )
 
     def _view(
@@ -285,9 +303,14 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 product = self._product(feed=feed)
                 validate_product_view(product, self._view(product))
 
-        pass_through = self._product(
-            feed="BAR",
+        pass_through = replace(
+            self._product(
+                feed="BAR",
+                consumer_id="alpha.binance.paper.stable",
+                interval="15m",
+            ),
             delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
+            binding_id=None,
         )
         validate_product_view(pass_through, self._view(pass_through))
         with self.assertRaisesRegex(ValueError, "pass-through"):
@@ -410,12 +433,22 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         self.assertEqual(primary.requirement, sdk_requirement(bar))
 
     def test_bar_stream_wait_covers_one_close_but_stays_sla_bounded(self):
-        bar = self._product(feed="BAR")
+        bar = self._product(
+            feed="BAR",
+            consumer_id="trading-system.paper.stable",
+            interval="1m",
+        )
         self.assertEqual(_stream_event_timeout_seconds(bar, 15.0), 75.0)
         self.assertLessEqual(
             _stream_event_timeout_seconds(bar, 15.0) * 1_000,
             bar.requirement.max_freshness_ms,
         )
+        alpha_bar = self._product(
+            feed="BAR",
+            consumer_id="alpha.binance.paper.stable",
+            interval="15m",
+        )
+        self.assertEqual(_stream_event_timeout_seconds(alpha_bar, 15.0), 915.0)
         trade = self._product(feed="TRADE")
         self.assertEqual(_stream_event_timeout_seconds(trade, 15.0), 15.0)
 

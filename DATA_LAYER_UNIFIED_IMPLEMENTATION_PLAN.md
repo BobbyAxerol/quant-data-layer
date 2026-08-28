@@ -19374,6 +19374,107 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         handoff claim. The prior failed C2 namespace is now disposable
         diagnostic output and must be removed before creating the fresh C2
         evidence namespace.
+      - **C2 durable-BAR verifier correction (`APPROVED / SOURCE-ONLY`,
+        2026-08-28):** the fresh disposable C2 run reached current strict
+        query admission but consumed its full 300-second ceiling while awaiting
+        a second *future* final-BAR through `_stream_resume`. This is a
+        verifier defect, not a stale/gap/provider or projector failure: a
+        signed cursor issued by an ordinary current warmup is deliberately at
+        that warmup's high watermark, so no retained record follows it; a
+        15m/1h close may not occur within C2's bounded observation. The three
+        projectors were restored immediately to the recorded Phase 10.3 map;
+        the zero-byte receipt is non-acceptance evidence only.
+
+        The approved repair is limited to the shared Phase-10.3 SDK receipt
+        helper reused by the actual four-consumer
+        `phase105_consumer_v2_identity_acceptance.py` C2 harness, plus focused
+        tests. For non-execution `BAR` products only, the helper
+        must first retain the existing strict current warmup/replica result,
+        then obtain a second **history-only** signed cursor at an earlier,
+        aligned durable boundary. That seed request preserves the exact
+        instrument/feed/interval/source-policy/recovery/finality/coverage and
+        gap contract, but uses observational freshness solely because an older
+        final bar cannot honestly satisfy the current freshness SLA. It must
+        replay one retained final BAR, acknowledge it, reconnect through the
+        other replica, and replay the next retained final BAR with monotonic
+        offsets. The replayed events are projected and validated again against
+        the original strict product requirement. `TRADE`, `QUOTE`, and
+        execution-grade `BAR` retain the existing live-event path; no deployed
+        consumer policy, authorization, route or public V2 contract changes.
+
+        **Invariants/exclusions:** no provider call, synthetic record,
+        runtime role, image, Kafka offset/topology/ACL, Redis/SQLite state, V1,
+        Trading System, alpha or order-path mutation during source tests. The
+        harness must fail closed on an insufficient retained replay window,
+        invalid/expired cursor, non-final/gapped historical bar, non-monotonic
+        resume, or any source/identity mismatch. Rollback is a source revert;
+        V1 remains serving and the three projectors remain on the recorded
+        rollback map until the corrected source passes.
+
+        **Exit gates:** focused unit tests prove historical seed-window
+        alignment, preservation of strict current validation, actual durable
+        replay plus cross-replica resumed offset progression, and unchanged
+        live-event behavior for `TRADE`/`QUOTE`/execution `BAR`; then run the
+        bounded C2-related source matrix in one immutable, network-disabled,
+        non-root/read-only image. Only after that image is attested may the
+        separately approved three-projector r11 retry and one fresh 300-second
+        C2 observation run from zero. The disposable C2 namespace is removed
+        only after its failure evidence has been recorded.
+      - **C2 source-matrix drift correction (`APPROVED / SOURCE-ONLY`,
+        2026-08-28):** the first network-disabled matrix exposed stale
+        assertions, not a data-plane defect. The governed current catalog now
+        resolves the two Alpha-Binance `15m` products as durable bindings, so
+        the Phase-10.3 scope is `18` products / `18` durable / `0`
+        pass-through, while the authority-promotion scope revision `3` contains
+        exactly `64` crypto bindings. Older Phase-10.3 tests and the
+        dependency-free packet validator still hard-code the historical
+        `16 + 2 pass-through` and `12`-binding values, causing a review-only
+        packet generator to fail before any SDK or runtime action.
+
+        Repair only the source assertions and sealed count constant to the
+        already-approved revision-3 scope. The receipt test must construct its
+        pass-through semantic negative case from a durable fixture rather than
+        imply that the active scope is pass-through. The BAR wait test must
+        select its declared `1m` execution product instead of relying on the
+        first alpha `15m` product. This does not broaden the scope, relax a
+        contract, modify a manifest/catalog, or change a packet/runtime route;
+        it restores the strict packet fence to the current reviewed scope.
+
+        **Implementation and source evidence (`PASS`, 2026-08-28):**
+        `_stream_resume` now performs the required strict current warmup for a
+        non-execution durable BAR, derives one earlier aligned one-BAR
+        time-range cursor seed with `OBSERVE` freshness only, replays a retained
+        final BAR, acknowledges it, reconnects through the second replica and
+        proves the resumed logical offset reaches the strict current watermark.
+        It preserves identity, interval, source/gap/recovery/revision policy,
+        finality/coverage, warmup interval-source policy, cache age and
+        deadline. Execution BAR plus TRADE/QUOTE continue to use the original
+        live requirement. The revision-3 packet fence is now explicit at `64`
+        bindings; current two-manifest helper assertions are `18` products, all
+        durable, and its pass-through semantic test is a non-serving fixture.
+        The actual C2 acceptance remains the existing Phase-10.5 four-identity
+        harness, which imports this helper and retains its frozen
+        V2-primary/V1-fallback/BLOCKED routing contract. The Phase-10.3
+        runbook now states that distinction explicitly, so its two-manifest
+        command cannot be mistaken for the approved four-consumer C2 packet.
+
+        `python3 -m py_compile` passed for the changed scripts/tests and
+        `git diff --check` passed. In the existing attested Python image
+        `sha256:96f271c574f3f4d6bf8c6597b5a87872fdd0bbdbce537f2442c4edddf7f8da5b`,
+        with source mounted read-only, `--network none`, non-root UID `10001`,
+        read-only root, no capabilities and tmpfs-only `/tmp`, the C2/packet
+        source matrix passed **70/70**:
+        `test_phase103_consumer_acceptance`,
+        `test_phase103_consumer_receipt_harness`,
+        `test_phase103_shared_primary_handoff`,
+        `test_phase105_identity_acceptance`,
+        `test_phase105_fallback_acceptance`,
+        `test_phase105_release_certification`, and
+        `test_fund_phase5_stream_sdk`. No provider connection, Docker runtime
+        role, Kafka, Redis, SQLite, V1, Trading System, alpha or order-path
+        mutation occurred. The next bounded action is to build and attest one
+        immutable Python image for this changed harness, then apply the
+        already-approved three-projector r11 retry and fresh C2 run from zero.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for

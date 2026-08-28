@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import time
 import unittest
+from unittest.mock import ANY, call, patch
 
 from scripts.phase103_consumer_receipt_acceptance import (
     _cursor_directory,
+    _historical_bar_replay_requirement,
+    _stream_resume,
+    _uses_historical_bar_replay,
     _validated_packet,
     parser,
 )
@@ -25,6 +31,15 @@ from scripts.phase103_packet_contract import (
 from qdl.runtime.stable_deployment import (
     SHARED_REALTIME_CORE_GROUP_ID as DEPLOYMENT_CORE_GROUP_ID,
     SHARED_REALTIME_CORE_ID_PREFIX as DEPLOYMENT_CORE_ID_PREFIX,
+)
+from qdl.certification.phase103_consumer_acceptance import DeliveryClass
+from qdl_sdk import (
+    ControlEvent,
+    DataRequirement,
+    Feed,
+    Grade,
+    StalePolicy,
+    StreamEvent,
 )
 
 
@@ -131,6 +146,272 @@ class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
         self.assertIn("trading_system_handoff.route_lock", runbook)
         self.assertIn("QDL_TRADING_SYSTEM_SOURCE_ROOT", runbook)
         self.assertIn("docker run --rm --entrypoint sha256sum", runbook)
+
+
+class Phase103HistoricalBarReplayTests(unittest.TestCase):
+    INTERVAL_NS = 15 * 60 * 1_000_000_000
+
+    def _requirement(
+        self,
+        *,
+        feed: Feed = Feed.BAR,
+        grade: Grade = Grade.ALPHA,
+        interval: str | None = "15m",
+        warmup_limit: int = 500,
+    ) -> DataRequirement:
+        return DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=feed,
+            consumer_grade=grade,
+            source_policy_id="crypto_primary_v2",
+            interval=interval,
+            warmup_limit=warmup_limit,
+            max_freshness_ms=1_080_000 if feed is Feed.BAR else 20_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+
+    def _product(
+        self,
+        *,
+        feed: Feed = Feed.BAR,
+        grade: Grade = Grade.ALPHA,
+    ):
+        return SimpleNamespace(
+            delivery=DeliveryClass.DURABLE,
+            feed=feed,
+            requirement=SimpleNamespace(consumer_grade=grade),
+            identity=("alpha.binance.paper.stable", "instrument", feed.value, "15m", "policy"),
+        )
+
+    def test_historical_seed_is_one_aligned_prior_bar_and_preserves_governed_policy(self):
+        original = self._requirement()
+        latest_open_ns = 20 * self.INTERVAL_NS
+        seed = _historical_bar_replay_requirement(
+            original,
+            latest_open_time_ns=latest_open_ns,
+        )
+
+        self.assertEqual(seed.instrument_uid, original.instrument_uid)
+        self.assertIs(seed.feed, original.feed)
+        self.assertIs(seed.consumer_grade, original.consumer_grade)
+        self.assertEqual(seed.interval, original.interval)
+        self.assertEqual(seed.source_policy_id, original.source_policy_id)
+        self.assertIs(seed.recovery, original.recovery)
+        self.assertIs(seed.gap_policy, original.gap_policy)
+        self.assertIs(seed.bar_revision_policy, original.bar_revision_policy)
+        self.assertEqual(seed.require_final_bars, original.require_final_bars)
+        self.assertEqual(seed.require_full_coverage, original.require_full_coverage)
+        self.assertEqual(seed.warmup_limit, 0)
+        self.assertIs(seed.stale_policy, StalePolicy.OBSERVE)
+        self.assertIsNone(seed.max_freshness_ms)
+        self.assertEqual(seed.warmup.time_range.start_time_ns, 18 * self.INTERVAL_NS)
+        self.assertEqual(seed.warmup.time_range.end_time_ns, 19 * self.INTERVAL_NS)
+        self.assertEqual(
+            seed.warmup.interval_source_policy,
+            original.warmup_specification.interval_source_policy,
+        )
+        self.assertEqual(seed.warmup.max_cache_age_ms, original.warmup_specification.max_cache_age_ms)
+        self.assertEqual(seed.warmup.deadline_ms, original.warmup_specification.deadline_ms)
+        self.assertEqual(original.warmup_limit, 500)
+        self.assertIs(original.stale_policy, StalePolicy.BLOCK)
+
+    def test_historical_seed_fails_closed_for_execution_unaligned_or_unbounded_requirements(self):
+        with self.assertRaisesRegex(ValueError, "execution BAR"):
+            _historical_bar_replay_requirement(
+                self._requirement(grade=Grade.EXECUTION),
+                latest_open_time_ns=20 * self.INTERVAL_NS,
+            )
+        with self.assertRaisesRegex(ValueError, "cannot form"):
+            _historical_bar_replay_requirement(
+                self._requirement(),
+                latest_open_time_ns=20 * self.INTERVAL_NS + 1,
+            )
+        with self.assertRaisesRegex(ValueError, "governed warmup"):
+            _historical_bar_replay_requirement(
+                self._requirement(warmup_limit=0),
+                latest_open_time_ns=20 * self.INTERVAL_NS,
+            )
+
+    def test_historical_replay_applies_only_to_non_execution_durable_bars(self):
+        self.assertTrue(_uses_historical_bar_replay(self._product()))
+        self.assertFalse(
+            _uses_historical_bar_replay(self._product(grade=Grade.EXECUTION))
+        )
+        self.assertFalse(_uses_historical_bar_replay(self._product(feed=Feed.TRADE)))
+        self.assertFalse(_uses_historical_bar_replay(self._product(feed=Feed.QUOTE)))
+
+
+class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
+    INTERVAL_NS = 15 * 60 * 1_000_000_000
+
+    class _Session:
+        def __init__(self, *, warmup, items):
+            self.warmup = warmup
+            self._items = iter(items)
+            self.acknowledged = []
+
+        async def __anext__(self):
+            await asyncio.sleep(0)
+            try:
+                return next(self._items)
+            except StopIteration as error:
+                raise StopAsyncIteration from error
+
+        def acknowledge(self, event):
+            self.acknowledged.append(event)
+
+    class _SessionContext:
+        def __init__(self, session):
+            self.session = session
+
+        async def __aenter__(self):
+            return self.session
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class _Client:
+        def __init__(self, *, strict_warmup, session):
+            self.strict_warmup = strict_warmup
+            self.session = session
+            self.warmup_calls = []
+            self.stream_calls = []
+            self.closed = False
+
+        async def warmup(self, requirement):
+            self.warmup_calls.append(requirement)
+            return self.strict_warmup
+
+        def warmup_then_stream(self, requirement, *, resume_restored_state=False):
+            self.stream_calls.append((requirement, resume_restored_state))
+            return Phase103HistoricalBarReplayResumeTests._SessionContext(self.session)
+
+        async def close(self):
+            self.closed = True
+
+    @staticmethod
+    def _product(*, grade: Grade = Grade.ALPHA):
+        return SimpleNamespace(
+            delivery=DeliveryClass.DURABLE,
+            feed=Feed.BAR,
+            interval="15m",
+            requirement=SimpleNamespace(
+                consumer_grade=grade,
+                max_freshness_ms=1_080_000,
+            ),
+            identity=("alpha.binance.paper.stable", "instrument", "BAR", "15m", "policy"),
+        )
+
+    @staticmethod
+    def _requirement(*, grade: Grade = Grade.ALPHA):
+        return DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.BAR,
+            consumer_grade=grade,
+            source_policy_id="crypto_primary_v2",
+            interval="15m",
+            warmup_limit=500,
+            max_freshness_ms=1_080_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+
+    async def test_non_execution_bar_replays_retained_offsets_across_replicas(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        seed_view = SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(data=[seed_view], watermark_offset=38)
+        first = StreamEvent(39, "resume-39", object())
+        resumed = StreamEvent(40, "resume-40", object())
+        first_session = self._Session(
+            warmup=seed_warmup,
+            items=(ControlEvent("REPLAYING", "retained BAR replay"), first),
+        )
+        resumed_session = self._Session(warmup=seed_warmup, items=(resumed,))
+        first_client = self._Client(strict_warmup=strict_warmup, session=first_session)
+        resumed_client = self._Client(strict_warmup=strict_warmup, session=resumed_session)
+        projected = []
+
+        def project(event, *, template, requirement):
+            projected.append((event.logical_offset, template, requirement))
+            return SimpleNamespace(logical_offset=event.logical_offset)
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-historical-bar-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", side_effect=project),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                )
+
+        self.assertEqual(result, (39, 40, ("REPLAYING",)))
+        self.assertEqual(first_client.warmup_calls, [requirement])
+        self.assertTrue(first_client.closed)
+        self.assertTrue(resumed_client.closed)
+        self.assertEqual(first_session.acknowledged, [first])
+        self.assertEqual(resumed_session.acknowledged, [resumed])
+        seed_requirement, first_resume = first_client.stream_calls[0]
+        resumed_requirement, resumed_flag = resumed_client.stream_calls[0]
+        self.assertFalse(first_resume)
+        self.assertTrue(resumed_flag)
+        self.assertIs(seed_requirement, resumed_requirement)
+        self.assertEqual(seed_requirement.warmup.time_range.start_time_ns, 18 * self.INTERVAL_NS)
+        self.assertEqual(seed_requirement.warmup.time_range.end_time_ns, 19 * self.INTERVAL_NS)
+        self.assertEqual([offset for offset, _template, _requirement in projected], [39, 40])
+        self.assertTrue(all(item[2] is seed_requirement for item in projected))
+        self.assertEqual(validate.call_args_list[0], call(product, strict_view))
+        self.assertEqual(
+            validate.call_args_list[1:],
+            [
+                call(product, ANY, require_current_quality=False),
+                call(product, ANY, require_current_quality=False),
+            ],
+        )
+
+    async def test_execution_bar_keeps_the_live_stream_requirement(self):
+        product = self._product(grade=Grade.EXECUTION)
+        requirement = self._requirement(grade=Grade.EXECUTION)
+        warmup = SimpleNamespace(data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=self.INTERVAL_NS))])
+        first = StreamEvent(10, "resume-10", object())
+        resumed = StreamEvent(11, "resume-11", object())
+        first_session = self._Session(warmup=warmup, items=(first,))
+        resumed_session = self._Session(warmup=warmup, items=(resumed,))
+        first_client = self._Client(strict_warmup=warmup, session=first_session)
+        resumed_client = self._Client(strict_warmup=warmup, session=resumed_session)
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-live-bar-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", return_value=SimpleNamespace()),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                )
+
+        self.assertEqual(result, (10, 11, ()))
+        self.assertEqual(first_client.warmup_calls, [])
+        self.assertEqual(first_client.stream_calls, [(requirement, False)])
+        self.assertEqual(resumed_client.stream_calls, [(requirement, True)])
 
 
 if __name__ == "__main__":

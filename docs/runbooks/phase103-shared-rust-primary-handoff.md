@@ -6,6 +6,13 @@ This runbook is the only operator procedure for the Phase 10.3 shared
 Rust-primary realtime handoff. It replaces the obsolete
 `production_core_*`/Phase-9 ceremony for this path.
 
+The later Phase 10.5-C2 four-consumer no-order acceptance is deliberately
+**not** run from this document: use
+`docs/runbooks/phase105-consumer-cutover-stable-release.md` and
+`phase105_consumer_v2_identity_acceptance.py`. This Phase 10.3 receipt helper
+is shared by that C2 harness, but its two-manifest command below cannot certify
+Monitoring or Alpha-OKX by itself.
+
 It is deliberately narrow:
 
 - one topic: `md.raw.realtime.v2`;
@@ -218,7 +225,8 @@ Observe the full 300 seconds with the existing mTLS read-only inspection
 identity and a fresh permitted audit consumer group. Do not commit offsets.
 Capture only bounded aggregate evidence and hashes:
 
-1. `md.raw.realtime.v2` has every 12 demanded Binance/OKX binding, zero
+1. `md.raw.realtime.v2` has every 64 binding in the sealed revision-3
+   Binance-USD-M/OKX-Swap authority scope, zero
    malformed/out-of-scope/identity/revision mismatch records and no test
    provenance.
 2. The three Rust cores report `RUST_PRIMARY`, one shared group, strict scope,
@@ -280,13 +288,15 @@ docker run --rm --read-only \
 ```
 
 The one JSON result must be `status=PASS`, have `expected_authority=RUST_PRIMARY`,
-match the sealed `packet_sha256`, report exactly `18` products (`16` durable,
-`2` pass-through) and no payload/cursor/secret values. It proves:
+match the sealed `packet_sha256`, report exactly `18` durable products and no
+payload/cursor/secret values. It proves only the two manifests explicitly
+supplied to this Phase 10.3 command; it is not the four-consumer Phase 10.5-C2
+certificate. It proves:
 
 - `trading-system.paper.stable` receives the full declared Binance USD-M and
   OKX Swap `TRADE`/`QUOTE`/final `BAR 1m` surface through V2;
-- `alpha.binance.paper.stable` receives its durable products plus explicit
-  `BAR 15m` provider pass-through without falsely claiming durable replay;
+- `alpha.binance.paper.stable` receives its declared durable products,
+  including `BAR 15m`, through the governed V2 route;
 - durable products complete snapshot/warmup, stream ACK and cursor-resume;
 - immutable final `BAR 1m` content agrees between query replicas, while live
   TRADE/QUOTE are compared for governed typed identity/quality rather than
@@ -297,9 +307,13 @@ For a multi-row final-BAR warmup, identity, provenance, finality, gap/coverage
 and cross-replica content parity apply to every row. Current freshness, `LIVE`
 state and execution eligibility apply only to the last returned closed BAR;
 older retained history is not incorrectly judged against a live-tick SLA.
-For a durable BAR stream, the receipt waits through one canonical interval plus
+Execution-grade durable BAR receipts wait through one canonical interval plus
 bounded settlement time, capped by the manifest freshness SLA (`1m` currently
-means 75 seconds). A missing next final BAR remains a fail-closed result.
+means 75 seconds). A non-execution durable BAR receipt first validates its
+current strict warmup, then uses one aligned retained history cursor to prove
+ACK/reconnect/replay within C2's bounded window; it never calls that retained
+BAR a fresh observation. Missing finality, a gap, an invalid cursor or a
+non-monotonic resumed offset remains fail-closed.
 
 Do not redirect the result into a source-controlled file. Retain only its
 bounded hash/offset/latency summary under the approved evidence location. A

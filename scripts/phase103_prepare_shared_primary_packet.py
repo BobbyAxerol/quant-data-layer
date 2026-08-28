@@ -45,6 +45,7 @@ from scripts.phase103_packet_contract import (
     REALTIME_RAW_TOPIC as _REALTIME_RAW_TOPIC,
     REQUIRED_CRYPTO_EVIDENCE as _REQUIRED_CRYPTO_EVIDENCE,
     SCHEMA,
+    SHARED_PRIMARY_CRYPTO_BINDING_COUNT,
     SHARED_REALTIME_CORE_GROUP_ID,
     SHARED_REALTIME_CORE_ID_PREFIX,
     authority_scoped_bar_state_path,
@@ -180,6 +181,8 @@ def prepare_shared_primary_packet(
         ROOT / "config/v2/stable-authority-promotion-scope.yaml",
         catalog=catalog,
     )
+    if len(scope.binding_ids) != SHARED_PRIMARY_CRYPTO_BINDING_COUNT:
+        raise ValueError("authority promotion scope differs from the sealed packet fence")
     authority = stable_authority_record(
         rust_image_digest=rust_image_digest,
         capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",

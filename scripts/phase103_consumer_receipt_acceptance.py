@@ -18,7 +18,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterator
 
@@ -52,7 +52,10 @@ from qdl_sdk import (
     GrpcStreamTransport,
     RestQueryTransport,
     RotatingJwtCredentialProvider,
+    StalePolicy as SdkStalePolicy,
     StreamEvent,
+    WarmupSpecification as SdkWarmupSpecification,
+    WarmupTimeRange as SdkWarmupTimeRange,
     WorkloadTlsConfig,
     market_data_view_from_stream,
 )
@@ -160,6 +163,64 @@ def _stream_event_timeout_seconds(
     return wait_seconds
 
 
+def _uses_historical_bar_replay(product: AcceptanceProduct) -> bool:
+    """Whether C2 can prove bounded replay without waiting for a future close.
+
+    Execution BARs stay on the ordinary strict/live path.  Their real consumers
+    must never use the historical observation requirement below.  Alpha BAR
+    receipts instead first validate the real current warmup strictly, then use
+    a prior retained boundary solely to prove signed durable replay and
+    cross-replica resume within C2's fixed observation window.
+    """
+
+    return (
+        product.delivery is DeliveryClass.DURABLE
+        and product.feed.value == "BAR"
+        and product.requirement.consumer_grade.value != "EXECUTION"
+    )
+
+
+def _historical_bar_replay_requirement(requirement, *, latest_open_time_ns: int):
+    """Build one aligned, bounded cursor seed before two retained BAR records.
+
+    The caller has already checked the current strict requirement.  This
+    request therefore preserves identity, finality, recovery, source policy,
+    coverage and gap behavior, while changing only freshness to OBSERVE so the
+    older seed bar is not incorrectly presented as a live trading observation.
+    """
+
+    if requirement.feed.value != "BAR" or not requirement.interval:
+        raise ValueError("historical replay seed requires a BAR interval")
+    if requirement.consumer_grade.value == "EXECUTION":
+        raise ValueError("execution BAR receipts must use the strict live path")
+    interval_ns = canonical_interval_ms(requirement.interval) * 1_000_000
+    if (
+        latest_open_time_ns <= 2 * interval_ns
+        or latest_open_time_ns % interval_ns
+    ):
+        raise ValueError("latest BAR open time cannot form a retained replay seed")
+    original_warmup = requirement.warmup_specification
+    if original_warmup is None:
+        raise ValueError("historical replay seed requires the governed warmup policy")
+    seed_end_ns = latest_open_time_ns - interval_ns
+    seed_start_ns = seed_end_ns - interval_ns
+    return replace(
+        requirement,
+        warmup_limit=0,
+        max_freshness_ms=None,
+        stale_policy=SdkStalePolicy.OBSERVE,
+        warmup=SdkWarmupSpecification(
+            time_range=SdkWarmupTimeRange(
+                start_time_ns=seed_start_ns,
+                end_time_ns=seed_end_ns,
+            ),
+            interval_source_policy=original_warmup.interval_source_policy,
+            max_cache_age_ms=original_warmup.max_cache_age_ms,
+            deadline_ms=original_warmup.deadline_ms,
+        ),
+    )
+
+
 async def _next_data(session, *, timeout_seconds: float) -> tuple[StreamEvent, list[str]]:
     controls: list[str] = []
     for _ in range(8):
@@ -257,6 +318,9 @@ async def _stream_resume(
         return None, None, ()
     cursor_path = _cursor_path(state_dir, product)
     requirement = sdk_requirement(product)
+    historical_replay = _uses_historical_bar_replay(product)
+    stream_requirement = requirement
+    strict_watermark: int | None = None
     event_timeout_seconds = _stream_event_timeout_seconds(product, timeout_seconds)
     first_client = _client(
         identity,
@@ -266,7 +330,20 @@ async def _stream_resume(
         timeout_seconds=timeout_seconds,
     )
     try:
-        async with first_client.warmup_then_stream(requirement) as session:
+        if historical_replay:
+            # This remains the product's actual contract check.  The replay
+            # cursor below is deliberately older only to make the bounded C2
+            # reconnect proof independent of the next 15m/1h close.
+            strict_warmup = await first_client.warmup(requirement)
+            strict_current = strict_warmup.data[-1]
+            validate_product_view(product, strict_current)
+            strict_watermark = strict_warmup.watermark_offset
+            stream_requirement = _historical_bar_replay_requirement(
+                requirement,
+                latest_open_time_ns=int(strict_current.payload.open_time_ns),
+            )
+            event_timeout_seconds = timeout_seconds
+        async with first_client.warmup_then_stream(stream_requirement) as session:
             first, first_controls = await _next_data(
                 session,
                 timeout_seconds=event_timeout_seconds,
@@ -274,9 +351,13 @@ async def _stream_resume(
             first_view = market_data_view_from_stream(
                 first,
                 template=session.warmup.data[-1],
-                requirement=requirement,
+                requirement=stream_requirement,
             )
-            validate_product_view(product, first_view)
+            validate_product_view(
+                product,
+                first_view,
+                require_current_quality=not historical_replay,
+            )
             session.acknowledge(first)
             first_offset = first.logical_offset
     finally:
@@ -291,7 +372,7 @@ async def _stream_resume(
     )
     try:
         async with resumed_client.warmup_then_stream(
-            requirement,
+            stream_requirement,
             resume_restored_state=True,
         ) as session:
             resumed, resumed_controls = await _next_data(
@@ -301,13 +382,24 @@ async def _stream_resume(
             resumed_view = market_data_view_from_stream(
                 resumed,
                 template=session.warmup.data[-1],
-                requirement=requirement,
+                requirement=stream_requirement,
             )
-            validate_product_view(product, resumed_view)
+            validate_product_view(
+                product,
+                resumed_view,
+                require_current_quality=not historical_replay,
+            )
             validate_resume_offsets(
                 acknowledged_offset=first_offset,
                 resumed_offset=resumed.logical_offset,
             )
+            if (
+                strict_watermark is not None
+                and resumed.logical_offset < strict_watermark
+            ):
+                raise AssertionError(
+                    "historical BAR replay did not converge through the strict current watermark"
+                )
             session.acknowledge(resumed)
             return first_offset, resumed.logical_offset, tuple(first_controls + resumed_controls)
     finally:

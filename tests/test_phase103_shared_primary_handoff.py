@@ -25,7 +25,10 @@ from scripts.phase103_prepare_shared_primary_packet import (
     validate_prepared_shared_primary_bundle,
     validate_shared_primary_packet,
 )
-from scripts.phase103_packet_contract import authority_scoped_bar_state_path
+from scripts.phase103_packet_contract import (
+    SHARED_PRIMARY_CRYPTO_BINDING_COUNT,
+    authority_scoped_bar_state_path,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -209,7 +212,10 @@ class SharedPrimaryPacketTests(unittest.TestCase):
                 packet["rollback"]["stop_only_services"],
                 list(_ALLOWED_SERVICE_ORDER),
             )
-            self.assertEqual(packet["acceptance"]["crypto_binding_count"], 12)
+            self.assertEqual(
+                packet["acceptance"]["crypto_binding_count"],
+                SHARED_PRIMARY_CRYPTO_BINDING_COUNT,
+            )
             handoff = packet["trading_system_handoff"]
             lock = handoff["route_lock"]
             self.assertEqual(lock["consumer_id"], "trading-system.paper.stable")
@@ -239,7 +245,14 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             core = json.loads((runtime / "core.json").read_text(encoding="utf-8"))
             self.assertEqual(core["raw_topics"], ["md.raw.realtime.v2"])
             self.assertTrue(core["strict_subscription_scope"])
-            self.assertEqual(len(core["core"]["bindings"]), 16)
+            enabled_bindings = sum(
+                item.enabled
+                for item in StableAcquisitionPlan.load(
+                    ACQUISITION_PATH,
+                    catalog=StableSourceCatalog.load(CATALOG_PATH),
+                ).bindings
+            )
+            self.assertEqual(len(core["core"]["bindings"]), enabled_bindings)
 
     def test_checkpoint_path_fences_python_artifact_and_schema(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phase103-packet-") as directory:
@@ -305,6 +318,12 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             self.reseal(bad_acl)
             with self.assertRaisesRegex(ValueError, "ACL scope"):
                 validate_shared_primary_packet(bad_acl)
+
+            bad_scope = copy.deepcopy(packet)
+            bad_scope["acceptance"]["crypto_binding_count"] -= 1
+            self.reseal(bad_scope)
+            with self.assertRaisesRegex(ValueError, "acceptance scope"):
+                validate_shared_primary_packet(bad_scope)
 
             bad_handoff = copy.deepcopy(packet)
             bad_handoff["trading_system_handoff"]["route_lock"]["route_manifest"][
