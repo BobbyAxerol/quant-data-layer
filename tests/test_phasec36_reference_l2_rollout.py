@@ -174,10 +174,44 @@ class ReferenceL2RolloutTests(unittest.TestCase):
                     packet["rollback"]["runtime_environment"]["bar_state_path"],
                     "/var/lib/qdl-stable/runtime/current.json",
                 )
+                self.assertEqual(
+                    packet["rollback"]["runtime_environment"]["query_config_revision"],
+                    "phase105c-final-bar-r11",
+                )
+                self.assertEqual(
+                    packet["rollback"]["runtime_environment"]["bar_config_revision"],
+                    "phase105c-final-bar-r11",
+                )
                 rendered = (output / "rollout-packet.json").read_text()
                 self.assertNotIn("PRIVATE KEY", rendered)
                 self.assertNotIn("database-secret", rendered)
                 self.assertNotIn("cursor-secret", rendered)
+
+    def test_mixed_query_and_bar_revisions_render_exact_role_rollback(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with patch.object(reference_l2_rollout, "STATE_ROOT", root):
+                inputs = self._inputs(root)
+                inputs["host_runtime_dir"] = root / "successor/runtime"
+                bar_env = Path(inputs["active_bar_env"])
+                self._write_env(bar_env, {
+                    "QDL_STABLE_BAR_STATE_PATH": "/var/lib/qdl-stable/runtime/r12.json",
+                    "QDL_CONFIG_REVISION": "phasec36-reference-l2-r12",
+                })
+                inputs["rollback_provenance"] = self._rollback(
+                    "/var/lib/qdl-stable/runtime/r12.json",
+                    state_root=root,
+                )
+                packet = prepare_reference_l2_rollout(**inputs)
+                output = Path(inputs["output_dir"])
+                override = (output / "rollback-legacy-manifests.override.yml").read_text()
+                self.assertIn('QDL_CONFIG_REVISION: "phase105c-final-bar-r11"', override)
+                self.assertIn('QDL_CONFIG_REVISION: "phasec36-reference-l2-r12"', override)
+                self.assertIn('QDL_STABLE_BAR_STATE_PATH: "/var/lib/qdl-stable/runtime/r12.json"', override)
+                rollback = packet["rollback"]["runtime_environment"]
+                self.assertEqual(rollback["query_config_revision"], "phase105c-final-bar-r11")
+                self.assertEqual(rollback["bar_config_revision"], "phasec36-reference-l2-r12")
+                self.assertEqual(rollback["bar_state_path"], "/var/lib/qdl-stable/runtime/r12.json")
 
     def test_fails_closed_on_existing_public_key_conflict_and_cleans_partial_output(self):
         with tempfile.TemporaryDirectory() as raw:

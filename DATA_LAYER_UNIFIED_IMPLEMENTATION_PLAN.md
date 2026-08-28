@@ -20526,6 +20526,27 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         stopped at `TemporaryDirectory` creation before exercising product
         logic. It is recorded as invalid harness setup, not a source failure;
         the corrected run is the evidence for this gate.
+      - **Exact rollback compiler correction (`APPROVED / IN PROGRESS`,
+        2026-08-28):** the original Reference/L2 compiler rejected the real
+        mixed state by requiring active query and bar-edge config revisions to
+        be equal. That would either prevent recovery or tempt an operator to
+        record a false rollback revision. Narrowly remove only that invalid
+        equality assumption: successor remains one r13 revision, while the
+        generated rollback override pins query/projector/stream roles to their
+        observed r11 revision and pins `binance_bar_edge` to its observed r12
+        revision plus current checkpoint. The packet must expose both revision
+        values and test the mixed-state case. No new runtime behavior, role,
+        route, topic, credential or provider access is introduced.
+      - **Compiler test exit (`PASS / ISOLATED`, 2026-08-28):** the targeted
+        immutable, source-mounted regression ran **37/37** in `7.048s` with
+        network disabled, read-only source and only ephemeral `/tmp`. It proves
+        the regular coherent case, public-key conflict cleanup and dry-run
+        cleanup still pass; the new mixed r11-query/r12-bar case emits one
+        override with exact per-role config revisions and the observed bar
+        checkpoint. The test first demonstrated that a stale rollback
+        checkpoint remains rejected, then passed once fixture rollback
+        provenance matched the observed bar state. No provider/runtime/durable
+        data operation occurred.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

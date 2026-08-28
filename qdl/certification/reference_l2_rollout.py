@@ -221,7 +221,13 @@ def _runtime_digests(runtime_dir: Path) -> dict[str, str]:
     }
 
 
-def _write_rollback_manifest_override(output_dir: Path) -> Path:
+def _write_rollback_manifest_override(
+    output_dir: Path,
+    *,
+    query_config_revision: str,
+    bar_config_revision: str,
+    bar_state_path: str,
+) -> Path:
     """Render the exact old manifest set only for Python rollback roles.
 
     The retained C2 projector image predates the new Reference/L2 manifest.
@@ -232,11 +238,17 @@ def _write_rollback_manifest_override(output_dir: Path) -> Path:
     lines = ["services:\n"]
     encoded_manifests = json.dumps(LEGACY_CONSUMER_MANIFESTS)
     for service in PYTHON_ROLLBACK_SERVICES:
+        config_revision = (
+            bar_config_revision if service == "binance_bar_edge" else query_config_revision
+        )
         lines.extend((
             f"  {service}:\n",
             "    environment:\n",
             f"      QDL_STABLE_CONSUMER_MANIFESTS: {encoded_manifests}\n",
+            f"      QDL_CONFIG_REVISION: {json.dumps(config_revision)}\n",
         ))
+        if service == "binance_bar_edge":
+            lines.append(f"      QDL_STABLE_BAR_STATE_PATH: {json.dumps(bar_state_path)}\n")
     path = output_dir / "rollback-legacy-manifests.override.yml"
     path.write_text("".join(lines), encoding="utf-8")
     path.chmod(0o640)
@@ -276,11 +288,6 @@ def _build_environment(
     previous_checkpoint = active_bar_environment.get("QDL_STABLE_BAR_STATE_PATH")
     if not isinstance(previous_checkpoint, str) or not previous_checkpoint:
         raise ValueError("Reference/L2 rollout active bar environment lacks its checkpoint path")
-    if active_bar_environment.get("QDL_CONFIG_REVISION") != active_query_environment[
-        "QDL_CONFIG_REVISION"
-    ]:
-        raise ValueError("Reference/L2 rollout active query/bar config revisions differ")
-
     environment = dict(base_environment)
     for key in (
         "QDL_STABLE_INTERNAL_INGEST_SECRET",
@@ -358,6 +365,12 @@ def prepare_reference_l2_rollout(
     previous_checkpoint = active_bar_environment.get("QDL_STABLE_BAR_STATE_PATH")
     if not isinstance(previous_checkpoint, str):
         raise ValueError("Reference/L2 rollout active bar checkpoint is invalid")
+    query_config_revision = active_query_environment.get("QDL_CONFIG_REVISION")
+    bar_config_revision = active_bar_environment.get("QDL_CONFIG_REVISION")
+    if not isinstance(query_config_revision, str) or not query_config_revision:
+        raise ValueError("Reference/L2 rollout active query config revision is invalid")
+    if not isinstance(bar_config_revision, str) or not bar_config_revision:
+        raise ValueError("Reference/L2 rollout active bar config revision is invalid")
     rollback = _load_rollback(
         rollback_provenance,
         new_runtime_dir=host_runtime_dir,
@@ -420,9 +433,14 @@ def prepare_reference_l2_rollout(
         env_path = output_dir / "rollout.env"
         env_path.write_text(render_dotenv(environment), encoding="utf-8")
         env_path.chmod(0o600)
-        rollback_override = _write_rollback_manifest_override(output_dir)
+        rollback_override = _write_rollback_manifest_override(
+            output_dir,
+            query_config_revision=query_config_revision,
+            bar_config_revision=bar_config_revision,
+            bar_state_path=previous_checkpoint,
+        )
         rollback_environment = {
-            "QDL_CONFIG_REVISION": active_query_environment["QDL_CONFIG_REVISION"],
+            "QDL_CONFIG_REVISION": query_config_revision,
             "QDL_STABLE_BAR_STATE_PATH": previous_checkpoint,
         }
         rollback_env_path = output_dir / "rollback-runtime.env"
@@ -496,6 +514,8 @@ def prepare_reference_l2_rollout(
                     "path": rollback_env_path.name,
                     "sha256": _sha256_file(rollback_env_path),
                     "config_revision": rollback_environment["QDL_CONFIG_REVISION"],
+                    "query_config_revision": query_config_revision,
+                    "bar_config_revision": bar_config_revision,
                     "bar_state_path": rollback_environment["QDL_STABLE_BAR_STATE_PATH"],
                 },
                 "durable_data_deletion": False,
