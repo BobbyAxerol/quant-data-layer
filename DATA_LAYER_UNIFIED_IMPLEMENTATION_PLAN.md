@@ -21831,6 +21831,29 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         provider route by itself and made no runtime or durable-state change.
         The one remaining action is to build the corrected reader image, roll
         the same four C2 reader roles, and run the real receipt.
+        **Receipt transport-boundary correction (`APPROVED / IN PROGRESS`,
+        2026-08-28):** after the corrected four-reader roll, the final receipt
+        reached the first native-BASIS lane but the disposable HTTP transport
+        raised `ReadTimeout` at exactly its `60s` provider deadline. This is a
+        client/server deadline race: the request still carries the immutable
+        `60000ms` provider deadline, while the query runtime has a validated
+        `90s` outer request cap and needs a small return-path margin to deliver
+        either the provider result or its typed fail-closed error. Correct only
+        the certification client's transport timeout to `provider_deadline +
+        15s`, bounded at `90s`; do not increase provider work, retry count,
+        admission capacity, product scope, reader runtime or public SDK
+        contract. This change is used only by a new disposable acceptance-tool
+        image; the four reader roles remain on `930409b`. Source exit requires
+        a deterministic boundary test, then one tool-only image and the same
+        79-product receipt.
+        **Source exit (`PASS`, 2026-08-28):** a deterministic guard proves a
+        `60s` provider deadline maps to a `75s` client transport bound (and
+        rejects a deadline above `60s`). The same isolated source matrix passed
+        **81 tests** with **one documented isolated-Redis skip** in `8.183s`;
+        `py_compile` and `git diff --check` passed. No reader, provider route,
+        Kafka/Redis/SQLite/V1, authority, Trading System, alpha or order state
+        changed. The next action is exactly one tool-only image and the same
+        receipt; no reader roll is authorized or needed.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

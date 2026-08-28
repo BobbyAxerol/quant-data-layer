@@ -13,6 +13,7 @@ from qdl.certification.reference_l2_acceptance import (
     _FUNDING_SETTLEMENT_JITTER_NS,
     _MILLISECOND_NS,
     _history_bounds,
+    acceptance_transport_timeout_seconds,
     REFERENCE_L2_CONSUMER_ID,
     build_reference_l2_acceptance_scope,
     reference_acceptance_batches,
@@ -116,6 +117,12 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
         ]
         self.assertEqual(len(isolated), 5)
         self.assertTrue(all(len(batch) == 1 for batch in isolated))
+
+    def test_acceptance_transport_timeout_keeps_provider_deadline_bounded(self):
+        self.assertEqual(acceptance_transport_timeout_seconds(60.0), 75.0)
+        self.assertEqual(acceptance_transport_timeout_seconds(5.0), 20.0)
+        with self.assertRaises(ValueError):
+            acceptance_transport_timeout_seconds(60.1)
 
     def test_reference_evidence_accepts_zero_decimal_but_rejects_blank_unit(self):
         product = next(item for item in self.scope.references if item.requirement.feed.value == "FUNDING_RATE")

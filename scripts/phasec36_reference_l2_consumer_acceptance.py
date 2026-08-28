@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 
 from qdl.certification.phase103_consumer_acceptance import DeliveryClass
 from qdl.certification.reference_l2_acceptance import (
+    acceptance_transport_timeout_seconds,
     build_reference_l2_acceptance_scope,
     reference_acceptance_batches,
     validate_reference_batch,
@@ -50,20 +51,27 @@ def _write_receipt(path: Path, receipt: dict[str, object]) -> None:
     target.chmod(0o600)
 
 
-async def _certify_references(scope, *, identity, args, state_dir: Path) -> list[dict[str, object]]:
+async def _certify_references(
+    scope,
+    *,
+    identity,
+    args,
+    state_dir: Path,
+    transport_timeout_seconds: float,
+) -> list[dict[str, object]]:
     primary = _client(
         identity,
         base_url=args.primary_url,
         grpc_target=args.grpc_target,
         cursor_path=state_dir / "reference-primary.json",
-        timeout_seconds=args.timeout_seconds,
+        timeout_seconds=transport_timeout_seconds,
     )
     secondary = _client(
         identity,
         base_url=args.secondary_url,
         grpc_target=args.grpc_target,
         cursor_path=state_dir / "reference-secondary.json",
-        timeout_seconds=args.timeout_seconds,
+        timeout_seconds=transport_timeout_seconds,
     )
     try:
         async def certify(client):
@@ -128,6 +136,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     process_started = time.process_time()
     temporary = Path(tempfile.mkdtemp(prefix="qdl-reference-l2-acceptance-"))
     semaphore = asyncio.Semaphore(args.concurrency)
+    transport_timeout_seconds = acceptance_transport_timeout_seconds(args.timeout_seconds)
 
     async def certify_book(product):
         async with semaphore:
@@ -138,7 +147,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 secondary_url=args.secondary_url,
                 grpc_target=args.grpc_target,
                 state_dir=temporary,
-                timeout_seconds=args.timeout_seconds,
+                timeout_seconds=transport_timeout_seconds,
             )
             if product.delivery is not DeliveryClass.DURABLE:
                 raise AssertionError("Reference/L2 book route lost durable delivery")
@@ -147,7 +156,13 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     try:
         references, books = await asyncio.wait_for(
             asyncio.gather(
-                _certify_references(scope, identity=identity, args=args, state_dir=temporary),
+                _certify_references(
+                    scope,
+                    identity=identity,
+                    args=args,
+                    state_dir=temporary,
+                    transport_timeout_seconds=transport_timeout_seconds,
+                ),
                 asyncio.gather(*(certify_book(product) for product in scope.books)),
             ),
             timeout=args.observation_seconds,

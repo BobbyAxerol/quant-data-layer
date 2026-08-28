@@ -48,6 +48,8 @@ _FUNDING_NS = 8 * 3_600_000_000_000
 _MILLISECOND_NS = 1_000_000
 _FUNDING_SETTLEMENT_JITTER_NS = 60_000 * _MILLISECOND_NS
 _REFERENCE_ACCEPTANCE_BATCH_SIZE = 12
+_ACCEPTANCE_TRANSPORT_MARGIN_SECONDS = 15.0
+_ACCEPTANCE_TRANSPORT_MAX_SECONDS = 90.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +174,21 @@ def reference_acceptance_batches(
         for offset in range(0, len(ordinary), _REFERENCE_ACCEPTANCE_BATCH_SIZE)
     )
     return tuple((product,) for product in native_basis) + chunks
+
+
+def acceptance_transport_timeout_seconds(provider_deadline_seconds: float) -> float:
+    """Leave bounded return-path time for a typed provider result.
+
+    The provider deadline remains the product contract. This applies only to
+    the disposable certification client, whose HTTP timeout must not cancel a
+    response at the same instant that the query service returns it.
+    """
+    if not 5.0 <= provider_deadline_seconds <= 60.0:
+        raise ValueError("reference acceptance provider deadline must be 5..60 seconds")
+    return min(
+        _ACCEPTANCE_TRANSPORT_MAX_SECONDS,
+        provider_deadline_seconds + _ACCEPTANCE_TRANSPORT_MARGIN_SECONDS,
+    )
 
 
 def _reference_request(requirement: DataRequirement, *, now_ns: int) -> ReferenceRequirement:
