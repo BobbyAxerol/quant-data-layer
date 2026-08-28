@@ -19547,6 +19547,112 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         V1, Trading System, alpha or order state. The next action is the
         approved sequential r11 roll of the three projectors, starting with
         `projector_v2`; a failure rolls back before the next role starts.
+
+        **Sequential projector roll (`PASS / C2 READY`, 2026-08-28):**
+        `projector_v2`, then `projector_v2_2`, then `projector_v2_3` were
+        recreated one at a time with the existing r11 runtime and immutable
+        `f92d...bdb0` image. No dependency was recreated. After the first two
+        roles, Kafka emitted only expected transient assignment-change
+        warnings while an old-catalog peer remained; the new roles had neither
+        catalog rejection nor OOM. Once all three shared r11, every target was
+        `running`, `restart=0`, `OOMKilled=false`, with observed RSS
+        `90.46 MiB`, `86.95 MiB`, and `82.52 MiB` respectively under the same
+        `512 MiB` cgroup. The configured `2048`/`32 MiB` guard was verified in
+        the first role's effective environment. No error/warning matched
+        catalog, allowlist, buffer-exhaustion or OOM in the final bounded
+        observation.
+
+        The legacy disposable `stable_admin` lag command was not accepted as
+        evidence: its own stale truststore failed TLS validation before reading
+        Kafka. It was an auto-removed read-only admin client and did not alter
+        broker state; the three projectors' own current projector certificates
+        remain connected. Rather than repair that unrelated diagnostic tool in
+        this packet, C2 will now measure the required reader-plane freshness,
+        warmup, replay/reconnect and V1 fallback behavior through the governed
+        signed SDK paths. V1, Kafka offsets/topology/ACLs, Redis, SQLite,
+        Trading System, alpha and all order paths remain unchanged. On a C2
+        failure, remove only its fresh evidence namespace and roll only the
+        three projectors back to the recorded image/runtime map.
+
+        **C2 binding preflight (`FAIL-CLOSED / ATTESTATION REFRESH ONLY`,
+        2026-08-28):** the first new disposable C2 client was non-root,
+        read-only, `--rm`, network-limited to `executor_network`, and exited
+        before making any query, stream, V1 fallback, provider or execution
+        request. The only error was
+        `Phase 10.5 V1 runtime binding is not current and attestable`: the
+        existing binding contains an old serving-container identity after V1
+        was recreated, although the frozen V1 provenance still matches the
+        currently serving immutable image
+        `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`.
+        The client was removed automatically; the zero-byte receipt and
+        bounded traceback are non-acceptance diagnostic output. All three r11
+        projectors remained `running`, `restart=0`, `OOMKilled=false`.
+
+        The next approved, non-runtime action is to invoke the existing
+        `phase105_bind_running_v1_fallback.py` with its explicit confirmation
+        token, writing one fresh mode-`0600`, payload-free binding into this
+        C2 namespace. It reads only the V1 container/image identities and
+        binds them to the already frozen provenance; it does not recreate V1,
+        write Kafka/Redis/SQLite, change routes, or touch Trading System,
+        alpha or orders. If it cannot attest the current V1 image, C2 remains
+        blocked and no fallback drill may run. If it passes, start C2 again
+        from zero for its full bounded observation using that exact file.
+
+        **V1 provenance diagnosis (`PASS / REFRESH AUTHORIZED`, 2026-08-28):**
+        the current serving V1 container is healthy on immutable image
+        `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`,
+        while the old evidence attested an earlier image digest. Read-only
+        image-label inspection proves this current image still has the frozen
+        `v1.2.2` provenance: source commit
+        `85c25df631e263281bd546de69efcaf6146c93ef`, source tree
+        `fb5bc2bee819989bd72920f568f69f5768587553`, and Dockerfile SHA
+        `c3f1aae2bb78c9deab25ac668bcfa4ea34d2665ec7cb65eb64f7312284595020`.
+        The exact frozen V1 source worktree exists at that commit. The allowed
+        correction is therefore a fresh secret-free attestation for the same
+        serving image, followed by a fresh container-ID binding; it does not
+        rebuild/recreate V1 or change its route. Both artifacts remain only in
+        the exact C2 evidence namespace and are prerequisites for rerunning
+        the V1 fallback drill.
+
+        **Fresh V1 proof and C2 result (`PASS_V2_DATA_PLANE_ONLY`,
+        2026-08-28):** the new V1 provenance and current-container binding
+        both passed before the probe. A fresh disposable C2 client then
+        completed in `117.988s` (within its hard `300s` cap) and returned
+        `PASS_V2_DATA_PLANE_ONLY` for **28/28 durable** manifest products:
+        14 Binance USD-M BTC/ETH products (`TRADE`, `QUOTE`, final `BAR 1m`
+        and `15m`) and 14 OKX Swap BTC/ETH products (`TRADE`, `QUOTE`, final
+        `BAR 1m` and `1h`). The four required consumer identities covered
+        Monitoring `4`, Trading System paper adapter `12`, Alpha-Binance paper
+        SDK `6`, and Alpha-OKX paper SDK `6` products. Every product performed
+        V2 query/warmup plus signed cursor replay/reconnect; acknowledged
+        logical offsets began at `1010` and resumed offsets at `1011` or later.
+        Maximum observed primary/secondary request latencies were
+        `1704.650ms`/`1157.496ms`.
+
+        The manifest-authorized V1 drill ran exactly **6** times, returned to
+        V2 each time, and had maximum V1 cached-read latency `23.333ms`. The
+        **22** `BLOCKED` routes made **zero** V1 requests. The client records
+        `provider_connections=0`, `order_actions=0`,
+        `cursor_directory_removed=true`, `secret_values_recorded=false`, and
+        `test_provenance=false`; its measured RSS was `207,716,352` bytes and
+        CPU `51` millicores. It was automatically removed by `--rm`. The three
+        r11 projectors remained `running`, `restart=0`, `OOMKilled=false` with
+        RSS `93.70 MiB`, `87.79 MiB`, `83.89 MiB`, and no bounded failure log.
+        This certifies the approved no-order reader handoff only; it does not
+        promote a new authority, submit an order, change a deployed alpha/TS
+        route, or certify DNSE/VN.
+
+        **Cleanup:** retain only the compact passing receipt plus its fresh V1
+        provenance/binding in
+        `/home/bobby/.local/state/qdl-v2/c2-r11-memoryguard-20260828T0528Z/`.
+        Remove the zero-byte receipt and bounded stderr from the earlier
+        preflight failure after this journal entry. The transient
+        `stable_admin` TLS mismatch is a diagnostic-client certificate-rotation
+        debt, not evidence against the current projector or C2 data plane; it
+        remains explicitly out of this three-projector/C2 packet and should be
+        repaired with the next admin-certificate rotation, not by weakening
+        Kafka TLS.
+
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
