@@ -19285,6 +19285,36 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       zero V1 requests. Rollback is removal of this client and only its fresh
       namespace on failure; no service, route, offset, cache, V1, Trading
       System, alpha or order mutation is permitted.
+    - **Fresh C2 result (`FAIL-CLOSED / PROJECTOR ROLLBACK IN PROGRESS`,
+      2026-08-28):** the disposable client passed identity and endpoint
+      admission but stopped on its first Monitoring Binance USD-M BTC perpetual
+      `TRADE` snapshot because V2 returned typed `DATA_STALE` under the
+      manifest freshness policy. It did not reach a fallback request or any
+      execution action; the `--rm` client exited and its redirected receipt is
+      non-acceptance output only. Treat this as a demanded-slice data-plane
+      failure, not a threshold relaxation opportunity. Per the approved packet,
+      restore only `projector_v2`, `projector_v2_2` and `projector_v2_3` to the
+      exact Phase 10.3 image/runtime map before any diagnosis. Then inspect
+      current canonical/projector/query freshness evidence read-only and remove
+      only the failed C2 namespace. V1, Kafka offsets/topology, Redis, SQLite,
+      Trading System, alpha and all order paths remain unchanged.
+    - **C2 stale diagnosis and corrected precondition (`PASS / C2 DEFERRED`,
+      2026-08-28):** V1 local BTCUSDT USD-M trade was independently fresh, so
+      the C2 `DATA_STALE` result is not an upstream provider outage. The
+      authenticated V2 query replicas agree on one bounded cache of `132,151`
+      records, but a read-only active-CA Kafka group describe found
+      `stable-projector-v1` carrying `974,912` canonical records of lag across
+      its six partitions (`406,836`, `188,469`, `17`, `12`, `379,571`, `7`).
+      The group was rebalancing immediately after the approved rollback. This
+      accumulated backlog explains the stale V2 latest projection; it is not a
+      freshness-policy candidate for relaxation. The corrected retry sequence
+      is: roll the already tested three-projector candidate only, require all
+      six partitions to be assigned and lag to decrease across three bounded
+      observations to the existing acceptance limit, verify demanded BTC/ETH
+      Binance/OKX trade and final-BAR freshness/replica agreement, then start a
+      *new* C2 namespace for the full 300 seconds. No reset, seek, flush,
+      cache deletion, broad replay or topology change is permitted. The failed
+      C2 namespace is disposable and must be removed after this diagnosis.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
