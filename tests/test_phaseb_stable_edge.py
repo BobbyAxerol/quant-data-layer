@@ -1693,6 +1693,22 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             first = await sink.publish(durable)
             second = await sink.publish(durable)
             self.assertEqual(first.cursor, second.cursor)
+            historical_envelope = market_data_pb2.EventEnvelope()
+            historical_envelope.CopyFrom(event)
+            historical_envelope.instrument_revision = 1
+            historical_envelope.event_id = hashlib.sha256(
+                bytes(event.event_id) + b":declared-historical-revision"
+            ).digest()[:16]
+            historical = DurableEvent(
+                stream=self.catalog.canonical_stream,
+                partition_key=binding.partition_key,
+                event_id=bytes(historical_envelope.event_id),
+                payload=historical_envelope.SerializeToString(deterministic=True),
+                accepted_at_ns=canonical_record.accepted_at_ns,
+                headers=durable.headers,
+            )
+            historical_stored = await sink.publish(historical)
+            self.assertNotEqual(historical_stored.cursor, first.cursor)
             tampered = DurableEvent(
                 stream=durable.stream,
                 partition_key=durable.partition_key,

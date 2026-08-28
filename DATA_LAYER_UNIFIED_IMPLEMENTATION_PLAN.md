@@ -20664,6 +20664,57 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         projector services may now be serially recreated with `--no-deps
         --force-recreate`; a failure restores only already-rolled projectors
         from this map before any query role is considered.
+      - **Projector packet permission correction (`PASS / RETRY ONE ROLE`,
+        2026-08-28):** the first `projector_v2` recreate failed before Kafka
+        consumption with `PermissionError` opening `/runtime/authority.json`.
+        The role was immediately restored to its recorded r13 image/runtime;
+        it returned `running`, `restart=0`, `OOMKilled=false`. No other role,
+        provider, Kafka offset/topology, Redis, SQLite, V1, Trading System,
+        alpha or order path changed. Root cause was the packet's host-side
+        generic permission normalizer incorrectly making non-secret runtime
+        JSON unreadable to UID/GID `10001`. Corrected only the successor
+        `runtime/` directory to `0755` and its non-secret JSON files to
+        `0644`; sealed env/identity material remains private. A disposable
+        immutable-image reader at UID/GID `10001`, network-disabled and
+        read-only, loaded and validated the byte-identical authority digest
+        `1cd55d...fb1078`. The same single-role retry is now permitted; a
+        repeated startup failure rolls it back and stops the packet.
+      - **Downstream historical-admission dependency (`IN PROGRESS / SAME
+        BOUNDED PACKET`, 2026-08-28):** the corrected projector started and
+        reached its Kafka loop, but its first retained revision-`1` BTC event
+        was rejected by the still-r13 stream gateway, which independently
+        enforces the same signed catalog before durable spool publication.
+        `StableHttpCanonicalSink` intentionally reduces the stream's HTTP
+        `422` into its generic fail-closed no-active-gateway result; lease
+        probes prove `stream_v2_passive` is actually READY and owns epoch
+        `22`. This is a required same-contract downstream image alignment,
+        not a lease failover or a reason to weaken the guard. Add one
+        source-only ingress regression for a declared historical envelope,
+        re-run the existing immutable image matrix with the test source
+        mounted read-only, then serially recreate only the two existing stream
+        roles (standby first, active owner second) on the already-sealed image
+        and runtime. Kafka retains projector pressure during the brief lease
+        handoff. Query, ingestion, Rust core, V1, authority, topology, state
+        stores, Trading System, alpha and all order paths remain excluded.
+      - **Historical ingress regression (`PASS / STREAM ALIGNMENT APPROVED`,
+        2026-08-28):** added the missing end-to-end signed stream-ingress
+        case: a BTC envelope with explicitly declared revision `1`, valid raw
+        lineage and a distinct deterministic test event ID is accepted through
+        `StableHttpCanonicalSink` and stored independently from the current
+        revision event. The existing current/idempotency, malformed raw and
+        invalid-signature cases remain in the same test. The immutable
+        `aad78f4` runtime image, with only the test directory mounted
+        read-only, network disabled, non-root/read-only root and tmpfs-only
+        `/tmp`, passed **50/50** in `6.859s` with `1` documented isolated
+        Redis skip. No runtime/provider/durable mutation occurred. The
+        approved packet scope now includes the two existing stream gateways
+        only because they enforce this identical catalog admission before a
+        projector can make progress: recreate `stream_v2_active` (current
+        standby) first, validate it; then recreate `stream_v2_passive` (the
+        current lease owner), validate that one gateway reacquires the same
+        lease. No new role, image, trust rotation, authority/CAS, Kafka/Redis/
+        SQLite operation, V1, query, ingestion, Rust core, Trading System,
+        alpha or order action is permitted.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
