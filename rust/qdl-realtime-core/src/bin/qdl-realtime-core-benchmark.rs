@@ -46,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         normalizer_version: "qdl-rust-core/2.0.0".into(),
         require_final_bar: false,
         sequence_policy: SequencePolicy::Monotonic,
+        l2: None,
     };
     let mut core = RealtimeCore::new(RealtimeCoreConfig {
         canonical_stream: "benchmark.canonical".into(),

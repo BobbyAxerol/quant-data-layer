@@ -20188,6 +20188,43 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       packet. The live roll never uses this overlay; it is applied only with
       the corresponding per-role image/runtime and legacy-manifest override if
       a rollback is actually required.
+    - **First Rust role preflight and fail-closed rollback (`IN PROGRESS`,
+      2026-08-28):** the approved serial packet first rolled only
+      `rust_core`, then `ingestor_binance_usdm` and `ingestor_okx_swap`, with
+      the sealed successor runtime. All three started with `restart=0` and no
+      OOM. Authentic Binance L2 frames immediately exposed a source defect:
+      the native boundary rejected the documented `e=depthUpdate` discriminator
+      as unsupported before the already-tested provider-neutral L2 adapter
+      could apply its sequence/gap rules. No Python role, query/stream route,
+      consumer manifest, V1, Kafka topology/offset, Redis flush, SQLite,
+      Trading System, alpha or order path was changed. The three Rust roles
+      were promptly recreated from their exact recorded `c8f3...` r11 rollback
+      selectors; post-rollback each is `running`, `restart=0`, `OOM=false`,
+      and `rust_core` resumed canonical progress with zero quarantines. The
+      only permitted continuation is a narrow Rust venue-adapter repair plus
+      strict unit/integration tests, one replacement immutable Rust image and
+      a regenerated successor packet. No remaining role may roll until the
+      repaired three-role preflight proves real `depthUpdate` is bound to the
+      approved L2 channel and reaches the existing canonical L2 state machine.
+      The affected full Rust suite also exposed one source-only benchmark
+      compile omission: its trade `CoreBinding` predates the optional `l2`
+      field. The repair is explicitly limited to `l2: None`; it has no runtime
+      behavior, provider, topology or data-plane effect and is required only
+      to keep the Rust core compile gate honest.
+    - **Rust repair test evidence (`PASS / SOURCE-ONLY`, 2026-08-28):** a
+      disposable Docker Rust builder ran `rustfmt --edition 2021 --check` on
+      the three changed Rust files and the affected suites: `qdl-core` **37/37**,
+      `qdl-native-raw-ingestor` **10/10**, and `qdl-realtime-core` **26/26**
+      with one pre-declared ignored test. Coverage includes the documented
+      `depthUpdate` frame, malformed-depth rejection, approved-book binding
+      ownership, cross-symbol rejection, Binance bootstrap bridge,
+      sequence/gap/resync and canonical L2 publication. A workspace-wide
+      `cargo fmt --check` still reports pre-existing formatting only in
+      `rust/qdl-venue-core/src/demand.rs`; it was not modified by this narrow
+      repair. The source itself is compiled in the same immutable builder
+      path used for the successor image. No provider, Docker role, Kafka,
+      Redis, SQLite, V1, Trading System, alpha or order mutation occurred
+      during this source test.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

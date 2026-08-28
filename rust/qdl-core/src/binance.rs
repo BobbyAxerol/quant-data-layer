@@ -98,6 +98,16 @@ fn native_stream(decoded: &Value) -> Result<String, String> {
     let stream = match decoded.get("e").and_then(Value::as_str) {
         Some("trade") => format!("{symbol}@trade"),
         Some("bookTicker") => format!("{symbol}@bookTicker"),
+        // USD-M diff-depth frames normally carry the documented
+        // `depthUpdate` discriminator. Map only the complete structural frame
+        // to the explicitly subscribed `@depth@100ms` lane; the generic L2
+        // state machine remains provider-neutral and will validate continuity.
+        Some("depthUpdate") if is_direct_diff_depth(decoded) => {
+            format!("{symbol}@depth@100ms")
+        }
+        Some("depthUpdate") => {
+            return Err("Binance native depth update frame misses documented fields".into())
+        }
         Some("kline") => {
             let interval = decoded
                 .get("k")
@@ -251,5 +261,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(book.stream, "btcusdt@depth@100ms");
+        let depth_update = decode_subscribed(
+            r#"{"e":"depthUpdate","s":"BTCUSDT","U":11,"u":11,"pu":10,"b":[["1","2"]],"a":[["3","4"]]}"#.into(),
+        )
+        .unwrap();
+        assert_eq!(depth_update.stream, "btcusdt@depth@100ms");
+        assert!(decode_subscribed(
+            r#"{"e":"depthUpdate","s":"BTCUSDT","U":12,"u":12,"b":[["1","2"]]}"#.into()
+        )
+        .is_err());
     }
 }

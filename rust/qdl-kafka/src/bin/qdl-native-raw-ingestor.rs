@@ -2062,6 +2062,32 @@ mod tests {
     }
 
     #[test]
+    fn binance_depth_update_binds_only_to_the_approved_book_channel() {
+        let binding = binding(RawFeed::Book, DeliveryClass::Lossless);
+        let bindings = HashMap::from([(binding.native_channel.clone(), binding)]);
+        let frame = pending_binance_frame(
+            &bindings,
+            "session-1",
+            7,
+            r#"{"e":"depthUpdate","s":"BTCUSDT","U":10,"u":10,"pu":9,"b":[["1","2"]],"a":[["3","4"]]}"#.into(),
+            10,
+        )
+        .unwrap();
+        assert_eq!(frame.binding.feed, RawFeed::Book);
+        assert_eq!(frame.binding.native_channel, "btcusdt@depth@100ms");
+
+        let error = pending_binance_frame(
+            &bindings,
+            "session-1",
+            7,
+            r#"{"e":"depthUpdate","s":"ETHUSDT","U":10,"u":10,"pu":9,"b":[["1","2"]],"a":[["3","4"]]}"#.into(),
+            11,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
     fn pre_ack_okx_frame_retains_approved_binding_or_fails_closed() {
         let mut binding = binding(RawFeed::Trade, DeliveryClass::Lossless);
         binding.provider = "OKX_DIRECT".into();
