@@ -19350,6 +19350,18 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       restart/OOM, then a fresh three-projector r11 catch-up and C2 restart
       from zero. On any source/schema/session failure, rollback this one role;
       no cache/offset reset or policy relaxation is permitted.
+      - **Runtime repair evidence (`PASS / PROJECTOR RETRY REQUIRED`,
+        2026-08-28):** only `ingestor_binance_usdm` was recreated to the
+        attested r11 Rust image/runtime. It is running with `restart=0`,
+        `OOM=false`; in a bounded real-provider observation the Rust core
+        advanced canonical records from `1,976,602` to `1,979,567` while its
+        quarantine count remained exactly `4,267,371`. This proves revision-5
+        Binance frames now pass strict admission and are canonicalized; it does
+        not claim C2 acceptance. The old Phase 10.3 projectors cannot project
+        the revision-5 catalog, so the next permitted action is the already
+        attested three-projector r11 candidate roll only, followed by the same
+        catch-up/freshness/C2 gates from zero. No new image, service, cache
+        operation, offset action or topology mutation is required.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
