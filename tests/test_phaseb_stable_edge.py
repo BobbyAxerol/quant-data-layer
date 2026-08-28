@@ -882,7 +882,12 @@ class StableProjectionAllowlistTests(unittest.TestCase):
         target._cache_id = "ab" * 16
         return target
 
-    def record(self, key: str) -> StableProjectionRecord:
+    def record(
+        self,
+        key: str,
+        *,
+        publications: tuple[tuple[str, bytes], ...] = (),
+    ) -> StableProjectionRecord:
         return StableProjectionRecord(
             partition_key="phase-b/allowlist/partition",
             offset=1,
@@ -890,6 +895,7 @@ class StableProjectionAllowlistTests(unittest.TestCase):
             shard_id="phase-b-allowlist",
             lease_epoch=1,
             items=(StableProjectionItem(key, b"payload"),),
+            publications=publications,
         )
 
     def test_every_catalog_legacy_bar_interval_is_admitted(self):
@@ -910,13 +916,31 @@ class StableProjectionAllowlistTests(unittest.TestCase):
                 last = f"kline:last:{binding.interval}:{binding.instrument.native_symbol}"
                 target._command(self.record(current))
                 target._command(self.record(last))
+                target._command(self.record(
+                    current,
+                    publications=((
+                        f"stream:kline:{binding.interval}:{binding.instrument.native_symbol}",
+                        b"payload",
+                    ),),
+                ))
 
-    def test_undeclared_suffix_and_unscoped_key_remain_rejected(self):
+    def test_undeclared_suffix_and_unscoped_key_or_channel_remain_rejected(self):
         target = self.target()
         for key in ("kline:1M:BTCUSDT", "kline:1w:BTCUSDT:extra", "foreign:key"):
             with self.subTest(key=key):
                 with self.assertRaisesRegex(ValueError, "escapes its allowlist"):
                     target._command(self.record(key))
+        for channel in (
+            "stream:kline:1M:BTCUSDT",
+            "stream:kline:1w:BTCUSDT:extra",
+            "foreign:channel",
+        ):
+            with self.subTest(channel=channel):
+                with self.assertRaisesRegex(ValueError, "escapes its allowlist"):
+                    target._command(self.record(
+                        "kline:1m:BTCUSDT",
+                        publications=((channel, b"payload"),),
+                    ))
 
 
 class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):

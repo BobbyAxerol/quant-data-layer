@@ -19203,6 +19203,58 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       to `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`
       and the Phase 10.3 runtime directory. Only after a clean catch-up may
       C2 begin its fresh 300-second no-order V2/V1/V2 observation.
+    - **Runtime approval and execution boundary (`APPROVED / IN PROGRESS`,
+      2026-08-28):** the owner approved the corrected immutable candidate and
+      the full bounded C2 handoff. Apply only
+      `sha256:e46084ced87a59c1f6d6c65c907ab841a54c20b29d8f4b515adbf7da4249e7fa`
+      to `projector_v2`, `projector_v2_2` and `projector_v2_3`, mounting the
+      existing r11/barfix runtime directory. Preserve the
+      `stable-projector-v1` group/offsets, Kafka topology/ACLs, Redis, SQLite,
+      V1, Trading System, alpha and every order path. Only normal
+      canonical-to-cache catch-up writes are permitted. Roll back only those
+      three roles to `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`
+      and the recorded Phase 10.3 runtime if continuity, catalog admission or
+      C2 fails. On clean catch-up, run C2 afresh for its full 300-second
+      no-order V2 -> V1 -> V2 observation; do not reuse the failed attempt.
+    - **Candidate runtime result (`FAIL-CLOSED / ROLLBACK IN PROGRESS`,
+      2026-08-28):** exactly the three approved projector roles were recreated
+      with `e460...4249e7fa`, the r11 runtime and no dependencies. Image/mount
+      provenance and V1 invariants initially passed, but projector generations
+      then rejected a distinct compatibility-channel allowlist violation before
+      any C2 client started: `stable compatibility channel escapes its
+      allowlist`. This is not the previously repaired `kline:1w` key grammar,
+      so the r11 catch-up gate has not passed. Per the approved exit policy,
+      restore only the same three roles to the recorded Phase 10.3
+      image/runtime map before investigating the source-level channel grammar.
+      Kafka offsets/topology, Redis, SQLite, V1, Trading System, alpha and all
+      order paths remain excluded; no C2 consumer, provider route or order
+      action was started.
+    - **Compatibility-channel repair scope (`APPROVED / SOURCE IN PROGRESS`,
+      2026-08-28):** repair only the remaining V1-compatible BAR Pub/Sub
+      allowlist so it admits the same catalog-declared suffix set as the
+      already-repaired key grammar (`m`, `h`, `d`, `w`). Add a catalog-wide
+      regression that serializes both `kline` keys and `stream:kline` channels
+      for every declared `BINANCE_BAR_GENERIC` binding, while retaining
+      rejection of calendar-month, malformed and foreign channels. This is a
+      source-only correction after rollback: no runtime role, provider,
+      Kafka, Redis, SQLite, V1, consumer route, Trading System, alpha or order
+      path may change until a fresh immutable candidate passes its focused
+      tests. It is not a namespace broadening beyond catalog compatibility.
+    - **Compatibility-channel source result (`PASS / PACKAGING PENDING`,
+      2026-08-28):** `stream:kline` now admits the same explicit fixed-duration
+      suffix grammar as the compatibility key path: `m`, `h`, `d`, `w`. The
+      stable-edge regression enumerates every current catalog
+      `BINANCE_BAR_GENERIC` binding and validates current/last keys plus its
+      matching Pub/Sub channel through the real projection serializer; it still
+      rejects `1M`, malformed weekly channels and foreign namespaces. In the
+      prior immutable candidate with source mounted read-only, `--network none`,
+      read-only root filesystem and tmpfs-only `/tmp`, the stable-edge,
+      final-BAR packet, C2 handoff and identity suite passed `65/65` with one
+      explicitly environment-gated Redis skip. No provider connection,
+      runtime role, Kafka, Redis, SQLite, V1, consumer route, Trading System,
+      alpha or order state changed during this source test. Next: commit the
+      narrow repair, build/attest one immutable Python candidate, then repeat
+      the already-approved three-projector packet from clean rollback state.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for

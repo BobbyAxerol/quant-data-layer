@@ -25,7 +25,7 @@ _KEY_PATTERNS = tuple(re.compile(value) for value in (
 _CHANNEL_PATTERNS = tuple(re.compile(value) for value in (
     r"stream:trade:(?:binance_usdm|binance_spot):[A-Z0-9_-]+",
     r"stream:trade:[A-Z0-9_-]+",
-    r"stream:kline:[0-9]+[smhd]:[A-Z0-9_-]+",
+    r"stream:kline:[0-9]+[smhdw]:[A-Z0-9_-]+",
     r"stream:vn:[A-Z0-9_-]+",
 ))
 
