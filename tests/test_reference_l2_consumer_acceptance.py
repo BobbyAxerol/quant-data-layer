@@ -8,11 +8,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from qdl.certification.reference_l2_acceptance import (
+    _DAY_NS,
+    _FUNDING_NS,
+    _history_bounds,
     REFERENCE_L2_CONSUMER_ID,
     build_reference_l2_acceptance_scope,
     reference_evidence,
 )
 from qdl.certification.phase103_consumer_acceptance import _validate_payload
+from qdl.query import FeedType
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl_sdk import Grade
@@ -75,6 +79,18 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
                 self.assertEqual(request.long_short_kind.value, "GLOBAL_ACCOUNT")
             if item.requirement.feed.value == "BASIS":
                 self.assertEqual(request.basis_contract_type, "PERPETUAL")
+
+    def test_history_windows_stop_at_the_last_settled_provider_period(self):
+        daily_boundary = (NOW_NS // _DAY_NS) * _DAY_NS
+        funding_boundary = (NOW_NS // _FUNDING_NS) * _FUNDING_NS
+        self.assertEqual(
+            _history_bounds(FeedType.FUNDING_RATE, NOW_NS),
+            (funding_boundary - 2 * _FUNDING_NS, funding_boundary - _FUNDING_NS),
+        )
+        self.assertEqual(
+            _history_bounds(FeedType.TAKER_FLOW, NOW_NS),
+            (daily_boundary - 2 * _DAY_NS, daily_boundary - _DAY_NS),
+        )
 
     def test_reference_evidence_accepts_zero_decimal_but_rejects_blank_unit(self):
         product = next(item for item in self.scope.references if item.requirement.feed.value == "FUNDING_RATE")

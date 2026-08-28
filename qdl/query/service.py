@@ -520,7 +520,20 @@ class V2QueryService:
             candidate: tuple[int, ReferenceDataRequirement, ReferenceRequest]
         ) -> ReferenceBatchResult:
             _index, _requirement, request = candidate
-            return await self.reference_batch.fetch_one(request)
+            result = await self.reference_batch.fetch_one(request)
+            # Rust provider admission deliberately communicates bounded
+            # pressure through a typed retry delay.  Keep Rust as the only
+            # admission authority and let the shared executor honor that
+            # delay, rather than treating a deferred result as completed.
+            if (
+                result.status is ReferenceStatus.ERROR
+                and result.retry_after_ms is not None
+            ):
+                raise RetryableWarmupError(
+                    result.error_detail or "reference provider deferred by bounded admission",
+                    retry_after_ms=result.retry_after_ms,
+                )
+            return result
 
         executions = await self.warmup_executor.execute(
             admitted,

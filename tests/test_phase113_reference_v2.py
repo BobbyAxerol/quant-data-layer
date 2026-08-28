@@ -44,10 +44,12 @@ from qdl.reference.contracts import (
     ReferenceLineage,
     ReferenceObservation,
     ReferenceProduct,
+    ReferenceProviderExhausted,
     ReferenceRequest,
     ReferenceUnavailable,
     decimal_field,
 )
+from qdl.warmup.executor import BoundedWarmupExecutor, ProviderBudgetPolicy
 from qdl_sdk import AsyncDataLayerClient, Grade
 from qdl_sdk.errors import ContinuityError
 from qdl_sdk.reference import ReferenceRequirement
@@ -130,6 +132,27 @@ class FixtureReferenceAdapter:
             return ReferenceFetch((observation,), (lineage,), coverage(request))
         finally:
             self.active -= 1
+
+
+class RetryOnceReferenceAdapter(FixtureReferenceAdapter):
+    """Deterministic admission pressure without bypassing ReferenceBatch."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts = 0
+
+    async def fetch(self, request, *, capability, received_at_ns):
+        self.attempts += 1
+        if self.attempts == 1:
+            raise ReferenceProviderExhausted(
+                "fixture Rust admission deferred provider work",
+                retry_after_ms=250,
+            )
+        return await super().fetch(
+            request,
+            capability=capability,
+            received_at_ns=received_at_ns,
+        )
 
 
 def fixture_batch(*, observed_at_ns: int = NOW_NS, policy=None) -> ReferenceBatch:
@@ -339,6 +362,51 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
             purpose=AccessPurpose.INTERNAL_ALPHA,
         )
         self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
+
+    async def test_retryable_reference_result_reuses_shared_warmup_policy(self):
+        adapter = RetryOnceReferenceAdapter()
+        sleeps: list[float] = []
+
+        async def sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        executor = BoundedWarmupExecutor(
+            default_policy=ProviderBudgetPolicy(
+                max_concurrency=1,
+                requests_per_second=100.0,
+                burst_requests=2,
+                max_attempts=2,
+            ),
+            sleep=sleep,
+            random_value=lambda: 0.0,
+        )
+        registry = InstrumentRegistry()
+        registry.register(self.binance, [])
+        service = V2QueryService(
+            instruments=InstrumentQuery(registry),
+            backend=MemoryMarketDataBackend(),
+            entitlements=grants(),
+            warmup_executor=executor,
+            reference_batch=ReferenceBatch(
+                {("BINANCE", "USDM"): adapter},
+                clock_ns=lambda: NOW_NS,
+            ),
+            reference_source_id=lambda item: f"{item.identity.venue}_DIRECT",
+            clock_ns=lambda: NOW_NS,
+        )
+
+        result = await service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "phase113-alpha",
+                (self.funding_requirement(self.binance.instrument_uid),),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+
+        self.assertFalse(result.partial)
+        self.assertEqual(adapter.attempts, 2)
+        self.assertEqual(executor.retry_count, 1)
+        self.assertGreaterEqual(max(sleeps), 0.25)
 
     async def test_rest_api_checks_manifest_and_serializes_exact_decimals(self):
         consumer_id = "phase113-api-alpha"

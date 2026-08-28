@@ -21588,6 +21588,72 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         `py_compile` and `git diff --check` passed. No provider, Docker role,
         image, Kafka, Redis, SQLite, V1, Trading System, alpha or order state
         changed in this source gate.
+        **Reader-manifest alignment (`IN PROGRESS / BOUNDED CORRECTION`,
+        2026-08-28):** the first disposable 79-product V2-only attempt
+        stopped fail-closed during durable BOOK replay with
+        `workload token is not bound to the active consumer manifest revision`.
+        This was not a provider, L2, JWT-key or query defect: the generated
+        `stable-reference-l2` token carries revision `3`, and both newly
+        recreated query replicas load revision `3`; the two existing stream
+        replicas still run the prior Python image whose baked manifest is
+        revision `2`. The only corrective runtime action is to serially
+        recreate the existing `stream_v2_active` and `stream_v2_passive`
+        reader roles on the already-built immutable
+        `qdl-v2-python:2.0.0-a37f32a` image, preserving their runtime mount,
+        TLS, lease, cursor/state and all role identities. No service, topic,
+        offset, cache, authority, provider, V1, Trading System, alpha or order
+        path changes. Rollback is role-by-role recreation on the recorded
+        `qdl-v2-python:2.0.0-b116c72` image. The failed disposable client
+        wrote no receipt and its exact temporary stdout/stderr namespace is
+        removed after the final receipt is recorded.
+        **Reference-window and admission-retry correction (`IN PROGRESS /
+        SHARED SOURCE ONLY`, 2026-08-28):** after stream alignment, the same
+        V2-only receipt passed identity and entered the real reference plane;
+        it then correctly returned explicit failures rather than accepting
+        partial or bypassed data. Ten Binance history rows asked for the right
+        edge of the still-open daily/funding period, so full-coverage truthfully
+        failed; the acceptance helper must instead target two provider-settled
+        observation timestamps. One native BASIS row was deferred by the
+        existing Rust admission lease with `INFLIGHT_CAPACITY` and a bounded
+        retry delay. The shared `ReferenceBatch` preserved that typed delay,
+        but the enclosing warmup executor treated the returned result as a
+        completed value and could not honor it. Correct only the shared query
+        bridge so a retryable `ReferenceBatchResult` is re-raised as
+        `RetryableWarmupError`; the existing bounded executor then waits on
+        Rust's `retry_after_ms`, retries inside the original deadline and never
+        creates a Python admission authority. Add deterministic regressions for
+        settled daily/funding bounds and deferred-result retry. No provider
+        fallback, coverage relaxation, fake data, service, role, topic,
+        volume, Redis/SQLite/Kafka mutation, V1, Trading System, alpha or order
+        change is authorized. After source tests pass, build exactly one final
+        Python image and roll only existing `query_v2_1`, `query_v2_2`,
+        `stream_v2_active` and `stream_v2_passive`; Rust remains the same
+        image/authority. The first `a37f32a` image remains the explicit
+        reader-local rollback until the compact receipt is recorded.
+        **Source exit (`PASS / NO RUNTIME MUTATION`, 2026-08-28):** the
+        Reference/L2 acceptance now asks daily and eight-hour provider history
+        only through the preceding settled boundary, preserving the existing
+        strict two-observation/full-coverage contract. The query bridge now
+        translates only `ReferenceStatus.ERROR` values with an explicit
+        `retry_after_ms` into the shared `RetryableWarmupError`; all other
+        typed unavailable, missing, partial and non-retryable provider results
+        retain their existing fail-closed semantics. The executor therefore
+        applies its already-governed lane budget, bounded attempts, circuit and
+        delay to Rust admission deferrals without creating a Python lock,
+        authority, fallback or coverage exception. Deterministic regressions
+        prove settled daily/funding windows and one deferred reference result
+        retries exactly once through `ReferenceBatch` before succeeding.
+        In a disposable `qdl-v2-python:2.0.0-a37f32a` container with
+        `--network none`, read-only root/worktree, UID/GID `10001`, no Linux
+        capabilities and tmpfs-only `/tmp`, the focused Reference/L2 query,
+        API/SDK, materializer, provider-admission, handoff and demand matrix
+        passed **44/44 in 6.543s**. A separate read-only syntax pass with
+        `PYTHONPYCACHEPREFIX=/tmp/pycache` and `git diff --check` passed. No
+        provider call, image build, runtime role, Kafka, Redis, SQLite, V1,
+        Trading System, alpha or order state changed. The next bounded action
+        is one final immutable Python reader image, followed by serial
+        recreation of only the four named query/stream roles and the existing
+        V2-only 79-product receipt.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

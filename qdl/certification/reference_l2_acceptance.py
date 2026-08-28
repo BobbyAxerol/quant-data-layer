@@ -124,9 +124,14 @@ def _history_bounds(feed: FeedType, now_ns: int) -> tuple[int, int]:
     if now_ns <= _DAY_NS:
         raise ValueError("reference acceptance clock is invalid")
     if feed is FeedType.FUNDING_RATE:
-        end = (now_ns // _FUNDING_NS) * _FUNDING_NS
+        # The current eight-hour funding interval is not complete yet.  This
+        # receipt proves full coverage only over two settled observations.
+        end = (now_ns // _FUNDING_NS) * _FUNDING_NS - _FUNDING_NS
         return end - _FUNDING_NS, end
-    end = (now_ns // _DAY_NS) * _DAY_NS
+    # Daily metrics are likewise requested only through the last fully closed
+    # provider day; asking for today's right edge would turn a truthful partial
+    # reply into a false acceptance failure.
+    end = (now_ns // _DAY_NS) * _DAY_NS - _DAY_NS
     return end - _DAY_NS, end
 
 
