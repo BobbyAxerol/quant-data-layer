@@ -20023,6 +20023,87 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
       (`/tmp/qdl-c36-provider-cert-20260828.out` and `.status`) are removed
       after this journal entry. No provider body, credential, runtime state or
       durable record is retained by that cleanup.
+  - **Reference/L2 completion transaction (`APPROVED / IN PROGRESS`,
+    2026-08-28; governed by
+    `upgrade/quant-data-layer-fund-grade-upgrade-architecture.md` C3.6-C):**
+    publish the already-certified source through one immutable Python image and
+    one immutable Rust image, then mount one sealed successor bundle into the
+    existing V2 topology. The bundle must materialize the committed
+    provider-authentic catalog/acquisition scope, the 84 V2-only
+    reference/L2 requirements, and the additive `stable-reference-l2`
+    public key/subject map. It must use the existing V2 network, Kafka,
+    `stable_redis`, SQLite/spool and durable topics; it creates no service,
+    network, topic, volume, provider worker, symbol worker or public port.
+    - **Exact rolling roles:** Rust: `ingestor_binance_usdm`,
+      `ingestor_okx_swap`, `rust_core`. Python: `binance_bar_edge`,
+      `projector_v2`, `projector_v2_2`, `projector_v2_3`, `query_v2_1`,
+      `query_v2_2`, `stream_v2_active`, `stream_v2_passive`. Each is an
+      existing role and is recreated one-at-a-time with `--no-deps` only after
+      its successor image/bundle digest and its exact current image/runtime
+      rollback selector are recorded. `rust_core_2`/`rust_core_3` are not
+      started, and `authority_outbox_v2`, Kafka, Redis, SQLite, V1,
+      Trading System, alpha containers and every order path are excluded.
+    - **Expected and forbidden writes:** new final-BAR and Rust L2 events may
+      make normal authentic market-data writes through the existing
+      Kafka/canonical/projector/cache plane. No administrative Redis flush,
+      offset seek/reset, topic/ACL change, SQLite deletion, raw-body archive,
+      consumer route mutation or execution write is allowed. V1 remains the
+      retained rollback endpoint; reference/L2 never falls back to V1 because
+      its manifest declares `rollback_contract: V2` and `BLOCKED` semantics.
+    - **Identity/trust handling:** generate the one additive external client
+      CA extension in a private successor-bundle directory, retain only its
+      public CA bundle and required client private material under the governed
+      state root, and atomically replace only
+      `/stable-certs/query/client-ca-bundle.crt` and
+      `/stable-certs/stream/client-ca-bundle.crt` before the four query/stream
+      rolls. Server CA/certificates, Kafka mesh material and existing client
+      identities remain byte-preserved. The helper is an ephemeral privileged
+      copy process only; it is not a new service or topology member.
+    - **Acceptance/rollback:** after the serial roll, prove 12 real L2 books
+      and the declared bounded reference batch through V2 query/stream using
+      the reference identity; then run the existing four no-order consumers
+      for `300s` against V2-primary data routes, including signed-cursor
+      replay/reconnect and permitted V1 fallback-return. Assert no direct
+      venue client connection, no signal/sizing mutation and no order action.
+      Rollback recreates only the named roles with their recorded prior image
+      and runtime directory, restores the prior query/stream client-CA bundle,
+      and reselects the existing V1 manifest revision. It never deletes
+      authentic data-plane rows.
+    - **Source-contract repair before image/bundle publication (`IN PROGRESS / SOURCE-ONLY`,
+      2026-08-28):** the committed Reference/L2 materialization legitimately
+      raised the canonical catalog from revision `5` to `6` and `74` to `98`
+      bindings, but the legacy stable release-route artifact still names the
+      old catalog digest. Repair this through the existing
+      `phase115c_materialize_active_native_bars.py` compiler, not a manual
+      YAML edit: any changed referenced artifact must advance the route
+      revision once, then be idempotent on a second run. Freeze historical C40
+      authority bootstrap selection to its exact original 12 primary
+      `TRADE`/`QUOTE` plus final `BAR 1m` bindings; Reference/L2, other BAR
+      intervals and future products are deliberately excluded from that old
+      authority packet. Update the structural catalog test to account for the
+      declared Reference/L2 bindings without masking a missing or duplicated
+      source. This slice changes only source contracts/tests and the main
+      journal; it performs no provider call, image build, runtime/bundle
+      mutation, route CAS or data-plane write. Exit requires the focused
+      materializer/C40/release-route suites and the bounded no-network
+      regression suite to pass. Rollback is a single source revert.
+    - **Source-contract repair evidence (`PASS`, 2026-08-28):** the first
+      disposable `network=none`, read-only focused gate exposed the stale
+      route/C40 assumptions; the repair was then verified by
+      `python -m unittest` in the existing
+      `qdl-v2-python:2.0.0-c36-c2-8e6ade8` image with the worktree mounted
+      read-only: `94 passed`, `1 skipped` (the named isolated-Redis test is
+      intentionally unconfigured), no provider/network/runtime access. The
+      compiler's source-only `--apply` ran as the workspace UID and changed
+      exactly `config/v2/stable-v2-release-routing.yaml`: route revision
+      `3 -> 4`, catalog revision `5 -> 6`, catalog SHA
+      `5fb0...fdb3c -> 089263...07995ff4`. It rewrote none of demand,
+      acquisition or promotion-scope artifacts. `git diff --check` and
+      Python byte-compilation of every changed operator/test module pass.
+      The initial apply attempt using UID `1000` failed before writing due to
+      the workspace UID being `1001`; it left no temp file or source change.
+      This is source-contract evidence only, not an image/bundle publication
+      or runtime promotion.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

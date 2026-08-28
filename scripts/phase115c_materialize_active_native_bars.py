@@ -363,7 +363,17 @@ def _update_release_route(
     summary: Mapping[str, Any],
 ) -> dict[str, Any]:
     result = deepcopy(dict(route))
-    if summary["demand_additions"]:
+    referenced_artifact_changed = any(
+        (
+            str(result[section]["sha256"]) != str(summary[summary_sha])
+            or int(result[section]["revision"]) != int(summary[summary_revision])
+        )
+        for section, summary_sha, summary_revision in (
+            ("source_catalog", "source_catalog_sha256", "catalog_revision"),
+            ("crypto_demand", "demand_sha256", "demand_revision"),
+        )
+    )
+    if referenced_artifact_changed:
         result["revision"] = int(result["revision"]) + 1
     result["source_catalog"]["sha256"] = summary["source_catalog_sha256"]
     result["source_catalog"]["revision"] = summary["catalog_revision"]
@@ -399,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
         okx_spot_capture=args.okx_spot_capture,
     )
     route = _update_release_route(_load_yaml(args.release_routing), summary=summary)
+    changed_files: list[str] = []
     if args.apply:
         for path, value in (
             (args.demand, demand),
@@ -407,8 +418,14 @@ def main(argv: list[str] | None = None) -> int:
             (args.promotion_scope, scope),
             (args.release_routing, route),
         ):
-            _atomic_write(path, value)
-    print(json.dumps({**summary, "status": "APPLIED" if args.apply else "DRY_RUN"}, sort_keys=True))
+            if _load_yaml(path) != value:
+                _atomic_write(path, value)
+                changed_files.append(str(path))
+    print(json.dumps({
+        **summary,
+        "changed_files": changed_files,
+        "status": "APPLIED" if args.apply else "DRY_RUN",
+    }, sort_keys=True))
     return 0
 
 

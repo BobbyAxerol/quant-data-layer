@@ -26,6 +26,7 @@ from scripts.phasec40_collect_live_core_parity import (
     _scan_tail,
     verify_sample,
 )
+from scripts.phasec40_authority_bootstrap import _c40_binding_ids
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
@@ -334,7 +335,13 @@ class C40LiveCoreParityTests(unittest.TestCase):
             SCOPE_PATH,
             catalog=self.catalog,
         )
-        self.assertEqual(len(scope.binding_ids), 12)
+        selected = _c40_binding_ids(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            scope=scope,
+        )
+        self.assertEqual(len(selected), 12)
+        self.assertLess(len(selected), len(scope.binding_ids))
         self.assertEqual(_bounded_window(100, 1000, 250), (750, 1000))
         self.assertEqual(_bounded_window(900, 1000, 250), (900, 1000))
         for values in ((-1, 1, 1), (2, 1, 1), (0, 1, 0)):

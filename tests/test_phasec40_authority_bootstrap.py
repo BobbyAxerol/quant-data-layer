@@ -98,6 +98,8 @@ class C40AuthorityBootstrapTests(unittest.TestCase):
             {item["feed"] for item in first["slices"]},
             {"TRADE", "QUOTE", "BAR"},
         )
+        self.assertTrue(all(item["product_type"] == "PERPETUAL" for item in first["slices"]))
+        self.assertTrue(all("book_" not in item["binding_id"] for item in first["slices"]))
         self.assertTrue(all(item["state"] == "RUST_SHADOW" for item in first["slices"]))
         validate_packet(first, now_ns=NOW)
 

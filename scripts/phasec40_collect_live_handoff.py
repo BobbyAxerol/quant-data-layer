@@ -28,7 +28,8 @@ from qdl.marketdata.v2 import market_data_pb2
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.envelope import validate_raw_envelope
 from qdl.runtime.stable_catalog import StableSourceCatalog
-from qdl.runtime.stable_deployment import AuthorityPromotionScope
+from qdl.runtime.stable_deployment import AuthorityPromotionScope, StableAcquisitionPlan
+from scripts.phasec40_authority_bootstrap import _c40_binding_ids
 
 
 SCHEMA = "qdl.c40.live-handoff-evidence.v1"
@@ -135,15 +136,19 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("live handoff overlap/tail bounds are invalid")
     catalog = StableSourceCatalog.load(args.catalog)
     scope = AuthorityPromotionScope.load(args.promotion_scope, catalog=catalog)
-    if len(scope.binding_ids) != 12:
-        raise ValueError("C40 live handoff requires exactly twelve slices")
+    acquisition = StableAcquisitionPlan.load(
+        args.acquisition_plan, catalog=catalog
+    )
+    selected = _c40_binding_ids(
+        catalog=catalog, acquisition=acquisition, scope=scope
+    )
     source_by_id = {item.binding_id: item for item in catalog.bindings}
     subscription_to_binding = {
         source_by_id[binding_id].source_id: binding_id
-        for binding_id in scope.binding_ids
+        for binding_id in selected
     }
     binding_to_slice = {}
-    for binding_id in scope.binding_ids:
+    for binding_id in selected:
         source = source_by_id[binding_id]
         identity = source.instrument.identity
         binding_to_slice[binding_id] = (
@@ -156,7 +161,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     raw_counts: dict[str, int] = defaultdict(int)
     raw_tail: dict[str, deque[dict[str, Any]]] = {
         binding_id: deque(maxlen=args.tail_per_slice)
-        for binding_id in scope.binding_ids
+        for binding_id in selected
     }
 
     def accept_raw(message: Any) -> None:
@@ -184,11 +189,11 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
 
     canonical: dict[str, deque[tuple[str, str]]] = {
         binding_id: deque(maxlen=args.tail_per_slice)
-        for binding_id in scope.binding_ids
+        for binding_id in selected
     }
     canary: dict[str, deque[tuple[str, str]]] = {
         binding_id: deque(maxlen=args.tail_per_slice)
-        for binding_id in scope.binding_ids
+        for binding_id in selected
     }
 
     def canonical_accept(target: dict[str, deque[tuple[str, str]]]):
@@ -234,7 +239,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     slices = []
-    for binding_id in sorted(scope.binding_ids):
+    for binding_id in sorted(selected):
         slice_id = binding_to_slice[binding_id]
         checkpoint = latest_checkpoints.get(slice_id)
         if checkpoint is None:
@@ -310,6 +315,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--catalog", type=Path, required=True)
     parser.add_argument("--promotion-scope", type=Path, required=True)
+    parser.add_argument(
+        "--acquisition-plan",
+        type=Path,
+        default=ROOT / "config/v2/stable-acquisition-bindings.yaml",
+    )
     parser.add_argument("--bootstrap-servers", required=True)
     parser.add_argument("--ca", type=Path, required=True)
     parser.add_argument("--certificate", type=Path, required=True)
@@ -325,7 +335,10 @@ def main() -> int:
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    for path in (args.catalog, args.promotion_scope, args.ca, args.certificate, args.key):
+    for path in (
+        args.catalog, args.promotion_scope, args.acquisition_plan,
+        args.ca, args.certificate, args.key,
+    ):
         if not path.is_file():
             raise FileNotFoundError(path)
     evidence = collect(args)

@@ -92,6 +92,9 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         cls.current_scope = cls.tool._load_yaml(
             ROOT / "config/v2/stable-authority-promotion-scope.yaml"
         )
+        cls.current_route = cls.tool._load_yaml(
+            ROOT / "config/v2/stable-v2-release-routing.yaml"
+        )
         (
             cls.before_demand,
             cls.before_catalog,
@@ -237,6 +240,40 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         self.assertEqual(catalog, self.catalog)
         self.assertEqual(acquisition, self.acquisition)
         self.assertEqual(scope, self.scope)
+
+    def test_release_route_rebinds_any_changed_artifact_once(self) -> None:
+        stale_route = deepcopy(self.current_route)
+        stale_route["revision"] -= 1
+        stale_route["source_catalog"] = {
+            **stale_route["source_catalog"],
+            "sha256": "0" * 64,
+            "revision": self.summary["catalog_revision"] - 1,
+        }
+        route = self.tool._update_release_route(
+            stale_route, summary=self.summary
+        )
+        self.assertEqual(
+            route["source_catalog"],
+            {
+                "path": "/app/config/v2/stable-source-bindings.yaml",
+                "sha256": self.summary["source_catalog_sha256"],
+                "revision": self.summary["catalog_revision"],
+            },
+        )
+        self.assertEqual(route["revision"], stale_route["revision"] + 1)
+        _, _, _, _, repeated_summary = self.tool.build_documents(
+            demand=self.demand,
+            source_catalog=self.catalog,
+            acquisition=self.acquisition,
+            promotion_scope=self.scope,
+            binance_usdm_capture=ROOT / "config/v2/captures/binance-usdm-exchangeinfo.filtered.json",
+            binance_spot_capture=ROOT / "config/v2/captures/binance-spot-exchangeinfo.filtered.json",
+            okx_swap_capture=ROOT / "config/v2/captures/okx-instruments-swap.filtered.json",
+            okx_spot_capture=ROOT / "config/v2/captures/okx-instruments-spot.filtered.json",
+        )
+        self.assertEqual(
+            self.tool._update_release_route(route, summary=repeated_summary), route
+        )
 
 
 if __name__ == "__main__":

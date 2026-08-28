@@ -59,6 +59,46 @@ R1_PRECANARY_FIELDS = {
 }
 
 
+# C40 is a historical, bounded Rust-shadow packet.  It is intentionally not
+# the authority selection mechanism for later Reference/L2 or interval
+# expansion.  Keep its original four perpetuals and three feed classes stable
+# so a catalog growth cannot silently widen the old handoff blast radius.
+_C40_VENUE_MARKETS = frozenset({("BINANCE", "USDM"), ("OKX", "SWAP")})
+_C40_BASE_ASSETS = frozenset({"BTC", "ETH"})
+_C40_FEEDS = frozenset({("TRADE", None), ("QUOTE", None), ("BAR", "1m")})
+
+
+def _c40_binding_ids(
+    *,
+    catalog: StableSourceCatalog,
+    acquisition: StableAcquisitionPlan,
+    scope: AuthorityPromotionScope,
+) -> frozenset[str]:
+    source_by_id = {item.binding_id: item for item in catalog.bindings}
+    selected = {
+        item.binding_id
+        for item in acquisition.bindings
+        if item.enabled
+        and item.binding_id in source_by_id
+        and (
+            source_by_id[item.binding_id].instrument.identity.venue,
+            source_by_id[item.binding_id].instrument.identity.market,
+        ) in _C40_VENUE_MARKETS
+        and source_by_id[item.binding_id].instrument.identity.product_type.value == "PERPETUAL"
+        and source_by_id[item.binding_id].instrument.base_asset in _C40_BASE_ASSETS
+        and source_by_id[item.binding_id].source_policy_id == "crypto_primary_v2"
+        and (
+            source_by_id[item.binding_id].feed.value,
+            source_by_id[item.binding_id].interval,
+        ) in _C40_FEEDS
+    }
+    if len(selected) != 12:
+        raise ValueError("C40 bootstrap requires exactly twelve frozen crypto bindings")
+    if not selected.issubset(scope.binding_ids):
+        raise ValueError("C40 frozen bindings are absent from promotion scope")
+    return frozenset(selected)
+
+
 def _encoded(value: Mapping[str, Any]) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
@@ -258,13 +298,9 @@ def prepare_packet(
         raise ValueError("production core manifest differs from promotion scope")
     source_by_id = {item.binding_id: item for item in catalog.bindings}
     acquisition_by_id = {item.binding_id: item for item in acquisition.bindings}
-    active_crypto = {
-        item.binding_id
-        for item in acquisition.bindings
-        if item.enabled and item.runtime in {"BINANCE", "OKX"}
-    }
-    if set(scope.binding_ids) != active_crypto:
-        raise ValueError("promotion scope differs from active Binance/OKX bindings")
+    c40_binding_ids = _c40_binding_ids(
+        catalog=catalog, acquisition=acquisition, scope=scope
+    )
     issued_ns = time.time_ns() if issued_at_ns is None else int(issued_at_ns)
     if issued_ns <= 0:
         raise ValueError("bootstrap issued time must be positive")
@@ -293,7 +329,7 @@ def prepare_packet(
     }
     bundle_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"qdl-c40:{candidate_digest}"))
     slices = []
-    for binding_id in sorted(scope.binding_ids):
+    for binding_id in sorted(c40_binding_ids):
         source = source_by_id[binding_id]
         acquisition_binding = acquisition_by_id[binding_id]
         identity = source.instrument.identity

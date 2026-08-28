@@ -45,6 +45,7 @@ from qdl.runtime.stable_deployment import (
     StableAcquisitionBinding,
     StableAcquisitionPlan,
 )
+from scripts.phasec40_authority_bootstrap import _c40_binding_ids
 
 SCHEMA = "qdl.c40.live-core-parity.v1"
 EVENT_ID_HEADER = "qdl-event-id"
@@ -415,14 +416,14 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
 
     catalog = StableSourceCatalog.load(args.catalog)
     scope = AuthorityPromotionScope.load(args.promotion_scope, catalog=catalog)
-    if len(scope.binding_ids) != 12:
-        raise ValueError("C40 live parity requires exactly twelve slices")
     acquisition = StableAcquisitionPlan.load(
         args.acquisition_plan, catalog=catalog
     )
     source_by_id = {item.binding_id: item for item in catalog.bindings}
     acquisition_by_id = {item.binding_id: item for item in acquisition.bindings}
-    selected = set(scope.binding_ids)
+    selected = set(_c40_binding_ids(
+        catalog=catalog, acquisition=acquisition, scope=scope
+    ))
     if {
         acquisition_by_id[item].provider_kind for item in selected
     } - SUPPORTED_KINDS:
@@ -430,7 +431,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
 
     samples: dict[str, deque[LiveSample]] = {
         binding_id: deque(maxlen=args.samples_per_slice)
-        for binding_id in scope.binding_ids
+        for binding_id in selected
     }
     ignored_records = 0
     pre_candidate_records = 0
@@ -481,7 +482,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
 
     slices = []
     aggregate = hashlib.sha256()
-    for binding_id in sorted(scope.binding_ids):
+    for binding_id in sorted(selected):
         binding = source_by_id[binding_id]
         acquisition_binding = acquisition_by_id[binding_id]
         verified = [

@@ -276,22 +276,30 @@ class StableCatalogContractTests(unittest.TestCase):
         catalog = StableSourceCatalog.load(CATALOG_PATH)
         # The base capability catalog has 22 rows; C3.5 adds each additional
         # provider-native BAR interval for two Binance USD-M and two OKX Swap
-        # instruments.  Keep this strict without pinning a historical revision.
+        # instruments. C3.6 then adds the declared 12 physical L2 books as
+        # 24 snapshot/delta logical bindings. Keep both product planes strict.
         from qdl.adapters.intervals import (
             BINANCE_USDM_NATIVE_INTERVALS,
             OKX_NATIVE_INTERVALS,
         )
-        self.assertEqual(
-            len(catalog.bindings),
+        baseline = (
             22
             + 2 * (len(BINANCE_USDM_NATIVE_INTERVALS) - 1)
-            + 2 * (len(OKX_NATIVE_INTERVALS) - 1),
+            + 2 * (len(OKX_NATIVE_INTERVALS) - 1)
         )
+        l2_bindings = [
+            item for item in catalog.bindings
+            if item.feed.value in {"BOOK_SNAPSHOT", "BOOK_DELTA"}
+        ]
+        self.assertEqual(len(l2_bindings), 24)
+        self.assertEqual(len(catalog.bindings), baseline + len(l2_bindings))
         self.assertEqual(
             {(item.instrument.identity.venue, item.feed.value) for item in catalog.bindings},
             {
                 ("BINANCE", "TRADE"), ("BINANCE", "QUOTE"), ("BINANCE", "BAR"),
+                ("BINANCE", "BOOK_SNAPSHOT"), ("BINANCE", "BOOK_DELTA"),
                 ("OKX", "TRADE"), ("OKX", "QUOTE"), ("OKX", "BAR"),
+                ("OKX", "BOOK_SNAPSHOT"), ("OKX", "BOOK_DELTA"),
                 ("HNX", "TRADE"), ("HNX", "BAR"),
                 ("HOSE", "TRADE"), ("HOSE", "BAR"),
             },
