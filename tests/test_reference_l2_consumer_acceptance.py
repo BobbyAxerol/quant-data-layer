@@ -193,7 +193,7 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "verified"):
             _validate_payload(product, SimpleNamespace(payload=delta))
 
-    def test_native_basis_receipt_retries_one_typed_cooldown_only(self):
+    def test_native_basis_receipt_retries_one_typed_public_cooldown_only(self):
         product = next(
             item for item in self.scope.references
             if item.venue == "BINANCE" and item.requirement.feed is FeedType.BASIS
@@ -203,16 +203,13 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
             success_count=0,
             error_count=1,
             results=(SimpleNamespace(
-                status="ERROR",
+                status="SOURCE_UNAVAILABLE",
                 problem=SimpleNamespace(
                     code="SOURCE_UNAVAILABLE",
                     retryable=True,
                     retry_after_ms=500,
                 ),
-                data=SimpleNamespace(
-                    status="ERROR",
-                    error_code="PROVIDER_RETRY_EXHAUSTED",
-                ),
+                data=None,
             ),),
         )
         terminal = SimpleNamespace(
@@ -263,16 +260,13 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
             success_count=0,
             error_count=1,
             results=(SimpleNamespace(
-                status="ERROR",
+                status="SOURCE_UNAVAILABLE",
                 problem=SimpleNamespace(
                     code="SOURCE_UNAVAILABLE",
                     retryable=True,
                     retry_after_ms=500,
                 ),
-                data=SimpleNamespace(
-                    status="ERROR",
-                    error_code="PROVIDER_RETRY_EXHAUSTED",
-                ),
+                data=None,
             ),),
         )
 

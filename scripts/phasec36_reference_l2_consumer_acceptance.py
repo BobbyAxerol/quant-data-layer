@@ -77,16 +77,24 @@ def _native_basis_cooldown_ms(batch, response) -> int | None:
     problem = getattr(item, "problem", None)
     data = getattr(item, "data", None)
     retry_after_ms = getattr(problem, "retry_after_ms", None)
+    item_status = getattr(item, "status", None)
     if (
-        getattr(item, "status", None) != "ERROR"
+        item_status not in {"ERROR", "SOURCE_UNAVAILABLE"}
         or getattr(problem, "code", None) != "SOURCE_UNAVAILABLE"
         or getattr(problem, "retryable", None) is not True
         or not isinstance(retry_after_ms, int)
         or retry_after_ms <= 0
-        or getattr(data, "status", None) != "ERROR"
+    ):
+        return None
+    if data is not None and (
+        getattr(data, "status", None) != "ERROR"
         or getattr(data, "error_code", None) != "PROVIDER_RETRY_EXHAUSTED"
     ):
         return None
+    # The public V2 batch boundary may intentionally flatten a worker failure
+    # into SOURCE_UNAVAILABLE without exposing its private result payload. The
+    # singleton product/venue/series checks above keep this retry bounded to
+    # the one Rust-admitted native-basis lane.
     return retry_after_ms
 
 

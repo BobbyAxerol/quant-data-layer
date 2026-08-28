@@ -21950,6 +21950,25 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         roll the same four approved C2 reader roles, then run the exact
         79-product real V2-only receipt; rollback remains their current
         `9d81e5c` image/runtime map.
+        **Public cooldown wire-shape correction (`PASS / ONE REPLACEMENT
+        READER IMAGE REQUIRED`, 2026-08-28):** the first c5dc92a receipt
+        correctly failed closed before any V1/order action. A bounded V2-only
+        probe showed the public batch contract intentionally flattens an
+        admitted native-BASIS worker cooldown to outer
+        `status=SOURCE_UNAVAILABLE`, `problem.code=SOURCE_UNAVAILABLE`,
+        `retryable=true` and `retry_after_ms`, without exposing the private
+        inner `ReferenceDataResponse`. The receipt helper had recognized only
+        the private form, so it did not make its authorized one retry. It now
+        accepts that public wire form only after the existing singleton
+        Binance/native-BASIS gate; a second cooldown or every other error
+        remains terminal. The source-only matrix again passed **95/95** with
+        **1 documented isolated-Redis skip** in **8.811s**, with `py_compile`
+        and `git diff --check` passing. The c5dc92a image has no accepted
+        receipt and is retained only as the immediate four-reader rollback
+        image. Build exactly one successor reader image from this correction,
+        serially roll the same four approved reader roles, then repeat the
+        single 79-product receipt. No other runtime role or data-plane state
+        is authorized to change.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance
