@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 from pathlib import Path
 
 import yaml
 
 from qdl.consumer.manifest import ConsumerManifestLoader
-from qdl.query.contracts import RecoveryPolicy
+from qdl.query.contracts import ConsumerGrade, FeedType, RecoveryPolicy
 from qdl.runtime.provider_history import pass_through_eligible
+from qdl.reference.runtime import reference_requirement_eligible
 from qdl.runtime.production_catalog import ProductionDemandManifest
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
@@ -108,6 +110,13 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
             for binding in self.catalog.bindings
         }
 
+    def _reference_eligible(self, requirement) -> bool:
+        try:
+            instrument = self.catalog.instrument_for(requirement.instrument_uid)
+        except KeyError:
+            return False
+        return reference_requirement_eligible(instrument, requirement)
+
     def test_every_consumer_requirement_is_servable(self):
         """A requirement must resolve to a binding or to the pass-through.
 
@@ -133,6 +142,8 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
                 if key in self.binding_keys:
                     continue
                 if pass_through_eligible(self.catalog, requirement):
+                    continue
+                if self._reference_eligible(requirement):
                     continue
                 unservable.setdefault(key, set()).add(manifest.consumer_id)
         self.assertEqual(unservable, {})
@@ -201,10 +212,16 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
         acquisition_ids = {item.binding_id for item in self.acquisition.bindings}
         self.assertEqual(acquisition_ids, catalog_ids)
 
-    def test_every_instrument_backs_at_least_one_binding(self):
+    def test_every_instrument_has_a_materialized_or_reference_product(self):
         referenced = {
             binding.instrument.identity.instrument_uid
             for binding in self.catalog.bindings
+        }
+        reference_served = {
+            requirement.instrument_uid
+            for path in sorted(CONSUMER_DIR.glob("*.yaml"))
+            for requirement in ConsumerManifestLoader.load(path).requirements
+            if self._reference_eligible(requirement)
         }
         declared = {
             item["instrument_uid"]
@@ -212,7 +229,42 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
                 CATALOG_PATH.read_text(encoding="utf-8")
             )["instruments"]
         }
-        self.assertEqual(declared - referenced, set())
+        self.assertEqual(declared - referenced - reference_served, set())
+
+    def test_reference_only_product_never_weakens_domain_boundaries(self):
+        manifest = ConsumerManifestLoader.load(CONSUMER_DIR / "reference-l2-stable.yaml")
+        requirement = next(
+            item
+            for item in manifest.requirements
+            if item.feed is FeedType.MARK_INDEX_PRICE
+            and item.instrument_uid not in {
+                binding.instrument.identity.instrument_uid for binding in self.catalog.bindings
+            }
+        )
+        instrument = self.catalog.instrument_for(requirement.instrument_uid)
+        self.assertTrue(reference_requirement_eligible(instrument, requirement))
+        self.assertFalse(
+            reference_requirement_eligible(
+                instrument,
+                replace(requirement, feed=FeedType.TRADE),
+            )
+        )
+        self.assertFalse(
+            reference_requirement_eligible(
+                instrument,
+                replace(requirement, recovery=RecoveryPolicy.SNAPSHOT_AND_REPLAY),
+            )
+        )
+        self.assertFalse(
+            reference_requirement_eligible(
+                instrument,
+                replace(requirement, consumer_grade=ConsumerGrade.EXECUTION),
+            )
+        )
+        other = next(
+            item for item in self.catalog.instruments if item.instrument_uid != instrument.instrument_uid
+        )
+        self.assertFalse(reference_requirement_eligible(other, requirement))
 
     def test_zero_demand_bindings_do_not_grow(self):
         demanded = set(_requirement_keys()) | _production_demand_keys(self.catalog)

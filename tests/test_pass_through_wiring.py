@@ -32,18 +32,26 @@ class PassThroughWiringTests(unittest.TestCase):
 
     def _catalog_with_unbound(self):
         payload = yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8"))
-        spare = copy.deepcopy(payload["instruments"][0])
+        spare = copy.deepcopy(
+            next(
+                item
+                for item in payload["instruments"]
+                if item["venue"] == "BINANCE"
+                and item["market"] == "USDM"
+                and item["product_type"] == "PERPETUAL"
+            )
+        )
         identity = InstrumentIdentity.create(
             venue="BINANCE",
             market="USDM",
             product_type=ProductType("PERPETUAL"),
-            canonical_symbol="SOL-USDT",
+            canonical_symbol="XRP-USDT",
         )
         spare["instrument_uid"] = identity.instrument_uid
         spare["instrument_id"] = identity.instrument_id
-        spare["canonical_symbol"] = "SOL-USDT"
-        spare["native_symbol"] = "SOLUSDT"
-        spare["base_asset"] = "SOL"
+        spare["canonical_symbol"] = "XRP-USDT"
+        spare["native_symbol"] = "XRPUSDT"
+        spare["base_asset"] = "XRP"
         payload["instruments"].append(spare)
         path = self.directory / "catalog.yaml"
         path.write_text(yaml.safe_dump(payload), encoding="utf-8")
@@ -104,7 +112,7 @@ class PassThroughWiringTests(unittest.TestCase):
         self.assertIsInstance(service.backend, RoutedQueryBackend)
         registry = self.catalog.instrument_registry(include_unbound=True)
         self.assertEqual(
-            registry.get(self.unbound_uid).native_symbol, "SOLUSDT"
+            registry.get(self.unbound_uid).native_symbol, "XRPUSDT"
         )
 
     def _authorize(self, policy, purpose: AccessPurpose):

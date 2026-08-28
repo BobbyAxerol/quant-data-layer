@@ -20306,6 +20306,128 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         exemptions and `-D warnings` passes. Neither exception is a release
         claim or a new debt hidden by this repair; both remain outside the
         approved adapter/runtime boundary.
+      - **Bounded runtime packet decision (`APPROVED / PENDING APPLY`):** the
+        repair changes only the Rust binary; the currently mounted r12
+        `core.json` already carries catalog revision `6`, acquisition revision
+        `12`, unchanged authority bytes and the intended `80` bindings. Do
+        **not** generate a second eleven-role successor bundle or rewrite
+        authority/catalog/trust. Prepare one private binary-only packet that
+        pins current runtime path
+        `reference-l2-rollout-85daaf9-20260828T085000Z/successor/runtime`,
+        records current rollback image
+        `sha256:34b12c11a78acaf22fd13d0c62fe268f397dd4055b3bd9efe9781ca9d991e669`,
+        and overlays only `QDL_STABLE_RUST_IMAGE` with the committed
+        replacement. Compose preflight must render the exact new image and the
+        unchanged runtime mount. The sole mutation is serial
+        `rust_core --no-deps --force-recreate`; no ingestor, Python role,
+        trust/client mount, V1, Kafka topology/offset, Redis, SQLite, Trading
+        System, alpha or order path changes. Rollback is the same scoped
+        command with the recorded r12 image and existing runtime directory.
+      - **Packet preflight (`PASS / READY TO APPLY`, 2026-08-28):** private
+        packet
+        `/home/bobby/.local/state/qdl-v2/rust-core-refresh-63a77bd-20260828T092945Z/packet.json`
+        has SHA-256 `7d7d7d5c2f9edcdf32a202dae5c34ebd2e09d72a863396fd239415ebe4f2df33`.
+        It pins successor image
+        `sha256:6edbdc4e877d5cd22fd0ff35aa734bf178279390ba88155980078928b523b750`
+        (OCI revision `63a77bd735142e372455da010730bedd6bd7c770`) and exact
+        r12 rollback image `sha256:34b12c11a78acaf22fd13d0c62fe268f397dd4055b3bd9efe9781ca9d991e669`.
+        `docker compose config` rendered only the successor image and the
+        unchanged read-only r12 `core.json` bind mount under UID/GID 10001.
+        Packet data is mode `0700/0600/0640`, contains no secret value, and
+        has not recreated any service yet.
+      - **Binary-only Rust core apply and live L2 observation (`PASS /
+        BOUNDED`, 2026-08-28):** the approved packet was applied exactly once:
+        only existing `rust_core` was recreated with image
+        `sha256:6edbdc4e877d5cd22fd0ff35aa734bf178279390ba88155980078928b523b750`.
+        It started with `restart=0` and no OOM; no V1, Python role, Kafka
+        topology/offset, Redis, SQLite, authority, Trading System, alpha or
+        order path changed. A manual-assignment, read-committed Kafka observer
+        with auto-commit and offset-store disabled saw `0` new L2 quarantine
+        records over `90s`. A separate bounded canonical observation saw `895`
+        newly canonical, sequence-verified Binance USD-M book events across
+        BTC/ETH perpetual and dated contracts. A raw-only observer saw all
+        twelve declared physical books: the six Binance books plus six real
+        OKX Swap/Futures `books` feeds. It also isolated one real recovery
+        gap: after a core-only restart, the still-connected OKX session emitted
+        only `update` frames, so the strict core correctly filtered them while
+        awaiting the provider's initial websocket `snapshot`. No update was
+        promoted as a fabricated snapshot.
+      - **Stateful websocket-book recovery (`APPROVED / IN PROGRESS`,
+        2026-08-28):** close that recovery gap without a new service,
+        container, worker, topic, Python bypass or vendor-specific core rule.
+        Reuse the existing L2 `snapshot_refresh_seconds` contract as the
+        bounded bootstrap-renewal cadence: Binance retains its documented REST
+        anchor; a provider whose documented snapshot arrives only on its
+        websocket (currently OKX `books`) renews only its dedicated internal
+        `BOOK` connection lane. The reconnect increments the existing durable
+        connection generation and causes the venue to emit a fresh websocket
+        snapshot; the Rust core remains fail-closed until that snapshot arrives.
+        Trade, BBO and BAR lanes stay connected. Source work is limited to the
+        provider-neutral acquisition contract/default, the existing Rust native
+        ingestor lane/session supervisor, the twelve declared OKX L2 bindings
+        and their tests. Test gates: strict contract validation; book-lane
+        isolation; bounded renewal scheduling; no synthetic `update` bootstrap;
+        unit/locked Rust workspace tests; and a real-provider post-restart
+        observation proving all twelve books are canonical, sequence-verified
+        and gap-free. Runtime scope after source exit is one immutable Rust
+        image plus a serial recreate of **only** existing `ingestor_okx_swap`
+        with a sealed r13 ingestor configuration. Rollback is that role alone
+        to its recorded r12 image/configuration; V1, Kafka topology/offsets,
+        Redis, SQLite, authority, all other roles, Trading System, alpha and
+        order paths remain excluded.
+      - **Reference-only catalog consistency correction (`APPROVED / IN
+        PROGRESS`, 2026-08-28):** the expanded source matrix exposed a stale
+        test invariant: six declared Binance USD-M/OKX Swap `BNB`/`DOGE`/`SOL`
+        instruments are intentionally unbound realtime rows. They are covered
+        by the already-rendered non-execution Reference/L2 consumer manifest
+        and the bounded V2 reference batch, so forcing a Kafka/WebSocket
+        binding would contradict the approved pass-through/reference design
+        and create needless permanent demand. Replace the stale assertion with
+        one provider-neutral shared eligibility predicate: a declared unbound
+        instrument is servable only through a recognised reference feed, its
+        exact catalog identity and an approved `BINANCE/USDM`, `OKX/SWAP` or
+        `OKX/FUTURES` provider edge, as `ALPHA`/`RESEARCH`,
+        `FRESH_SNAPSHOT`, and never execution-grade. `TRADE`, unknown identity,
+        replay-required and execution requests remain fail-closed. This is
+        source/test only; it opens no reference endpoint, provider request,
+        binding, role, route or authority and stays inside the existing
+        reference runtime abstraction.
+      - **Source implementation and offline exit (`PASS / READY FOR SEALED
+        BUILD`, 2026-08-28):** acquisition revision `13` makes the bounded
+        `30s` renewal explicit for every declared `OKX_PUBLIC_BOOKS` binding;
+        validation rejects a missing or out-of-range cadence. The shared native
+        Rust ingestor now partitions every provider into internal `BOOK`,
+        `BAR`, `TRADE` and `QUOTE` lanes. Only an all-`BOOK` lane owns the
+        renewal timer. For OKX that timer closes and re-subscribes the same
+        existing `books` connection, advancing its existing connection
+        generation so the venue emits a real websocket snapshot; it does not
+        label the normal renewal as a disconnect/backoff. Binance retains the
+        existing REST-anchor renewal through the same provider-neutral cadence
+        contract. The strict core remains unchanged: an OKX `update` cannot
+        bootstrap a book. The catalog consistency check now uses the shared
+        reference admission predicate, and the pass-through test fixture picks
+        an explicit USD-M perpetual template rather than relying on catalog
+        ordering.
+      - **Tests actually run (`PASS / NO RUNTIME MUTATION`, 2026-08-28):**
+        read-only/no-network Python regression matrix passed **63/63** across
+        catalog consistency, pass-through wiring, reference API/SDK,
+        Reference/L2 materialization, universal realtime/L2 demand, stable
+        deployment and production catalog tests. It covers the new six
+        reference-only records and proves `TRADE`, replay-required,
+        execution-grade and cross-instrument attempts remain rejected. Rust
+        formatting passed for the changed ingestor; the isolated locked/offline
+        full workspace suite passed **144**, with **1** explicit Redis-only
+        integration test ignored because no test Redis URL was supplied.
+        `git diff --check` and read-only Python syntax compilation passed.
+        A global `clippy -D warnings` probe still fails at the same pre-existing
+        `qdl-kafka::enqueue_with_retry` 8-argument lint in the immutable
+        baseline builder; it is not introduced by this patch and no unrelated
+        hot-path refactor or lint suppression was added. No provider request,
+        image build, service/container recreation, Kafka/Redis/SQLite write,
+        V1/V2 route, authority, Trading System, alpha or order mutation has
+        occurred in this source gate. The exact root-owned offline Cargo target
+        `/tmp/qdl-okx-book-recovery-target` (2.2 GiB) was removed after the
+        matrix; no disposable test container remains.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

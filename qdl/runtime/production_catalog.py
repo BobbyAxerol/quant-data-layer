@@ -653,11 +653,10 @@ class ProductionCatalogBuilder:
                 "rest_snapshot_url": (
                     _BINANCE_DEPTH_REST[item.market] if item.venue == "BINANCE" else None
                 ),
-                # Binance's documented diff-depth bootstrap needs a bounded
-                # fresh REST anchor. OKX public books supplies the snapshot on
-                # the same websocket stream and must not be polled as if it
-                # were Binance.
-                "snapshot_refresh_seconds": 30 if item.venue == "BINANCE" else None,
+                # Binance renews its documented REST anchor. OKX public books
+                # renews its own websocket snapshot on the isolated BOOK lane;
+                # it is never polled as if it were a Binance diff-depth book.
+                "snapshot_refresh_seconds": 30,
             }
         return result
 

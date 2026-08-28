@@ -1092,6 +1092,17 @@ class StableDeploymentContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "replace-only"):
                 StableAcquisitionPlan.load(path, catalog=self.catalog)
 
+            missing_okx_book_renewal = copy.deepcopy(payload)
+            for item in missing_okx_book_renewal["bindings"]:
+                if item["provider_kind"] == "okx_book":
+                    item["l2"]["snapshot_refresh_seconds"] = None
+                    break
+            path.write_text(
+                yaml.safe_dump(missing_okx_book_renewal, sort_keys=False), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "OKX L2 acquisition"):
+                StableAcquisitionPlan.load(path, catalog=self.catalog)
+
         primary = copy.deepcopy(self.authority)
         primary["mode"] = "RUST_PRIMARY"
         primary["public_write_allowed"] = True

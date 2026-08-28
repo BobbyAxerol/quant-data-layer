@@ -157,7 +157,7 @@ impl RawBinding {
                     if l2.provider_protocol != "OKX_PUBLIC_BOOKS"
                         || !(1..=10_000).contains(&l2.depth_per_side)
                         || l2.rest_snapshot_url.is_some()
-                        || l2.snapshot_refresh_seconds.is_some()
+                        || !matches!(l2.snapshot_refresh_seconds, Some(5..=300))
                         || self.native_channel != "books"
                     {
                         return Err("OKX BOOK binding L2 configuration is invalid".into());
@@ -206,13 +206,11 @@ fn partition_bindings(bindings: &[RawBinding], max_subscriptions: usize) -> Vec<
         .collect()
 }
 
-fn partition_binance_bindings(
-    bindings: &[RawBinding],
-    max_subscriptions: usize,
-) -> Vec<Vec<RawBinding>> {
-    // Keep low-rate final BARs and lossless trades out of a high-rate quote
-    // socket. One worker still owns the complete venue/market demand; these
-    // are stable internal connection lanes, not per-symbol processes.
+fn partition_feed_lanes(bindings: &[RawBinding], max_subscriptions: usize) -> Vec<Vec<RawBinding>> {
+    // Stateful BOOK sessions need an independent recovery cadence. BAR, TRADE
+    // and QUOTE stay isolated as well, so rotating a book snapshot connection
+    // never disconnects another feed class. These are lanes inside one shared
+    // venue/market role, never symbol workers.
     [RawFeed::Book, RawFeed::Bar, RawFeed::Trade, RawFeed::Quote]
         .into_iter()
         .flat_map(|feed| {
@@ -224,6 +222,20 @@ fn partition_binance_bindings(
             partition_bindings(&lane, max_subscriptions)
         })
         .collect()
+}
+
+fn partition_binance_bindings(
+    bindings: &[RawBinding],
+    max_subscriptions: usize,
+) -> Vec<Vec<RawBinding>> {
+    partition_feed_lanes(bindings, max_subscriptions)
+}
+
+fn partition_okx_bindings(
+    bindings: &[RawBinding],
+    max_subscriptions: usize,
+) -> Vec<Vec<RawBinding>> {
+    partition_feed_lanes(bindings, max_subscriptions)
 }
 
 impl IngestorConfig {
@@ -699,10 +711,16 @@ async fn fetch_binance_book_snapshots(
     Ok(frames)
 }
 
-fn binance_book_snapshot_period(bindings: &HashMap<String, RawBinding>) -> Option<Duration> {
+fn book_snapshot_renewal_period(bindings: &HashMap<String, RawBinding>) -> Option<Duration> {
+    if bindings.is_empty()
+        || bindings
+            .values()
+            .any(|binding| binding.feed != RawFeed::Book)
+    {
+        return None;
+    }
     bindings
         .values()
-        .filter(|binding| binding.feed == RawFeed::Book)
         .filter_map(|binding| {
             binding
                 .l2
@@ -894,7 +912,7 @@ async fn run_binance_connection(
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(5))
         .build()?;
-    let snapshot_period = binance_book_snapshot_period(&bindings);
+    let snapshot_period = book_snapshot_renewal_period(&bindings);
     let backoff = BackoffPolicy {
         initial_ms: 250,
         maximum_ms: 30_000,
@@ -1431,7 +1449,16 @@ async fn run_okx_service(
                     tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
                 latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 latest_tick.tick().await;
+                let snapshot_period = book_snapshot_renewal_period(&binding_map);
+                let mut snapshot_tick = snapshot_period.map(tokio::time::interval);
+                if let Some(tick) = snapshot_tick.as_mut() {
+                    // The initial provider subscription already requested the
+                    // authoritative snapshot. Consume interval's immediate
+                    // tick so renewal only occurs after the declared bound.
+                    tick.tick().await;
+                }
                 let mut disconnected = false;
+                let mut snapshot_renewal = false;
                 let mut publish_error = None;
                 let mut exhausted = false;
                 while let Some(frame) = pre_ack_frames.pop_front() {
@@ -1491,6 +1518,22 @@ async fn run_okx_service(
                             }
                             failures = 0;
                             continue;
+                        }
+                        _ = async {
+                            match snapshot_tick.as_mut() {
+                                Some(tick) => {
+                                    tick.tick().await;
+                                }
+                                None => std::future::pending::<()>().await,
+                            }
+                        }, if snapshot_period.is_some() => {
+                            // OKX books can only establish a new executable
+                            // state from its documented websocket snapshot.
+                            // Rotate the isolated BOOK lane so a core restart
+                            // obtains that snapshot without touching trade,
+                            // quote or bar sessions.
+                            snapshot_renewal = true;
+                            break;
                         }
                         result = &mut read => Some(result),
                         completed = inflight.next(), if !inflight.is_empty() => {
@@ -1601,6 +1644,22 @@ async fn run_okx_service(
                 if let Some(error) = publish_error {
                     return Err(error.into());
                 }
+                if snapshot_renewal && !should_stop(&stopped, &accepted, config.max_events, expires)
+                {
+                    failures = 0;
+                    println!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "event": "qdl_native_book_snapshot_renewal",
+                            "runtime": "OKX",
+                            "service": format!("{:?}", service).to_ascii_uppercase(),
+                            "generation": generation,
+                            "bindings": binding_map.len(),
+                            "snapshot_refresh_seconds": snapshot_period.map(|value| value.as_secs()),
+                        }))?
+                    );
+                    continue;
+                }
                 if disconnected && !should_stop(&stopped, &accepted, config.max_events, expires) {
                     failures = failures.saturating_add(1);
                     eprintln!(
@@ -1678,9 +1737,10 @@ async fn run_okx(
         .clone()
         .ok_or("OKX business WebSocket URL is required")?;
     let mut futures = Vec::new();
-    for (index, bindings) in partition_bindings(&public, config.max_subscriptions_per_connection)
-        .into_iter()
-        .enumerate()
+    for (index, bindings) in
+        partition_okx_bindings(&public, config.max_subscriptions_per_connection)
+            .into_iter()
+            .enumerate()
     {
         futures.push(run_okx_service(
             OkxServiceShard {
@@ -1695,9 +1755,10 @@ async fn run_okx(
             stopped.clone(),
         ));
     }
-    for (index, bindings) in partition_bindings(&business, config.max_subscriptions_per_connection)
-        .into_iter()
-        .enumerate()
+    for (index, bindings) in
+        partition_okx_bindings(&business, config.max_subscriptions_per_connection)
+            .into_iter()
+            .enumerate()
     {
         futures.push(run_okx_service(
             OkxServiceShard {
@@ -1850,13 +1911,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        next_connection_generation, partition_binance_bindings, partition_bindings,
-        pending_binance_frame, pending_okx_frame, DeliveryClass, LatestStateBuffer,
-        PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
+        book_snapshot_renewal_period, next_connection_generation, partition_binance_bindings,
+        partition_bindings, partition_okx_bindings, pending_binance_frame, pending_okx_frame,
+        DeliveryClass, LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
     };
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     fn generation_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -1947,6 +2009,52 @@ mod tests {
     }
 
     #[test]
+    fn okx_book_lane_renews_without_rotating_trade_or_quote_lanes() {
+        let mut book = binding(RawFeed::Book, DeliveryClass::Lossless);
+        book.provider = "OKX_DIRECT".into();
+        book.venue = "OKX".into();
+        book.market = "SWAP".into();
+        book.product_type = "PERPETUAL".into();
+        book.native_symbol = "BTC-USDT-SWAP".into();
+        book.native_channel = "books".into();
+        book.l2 = Some(super::RawL2Config {
+            provider_protocol: "OKX_PUBLIC_BOOKS".into(),
+            depth_per_side: 100,
+            rest_snapshot_url: None,
+            snapshot_refresh_seconds: Some(30),
+        });
+        let mut trade = book.clone();
+        trade.feed = RawFeed::Trade;
+        trade.native_channel = "trades".into();
+        trade.l2 = None;
+        let mut quote = trade.clone();
+        quote.feed = RawFeed::Quote;
+        quote.delivery_class = DeliveryClass::LatestState;
+        quote.native_channel = "bbo-tbt".into();
+
+        let values = vec![book, trade, quote];
+        let lanes = partition_okx_bindings(&values, 100);
+        assert_eq!(lanes.len(), 3);
+        assert!(lanes[0].iter().all(|item| item.feed == RawFeed::Book));
+        assert!(lanes[1].iter().all(|item| item.feed == RawFeed::Trade));
+        assert!(lanes[2].iter().all(|item| item.feed == RawFeed::Quote));
+        let books = lanes[0]
+            .iter()
+            .cloned()
+            .map(|item| (item.key(), item))
+            .collect::<HashMap<_, _>>();
+        let mixed = values
+            .into_iter()
+            .map(|item| (item.key(), item))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            book_snapshot_renewal_period(&books),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(book_snapshot_renewal_period(&mixed), None);
+    }
+
+    #[test]
     fn feed_delivery_contract_allows_only_latest_quote_and_lossless_trade_bar() {
         assert!(binding(RawFeed::Quote, DeliveryClass::LatestState)
             .validate(ProviderRuntime::Binance)
@@ -2006,9 +2114,11 @@ mod tests {
             provider_protocol: "OKX_PUBLIC_BOOKS".into(),
             depth_per_side: 100,
             rest_snapshot_url: None,
-            snapshot_refresh_seconds: None,
+            snapshot_refresh_seconds: Some(30),
         });
         assert!(okx_book.validate(ProviderRuntime::Okx).is_ok());
+        okx_book.l2.as_mut().unwrap().snapshot_refresh_seconds = None;
+        assert!(okx_book.validate(ProviderRuntime::Okx).is_err());
     }
 
     #[test]

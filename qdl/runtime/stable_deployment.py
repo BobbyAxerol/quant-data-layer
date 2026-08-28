@@ -92,7 +92,8 @@ class StableL2Acquisition:
                 or acquisition.provider_kind != "okx_book"
                 or acquisition.native_channel != "books"
                 or self.rest_snapshot_url is not None
-                or self.snapshot_refresh_seconds is not None
+                or self.snapshot_refresh_seconds is None
+                or not 5 <= self.snapshot_refresh_seconds <= 300
             ):
                 raise ValueError("OKX L2 acquisition differs from documented provider edge")
             return

@@ -13,9 +13,10 @@ from dataclasses import dataclass
 
 from qdl.adapters.binance.reference import BinanceUsdmReferenceAdapter
 from qdl.admission import ProviderAdmissionRuntime
-from qdl.adapters.okx.client import OkxRestClient
 from qdl.adapters.okx.reference import OkxSwapReferenceAdapter
+from qdl.adapters.okx.client import OkxRestClient
 from qdl.domain.instrument import InstrumentRecord
+from qdl.query.contracts import ConsumerGrade, DataRequirement, FeedType, RecoveryPolicy
 from qdl.query.entitlement import (
     AccessPurpose,
     DataProduct,
@@ -30,6 +31,45 @@ _REFERENCE_SOURCES: dict[tuple[str, str], str] = {
     ("OKX", "FUTURES"): "qdl-reference-okx-futures-v1",
 }
 _REFERENCE_LICENSE_REVISION = "qdl-reference-provider-v1"
+_REFERENCE_FEEDS = frozenset(
+    {
+        FeedType.FUNDING_RATE,
+        FeedType.OPEN_INTEREST,
+        FeedType.LONG_SHORT_RATIO,
+        FeedType.TAKER_FLOW,
+        FeedType.MARK_INDEX_PRICE,
+        FeedType.CONTRACT_METADATA,
+        FeedType.BASIS,
+    }
+)
+
+
+def reference_requirement_eligible(
+    instrument: InstrumentRecord,
+    requirement: DataRequirement,
+) -> bool:
+    """Return whether an unbound V2 requirement can use reference batch data.
+
+    This is an admission predicate only. It neither opens a provider connection
+    nor promises that every venue supports every reference metric; an adapter
+    reports unavailable products as typed provider results. The predicate keeps
+    unbound metadata from accidentally authorising replay, execution, or an
+    unrelated instrument/feed.
+    """
+
+    return (
+        instrument.instrument_uid == requirement.instrument_uid
+        and requirement.feed in _REFERENCE_FEEDS
+        and requirement.consumer_grade
+        in {ConsumerGrade.ALPHA, ConsumerGrade.RESEARCH}
+        and requirement.recovery is RecoveryPolicy.FRESH_SNAPSHOT
+        and not requirement.require_final_bars
+        and (
+            instrument.identity.venue,
+            instrument.identity.market,
+        )
+        in _REFERENCE_SOURCES
+    )
 
 
 @dataclass(frozen=True, slots=True)
