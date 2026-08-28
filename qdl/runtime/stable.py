@@ -695,6 +695,7 @@ async def serve_stable_projector() -> None:
     )
     sink = StableHttpCanonicalSink(
         config.stream_ingest_urls, config.internal_ingest_secret, spool,
+        max_request_bytes=config.max_request_bytes,
         ssl_context=stable_client_ssl_context(config),
     )
     projector = StableCompatibilityProjector(

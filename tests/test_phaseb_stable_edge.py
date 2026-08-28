@@ -1723,7 +1723,7 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
             with self.assertRaisesRegex(
-                RuntimeError, "no active stable stream gateway"
+                RuntimeError, "http_status=422"
             ):
                 await sink.publish(tampered)
             rejected = await client.post(
@@ -1731,6 +1731,99 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 headers={"X-QDL-Stable-Signature": "sha256=bad"},
             )
             self.assertEqual(rejected.status_code, 401)
+        finally:
+            await sink.close()
+            await client.aclose()
+
+    async def test_signed_http_sink_chunks_by_exact_request_bytes(self):
+        durable = tuple(
+            DurableEvent(
+                stream=self.catalog.canonical_stream,
+                partition_key="stable-byte-chunk-test",
+                event_id=bytes([index]) * 16,
+                payload=(f"canonical-{index}".encode() * 128),
+                accepted_at_ns=1,
+                headers={
+                    "raw_stream": "md.raw.byte-chunk-test",
+                    "raw_event_id": bytes([index + 10]).hex() * 16,
+                    "raw_provider_envelope": "a" * 2_000,
+                },
+            )
+            for index in range(1, 4)
+        )
+        stored = tuple(self.spool.append(event) for event in durable)
+        expected = {
+            base64.b64encode(event.payload).decode(): (event, append)
+            for event, append in zip(durable, stored, strict=True)
+        }
+        observed_bodies = []
+        observed_event_ids = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            observed_bodies.append(request.content)
+            payload = json.loads(request.content)
+            received = [expected[item["canonical"]] for item in payload["events"]]
+            observed_event_ids.extend(event.event_id for event, _ in received)
+            return httpx.Response(200, json={
+                "schema": "qdl.v2.stable-canonical-ingest-result.v1",
+                "results": [
+                    {
+                        "event_id": event.event_id.hex(),
+                        "offset": append.cursor.offset,
+                    }
+                    for event, append in received
+                ],
+            })
+
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://localhost"
+        )
+        sink = StableHttpCanonicalSink(
+            ("http://localhost",), b"s" * 32, self.spool,
+            max_request_bytes=5_000, client=client,
+        )
+        try:
+            result = await sink.publish_many(durable)
+            self.assertEqual(
+                tuple(item.cursor for item in result),
+                tuple(item.cursor for item in stored),
+            )
+            self.assertEqual(
+                tuple(item.event.event_id for item in result),
+                tuple(event.event_id for event in durable),
+            )
+            self.assertGreater(len(observed_bodies), 1)
+            self.assertTrue(all(len(body) <= 5_000 for body in observed_bodies))
+            self.assertEqual(
+                sum(len(json.loads(body)["events"]) for body in observed_bodies), 3
+            )
+            self.assertEqual(
+                observed_event_ids, [event.event_id for event in durable]
+            )
+            with self.assertRaisesRegex(
+                ValueError, "event exceeds request byte bound"
+            ):
+                await StableHttpCanonicalSink(
+                    ("http://localhost",), b"s" * 32, self.spool,
+                    max_request_bytes=256, client=client,
+                ).publish(durable[0])
+
+            async def reject(request: httpx.Request) -> httpx.Response:
+                return httpx.Response(413, request=request)
+
+            rejected_client = httpx.AsyncClient(
+                transport=httpx.MockTransport(reject), base_url="http://localhost"
+            )
+            rejected_sink = StableHttpCanonicalSink(
+                ("http://localhost",), b"s" * 32, self.spool,
+                max_request_bytes=5_000, client=rejected_client,
+            )
+            try:
+                with self.assertRaisesRegex(RuntimeError, "http_status=413"):
+                    await rejected_sink.publish(durable[0])
+            finally:
+                await rejected_sink.close()
+                await rejected_client.aclose()
         finally:
             await sink.close()
             await client.aclose()

@@ -21088,6 +21088,133 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         System, alpha or order mutation. Next permitted action remains only
         one immutable Python reader image, a four-reader rolling handoff with
         its recorded rollback map, then the bounded V2-only receipt.
+        **Runtime packet (`APPROVED / READY`, 2026-08-28):** build exactly one
+        immutable Python image from source commit `32fa3cc`; run the same
+        focused `54/54` matrix from that image without a source mount; then
+        rolling-recreate only `query_v2_1`, `query_v2_2`,
+        `stream_v2_passive`, and `stream_v2_active` in that order. All four
+        retain the existing project `qdl_v2_stable_candidate`, runtime bind
+        mount
+        `/home/bobby/.local/state/qdl-v2/historical-lineage-aad78f4-20260828T112339Z/successor/runtime`,
+        stable state/TLS volumes and current r13 configuration. The recorded
+        rollback map for every named role is image
+        `sha256:3149e4099696f9b5dfdf6f2f201e22577da90ddc5280ead9556a0f9a0a3f7eb2`
+        plus that same runtime path; rollback recreates only a failed reader
+        from this exact map, in reverse order where needed. No role is added,
+        no runtime bundle, Kafka topology/offset, Redis, SQLite, Rust core,
+        projector, V1, Trading System, alpha or order path is changed.
+        Normal V2 query/provider reads and durable book reads during the
+        bounded acceptance are expected data-plane activity; the disposable
+        client itself has no provider credentials or V1 route. After every
+        reader is healthy and restart/OOM clean, mount only the existing
+        `stable-reference-l2` mTLS/JWT identity into one disposable,
+        non-root, read-only client with tmpfs cursor state and execute the
+        exact 79-product V2-only receipt for at most 300 seconds. A failed
+        receipt removes only its exact evidence namespace and triggers the
+        reader-local rollback map; it does not retry by creating an image,
+        service, worker, topic or alternate data source. Exit requires all
+        55 Reference and 24 BOOK products through both V2 query replicas,
+        valid Decimal/unit/identity/lineage, verified book generation/sequence
+        and replay/reconnect, `order_actions=0`, no hidden V1/direct-provider
+        client use, bounded resources and compact hash-only evidence.
+        **Reader image and rolling exit (`PASS / receipt pending`, 2026-08-28):**
+        built exactly one immutable image
+        `qdl-v2-python:2.0.0-32fa3cc`
+        (`sha256:a4fedf5ada3b905daab2ddd58de119467d5d7afde7d4ab277e29cfa5b695ec6e`)
+        from source revision `32fa3cc79bba256ecf4857b940bdd1a2de40132d`.
+        The image-only, non-root/read-only/no-network focused matrix passed
+        **54/54** in `7.326s`; no host source was mounted. Compose render with
+        the existing r13 rollout environment passed. Rolling recreated only
+        `query_v2_1`, `query_v2_2`, `stream_v2_passive` and
+        `stream_v2_active`, in that order, with `--no-deps`; all retain the
+        same runtime mount and stable state/TLS volumes. Post-roll the four
+        are `running`, `restart=0`, `OOMKilled=false`; `query_v2_1` is Docker
+        `healthy`, and the other three have no Docker healthcheck, so the
+        governed end-to-end receipt remains their functional gate. Startup logs
+        contain no warning/error. V1, Kafka, Redis, SQLite, Rust, projectors,
+        Trading System, alpha and order paths were not touched.
+        **First receipt attempt (`EXPECTED FAIL-CLOSED`, 2026-08-28):** the
+        disposable client correctly refused `qdl-v2-stream-a:8210` with
+        `GATEWAY_FENCED`; read-only Redis inspection established that the
+        current valid lease owner is `stable-stream-passive`, epoch `26`.
+        This follows the approved rolling order (passive acquired the shared
+        lease before active), proves split-brain fencing rather than a data
+        defect, and made no receipt or data/control-plane mutation. The empty
+        exact evidence directory is removed. The one permitted retry changes
+        only the client gRPC target to the current lease-holder alias
+        `qdl-v2-stream-b:8210`; it does not change reader state, lease, route,
+        image, manifest or topology.
+        **L2 runtime diagnosis and bounded recovery (`CONFIRMED / APPROVED`,
+        2026-08-28):** the second V2-only receipt reached the active stream
+        lease-holder but correctly failed the 60-second BOOK freshness gate.
+        Targeted role inspection established the concrete cause: `rust_core`
+        exited at `2026-08-28T14:08:52Z` with exit `137` and
+        `OOMKilled=true` under its inherited `256 MiB` limit. The three
+        projectors remain running but report only `no active stable stream
+        gateway accepted canonical data`; this is the downstream symptom, not
+        a provider, OKX contract or acceptance-client defect. The existing
+        versioned `docker-compose.phase105c.override.yml` already defines the
+        narrowly intended `rust_core` limit of `512 MiB`. Recovery is limited
+        to rendering that existing override and recreating only the exited
+        `rust_core` with the same immutable Rust image and the same mounted
+        runtime `core.json`; no code, image, service, topic, offset, Redis,
+        SQLite, V1, projector, Trading System, alpha or order state changes.
+        Rollback is the prior `256 MiB` compose definition; V1 remains the
+        independent fallback. After bounded catch-up, rerun the 24 BOOK probe
+        and then the one 79-product V2-only receipt. Freshness is not relaxed.
+        **Projector capacity correction (`CONFIRMED / APPROVED`,
+        2026-08-28):** after core recovery, all three existing projectors
+        independently exited with `OOMKilled=true` at their inherited
+        `512 MiB` cgroup while the canonical backlog was materialized. This is
+        an in-scope capacity defect in the existing bounded handoff, not a
+        reason to add worker types, buffers, retries or another topology. The
+        existing `phase105c` override now gives only the same three projector
+        roles a parameterized `1024 MiB` cgroup while preserving their
+        immutable Python image, runtime mount, consumer group, Kafka offsets,
+        `2048`/`33554432` lossless pending bounds, TLS identity and all source
+        semantics. Host available memory was `7.7 GiB` at admission. Apply is
+        serial: start `projector_v2`, observe bounded RSS/error/lag, then
+        `projector_v2_2`, then `projector_v2_3`; no other role is recreated.
+        Rollback recreates only the affected projector with its prior `512 MiB`
+        base definition. The acceptance remains blocked until all are live and
+        the exact 24 BOOK plus 79-product V2-only receipt passes.
+        **Exact handoff root cause and source correction (`CONFIRMED / IN
+        PROGRESS`, 2026-08-28):** real non-committing reads from the six current
+        projector offsets proved Rust core emits canonical BOOK data correctly.
+        A single BOOK event and the exact `128`-event partition-`0` batch pass
+        mTLS/HMAC/catalog/raw-lineage admission. The six bounded real batches
+        then isolated the actual defect: partitions `0`, `1` and `2` were
+        accepted (`303,683`, `198,791`, `25,151` bytes); partitions `3`, `4`
+        and `5` were truthfully rejected `413 PAYLOAD_TOO_LARGE` at
+        `2,896,763`, `2,252,531` and `6,270,915` bytes against the existing
+        `1,048,576` byte request limit. The old count-only `128` record sink
+        collapses this `413` into the misleading generic gateway message; its
+        retry loop then creates the observed projector memory pressure. Fix
+        only `StableHttpCanonicalSink`: split an already-validated ordered
+        batch by exact serialized request bytes, preserve HMAC/raw lineage,
+        idempotent event order and ACK/offset validation, and fail closed when
+        one individual event itself exceeds the configured request bound. The
+        existing `max_request_bytes` remains the single bound; no new queue,
+        service, worker, topic, provider route or fallback is authorized. Test
+        exact multi-chunk order/byte caps, individual oversize rejection,
+        413 observability and the existing signed/idempotent path. The
+        temporary `1024 MiB` projector probe is removed before final runtime
+        retry; final admission must demonstrate the existing `512 MiB` role is
+        sufficient with byte-bounded delivery.
+        **Byte-bound source gate (`PASS / SOURCE-ONLY`, 2026-08-28):** the
+        focused non-root, read-only, network-disabled Python matrix passed
+        **37/37** in `2.628s` after the sink was made byte-aware. It proves
+        exact serialized-body bounds, ordered multi-chunk delivery, preserved
+        ACK/offset identity, individual-event oversize fail-closed behavior,
+        explicit `413` observability, signed/idempotent ingestion and the
+        existing recovery/compose boundary. The temporary `1024 MiB` projector
+        override and its test assertion were removed before this source slice;
+        it remains diagnostic evidence only, not retained runtime policy. The
+        final retry uses the existing three projector roles at `512 MiB` and
+        the existing `rust_core` `512 MiB` override. Next action is exactly one
+        immutable Python image from this source revision, then serially
+        recreate only the three existing projectors, without changing Kafka
+        offsets, Redis, SQLite, V1, Trading System, alpha or order state.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

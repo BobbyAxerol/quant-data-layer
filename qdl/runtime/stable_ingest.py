@@ -212,6 +212,7 @@ class StableHttpCanonicalSink:
     secret: bytes
     spool: SQLiteDurableSpool
     timeout_seconds: float = 10.0
+    max_request_bytes: int = 1_048_576
     client: httpx.AsyncClient | None = None
     ssl_context: ssl.SSLContext | None = None
     _owns_client: bool = field(init=False)
@@ -222,6 +223,7 @@ class StableHttpCanonicalSink:
             or any(not _internal_url(value) for value in self.urls)
             or len(self.secret) < 32
             or self.timeout_seconds <= 0
+            or self.max_request_bytes <= 0
         ):
             raise ValueError("stable HTTP sink configuration is invalid")
         if any(urlsplit(value).scheme == "https" for value in self.urls) and self.ssl_context is None and self.client is None:
@@ -246,26 +248,73 @@ class StableHttpCanonicalSink:
         values = tuple(events)
         if not 1 <= len(values) <= 1000:
             raise ValueError("stable HTTP sink batch must contain 1..1000 events")
-        encoded = []
-        for event in values:
-            raw_stream = event.headers.get("raw_stream")
-            raw_event_id = event.headers.get("raw_event_id")
-            if not raw_stream or not raw_event_id:
-                raise ValueError("stable HTTP sink requires a durable raw reference")
-            item = {
-                "canonical": base64.b64encode(event.payload).decode(),
-                "raw_stream": raw_stream,
-                "raw_event_id": raw_event_id,
-            }
-            inline_raw = event.headers.get("raw_provider_envelope")
-            if inline_raw:
-                item["raw_provider_envelope"] = inline_raw
-            encoded.append(item)
-        body = json.dumps({
+        encoded = tuple(self._encode_event(event) for event in values)
+        stored_values = []
+        for chunk_values, chunk_encoded in self._request_chunks(values, encoded):
+            stored_values.extend(
+                await self._publish_chunk(chunk_values, chunk_encoded)
+            )
+        return tuple(stored_values)
+
+    @staticmethod
+    def _encode_event(event: DurableEvent) -> dict[str, str]:
+        raw_stream = event.headers.get("raw_stream")
+        raw_event_id = event.headers.get("raw_event_id")
+        if not raw_stream or not raw_event_id:
+            raise ValueError("stable HTTP sink requires a durable raw reference")
+        item = {
+            "canonical": base64.b64encode(event.payload).decode(),
+            "raw_stream": raw_stream,
+            "raw_event_id": raw_event_id,
+        }
+        inline_raw = event.headers.get("raw_provider_envelope")
+        if inline_raw:
+            item["raw_provider_envelope"] = inline_raw
+        return item
+
+    @staticmethod
+    def _body(encoded: tuple[dict[str, str], ...]) -> bytes:
+        return json.dumps({
             "schema": _INGEST_SCHEMA,
             "batch_id": str(uuid.uuid4()),
             "events": encoded,
         }, sort_keys=True, separators=(",", ":")).encode()
+
+    def _request_chunks(
+        self,
+        values: tuple[DurableEvent, ...],
+        encoded: tuple[dict[str, str], ...],
+    ) -> tuple[tuple[tuple[DurableEvent, ...], tuple[dict[str, str], ...]], ...]:
+        chunks = []
+        current_values: list[DurableEvent] = []
+        current_encoded: list[dict[str, str]] = []
+        for event, item in zip(values, encoded, strict=True):
+            candidate = (*current_encoded, item)
+            if len(self._body(candidate)) > self.max_request_bytes:
+                if not current_values:
+                    raise ValueError(
+                        "stable canonical event exceeds request byte bound"
+                    )
+                chunks.append((tuple(current_values), tuple(current_encoded)))
+                current_values = [event]
+                current_encoded = [item]
+                if len(self._body(tuple(current_encoded))) > self.max_request_bytes:
+                    raise ValueError(
+                        "stable canonical event exceeds request byte bound"
+                    )
+                continue
+            current_values.append(event)
+            current_encoded.append(item)
+        if current_values:
+            chunks.append((tuple(current_values), tuple(current_encoded)))
+        return tuple(chunks)
+
+    async def _publish_chunk(
+        self,
+        values: tuple[DurableEvent, ...],
+        encoded: tuple[dict[str, str], ...],
+    ) -> tuple[StoredEvent, ...]:
+        body = self._body(encoded)
         last_error: BaseException | None = None
         assert self.client is not None
         for url in self.urls:
@@ -309,6 +358,11 @@ class StableHttpCanonicalSink:
                 return tuple(stored_values)
             except (httpx.HTTPError, ValueError, TypeError) as error:
                 last_error = error
+        if isinstance(last_error, httpx.HTTPStatusError):
+            raise RuntimeError(
+                "stable canonical ingest rejected "
+                f"http_status={last_error.response.status_code}"
+            ) from last_error
         raise RuntimeError(
             "no active stable stream gateway accepted canonical data"
         ) from last_error
