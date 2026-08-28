@@ -19362,6 +19362,18 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         attested three-projector r11 candidate roll only, followed by the same
         catch-up/freshness/C2 gates from zero. No new image, service, cache
         operation, offset action or topology mutation is required.
+      - **Post-repair demanded-slice preflight (`PASS / FRESH C2 REQUIRED`,
+        2026-08-28):** after the one-role source repair and the already
+        attested three-projector r11 retry, all six projector partitions were
+        assigned at lag `23`, with every projector `restart=0` and `OOM=false`.
+        Dedicated-cache metadata showed real canonical `TRADE` freshness for
+        Binance USD-M BTC/ETH at `451/138 ms` source age and OKX Swap BTC/ETH
+        at `471/423 ms`; all four were present and carried the expected
+        `trade` feed. No catalog/allowlist rejection was emitted. This is the
+        exact precondition for one new disposable C2 run; it is not a consumer
+        handoff claim. The prior failed C2 namespace is now disposable
+        diagnostic output and must be removed before creating the fresh C2
+        evidence namespace.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
