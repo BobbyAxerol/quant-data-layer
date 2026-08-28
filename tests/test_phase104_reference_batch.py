@@ -367,6 +367,43 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(basis_result.coverage.complete_right)
         self.assertFalse(basis_result.coverage.truncated)
 
+    async def test_taker_provider_window_advances_one_period_without_changing_logical_coverage(self):
+        hour_ms = 3_600_000
+        calls = []
+
+        def taker(symbol, period, limit, start_time, end_time, **kwargs):
+            del period, kwargs
+            calls.append((symbol, limit, start_time, end_time))
+            return {"data": [
+                {"symbol": symbol, "buySellRatio": "1.1", "buyVol": "2", "sellVol": "3", "timestamp": str(hour_ms)},
+                {"symbol": symbol, "buySellRatio": "1.2", "buyVol": "4", "sellVol": "5", "timestamp": str(2 * hour_ms)},
+            ]}
+
+        adapter = BinanceUsdmReferenceAdapter(
+            taker_fetcher=taker,
+            max_attempts=1,
+            sleep=no_sleep,
+        )
+        result = await ReferenceBatch({("BINANCE", "USDM"): adapter}).fetch_one(
+            ReferenceRequest(
+                instrument=self.btc,
+                product=ReferenceProduct.TAKER_FLOW,
+                start_ms=hour_ms,
+                end_ms=3 * hour_ms - 1,
+                interval="1h",
+                limit=2,
+            )
+        )
+
+        self.assertEqual(calls, [("BTCUSDT", 2, 2 * hour_ms, 4 * hour_ms - 1)])
+        self.assertEqual(
+            [item.observed_at_ns // 1_000_000 for item in result.observations],
+            [hour_ms, 2 * hour_ms],
+        )
+        self.assertTrue(result.coverage.complete_left)
+        self.assertTrue(result.coverage.complete_right)
+        self.assertFalse(result.coverage.truncated)
+
     async def test_latest_first_metric_history_paginates_backward_without_losing_left_coverage(self):
         calls = []
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import unittest
 from pathlib import Path
@@ -25,6 +26,7 @@ from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl_sdk import Grade
 from qdl_sdk.reference import ReferenceProduct, ReferenceRequirement
+from scripts.phasec36_reference_l2_consumer_acceptance import _reference_batch_until_terminal
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -190,6 +192,103 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
         delta.sequence_verified = False
         with self.assertRaisesRegex(ValueError, "verified"):
             _validate_payload(product, SimpleNamespace(payload=delta))
+
+    def test_native_basis_receipt_retries_one_typed_cooldown_only(self):
+        product = next(
+            item for item in self.scope.references
+            if item.venue == "BINANCE" and item.requirement.feed is FeedType.BASIS
+        )
+        cooldown = SimpleNamespace(
+            partial=True,
+            success_count=0,
+            error_count=1,
+            results=(SimpleNamespace(
+                status="ERROR",
+                problem=SimpleNamespace(
+                    code="SOURCE_UNAVAILABLE",
+                    retryable=True,
+                    retry_after_ms=500,
+                ),
+                data=SimpleNamespace(
+                    status="ERROR",
+                    error_code="PROVIDER_RETRY_EXHAUSTED",
+                ),
+            ),),
+        )
+        terminal = SimpleNamespace(
+            partial=False,
+            success_count=1,
+            error_count=0,
+            results=(SimpleNamespace(status="OK", problem=None, data=object()),),
+        )
+
+        class Client:
+            def __init__(self):
+                self.calls = 0
+
+            async def reference_batch(self, requirements, *, require_all):
+                self.calls += 1
+                self.assert_requirements = tuple(requirements)
+                self.assert_require_all = require_all
+                return cooldown if self.calls == 1 else terminal
+
+        client = Client()
+        sleeps = []
+
+        async def sleep(seconds):
+            sleeps.append(seconds)
+
+        response, attempts, deferred_ms = asyncio.run(_reference_batch_until_terminal(
+            client,
+            (product,),
+            deadline_monotonic=2.0,
+            clock=lambda: 0.0,
+            sleep=sleep,
+        ))
+        self.assertIs(response, terminal)
+        self.assertEqual(client.calls, 2)
+        self.assertFalse(client.assert_require_all)
+        self.assertEqual(client.assert_requirements, (product.sdk_requirement,))
+        self.assertEqual(attempts, 2)
+        self.assertEqual(deferred_ms, 500)
+        self.assertEqual(sleeps, [0.5])
+
+    def test_native_basis_receipt_fails_closed_when_cooldown_does_not_fit(self):
+        product = next(
+            item for item in self.scope.references
+            if item.venue == "BINANCE" and item.requirement.feed is FeedType.BASIS
+        )
+        response = SimpleNamespace(
+            partial=True,
+            success_count=0,
+            error_count=1,
+            results=(SimpleNamespace(
+                status="ERROR",
+                problem=SimpleNamespace(
+                    code="SOURCE_UNAVAILABLE",
+                    retryable=True,
+                    retry_after_ms=500,
+                ),
+                data=SimpleNamespace(
+                    status="ERROR",
+                    error_code="PROVIDER_RETRY_EXHAUSTED",
+                ),
+            ),),
+        )
+
+        class Client:
+            async def reference_batch(self, _requirements, *, require_all):
+                self.assert_require_all = require_all
+                return response
+
+        with self.assertRaisesRegex(AssertionError, "cooldown exceeds"):
+            asyncio.run(_reference_batch_until_terminal(
+                Client(),
+                (product,),
+                deadline_monotonic=0.6,
+                clock=lambda: 0.0,
+                sleep=lambda _seconds: self.fail("deadline rejection must not sleep"),
+            ))
 
 
 if __name__ == "__main__":

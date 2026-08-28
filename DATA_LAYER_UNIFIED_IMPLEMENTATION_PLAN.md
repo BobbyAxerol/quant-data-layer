@@ -21899,6 +21899,57 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         79-product V2-only receipt. A typed provider deferral remains a
         fail-closed certificate result, not a reason to extend a request or
         synthesize data.
+        **Reference provider semantic completion (`APPROVED / IN PROGRESS`,
+        2026-08-28):** live V2-only inspection after the four-reader roll
+        confirmed all **24/24** logical BOOK snapshot/delta products are
+        fresh, sequence-verified and readable on both query replicas; no L2
+        configuration, Rust core, ingestor or topology change is required.
+        The exact 55-reference receipt then exposed two provider-bound
+        semantics. First, genuine Binance
+        `/futures/data/takerlongshortRatio` replies to a bounded daily window
+        with the completed row timestamped one full sampling interval before
+        the provider request boundary; the adapter currently filters that
+        authentic row against the unshifted logical window and returns
+        `DATA_NOT_READY`. Second, the native Binance BASIS lane can truthfully
+        return Rust's typed `SOURCE_UNAVAILABLE` cooldown (`retry_after_ms=60000`)
+        after an upstream rate-limit envelope, while a later bounded genuine
+        call succeeds. Correct only (a) the generic paginated provider-bound
+        offset needed by TAKER_FLOW, preserving logical timestamp/coverage,
+        and (b) the disposable receipt's handling of one explicitly typed
+        native-BASIS cooldown inside its existing 300-second deadline. The
+        service remains fail-closed during a real cooldown; no freshness,
+        coverage, source policy, provider fallback or data substitution is
+        relaxed. Scope is source/receipt tests, exactly one reader image and
+        the same four approved reader roles. No Rust/core/ingestor/provider
+        worker, topic, volume, Kafka/Redis/SQLite/V1, Trading System, alpha or
+        order path mutation is authorized. Source exit requires deterministic
+        offset/pagination, retry-bound and full focused Reference/L2 tests;
+        runtime exit requires the exact 79-product V2-only real-provider
+        receipt and scoped evidence cleanup. Rollback is the current
+        `9d81e5c` image map for those four reader roles.
+        **Source gate (`PASS / READER ROLL PERMITTED`, 2026-08-28):** the
+        Binance adapter now shifts only the bounded upstream TAKER_FLOW query
+        envelope by one declared interval; canonical timestamps, selection,
+        coverage, Decimal values, units and lineage remain in the caller's
+        original logical window. The disposable receipt recognizes exactly one
+        singleton Binance native-BASIS `SOURCE_UNAVAILABLE` response whose
+        inner typed result is `ERROR/PROVIDER_RETRY_EXHAUSTED`; it may defer
+        once only when the existing global 300-second receipt deadline retains
+        a 250ms terminal window. Any different/mixed error, a second deferral,
+        or an insufficient remaining deadline still fails closed. Per-product
+        receipt evidence now records attempts/deferred milliseconds without
+        recording payloads or secrets. In the existing immutable
+        `qdl-v2-python:2.0.0-9d81e5c` image with source mounted read-only,
+        network disabled, UID/GID `10001`, no capabilities and tmpfs-only
+        `/tmp`, the focused reference adapter, receipt, V2 bridge, active
+        demand and stable-edge suite passed **95/95** with **1 documented
+        isolated-Redis skip** in **8.698s**. `py_compile` and `git diff
+        --check` passed. No provider, runtime, Rust/core/ingestor, Kafka,
+        Redis, SQLite, V1, Trading System, alpha or order state changed. The
+        sole next action is build one replacement Python reader image, serially
+        roll the same four approved C2 reader roles, then run the exact
+        79-product real V2-only receipt; rollback remains their current
+        `9d81e5c` image/runtime map.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

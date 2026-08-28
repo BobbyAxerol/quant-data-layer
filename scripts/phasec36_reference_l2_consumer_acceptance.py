@@ -30,8 +30,10 @@ from qdl.certification.reference_l2_acceptance import (
     reference_acceptance_batches,
     validate_reference_batch,
 )
+from qdl.query import FeedType
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from qdl_sdk.reference import BasisSeries
 from scripts.phase103_consumer_receipt_acceptance import (
     _certify_product,
     _client,
@@ -51,6 +53,72 @@ def _write_receipt(path: Path, receipt: dict[str, object]) -> None:
     target.chmod(0o600)
 
 
+def _native_basis_cooldown_ms(batch, response) -> int | None:
+    """Recognize only Rust's one typed native-BASIS cooldown response.
+
+    This is receipt behavior, not provider retry policy: the query service
+    remains fail-closed, and no other product/error becomes retryable here.
+    """
+
+    if len(batch) != 1:
+        return None
+    product = batch[0]
+    if (
+        product.venue != "BINANCE"
+        or product.requirement.feed is not FeedType.BASIS
+        or product.sdk_requirement.basis_series is not BasisSeries.NATIVE
+        or getattr(response, "partial", None) is not True
+        or getattr(response, "success_count", None) != 0
+        or getattr(response, "error_count", None) != 1
+        or len(getattr(response, "results", ())) != 1
+    ):
+        return None
+    item = response.results[0]
+    problem = getattr(item, "problem", None)
+    data = getattr(item, "data", None)
+    retry_after_ms = getattr(problem, "retry_after_ms", None)
+    if (
+        getattr(item, "status", None) != "ERROR"
+        or getattr(problem, "code", None) != "SOURCE_UNAVAILABLE"
+        or getattr(problem, "retryable", None) is not True
+        or not isinstance(retry_after_ms, int)
+        or retry_after_ms <= 0
+        or getattr(data, "status", None) != "ERROR"
+        or getattr(data, "error_code", None) != "PROVIDER_RETRY_EXHAUSTED"
+    ):
+        return None
+    return retry_after_ms
+
+
+async def _reference_batch_until_terminal(
+    client,
+    batch,
+    *,
+    deadline_monotonic: float,
+    clock=time.monotonic,
+    sleep=asyncio.sleep,
+):
+    """Run one V2 batch with at most one explicit native-BASIS deferral."""
+
+    attempts = 0
+    deferred_ms = 0
+    while True:
+        attempts += 1
+        response = await client.reference_batch(
+            [item.sdk_requirement for item in batch], require_all=False
+        )
+        retry_after_ms = _native_basis_cooldown_ms(batch, response)
+        if retry_after_ms is None or attempts >= 2:
+            return response, attempts, deferred_ms
+        remaining_ms = int((deadline_monotonic - clock()) * 1_000)
+        if retry_after_ms + 250 >= remaining_ms:
+            raise AssertionError(
+                "native BASIS cooldown exceeds the bounded Reference/L2 acceptance deadline"
+            )
+        await sleep(retry_after_ms / 1_000)
+        deferred_ms += retry_after_ms
+
+
 async def _certify_references(
     scope,
     *,
@@ -58,6 +126,7 @@ async def _certify_references(
     args,
     state_dir: Path,
     transport_timeout_seconds: float,
+    deadline_monotonic: float,
 ) -> list[dict[str, object]]:
     primary = _client(
         identity,
@@ -78,8 +147,10 @@ async def _certify_references(
             values = {}
             for batch in reference_acceptance_batches(scope.references):
                 started = time.perf_counter()
-                response = await client.reference_batch(
-                    [item.sdk_requirement for item in batch], require_all=True
+                response, attempts, deferred_ms = await _reference_batch_until_terminal(
+                    client,
+                    batch,
+                    deadline_monotonic=deadline_monotonic,
                 )
                 latency_ms = (time.perf_counter() - started) * 1_000
                 hashes = validate_reference_batch(
@@ -90,7 +161,7 @@ async def _certify_references(
                 for product, content_hash in zip(batch, hashes, strict=True):
                     if product.identity in values:
                         raise AssertionError("Reference/L2 receipt batch duplicated a product")
-                    values[product.identity] = (content_hash, latency_ms)
+                    values[product.identity] = (content_hash, latency_ms, attempts, deferred_ms)
             if len(values) != len(scope.references):
                 raise AssertionError("Reference/L2 receipt batch lost a product")
             return values
@@ -107,6 +178,10 @@ async def _certify_references(
             "secondary_content_sha256": secondary_results[product.identity][0],
             "primary_latency_ms": round(primary_results[product.identity][1], 3),
             "secondary_latency_ms": round(secondary_results[product.identity][1], 3),
+            "primary_provider_attempts": primary_results[product.identity][2],
+            "secondary_provider_attempts": secondary_results[product.identity][2],
+            "primary_provider_deferred_ms": primary_results[product.identity][3],
+            "secondary_provider_deferred_ms": secondary_results[product.identity][3],
             "v1_fallback_attempted": False,
         }
         for product in scope.references
@@ -162,6 +237,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     args=args,
                     state_dir=temporary,
                     transport_timeout_seconds=transport_timeout_seconds,
+                    deadline_monotonic=started + args.observation_seconds,
                 ),
                 asyncio.gather(*(certify_book(product) for product in scope.books)),
             ),

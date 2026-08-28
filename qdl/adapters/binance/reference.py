@@ -291,6 +291,11 @@ class BinanceUsdmReferenceAdapter:
             # Binance documents this timestamp as the start of the sampling
             # period. A row at t covers [t, t + interval), not only t.
             right_boundary_period_ms=interval_ms,
+            # The vendor's bounded request window is one completed period
+            # ahead of the timestamp it returns. Keep all canonical selection
+            # and coverage in the caller's logical window; shift only the
+            # provider request envelope.
+            provider_time_offset_ms=interval_ms,
         )
 
     async def _mark_index_snapshot(
@@ -664,6 +669,7 @@ class BinanceUsdmReferenceAdapter:
         expected_interval_ms: int | None = None,
         boundary_tolerance_ms: int = 0,
         right_boundary_period_ms: int | None = None,
+        provider_time_offset_ms: int = 0,
     ) -> ReferenceFetch:
         assert request.start_ms is not None and request.end_ms is not None
         if direction not in {"FORWARD", "BACKWARD"}:
@@ -674,6 +680,14 @@ class BinanceUsdmReferenceAdapter:
             raise ValueError("Binance reference boundary tolerance must be between 0 and 300000ms")
         if right_boundary_period_ms is not None and right_boundary_period_ms <= 0:
             raise ValueError("Binance reference right-boundary period must be positive")
+        if provider_time_offset_ms < 0:
+            raise ValueError("Binance reference provider time offset must not be negative")
+        if (
+            provider_time_offset_ms
+            and expected_interval_ms is not None
+            and provider_time_offset_ms > expected_interval_ms
+        ):
+            raise ValueError("Binance reference provider time offset exceeds the expected interval")
         per_page = min(request.page_size or request.limit, page_limit)
         cursor_start = request.start_ms
         cursor_end = request.end_ms
@@ -682,9 +696,11 @@ class BinanceUsdmReferenceAdapter:
         terminal_reason = "MAX_PAGES"
         truncated = False
         while pages < request.max_pages and len(selected) < request.limit:
+            logical_start = cursor_start if direction == "FORWARD" else request.start_ms
+            logical_end = request.end_ms if direction == "FORWARD" else cursor_end
             response = await page(
-                cursor_start if direction == "FORWARD" else request.start_ms,
-                request.end_ms if direction == "FORWARD" else cursor_end,
+                logical_start + provider_time_offset_ms,
+                logical_end + provider_time_offset_ms,
                 min(per_page, request.limit - len(selected)),
             )
             data = self._response_data(response, endpoint)
