@@ -53,12 +53,25 @@ _INTERVAL_MILLISECONDS = {
     "8h": 28_800_000,
     "12h": 43_200_000,
     "1d": 86_400_000,
+    "2d": 172_800_000,
     "3d": 259_200_000,
     "1w": 604_800_000,
     "1M": 2_592_000_000,
 }
-_SUPPORTED_PARSERS = frozenset({"ALPHA_COMPOSE_V1", "PRODUCTION_DEMAND_V1"})
+_SUPPORTED_PARSERS = frozenset(
+    {"ALPHA_COMPOSE_V1", "PRODUCTION_DEMAND_V1", "UNIVERSAL_DEMAND_V1"}
+)
 _TARGET_VENUES = frozenset({"BINANCE", "OKX"})
+_CONTINUOUS_PROVIDER_POLICIES = {
+    ("BINANCE", "USDM"): {
+        "CURRENT_QUARTER": "CURRENT_QUARTER",
+        "NEXT_QUARTER": "NEXT_QUARTER",
+    },
+    ("OKX", "FUTURES"): {
+        "QUARTER": "CURRENT_QUARTER",
+        "NEXT_QUARTER": "NEXT_QUARTER",
+    },
+}
 
 
 class InventoryError(ValueError):
@@ -613,6 +626,8 @@ class ActiveDemandCompiler:
                     candidates.extend(self._compile_alpha_compose(source, root, path, document_ref))
                 elif source.parser == "PRODUCTION_DEMAND_V1":
                     candidates.extend(self._compile_production_demand(source, path, document_ref))
+                elif source.parser == "UNIVERSAL_DEMAND_V1":
+                    candidates.extend(self._compile_universal_demand(source, path, document_ref))
                 else:  # guarded by SourceSpec; kept fail-closed for future changes.
                     raise InventoryError(f"unsupported source parser: {source.parser}")
         merged: dict[str, list[InventoryCandidate]] = defaultdict(list)
@@ -1327,6 +1342,53 @@ class ActiveDemandCompiler:
                 ))
         return values
 
+    def _compile_universal_demand(
+        self, source: SourceSpec, path: Path, document_ref: str
+    ) -> list[InventoryCandidate]:
+        """Compile one versioned universal-demand document without activation.
+
+        The canonical V2 schema is also used for bounded reference and L2
+        declarations.  This compiler preserves requirements exactly: it does
+        not resolve contracts, call providers, or create consumer routes.
+        """
+
+        raw = _load_mapping(path)
+        expected = {"schema", "revision", "requirements"}
+        if set(raw) != expected or raw.get("schema") != MANIFEST_SCHEMA:
+            raise InventoryError("universal demand source schema is invalid")
+        revision = raw.get("revision")
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+            raise InventoryError("universal demand source revision is invalid")
+        rows = raw.get("requirements")
+        if not isinstance(rows, list) or not rows:
+            raise InventoryError("universal demand source has no requirements")
+
+        values: list[InventoryCandidate] = []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                raise InventoryError("universal demand requirement must be a mapping")
+            try:
+                requirement = DataRequirement.from_mapping(row)
+            except (TypeError, ValueError) as error:
+                raise InventoryError("universal demand requirement is invalid") from error
+            if requirement.universe.venue not in _TARGET_VENUES:
+                continue
+            if requirement.source_policy_id != source.source_policy_id:
+                raise InventoryError(
+                    "universal demand source policy differs from its registry declaration"
+                )
+            values.append(
+                InventoryCandidate(
+                    requirement=requirement,
+                    source_refs=(document_ref,),
+                    source_kind="UNIVERSAL_DEMAND_V1",
+                    detail=f"manifest_revision={revision}",
+                )
+            )
+        if not values:
+            raise InventoryError("universal demand source has no Binance/OKX requirements")
+        return values
+
 
 def _record_lookup(records: Iterable[InstrumentRecord]) -> dict[tuple[str, str, str, str], InstrumentRecord]:
     result: dict[tuple[str, str, str, str], InstrumentRecord] = {}
@@ -1341,6 +1403,51 @@ def _record_lookup(records: Iterable[InstrumentRecord]) -> dict[tuple[str, str, 
             raise InventoryError(f"provider metadata contains duplicate instrument identity: {key}")
         result[key] = item
     return result
+
+
+def _provider_continuous_marker(
+    venue: str,
+    market: str,
+    row: Mapping[str, Any],
+) -> tuple[str, str] | None:
+    """Map provider-specific dated aliases to one canonical roll selector."""
+
+    key = venue.upper(), market.upper()
+    aliases = _CONTINUOUS_PROVIDER_POLICIES.get(key)
+    if aliases is None:
+        return None
+    if key == ("BINANCE", "USDM"):
+        family = (
+            f"{str(row.get('baseAsset') or '').upper()}-"
+            f"{str(row.get('quoteAsset') or '').upper()}"
+        )
+        provider_policy = str(row.get("contractType") or "").upper()
+    else:
+        family = str(row.get("instFamily") or "").upper()
+        provider_policy = str(row.get("alias") or "").upper()
+    canonical_policy = aliases.get(provider_policy)
+    if not family or canonical_policy is None:
+        return None
+    return family, canonical_policy
+
+
+def _record_continuous_marker(record: InstrumentRecord) -> tuple[str, str] | None:
+    """Return the canonical continuous selector for one parsed record."""
+
+    key = record.identity.venue, record.identity.market
+    aliases = _CONTINUOUS_PROVIDER_POLICIES.get(key)
+    if aliases is None:
+        return None
+    if key == ("BINANCE", "USDM"):
+        family = f"{record.base_asset}-{record.quote_asset}"
+        provider_policy = str(record.attributes.get("contractType") or "").upper()
+    else:
+        family = str(record.attributes.get("instFamily") or "").upper()
+        provider_policy = str(record.attributes.get("alias") or "").upper()
+    canonical_policy = aliases.get(provider_policy)
+    if not family or canonical_policy is None:
+        return None
+    return family, canonical_policy
 
 
 def _selected_metadata_payload(
@@ -1381,13 +1488,8 @@ def _selected_metadata_payload(
         native_symbol = str(row.get("symbol") or row.get("instId") or "").upper()
         if native_symbol in explicit_symbols:
             return True
-        if venue == "BINANCE":
-            family = f"{str(row.get('baseAsset') or '').upper()}-{str(row.get('quoteAsset') or '').upper()}"
-            contract_type = str(row.get("contractType") or "").upper()
-        else:
-            family = str(row.get("instFamily") or "").upper()
-            contract_type = ""
-        return (family, contract_type) in continuous_families
+        marker = _provider_continuous_marker(venue, market, row)
+        return marker is not None and marker in continuous_families
 
     if venue == "BINANCE":
         if not isinstance(payload, Mapping) or not isinstance(payload.get("symbols"), list):
@@ -1475,7 +1577,7 @@ def parse_provider_metadata(
                 raise InventoryError("Binance Spot metadata capture must be an object")
             if selected_payload["symbols"]:
                 records.extend(parse_spot_exchange_info(selected_payload, valid_from_ns=1).records)
-        elif venue == "OKX" and market in {"SWAP", "SPOT"}:
+        elif venue == "OKX" and market in {"SWAP", "SPOT", "FUTURES"}:
             if not isinstance(selected_payload, list):
                 raise InventoryError("OKX metadata capture must be a data list")
             for row in selected_payload:
@@ -1514,8 +1616,7 @@ def admit_provider_metadata(
                 if item.identity.venue == selector.venue
                 and item.identity.market == selector.market
                 and item.identity.product_type is ProductType.FUTURE
-                and f"{item.base_asset}-{item.quote_asset}" == family
-                and item.attributes.get("contractType", "").upper() == policy
+                and _record_continuous_marker(item) == (family, policy)
             ]
             if len(candidates) == 1:
                 symbols.append(candidates[0].native_symbol)

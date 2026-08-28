@@ -19239,6 +19239,79 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
   `--rm`, `--network none`, read-only source and tmpfs only; it issued no
   provider request and changed no service, Kafka, Redis, SQLite, V1, Trading
   System, alpha or order state.
+- **Active Reference/L2 demand activation (`SOURCE-ONLY / IN PROGRESS`,
+  2026-08-28):** close the remaining declaration gap without changing runtime
+  topology. The active-demand compiler will accept the existing canonical
+  `qdl.v2.universal-demand.v1` schema as a first-class registered source; one
+  versioned manifest will declare the approved five-liquid-asset Binance
+  USD-M/OKX Swap reference plane and BTC/ETH perpetual plus current/next
+  quarterly L2 snapshot/delta plane. Dated contracts must remain continuous
+  selectors resolved from live provider metadata, never date-formatted native
+  symbols. The shared metadata admission path must support `OKX/FUTURES` and
+  map its provider aliases `quarter`/`next_quarter` to the same canonical
+  `CURRENT_QUARTER`/`NEXT_QUARTER` selector policy already used for Binance.
+  Registry budgets must be explicit for every declared reference/book feed.
+  Tests must prove exact parser/schema validation, no cross-venue/symbol mix,
+  Binance and OKX continuous admission, typed unavailable semantics, bounded
+  L2 topology and universal-release coverage. This slice creates no runtime
+  consumer route, provider request, image, service/container, Kafka/Redis/
+  SQLite state, identity, Trading System, alpha or order mutation. Rollback is
+  a source revert; a later activation still requires a separately sealed
+  role/image/runtime/rollback packet after the projector C2 gate.
+- **Implementation and offline contract gate (`SOURCE PASS / RUNTIME
+  UNCHANGED`, 2026-08-28):** the active-demand compiler now accepts the
+  canonical `UNIVERSAL_DEMAND_V1` source kind and binds every requirement to
+  the registry-declared source policy. A new versioned
+  `stable-reference-l2-demand.yaml` declares five liquid perpetual reference
+  surfaces for Binance USD-M and OKX Swap, plus the exact 12 BTC/ETH book
+  bindings: Binance/OKX perpetuals and metadata-resolved current/next
+  quarterlies. It uses continuous selectors only for dated books; no native
+  date identifier is authored. Provider admission now treats Binance
+  `CURRENT_QUARTER`/`NEXT_QUARTER` and OKX Futures
+  `quarter`/`next_quarter` as the same canonical roll policy, while missing or
+  duplicate provider aliases remain fail-closed. The active-demand registry is
+  revision `2` with explicit per-feed budgets, and universal release policy
+  revision `2` classifies the bounded internal reference/L2 product without
+  granting an external consumer identity.
+  - **Exact offline gate:** immutable image
+    `sha256:e46084ced87a59c1f6d6c65c907ab841a54c20b29d8f4b515adbf7da4249e7fa`
+    was used only as a dependency-complete test runner with this worktree
+    mounted read-only, `--network none`, `--read-only`, `--tmpfs /tmp`, and no
+    Compose operation. `tests.test_active_reference_l2_demand`,
+    `tests.test_phase111_active_demand_inventory`,
+    `tests.test_phase114_l2_demand`, `tests.test_phase115_universal_release`,
+    and `tests.test_phasec36_liquid_crypto_features` passed `40/40`. The test
+    proves 34 declarations expand to 94 admitted provider rows and exactly 12
+    shared L2 bindings across only `BINANCE/USDM`, `OKX/SWAP`, and
+    `OKX/FUTURES`; no provider request, image build, service, Kafka, Redis,
+    SQLite, V1/V2 route, identity, Trading System, alpha, or order action
+    occurred. This is source evidence, not an immutable-image attestation or
+    runtime activation. Rollback remains a revert of the additive source
+    change.
+  - **Control-plane integration correction (`SOURCE PASS / RUNTIME
+    UNCHANGED`, 2026-08-28):** compiling the real registered source set without
+    provider admission correctly reached the existing `OKX/SWAP` `BAR/2d`
+    declarations in `stable-crypto-demand.yaml`, then failed closed because the
+    compiler's canonical duration table omitted `2d`. This is a
+    compiler-contract defect: `2d` is already an explicit V2 source and
+    acquisition binding, not a new native subscription or an alpha-specific
+    exception. The bounded repair adds the exact `172800000`-ms duration and a
+    golden test that compiles every BAR interval declared by the registered
+    production-demand document while retaining rejection for an unknown
+    interval.
+    - **Exit evidence:** in immutable image
+      `sha256:e46084ced87a59c1f6d6c65c907ab841a54c20b29d8f4b515adbf7da4249e7fa`,
+      with worktree/source mounts read-only, `--network none`, read-only root
+      and tmpfs only, the focused active-demand/reference/L2 suite passed
+      `41/41`. The real registered source registry then compiled `PASS` with
+      `181` requirements from `52` source documents, no provider admission and
+      `runtime_mutations=0`. Its ten exclusions are expected and explicit:
+      eight `OUTSIDE_PHASE11_BINANCE_OKX_SCOPE` alpha declarations and two
+      `NON_USDM_SYMBOL_IN_MIXED_DECLARATION` filters; no in-scope requirement
+      was silently dropped. No provider, runtime, image, service, Kafka,
+      Redis, SQLite, identity, consumer route, Trading System, alpha or order
+      mutation occurred. Rollback is a source revert; runtime activation
+      remains separately gated.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

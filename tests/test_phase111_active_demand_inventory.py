@@ -34,6 +34,9 @@ from scripts.phase111_active_demand_inventory import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def _binance_symbol(
     symbol: str,
     *,
@@ -661,6 +664,88 @@ class ActiveDemandInventoryTests(unittest.TestCase):
         )
         self.assertEqual(len(inventory.requirements), 2)
         self.assertIsNone(admission)
+
+    def test_registered_production_demand_compiles_every_declared_bar_interval(self):
+        """A declared production BAR interval must have one canonical duration."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repository = root / "repository"
+            alpha = root / "execution_alpha"
+            trading = root / "trading_system"
+            (repository / "config/v2").mkdir(parents=True)
+            (trading / "config/_config").mkdir(parents=True)
+            alpha.mkdir()
+            (trading / "config/_config/portfolio_account_config_setup.yaml").write_text(
+                "alphas:\n  - alpha_id: fixture_alpha\n    allowed_venues: [BINANCE]\n",
+                encoding="utf-8",
+            )
+            production_path = repository / "config/v2/stable-crypto-demand.yaml"
+            production = yaml.safe_load(
+                (ROOT / "config/v2/stable-crypto-demand.yaml").read_text(encoding="utf-8")
+            )
+            production_path.write_text(
+                yaml.safe_dump(production, sort_keys=False), encoding="utf-8"
+            )
+            registry = yaml.safe_load(
+                (ROOT / "config/v2/active-demand-source-registry.yaml").read_text(
+                    encoding="utf-8"
+                )
+            )
+            registry["sources"] = [
+                item
+                for item in registry["sources"]
+                if item["source_id"] == "current-v2-production-demand"
+            ]
+            registry_path = repository / "config/v2/registry.yaml"
+            registry_path.write_text(
+                yaml.safe_dump(registry, sort_keys=False), encoding="utf-8"
+            )
+
+            inventory = ActiveDemandCompiler(
+                registry=ActiveDemandSourceRegistry.load(registry_path),
+                repository_root=repository,
+                execution_alpha_root=alpha,
+                trading_system_root=trading,
+            ).compile()
+            declared = {
+                str(row["interval"])
+                for consumer in production["consumers"]
+                for row in consumer["requirements"]
+                if row["feed"] == "BAR"
+            }
+            compiled = {
+                item.requirement.interval
+                for item in inventory.candidates
+                if item.requirement.feed is DemandFeed.BAR
+            }
+            self.assertTrue(declared <= compiled)
+            two_day = next(
+                item.requirement
+                for item in inventory.candidates
+                if item.requirement.feed is DemandFeed.BAR
+                and item.requirement.interval == "2d"
+            )
+            self.assertEqual(two_day.max_freshness_ms, 518_400_000)
+
+            for consumer in production["consumers"]:
+                for row in consumer["requirements"]:
+                    if row["feed"] == "BAR" and row["interval"] == "2d":
+                        row["interval"] = "unsupported"
+                        break
+                else:
+                    continue
+                break
+            production_path.write_text(
+                yaml.safe_dump(production, sort_keys=False), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(InventoryError, "unsupported declared interval: unsupported"):
+                ActiveDemandCompiler(
+                    registry=ActiveDemandSourceRegistry.load(registry_path),
+                    repository_root=repository,
+                    execution_alpha_root=alpha,
+                    trading_system_root=trading,
+                ).compile()
 
 
 if __name__ == "__main__":

@@ -49,6 +49,7 @@ def _required_markets(inventory: ActiveDemandInventory) -> tuple[tuple[str, str]
         ("BINANCE", "SPOT"),
         ("OKX", "SWAP"),
         ("OKX", "SPOT"),
+        ("OKX", "FUTURES"),
     })
     if unsupported:
         raise ProviderMetadataError(
@@ -63,7 +64,7 @@ def _metadata_endpoint(venue: str, market: str) -> tuple[str, dict[str, str]]:
         return "https://fapi.binance.com/fapi/v1/exchangeInfo", {}
     if (venue, market) == ("BINANCE", "SPOT"):
         return "https://api.binance.com/api/v3/exchangeInfo", {}
-    if venue == "OKX" and market in {"SWAP", "SPOT"}:
+    if venue == "OKX" and market in {"SWAP", "SPOT", "FUTURES"}:
         return "https://www.okx.com/api/v5/public/instruments", {"instType": market}
     raise ProviderMetadataError(f"unsupported provider metadata market: {venue}/{market}")
 

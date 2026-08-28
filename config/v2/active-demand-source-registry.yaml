@@ -1,5 +1,5 @@
 schema: qdl.v2.active-demand-source-registry.v1
-revision: 1
+revision: 2
 owner_registry:
   root: trading_system
   path: config/_config/portfolio_account_config_setup.yaml
@@ -41,7 +41,35 @@ admission:
       max_slices: 32
     - venue: BINANCE
       market: USDM
+      feed: BOOK_DELTA
+      max_slices: 32
+    - venue: BINANCE
+      market: USDM
       feed: FUNDING_RATE
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: OPEN_INTEREST
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: LONG_SHORT_RATIO
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: TAKER_FLOW
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: MARK_PRICE
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: INDEX_PRICE
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: CONTRACT_METADATA
       max_slices: 128
     - venue: BINANCE
       market: USDM
@@ -71,6 +99,46 @@ admission:
       market: SWAP
       feed: TRADE
       max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: BOOK_SNAPSHOT
+      max_slices: 32
+    - venue: OKX
+      market: SWAP
+      feed: BOOK_DELTA
+      max_slices: 32
+    - venue: OKX
+      market: SWAP
+      feed: FUNDING_RATE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: OPEN_INTEREST
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: MARK_PRICE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: INDEX_PRICE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: CONTRACT_METADATA
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: BASIS
+      max_slices: 64
+    - venue: OKX
+      market: FUTURES
+      feed: BOOK_SNAPSHOT
+      max_slices: 32
+    - venue: OKX
+      market: FUTURES
+      feed: BOOK_DELTA
+      max_slices: 32
 sources:
   - source_id: alpha-compose
     root: execution_alpha
@@ -99,6 +167,16 @@ sources:
     glob: null
     source_policy_id: crypto_primary_v2
     priority: 20
+    ttl_seconds: 180
+    default_warmup_limit: 1
+    bar_freshness_multiplier: 3
+  - source_id: stable-reference-l2-demand
+    root: repository
+    parser: UNIVERSAL_DEMAND_V1
+    path: config/v2/stable-reference-l2-demand.yaml
+    glob: null
+    source_policy_id: crypto_liquid_v2
+    priority: 50
     ttl_seconds: 180
     default_warmup_limit: 1
     bar_freshness_multiplier: 3

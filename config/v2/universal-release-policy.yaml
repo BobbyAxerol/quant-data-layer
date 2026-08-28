@@ -1,7 +1,7 @@
 # Phase 11.5 source policy.  This is not a runtime switch: a generated release
 # artifact binds this policy to one fresh admitted active-demand inventory.
 schema: qdl.v2.universal-release-policy.v1
-revision: 1
+revision: 2
 contract_version: 2.0.0
 capability_matrix:
   path: config/v2/stable-capabilities.yaml
@@ -22,6 +22,8 @@ consumer_classes:
     consumer_prefixes: [monitoring.]
   - class_id: TRADING_SYSTEM
     consumer_prefixes: [trading-system.]
+  - class_id: REFERENCE_L2
+    consumer_prefixes: [qdl.crypto.reference-l2.]
   - class_id: BASIS_ARB
     consumer_prefixes: [basis_arb_binance_]
   - class_id: GRID_REACTIVE_BRACKET

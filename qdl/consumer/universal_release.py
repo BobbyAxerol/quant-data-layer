@@ -94,6 +94,7 @@ def _relative_path(root: Path, value: object, field: str) -> Path:
 class UniversalConsumerClass(StrEnum):
     MONITORING = "MONITORING"
     TRADING_SYSTEM = "TRADING_SYSTEM"
+    REFERENCE_L2 = "REFERENCE_L2"
     SINGLE_SYMBOL_ALPHA = "SINGLE_SYMBOL_ALPHA"
     PORTFOLIO_MULTI_SYMBOL = "PORTFOLIO_MULTI_SYMBOL"
     GRID_REACTIVE_BRACKET = "GRID_REACTIVE_BRACKET"
