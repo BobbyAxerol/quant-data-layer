@@ -147,7 +147,7 @@ def _reference_request(requirement: DataRequirement, *, now_ns: int) -> Referenc
         "source_policy_id": requirement.source_policy_id,
         "max_freshness_ms": requirement.max_freshness_ms,
         "require_full_coverage": requirement.require_full_coverage,
-        "deadline_ms": 20_000,
+        "deadline_ms": 60_000,
     }
     history_product = product in {
         ReferenceProduct.FUNDING_RATE,

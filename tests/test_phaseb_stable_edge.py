@@ -1915,6 +1915,16 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             root = Path(temp)
             values = self.environment(root)
             config = StableRuntimeConfig.from_environment("query_v2", values)
+            self.assertEqual(config.request_deadline_seconds, 10.0)
+            values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "90"
+            self.assertEqual(
+                StableRuntimeConfig.from_environment("query_v2", values).request_deadline_seconds,
+                90.0,
+            )
+            values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "121"
+            with self.assertRaisesRegex(ValueError, "request deadline"):
+                StableRuntimeConfig.from_environment("query_v2", values)
+            values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "90"
             manifest = config.public_manifest()
             self.assertEqual(manifest["contract_version"], "2.0.0")
             self.assertEqual(manifest["authority"], "RUST_SHADOW")

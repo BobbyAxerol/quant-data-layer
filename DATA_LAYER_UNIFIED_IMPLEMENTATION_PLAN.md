@@ -21691,6 +21691,47 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         no longer sufficient because it predates this SDK correction; build
         exactly one replacement image, roll only the same four reader roles
         and rerun the original 79-product receipt.
+        **Query deadline alignment (`APPROVED / IN PROGRESS`, 2026-08-28):**
+        the subsequent live V2-only receipt reached the reference route but
+        received the middleware's truthful `504 DEADLINE_EXCEEDED` after the
+        stable query application's implicit ten-second ASGI cap. That cap is
+        incompatible with the public ReferenceBatch contract, whose bounded
+        individual provider deadline is explicitly allowed through 120 seconds,
+        and it masks the existing Rust-admitted executor before it can return
+        a typed result. Correct this only by making the stable runtime's HTTP
+        request deadline an explicit validated configuration bound, set to 90
+        seconds in stable Compose, while the disposable 55-product reference
+        receipt asks each provider lane for at most 60 seconds. Existing byte,
+        concurrency, provider-admission, full-coverage and client deadline
+        bounds remain active. Scope is limited to `StableRuntimeConfig`, its
+        query-app RequestBounds wiring, stable Compose and the existing
+        Reference/L2 receipt/test. No schema, provider adapter, Rust behavior,
+        stream semantics, service, topic, volume, authority, V1, Kafka,
+        Redis, SQLite, Trading System, alpha or order path changes are
+        authorized. Source exit requires config-bound and receipt-shape
+        regressions plus the focused offline matrix. Runtime action after that
+        is a serial recreate of **only** `query_v2_1` and `query_v2_2` on one
+        immutable Python image; rollback is their exact current
+        `qdl-v2-python:2.0.0-31a66d5` image/runtime map.
+        **Source exit (`PASS / NO RUNTIME MUTATION`, 2026-08-28):** stable V2
+        now reads `QDL_STABLE_REQUEST_DEADLINE_SECONDS` as a validated 1..120
+        second runtime bound (preserving ten seconds when an older deployment
+        does not set it). Stable Compose explicitly selects 90 seconds, while
+        the 55 real reference requirements each keep a bounded 60-second
+        provider deadline. The ASGI byte cap, 200-request concurrency cap,
+        Rust provider admission, requirement full coverage and explicit client
+        timeout are unchanged. Deterministic regression proves the default,
+        configured value and fail-closed out-of-range value; the receipt
+        regression proves all reference requests carry 60,000ms. In the
+        existing immutable `qdl-v2-python:2.0.0-31a66d5` image with source
+        mounted read-only, `--network none`, non-root UID/GID `10001`, no
+        capabilities and tmpfs-only `/tmp`, the stable boundary, Reference/L2
+        receipt, reference query/API, SDK stream, active-demand and
+        materializer matrix passed **90/90** in **12.671s** (`1` intentional
+        skip). `py_compile` and `git diff --check` passed. No provider,
+        runtime role, image, Kafka, Redis, SQLite, V1, Trading System, alpha
+        or order state changed. Next action is one immutable reader image and
+        serial recreation of the two query replicas only.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

@@ -61,6 +61,7 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
             self.assertEqual(request.instrument_uid, item.instrument_uid)
             self.assertEqual(request.source_policy_id, "crypto_liquid_v2")
             self.assertEqual(request.consumer_grade.value, "RESEARCH")
+            self.assertEqual(request.deadline_ms, 60_000)
             if item.requirement.feed.value in {"LONG_SHORT_RATIO", "TAKER_FLOW", "BASIS"}:
                 self.assertEqual(request.interval, "1d")
                 self.assertIsNotNone(request.start_time_ns)

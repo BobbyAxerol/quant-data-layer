@@ -74,6 +74,9 @@ x-stable-env: &stable-env
   QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
   QDL_STABLE_CURSOR_TTL_SECONDS: "3600"
   QDL_STABLE_MAX_REQUEST_BYTES: "1048576"
+  # Reference batches may use a bounded provider deadline up to 60 seconds.
+  # Keep the stable query boundary above that while retaining concurrency caps.
+  QDL_STABLE_REQUEST_DEADLINE_SECONDS: "90"
   QDL_STABLE_MAX_CONCURRENT_REQUESTS: "200"
   QDL_STABLE_MAX_CONCURRENT_RPCS: "200"
   QDL_STABLE_MAX_STREAMS: "1000"

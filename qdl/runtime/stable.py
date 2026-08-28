@@ -139,6 +139,7 @@ class StableRuntimeConfig:
     http_port: int
     grpc_port: int
     max_request_bytes: int
+    request_deadline_seconds: float
     max_concurrent_requests: int
     max_concurrent_rpcs: int
     max_streams: int
@@ -210,6 +211,8 @@ class StableRuntimeConfig:
             raise ValueError("stable active cursor key is unavailable or weak")
         if not 60 <= self.cursor_ttl_seconds <= 86_400:
             raise ValueError("stable cursor TTL must be 60..86400 seconds")
+        if not 1 <= self.request_deadline_seconds <= 120:
+            raise ValueError("stable request deadline must be 1..120 seconds")
         if min(
             self.http_port, self.grpc_port, self.max_request_bytes,
             self.max_concurrent_requests, self.max_concurrent_rpcs,
@@ -285,6 +288,9 @@ class StableRuntimeConfig:
             http_port=int(env.get("QDL_STABLE_HTTP_PORT", "18200")),
             grpc_port=int(env.get("QDL_STABLE_GRPC_PORT", "18210")),
             max_request_bytes=int(env.get("QDL_STABLE_MAX_REQUEST_BYTES", "1048576")),
+            request_deadline_seconds=float(
+                env.get("QDL_STABLE_REQUEST_DEADLINE_SECONDS", "10")
+            ),
             max_concurrent_requests=int(env.get("QDL_STABLE_MAX_CONCURRENT_REQUESTS", "200")),
             max_concurrent_rpcs=int(env.get("QDL_STABLE_MAX_CONCURRENT_RPCS", "200")),
             max_streams=int(env.get("QDL_STABLE_MAX_STREAMS", "1000")),
@@ -526,6 +532,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         cursor_issuer=issuer,
         request_bounds=RequestBounds(
             max_request_bytes=config.max_request_bytes,
+            request_deadline_seconds=config.request_deadline_seconds,
             max_concurrent_requests=config.max_concurrent_requests,
         ),
         contract_version="2.0.0", authority="INTERNAL_STABLE",
