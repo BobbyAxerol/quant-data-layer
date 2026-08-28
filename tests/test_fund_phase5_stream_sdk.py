@@ -62,8 +62,8 @@ from qdl_sdk import (
     StalePolicy as SdkStalePolicy,
     StaticBearerCredential,
 )
-from qdl_sdk.cursor import FileCursorStore
-from qdl_sdk.errors import CursorExpiredError, DataLayerError, SlowConsumerError
+from qdl_sdk.cursor import CursorCheckpoint, FileCursorStore
+from qdl_sdk.errors import ContinuityError, CursorExpiredError, DataLayerError, SlowConsumerError
 from qdl_sdk.models import ControlEvent, StreamEvent
 from qdl_sdk.v1_facade import V1CompatibilityFacade
 from qdl.consumer import ConsumerManifestLoader
@@ -920,6 +920,59 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             contracts, {"/v2/market-data/warmup", "grpc:Subscribe"}
         )
+
+    async def test_filtered_durable_offsets_are_strictly_monotonic_not_contiguous(self):
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
+            interval="1m", warmup_limit=1,
+        )
+        stream = ScriptedStreamTransport((
+            (
+                StreamEvent(7, "token-7", envelope(self.record, 7)),
+                StreamEvent(12, "token-12", envelope(self.record, 12)),
+            ),
+        ))
+        store = MemoryCursorStore()
+        client = AsyncDataLayerClient(
+            query_transport=FakeQueryTransport("filtered-token", watermark=5),
+            stream_transport=stream,
+            consumer_id="alpha-shadow",
+            cursor_store=store,
+        )
+
+        async with client.warmup_then_stream(requirement) as session:
+            first = await session.__anext__()
+            second = await session.__anext__()
+            self.assertEqual((first.logical_offset, second.logical_offset), (7, 12))
+            session.acknowledge(first)
+            session.acknowledge(second)
+
+        self.assertEqual(
+            store.load(client._cursor_key(requirement)),
+            CursorCheckpoint("token-12", 12),
+        )
+
+    async def test_filtered_durable_offsets_still_reject_duplicates_or_rewinds(self):
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
+            interval="1m", warmup_limit=1,
+        )
+        stream = ScriptedStreamTransport((
+            (
+                StreamEvent(7, "token-7", envelope(self.record, 7)),
+                StreamEvent(7, "token-7-repeat", envelope(self.record, 7)),
+            ),
+        ))
+        client = AsyncDataLayerClient(
+            query_transport=FakeQueryTransport("filtered-token", watermark=5),
+            stream_transport=stream,
+            consumer_id="alpha-shadow",
+        )
+
+        async with client.warmup_then_stream(requirement) as session:
+            self.assertEqual((await session.__anext__()).logical_offset, 7)
+            with self.assertRaisesRegex(ContinuityError, "non-monotonic"):
+                await session.__anext__()
 
     async def test_fresh_snapshot_reconnect_before_first_ack_keeps_new_generation(self):
         store = MemoryCursorStore()

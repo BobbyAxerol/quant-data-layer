@@ -21654,6 +21654,43 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         is one final immutable Python reader image, followed by serial
         recreation of only the four named query/stream roles and the existing
         V2-only 79-product receipt.
+        **Filtered durable-offset semantic correction (`IN PROGRESS / SDK
+        SOURCE ONLY`, 2026-08-28):** the next real receipt proved the reader
+        image and Reference plane are reachable, then correctly stopped on
+        `expected offset 177402, observed 177572` while replaying a BOOK
+        product. Investigation of the existing gRPC server shows that a
+        signed cursor advances over every physical durable record while the
+        requirement matcher emits only records belonging to the requested
+        logical product/interval. Therefore a positive physical-offset jump is
+        normal for a filtered subscription and is not evidence of a missing
+        matching event. The SDK must preserve the real invariant: every
+        delivered offset is strictly greater than the last accepted offset;
+        duplicate/backward offsets remain `OPEN_SEQUENCE_GAP`, while durable
+        replay, signed cursor validation, server-side filter, source sequence
+        checks and query quality/gap state remain the authorities for actual
+        loss. Scope is only `qdl_sdk` session semantics plus deterministic
+        filtered-offset and non-monotonic regressions; it does not alter gRPC
+        schema, cursor format, server filtering, Rust, provider access,
+        topology, V1, Trading System, alpha or order paths. After source
+        tests pass, build one replacement Python image and serially recreate
+        only the same four reader roles before rerunning the exact receipt.
+        **Source exit (`PASS / NO RUNTIME MUTATION`, 2026-08-28):**
+        `WarmupStreamSession` now accepts strictly increasing physical offsets
+        for filtered durable streams and continues to reject duplicate or
+        backward delivery as `OPEN_SEQUENCE_GAP`. The reason is explicit in
+        code: only the server can validate cursor scope, replay continuity and
+        the requirement matcher across omitted physical records. A regression
+        proves a `5 -> 7 -> 12` filtered cursor sequence is accepted and
+        checkpointed, while `7 -> 7` still fails closed. In a disposable,
+        read-only/no-network UID/GID `10001` container with tmpfs-only `/tmp`,
+        SDK stream, Reference/L2 query/API/materializer/admission/handoff and
+        active-demand tests passed **65/65 in 7.280s**. `py_compile` using a
+        tmpfs bytecode prefix and `git diff --check` passed. No runtime role,
+        provider call, Kafka, Redis, SQLite, V1, Trading System, alpha or order
+        state changed in this source gate. The existing final reader image is
+        no longer sufficient because it predates this SDK correction; build
+        exactly one replacement image, roll only the same four reader roles
+        and rerun the original 79-product receipt.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

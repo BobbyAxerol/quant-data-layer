@@ -278,11 +278,10 @@ class WarmupStreamSession:
                 "OPEN_SEQUENCE_GAP",
                 f"non-monotonic stream offset {event.logical_offset} after {self._last_seen_offset}",
             )
-        if event.logical_offset != self._last_seen_offset + 1:
-            raise ContinuityError(
-                "OPEN_SEQUENCE_GAP",
-                f"expected offset {self._last_seen_offset + 1}, observed {event.logical_offset}",
-            )
+        # A signed cursor advances across the physical durable partition, but
+        # the server emits only records matching this logical requirement.
+        # Gaps in physical offsets therefore represent filtered records, not
+        # a loss of matching data; server replay/gap checks remain authority.
         self._last_seen_offset = event.logical_offset
         self._reconnect_attempts = 0
         return event
