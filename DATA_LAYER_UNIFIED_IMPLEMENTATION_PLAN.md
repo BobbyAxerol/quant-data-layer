@@ -19501,6 +19501,52 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         After catch-up/freshness gates pass, run one fresh 300-second Phase-10.5
         four-consumer C2 no-order acceptance with its existing V1 fallback
         drill; any failure rolls back these three projectors only.
+      - **Projector memory guard (`FAIL-CLOSED / SOURCE REMEDIATION APPROVED`,
+        2026-08-28):** the first retry of only `projector_v2` on the r11
+        catalog exited with Docker `OOMKilled=true` before C2 began. It had the
+        approved image/runtime and a `512 MiB` cgroup, while the steady rollback
+        projector used about `171.5 MiB`; the r11 catalog expands the reader
+        from the old small catalog to `68` bindings. The current generic
+        projector default permits a `256 MiB` canonical-before-raw pending
+        queue, which is not a safe share of that cgroup during a catch-up.
+        The role was immediately restored to the exact prior image/runtime;
+        all three rollback projectors are `running`, `restart=0`,
+        `OOMKilled=false`. No C2 client, offset reset, topic/topology/ACL
+        change, Redis/SQLite deletion or flush, V1, Trading System, alpha or
+        order action occurred.
+
+        The approved source/config remediation is intentionally narrow: set
+        `QDL_STABLE_MAX_PENDING_RECORDS=2048` and
+        `QDL_STABLE_MAX_PENDING_BYTES=33554432` (**32 MiB**) on exactly the
+        three existing projector services. The engine already pauses canonical
+        Kafka consumption at 75% and resumes it at 50%; therefore pressure
+        stays durably in the retained Kafka partitions rather than becoming
+        memory growth or a silent drop. Keep the existing `512 MiB` cgroup and
+        all query/stream limits unchanged. Test the Compose contract and
+        runtime-config parsing, then roll the three approved projectors
+        sequentially with the existing `f92d...bdb0` image/r11 runtime. If any
+        projector exits, OOMs, rejects its catalog, cannot catch up, or fails
+        demanded-slice freshness, restore only that role (or already rolled
+        projector roles) to the recorded rollback image/runtime and do not
+        start C2. This is a bounded capacity correction, not a topology,
+        consumer-route, authority, image, or data-retention change.
+
+        **Source/config exit (`PASS / SEQUENTIAL ROLL READY`, 2026-08-28):**
+        the Compose contract asserts the same two bounds on all and only the
+        three projector roles; query and stream roles retain their inherited
+        limits. `StableRuntimeConfig.from_environment` parses the two values
+        into the exact integer bounds. In the immutable candidate image
+        `sha256:f92d436aca46e564e1a043862e30676e072b5d02734fbcf0853e4681c635bdb0`,
+        with source mounted read-only, `--network none`, non-root UID/GID
+        `10001`, read-only root, no capabilities, `512 MiB`/one CPU and
+        tmpfs-only `/tmp`, the C2/packet matrix plus the two new capacity
+        regressions passed **72/72** in `5.516s`. The checked sealed Compose
+        configuration also passed `docker compose ... config -q` against the
+        active Phase-10.5-C environment. These gates made no provider request
+        and did not recreate a runtime role or mutate Kafka, Redis, SQLite,
+        V1, Trading System, alpha or order state. The next action is the
+        approved sequential r11 roll of the three projectors, starting with
+        `projector_v2`; a failure rolls back before the next role starts.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for

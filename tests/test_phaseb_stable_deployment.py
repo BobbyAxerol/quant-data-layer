@@ -1165,6 +1165,23 @@ class StableComposeAndBundleTests(unittest.TestCase):
             {"stable-projector-1", "stable-projector-2", "stable-projector-3"},
         )
         self.assertEqual(
+            {
+                services[name]["environment"]["QDL_STABLE_MAX_PENDING_RECORDS"]
+                for name in projector_names
+            },
+            {"2048"},
+        )
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_STABLE_MAX_PENDING_BYTES"]
+                for name in projector_names
+            },
+            {"33554432"},
+        )
+        for name in ("query_v2_1", "query_v2_2", "stream_v2_active", "stream_v2_passive"):
+            self.assertNotIn("QDL_STABLE_MAX_PENDING_RECORDS", services[name]["environment"])
+            self.assertNotIn("QDL_STABLE_MAX_PENDING_BYTES", services[name]["environment"])
+        self.assertEqual(
             len({
                 services[name]["environment"]["QDL_STABLE_AUDIT_PATH"]
                 for name in projector_names

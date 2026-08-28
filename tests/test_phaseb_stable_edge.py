@@ -1778,6 +1778,15 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             })
             projector = StableRuntimeConfig.from_environment("projector_v2", values)
             self.assertEqual(projector.kafka_raw_topics, ())
+            values.update({
+                "QDL_STABLE_MAX_PENDING_RECORDS": "2048",
+                "QDL_STABLE_MAX_PENDING_BYTES": "33554432",
+            })
+            bounded_projector = StableRuntimeConfig.from_environment(
+                "projector_v2", values
+            )
+            self.assertEqual(bounded_projector.max_pending_records, 2048)
+            self.assertEqual(bounded_projector.max_pending_bytes, 33_554_432)
             authority_path = Path(values["QDL_STABLE_RUNTIME_DIR"]) / "authority.json"
             primary = json.loads(authority_path.read_text(encoding="utf-8"))
             primary.update({"mode": "RUST_PRIMARY", "revision": 2})
