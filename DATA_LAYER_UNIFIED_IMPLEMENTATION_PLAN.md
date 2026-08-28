@@ -19475,6 +19475,32 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         mutation occurred. The next bounded action is to build and attest one
         immutable Python image for this changed harness, then apply the
         already-approved three-projector r11 retry and fresh C2 run from zero.
+      - **C2 retained-replay candidate (`PASS / THREE-PROJECTOR RETRY
+        APPROVED`, 2026-08-28):** source commit
+        `42aa401f9278ef58f87522aeaa032fae92960d76` built exactly one replacement
+        Python image, `qdl-v2-python:2.0.0-c2-replay-42aa401`, immutable image
+        ID `sha256:f92d436aca46e564e1a043862e30676e072b5d02734fbcf0853e4681c635bdb0`
+        (about `195.5 MB`). Its OCI revision/version labels exactly match that
+        source commit and release; its configured user is `qdl:qdl`. From the
+        image itself, with no source bind mount, `--network none`, read-only
+        root, UID/GID `10001`, no Linux capabilities, `512 MiB`/one CPU/pid
+        limits and tmpfs-only `/tmp`, the same C2 matrix passed **70/70** in
+        `7.656s`. This is the sole new C2 image; it supersedes the prior C2
+        receipt candidate only because the receipt binary changed.
+
+        **Approved bounded runtime action:** recreate only `projector_v2`,
+        `projector_v2_2` and `projector_v2_3` with this image and the existing
+        r11/barfix runtime
+        `/home/bobby/.local/state/qdl-v2/c36c2-20260827T165526Z/r11-barfix-b965276-20260827T1822Z/runtime`.
+        Preserve `stable-projector-v1` group/offsets, Kafka topology/ACLs,
+        Redis, SQLite, V1, every other V2 role, Trading System, alpha and all
+        order paths. Ordinary canonical-to-cache catch-up is the only expected
+        data-plane write. Exact rollback is only those three projectors to
+        `sha256:5275c9f2f67952d9a7a4c2d59001ee63735ad0a58fbbe3b7d2f7fcae0e4ad215`
+        with `/home/bobby/.local/state/qdl-v2/phase103-shared-primary-e0bedff-retry-20260825T054740Z/runtime`.
+        After catch-up/freshness gates pass, run one fresh 300-second Phase-10.5
+        four-consumer C2 no-order acceptance with its existing V1 fallback
+        drill; any failure rolls back these three projectors only.
 - **Consumer-product closure audit (`SOURCE PASS / RUNTIME SCOPE EXPLICIT`,
   2026-08-27):** current-source, network-disabled tests passed `51/51` for
   V2 contract/SDK/reference/L2/C2 fallback semantics and `33/33` for
