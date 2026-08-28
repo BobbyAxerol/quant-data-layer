@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
-from qdl.runtime.stable_deployment import AuthorityPromotionScope, StableAcquisitionPlan
+from qdl.runtime.stable_deployment import (
+    AuthorityPromotionScope,
+    StableAcquisitionPlan,
+    stable_authority_record,
+)
 from scripts.refresh_stable_runtime_bundle import PRESERVED, refresh
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,17 +41,40 @@ class StableRuntimeRefreshTests(unittest.TestCase):
         (bundle / "runtime/stale-core.json").write_bytes(b"{}\n")
         return bundle
 
-    def _refresh(self, bundle: Path, *, apply: bool, state_dir: Path | None = None) -> dict:
+    def _refresh(
+        self,
+        bundle: Path,
+        *,
+        apply: bool,
+        state_dir: Path | None = None,
+        preserve_authority: bool = False,
+        rust_image_id: str = RUST_IMAGE_ID,
+    ) -> dict:
         return refresh(
             bundle_dir=bundle,
-            rust_image_id=RUST_IMAGE_ID,
+            rust_image_id=rust_image_id,
             source_catalog=CATALOG_PATH,
             acquisition_plan=ACQUISITION_PATH,
             promotion_scope_path=PROMOTION_SCOPE_PATH,
             partition_plan_epoch=1,
             apply=apply,
             state_dir=state_dir,
+            preserve_authority=preserve_authority,
         )
+
+    def _primary_authority_bytes(self) -> bytes:
+        authority = stable_authority_record(
+            rust_image_digest="sha256:" + "a" * 64,
+            capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
+            contract=ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto",
+            partition_plan=ACQUISITION_PATH.read_bytes(),
+            effective_at_ns=1,
+            mode="RUST_PRIMARY",
+            revision=7,
+            slice_id="qdl-v2-refresh-preserved-primary",
+            approved_by="test-refresh-preserve-authority",
+        )
+        return (json.dumps(authority, indent=2, sort_keys=False) + "\n").encode()
 
     def test_refuses_a_directory_that_is_not_an_existing_bundle(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -114,6 +142,31 @@ class StableRuntimeRefreshTests(unittest.TestCase):
 
             backup = Path(str(result["backup_dir"]))
             self.assertTrue((backup / "stale-core.json").is_file())
+
+    def test_explicit_preserve_authority_retains_primary_bytes(self):
+        with tempfile.TemporaryDirectory() as raw:
+            bundle = self._bundle(Path(raw))
+            original = self._primary_authority_bytes()
+            (bundle / "runtime/authority.json").write_bytes(original)
+            requested_image = "sha256:" + "d" * 64
+
+            result = self._refresh(
+                bundle,
+                apply=True,
+                preserve_authority=True,
+                rust_image_id=requested_image,
+            )
+
+            self.assertTrue(result["authority_bytes_preserved"])
+            self.assertEqual(result["requested_rust_image_id"], requested_image)
+            self.assertEqual(result["authority_sha256"], hashlib.sha256(original).hexdigest())
+            self.assertEqual((bundle / "runtime/authority.json").read_bytes(), original)
+
+    def test_preserve_authority_fails_closed_for_invalid_existing_record(self):
+        with tempfile.TemporaryDirectory() as raw:
+            bundle = self._bundle(Path(raw))
+            with self.assertRaisesRegex(ValueError, "preserved authority"):
+                self._refresh(bundle, apply=False, preserve_authority=True)
 
     def test_generic_core_excludes_the_production_scope_and_bundle_binds_bootstrap(self):
         with tempfile.TemporaryDirectory() as raw:

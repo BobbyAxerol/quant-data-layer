@@ -21439,6 +21439,31 @@ PROGRESS / APPROVED CONTINUATION OF C3.6-C`, 2026-08-27):**
         did not produce a failure. No runtime role, image, provider request,
         Kafka/Redis/SQLite state, V1, Trading System, alpha or order path has
         changed in this source gate.
+        **Authority-preserving refresh guard (`APPROVED / IN PROGRESS / SOURCE-ONLY`,
+        2026-08-28):** the generic runtime refresh helper currently regenerates
+        `authority.json` from its image argument, which is unsafe for this
+        bounded repair because the live authority is already `RUST_PRIMARY` and
+        its bytes are an approved lease record rather than a binary-version
+        selector. Add one explicit `--preserve-authority` path: it validates and
+        carries the existing authority bytes through the atomic runtime swap,
+        records the requested immutable Rust image as provenance only, and
+        leaves authority mode/revision/slice/digests untouched. The default
+        refresh behavior remains unchanged for a newly prepared shadow bundle.
+        Test both paths before the runtime dry run. This is not a new authority
+        CAS, route mutation, image build, provider request or runtime change.
+        **Authority-preserving refresh source exit (`PASS / SOURCE-ONLY`,
+        2026-08-28):** `scripts/refresh_stable_runtime_bundle.py` now has the
+        explicit `--preserve-authority` switch. It validates the existing
+        record, regenerates runtime config with that record, then restores the
+        exact original `authority.json` bytes before the atomic swap; the new
+        Rust image identifier is output provenance only. The default path still
+        creates the prior shadow authority behavior. The isolated, read-only,
+        network-disabled matrix `test_stable_runtime_refresh`,
+        `test_phasec36_reference_l2_rollout` and `test_phase105_handoff` passed
+        **32/32 in 4.921s**, including exact-primary-byte preservation and
+        invalid-record fail-closed behavior. `python3 -m py_compile` and
+        `git diff --check` passed. No image, provider, runtime role,
+        Kafka/Redis/SQLite, V1, Trading System, alpha or order state changed.
 - **Runtime/acceptance gate:** r11 must materialize all 56 approved crypto
   final-BAR bindings (BTC/ETH across Binance USD-M and OKX Swap configured
   intervals). The two VN catalog entries are excluded from the acceptance

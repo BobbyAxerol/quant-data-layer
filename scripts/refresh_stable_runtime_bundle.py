@@ -37,6 +37,7 @@ from qdl.runtime.stable_deployment import (
     AuthorityPromotionScope,
     StableAcquisitionPlan,
     stable_authority_record,
+    validate_shared_authority_record,
     write_production_core_bundle,
     write_stable_runtime_bundle,
 )
@@ -140,6 +141,23 @@ def _classify(before: dict[str, str], after: dict[str, str]) -> dict[str, list[s
     }
 
 
+def _load_preserved_authority(runtime_dir: Path) -> tuple[dict[str, object], bytes]:
+    """Load the current authority exactly when a config-only refresh is requested."""
+    path = runtime_dir / "authority.json"
+    try:
+        encoded = path.read_bytes()
+        decoded = json.loads(encoded)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("preserved authority is unreadable") from error
+    if not isinstance(decoded, dict):
+        raise ValueError("preserved authority is not an object")
+    try:
+        validate_shared_authority_record(decoded)
+    except ValueError as error:
+        raise ValueError("preserved authority is invalid") from error
+    return dict(decoded), encoded
+
+
 def refresh(
     *,
     bundle_dir: Path,
@@ -150,6 +168,7 @@ def refresh(
     partition_plan_epoch: int,
     apply: bool,
     state_dir: Path | None = None,
+    preserve_authority: bool = False,
     clock=time.time_ns,
 ) -> dict[str, object]:
     bundle_dir = bundle_dir.resolve()
@@ -167,13 +186,17 @@ def refresh(
     promotion_scope = AuthorityPromotionScope.load(
         promotion_scope_path, catalog=catalog
     )
-    authority = stable_authority_record(
-        rust_image_digest=rust_image_id,
-        capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
-        contract=ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto",
-        partition_plan=acquisition_plan.read_bytes(),
-        effective_at_ns=clock(),
-    )
+    authority_bytes: bytes | None = None
+    if preserve_authority:
+        authority, authority_bytes = _load_preserved_authority(runtime_dir)
+    else:
+        authority = stable_authority_record(
+            rust_image_digest=rust_image_id,
+            capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
+            contract=ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto",
+            partition_plan=acquisition_plan.read_bytes(),
+            effective_at_ns=clock(),
+        )
 
     # A dry run must not write inside a bundle that is serving traffic, so it
     # stages elsewhere. An apply stages next to the target because the swap
@@ -203,6 +226,11 @@ def refresh(
             raw_authority=authority,
             partition_plan_epoch=partition_plan_epoch,
         )
+        if authority_bytes is not None:
+            authority_path = staging / "authority.json"
+            authority_path.write_bytes(authority_bytes)
+            if authority_path.read_bytes() != authority_bytes:
+                raise RuntimeError("preserved authority bytes changed during refresh")
         after = _digests(staging)
         backup_dir = None
         if apply:
@@ -234,6 +262,13 @@ def refresh(
         "promotion_scope_revision": promotion_scope.revision,
         "promotion_binding_count": len(promotion_scope.binding_ids),
         "partition_plan_epoch": partition_plan_epoch,
+        "requested_rust_image_id": rust_image_id,
+        "authority_bytes_preserved": authority_bytes is not None,
+        "authority_sha256": hashlib.sha256(
+            authority_bytes if authority_bytes is not None else json.dumps(
+                authority, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest(),
         "preserved": list(PRESERVED),
         "backup_dir": str(backup_dir) if backup_dir else None,
         "files": _classify(before, after),
@@ -264,6 +299,11 @@ def main() -> int:
              "given, checkpoints stranded by this refresh are reported",
     )
     parser.add_argument(
+        "--preserve-authority",
+        action="store_true",
+        help="retain the validated existing authority.json bytes during a config-only refresh",
+    )
+    parser.add_argument(
         "--apply", action="store_true",
         help="write the refreshed configs; omit to report the diff only",
     )
@@ -277,6 +317,7 @@ def main() -> int:
         partition_plan_epoch=args.partition_plan_epoch,
         apply=args.apply,
         state_dir=args.state_dir,
+        preserve_authority=args.preserve_authority,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     if result["stranded_checkpoints"]:
