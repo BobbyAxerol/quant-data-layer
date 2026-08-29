@@ -51,7 +51,10 @@ class Phase105FallbackAcceptanceTests(unittest.TestCase):
         }
         self.assertEqual({item.identity for item in self.probes}, expected)
         self.assertTrue(self.probes)
-        self.assertTrue(all(item.native_symbol in {"BTCUSDT", "ETHUSDT"} for item in self.probes))
+        self.assertEqual(
+            {item.native_symbol for item in self.probes},
+            {"BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"},
+        )
         self.assertTrue(all(item.path.startswith("/v1/binance/") for item in self.probes))
         self.assertTrue(all(item.feed == "TRADE" for item in self.probes))
 
@@ -62,17 +65,25 @@ class Phase105FallbackAcceptanceTests(unittest.TestCase):
                 self.assertIn((product.consumer_id, requirement_key(product.requirement)), blocked)
         bindings = {
             item.binding_id: item
-            for item in self.catalog.bindings
-            if item.binding_id in {
-                "binance-usdm-btcusdt-bar-1m",
-                "binance-usdm-ethusdt-bar-1m",
-            }
+            for item in (
+                self.catalog.binding_for(product.requirement)
+                for product in self.scope.products
+                if product.feed == "BAR"
+                and product.venue == "BINANCE"
+                and product.market == "USDM"
+                and product.interval == "1m"
+            )
         }
-        self.assertEqual(set(bindings), {
-            "binance-usdm-btcusdt-bar-1m",
-            "binance-usdm-ethusdt-bar-1m",
-        })
-        self.assertTrue(all(item.v1_compatibility == "NONE" for item in bindings.values()))
+        self.assertEqual(
+            {item.instrument.native_symbol for item in bindings.values()},
+            {"BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"},
+        )
+        self.assertTrue(
+            all(
+                item.v1_compatibility in {"NONE", "BINANCE_BAR_GENERIC"}
+                for item in bindings.values()
+            )
+        )
 
     def test_blocked_scope_never_appears_in_v1_probe_scope(self) -> None:
         blocked = set(blocked_fallback_identities(self.release))

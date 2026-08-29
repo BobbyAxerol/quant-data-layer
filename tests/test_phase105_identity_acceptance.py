@@ -13,7 +13,9 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     IDENTITY_PREFIXES,
     _authority,
     _c2_grpc_targets,
+    _consumer_ids,
     _identity_files,
+    _identity_files_for_consumers,
     _route_summary,
     _run_consumer_groups,
     _v1_base_url,
@@ -76,6 +78,44 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
             files = _identity_files(parser().parse_args(arguments))
         self.assertEqual(set(files), set(IDENTITY_PREFIXES))
         self.assertEqual(files["alpha.binance.paper.stable"].jwt_key_id, "alpha-binance-key")
+
+    def test_cli_can_select_the_exact_three_consumer_five_liquid_scope(self) -> None:
+        selected = (
+            "trading-system.paper.stable",
+            "alpha.binance.paper.stable",
+            "alpha.okx.paper.stable",
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            certificate = root / "client.crt"
+            private_key = root / "client.key"
+            jwt_private_key = root / "private.key"
+            for path in (certificate, private_key, jwt_private_key):
+                path.write_text("fixture", encoding="utf-8")
+            arguments = [
+                "--authority-record", str(root / "authority.json"),
+                "--primary-url", "https://query.example",
+                "--secondary-url", "https://query-two.example",
+                "--grpc-target", "stream.example:8210",
+                "--v1-base-url", "http://data_layer:8100",
+                "--v1-provenance", str(root / "v1-provenance.json"),
+                "--v1-runtime-binding", str(root / "v1-runtime-binding.json"),
+                "--tls-ca-file", str(certificate),
+            ]
+            for consumer_id in selected:
+                prefix = IDENTITY_PREFIXES[consumer_id]
+                arguments.extend((
+                    "--consumer-id", consumer_id,
+                    f"--{prefix}-tls-certificate-file", str(certificate),
+                    f"--{prefix}-tls-private-key-file", str(private_key),
+                    f"--{prefix}-jwt-private-key-file", str(jwt_private_key),
+                    f"--{prefix}-jwt-key-id", f"{prefix}-key",
+                ))
+            args = parser().parse_args(arguments)
+            consumer_ids = _consumer_ids(args)
+            files = _identity_files_for_consumers(args, consumer_ids)
+        self.assertEqual(consumer_ids, selected)
+        self.assertEqual(set(files), set(selected))
 
     def test_forced_v1_read_is_pinned_to_the_local_v1_service(self) -> None:
         self.assertEqual(_v1_base_url("http://data_layer:8100"), "http://data_layer:8100")

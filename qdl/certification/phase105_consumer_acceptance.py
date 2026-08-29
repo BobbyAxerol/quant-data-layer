@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from qdl.certification.phase103_consumer_acceptance import (
     ConsumerAcceptanceScope,
     build_manifest_acceptance_scope,
@@ -24,6 +26,7 @@ def build_release_consumer_acceptance_scope(
     *,
     catalog: StableSourceCatalog,
     acquisition: StableAcquisitionPlan,
+    consumer_ids: Iterable[str] | None = None,
 ) -> ConsumerAcceptanceScope:
     """Materialize exactly the release-manifest V2 paper products.
 
@@ -31,18 +34,28 @@ def build_release_consumer_acceptance_scope(
     read matrix from those routes, leaving `V1_PRIMARY` VN requirements outside
     the V2 probe and refusing any route/product drift.
     """
+    expected_consumer_ids = (
+        PHASE105_PAPER_CONSUMER_IDS
+        if consumer_ids is None
+        else frozenset(str(item) for item in consumer_ids)
+    )
+    if (
+        not expected_consumer_ids
+        or not expected_consumer_ids <= PHASE105_PAPER_CONSUMER_IDS
+    ):
+        raise ValueError("Phase 10.5 paper consumer scope is invalid")
     selected = tuple(
         consumer
         for consumer in release.consumers
-        if consumer.consumer_id in PHASE105_PAPER_CONSUMER_IDS
+        if consumer.consumer_id in expected_consumer_ids
     )
-    if frozenset(item.consumer_id for item in selected) != PHASE105_PAPER_CONSUMER_IDS:
+    if frozenset(item.consumer_id for item in selected) != expected_consumer_ids:
         raise ValueError("Phase 10.5 paper consumers are incomplete")
     scope = build_manifest_acceptance_scope(
         (item.manifest_path for item in selected),
         catalog=catalog,
         acquisition=acquisition,
-        expected_consumer_ids=PHASE105_PAPER_CONSUMER_IDS,
+        expected_consumer_ids=expected_consumer_ids,
         schema="qdl.phase105.consumer-acceptance-scope.v1",
     )
     routes = {

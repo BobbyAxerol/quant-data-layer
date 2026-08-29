@@ -89,19 +89,35 @@ def _authority(path: Path) -> dict[str, object]:
 
 
 def _identity_files(args: argparse.Namespace) -> dict[str, IdentityFiles]:
+    return _identity_files_for_consumers(args, tuple(IDENTITY_PREFIXES))
+
+
+def _identity_files_for_consumers(
+    args: argparse.Namespace,
+    consumer_ids: tuple[str, ...],
+) -> dict[str, IdentityFiles]:
     values: dict[str, IdentityFiles] = {}
-    for consumer_id, prefix in IDENTITY_PREFIXES.items():
+    for consumer_id in consumer_ids:
+        prefix = IDENTITY_PREFIXES[consumer_id]
         # argparse converts every option dash into an underscore in Namespace
         # attributes, while the public CLI intentionally keeps alpha-binance
         # and alpha-okx readable as dashed option names.
         attribute_prefix = prefix.replace("-", "_")
-        fields = IdentityFiles(
-            certificate=str(getattr(args, f"{attribute_prefix}_tls_certificate_file")),
-            private_key=str(getattr(args, f"{attribute_prefix}_tls_private_key_file")),
-            jwt_private_key=str(getattr(args, f"{attribute_prefix}_jwt_private_key_file")),
-            jwt_key_id=str(getattr(args, f"{attribute_prefix}_jwt_key_id")),
+        raw_fields = (
+            getattr(args, f"{attribute_prefix}_tls_certificate_file"),
+            getattr(args, f"{attribute_prefix}_tls_private_key_file"),
+            getattr(args, f"{attribute_prefix}_jwt_private_key_file"),
+            getattr(args, f"{attribute_prefix}_jwt_key_id"),
         )
-        if not fields.jwt_key_id or any(not Path(path).is_file() for path in (
+        if not all(item is not None and str(item) for item in raw_fields):
+            raise ValueError(f"Phase 10.5 identity material is unavailable for {consumer_id}")
+        fields = IdentityFiles(
+            certificate=str(raw_fields[0]),
+            private_key=str(raw_fields[1]),
+            jwt_private_key=str(raw_fields[2]),
+            jwt_key_id=str(raw_fields[3]),
+        )
+        if any(not Path(path).is_file() for path in (
             fields.certificate, fields.private_key, fields.jwt_private_key,
         )):
             raise ValueError(f"Phase 10.5 identity material is unavailable for {consumer_id}")
@@ -109,14 +125,29 @@ def _identity_files(args: argparse.Namespace) -> dict[str, IdentityFiles]:
     return values
 
 
-def _scope(args: argparse.Namespace):
+def _consumer_ids(args: argparse.Namespace) -> tuple[str, ...]:
+    selected = tuple(args.consumer_id or ())
+    if not selected:
+        return tuple(PHASE105_PAPER_CONSUMER_ORDER)
+    if len(selected) != len(set(selected)) or any(
+        item not in IDENTITY_PREFIXES for item in selected
+    ):
+        raise ValueError("Phase 10.5 C2 consumer selection is invalid")
+    return tuple(
+        consumer_id
+        for consumer_id in PHASE105_PAPER_CONSUMER_ORDER
+        if consumer_id in selected
+    )
+
+
+def _scope(args: argparse.Namespace, consumer_ids: tuple[str, ...]):
     catalog = StableSourceCatalog.load(args.catalog)
     acquisition = StableAcquisitionPlan.load(args.acquisition, catalog=catalog)
     release = StableReleaseRoutePlan.load(args.release_routing, manifest_root=ROOT)
     scope = build_release_consumer_acceptance_scope(
-        release, catalog=catalog, acquisition=acquisition
+        release, catalog=catalog, acquisition=acquisition, consumer_ids=consumer_ids
     )
-    if {item.consumer_id for item in scope.products} != PHASE105_PAPER_CONSUMER_IDS:
+    if {item.consumer_id for item in scope.products} != frozenset(consumer_ids):
         raise ValueError("Phase 10.5 V2 identity scope is incomplete")
     return scope, release
 
@@ -268,8 +299,9 @@ async def _run_consumer_groups(
 
 async def run(args: argparse.Namespace) -> dict[str, object]:
     authority = _authority(args.authority_record)
-    scope, release = _scope(args)
-    files = _identity_files(args)
+    consumer_ids = _consumer_ids(args)
+    scope, release = _scope(args, consumer_ids)
+    files = _identity_files_for_consumers(args, consumer_ids)
     v1_base_url = _v1_base_url(args.v1_base_url)
     grpc_target = _c2_grpc_targets(args.grpc_target)
     try:
@@ -283,7 +315,10 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("Phase 10.5 V1 runtime binding cannot be read") from error
     v1_runtime_binding = validate_v1_runtime_binding(v1_provenance, v1_runtime_binding_raw)
     probes = build_v1_fallback_probes(
-        release, catalog=StableSourceCatalog.load(args.catalog), products=scope.products
+        release,
+        catalog=StableSourceCatalog.load(args.catalog),
+        products=scope.products,
+        consumer_ids=consumer_ids,
     )
     products_by_identity = {
         (item.consumer_id, requirement_key(item.requirement)): item for item in scope.products
@@ -359,7 +394,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
 
     async def certify_ordered() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         groups = await _run_consumer_groups(
-            tuple(PHASE105_PAPER_CONSUMER_ORDER), certify_consumer
+            consumer_ids, certify_consumer
         )
         results: list[dict[str, object]] = []
         fallback_details: list[dict[str, object]] = []
@@ -397,12 +432,16 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             "v1_fallback_observed": True,
             "route_selection_probe_only": True,
             "blocked_v1_requests": 0,
-            "blocked_route_count": len(blocked_fallback_identities(release)),
+            "blocked_route_count": len(
+                blocked_fallback_identities(release, consumer_ids=consumer_ids)
+            ),
         },
         "v1_provenance": v1_provenance,
         "v1_runtime_binding": v1_runtime_binding,
         "fallback_details": fallback_details,
-        "fallback_drill": build_fallback_return_receipt(release, probes),
+        "fallback_drill": build_fallback_return_receipt(
+            release, probes, consumer_ids=consumer_ids
+        ),
         "provider_connections": 0,
         "order_actions": 0,
         "cursor_directory_removed": True,
@@ -430,11 +469,17 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--v1-provenance", type=Path, required=True)
     value.add_argument("--v1-runtime-binding", type=Path, required=True)
     value.add_argument("--tls-ca-file", required=True)
+    value.add_argument(
+        "--consumer-id",
+        action="append",
+        choices=tuple(IDENTITY_PREFIXES),
+        help="Optional bounded C2 subset; omit for the existing four-consumer scope.",
+    )
     for prefix in IDENTITY_PREFIXES.values():
-        value.add_argument(f"--{prefix}-tls-certificate-file", type=Path, required=True)
-        value.add_argument(f"--{prefix}-tls-private-key-file", type=Path, required=True)
-        value.add_argument(f"--{prefix}-jwt-private-key-file", type=Path, required=True)
-        value.add_argument(f"--{prefix}-jwt-key-id", required=True)
+        value.add_argument(f"--{prefix}-tls-certificate-file", type=Path)
+        value.add_argument(f"--{prefix}-tls-private-key-file", type=Path)
+        value.add_argument(f"--{prefix}-jwt-private-key-file", type=Path)
+        value.add_argument(f"--{prefix}-jwt-key-id")
     value.add_argument("--issuer", default="https://identity.qdl.stable.internal")
     value.add_argument("--audience", default="qdl-v2-stable")
     value.add_argument("--timeout-seconds", type=float, default=15.0)

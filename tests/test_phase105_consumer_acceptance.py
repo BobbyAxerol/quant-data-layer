@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import yaml
+
 from qdl.certification.phase105_consumer_acceptance import (
     PHASE105_PAPER_CONSUMER_IDS,
     build_release_consumer_acceptance_scope,
@@ -13,6 +15,11 @@ from qdl.runtime.stable_deployment import StableAcquisitionPlan
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FIVE_LIQUID_CONSUMER_IDS = frozenset({
+    "trading-system.paper.stable",
+    "alpha.binance.paper.stable",
+    "alpha.okx.paper.stable",
+})
 
 
 class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
@@ -28,6 +35,11 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
         cls.acquisition = StableAcquisitionPlan.load(
             ROOT / "config/v2/stable-acquisition-bindings.yaml",
             catalog=cls.catalog,
+        )
+        cls.five_liquid_demand = yaml.safe_load(
+            (ROOT / "config/v2/phase115c-paper-consumer-demand.yaml").read_text(
+                encoding="utf-8"
+            )
         )
 
     def test_scope_is_exactly_release_v2_primary_for_all_paper_classes(self):
@@ -67,6 +79,60 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
                 ("monitoring.multivenue.stable", "VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE"),
                 ("trading-system.paper.stable", "VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE"),
             },
+        )
+
+    def test_five_liquid_selection_is_exactly_the_sixty_declared_routes(self):
+        scope = build_release_consumer_acceptance_scope(
+            self.release,
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            consumer_ids=FIVE_LIQUID_CONSUMER_IDS,
+        )
+        expected = {
+            (
+                consumer["consumer_id"],
+                requirement["venue"],
+                requirement["market"],
+                requirement["product_type"],
+                requirement["native_symbol"],
+                requirement["feed"],
+                requirement["interval"],
+                requirement["source_policy_id"],
+            )
+            for consumer in self.five_liquid_demand["consumers"]
+            for requirement in consumer["requirements"]
+        }
+        actual = {
+            (
+                product.consumer_id,
+                product.venue,
+                product.market,
+                self.catalog.instrument_for(product.instrument_uid).identity.product_type,
+                product.native_symbol,
+                product.feed.value,
+                product.interval,
+                product.source_policy_id,
+            )
+            for product in scope.products
+        }
+        self.assertEqual(len(scope.products), 60)
+        self.assertEqual(actual, expected)
+        self.assertEqual(
+            {
+                consumer_id: sum(
+                    product.consumer_id == consumer_id for product in scope.products
+                )
+                for consumer_id in FIVE_LIQUID_CONSUMER_IDS
+            },
+            {
+                "trading-system.paper.stable": 30,
+                "alpha.binance.paper.stable": 15,
+                "alpha.okx.paper.stable": 15,
+            },
+        )
+        self.assertEqual(
+            {(item.consumer_id, item.reason) for item in scope.excluded},
+            {("trading-system.paper.stable", "VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE")},
         )
 
 

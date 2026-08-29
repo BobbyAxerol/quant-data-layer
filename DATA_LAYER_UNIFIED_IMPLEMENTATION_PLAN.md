@@ -22741,3 +22741,61 @@ this scope rather than opening a new phase.
   projectors, two queries, two streams and three Rust core replicas remained
   `running`, `restart=0`, `OOMKilled=false`; no disposable `qdl_c2_final_*`
   container remains.
+
+- `2026-08-29 C2 FIVE-LIQUID CONSUMER-MANIFEST EXPANSION / APPROVED`:
+  the preceding C2 receipt certified the existing `28` release-routing
+  products, while the already-admitted
+  `config/v2/phase115c-paper-consumer-demand.yaml` declares the intended
+  `60` five-liquid paper routes: Trading System `30`, Binance alpha `15` and
+  OKX alpha `15`.  The approved task is deliberately limited to deriving the
+  consumer manifests and stable V2 release-routing scope from that existing
+  demand, then running one fresh, isolated C2 no-order receipt for exactly
+  those `60` routes.  It does not add an instrument, interval, source binding,
+  provider connection, service, image, topic, consumer group or runtime roll.
+
+  **Invariants and exit:** every requirement keeps its canonical instrument
+  identity, venue isolation, `V2_PRIMARY` route and existing explicit fallback
+  policy; Binance TRADE is the only permitted V1 fallback class, while final
+  BAR, BBO and all OKX routes remain blocked from V1.  Compile/contract tests
+  must prove the generated C2 scope is exactly `60`, duplicate-free and equal
+  to the sealed demand.  The fresh non-root, read-only, tmpfs-only client must
+  observe signed warmup/replay/reconnect for all routes, `0` direct provider
+  connections, `0` order actions, correct fallback-return and no V1 request
+  for blocked routes.  Failure stops without deploying a manifest; rollback is
+  the current revision-`6` release routing and existing runtime roles.  The
+  decision boundary is strict: no unrelated monitoring, VN/DNSE, L2,
+  reference-data or broad-universe change may be folded into this task.
+
+- `2026-08-29 C2 FIVE-LIQUID SOURCE PREFLIGHT / PASS; RUNTIME HANDOFF
+  REQUIRED`: isolated non-root, read-only/no-network regression passed
+  `26/26`. It proves the selected C2 scope is duplicate-free and exactly the
+  `60` declared routes (`Trading System=30`, `alpha-binance=15`,
+  `alpha-okx=15`), with `10` explicit Binance-TRADE V1 fallback probes and
+  `50` V1-blocked routes. It also preserves Trading System's separate DNSE V1
+  route outside the C2 product set. The current V2 readers cannot certify that
+  revision yet: read-only container inspection found their embedded manifests
+  at Trading System `revision=2`, alpha Binance `revision=4`, alpha OKX
+  `revision=4`, whereas this controlled source revision is `3/5/5`.
+
+  A real C2 run against those old readers would correctly reject the new JWT
+  manifest claims and produce only a known-negative receipt. The minimal next
+  runtime packet therefore needs a new immutable Python image carrying only
+  these reviewed manifests/routing plus a rolling recreate of exactly
+  `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+  `stream_v2_passive`. It reuses the current sealed `/runtime` directory, TLS
+  volume, Kafka/Redis/SQLite state, ports, identities and topology; rollback
+  is the current image `53db451bea93` and the same runtime mount. V1, all
+  ingest/projector/Rust roles, Trading System, alpha processes and order paths
+  remain excluded. This runtime recreate requires its own exact operator
+  approval under the workspace safety rule; until then, no C2 acceptance
+  client is launched and no runtime state is changed.
+
+  **Recorded source evidence:** `qdl-v2-python:2.0.0-89ac070`, non-root,
+  read-only, `--network none` ran
+  `tests.test_phase115c_five_liquid_handoff`,
+  `tests.test_phase105_consumer_acceptance`,
+  `tests.test_phase105_identity_acceptance`,
+  `tests.test_phase105_fallback_acceptance`, and
+  `tests.test_phase105_stable_release`: `26/26 PASS` in `8.505s`.
+  `git diff --check` passed. No runtime container, store, client namespace or
+  payload evidence was created by this source validation.

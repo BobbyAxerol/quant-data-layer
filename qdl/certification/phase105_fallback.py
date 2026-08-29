@@ -33,6 +33,24 @@ PHASE105_PAPER_CONSUMER_ORDER = (
     "alpha.binance.paper.stable",
     "alpha.okx.paper.stable",
 )
+
+
+def _selected_consumer_order(
+    consumer_ids: Iterable[str] | None = None,
+) -> tuple[str, ...]:
+    selected = (
+        frozenset(PHASE105_PAPER_CONSUMER_ORDER)
+        if consumer_ids is None
+        else frozenset(str(item) for item in consumer_ids)
+    )
+    known = frozenset(PHASE105_PAPER_CONSUMER_ORDER)
+    if not selected or not selected <= known:
+        raise ValueError("Phase 10.5 fallback consumer scope is invalid")
+    return tuple(
+        consumer_id
+        for consumer_id in PHASE105_PAPER_CONSUMER_ORDER
+        if consumer_id in selected
+    )
 @dataclass(frozen=True, slots=True)
 class V1FallbackProbe:
     """One manifest-approved V1 cached read, without any route mutation."""
@@ -71,14 +89,16 @@ def build_v1_fallback_probes(
     *,
     catalog: StableSourceCatalog,
     products: Iterable[AcceptanceProduct],
+    consumer_ids: Iterable[str] | None = None,
 ) -> tuple[V1FallbackProbe, ...]:
     """Materialize exactly the frozen V1-allowed subset of C2 products."""
+    consumer_order = _selected_consumer_order(consumer_ids)
     by_identity = {(item.consumer_id, requirement_key(item.requirement)): item for item in products}
     routes = _product_routes(release)
     expected = {
         identity
         for identity, route in routes.items()
-        if identity[0] in PHASE105_PAPER_CONSUMER_ORDER
+        if identity[0] in consumer_order
         and getattr(route, "route") == "V2_PRIMARY"
         and getattr(route, "fallback") == "V1"
     }
@@ -86,7 +106,7 @@ def build_v1_fallback_probes(
         raise ValueError("Phase 10.5 V1 fallback products differ from the V2 acceptance scope")
 
     probes: list[V1FallbackProbe] = []
-    for consumer_id in PHASE105_PAPER_CONSUMER_ORDER:
+    for consumer_id in consumer_order:
         selected = sorted(
             (by_identity[identity] for identity in expected if identity[0] == consumer_id),
             key=lambda item: (item.native_symbol, item.feed.value, item.interval or ""),
@@ -125,12 +145,17 @@ def build_v1_fallback_probes(
     return tuple(probes)
 
 
-def blocked_fallback_identities(release: StableReleaseRoutePlan) -> tuple[tuple[str, str], ...]:
+def blocked_fallback_identities(
+    release: StableReleaseRoutePlan,
+    *,
+    consumer_ids: Iterable[str] | None = None,
+) -> tuple[tuple[str, str], ...]:
     """Return V2 products that must never choose V1 in the C2 probe."""
+    consumer_order = _selected_consumer_order(consumer_ids)
     return tuple(sorted(
         (consumer_id, requirement_key)
         for (consumer_id, requirement_key), route in _product_routes(release).items()
-        if consumer_id in PHASE105_PAPER_CONSUMER_ORDER
+        if consumer_id in consumer_order
         and getattr(route, "route") == "V2_PRIMARY"
         and getattr(route, "fallback") == "BLOCKED"
     ))
@@ -264,8 +289,11 @@ def validate_v1_fallback_payload(
 def build_fallback_return_receipt(
     release: StableReleaseRoutePlan,
     probes: Iterable[V1FallbackProbe],
+    *,
+    consumer_ids: Iterable[str] | None = None,
 ) -> dict[str, object]:
     """Create the strict payload-free record consumed by Phase 10.5-D."""
+    consumer_order = _selected_consumer_order(consumer_ids)
     routes = [
         {
             "consumer_id": probe.consumer_id,
@@ -279,7 +307,7 @@ def build_fallback_return_receipt(
     expected = {
         (consumer_id, requirement_key)
         for (consumer_id, requirement_key), route in _product_routes(release).items()
-        if consumer_id in PHASE105_PAPER_CONSUMER_ORDER
+        if consumer_id in consumer_order
         and getattr(route, "route") == "V2_PRIMARY"
         and getattr(route, "fallback") == "V1"
     }
