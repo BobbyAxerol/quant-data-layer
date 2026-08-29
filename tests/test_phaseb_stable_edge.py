@@ -1723,7 +1723,8 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
             with self.assertRaisesRegex(
-                RuntimeError, "http_status=422"
+                RuntimeError,
+                "http_status=422 detail=Error parsing message with type",
             ):
                 await sink.publish(tampered)
             rejected = await client.post(
@@ -1809,7 +1810,11 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 ).publish(durable[0])
 
             async def reject(request: httpx.Request) -> httpx.Response:
-                return httpx.Response(413, request=request)
+                return httpx.Response(
+                    413,
+                    json={"detail": "x" * 256},
+                    request=request,
+                )
 
             rejected_client = httpx.AsyncClient(
                 transport=httpx.MockTransport(reject), base_url="http://localhost"
@@ -1819,7 +1824,10 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 max_request_bytes=5_000, client=rejected_client,
             )
             try:
-                with self.assertRaisesRegex(RuntimeError, "http_status=413"):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "http_status=413 detail=<redacted>",
+                ):
                     await rejected_sink.publish(durable[0])
             finally:
                 await rejected_sink.close()

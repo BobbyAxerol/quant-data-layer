@@ -22284,3 +22284,216 @@ this scope rather than opening a new phase.
   then perform only the 13-role rolling packet and the scoped 300-second
   V2-only/no-order C2 acceptance. This journal entry does not authorize
   Trading System cutover or any order action.
+
+- `2026-08-29 RUNTIME PREFLIGHT / APPROVED PACKET IN PREPARATION`: read-only
+  inspection confirms the live V2 roles are currently split across two
+  historical successor runtime directories. The five-liquid change must not
+  preserve that split: one new sealed successor runtime will carry catalog
+  revision `7`, acquisition revision `14` and price-plane promotion scope
+  revision `6` for the exact 160-product surface. The approved rolling set is
+  exactly the thirteen existing roles listed above; it creates no
+  symbol-specific service, topic, volume, Redis prefix or consumer group. The
+  rollback map will record the current image digest, host runtime directory
+  and bar-edge checkpoint for each role before mutation. Because the active
+  Python/Rust images embed the catalog/admission policy, preflight compares
+  their immutable embedded digests to the committed source. Only if they
+  differ, build exactly one Python image and one Rust image from commit
+  `b2c3d5a`; those two shared images replace no role until the sealed packet
+  validates. No V1, Kafka topology/offset, Redis, SQLite, Trading System,
+  alpha or order state is touched by this preflight.
+
+- `2026-08-29 EMBEDDED-CONFIG PREFLIGHT PASS`: three active Python image
+  digests were read in isolated, no-network, read-only containers and each
+  carries a pre-revision-7 catalog/acquisition pair. The committed pair is
+  `c79bd3a8...c643d291` / `5491501f...3328f459`, so a shared Python image
+  from `b2c3d5a` is required for bar-edge, projector, query and stream to
+  resolve the new identities. The running Rust image's provider-admission
+  policy digest is already `e4a4330d...ca8053ad`, equal to the committed
+  policy; its core bindings are mounted runtime JSON. Therefore this packet
+  builds **one** immutable Python image only and reuses the existing Rust
+  image. This is an evidence-based reduction, not a Python fallback or a
+  per-symbol image. The next step is that one build, then sealed-runtime
+  render and the declared 13-role rolling packet.
+
+- `2026-08-29 SEALED RUNTIME RENDER DRY-RUN PASS`: the existing filesystem-only
+  successor renderer accepted the current authority, identity/trust material,
+  exact current rollback map and new immutable Python image. It produced a
+  no-secret dry receipt at catalog `7`, acquisition `14`, with authority bytes
+  preserved and all five approved JWT identities retained. The historical
+  renderer's embedded role list has eleven services because its original
+  Reference/L2 scope excluded `rust_core_2` and `rust_core_3`; it is used here
+  only as the proven sealed-config renderer. The five-liquid execution packet
+  will independently enumerate all thirteen approved existing roles and their
+  captured per-role rollback provenance. That distinction prevents an old
+  narrower packet from silently defining this rollout.
+
+- `2026-08-29 COMPOSE PREFLIGHT FAIL-CLOSED / IN-SCOPE CONFIG REPAIR`: resolving
+  the successor bundle against the current three Rust-core override correctly
+  stopped before any Docker action because the renderer did not carry the
+  existing required selector `QDL_PHASE105C_RUST_CORE_MEMORY_LIMIT`. Read-only
+  inspection proves all three active cores already run at the declared `512m`
+  limit. The only permitted repair is to add that exact non-secret selector to
+  the new private rollout env, atomically, then rerun Compose config
+  validation. No image, service, authority, cache or data-plane change occurs
+  in this repair.
+
+- `2026-08-29 RUNTIME PACKET PRE-FLIGHT PASS / READY TO ROLL`: the sealed
+  five-liquid packet is private state
+  `five-liquid-b2c3d5a-20260829T052838Z/five-liquid-rollout-packet.json`, SHA
+  `33dd7992...b1cc0b7c`. It binds the new Python image
+  `sha256:53db451...c39400b6`, reuses Rust
+  `sha256:e07e6da...1fff05d4`, preserves authority bytes, and contains a
+  verified rollback map for all thirteen approved roles. Compose config passes
+  with exactly those roles, their expected mounts and the existing Rust `512m`
+  limit; a second Compose-only validation proves the generated rollback
+  override resolves every role to its exact pre-roll image/runtime/checkpoint.
+  The first normal market-data writes will occur only after shared Rust core is
+  recreated and healthy; rolling order is core replicas, ingestors, bar edge,
+  projector replicas, then query/stream readers. V1, Kafka topology/offsets,
+  Redis, SQLite, Trading System, alpha, order paths, DNSE/VN, Spot and L2
+  expansion remain excluded.
+
+- `2026-08-29 ROLLING STOP / FAIL-CLOSED`: only `rust_core`, `rust_core_2`
+  and `rust_core_3` were serially recreated from the approved thirteen-role
+  packet. All three started with the preserved `RUST_PRIMARY` authority,
+  revision-14 bindings and `512m` limit, but their bounded counters then showed
+  `canonical=0` while `quarantines` tracked `processed`; `scope_quarantines=0`.
+  A normal Kafka assignment-generation retry recovered, but it does not explain
+  the rejection pattern. The packet is paused before any ingestor, bar-edge,
+  projector, query or stream role is recreated. The next action is one
+  read-only, disposable-group inspection of a bounded quarantine record to
+  identify the strict reason. No offset reset, data deletion, Redis/SQLite
+  mutation, V1, Trading System, alpha or order-path mutation is authorized by
+  this diagnostic. If the reason proves an incompatible core/runtime binding,
+  the preflighted per-role rollback map restores only these three cores.
+
+- `2026-08-29 RAW-REVISION DIAGNOSTIC / ROOT CAUSE CONFIRMED`: a disposable,
+  admin-authorized, manually assigned Kafka tail reader scanned `15` current
+  records across all six `md.raw.realtime.v2` partitions with commits disabled.
+  It observed authority revision `1`, no test provenance and raw instrument
+  catalog revision `6` only, while every rolled Rust-core binding requires
+  catalog revision `7`. This exactly explains the core's zero-scope-quarantine
+  pattern: `RealtimeCore` terminally records valid revision-6 raw as
+  `UNKNOWN_INSTRUMENT` / `instrument catalog revision mismatch`. It is neither
+  a provider failure nor a Rust canonicalization defect. The bounded receipt is
+  aggregate-only (`de7066f0...951c4c51`); it retains no provider frame.
+  **Approved in-scope continuation:** serially recreate only
+  `ingestor_binance_usdm` then `ingestor_okx_swap` from the already sealed
+  revision-7 bundle so newly acquired raw carries catalog `7`; observe the
+  already rolled cores until canonical progress is nonzero and no new
+  quarantine appears. This preserves V1, Kafka topology/offsets, Redis,
+  SQLite, Trading System, alpha, orders, DNSE/VN, Spot and L2 scope. If a
+  rolled ingestor fails readiness, rollback only that role using the recorded
+  map; if current revision-7 raw still quarantines, rollback the three core
+  roles and stop the packet.
+
+- `2026-08-29 REVISION-7 INGEST RECOVERY / PASS`: `ingestor_binance_usdm`
+  and then `ingestor_okx_swap` were serially recreated, each once, from the
+  sealed successor runtime and the existing immutable Rust image. Both are
+  `running`, `restart=0`, `OOMKilled=false`, each mounts its intended
+  revision-7 config with `16` shared bindings. A second disposable read-only
+  tail scan saw `27/27` current raw records across all six partitions at
+  catalog revision `7`, authority revision `1`, zero test provenance
+  (`799710ab...4af4d984`). Rust-core canonical counters then rose on all three
+  replicas while the old revision-6 quarantine counters stopped or converged;
+  no scope rejection occurred. Historical revision-6 quarantine evidence is
+  retained, not deleted. The next approved role is only `binance_bar_edge`,
+  which must materialize the new final-BAR demand before any projector or
+  reader is recreated.
+
+- `2026-08-29 FIVE-LIQUID FINAL-BAR MATERIALIZATION / PASS`: only
+  `binance_bar_edge` was recreated with the sealed revision-7 Python image and
+  runtime. Its authentic provider bootstrap acknowledged exactly `70` final
+  BAR bindings for Binance USD-M and `70` for OKX Swap: each of BTC, ETH, SOL,
+  DOGE and BNB across the declared `14` native intervals. The bounded startup
+  log scan reported zero `ERROR`/`WARNING`; all records are provider-returned,
+  not synthetic. A no-network source count independently confirms the exact
+  140 BAR catalog identities, including native `BTC-USDT-SWAP` rather than a
+  cross-venue alias. Normal bootstrap writes are limited to the already
+  approved V2 Kafka/canonical/cache data plane. Next, serially recreate only
+  `projector_v2`, `projector_v2_2` and `projector_v2_3` so their catalog reader
+  and durable projection move from revision 6 to 7.
+
+- `2026-08-29 PROJECTOR ROLL / PASS`: `projector_v2`, `projector_v2_2` and
+  `projector_v2_3` were recreated serially, one role per operation. Every
+  replica is `running`, `restart=0`, `OOMKilled=false`, mounts the sealed
+  successor runtime and uses Python image `sha256:53db451...c39400b6`.
+  Each completed application startup without a catalog, lineage, TLS or
+  projection error in its bounded startup window. No Kafka offset was reset and
+  no SQLite/Redis state was deleted. The remaining approved reader roll is
+  query replicas first, then `stream_v2_passive` followed by
+  `stream_v2_active`, preserving a standby path while the active lease-holder
+  is replaced.
+
+- `2026-08-29 READER ROLL / PASS`: only `query_v2_1`, `query_v2_2`,
+  `stream_v2_passive`, then `stream_v2_active` were serially recreated from
+  the sealed revision-7 bundle. All four are `running`, `restart=0` and use
+  Python image `sha256:53db451...c39400b6`; the two query replicas and two
+  governed stream aliases remain on `executor_network`. Their bounded startup
+  windows contain no TLS, catalog, lineage, fatal or OOM record. This changes
+  no V1 service, Kafka topology/offset, Redis/SQLite state, Trading System,
+  alpha or order route.
+
+- `2026-08-29 C2 FIVE-LIQUID HANDOFF PREPARED / APPROVED RUNTIME SCOPE`:
+  the remaining step is the existing
+  `phase105_consumer_v2_identity_acceptance.py` harness, not a new consumer
+  framework. It will run once for at most `300` seconds against
+  `query_v2_1:8200`, `query_v2_2:8200` and both governed stream aliases on
+  `executor_network`, with the frozen V1 read route exactly
+  `http://data_layer:8100`. It covers the release-routing manifest's current
+  `28` declared realtime consumer products (Monitoring `4`, Trading System
+  paper `12`, Alpha-Binance paper `6`, Alpha-OKX paper `6`): this is distinct
+  from the `60` logical five-liquid active-demand fixture, which proves
+  admission/materialization but is not an unrecorded deployed consumer route.
+  The 160-product five-liquid price/bar plane has already been materialized;
+  C2 must not claim that a consumer requested a product absent from its
+  checksum-bound release manifest.
+
+  The disposable client uses the immutable Python image, is non-root,
+  `--read-only`, capability-dropped and has only tmpfs state. Docker user
+  namespace mapping cannot safely bind the owner-only external identity files
+  directly to the non-root UID, so the host will stream only the exact four
+  approved client identity files, public server CA, authority record and
+  payload-free V1 evidence into that client's private tmpfs. It receives no
+  Docker socket, provider credential, order/execution credential, persistent
+  cursor or writable host mount. It retains only one payload-free receipt and
+  fresh V1 runtime binding under the private five-liquid evidence namespace;
+  the container and its tmpfs disappear on exit. Invariants are zero order
+  actions, zero direct provider connections, V2 warmup/signed replay/reconnect,
+  permitted `V2 -> V1 -> V2` reads only, and no V1 request for `BLOCKED`
+  routes. Any failure stops this packet; rollback is the already recorded
+  per-role map, while the C2 client itself has no persistent runtime to roll
+  back.
+
+- `2026-08-29 C2 DURABLE-PROJECTION DIAGNOSTIC / MINIMAL REPAIR AUTHORIZED`:
+  C2 reached authenticated V2 query but correctly rejected a non-authoritative
+  provider pass-through response. All three projectors concurrently report
+  `stable canonical ingest rejected http_status=422`, so the durable stream
+  projection, not the consumer identity or V1 fallback, is the blocker.
+  A read-only Kafka scan used the running projector's production interpreter,
+  TLS identity and `stable-projector-v1` committed offsets with commits
+  disabled. It validated `512/512` bounded canonical records against the
+  revision-7 catalog and inline raw lineage: all passed. The stream endpoints
+  and projector also load the identical catalog SHA/revision. The current sink
+  intentionally discards the server's bounded validation detail, leaving no
+  evidence for a domain repair. Approved minimal scope is therefore one
+  source-only diagnostic improvement in `StableHttpCanonicalSink`, with a
+  focused test proving it logs only a bounded server validation reason, never
+  canonical payload or raw provider bytes. It changes neither admission,
+  fallback, data nor order semantics. Only if the test passes will one new
+  immutable Python image be built and only the three projector roles be rolled
+  to expose the exact fail-closed reason; V1, Kafka offsets/topology, Redis,
+  SQLite, stream/query roles, Trading System, alpha and order paths remain
+  untouched. Rollback is the recorded `53db451...c39400b6` projector image map.
+
+- `2026-08-29 SINK DIAGNOSTIC SOURCE EXIT / PASS`: the sink now preserves the
+  fail-closed HTTP status while adding only a normalized `detail=` value capped
+  at `192` characters; long token-like material is replaced with `<redacted>`.
+  The focused, isolated read-only/no-network
+  `StableProjectorRecoveryTests` matrix passed **20/20** in `4.591s`, including
+  malformed inline lineage (`422`) and an oversized server detail (`413`).
+  No public API, event schema, admission rule, fallback rule or provider data
+  behavior changed. The next bounded action is one immutable Python image from
+  this tested source and serial recreation of only the three projector roles;
+  it will expose the existing server-side reason without mutating any other
+  approved component.

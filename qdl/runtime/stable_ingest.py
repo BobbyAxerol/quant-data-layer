@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import re
 import ssl
 import uuid
 from dataclasses import dataclass, field
@@ -26,6 +27,8 @@ from qdl.transport import DurableEvent, SQLiteDurableSpool, StoredEvent
 
 _INGEST_SCHEMA = "qdl.v2.stable-canonical-ingest.v1"
 _RESULT_SCHEMA = "qdl.v2.stable-canonical-ingest-result.v1"
+_MAX_REJECTION_DETAIL_CHARS = 192
+_UNSAFE_REJECTION_TOKEN = re.compile(r"[A-Za-z0-9+/=_-]{33,}")
 
 
 def _signature(secret: bytes, body: bytes) -> str:
@@ -46,6 +49,24 @@ def _internal_url(value: str) -> bool:
             "stream_v2_passive",
             "qdl-stable-stream",
         } or parsed.hostname.endswith(".internal")
+
+
+def _bounded_rejection_detail(response: httpx.Response) -> str:
+    """Return a bounded, payload-safe stable-ingest validation reason."""
+
+    try:
+        body = response.json()
+    except (ValueError, json.JSONDecodeError):
+        return "unavailable"
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if not isinstance(detail, str):
+        return "unavailable"
+    normalized = " ".join(detail.split())
+    if not normalized:
+        return "unavailable"
+    return _UNSAFE_REJECTION_TOKEN.sub(
+        "<redacted>", normalized
+    )[:_MAX_REJECTION_DETAIL_CHARS]
 
 
 def install_stable_canonical_ingest(
@@ -361,7 +382,8 @@ class StableHttpCanonicalSink:
         if isinstance(last_error, httpx.HTTPStatusError):
             raise RuntimeError(
                 "stable canonical ingest rejected "
-                f"http_status={last_error.response.status_code}"
+                f"http_status={last_error.response.status_code} "
+                f"detail={_bounded_rejection_detail(last_error.response)}"
             ) from last_error
         raise RuntimeError(
             "no active stable stream gateway accepted canonical data"
