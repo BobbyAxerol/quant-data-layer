@@ -23105,3 +23105,16 @@ this scope rather than opening a new phase.
   recorded exact role-image rollback map.  On any failed startup/health/C2
   gate, restore those fourteen roles only; never reset the r14 checkpoint or
   any durable data plane.
+
+- `2026-08-29 FULL V2 RUNTIME ROLLOUT / CALENDAR-BOUNDARY IMAGE / BUILT`:
+  committed source revision `4f7bed07670911ba3155ce504dd8201338d56c1a`
+  produced immutable Python image
+  `sha256:b482e31706a1182297caec707545a4f0405fcf8172e6ae841568a5e75c588a09`
+  (`qdl-v2-python:2.0.0-4f7bed0`, matching OCI revision/version labels).
+  The Rust image remains the already-attested unchanged binary
+  `sha256:cfb686cf23fce8bea8c9c29c31630571bb6aad1b3a137f6dae1d28644649951f`.
+  Before runtime mutation, only `QDL_STABLE_PYTHON_IMAGE` in the private
+  successor environment is updated to this new immutable digest; runtime
+  directory, trust/identity files, authority, Kafka, Redis, SQLite, V1 and
+  every rollback image remain unchanged.  The exact fourteen-role rollback
+  map remains SHA-256 `eb16bae1b8714a26b7e70a88f14b5ea29031e06d926e8f30853f108613c5db15`.
