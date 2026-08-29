@@ -231,15 +231,12 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
         }
         self.assertEqual(declared - referenced - reference_served, set())
 
-    def test_reference_only_product_never_weakens_domain_boundaries(self):
+    def test_reference_product_never_weakens_domain_boundaries(self):
         manifest = ConsumerManifestLoader.load(CONSUMER_DIR / "reference-l2-stable.yaml")
         requirement = next(
             item
             for item in manifest.requirements
             if item.feed is FeedType.MARK_INDEX_PRICE
-            and item.instrument_uid not in {
-                binding.instrument.identity.instrument_uid for binding in self.catalog.bindings
-            }
         )
         instrument = self.catalog.instrument_for(requirement.instrument_uid)
         self.assertTrue(reference_requirement_eligible(instrument, requirement))

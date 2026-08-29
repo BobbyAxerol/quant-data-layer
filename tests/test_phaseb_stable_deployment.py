@@ -379,8 +379,11 @@ class StableDeploymentContractTests(unittest.TestCase):
             okx_bbo,
             {
                 "okx-spot-btcusdt-quote": "NONE",
+                "okx-swap-bnb-usdt-swap-quote": "NONE",
                 "okx-swap-btcusdt-quote": "NONE",
+                "okx-swap-doge-usdt-swap-quote": "NONE",
                 "okx-swap-eth-usdt-swap-quote": "NONE",
+                "okx-swap-sol-usdt-swap-quote": "NONE",
             },
         )
 

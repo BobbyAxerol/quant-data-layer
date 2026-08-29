@@ -310,16 +310,18 @@ def build_documents(
     )
 
     promotion_result = deepcopy(dict(promotion_scope))
-    promotion_result["revision"] = int(promotion_result["revision"]) + revision_increment
-    active_bar_ids = {
+    active_price_ids = {
         item.binding_id
         for item in next_catalog.bindings
-        if item.feed.value == "BAR"
+        if item.feed.value in {"BAR", "TRADE", "QUOTE"}
         and (item.instrument.identity.venue, item.instrument.identity.market) in ACTIVE_BAR_FAMILIES
     }
-    promotion_result["binding_ids"] = sorted(
-        set(str(item) for item in promotion_scope["binding_ids"]) | active_bar_ids
+    next_scope_ids = sorted(
+        set(str(item) for item in promotion_scope["binding_ids"]) | active_price_ids
     )
+    if additions or next_scope_ids != list(promotion_scope["binding_ids"]):
+        promotion_result["revision"] = int(promotion_scope["revision"]) + 1
+    promotion_result["binding_ids"] = next_scope_ids
     _load_temporary(
         promotion_result,
         "next-scope.yaml",
@@ -347,6 +349,18 @@ def build_documents(
             "dnse": sum(
                 1 for item in next_catalog.bindings
                 if item.feed.value == "BAR" and item.instrument.identity.venue in {"HNX", "HOSE"}
+            ),
+        },
+        "price_binding_counts": {
+            "binance_usdm": sum(
+                1 for item in next_catalog.bindings
+                if item.feed.value in {"BAR", "TRADE", "QUOTE"}
+                and (item.instrument.identity.venue, item.instrument.identity.market) == ("BINANCE", "USDM")
+            ),
+            "okx_swap": sum(
+                1 for item in next_catalog.bindings
+                if item.feed.value in {"BAR", "TRADE", "QUOTE"}
+                and (item.instrument.identity.venue, item.instrument.identity.market) == ("OKX", "SWAP")
             ),
         },
         "source_catalog_sha256": _sha256_bytes(_yaml_bytes(source_result)),

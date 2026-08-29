@@ -22144,3 +22144,143 @@ authority, route, image, Kafka, Redis, SQLite, provider, Trading System, alpha
 or order state changes are authorized by adding it. Each Phase 11 subphase
 requires explicit user approval, then a plan-journal update before code or
 runtime work begins.
+
+### 22.12 Approved Extension - Five-Liquid Crypto Price/Bar Plane Before Trading System Cutover
+
+**Status:** `APPROVED / IN PROGRESS` (2026-08-29). The owner approved this
+bounded Data Layer extension before promoting V2 into the real Trading System.
+It extends the already-certified BTC/ETH Binance USD-M and OKX Swap price/bar
+surface to the same liquid set: `BTC`, `ETH`, `SOL`, `DOGE`, `BNB`.
+
+**Goal and exact product scope:**
+
+1. Materialize final, closed BARs for all provider-native intervals on the
+   five perpetual instruments per venue: Binance USD-M `BTCUSDT`, `ETHUSDT`,
+   `SOLUSDT`, `DOGEUSDT`, `BNBUSDT`, and OKX Swap `BTC-USDT-SWAP`,
+   `ETH-USDT-SWAP`, `SOL-USDT-SWAP`, `DOGE-USDT-SWAP`,
+   `BNB-USDT-SWAP`.
+2. This yields `70` final-BAR bindings per venue (`5` instruments x `14`
+   native intervals), `140` total, adding exactly `84` bindings to the
+   existing `56` BTC/ETH set.
+3. Materialize the matching realtime `TRADE` and `QUOTE` routes for the three
+   added instruments only: `6` per venue / `12` total. The final price/bar
+   plane therefore contains `160` exact active catalog products (`140` BAR +
+   `20` TRADE/QUOTE) across both venues.
+4. Reference products remain the already-certified five-liquid scope. Rust L2
+   remains deliberately BTC/ETH perpetual-plus-quarterly only; this extension
+   does not create SOL/DOGE/BNB L2 demand, any worker, service or topology.
+
+**Architecture/invariants:** use the existing
+`phase115c_materialize_active_native_bars.py` compiler, shared Binance/OKX
+ingestors, shared Rust core, shared bar edge, catalog/acquisition/authority
+compiler and versioned consumer binding. No symbol-specific process,
+container, topic, Redis namespace, volume or Python bypass is allowed.
+Binance and OKX identities must remain exact and never cross-mix. Every BAR is
+already closed; every query/stream result retains catalog identity, decimal,
+unit, lineage, freshness and gap semantics. V1 remains untouched and remains
+the only rollback route. DNSE/VN, Spot, L2 expansion, Trading System,
+production alpha strategies, signals, sizing and all order paths are excluded.
+
+**Implementation and gates:**
+
+1. Add the explicit `TRADE`, `QUOTE` and seed `BAR 1m` demand rows for the six
+   new venue/instrument pairs to the two versioned demand documents. Run the
+   existing compiler so the remaining native BAR intervals, catalog,
+   acquisition plan, promotion scope and release-route digests are regenerated
+   atomically from committed provider metadata. No hand-authored duplicated
+   per-interval logic.
+2. Add focused regressions proving exactly `70/70` final BAR per venue,
+   `10/10` TRADE+QUOTE per venue, correct native aliases, no disabled Spot or
+   DNSE admission, no L2 growth, no duplicate source identity, and unchanged
+   legacy bindings. Run the relevant contract/catalog/compiler/Rust
+   configuration matrix in an isolated non-root, read-only/no-network image.
+3. Run a bounded real-provider preflight against all added routes: newest
+   already-closed BAR for every added interval, provider-native TRADE/QUOTE
+   observation for each new venue/instrument, identity/finality/decimal/unit
+   checks and provider retry/rate-limit budget. Long intervals are verified
+   from provider-closed historical/bootstrap data; the packet does not wait a
+   week to manufacture a `1w` close. No synthetic datum can certify this gate.
+4. Only after those gates pass, render one sealed runtime revision and record
+   exact image/mount/checkpoint rollback provenance. Recreate only existing
+   V2 data-plane roles needed to load it: `binance_bar_edge`,
+   `ingestor_binance_usdm`, `ingestor_okx_swap`, `rust_core`, `rust_core_2`,
+   `rust_core_3`, `projector_v2`, `projector_v2_2`, `projector_v2_3`,
+   `query_v2_1`, `query_v2_2`, `stream_v2_active`, `stream_v2_passive`.
+   Kafka topology/offsets, Redis flushes, SQLite deletion, V1,
+   Trading System, alpha and order paths are forbidden. Normal real
+   market-data writes for the new bindings are the only permitted data-plane
+   effect. A failed role restores only itself to its recorded image/runtime;
+   no offset or cache reset is permitted.
+5. Run a bounded `300s` V2-only/no-order acceptance with extended sealed
+   Trading-System/alpha-paper identities. Verify all new `TRADE`, `QUOTE` and
+   representative `1m` plus existing consumer intervals, signed warmup/replay
+   /reconnect, final-BAR replica equality, quality gaps, CPU/RAM/lag, exact
+   V1 fallback policy and zero direct-provider client/order/signal/sizing
+   actions. Clean only the disposable evidence namespace.
+
+**Decision boundary and exit:** success is a compact source/test report,
+real-provider receipt, exact role rollback map and no-order receipt proving
+the `160` product price/bar plane. It authorizes the later, separate Trading
+System V2-primary cutover; it does not itself promote any Trading System or
+strategy consumer. Any provider inconsistency, gap, identity mismatch,
+unexpected role/topology change or resource regression fails closed and stops
+this scope rather than opening a new phase.
+
+**Implementation journal:**
+
+- `2026-08-29 PRE-FLIGHT FAIL-CLOSED / SOURCE ONLY`: the existing compiler
+  correctly rejected the initial five-liquid seed because the committed August
+  22 filtered Binance USD-M and OKX Swap captures retain only BTC/ETH. It
+  raised `authoritative metadata missing demanded instrument:
+  ('BINANCE', 'USDM', 'BNBUSDT')`; no catalog, acquisition plan, runtime,
+  provider data-plane, V1, consumer or order state changed. The in-scope
+  correction is to refresh only the two filtered provider captures from one
+  bounded real public metadata read per venue, preserve verbatim selected
+  rows plus full-response/filtered hashes in provenance, then re-run the same
+  compiler. It is explicitly forbidden to infer tick, lot or identity from
+  the existing declared catalog.
+
+- `2026-08-29 SOURCE + REAL-PROVIDER GATES PASS / RUNTIME PENDING`: refreshed
+  exactly the two required filtered captures from bounded public reads, then
+  retained only the five verbatim perpetual rows per venue. Binance USD-M
+  full/filtered SHA-256 is `160c4857...c7b97a08` / `7f7c387e...4a71f702`;
+  OKX Swap is `afa3702b...c9f3f7` / `506de7a...74cfe0`. Per-capture timestamps
+  and byte/hash provenance are committed in
+  [captures/provenance.json](config/v2/captures/provenance.json); no full
+  response, synthetic tick/lot or provider payload was retained.
+- Added the six explicit seed triplets (`TRADE`, `QUOTE`, `BAR 1m`) to stable
+  demand and all matching no-order paper consumer routes. The shared compiler
+  first added `78` missing BAR requirements beside the existing BTC/ETH
+  intervals and rendered catalog revision `7`, acquisition revision `14`,
+  demand revision `3` and release-route hashes. A second fail-closed compiler
+  correction made the authority scope price-plane complete: it now includes
+  `BAR`, `TRADE` and `QUOTE`, not BAR alone, at promotion-scope revision `6`
+  (`a2233af0...0ae2c985`). It is idempotent after this render.
+- The resulting exact surface is `70` final BARs plus `10` TRADE/QUOTE per
+  venue, `160` price/bar catalog products total. Rust L2 bindings did not
+  grow; Spot, DNSE/VN, V1, Trading System, alpha, orders, Kafka, Redis and
+  SQLite remained unchanged. The C2 sealed-demand fixture is exactly `60`
+  logical paper routes: Trading System `30`, Binance alpha `15`, OKX alpha
+  `15`, with exact `BAR=15`, `QUOTE=5`, `TRADE=10` budgets for each venue.
+- **Source/config tests:** isolated non-root, read-only/no-network Python
+  matrix passed `47/47`: native-bar compiler, five-liquid sealed handoff,
+  catalog regeneration, catalog-demand boundaries and stable deployment
+  configuration. The focused tests also corrected two stale assertions: order
+  of YAML requirements is non-semantic, and the price-plane regeneration test
+  must not claim ownership of separately governed dated L2/reference catalog
+  records. No Rust source changed; the stable Rust core binding/config path is
+  covered by the stable deployment matrix, and no new Rust compile result is
+  claimed for this configuration-only slice.
+- **Authentic provider evidence:** the bounded read-only preflight over the
+  three new symbols on each venue passed `96/96` in `16.352s`: `84` provider
+  final closed BARs (`42` Binance USD-M + `42` OKX Swap), `12` multiplexed
+  native TRADE/QUOTE observations, zero metadata-admission failures and zero
+  missing source timestamps. It used eight native sessions, `1.830s` process
+  CPU and `174808 KiB` peak RSS; it wrote no runtime/durable data. Receipts:
+  [realtime](upgrade/evidence/phase115c-five-liquid-provider-realtime.json)
+  and [metadata](upgrade/evidence/phase115c-five-liquid-provider-metadata.json).
+- **Next permitted step:** build/render the sealed runtime revision from these
+  committed artifacts, record its exact image/mount/checkpoint rollback map,
+  then perform only the 13-role rolling packet and the scoped 300-second
+  V2-only/no-order C2 acceptance. This journal entry does not authorize
+  Trading System cutover or any order action.

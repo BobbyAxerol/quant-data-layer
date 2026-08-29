@@ -21,7 +21,11 @@ CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 DEMAND_PATH = ROOT / "config/v2/stable-crypto-demand.yaml"
 CAPTURES = ROOT / "config/v2/captures"
 PROVENANCE = CAPTURES / "provenance.json"
-CRYPTO_VENUES = {"BINANCE", "OKX"}
+# This builder is fed only the stable price/bar demand capture.  Dated futures
+# used by the independently governed L2/reference product are deliberately
+# retained in the stable catalog but are not a false claim that this narrow
+# price-plane regeneration owns their metadata.
+REGENERATED_PRODUCT_TYPES = {"SPOT", "PERPETUAL"}
 
 # Fields where the committed catalog disagrees with the provider capture that
 # regenerates it. Each was verified directly against the raw provider response,
@@ -101,7 +105,7 @@ class CatalogRegenerationTests(unittest.TestCase):
         self.committed = {
             item["instrument_id"]: item
             for item in raw["instruments"]
-            if item["venue"] in CRYPTO_VENUES
+            if item["product_type"] in REGENERATED_PRODUCT_TYPES
         }
 
     def test_the_same_instrument_set_is_produced(self):

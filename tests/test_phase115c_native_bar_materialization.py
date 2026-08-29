@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections import Counter
 from copy import deepcopy
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 
@@ -23,6 +25,16 @@ def _module():
 
 
 class Phase115CNativeBarMaterializationTests(unittest.TestCase):
+    @staticmethod
+    def _canonical_demand(payload: dict) -> dict:
+        result = deepcopy(payload)
+        for consumer in result["consumers"]:
+            consumer["requirements"] = sorted(
+                consumer["requirements"],
+                key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+            )
+        return result
+
     @staticmethod
     def _before_materialization(
         demand: dict,
@@ -142,24 +154,54 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         }
 
     def test_exact_active_native_interval_sets_are_materialized(self) -> None:
-        for symbol in ("BTCUSDT", "ETHUSDT"):
+        for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"):
             self.assertEqual(
                 self._intervals("BINANCE", "USDM", symbol),
                 set(BINANCE_USDM_NATIVE_INTERVALS),
             )
-        for symbol in ("BTC-USDT-SWAP", "ETH-USDT-SWAP"):
+        for symbol in (
+            "BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP",
+            "DOGE-USDT-SWAP", "BNB-USDT-SWAP",
+        ):
             self.assertEqual(
                 self._intervals("OKX", "SWAP", symbol),
                 set(OKX_NATIVE_INTERVALS),
             )
-        self.assertEqual(self.summary["demand_additions"], 52)
+        self.assertEqual(self.summary["demand_additions"], 130)
         self.assertEqual(self.summary["bar_binding_counts"], {
-            "binance_usdm": 28, "okx_swap": 28, "dnse": 2,
+            "binance_usdm": 70, "okx_swap": 70, "dnse": 2,
         })
-        self.assertEqual(self.demand, self.current_demand)
+        self.assertEqual(self.summary["price_binding_counts"], {
+            "binance_usdm": 80, "okx_swap": 80,
+        })
+        self.assertEqual(
+            self._canonical_demand(self.demand),
+            self._canonical_demand(self.current_demand),
+        )
         self.assertEqual(self.catalog, self.current_catalog)
         self.assertEqual(self.acquisition, self.current_acquisition)
         self.assertEqual(self.scope, self.current_scope)
+
+    def test_five_liquid_price_plane_has_exact_trade_quote_counts_without_l2_growth(self) -> None:
+        product_counts = Counter(
+            (item.instrument.identity.venue, item.instrument.identity.market, item.feed.value)
+            for item in self.loaded_catalog.bindings
+            if (item.instrument.identity.venue, item.instrument.identity.market)
+            in {("BINANCE", "USDM"), ("OKX", "SWAP")}
+        )
+        self.assertEqual(product_counts[("BINANCE", "USDM", "TRADE")], 5)
+        self.assertEqual(product_counts[("BINANCE", "USDM", "QUOTE")], 5)
+        self.assertEqual(product_counts[("OKX", "SWAP", "TRADE")], 5)
+        self.assertEqual(product_counts[("OKX", "SWAP", "QUOTE")], 5)
+        current_l2 = {
+            item["binding_id"] for item in self.current_catalog["bindings"]
+            if str(item["feed"]).startswith("BOOK_")
+        }
+        materialized_l2 = {
+            item.binding_id for item in self.loaded_catalog.bindings
+            if item.feed.value.startswith("BOOK_")
+        }
+        self.assertEqual(materialized_l2, current_l2)
 
     def test_every_active_bar_is_rest_owned_with_exact_venue_channel(self) -> None:
         source_by_id = {item.binding_id: item for item in self.loaded_catalog.bindings}

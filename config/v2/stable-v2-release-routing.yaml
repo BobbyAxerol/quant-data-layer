@@ -1,14 +1,14 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 5
+revision: 6
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
-  sha256: 94200f3e9739c2d7b0c60cd2819b02a31c9f620277fb6b31e88bc18d4c41e98c
-  revision: 6
+  sha256: c79bd3a89b8179a639d8557adb0b7fd937dd135201c4c84be465572bc643d291
+  revision: 7
 crypto_demand:
   path: /app/config/v2/stable-crypto-demand.yaml
-  sha256: 667ef17dfb7227a40e835ef455f8e4c8bdea1e917706489b70682d4996e9a4a1
-  revision: 2
+  sha256: 45d56cc95fc6ef6dfec6ec56739e0254c679b1c5a02e4d4ea63ecfe0af044b81
+  revision: 3
 capability_matrix:
   path: /app/config/v2/stable-capabilities.yaml
   sha256: 81347a88866a54ed99cfbf25979d8e5912c98084f97f8a997a608dc9e03af6bf
@@ -29,7 +29,7 @@ consumers:
   manifest: /app/consumers/stable/monitoring-multivenue.yaml
   manifest_revision: 2
   manifest_sha256: eaf828db40cac3b256fee087fa4cb7730fcb4894c9300ce4a319433aec4d88ea
-  demand_revision: 2
+  demand_revision: 3
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
@@ -55,7 +55,7 @@ consumers:
   manifest: /app/consumers/stable/alpha-binance-paper.yaml
   manifest_revision: 4
   manifest_sha256: f7c722d0485d9ae3c422afd961c1a870576766e915a87343b0056792e3cc2b6a
-  demand_revision: 2
+  demand_revision: 3
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:BAR:1m:crypto_primary_v2
     route: V2_PRIMARY
@@ -85,7 +85,7 @@ consumers:
   manifest: /app/consumers/stable/alpha-okx-paper.yaml
   manifest_revision: 4
   manifest_sha256: 22c408a1e4d54a9ad580481018a81a62a2a17dc25778f6bac67ffa14f5eb0b8c
-  demand_revision: 2
+  demand_revision: 3
   products:
   - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:BAR:1m:crypto_primary_v2
     route: V2_PRIMARY
@@ -115,7 +115,7 @@ consumers:
   manifest: /app/consumers/stable/alpha-vn-paper.yaml
   manifest_revision: 1
   manifest_sha256: f2f03f87bfeb775d90099e0bdb38ee9b158ee1506dd333581ef54635e20d3e2a
-  demand_revision: 2
+  demand_revision: 3
   products:
   - requirement_key: d0ac3d4c-2374-5690-8af5-b970448f91d3:BAR:1m:vn_primary_v2
     route: V1_PRIMARY
@@ -129,7 +129,7 @@ consumers:
   manifest: /app/consumers/stable/trading-system-paper.yaml
   manifest_revision: 2
   manifest_sha256: 3449a750093da3ac54673807a35e5f74db5d51d64c8d641d6f092c920da92ac0
-  demand_revision: 2
+  demand_revision: 3
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
