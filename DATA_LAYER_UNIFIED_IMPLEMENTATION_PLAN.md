@@ -22799,3 +22799,56 @@ this scope rather than opening a new phase.
   `tests.test_phase105_stable_release`: `26/26 PASS` in `8.505s`.
   `git diff --check` passed. No runtime container, store, client namespace or
   payload evidence was created by this source validation.
+
+- `2026-08-29 C2 FIVE-LIQUID READER HANDOFF / APPLIED; ACCEPTANCE PENDING`:
+  the operator approved one immutable Python build from
+  `d257a15d64c689aaab17de25ef7c791bfd2aca5b`, followed by a serial rolling
+  recreate of exactly `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+  `stream_v2_passive`. The resulting image is
+  `sha256:88b872403ef367ffde134c1e4d166bcf4b64547ff59570805bdba333c51f773b`.
+  Each named reader is `running`, `restart=0`, `OOMKilled=false`; the query
+  healthcheck is healthy. Read-only inspection of the embedded manifests
+  confirms Trading System paper revision `3`, alpha-Binance paper revision
+  `5`, and alpha-OKX paper revision `5`.
+
+  The existing sealed `/runtime` mount, TLS, Kafka, Redis, SQLite, V1,
+  Rust/ingestor/projector roles, Trading System, alpha and order path were not
+  recreated or changed. The precise rollback remains the previous immutable
+  reader image `sha256:53db451bea9338bdf429a8f0fd3d22e84663398137adf750a9227006c39400b6`
+  with the same runtime mount, applied only to these same four reader roles.
+  A fresh V1 serving-image binding has been written under the private C2
+  evidence namespace. The sole remaining in-scope action is one 300-second,
+  non-root, read-only, tmpfs-identity C2 acceptance for the exact three
+  selected paper identities and 60 logical routes; its client will be removed
+  after retaining only a payload-free receipt.
+
+- `2026-08-29 C2 FIVE-LIQUID ACCEPTANCE / FAIL-CLOSED; CLEANED`:
+  the single approved disposable C2 client started against the newly rolled
+  readers but stopped before its observation window at
+  `trading-system.paper.stable / OKX.SWAP.PERPETUAL.DOGE-USDT / TRADE` with
+  `required data exceeds its freshness policy`. It did not reach the
+  V2-to-V1 fallback drill. The client had no provider or order credentials;
+  no order path, V1 service, Kafka, Redis, SQLite, V2 reader, Trading System
+  or alpha process was mutated. The client, its tmpfs-only identities and the
+  zero-byte failed receipt were removed. The named private evidence namespace
+  was then removed after recording its fresh V1-binding digest
+  `3830f1f92acc9962874bea0a964834ad07a7a9d45dc16b853d1ac503a90d736f`.
+
+  **Root cause (read-only evidence):** the DOGE route is active, not missing:
+  its query cache held `10,000` recent records and advanced from a 9.136-second
+  age to 1.428 seconds on the next sample. But its declared TRADE SLA is
+  `3,000 ms`; a 30-second cache measurement observed ages `124..11,136 ms`,
+  with `16/30` samples over that bound and committed-event gaps up to
+  `14.372 s`. A trade feed is event-driven, so a quiet interval is not by
+  itself a provider/connection failure. The current contract incorrectly uses
+  last-trade-event age as transport liveness for this class.
+
+  **Decision boundary:** do not silently relax the `3,000 ms` value and do
+  not run a second C2 receipt merely to catch a favorable instant. The
+  required narrow correction is to model TRADE freshness separately from
+  provider-session/heartbeat freshness (and retain last-event age as market
+  recency), then add deterministic contract tests for quiet-but-connected,
+  disconnected and genuinely stale paths. Only after that source correction
+  is reviewed may a new one-shot C2 acceptance be requested. This failure is
+  therefore an in-scope data-quality blocker, not evidence that the 60 route
+  manifests or DOGE ingestion are absent.
