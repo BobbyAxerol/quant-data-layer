@@ -22497,3 +22497,247 @@ this scope rather than opening a new phase.
   this tested source and serial recreation of only the three projector roles;
   it will expose the existing server-side reason without mutating any other
   approved component.
+
+- `2026-08-29 PROJECTOR RECOVERY / C2 RETRY BASIS`: one immutable Python image
+  `sha256:7eb4cfd6...2e0857abe` was built from tested commit `89ac070` and only
+  `projector_v2`, `projector_v2_2` and `projector_v2_3` were serially
+  recreated. All are running, `restart=0`, `OOMKilled=false`; the initial
+  `Kafka assignment changed before stable checkpoint` records are expected
+  cooperative-rebalance recovery, not a data rejection. The former `422` did
+  not recur. The first clean C2 retry then correctly failed closed while the
+  projector cache was converging: `trading-system.paper.stable / OKX BTC 1m`
+  had unequal final-BAR warmup fingerprints. A subsequent disposable,
+  non-root, V2-only read of that exact route found both query replicas equal
+  across `1000` rows, first/last content hashes and full warmup fingerprint;
+  both latest records are `OKX_DIRECT / PRIMARY / authoritative / LIVE`,
+  complete and gap-free. No source policy was relaxed. One final fresh C2 run
+  is therefore justified only after this observed convergence; failure remains
+  terminal for this packet. Failed client namespaces retain no payload and are
+  cleaned only after its result is journaled.
+
+- `2026-08-29 C2 FINAL DIAGNOSIS / BOUNDED DURABLE-BAR REPAIR`: the final C2
+  retry correctly stopped at `alpha.binance.paper.stable / BTCUSDT / BAR 15m`,
+  not at identity, TLS, V1 fallback or a provider failure. A direct read from
+  the serving `query_v2_1` spool found `1001` real canonical rows but exactly
+  three missing closed opens (`2026-08-28T06:15Z`, `06:30Z`, `06:45Z`) in the
+  requested 500-row horizon. Its result was therefore `PARTIAL/GAPPED`, while
+  the binding and all retained rows remained `BINANCE_DIRECT / PRIMARY /
+  authoritative`. `FRESH_SNAPSHOT` then correctly permits the router to return
+  a non-authoritative provider pass-through response, which C2 correctly
+  refuses for this declared durable V2 route. This is historical projection
+  fallout from the now-fixed `422` ingest rejection, not a new source-policy
+  defect. The approved minimal recovery is to recreate **only** the existing
+  `binance_bar_edge` with a new bounded checkpoint path and the already
+  running immutable Python image. It replays the provider-authentic bounded
+  final-BAR bootstrap through the existing Kafka -> Rust -> projector path;
+  it does not edit SQLite, reset offsets, create a service/image/topic, or
+  touch V1, Trading System, alpha or order paths. Exit is the exact 15m spool
+  window `FULL/LIVE/gap_free`, projector catch-up without new rejection, then
+  one fresh C2 run. Rollback recreates only `binance_bar_edge` with its
+  recorded prior checkpoint and current image; no data deletion is allowed.
+
+- `2026-08-29 BAR-EDGE REPAIR RESULT / TARGETED CANONICAL REPLAY PENDING`:
+  recreating only `binance_bar_edge` with a fresh private checkpoint completed
+  a provider-authentic bootstrap of `140` bindings / `122,945` rows and left
+  the role `running`, `restart=0`, `OOMKilled=false`. It cannot repair the
+  three historical cache holes by itself: Rust correctly deduplicates the
+  already-canonical BAR event IDs, while the prior projector had advanced past
+  those events during the old `422` sink rejection. The valid bounded repair
+  is therefore **not** an offset reset, direct SQLite write, source-ID change,
+  or another service. It is a one-shot, in-place projector-runtime operation:
+  read only the three exact canonical Kafka records by instrument/binding/open
+  time using a disposable no-commit consumer; validate event ID, catalog
+  identity and inline raw lineage; then submit those same three canonical
+  bytes through the existing active stream internal ingest endpoint. The
+  endpoint remains idempotent and returns its durable offsets. Any missing,
+  ambiguous, invalid or non-three-record selection fails closed before write.
+  The operation records only event-ID digests, partition/offset and result
+  counts, never payloads or credentials. It changes no consumer offset,
+  authority, catalog, image, container, V1, Trading System, alpha or order
+  route. Exit remains exact 15m `FULL/LIVE/gap_free` on both query replicas
+  before one final C2.
+
+- `2026-08-29 TARGETED CANONICAL REPLAY CORRECTION / APPROVED BOUNDED
+  EXECUTION`: a full read-only continuity audit of the same durable partition
+  corrected the earlier narrow diagnosis.  The cache has one contiguous
+  `93`-BAR gap, from `2026-08-28T06:15:00Z` through
+  `2026-08-29T05:15:00Z`; it is one historical projector-`422` checkpoint
+  skip, not a new provider or final-BAR defect.  The prior count of three was
+  limited to a short inspection window and is superseded by this exact audit.
+  The original records remain in `md.canonical.v2`, partition `2`, in the
+  bounded historical bootstrap range beginning at offset `4267334`.
+
+  **Approved repair invariant:** a one-shot operator process inside the
+  already-running `projector_v2` role manually assigns a no-commit reader to
+  that bounded Kafka range, selects exactly the 93 expected open times,
+  validates key, canonical event ID, final BAR interval and inline raw-provider
+  lineage, then republishes the *identical canonical bytes and headers* through
+  the existing Rust-core Kafka writer identity.  This appends normal canonical
+  replay records with fresh Kafka offsets; it never changes an event ID,
+  source, payload, cache row, consumer offset, authority, image, container,
+  topic, Redis, SQLite, V1, Trading System, alpha or order path.  It must fail
+  closed unless the selected set is exactly 93 unique records and the existing
+  spool contains none of their event IDs.  The direct stream endpoint is
+  deliberately excluded because it would not restore the Kafka-authoritative
+  canonical log.  Evidence is limited to counts, offset range, event-ID
+  digests and payload hashes.  Exit is both query replicas reporting the exact
+  500-row `15m` history as `FULL/LIVE/gap_free`, then one final C2 no-order
+  run.  The only rollback is to stop the operator process before publish; no
+  deletion or offset reset is permitted after durable replay.
+
+  **Read-only selection result:** the first bounded scan proved the durable
+  cache had already materialized `85/93` records asynchronously after the
+  projector recovery.  Continuity must be evaluated by BAR `open_time`, not
+  append offset: the remaining exact set is `8` opens from
+  `2026-08-28T06:15:00Z` through `2026-08-28T08:00:00Z`.  Therefore the write
+  step is narrowed further: select all 93 from the original range, subtract
+  event IDs already present in the shared spool, and publish only the eight
+  byte-identical canonical records whose raw-lineage header validates.  An
+  existing Rust-core writer credential completed Kafka metadata preflight
+  against the six-partition canonical topic; no record, offset, service or
+  cache mutation occurred during this selection/preflight.
+
+- `2026-08-29 C2 CLIENT CERTIFICATE PREFLIGHT / FAIL-CLOSED`: the first final
+  C2 client exited in `8.3s` before producing a receipt or beginning its
+  observation window.  It reached `query_v2_1` but the mTLS server correctly
+  closed the connection for `trading-system.paper.stable`: the invocation
+  mistakenly supplied the expired original client certificate
+  (`notAfter=2026-08-22T17:39:25Z`).  This is test-client material selection,
+  not a query, Rust, provider, fallback or data-plane defect.  An already
+  sealed rotated Trading System identity with the same approved subject and
+  JWT key lineage is present at
+  `bundle/identities-rotate-20260822T144323Z/trading-system`, valid until
+  `2026-11-20T14:43:25Z`.  The retry may replace only that C2 tmpfs input
+  path; it does not deploy or alter Trading System identity material, V1,
+  Kafka, Redis, SQLite, projectors, query/stream roles, alpha or order paths.
+
+- `2026-08-29 FINAL 15M CONTINUITY CHECK / TWO-RECORD RESIDUAL`: after the
+  eight-record repair, the serving `500`-row BTCUSDT `15m` cache window was
+  still `PARTIAL`: only `2026-08-28T08:15:00Z` and `08:30:00Z` remained
+  absent.  This is within the already-approved historical `93`-bar recovery
+  range, not a new feed gap.  A direct-assigned, `enable.auto.commit=false`
+  read using the already-authorized `stable-projector-v1` group (no subscribe,
+  group join or offset commit) selected exactly the two originals in canonical
+  partition `2`, offsets `4268250..4268251`.  Both passed partition-key,
+  event-ID header, inline raw-provider lineage, `15m` and finality validation;
+  only short IDs `e786dad575c2` and `3cbbaf0b1283` are retained.  The next
+  bounded operation is the same byte-identical Kafka-authoritative replay for
+  those two records only, after an event-ID absence preflight against the
+  shared spool.  Any duplicate, missing raw lineage, wrong identity or missing
+  delivery ACK fails closed before completion.
+
+- `2026-08-29 TWO-RECORD CANONICAL REPAIR / CACHE HEALED`: spool absence
+  preflight passed for both selected event IDs.  They were published once with
+  the existing Rust-core Kafka writer mTLS identity to the same canonical
+  partition, preserving their original key, event IDs, payload bytes and raw
+  lineage headers.  The operator callback's optional delivery bookkeeping
+  could not read producer-returned headers and raised after broker ACK, so no
+  blind retry was attempted.  A subsequent read-only shared-spool audit is the
+  authority evidence: both short IDs now exist exactly once at logical offsets
+  `2067` and `2068`; the governed `500`-row BTCUSDT `15m` window has
+  `gap_count=0`, `missing_total=0`.  No consumer offset reset, direct SQLite
+  edit, payload regeneration, V1 change, service roll, Trading System/alpha
+  change or order action occurred.  The failed C2 client was an exact scoped
+  tmpfs container and has been removed; it retained no persistent receipt.
+  Next permitted operation: one fresh no-order C2 run after this canonical
+  continuity result, then cleanup of that exact client namespace.
+
+- `2026-08-29 C2 REPLAY-HARNESS CORRECTION / SOURCE-ONLY`: the post-repair C2
+  warmup now passes the strict authoritative/live 15m BAR check, then stops in
+  its own reconnect assertion.  The helper consumes exactly one resumed BAR
+  and incorrectly assumes it must already equal the strict warmup watermark.
+  That assumption is invalid for a durable log containing valid historical
+  repair records after the cursor seed: the stream is ordered and gap-free,
+  but needs more than one retained event to converge.  Approved narrow fix:
+  drain and acknowledge a bounded maximum of `16` resumed BAR records, validate
+  each with the unchanged historical-quality rules, and require the terminal
+  offset to reach the strict watermark.  Exceeding the bound or a nonmonotonic
+  offset remains fail-closed.  This is a source/test harness correction only;
+  no V2 runtime role, public contract, source policy, consumer route or market
+  data is changed.
+
+  **Source gate (`PASS`)**: the edited module's syntax gate and the exact
+  historical replay regressions passed `2/2` in an existing immutable Python
+  image with source mounted read-only, network disabled, non-root, read-only
+  root and tmpfs-only state.  The broader harness module currently has one
+  pre-existing packet-fixture failure (`authority promotion scope differs from
+  the sealed packet fence`) outside this replay scope; it was not changed or
+  concealed.  The final C2 rerun will use this tested source only in its
+  disposable client, not deploy it into any V2 role.
+
+- `2026-08-29 FIVE-LIQUID BINANCE 15M READ-ONLY AUDIT`: C2 advanced through
+  repaired BTCUSDT and exposed the same historical projector-skip signature on
+  ETHUSDT.  A compact read-only audit of the five active Binance USD-M `15m`
+  partitions shows BTCUSDT, SOLUSDT, DOGEUSDT and BNBUSDT `gap_count=0`; only
+  ETHUSDT has exactly eight missing opens, `2026-08-28T06:15:00Z` through
+  `08:00:00Z`.  The allowed recovery is one ETH-only bounded batch using the
+  already-approved canonical replay invariant.  It must select exactly those
+  eight source records, prove all eight event IDs are absent from the shared
+  spool, preserve raw lineage/key/payload/event ID and wait for all delivery
+  ACKs; then the same five-partition read-only audit must be clean before C2
+  resumes.  No broad rebootstrap, offset reset, SQLite edit or per-symbol
+  service is allowed.
+
+- `2026-08-29 ETHUSDT 15M REAL-PROVIDER RECOVERY / C2 RESUME`: the original
+  eight canonical source records were selected correctly at
+  `md.canonical.v2/5:35782146..35782153`, but that short-retention topic
+  advanced to low watermark `35822893` before replay.  The operator therefore
+  did **not** manufacture rows, edit SQLite, or retry a vanished canonical
+  selection.  It used the existing Binance BAR-edge vendor adapter with the
+  sealed catalog/acquisition/authority lineage to fetch exactly eight closed
+  `ETHUSDT 15m` bars from Binance REST for `2026-08-28T06:15Z..08:00Z` and
+  publish their authentic raw envelopes once to `md.raw.realtime.v2/3`
+  (`1225428..1225435`).  Rust core then canonicalized them normally.  The
+  producer returned `8/8` durable ACKs; both query replicas now contain all
+  eight original canonical event IDs at logical offsets `2061..2068`.  The
+  recovery wrote only these normal raw/canonical data-plane events; it changed
+  no V1 role, Kafka consumer offset/topology, Redis, direct SQLite row,
+  Trading System, alpha or order path.  The next and final scope operation is
+  one disposable C2 no-order run, followed by deletion of that client only.
+
+- `2026-08-29 C2 FIVE-LIQUID DURABLE RECOVERY AND FINAL ACCEPTANCE / PASS`:
+  before the final retry, a catalog-driven, read-only audit of every durable
+  BAR route declared by the C2 release manifest found four residual historical
+  projector holes: Binance `ETHUSDT 1m` (`22`), OKX `ETH-USDT-SWAP 1m`
+  (`22`), OKX `BTC-USDT-SWAP 1h` (`2`) and OKX `ETH-USDT-SWAP 1h` (`2`).
+  The recovery used the existing sealed Binance/OKX BAR-edge vendor adapters
+  and published exactly `48` authentic, already-closed provider raw envelopes
+  once through the normal `raw -> Rust canonical -> projector` data plane.
+  It received durable broker acknowledgements on raw partitions `0,1,3,5` and
+  retained only route counts, offset range and capture digests in operator
+  output.  No row was generated or edited; no Kafka offset was reset; and no
+  V1 role, topology, Redis/SQLite state, Trading System, alpha or order path
+  changed.  After projector catch-up, the same read-only catalog audit proved
+  all `12/12` declared durable BAR routes have `gap_count=0`.
+
+  A fresh disposable C2 client then passed the exact existing no-order
+  acceptance harness in `81.537s`: `28/28` declared products were durable
+  V2-primary reads, signed cursor replay/reconnect completed and the cursor
+  directory was removed.  It recorded `provider_connections=0` and
+  `order_actions=0`; the six explicitly allowed Binance trade fallback routes
+  exercised `V2 -> V1 -> V2`, while all `22` blocked routes made `0` V1
+  requests.  The bounded release observation reported `72` CPU millicores and
+  `187,371,520` RSS bytes.  Receipt-only evidence is private mode `0600` at
+  `successor/evidence/c2-final-five-liquid-20260829T094000Z/receipt.json`
+  (`sha256=fd98597d082f0fe2a6cf389076f6a5fe9c8dad7fce8511e7c3e126147a6262f1`).
+  The client ran non-root, read-only, cap-drop, pids/memory/CPU bounded and
+  with tmpfs-only identities; it was removed after copying only this
+  payload-free receipt.  V1, the running V2 roles and all durable stores stay
+  intact.  This closes the approved C2 no-order acceptance scope for the
+  current five-liquid paper release; it does not claim a broker/order-path
+  certification or silently promote any unbound consumer route.
+
+  **Final source regression (`PASS / BOUNDED`):** an in-memory syntax compile
+  plus all three `Phase103HistoricalBarReplayResumeTests` passed in the
+  existing immutable Python image with network disabled, non-root, read-only
+  root and tmpfs-only state.  The full C2 harness module ran `13` tests and
+  has exactly one already-recorded, unrelated fixture error in
+  `test_harness_rejects_an_expired_or_tampered_packet_before_sdk_io`
+  (`authority promotion scope differs from the sealed packet fence`); the
+  historical replay change introduced no additional failure.  That fixture is
+  outside this closed C2 repair scope and was not modified.
+
+  **Post-acceptance runtime sanity (`PASS / READ-ONLY`):** all three
+  projectors, two queries, two streams and three Rust core replicas remained
+  `running`, `restart=0`, `OOMKilled=false`; no disposable `qdl_c2_final_*`
+  container remains.

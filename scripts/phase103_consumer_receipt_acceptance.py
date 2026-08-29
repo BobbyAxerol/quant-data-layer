@@ -23,6 +23,12 @@ from pathlib import Path
 from typing import Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# A historical alpha BAR seed normally replays one retained event. A bounded
+# repair can append a few older canonical records after that seed, so C2 must
+# consume through the strict snapshot watermark rather than assume one event
+# is enough. This is acceptance-only, never an unbounded consumer catch-up.
+_MAX_HISTORICAL_REPLAY_CATCHUP_EVENTS = 16
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -375,33 +381,47 @@ async def _stream_resume(
             stream_requirement,
             resume_restored_state=True,
         ) as session:
-            resumed, resumed_controls = await _next_data(
-                session,
-                timeout_seconds=event_timeout_seconds,
+            acknowledged_offset = first_offset
+            resumed_controls: list[str] = []
+            maximum = (
+                _MAX_HISTORICAL_REPLAY_CATCHUP_EVENTS
+                if historical_replay
+                else 1
             )
-            resumed_view = market_data_view_from_stream(
-                resumed,
-                template=session.warmup.data[-1],
-                requirement=stream_requirement,
-            )
-            validate_product_view(
-                product,
-                resumed_view,
-                require_current_quality=not historical_replay,
-            )
-            validate_resume_offsets(
-                acknowledged_offset=first_offset,
-                resumed_offset=resumed.logical_offset,
-            )
-            if (
-                strict_watermark is not None
-                and resumed.logical_offset < strict_watermark
-            ):
-                raise AssertionError(
-                    "historical BAR replay did not converge through the strict current watermark"
+            for _ in range(maximum):
+                resumed, controls = await _next_data(
+                    session,
+                    timeout_seconds=event_timeout_seconds,
                 )
-            session.acknowledge(resumed)
-            return first_offset, resumed.logical_offset, tuple(first_controls + resumed_controls)
+                resumed_controls.extend(controls)
+                resumed_view = market_data_view_from_stream(
+                    resumed,
+                    template=session.warmup.data[-1],
+                    requirement=stream_requirement,
+                )
+                validate_product_view(
+                    product,
+                    resumed_view,
+                    require_current_quality=not historical_replay,
+                )
+                validate_resume_offsets(
+                    acknowledged_offset=acknowledged_offset,
+                    resumed_offset=resumed.logical_offset,
+                )
+                session.acknowledge(resumed)
+                acknowledged_offset = resumed.logical_offset
+                if (
+                    strict_watermark is None
+                    or acknowledged_offset >= strict_watermark
+                ):
+                    return (
+                        first_offset,
+                        acknowledged_offset,
+                        tuple(first_controls + resumed_controls),
+                    )
+            raise AssertionError(
+                "historical BAR replay did not converge through the strict current watermark"
+            )
     finally:
         await resumed_client.close()
 

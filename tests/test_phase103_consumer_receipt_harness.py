@@ -380,6 +380,43 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_non_execution_bar_drains_bounded_replay_to_strict_watermark(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        seed_view = SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=42)
+        seed_warmup = SimpleNamespace(data=[seed_view], watermark_offset=38)
+        first = StreamEvent(39, "resume-39", object())
+        resumed = tuple(StreamEvent(offset, f"resume-{offset}", object()) for offset in (40, 41, 42))
+        first_session = self._Session(warmup=seed_warmup, items=(first,))
+        resumed_session = self._Session(warmup=seed_warmup, items=resumed)
+        first_client = self._Client(strict_warmup=strict_warmup, session=first_session)
+        resumed_client = self._Client(strict_warmup=strict_warmup, session=resumed_session)
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-historical-drain-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", return_value=SimpleNamespace()),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                )
+
+        self.assertEqual(result, (39, 42, ()))
+        self.assertEqual(first_session.acknowledged, [first])
+        self.assertEqual(resumed_session.acknowledged, list(resumed))
+
     async def test_execution_bar_keeps_the_live_stream_requirement(self):
         product = self._product(grade=Grade.EXECUTION)
         requirement = self._requirement(grade=Grade.EXECUTION)
