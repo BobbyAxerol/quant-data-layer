@@ -10,9 +10,11 @@ from qdl_sdk import (
     EXECUTION_PRICE_VALIDATION_FEEDS,
     Feed,
     Grade,
+    StalePolicy,
     StreamEvent,
     market_data_view_from_stream,
 )
+from qdl_sdk.client import _validate_query_payload
 from qdl_sdk.errors import ContinuityError
 from qdl_sdk.models import MarketDataView
 
@@ -406,6 +408,69 @@ class SdkStreamProjectionTests(unittest.TestCase):
                 now_ns=NOW + 2_000_000_000,
             )
         self.assertEqual(stale.exception.code, "DATA_STALE")
+
+    def test_quiet_connected_trade_is_observable_but_never_execution_eligible(self):
+        requirement = DataRequirement(
+            instrument_uid="uid-1",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=1_000,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+        )
+        value = envelope(Feed.TRADE)
+        # The trade is two seconds old, while the stream transport delivered
+        # this frame one millisecond ago. This is test-only provider evidence.
+        value.received_at_ns = NOW + 1_999_000_000
+        view = market_data_view_from_stream(
+            StreamEvent(11, "signed", value),
+            template=template(Feed.TRADE),
+            requirement=requirement,
+            now_ns=NOW + 2_000_000_000,
+        )
+        self.assertEqual(view.quality.state, "LIVE")
+        self.assertEqual(view.quality.event_recency_state, "STALE")
+        self.assertEqual(view.quality.provider_session_state, "LIVE")
+        self.assertEqual(view.quality.provider_session_liveness_ms, 1)
+        self.assertFalse(view.quality.execution_eligible)
+
+    def test_query_sdk_observes_quiet_trade_but_rejects_disconnected_session(self):
+        requirement = DataRequirement(
+            instrument_uid="uid-1",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=1_000,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+        )
+        data = template(Feed.TRADE).model_dump(mode="json")
+        data["quality"].update({
+            "freshness_ms": 2_000,
+            "event_recency_state": "STALE",
+            "provider_session_state": "LIVE",
+            "provider_session_liveness_ms": 1,
+            "execution_eligible": False,
+        })
+        accepted = _validate_query_payload(
+            requirement,
+            {"request_id": "quiet-trade", "data": data},
+            warmup=False,
+        )
+        self.assertFalse(accepted.data.quality.execution_eligible)
+
+        data["quality"].update({
+            "freshness_ms": 1,
+            "event_recency_state": "LIVE",
+            "provider_session_state": "DISCONNECTED",
+        })
+        with self.assertRaisesRegex(ContinuityError, "provider session"):
+            _validate_query_payload(
+                requirement,
+                {"request_id": "disconnected-trade", "data": data},
+                warmup=False,
+            )
 
     def test_execution_book_requires_verified_generation(self):
         unverified = envelope(Feed.BOOK_SNAPSHOT)

@@ -76,6 +76,12 @@ pub struct DataRequirement {
     pub revision_policy: i32,
     #[prost(message, optional, tag="26")]
     pub warmup: ::core::option::Option<WarmupSpecification>,
+    /// Retains the last-market-event SLA independently from provider transport
+    /// liveness.  An unset policy preserves stale_policy behavior.
+    #[prost(enumeration="StalePolicy", tag="27")]
+    pub event_recency_policy: i32,
+    #[prost(uint64, tag="28")]
+    pub max_session_liveness_ms: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeRequest {
@@ -182,6 +188,12 @@ pub struct GetFeedStatusResponse {
     pub policy_id: ::prost::alloc::string::String,
     #[prost(string, repeated, tag="7")]
     pub flags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag="8")]
+    pub event_recency_state: ::prost::alloc::string::String,
+    #[prost(string, tag="9")]
+    pub provider_session_state: ::prost::alloc::string::String,
+    #[prost(uint64, tag="10")]
+    pub provider_session_liveness_ms: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

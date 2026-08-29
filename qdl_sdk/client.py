@@ -148,9 +148,25 @@ def _validate_query_payload(
             and state != "MARKET_CLOSED"
             and requirement.max_freshness_ms is not None
             and freshness_ms > requirement.max_freshness_ms
-            and requirement.stale_policy.value in {"BLOCK", "PAUSE"}
+            and requirement.effective_event_recency_policy.value in {"BLOCK", "PAUSE"}
         ):
             raise ContinuityError("DATA_STALE", "query response exceeds freshness policy")
+        if (
+            is_tail
+            and quality.provider_session_state in {"STALE", "DISCONNECTED", "UNKNOWN"}
+        ):
+            raise ContinuityError(
+                "DATA_STALE", "query response provider session is not live"
+            )
+        if is_tail and requirement.max_session_liveness_ms is not None and (
+            quality.provider_session_state != "LIVE"
+            or quality.provider_session_liveness_ms is None
+            or quality.provider_session_liveness_ms
+            > requirement.max_session_liveness_ms
+        ):
+            raise ContinuityError(
+                "DATA_STALE", "query response provider session exceeds its policy"
+            )
         if quality.gap_open and requirement.gap_policy.value in {"BLOCK", "PAUSE"}:
             raise ContinuityError("OPEN_SEQUENCE_GAP", "query response has an open gap")
         if is_tail and state in {
@@ -163,6 +179,12 @@ def _validate_query_payload(
             is_tail
             and requirement.consumer_grade is Grade.EXECUTION
             and not quality.execution_eligible
+            and not (
+                requirement.feed is Feed.TRADE
+                and requirement.effective_event_recency_policy.value == "OBSERVE"
+                and quality.event_recency_state == "STALE"
+                and quality.provider_session_state in {"LIVE", "NOT_APPLICABLE"}
+            )
         ):
             raise ContinuityError(
                 "SOURCE_NON_AUTHORITATIVE",

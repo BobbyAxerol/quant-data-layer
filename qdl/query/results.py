@@ -51,12 +51,34 @@ class QualityMetadata:
     execution_eligible: bool
     policy_id: str
     flags: tuple[str, ...] = ()
+    # ``freshness_ms`` stays the backwards-compatible age of the latest market
+    # event.  Event recency and provider transport liveness are separate facts:
+    # a quiet trade must never masquerade as a fresh executable price, but it
+    # also must not be reported as a disconnected provider session.
+    event_recency_state: str = "LIVE"
+    provider_session_state: str = "NOT_APPLICABLE"
+    provider_session_liveness_ms: int | None = None
 
     def __post_init__(self) -> None:
         if self.freshness_ms < 0:
             raise ValueError("freshness_ms cannot be negative")
         if not self.state.strip() or not self.policy_id.strip():
             raise ValueError("quality state and policy_id are required")
+        if self.event_recency_state not in {"LIVE", "STALE", "NOT_APPLICABLE"}:
+            raise ValueError("event recency state is invalid")
+        if self.provider_session_state not in {
+            "LIVE",
+            "STALE",
+            "DISCONNECTED",
+            "UNKNOWN",
+            "NOT_APPLICABLE",
+        }:
+            raise ValueError("provider session state is invalid")
+        if (
+            self.provider_session_liveness_ms is not None
+            and self.provider_session_liveness_ms < 0
+        ):
+            raise ValueError("provider session liveness cannot be negative")
 
 
 @dataclass(frozen=True)

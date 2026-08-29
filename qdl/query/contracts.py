@@ -148,6 +148,12 @@ class DataRequirement:
     interval: str | None = None
     warmup_limit: int = 0
     max_freshness_ms: int | None = None
+    # ``max_freshness_ms`` remains the age of the last market event.  A sparse
+    # TRADE feed may observe that bound without the provider session being
+    # unhealthy, so the consumer can declare a separate session SLA and choose
+    # whether event recency blocks this non-execution read.
+    event_recency_policy: StalePolicy | None = None
+    max_session_liveness_ms: int | None = None
     require_full_coverage: bool = True
     require_final_bars: bool = True
     stale_policy: StalePolicy = StalePolicy.BLOCK
@@ -170,9 +176,14 @@ class DataRequirement:
             "gap_policy": GapPolicy,
             "recovery": RecoveryPolicy,
             "bar_revision_policy": BarRevisionPolicy,
+            "event_recency_policy": StalePolicy,
         }
         for field, enum_type in enums.items():
-            if field in converted and not isinstance(converted[field], enum_type):
+            if (
+                field in converted
+                and converted[field] is not None
+                and not isinstance(converted[field], enum_type)
+            ):
                 converted[field] = enum_type(str(converted[field]).upper())
         if isinstance(converted.get("warmup"), dict):
             converted["warmup"] = WarmupSpecification.from_mapping(converted["warmup"])
@@ -199,6 +210,25 @@ class DataRequirement:
                 raise ValueError("time-range warmup cannot also declare warmup_limit")
         if self.max_freshness_ms is not None and self.max_freshness_ms <= 0:
             raise ValueError("max_freshness_ms must be positive")
+        if (
+            self.max_session_liveness_ms is not None
+            and self.max_session_liveness_ms <= 0
+        ):
+            raise ValueError("max_session_liveness_ms must be positive")
+        if self.event_recency_policy is not None and not isinstance(
+            self.event_recency_policy, StalePolicy
+        ):
+            raise TypeError("event_recency_policy must use StalePolicy")
+        if (
+            self.event_recency_policy is StalePolicy.UNSPECIFIED
+            or (
+                self.event_recency_policy is StalePolicy.OBSERVE
+                and self.max_session_liveness_ms is None
+            )
+        ):
+            raise ValueError(
+                "observed event recency requires an explicit provider session SLA"
+            )
         enum_values = (
             self.feed,
             self.consumer_grade,
@@ -231,6 +261,12 @@ class DataRequirement:
                 raise ValueError("execution-grade gap policy must BLOCK")
             if not self.require_full_coverage:
                 raise ValueError("execution-grade requirements need full coverage")
+
+    @property
+    def effective_event_recency_policy(self) -> StalePolicy:
+        """Preserve legacy blocking semantics unless a route declares otherwise."""
+
+        return self.event_recency_policy or self.stale_policy
 
     @property
     def warmup_specification(self) -> WarmupSpecification | None:

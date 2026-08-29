@@ -5761,6 +5761,64 @@ product silently fall back, or promote VN before its independent real-provider
 gate. Each scope stops after its declared evidence/rollback gate and records
 the result in the main journal.
 
+#### J.7.1 TRADE event recency versus provider-session liveness
+
+`freshness_ms` is and remains the age of the last canonical market event.  It
+is never a proxy for WebSocket health.  This distinction matters for an
+event-driven `TRADE` feed: a market may have no prints for longer than its
+event-age SLA while the authenticated provider session is still healthy.
+
+The additive V2 requirement contract therefore has two independent controls:
+
+- `event_recency_policy`, defaulting to the existing `stale_policy`, governs
+  the age of the actual market event.
+- `max_session_liveness_ms` is an optional, explicit upper bound for a
+  session heartbeat.  `OBSERVE` event recency requires this field; it is not a
+  route to loosen an execution price requirement.
+
+Existing Rust native ingestors write only a bounded control record per active
+connection under their existing shared stable-state volume.  The record is
+atomically write/rename/fsync persisted at a bounded cadence and carries
+schema, source session ID, connection generation, state, transport timestamp
+and config revision only.  Query/stream readers match all three identity
+coordinates.  Missing, malformed, duplicate, expired, disconnected,
+clock-skewed or revision-mismatched evidence is `UNKNOWN`/`STALE` and fails
+closed.  A reconnect therefore cannot bless an event emitted by an old
+connection generation.
+
+For a governed no-order paper `TRADE` requirement, `OBSERVE` permits a
+quiet-but-connected response with `state=LIVE`,
+`event_recency_state=STALE`, `provider_session_state=LIVE`,
+`LAST_EVENT_STALE`, and `execution_eligible=false`.  Any execution-grade
+caller, quote, book, bar, gap, source-authority or session-liveness failure
+remains blocking.  This is provider-neutral and applies identically to the
+existing Binance USD-M and OKX Swap native ingestors; it adds no service,
+topic, worker or per-symbol topology.
+
+Source exit requires contract/protobuf/OpenAPI/SDK parity, manifest exactness,
+atomic writer and reader failure-path tests, and a no-network Rust/Python
+regression.  The following C2 retry is a separately approved runtime packet:
+build immutable Python/Rust images from the reviewed source revision, seal the
+updated three paper manifests and release-routing revision, roll only
+`ingestor_binance_usdm`, `ingestor_okx_swap`, `query_v2_1`, `query_v2_2`,
+`stream_v2_active`, and `stream_v2_passive`, then observe one disposable
+300-second no-order C2 receipt.  It does not touch V1, Kafka topology or
+offsets, Redis, SQLite, projector, Trading System, alpha or order paths; the
+recorded V1 image/runtime revision is the rollback coordinate.
+
+**Source evidence (2026-08-29, `IMPLEMENTED / TESTED LOCALLY`):** Buf
+generate, format, lint and breaking passed against both frozen baselines.
+The isolated Python regression passed `157` tests with `1` existing
+infrastructure skip; it covers query, SDK, REST, gRPC/protobuf, stream,
+manifest, release and C2 validator paths.  The isolated Rust native-ingestor
+suite passed `12/12`, including atomic bounded writer and explicit disconnect
+state.  The deterministic paths prove quiet-but-connected observation,
+strict event-recency blocking, expired/disconnected/missing/malformed/duplicate
+session evidence, config-revision and reconnect-generation mismatch.  No
+runtime image, bundle, role, provider session, durable store or consumer was
+changed by this evidence.  This is not a C2 certificate; one separately
+approved runtime packet remains required.
+
 ### J.8 Phase 11.5 consumer-scoped universal route binding
 
 The universal release manifest is a release-control artifact, not an

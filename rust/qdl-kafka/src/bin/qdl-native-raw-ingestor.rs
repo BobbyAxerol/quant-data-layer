@@ -5,7 +5,7 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::future::Future;
 use std::io::{ErrorKind, Write};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -36,7 +36,7 @@ use qdl_kafka::{
 };
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use qdl_venue_core::backpressure::DeliveryClass;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio_tungstenite::connect_async;
@@ -187,6 +187,8 @@ struct IngestorConfig {
     max_runtime_seconds: u64,
     metrics_every_events: u64,
     generation_state_path: String,
+    session_liveness_dir: String,
+    session_liveness_write_interval_ms: u64,
     max_inflight_publishes: usize,
     #[serde(default = "default_max_subscriptions_per_connection")]
     max_subscriptions_per_connection: usize,
@@ -254,6 +256,7 @@ impl IngestorConfig {
             || self.heartbeat_seconds == 0
             || self.heartbeat_seconds >= 30
             || self.metrics_every_events == 0
+            || !(250..=5_000).contains(&self.session_liveness_write_interval_ms)
             || self.max_inflight_publishes == 0
             || self.max_inflight_publishes > 4_096
             || self.max_subscriptions_per_connection == 0
@@ -273,6 +276,16 @@ impl IngestorConfig {
                 .any(|component| matches!(component, Component::ParentDir))
         {
             return Err("generation state path must be absolute without parent traversal".into());
+        }
+        let session_liveness_dir = Path::new(&self.session_liveness_dir);
+        if !session_liveness_dir.is_absolute()
+            || session_liveness_dir
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+        {
+            return Err(
+                "session liveness directory must be absolute without parent traversal".into(),
+            );
         }
         if self.runtime == ProviderRuntime::Okx {
             let business = self
@@ -354,6 +367,125 @@ fn next_connection_generation(
     fs::rename(&temporary, state_path)?;
     File::open(parent)?.sync_all()?;
     Ok(generation)
+}
+
+const SESSION_LIVENESS_SCHEMA: &str = "qdl.provider-session-liveness.v1";
+
+#[derive(Serialize)]
+struct ProviderSessionLiveness<'a> {
+    schema: &'static str,
+    source_session_id: &'a str,
+    connection_generation: u64,
+    state: &'static str,
+    last_transport_at_ns: i64,
+    updated_at_ns: i64,
+    config_revision: u64,
+}
+
+struct SessionLivenessWriter {
+    path: PathBuf,
+    config_revision: u64,
+    write_interval_ns: i64,
+    last_written_ns: Option<i64>,
+}
+
+impl SessionLivenessWriter {
+    fn new(
+        config: &IngestorConfig,
+        lane: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        if lane.is_empty()
+            || lane.len() > 120
+            || !lane.chars().all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+            })
+        {
+            return Err("session liveness lane is invalid".into());
+        }
+        Ok(Self {
+            path: Path::new(&config.session_liveness_dir).join(format!("{lane}.json")),
+            config_revision: config.config_revision,
+            write_interval_ns: i64::try_from(config.session_liveness_write_interval_ms)?
+                .checked_mul(1_000_000)
+                .ok_or("session liveness write interval overflow")?,
+            last_written_ns: None,
+        })
+    }
+
+    fn live(
+        &mut self,
+        session_id: &str,
+        generation: u64,
+        transport_at_ns: i64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.write(session_id, generation, "LIVE", transport_at_ns, false)
+    }
+
+    fn disconnected(
+        &mut self,
+        session_id: &str,
+        generation: u64,
+        transport_at_ns: i64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.write(
+            session_id,
+            generation,
+            "DISCONNECTED",
+            transport_at_ns,
+            true,
+        )
+    }
+
+    fn write(
+        &mut self,
+        session_id: &str,
+        generation: u64,
+        state: &'static str,
+        transport_at_ns: i64,
+        force: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if session_id.is_empty()
+            || session_id.len() > 256
+            || generation == 0
+            || transport_at_ns <= 0
+        {
+            return Err("provider session liveness identity is invalid".into());
+        }
+        if !force
+            && self
+                .last_written_ns
+                .is_some_and(|last| transport_at_ns.saturating_sub(last) < self.write_interval_ns)
+        {
+            return Ok(());
+        }
+        let parent = self
+            .path
+            .parent()
+            .ok_or("session liveness path has no parent")?;
+        fs::create_dir_all(parent)?;
+        let payload = serde_json::to_vec(&ProviderSessionLiveness {
+            schema: SESSION_LIVENESS_SCHEMA,
+            source_session_id: session_id,
+            connection_generation: generation,
+            state,
+            last_transport_at_ns: transport_at_ns,
+            updated_at_ns: now_ns()?,
+            config_revision: self.config_revision,
+        })?;
+        let temporary =
+            self.path
+                .with_extension(format!("tmp-{}-{}", std::process::id(), now_ns()?));
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(&payload)?;
+        file.sync_all()?;
+        fs::rename(&temporary, &self.path)?;
+        File::open(parent)?.sync_all()?;
+        self.last_written_ns = Some(transport_at_ns);
+        Ok(())
+    }
 }
 
 fn capture_id(session: &str, generation: u64, received_at_ns: i64, frame: &[u8]) -> Vec<u8> {
@@ -968,6 +1100,9 @@ async fn run_binance_connection(
                     config.market_name(),
                     now_ns()?
                 );
+                let mut liveness =
+                    SessionLivenessWriter::new(&config, &format!("binance-{shard_index:03}"))?;
+                liveness.live(&session_id, generation, now_ns()?)?;
                 let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
                 let mut latest = LatestStateBuffer::default();
                 let mut latest_tick =
@@ -1136,7 +1271,12 @@ async fn run_binance_connection(
                         }
                     };
                     let message = match outcome.expect("Binance read outcome is present") {
-                        Ok(Some(Ok(message))) => message,
+                        Ok(Some(Ok(message))) => {
+                            if !matches!(message, Message::Close(_)) {
+                                liveness.live(&session_id, generation, now_ns()?)?;
+                            }
+                            message
+                        }
                         Ok(Some(Err(error))) => {
                             failures = failures.saturating_add(1);
                             eprintln!(
@@ -1149,6 +1289,7 @@ async fn run_binance_connection(
                                     "error": error.to_string(),
                                 }))?
                             );
+                            liveness.disconnected(&session_id, generation, now_ns()?)?;
                             disconnected = true;
                             break;
                         }
@@ -1164,6 +1305,7 @@ async fn run_binance_connection(
                                     "error": "provider closed the WebSocket",
                                 }))?
                             );
+                            liveness.disconnected(&session_id, generation, now_ns()?)?;
                             disconnected = true;
                             break;
                         }
@@ -1175,8 +1317,16 @@ async fn run_binance_connection(
                             )
                             .await
                             {
-                                Ok(Some(Ok(Message::Pong(_)))) => continue,
-                                Ok(Some(Ok(message))) => message,
+                                Ok(Some(Ok(Message::Pong(_)))) => {
+                                    liveness.live(&session_id, generation, now_ns()?)?;
+                                    continue;
+                                }
+                                Ok(Some(Ok(message))) => {
+                                    if !matches!(message, Message::Close(_)) {
+                                        liveness.live(&session_id, generation, now_ns()?)?;
+                                    }
+                                    message
+                                }
                                 _ => {
                                     failures = failures.saturating_add(1);
                                     eprintln!(
@@ -1188,6 +1338,7 @@ async fn run_binance_connection(
                                             "generation": generation,
                                         }))?
                                     );
+                                    liveness.disconnected(&session_id, generation, now_ns()?)?;
                                     disconnected = true;
                                     break;
                                 }
@@ -1202,6 +1353,7 @@ async fn run_binance_connection(
                         continue;
                     }
                     if matches!(message, Message::Close(_)) {
+                        liveness.disconnected(&session_id, generation, now_ns()?)?;
                         disconnected = true;
                         break;
                     }
@@ -1256,6 +1408,7 @@ async fn run_binance_connection(
                         Err(_) => {}
                     }
                 }
+                liveness.disconnected(&session_id, generation, now_ns()?)?;
                 if let Some(error) = publish_error {
                     return Err(error.into());
                 }
@@ -1443,6 +1596,11 @@ async fn run_okx_service(
                         _ => {}
                     }
                 }
+                let mut liveness = SessionLivenessWriter::new(
+                    &config,
+                    &format!("okx-{service_name}-{shard_index:03}"),
+                )?;
+                liveness.live(&session_id, generation, now_ns()?)?;
                 let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
                 let mut latest = LatestStateBuffer::default();
                 let mut latest_tick =
@@ -1553,8 +1711,14 @@ async fn run_okx_service(
                         }
                     };
                     let message = match outcome.expect("OKX read outcome is present") {
-                        Ok(Some(Ok(message))) => message,
+                        Ok(Some(Ok(message))) => {
+                            if !matches!(message, Message::Close(_)) {
+                                liveness.live(&session_id, generation, now_ns()?)?;
+                            }
+                            message
+                        }
                         Ok(Some(Err(_))) | Ok(None) => {
+                            liveness.disconnected(&session_id, generation, now_ns()?)?;
                             disconnected = true;
                             break;
                         }
@@ -1569,9 +1733,11 @@ async fn run_okx_service(
                                 Ok(Some(Ok(message)))
                                     if message.is_text() && message.to_text()? == "pong" =>
                                 {
-                                    continue
+                                    liveness.live(&session_id, generation, now_ns()?)?;
+                                    continue;
                                 }
                                 _ => {
+                                    liveness.disconnected(&session_id, generation, now_ns()?)?;
                                     disconnected = true;
                                     break;
                                 }
@@ -1588,6 +1754,7 @@ async fn run_okx_service(
                     let raw_text = message.to_text()?.to_owned();
                     let payload: Value = serde_json::from_str(&raw_text)?;
                     if payload.get("event").and_then(Value::as_str) == Some("notice") {
+                        liveness.disconnected(&session_id, generation, now_ns()?)?;
                         disconnected = true;
                         break;
                     }
@@ -1641,6 +1808,7 @@ async fn run_okx_service(
                         Err(_) => {}
                     }
                 }
+                liveness.disconnected(&session_id, generation, now_ns()?)?;
                 if let Some(error) = publish_error {
                     return Err(error.into());
                 }
@@ -1914,6 +2082,7 @@ mod tests {
         book_snapshot_renewal_period, next_connection_generation, partition_binance_bindings,
         partition_bindings, partition_okx_bindings, pending_binance_frame, pending_okx_frame,
         DeliveryClass, LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
+        SessionLivenessWriter,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -2250,6 +2419,45 @@ mod tests {
         assert_eq!(next_connection_generation(&business).unwrap(), 1);
         assert_eq!(next_connection_generation(&public).unwrap(), 2);
         assert_eq!(fs::read_to_string(&business).unwrap(), "1\n");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn session_liveness_writer_is_atomic_bounded_and_disconnects_explicitly() {
+        let directory = generation_path("session-liveness");
+        let path = directory.join("binance-usdm").join("binance-000.json");
+        let mut writer = SessionLivenessWriter {
+            path: path.clone(),
+            config_revision: 7,
+            write_interval_ns: 1_000_000_000,
+            last_written_ns: None,
+        };
+
+        writer.live("session-1", 3, 1_000_000_000).unwrap();
+        let first: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(first["schema"], "qdl.provider-session-liveness.v1");
+        assert_eq!(first["source_session_id"], "session-1");
+        assert_eq!(first["connection_generation"], 3);
+        assert_eq!(first["state"], "LIVE");
+        assert_eq!(first["last_transport_at_ns"], 1_000_000_000_i64);
+        assert_eq!(first["config_revision"], 7);
+
+        writer.live("session-1", 3, 1_500_000_000).unwrap();
+        let bounded: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(bounded["last_transport_at_ns"], 1_000_000_000_i64);
+
+        writer.disconnected("session-1", 3, 1_500_000_000).unwrap();
+        let disconnected: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disconnected["state"], "DISCONNECTED");
+        assert_eq!(disconnected["last_transport_at_ns"], 1_500_000_000_i64);
+        assert!(directory.join("binance-usdm").is_dir());
+        assert_eq!(
+            fs::read_dir(directory.join("binance-usdm"))
+                .unwrap()
+                .count(),
+            1
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 }

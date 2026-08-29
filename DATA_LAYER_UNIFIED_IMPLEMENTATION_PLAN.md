@@ -22852,3 +22852,103 @@ this scope rather than opening a new phase.
   is reviewed may a new one-shot C2 acceptance be requested. This failure is
   therefore an in-scope data-quality blocker, not evidence that the 60 route
   manifests or DOGE ingestion are absent.
+
+- `2026-08-29 C2 TRADE-RECENCY / PROVIDER-SESSION-LIVENESS CORRECTION / APPROVED SOURCE-ONLY`:
+  **Goal:** correct the V2 quality contract so an event-driven `TRADE` feed
+  distinguishes (a) age of its most recent trade, which remains a market
+  recency fact, from (b) the liveness of the authenticated provider session.
+  The observed `3,000 ms` DOGE threshold remains unchanged and visible; this
+  task must not make a quiet market look like a fresh executable price, nor
+  make an active session look disconnected merely because no trade printed.
+
+  **Approved source scope:** add explicit event-recency and provider-session
+  liveness fields to the provider-neutral V2 requirement/quality contracts;
+  add bounded, atomic session-heartbeat state written by the existing Rust
+  native Binance/OKX ingestors into their existing shared `stable_state`
+  volume; make the existing Python query/SDK/stream edge consume that state
+  fail-closed; and revise only the governed paper `TRADE` requirements to
+  declare `event_recency_policy=OBSERVE` plus an explicit bounded provider
+  session liveness SLA.  `OBSERVE` means a caller can inspect a quiet trade
+  and its flag, not that an execution-grade price becomes eligible.  Quotes,
+  books, bars, gaps, source authority and the existing `3,000 ms` event-age
+  bound stay strict.  No new service, container, topic, consumer group,
+  symbol worker or provider connection is permitted.
+
+  **Invariants:** session state is keyed by the emitted
+  `source_session_id` and `connection_generation`; missing, malformed,
+  mismatched-generation, disconnected or expired state is `fail-closed`.
+  A reconnect cannot bless a last trade from an earlier session.  Rust records
+  only bounded operational metadata, never payloads or credentials, with
+  atomic write/rename and bounded persistence cadence.  `freshness_ms`
+  remains the backwards-compatible last-event-age alias while the new fields
+  expose event recency and transport liveness separately.  `execution_eligible`
+  still requires current price event recency even when a no-order paper route
+  observes a quiet trade.
+
+  **Required test gates:** deterministic quiet-but-connected, disconnected,
+  heartbeat-expired, malformed/mismatched session-state and reconnect tests;
+  query/SDK/stream parity; REST/gRPC/protobuf compatibility; manifest
+  exactness; Rust atomic state writer tests; existing V2 contract lint,
+  breaking and generated-source checks; and a focused no-network Python/Rust
+  regression suite.  Real-provider C2 is expressly excluded from this source
+  task.
+
+  **Runtime exclusion and rollback:** do not build images, regenerate a sealed
+  runtime bundle, recreate roles, alter Kafka/Redis/SQLite/V1, change Trading
+  System/alpha, open provider sessions or submit an order.  Source rollback is
+  one revert commit.  After source tests pass, the next decision boundary is a
+  separate narrow runtime packet for the two existing native ingestors and
+  four existing query/stream readers, followed by one new disposable C2
+  no-order retry; it requires explicit approval and retains V1 rollback.
+
+- `2026-08-29 C2 TRADE-RECENCY / PROVIDER-SESSION-LIVENESS CORRECTION / IMPLEMENTED AND SOURCE-TESTED; RUNTIME PENDING`:
+  the approved narrow source change is complete.  The provider-neutral V2
+  contract adds nullable `event_recency_policy` and
+  `max_session_liveness_ms` to `DataRequirement`, REST/OpenAPI, gRPC/protobuf,
+  SDK and quality/status output.  `freshness_ms` stays the exact age of the
+  latest market event; quality now reports `event_recency_state`,
+  `provider_session_state`, and optional `provider_session_liveness_ms`.
+  Existing governed paper `TRADE` routes alone use `OBSERVE` with a `45,000ms`
+  session SLA.  Their existing event-age SLA is unchanged.  A quiet but
+  connected trade is inspectable only and remains
+  `execution_eligible=false`; `BLOCK`/`PAUSE`, execution-grade requirements,
+  bars, quotes, books, gaps and stale/disconnected/malformed session state
+  remain fail-closed.
+
+  The existing Rust Binance/OKX native ingestors now atomically persist a
+  bounded `qdl.provider-session-liveness.v1` record per existing connection in
+  the shared stable-state namespace.  The Python projection consumes it only
+  when a requirement declares a session SLA and requires exact
+  `source_session_id`, `connection_generation` and `config_revision` parity.
+  Missing, malformed, duplicate, clock-skewed, expired, disconnected or
+  reconnect-mismatched records are not accepted.  No new service, worker,
+  topic, consumer group, symbol subscription or runtime topology was added.
+
+  **Source evidence:** final isolated no-network Python regression passed
+  `157` tests with `1` existing infrastructure skip; it includes the focused
+  C2 receipt, SDK projection/query, REST, SDK stream, OpenAPI, contract,
+  release, manifest and gRPC/protobuf paths.  Rust native-ingestor tests
+  passed `12/12`; Buf generate, format, lint and breaking passed against both
+  frozen baselines; the Rust formatter and `git diff --check` passed.  The
+  tests cover quiet-but-connected, strict event stale, heartbeat expiry,
+  disconnected/missing/malformed/duplicate/revision-mismatch state, reconnect
+  generation mismatch, query/SDK/stream parity, manifest caller
+  non-escalation, protobuf/gRPC typed round-trip, and atomic bounded
+  writer/disconnect persistence.
+
+  **Known unrelated test observations:** an optional
+  `tests.test_routed_query_backend` run still has nine pre-existing fixture
+  failures (`stable instrument UID/ID is not deterministic`) outside this
+  contract path.  The historic Phase-10.3 receipt-harness authority-fence
+  mismatch remains separately recorded.  Neither was changed or reclassified
+  as accepted evidence.
+
+  **Runtime decision boundary:** this is `IMPLEMENTED / TESTED LOCALLY`, not
+  C2 accepted or runtime-authoritative.  The next allowed action is one
+  explicit packet to build/attest immutable Python and Rust images from this
+  source commit, seal the three amended paper manifests plus release-routing
+  revision, roll exactly `ingestor_binance_usdm`, `ingestor_okx_swap`,
+  `query_v2_1`, `query_v2_2`, `stream_v2_active`, and `stream_v2_passive`,
+  then run one disposable 300-second C2 no-order retry.  It must name the V1
+  image/runtime rollback coordinate and must not mutate V1, Kafka topology or
+  offsets, Redis, SQLite, projector, Trading System, alpha or any order path.

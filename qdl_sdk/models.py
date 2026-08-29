@@ -232,6 +232,14 @@ class QualityView(ClosedModel):
         "HALTED", "MARKET_CLOSED",
     ]
     freshness_ms: int = Field(ge=0)
+    # ``freshness_ms`` is retained as the public last-event-age field.  The
+    # two fields below make quiet event-driven feeds distinguishable from an
+    # unhealthy provider session.
+    event_recency_state: Literal["LIVE", "STALE", "NOT_APPLICABLE"] = "LIVE"
+    provider_session_state: Literal[
+        "LIVE", "STALE", "DISCONNECTED", "UNKNOWN", "NOT_APPLICABLE"
+    ] = "NOT_APPLICABLE"
+    provider_session_liveness_ms: int | None = Field(default=None, ge=0)
     gap_open: bool
     complete: bool
     execution_eligible: bool
@@ -663,6 +671,8 @@ class DataRequirement:
     interval: str | None = None
     warmup_limit: int = 0
     max_freshness_ms: int | None = None
+    event_recency_policy: StalePolicy | None = None
+    max_session_liveness_ms: int | None = None
     require_full_coverage: bool = True
     require_final_bars: bool = True
     stale_policy: StalePolicy = StalePolicy.BLOCK
@@ -701,6 +711,22 @@ class DataRequirement:
                 raise ValueError("time-range warmup cannot also declare warmup_limit")
         if self.max_freshness_ms is not None and self.max_freshness_ms <= 0:
             raise ValueError("max_freshness_ms must be positive")
+        if (
+            self.max_session_liveness_ms is not None
+            and self.max_session_liveness_ms <= 0
+        ):
+            raise ValueError("max_session_liveness_ms must be positive")
+        if self.event_recency_policy is not None and not isinstance(
+            self.event_recency_policy, StalePolicy
+        ):
+            raise TypeError("event_recency_policy must use the typed SDK enum")
+        if (
+            self.event_recency_policy is StalePolicy.OBSERVE
+            and self.max_session_liveness_ms is None
+        ):
+            raise ValueError(
+                "observed event recency requires an explicit provider session SLA"
+            )
         if self.feed is Feed.BAR and not self.interval:
             raise ValueError("bar requirement needs interval")
         if self.feed in METRIC_INTERVAL_FEEDS and not self.interval:
@@ -734,6 +760,12 @@ class DataRequirement:
                 else self.warmup_limit or None
             ),
             "max_freshness_ms": self.max_freshness_ms,
+            "event_recency_policy": (
+                self.event_recency_policy.value
+                if self.event_recency_policy is not None
+                else None
+            ),
+            "max_session_liveness_ms": self.max_session_liveness_ms,
             "require_full_coverage": self.require_full_coverage,
             "require_final_bars": self.require_final_bars,
             "stale_policy": self.stale_policy.value,
@@ -772,6 +804,12 @@ class DataRequirement:
             "interval": self.interval,
             "warmup_limit": self.warmup_limit,
             "max_freshness_ms": self.max_freshness_ms,
+            "event_recency_policy": (
+                self.event_recency_policy.value
+                if self.event_recency_policy is not None
+                else None
+            ),
+            "max_session_liveness_ms": self.max_session_liveness_ms,
             "require_full_coverage": self.require_full_coverage,
             "require_final_bars": self.require_final_bars,
             "stale_policy": self.stale_policy.value,
@@ -788,6 +826,12 @@ class DataRequirement:
             source_policy_id=self.source_policy_id,
             warmup_limit=self.warmup_limit,
             max_freshness_ms=self.max_freshness_ms or 0,
+            event_recency_policy=(
+                getattr(query_pb2, f"STALE_POLICY_{self.event_recency_policy.value}")
+                if self.event_recency_policy is not None
+                else query_pb2.STALE_POLICY_UNSPECIFIED
+            ),
+            max_session_liveness_ms=self.max_session_liveness_ms or 0,
             require_full_coverage=self.require_full_coverage,
             require_final_bars=self.require_final_bars,
             feed_type=getattr(query_pb2, f"FEED_TYPE_{self.feed.value}"),
@@ -822,6 +866,10 @@ class DataRequirement:
                 ))
             result.warmup.CopyFrom(proto)
         return result
+
+    @property
+    def effective_event_recency_policy(self) -> StalePolicy:
+        return self.event_recency_policy or self.stale_policy
 
 
 @dataclass(frozen=True)

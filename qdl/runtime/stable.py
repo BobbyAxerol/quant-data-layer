@@ -239,6 +239,12 @@ class StableRuntimeConfig:
             )) or not self.stream_ingest_urls:
                 raise ValueError("stable projector Kafka/stream dependencies are required")
 
+    @property
+    def session_liveness_dir(self) -> Path:
+        """Shared read-only query view of bounded ingestor session state."""
+
+        return self.state_dir / "runtime" / "session-liveness"
+
     @classmethod
     def from_environment(
         cls, role: str, values: Mapping[str, str] | None = None
@@ -519,6 +525,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         reference_data_enabled=config.reference_data_enabled,
         provider_admission_url=config.provider_admission_url,
         provider_admission_secret=config.internal_ingest_secret,
+        session_liveness_root=str(config.session_liveness_dir),
     )
     readiness = stable_readiness(
         config, manifests, spool, quota=identity.quota,
@@ -611,6 +618,7 @@ def create_stable_stream_runtime(
         reference_data_enabled=config.reference_data_enabled,
         provider_admission_url=config.provider_admission_url,
         provider_admission_secret=config.internal_ingest_secret,
+        session_liveness_root=str(config.session_liveness_dir),
     )
     grpc_service = GrpcMarketDataService(
         gateway=gateway, query_service=query_service,

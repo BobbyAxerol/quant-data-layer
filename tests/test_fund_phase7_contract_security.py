@@ -545,6 +545,27 @@ class Phase7RestAndContractTests(unittest.TestCase):
                 source_policy_id="alpha_binance_v1",
             ))
 
+    def test_sdk_requirement_preserves_event_recency_and_session_liveness(self):
+        sdk = SdkRequirement(
+            self.fixture.record.instrument_uid,
+            Feed.TRADE,
+            Grade.EXECUTION,
+            "alpha_binance_v1",
+            max_freshness_ms=3_000,
+            event_recency_policy=SdkStalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+            stale_policy=SdkStalePolicy.BLOCK,
+            gap_policy=SdkGapPolicy.BLOCK,
+            recovery=SdkRecoveryPolicy.SNAPSHOT_AND_REPLAY,
+            bar_revision_policy=SdkBarRevisionPolicy.LATEST,
+        )
+        message = sdk.to_proto()
+        self.assertEqual(message.event_recency_policy, query_pb2.STALE_POLICY_OBSERVE)
+        self.assertEqual(message.max_session_liveness_ms, 45_000)
+        decoded = requirement_from_proto(message)
+        self.assertEqual(decoded.event_recency_policy.value, "OBSERVE")
+        self.assertEqual(decoded.max_session_liveness_ms, 45_000)
+
 
 class Phase7GrpcIdentityTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

@@ -310,8 +310,11 @@ class StableReleaseVersionContractTests(unittest.TestCase):
         self.assertEqual(qdl_sdk.__version__, "2.0.0")
         self.assertEqual(generated["info"]["version"], "2.0.0")
         self.assertEqual(snapshot, generated)
-        self.assertEqual(len(generated["paths"]), 10)
-        self.assertEqual(len(generated["components"]["schemas"]), 53)
+        # ``reference:batch`` is a governed V2 public path in the checked-in
+        # router and snapshot; keep this count as a regression guard rather
+        # than silently accepting a stale release assertion.
+        self.assertEqual(len(generated["paths"]), 11)
+        self.assertEqual(len(generated["components"]["schemas"]), 67)
 
 
 if __name__ == "__main__":

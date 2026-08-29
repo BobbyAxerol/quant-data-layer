@@ -19,6 +19,7 @@ from qdl.query.contracts import (
     DataRequirement,
     FeedType,
     QueryProblem,
+    StalePolicy,
     evaluate_requirement,
 )
 from qdl.query.lifecycle import BarLifecycle
@@ -754,10 +755,23 @@ class V2QueryService:
             fresh=(
                 quality.state == "MARKET_CLOSED"
                 or (
-                    quality.state not in {"STALE", "OFFLINE"}
+                    quality.state not in {"STALE", "OFFLINE", "UNAVAILABLE"}
+                    and quality.provider_session_state
+                    not in {"STALE", "DISCONNECTED", "UNKNOWN"}
+                    and (
+                        requirement.max_session_liveness_ms is None
+                        or (
+                            quality.provider_session_state == "LIVE"
+                            and quality.provider_session_liveness_ms is not None
+                            and quality.provider_session_liveness_ms
+                            <= requirement.max_session_liveness_ms
+                        )
+                    )
                     and (
                         requirement.max_freshness_ms is None
                         or quality.freshness_ms <= requirement.max_freshness_ms
+                        or requirement.effective_event_recency_policy
+                        not in {StalePolicy.BLOCK, StalePolicy.PAUSE}
                     )
                 )
             ),
@@ -799,6 +813,18 @@ class V2QueryService:
             and quality.state == "LIVE"
             and quality.complete
             and not quality.gap_open
+            and quality.event_recency_state != "STALE"
+            and quality.provider_session_state
+            not in {"STALE", "DISCONNECTED", "UNKNOWN"}
+            and (
+                requirement.max_session_liveness_ms is None
+                or (
+                    quality.provider_session_state == "LIVE"
+                    and quality.provider_session_liveness_ms is not None
+                    and quality.provider_session_liveness_ms
+                    <= requirement.max_session_liveness_ms
+                )
+            )
             and (
                 requirement.max_freshness_ms is None
                 or quality.freshness_ms <= requirement.max_freshness_ms

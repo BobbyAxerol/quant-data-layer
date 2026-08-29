@@ -10,6 +10,7 @@ from qdl.certification.phase105_consumer_acceptance import (
     build_release_consumer_acceptance_scope,
 )
 from qdl.consumer import StableReleaseRoutePlan, requirement_key
+from qdl.query import FeedType, StalePolicy
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 
@@ -134,6 +135,22 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             {(item.consumer_id, item.reason) for item in scope.excluded},
             {("trading-system.paper.stable", "VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE")},
         )
+
+    def test_paper_trade_routes_declare_observed_event_recency_and_session_sla(self):
+        scope = build_release_consumer_acceptance_scope(
+            self.release,
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            consumer_ids=FIVE_LIQUID_CONSUMER_IDS,
+        )
+        trades = [item for item in scope.products if item.feed is FeedType.TRADE]
+        self.assertEqual(len(trades), 20)
+        self.assertTrue(all(
+            item.requirement.event_recency_policy is StalePolicy.OBSERVE
+            and item.requirement.max_session_liveness_ms == 45_000
+            and item.requirement.stale_policy is StalePolicy.BLOCK
+            for item in trades
+        ))
 
 
 if __name__ == "__main__":

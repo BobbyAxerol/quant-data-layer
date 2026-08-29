@@ -1455,6 +1455,16 @@
             "title": "Complete",
             "type": "boolean"
           },
+          "event_recency_state": {
+            "default": "LIVE",
+            "enum": [
+              "LIVE",
+              "STALE",
+              "NOT_APPLICABLE"
+            ],
+            "title": "Event Recency State",
+            "type": "string"
+          },
           "execution_eligible": {
             "title": "Execution Eligible",
             "type": "boolean"
@@ -1479,6 +1489,30 @@
             "maxLength": 200,
             "minLength": 1,
             "title": "Policy Id",
+            "type": "string"
+          },
+          "provider_session_liveness_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Session Liveness Ms"
+          },
+          "provider_session_state": {
+            "default": "NOT_APPLICABLE",
+            "enum": [
+              "LIVE",
+              "STALE",
+              "DISCONNECTED",
+              "UNKNOWN",
+              "NOT_APPLICABLE"
+            ],
+            "title": "Provider Session State",
             "type": "string"
           },
           "state": {
@@ -2171,7 +2205,7 @@
             "anyOf": [
               {
                 "exclusiveMinimum": 0.0,
-                "maximum": 86400000.0,
+                "maximum": 259200000.0,
                 "type": "integer"
               },
               {
@@ -2246,6 +2280,16 @@
           "consumer_grade": {
             "$ref": "#/components/schemas/ConsumerGrade"
           },
+          "event_recency_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StalePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "feed": {
             "$ref": "#/components/schemas/FeedType"
           },
@@ -2283,6 +2327,19 @@
               }
             ],
             "title": "Max Freshness Ms"
+          },
+          "max_session_liveness_ms": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 86400000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Session Liveness Ms"
           },
           "recovery": {
             "$ref": "#/components/schemas/RecoveryPolicy",
@@ -2949,6 +3006,58 @@
           },
           {
             "in": "query",
+            "name": "max_freshness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_recency_policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/StalePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Recency Policy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_session_liveness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Session Liveness Ms"
+            }
+          },
+          {
+            "in": "query",
             "name": "require_full_coverage",
             "required": false,
             "schema": {
@@ -3439,6 +3548,40 @@
           },
           {
             "in": "query",
+            "name": "event_recency_policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/StalePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Recency Policy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_session_liveness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Session Liveness Ms"
+            }
+          },
+          {
+            "in": "query",
             "name": "require_full_coverage",
             "required": false,
             "schema": {
@@ -3608,6 +3751,40 @@
                 }
               ],
               "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_recency_policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/StalePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Recency Policy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_session_liveness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Session Liveness Ms"
             }
           },
           {
@@ -3866,6 +4043,40 @@
                 }
               ],
               "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_recency_policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/StalePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Recency Policy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_session_liveness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Session Liveness Ms"
             }
           },
           {

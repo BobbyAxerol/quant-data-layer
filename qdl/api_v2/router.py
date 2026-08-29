@@ -538,6 +538,8 @@ def _query_requirement(
     interval: str | None,
     warmup_limit: int,
     max_freshness_ms: int | None,
+    event_recency_policy: StalePolicy | None,
+    max_session_liveness_ms: int | None,
     require_full_coverage: bool,
     require_final_bars: bool,
     stale_policy: StalePolicy,
@@ -554,6 +556,8 @@ def _query_requirement(
         interval=interval,
         warmup_limit=warmup_limit,
         max_freshness_ms=max_freshness_ms,
+        event_recency_policy=event_recency_policy,
+        max_session_liveness_ms=max_session_liveness_ms,
         require_full_coverage=require_full_coverage,
         require_final_bars=require_final_bars,
         stale_policy=stale_policy,
@@ -601,6 +605,8 @@ async def snapshot(
     consumer_grade: ConsumerGrade = ConsumerGrade.ALPHA,
     interval: str | None = None,
     max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    event_recency_policy: StalePolicy | None = None,
+    max_session_liveness_ms: int | None = Query(None, gt=0, le=86_400_000),
     require_full_coverage: bool = True,
     require_final_bars: bool = True,
     stale_policy: StalePolicy = StalePolicy.BLOCK,
@@ -613,7 +619,8 @@ async def snapshot(
 ):
     requirement = _query_requirement(
         instrument_uid, feed, consumer_grade, source_policy_id,
-        interval, 0, max_freshness_ms, require_full_coverage,
+        interval, 0, max_freshness_ms, event_recency_policy,
+        max_session_liveness_ms, require_full_coverage,
         require_final_bars, stale_policy, gap_policy, recovery,
         bar_revision_policy,
     )
@@ -645,6 +652,8 @@ async def warmup(
     max_cache_age_ms: int = Query(60_000, ge=0, le=86_400_000),
     deadline_ms: int = Query(20_000, ge=100, le=120_000),
     max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    event_recency_policy: StalePolicy | None = None,
+    max_session_liveness_ms: int | None = Query(None, gt=0, le=86_400_000),
     require_full_coverage: bool = True,
     require_final_bars: bool = True,
     stale_policy: StalePolicy = StalePolicy.BLOCK,
@@ -672,7 +681,8 @@ async def warmup(
         ) from error
     requirement = _query_requirement(
         instrument_uid, feed, consumer_grade, source_policy_id,
-        interval, 0, max_freshness_ms, require_full_coverage,
+        interval, 0, max_freshness_ms, event_recency_policy,
+        max_session_liveness_ms, require_full_coverage,
         require_final_bars, stale_policy, gap_policy, recovery,
         bar_revision_policy, warmup_spec,
     )
@@ -707,6 +717,8 @@ async def history(
     max_cache_age_ms: int = Query(60_000, ge=0, le=86_400_000),
     deadline_ms: int = Query(20_000, ge=100, le=120_000),
     max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    event_recency_policy: StalePolicy | None = None,
+    max_session_liveness_ms: int | None = Query(None, gt=0, le=86_400_000),
     require_full_coverage: bool = True,
     require_final_bars: bool = True,
     stale_policy: StalePolicy = StalePolicy.BLOCK,
@@ -734,7 +746,8 @@ async def history(
         ) from error
     requirement = _query_requirement(
         instrument_uid, feed, consumer_grade, source_policy_id,
-        interval, 0, max_freshness_ms, require_full_coverage,
+        interval, 0, max_freshness_ms, event_recency_policy,
+        max_session_liveness_ms, require_full_coverage,
         require_final_bars, stale_policy, gap_policy, recovery,
         bar_revision_policy, warmup_spec,
     )
@@ -870,6 +883,9 @@ async def feed_status(
     source_policy_id: str,
     consumer_grade: ConsumerGrade = ConsumerGrade.ALPHA,
     interval: str | None = None,
+    max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    event_recency_policy: StalePolicy | None = None,
+    max_session_liveness_ms: int | None = Query(None, gt=0, le=86_400_000),
     require_full_coverage: bool = True,
     require_final_bars: bool = True,
     stale_policy: StalePolicy = StalePolicy.BLOCK,
@@ -881,7 +897,8 @@ async def feed_status(
     access: DataPlaneAccess = Depends(_data_access),
 ):
     requirement = _query_requirement(
-        instrument_uid, feed, consumer_grade, source_policy_id, interval, 0, None,
+        instrument_uid, feed, consumer_grade, source_policy_id, interval, 0,
+        max_freshness_ms, event_recency_policy, max_session_liveness_ms,
         require_full_coverage, require_final_bars, stale_policy, gap_policy,
         recovery, bar_revision_policy,
     )

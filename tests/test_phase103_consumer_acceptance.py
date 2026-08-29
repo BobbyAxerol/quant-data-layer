@@ -60,10 +60,10 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             {item.consumer_id for item in scope.products},
             PHASE103_CONSUMER_IDS,
         )
-        self.assertEqual(len(scope.products), 18)
+        self.assertEqual(len(scope.products), 45)
         self.assertEqual(
             sum(item.delivery is DeliveryClass.DURABLE for item in scope.products),
-            18,
+            45,
         )
         pass_through = [
             item
@@ -82,8 +82,11 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 )
             },
             {
+                "binance-usdm-bnbusdt-bar-15m",
                 "binance-usdm-btcusdt-bar-15m",
+                "binance-usdm-dogeusdt-bar-15m",
                 "binance-usdm-ethusdt-bar-15m",
+                "binance-usdm-solusdt-bar-15m",
             },
         )
         self.assertEqual(len(scope.excluded), 1)
@@ -260,6 +263,17 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 "quality": {
                     "state": "LIVE",
                     "freshness_ms": freshness_ms,
+                    "event_recency_state": "LIVE",
+                    "provider_session_state": (
+                        "LIVE"
+                        if product.requirement.max_session_liveness_ms is not None
+                        else "NOT_APPLICABLE"
+                    ),
+                    "provider_session_liveness_ms": (
+                        1
+                        if product.requirement.max_session_liveness_ms is not None
+                        else None
+                    ),
                     "gap_open": gap_open,
                     "complete": True,
                     "execution_eligible": (
@@ -294,8 +308,47 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         self.assertEqual(value.consumer_grade.value, source.consumer_grade.value)
         self.assertEqual(value.interval, source.interval)
         self.assertEqual(value.warmup_limit, source.warmup_limit)
+        self.assertEqual(value.event_recency_policy, source.event_recency_policy)
+        self.assertEqual(
+            value.max_session_liveness_ms,
+            source.max_session_liveness_ms,
+        )
         self.assertEqual(value.recovery.value, source.recovery.value)
         self.assertEqual(value.bar_revision_policy.value, source.bar_revision_policy.value)
+
+    def test_quiet_connected_trade_is_accepted_for_no_order_observation_only(self):
+        product = self._product(feed="TRADE")
+        quiet = self._view(
+            product,
+            freshness_ms=product.requirement.max_freshness_ms + 1,
+            execution_eligible=False,
+        )
+        quiet = quiet.model_copy(
+            update={
+                "quality": quiet.quality.model_copy(
+                    update={
+                        "event_recency_state": "STALE",
+                        "provider_session_state": "LIVE",
+                        "provider_session_liveness_ms": 1,
+                    }
+                )
+            }
+        )
+        validate_product_view(product, quiet)
+
+        disconnected = quiet.model_copy(
+            update={
+                "quality": quiet.quality.model_copy(
+                    update={
+                        "freshness_ms": 1,
+                        "event_recency_state": "LIVE",
+                        "provider_session_state": "DISCONNECTED",
+                    }
+                )
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "provider session"):
+            validate_product_view(product, disconnected)
 
     def test_typed_views_enforce_durable_and_pass_through_domain_semantics(self):
         for feed in ("TRADE", "QUOTE", "BAR"):

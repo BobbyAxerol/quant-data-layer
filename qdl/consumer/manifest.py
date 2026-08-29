@@ -116,6 +116,14 @@ class ConsumerManifest:
             and configured.interval == requirement.interval
             and configured.consumer_grade is requirement.consumer_grade
             and configured.source_policy_id == requirement.source_policy_id
+            # Event-recency handling is an entitlement property, not a caller
+            # preference.  A request cannot turn a strict manifest route into
+            # an observed quiet-feed route, or remove its session SLA.
+            and configured.event_recency_policy is requirement.event_recency_policy
+            and (
+                configured.max_session_liveness_ms
+                == requirement.max_session_liveness_ms
+            )
             for configured in self.requirements
         )
 

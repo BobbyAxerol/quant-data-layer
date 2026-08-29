@@ -690,6 +690,10 @@ class StableAcquisitionPlan:
                 "generation_state_path": (
                     f"/var/lib/qdl-stable/runtime/generations/{key}"
                 ),
+                "session_liveness_dir": (
+                    f"/var/lib/qdl-stable/runtime/session-liveness/{key}"
+                ),
+                "session_liveness_write_interval_ms": 1000,
                 "max_inflight_publishes": 512,
                 "max_subscriptions_per_connection": (
                     200 if runtime == "BINANCE" else 100

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 from qdl.consumer.manifest import ConsumerManifest, ConsumerManifestLoader
-from qdl.query import DataRequirement, FeedType, RecoveryPolicy
+from qdl.query import DataRequirement, FeedType, RecoveryPolicy, StalePolicy
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 
@@ -355,6 +355,12 @@ def sdk_requirement(product: AcceptanceProduct):
         interval=item.interval,
         warmup_limit=item.warmup_limit,
         max_freshness_ms=item.max_freshness_ms,
+        event_recency_policy=(
+            SdkStalePolicy(item.event_recency_policy.value)
+            if item.event_recency_policy is not None
+            else None
+        ),
+        max_session_liveness_ms=item.max_session_liveness_ms,
         require_full_coverage=item.require_full_coverage,
         require_final_bars=item.require_final_bars,
         stale_policy=SdkStalePolicy(item.stale_policy.value),
@@ -495,13 +501,28 @@ def validate_product_view(
         raise ValueError("V2 receipt identity, feed, interval or policy mismatches demand")
     if view.quality.gap_open or not view.quality.complete:
         raise ValueError("V2 receipt has an unresolved gap or incomplete coverage")
-    max_freshness_ms = product.requirement.max_freshness_ms
+    requirement = product.requirement
+    max_freshness_ms = requirement.max_freshness_ms
+    observed_quiet_trade = (
+        product.feed is FeedType.TRADE
+        and requirement.effective_event_recency_policy is StalePolicy.OBSERVE
+        and view.quality.event_recency_state == "STALE"
+        and view.quality.provider_session_state == "LIVE"
+    )
     if (
         require_current_quality
         and max_freshness_ms is not None
         and view.quality.freshness_ms > max_freshness_ms
+        and not observed_quiet_trade
     ):
         raise ValueError("V2 receipt exceeds the governed freshness bound")
+    if requirement.max_session_liveness_ms is not None and (
+        view.quality.provider_session_state != "LIVE"
+        or view.quality.provider_session_liveness_ms is None
+        or view.quality.provider_session_liveness_ms
+        > requirement.max_session_liveness_ms
+    ):
+        raise ValueError("V2 receipt provider session liveness differs from demand")
     if product.delivery is DeliveryClass.DURABLE:
         if (
             view.source.venue != product.venue
@@ -513,8 +534,9 @@ def validate_product_view(
             raise ValueError("durable V2 receipt is not authoritative and live")
         if (
             require_current_quality
-            and product.requirement.consumer_grade.value == "EXECUTION"
+            and requirement.consumer_grade.value == "EXECUTION"
             and not view.quality.execution_eligible
+            and not observed_quiet_trade
         ):
             raise ValueError("execution-grade durable V2 receipt is not eligible")
     elif product.delivery is DeliveryClass.PROVIDER_PASS_THROUGH:

@@ -88,6 +88,16 @@ def requirement_from_proto(value: query_pb2.DataRequirement) -> DataRequirement:
         "source_policy_id": value.source_policy_id,
         "warmup_limit": value.warmup_limit,
         "max_freshness_ms": value.max_freshness_ms or None,
+        "event_recency_policy": (
+            None
+            if value.event_recency_policy == query_pb2.STALE_POLICY_UNSPECIFIED
+            else enum_value(
+                value.event_recency_policy,
+                query_pb2.StalePolicy,
+                "STALE_POLICY_",
+            )
+        ),
+        "max_session_liveness_ms": value.max_session_liveness_ms or None,
         "require_full_coverage": value.require_full_coverage,
         "require_final_bars": value.require_final_bars,
         "stale_policy": enum_value(
@@ -353,6 +363,11 @@ class GrpcMarketDataService:
                 execution_eligible=status.execution_eligible,
                 policy_id=status.policy_id,
                 flags=status.flags,
+                event_recency_state=status.event_recency_state,
+                provider_session_state=status.provider_session_state,
+                provider_session_liveness_ms=(
+                    status.provider_session_liveness_ms or 0
+                ),
             )
         except QueryServiceError as error:
             await context.abort(

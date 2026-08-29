@@ -29,6 +29,7 @@ from qdl.query import (
     QualityMetadata,
     RecoveryPolicy,
     SourceMetadata,
+    StalePolicy,
     V2QueryService,
 )
 from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR
@@ -38,6 +39,7 @@ from qdl.runtime.stable_catalog import (
     StableSourceCatalog,
     canonical_payload_interval,
 )
+from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import GrpcSnapshot
 from qdl.transport import Cursor, SQLiteDurableSpool, StoredEvent
 
@@ -164,6 +166,7 @@ class StableSpoolQueryBackend:
         *,
         schema_digest: str,
         config_revision: int = 1,
+        session_liveness_root: str | None = None,
         clock_ns=time.time_ns,
     ) -> None:
         if len(schema_digest) != 64:
@@ -172,6 +175,11 @@ class StableSpoolQueryBackend:
         self.catalog = catalog
         self.schema_digest = schema_digest
         self.config_revision = config_revision
+        self._session_liveness = (
+            StableSessionLivenessReader(session_liveness_root)
+            if session_liveness_root is not None
+            else None
+        )
         self._clock_ns = clock_ns
 
     def latest(self, requirement: DataRequirement) -> MarketDataItem | None:
@@ -421,14 +429,19 @@ class StableSpoolQueryBackend:
             bool(self._gaps(binding, records)) if gap_open is None else gap_open
         )
         return tuple(
-            self._item(binding, stored, market_data_pb2.EventEnvelope.FromString(
-                stored.event.payload
-            ), effective_gap)
+            self._item(
+                requirement,
+                binding,
+                stored,
+                market_data_pb2.EventEnvelope.FromString(stored.event.payload),
+                effective_gap,
+            )
             for stored in records
         )
 
     def _quality(
         self,
+        requirement: DataRequirement,
         binding: StableSourceBinding,
         envelope: market_data_pb2.EventEnvelope,
         *,
@@ -451,7 +464,41 @@ class StableSpoolQueryBackend:
             market_closed = not trading_calendar_for_id(
                 binding.instrument.session_calendar_id
             ).is_open_ns(self._clock_ns())
-        stale = freshness_ms > binding.stale_after_ms
+        event_limit_ms = (
+            binding.stale_after_ms
+            if requirement.max_freshness_ms is None
+            else min(binding.stale_after_ms, requirement.max_freshness_ms)
+        )
+        event_stale = freshness_ms > event_limit_ms
+        event_recency_state = "STALE" if event_stale else "LIVE"
+        session_state = "NOT_APPLICABLE"
+        session_liveness_ms = None
+        session_flags: tuple[str, ...] = ()
+        if requirement.max_session_liveness_ms is not None:
+            session_state = "UNKNOWN"
+            if self._session_liveness is None:
+                session_flags = ("SOURCE_SESSION_UNAVAILABLE",)
+            else:
+                status = self._session_liveness.status(
+                    venue=envelope.venue,
+                    market=envelope.market,
+                    source_session_id=envelope.source_session_id,
+                    connection_generation=int(envelope.connection_generation),
+                    config_revision=max(
+                        1, int(envelope.config_revision or self.config_revision)
+                    ),
+                    now_ns=self._clock_ns(),
+                )
+                session_state = status.state
+                session_liveness_ms = status.liveness_ms
+                session_flags = status.flags
+                if (
+                    session_state == "LIVE"
+                    and session_liveness_ms is not None
+                    and session_liveness_ms > requirement.max_session_liveness_ms
+                ):
+                    session_state = "STALE"
+                    session_flags += ("SOURCE_SESSION_HEARTBEAT_EXPIRED",)
         payload_name = envelope.WhichOneof("payload")
         book_unverified = payload_name in {"book_snapshot", "book_delta"} and not (
             bool(getattr(envelope, payload_name).sequence_verified)
@@ -465,7 +512,13 @@ class StableSpoolQueryBackend:
             state = "GAPPED"
         elif book_unverified:
             state = "SYNCING"
-        elif stale:
+        elif session_state in {"STALE", "DISCONNECTED", "UNKNOWN"}:
+            state = "STALE"
+        elif (
+            event_stale
+            and requirement.effective_event_recency_policy
+            in {StalePolicy.BLOCK, StalePolicy.PAUSE}
+        ):
             state = "STALE"
         else:
             state = "LIVE"
@@ -475,6 +528,8 @@ class StableSpoolQueryBackend:
             and binding.source_role == "PRIMARY"
             and state == "LIVE"
             and complete
+            and event_recency_state != "STALE"
+            and session_state in {"LIVE", "NOT_APPLICABLE"}
         )
         return QualityMetadata(
             state=state,
@@ -483,7 +538,15 @@ class StableSpoolQueryBackend:
             complete=complete,
             execution_eligible=execution_eligible,
             policy_id=binding.source_policy_id,
-            flags=flags + (("MARKET_CLOSED",) if market_closed else ()),
+            flags=(
+                flags
+                + session_flags
+                + (("LAST_EVENT_STALE",) if event_stale else ())
+                + (("MARKET_CLOSED",) if market_closed else ())
+            ),
+            event_recency_state=event_recency_state,
+            provider_session_state=session_state,
+            provider_session_liveness_ms=session_liveness_ms,
         )
 
     def _gaps(
@@ -554,13 +617,14 @@ class StableSpoolQueryBackend:
 
     def _item(
         self,
+        requirement: DataRequirement,
         binding: StableSourceBinding,
         stored: StoredEvent,
         envelope: market_data_pb2.EventEnvelope,
         gap_open: bool,
     ) -> MarketDataItem:
         payload_name = envelope.WhichOneof("payload")
-        quality = self._quality(binding, envelope, gap_open=gap_open)
+        quality = self._quality(requirement, binding, envelope, gap_open=gap_open)
         source_role = common_pb2.SourceRole.Name(envelope.source_role).removeprefix(
             "SOURCE_ROLE_"
         )
@@ -965,6 +1029,7 @@ def build_stable_query_stack(
     reference_data_enabled: bool = False,
     provider_admission_url: str | None = None,
     provider_admission_secret: bytes | None = None,
+    session_liveness_root: str | None = None,
 ) -> tuple[V2QueryService, StableSpoolQueryBackend, StableConsumerCursorIssuer]:
     """Build the query stack, optionally including the pass-through product.
 
@@ -973,7 +1038,12 @@ def build_stable_query_stack(
     off, the registry, the entitlements and the backend are exactly what they
     were before, which keeps the default deployment unchanged.
     """
-    backend = StableSpoolQueryBackend(spool, catalog, schema_digest=schema_digest)
+    backend = StableSpoolQueryBackend(
+        spool,
+        catalog,
+        schema_digest=schema_digest,
+        session_liveness_root=session_liveness_root,
+    )
     served: MarketDataQueryBackend = backend
     if pass_through_enabled:
         from qdl.runtime.provider_history import ProviderBarHistorySource

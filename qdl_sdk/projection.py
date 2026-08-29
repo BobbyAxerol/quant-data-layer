@@ -412,13 +412,22 @@ def market_data_view_from_stream(
         observed_for_freshness = int(envelope.bar.close_time_ns)
     else:
         observed_for_freshness = observed_at_ns
-    freshness_ms = max(
-        0, ((now_ns or time.time_ns()) - observed_for_freshness) // 1_000_000
-    )
-    stale = (
+    current_ns = time.time_ns() if now_ns is None else now_ns
+    freshness_ms = max(0, (current_ns - observed_for_freshness) // 1_000_000)
+    event_stale = (
         requirement.max_freshness_ms is not None
         and freshness_ms > requirement.max_freshness_ms
     )
+    event_recency_state = "STALE" if event_stale else "LIVE"
+    # A received stream frame is contemporaneous transport evidence for this
+    # event. Quiet-session liveness is instead established by the query/status
+    # path's native-ingestor heartbeat record.
+    session_liveness_ms = max(0, (current_ns - int(envelope.received_at_ns)) // 1_000_000)
+    session_stale = (
+        requirement.max_session_liveness_ms is not None
+        and session_liveness_ms > requirement.max_session_liveness_ms
+    )
+    provider_session_state = "STALE" if session_stale else "LIVE"
     book_unverified = feed in {Feed.BOOK_SNAPSHOT, Feed.BOOK_DELTA} and not (
         bool(payload["sequence_verified"]) and int(payload["book_generation"]) >= 1
     )
@@ -430,16 +439,27 @@ def market_data_view_from_stream(
         else "SYNCING"
         if book_unverified
         else "STALE"
-        if stale
+        if session_stale
+        or (
+            event_stale
+            and requirement.effective_event_recency_policy.value in {"BLOCK", "PAUSE"}
+        )
         else "LIVE"
     )
     if gap_open and requirement.gap_policy.value in {"BLOCK", "PAUSE"}:
         raise ContinuityError(
             "OPEN_SEQUENCE_GAP", "stream event violates the requested gap policy"
         )
-    if stale and requirement.stale_policy.value in {"BLOCK", "PAUSE"}:
+    if (
+        event_stale
+        and requirement.effective_event_recency_policy.value in {"BLOCK", "PAUSE"}
+    ):
         raise ContinuityError(
             "DATA_STALE", "stream event violates the requested freshness policy"
+        )
+    if session_stale:
+        raise ContinuityError(
+            "DATA_STALE", "stream event transport liveness exceeds its policy"
         )
 
     authoritative = (
@@ -452,7 +472,7 @@ def market_data_view_from_stream(
             "OPEN_SEQUENCE_GAP"
             if gap_open
             else "DATA_STALE"
-            if stale
+            if event_stale or session_stale
             else "DATA_NOT_READY"
             if book_unverified
             else "SOURCE_NON_AUTHORITATIVE"
@@ -488,10 +508,16 @@ def market_data_view_from_stream(
             "quality": {
                 "state": state,
                 "freshness_ms": int(freshness_ms),
+                "event_recency_state": event_recency_state,
+                "provider_session_state": provider_session_state,
+                "provider_session_liveness_ms": int(session_liveness_ms),
                 "gap_open": gap_open,
                 "complete": not gap_open and not book_unverified,
                 "execution_eligible": (
-                    authoritative and feed in EXECUTION_PRICE_VALIDATION_FEEDS
+                    authoritative
+                    and not event_stale
+                    and not session_stale
+                    and feed in EXECUTION_PRICE_VALIDATION_FEEDS
                 ),
                 "policy_id": requirement.source_policy_id,
                 "flags": flags,

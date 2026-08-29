@@ -35,7 +35,15 @@ from qdl.domain.instrument import (
     ProductType,
 )
 from qdl.domain.decimal import CanonicalDecimal
-from qdl.query import ConsumerGrade, DataRequirement
+from qdl.query import (
+    AccessPurpose,
+    ConsumerGrade,
+    DataRequirement,
+    InstrumentQuery,
+    QueryServiceError,
+    StalePolicy,
+    V2QueryService,
+)
 from qdl.projection.stable import (
     InMemoryStableProjectionTarget,
     ProjectionCacheMismatch,
@@ -64,6 +72,7 @@ from qdl.runtime.stable_source import (
     StableConsumerCursorIssuer,
     StableSpoolQueryBackend,
 )
+from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import DurableStreamGateway
 from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
 from qdl.transport.kafka_projector import KafkaProjectorRecord
@@ -274,18 +283,18 @@ class StableCatalogContractTests(unittest.TestCase):
 
     def test_catalog_covers_equal_source_baseline_with_deterministic_identity(self):
         catalog = StableSourceCatalog.load(CATALOG_PATH)
-        # The base capability catalog has 22 rows; C3.5 adds each additional
-        # provider-native BAR interval for two Binance USD-M and two OKX Swap
-        # instruments. C3.6 then adds the declared 12 physical L2 books as
-        # 24 snapshot/delta logical bindings. Keep both product planes strict.
+        # The fixed non-crypto capability plane has 10 rows. Each of the five
+        # liquid Binance USD-M and five OKX Swap instruments contributes TRADE,
+        # QUOTE and every provider-native BAR interval. C3.6 adds the declared
+        # 12 physical L2 books as 24 snapshot/delta logical bindings.
         from qdl.adapters.intervals import (
             BINANCE_USDM_NATIVE_INTERVALS,
             OKX_NATIVE_INTERVALS,
         )
         baseline = (
-            22
-            + 2 * (len(BINANCE_USDM_NATIVE_INTERVALS) - 1)
-            + 2 * (len(OKX_NATIVE_INTERVALS) - 1)
+            10
+            + 5 * (2 + len(BINANCE_USDM_NATIVE_INTERVALS))
+            + 5 * (2 + len(OKX_NATIVE_INTERVALS))
         )
         l2_bindings = [
             item for item in catalog.bindings
@@ -864,6 +873,175 @@ class StableQueryContractTests(unittest.TestCase):
                 partition_key=binding.partition_key,
                 limit=10,
             )
+
+
+class StableSessionLivenessQualityTests(unittest.TestCase):
+    """Deterministic quiet-feed evidence; no provider connection is opened."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.catalog = StableSourceCatalog.load(CATALOG_PATH)
+        self.spool = SQLiteDurableSpool(SpoolConfig(
+            path=Path(self.temp.name) / "stable.sqlite3",
+            max_records=100,
+            max_payload_bytes=2 * 1024 * 1024,
+            max_storage_bytes=8 * 1024 * 1024,
+            min_free_disk_bytes=0,
+        ))
+        self.binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-trade"
+        )
+        self.event = _stable_event(
+            self.catalog, "binance_usdm_trade.json", self.binding.binding_id
+        )
+        self.event.config_revision = 7
+        _append(self.spool, self.catalog, self.event)
+        self.now_ns = self.event.source_event_time_ns + 5_000_000_000
+        self.root = Path(self.temp.name) / "session-liveness"
+
+    def tearDown(self):
+        self.spool.close()
+        self.temp.cleanup()
+
+    def _requirement(self, *, policy=StalePolicy.OBSERVE):
+        return DataRequirement(
+            instrument_uid=self.binding.instrument.instrument_uid,
+            feed=self.binding.feed,
+            interval=self.binding.interval,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id=self.binding.source_policy_id,
+            max_freshness_ms=3_000,
+            event_recency_policy=policy,
+            max_session_liveness_ms=45_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+
+    def _write_session(
+        self,
+        *,
+        state="LIVE",
+        generation=None,
+        revision=7,
+        age_ms=1,
+    ):
+        directory = self.root / "binance-usdm"
+        directory.mkdir(parents=True, exist_ok=True)
+        transport_at_ns = self.now_ns - age_ms * 1_000_000
+        (directory / "trade-lane.json").write_text(
+            json.dumps({
+                "schema": "qdl.provider-session-liveness.v1",
+                "source_session_id": self.event.source_session_id,
+                "connection_generation": (
+                    self.event.connection_generation
+                    if generation is None
+                    else generation
+                ),
+                "state": state,
+                "last_transport_at_ns": transport_at_ns,
+                "updated_at_ns": transport_at_ns,
+                "config_revision": revision,
+            }),
+            encoding="utf-8",
+        )
+
+    def _backend(self):
+        return StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="e" * 64,
+            config_revision=7,
+            session_liveness_root=str(self.root),
+            clock_ns=lambda: self.now_ns,
+        )
+
+    def test_quiet_but_connected_trade_is_visible_and_non_executable(self):
+        self._write_session()
+        requirement = self._requirement()
+        backend = self._backend()
+        item = backend.latest(requirement)
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertEqual(item.quality.state, "LIVE")
+        self.assertGreater(item.quality.freshness_ms, 3_000)
+        self.assertEqual(item.quality.event_recency_state, "STALE")
+        self.assertEqual(item.quality.provider_session_state, "LIVE")
+        self.assertEqual(item.quality.provider_session_liveness_ms, 1)
+        self.assertFalse(item.quality.execution_eligible)
+        self.assertIn("LAST_EVENT_STALE", item.quality.flags)
+
+        service = V2QueryService(
+            instruments=InstrumentQuery(self.catalog.instrument_registry()),
+            backend=backend,
+            entitlements=self.catalog.entitlements(),
+            clock_ns=lambda: self.now_ns,
+        )
+        result = service.snapshot(
+            requirement,
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertFalse(result.item.quality.execution_eligible)
+
+    def test_disconnected_expired_and_reconnected_session_evidence_fail_closed(self):
+        requirement = self._requirement()
+        cases = (
+            ("DISCONNECTED", None, 7, 1, "DISCONNECTED"),
+            ("LIVE", None, 7, 45_001, "STALE"),
+            ("LIVE", None, 6, 1, "UNKNOWN"),
+            ("LIVE", 2, 7, 1, "UNKNOWN"),
+        )
+        for state, generation, revision, age_ms, expected in cases:
+            with self.subTest(
+                state=state,
+                generation=generation,
+                revision=revision,
+                age_ms=age_ms,
+            ):
+                self._write_session(
+                    state=state,
+                    generation=generation,
+                    revision=revision,
+                    age_ms=age_ms,
+                )
+                item = self._backend().latest(requirement)
+                self.assertIsNotNone(item)
+                assert item is not None
+                self.assertEqual(item.quality.state, "STALE")
+                self.assertEqual(item.quality.provider_session_state, expected)
+        self._write_session()
+        raw = self.root / "binance-usdm" / "trade-lane.json"
+        raw.write_text("{malformed", encoding="utf-8")
+        status = StableSessionLivenessReader(self.root).status(
+            venue="BINANCE",
+            market="USDM",
+            source_session_id=self.event.source_session_id,
+            connection_generation=self.event.connection_generation,
+            config_revision=7,
+            now_ns=self.now_ns,
+        )
+        self.assertEqual(status.state, "UNKNOWN")
+        self.assertEqual(status.flags, ("SOURCE_SESSION_MALFORMED",))
+
+    def test_block_policy_remains_strict_with_a_live_session(self):
+        self._write_session()
+        requirement = self._requirement(policy=StalePolicy.BLOCK)
+        backend = self._backend()
+        item = backend.latest(requirement)
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertEqual(item.quality.event_recency_state, "STALE")
+        self.assertEqual(item.quality.provider_session_state, "LIVE")
+        self.assertEqual(item.quality.state, "STALE")
+        service = V2QueryService(
+            instruments=InstrumentQuery(self.catalog.instrument_registry()),
+            backend=backend,
+            entitlements=self.catalog.entitlements(),
+            clock_ns=lambda: self.now_ns,
+        )
+        with self.assertRaises(QueryServiceError) as raised:
+            service.snapshot(requirement, purpose=AccessPurpose.INTERNAL_EXECUTION)
+        self.assertEqual(raised.exception.problem.code.value, "DATA_STALE")
 
 
 class StableCursorScopeValidatorTests(unittest.TestCase):

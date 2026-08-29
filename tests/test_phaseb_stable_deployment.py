@@ -337,6 +337,20 @@ class StableDeploymentContractTests(unittest.TestCase):
             value.startswith("/var/lib/qdl-stable/runtime/generations/")
             for value in generation_paths
         ))
+        session_liveness_dirs = {
+            item["session_liveness_dir"] for item in native.values()
+        }
+        self.assertEqual(
+            session_liveness_dirs,
+            {
+                "/var/lib/qdl-stable/runtime/session-liveness/binance-usdm",
+                "/var/lib/qdl-stable/runtime/session-liveness/okx-swap",
+            },
+        )
+        self.assertEqual(
+            {item["session_liveness_write_interval_ms"] for item in native.values()},
+            {1000},
+        )
         self.assertEqual(
             {item["latest_state_flush_ms"] for item in native.values()}, {50}
         )

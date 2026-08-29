@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from qdl.consumer import (
     MigrationState,
     UsageTelemetry,
 )
-from qdl.query import ConsumerGrade, FeedType
+from qdl.query import ConsumerGrade, FeedType, StalePolicy
 from tests.phase7_support import manifest_mapping
 
 
@@ -48,6 +49,25 @@ class ConsumerManifestTests(unittest.TestCase):
         base["unexpected"] = True
         with self.assertRaisesRegex(ValueError, "unknown top-level"):
             ConsumerManifestLoader.from_mapping(base)
+
+    def test_manifest_binds_quiet_trade_policy_and_session_sla(self):
+        manifest = ConsumerManifestLoader.load(
+            ROOT / "consumers/stable/trading-system-paper.yaml"
+        )
+        requirement = next(
+            item for item in manifest.requirements if item.feed is FeedType.TRADE
+        )
+        self.assertIs(requirement.event_recency_policy, StalePolicy.OBSERVE)
+        self.assertEqual(requirement.max_session_liveness_ms, 45_000)
+        self.assertTrue(manifest.requirement_allowed(requirement))
+        self.assertFalse(manifest.requirement_allowed(replace(
+            requirement,
+            event_recency_policy=None,
+        )))
+        self.assertFalse(manifest.requirement_allowed(replace(
+            requirement,
+            max_session_liveness_ms=45_001,
+        )))
 
 
 class ConsumerMigrationTests(unittest.TestCase):
