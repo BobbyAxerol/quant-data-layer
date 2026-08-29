@@ -324,7 +324,9 @@ class ProviderBarHistorySource:
         observed_ns = self._clock_ns()
         observed_ms = observed_ns // 1_000_000
         latest_boundary_ns = latest_closed_boundary_ms(
-            interval, observed_ms
+            interval,
+            observed_ms,
+            provider=instrument.identity.venue,
         ) * 1_000_000
         if specification.rows is not None:
             limit = specification.rows
@@ -845,9 +847,11 @@ class ProviderBarHistorySource:
         assert specification is not None
         target_interval = requirement.interval or ""
         target_ns = canonical_interval_ms(target_interval) * 1_000_000
+        instrument = self.catalog.instrument_for(requirement.instrument_uid)
         latest_boundary_ns = latest_closed_boundary_ms(
             target_interval,
             self._clock_ns() // 1_000_000,
+            provider=instrument.identity.venue,
         ) * 1_000_000
         if specification.rows is not None:
             expected_start_ns = expected_end_ns = None

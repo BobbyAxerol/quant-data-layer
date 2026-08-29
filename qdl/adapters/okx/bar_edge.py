@@ -83,7 +83,11 @@ async def fetch_closed_bar_history_raw_envelopes(
     # next paged request. Keep the provider end just before that boundary;
     # provider-native rows still decide the exact calendar anchor and are
     # validated for continuity below.
-    end_ms = latest_closed_boundary_ms(binding.interval, observed_ms) - 1
+    end_ms = latest_closed_boundary_ms(
+        binding.interval,
+        observed_ms,
+        provider="OKX",
+    ) - 1
     start_ms = end_ms - (limit + 2) * interval_ms
     client = history_client or OkxHistoricalClient(OkxRestClient())
     history = await client.candles(

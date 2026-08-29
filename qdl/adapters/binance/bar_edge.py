@@ -184,7 +184,11 @@ def fetch_closed_bar_history_raw_envelopes(
     # `now` can consume one slot with the still-open candle, yielding only 999
     # usable closed rows.  The history API's cutoff is therefore the exclusive
     # boundary of the current interval, not request observation time.
-    provider_end_ms = latest_closed_boundary_ms(binding.interval, observed_ms) - 1
+    provider_end_ms = latest_closed_boundary_ms(
+        binding.interval,
+        observed_ms,
+        provider="BINANCE",
+    ) - 1
     rows = _fetch_rows(
         binding,
         observed_ms=provider_end_ms,

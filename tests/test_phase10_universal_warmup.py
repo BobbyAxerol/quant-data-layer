@@ -268,6 +268,36 @@ class WarmupContractAndPlannerTests(unittest.TestCase):
         self.assertEqual(item.end_time_ns, monday_ns)
         self.assertEqual(item.start_time_ns, monday_ns - 2 * 7 * 86_400_000_000_000)
 
+    def test_three_day_planner_uses_each_provider_calendar_anchor(self):
+        binance = _demand("3d", 1)
+        binance = replace(
+            binance,
+            capability=replace(binance.capability, venue="BINANCE"),
+        )
+        binance_closed_ns = int(
+            datetime(2026, 8, 24, tzinfo=timezone.utc).timestamp()
+            * 1_000_000_000
+        )
+        okx_closed_ns = int(
+            datetime(2026, 8, 26, tzinfo=timezone.utc).timestamp()
+            * 1_000_000_000
+        )
+        self.assertEqual(
+            UniversalWarmupPlanner().compile(
+                (binance,), generated_at_ns=binance_closed_ns + 5_000_000_000,
+                demand_revision=7,
+            ).items[0].end_time_ns,
+            binance_closed_ns,
+        )
+        self.assertEqual(
+            UniversalWarmupPlanner().compile(
+                (_demand("3d", 1),),
+                generated_at_ns=okx_closed_ns + 5_000_000_000,
+                demand_revision=7,
+            ).items[0].end_time_ns,
+            okx_closed_ns,
+        )
+
     def test_native_only_rejects_a_non_native_interval(self):
         demand = _demand("45m", 2)
         strict = replace(

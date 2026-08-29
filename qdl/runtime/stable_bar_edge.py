@@ -9,7 +9,11 @@ import threading
 import time
 from pathlib import Path
 
-from qdl.adapters.intervals import canonical_interval_ms, latest_closed_boundary_ms
+from qdl.adapters.intervals import (
+    canonical_interval_ms,
+    is_valid_bar_open_ms,
+    latest_closed_boundary_ms,
+)
 from qdl.adapters.binance import (
     BinanceBarRawBinding,
     fetch_closed_bar_history_raw_envelopes as fetch_binance_history,
@@ -52,6 +56,36 @@ def _bar_interval_ms(interval: str) -> int:
         return canonical_interval_ms(interval)
     except ValueError as error:
         raise ValueError(f"stable BAR interval is unsupported: {interval}") from error
+
+
+def _source_provider(source: StableSourceBinding) -> str:
+    """Return the catalog venue used for provider BAR calendar alignment."""
+    instrument = getattr(source, "instrument", None)
+    identity = getattr(instrument, "identity", None)
+    venue = getattr(identity, "venue", None)
+    # StableSourceBinding always has identity in runtime.  Keeping the generic
+    # anchor for lightweight scheduling test doubles preserves their existing
+    # contract without weakening real catalog validation.
+    return str(venue) if venue is not None else ""
+
+
+def _valid_source_bar_open_ms(source: StableSourceBinding, open_ms: int) -> bool:
+    return is_valid_bar_open_ms(
+        source.interval or "",
+        open_ms,
+        provider=_source_provider(source),
+    )
+
+
+def _latest_source_closed_boundary_ms(
+    source: StableSourceBinding,
+    observed_ms: int,
+) -> int:
+    return latest_closed_boundary_ms(
+        source.interval or "",
+        observed_ms,
+        provider=_source_provider(source),
+    )
 
 
 class StableBinanceBarEdge:
@@ -264,7 +298,7 @@ class StableBinanceBarEdge:
                 isinstance(value, bool)
                 or not isinstance(value, int)
                 or value <= 0
-                or value % _bar_interval_ms(sources[binding_id].interval or "")
+                or not _valid_source_bar_open_ms(sources[binding_id], value)
             ):
                 raise RuntimeError("stable BAR checkpoint watermark is invalid")
             restored[binding_id] = value
@@ -550,7 +584,7 @@ class StableBinanceBarEdge:
         """Return whether a new final BAR can exist after the settled clock."""
         interval_ms = _bar_interval_ms(source.interval or "")
         newest_closed_open = (
-            latest_closed_boundary_ms(source.interval or "", observed_ms)
+            _latest_source_closed_boundary_ms(source, observed_ms)
             - interval_ms
         )
         previous_open = self._last_open_ms.get(source.binding_id)
@@ -561,8 +595,9 @@ class StableBinanceBarEdge:
         candidates = []
         for source, _acquisition in self.bindings + self.okx_bindings:
             interval_ms = _bar_interval_ms(source.interval or "")
-            boundary_ms = latest_closed_boundary_ms(
-                source.interval or "", int(now * 1000)
+            boundary_ms = _latest_source_closed_boundary_ms(
+                source,
+                int(now * 1000),
             )
             ready_at = boundary_ms / 1000 + self.settlement_delay_seconds
             if ready_at <= now:

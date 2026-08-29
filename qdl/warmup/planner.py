@@ -121,6 +121,7 @@ class UniversalWarmupPlanner:
             boundary_ns = latest_closed_boundary_ms(
                 target_interval,
                 generated_at_ns // 1_000_000,
+                provider=resolved.capability.venue,
             ) * 1_000_000
             target_interval_ns = target_ms * 1_000_000
             calendar_id = self.session_calendar_ids.get(resolved.instrument_uid)

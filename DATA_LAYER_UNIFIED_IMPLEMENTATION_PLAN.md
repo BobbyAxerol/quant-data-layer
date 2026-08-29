@@ -22952,3 +22952,156 @@ this scope rather than opening a new phase.
   then run one disposable 300-second C2 no-order retry.  It must name the V1
   image/runtime rollback coordinate and must not mutate V1, Kafka topology or
   offsets, Redis, SQLite, projector, Trading System, alpha or any order path.
+
+- `2026-08-29 C2 SESSION-LIVENESS / FULL ACTIVE-V2 APPLICATION ROLLOUT / OPERATOR APPROVED`:
+  the operator approved replacement of the active V2 application runtime, not
+  a second source-only rehearsal.  The scoped application set is the fourteen
+  currently running roles in compose project `qdl_v2_stable_candidate`:
+  `authority_outbox_v2`, `binance_bar_edge`, `projector_v2`,
+  `projector_v2_2`, `projector_v2_3`, `query_v2_1`, `query_v2_2`,
+  `stream_v2_active`, `stream_v2_passive`, `rust_core`, `rust_core_2`,
+  `rust_core_3`, `ingestor_binance_usdm`, and `ingestor_okx_swap`.  One
+  immutable Python image and one immutable Rust image are built from
+  `43cdbe3`; a private successor env references those image IDs while retaining
+  the current sealed runtime directory, authority record, identities and
+  durable state.
+
+  **Deliberate topology preservation:** Kafka, `stable_redis`,
+  `stable_authority_db`, `stable_state`, `stable_tls`, V1
+  `data_layer_service`, volumes, topics, offsets, consumer groups, Trading
+  System, alpha containers and every order path are not recreated or reset.
+  This is not an artificial boundary: they are stateful infrastructure or a
+  rollback provider, not V2 application code.  Recreated V2 ingestors will
+  naturally reconnect and write normal provider market data; no synthetic
+  bootstrap, flush, deletion or topology mutation is permitted.
+
+  **Preflight/rollback:** current role image IDs/config hashes and the active
+  runtime/env coordinate are captured as payload-free rollback evidence before
+  mutation.  Rollback restores the same fourteen role-specific image IDs with
+  the prior env/runtime mount; it stops no V1 or stateful service.  The
+  preflight found `query_v2_1` unhealthy on its old image (`/health/ready`
+  returns HTTP `503`), while `query_v2_2` is healthy.  The successor rollout
+  must make both readers ready before the C2 receipt may begin.
+
+  **Successor runtime rule:** the current two native-ingestor JSON files
+  predate this additive Rust config and therefore lack
+  `session_liveness_dir` and `session_liveness_write_interval_ms`.  The
+  successor runtime is a private copy of the active runtime directory with
+  exactly those two fields added to `ingestor-binance-usdm.json` and
+  `ingestor-okx-swap.json` (`/var/lib/qdl-stable/runtime/session-liveness/`
+  plus the existing `binance-usdm`/`okx-swap` lanes, `1000ms`).  It retains the
+  exact authority bytes, config revision, core JSON, acquisition plan and all
+  other files.  No authority, topic, offset, secret or market-data record is
+  regenerated.
+
+  **Acceptance and exit:** after the sequential rolling recreate, verify each
+  V2 application role is running, both query/stream endpoints are ready, the
+  active session-liveness files are fresh and correctly scoped, and no V1
+  health regression exists.  Then run exactly one disposable no-order C2
+  acceptance for the governed paper consumers for `300s`, including
+  V2-primary, signed cursor/reconnect, allowed V1 fallback-return and blocked
+  fallback behavior.  Retain only bounded payload-free evidence and remove the
+  disposable client.  A failed health/C2 gate rolls the fourteen application
+  roles back to their recorded images; it does not create a new topology or
+  retry loop.
+
+  **Build and rollback evidence:** immutable images from
+  `43cdbe32ed82642835d06a8335f614ba110b2871` are
+  Python `sha256:7028675a2b35cad47feac0bffd04e04c9f21299aa78470ba6645e94029476806`
+  and Rust `sha256:cfb686cf23fce8bea8c9c29c31630571bb6aad1b3a137f6dae1d28644649951f`;
+  both carry OCI revision `43cdbe32ed82642835d06a8335f614ba110b2871` and
+  release `2.0.0-43cdbe3`.  The private successor runtime is
+  `session-liveness-43cdbe3-20260829T162719Z`; its payload-free fourteen-role
+  rollback manifest has SHA-256
+  `eb16bae1b8714a26b7e70a88f14b5ea29031e06d926e8f30853f108613c5db15`.
+  `docker compose --profile stable-authority ... config -q` passed against the
+  successor environment before any runtime recreate.  The Rust image build
+  completed its locked release compilation successfully; no old image or
+  runtime role has been removed.
+
+  **Startup repair before retry:** the first serial attempt rolled the three
+  Rust core replicas, then failed closed on `ingestor_binance_usdm` and
+  immediately restored the exact fourteen-role rollback map.  Captured
+  startup evidence was `Os { code: 13, kind: PermissionDenied }`.  The cause
+  was the private successor staging procedure itself: it had made the two
+  bind-mounted, non-secret ingestor JSON files mode `0600` under the host UID,
+  while the immutable Rust process runs as UID/GID `10001`.  No provider,
+  Kafka, Redis, SQLite or V1 defect was involved.  Both JSON files now have
+  mode `0444`; their enclosing private state directory remains non-public.
+  A disposable `--network none`, read-only, tmpfs-state Rust run reached
+  `qdl_native_raw_ingestor_started` and then only reported expected DNS
+  failures until its five-second timeout.  It emitted/accepted no provider
+  frame, Kafka record or shared-state write.  This verifies the corrected
+  config read path before the single allowed rollout retry.
+
+  **Second fail-closed startup repair:** the next serial attempt proved the
+  Rust roles and both native ingestors start on the new images, but the Python
+  bar-edge, projector, query and stream roles exited before acceptance.  Their
+  bounded logs all identified the same staging-only fault:
+  `PermissionError: /runtime/authority.json`.  The copied runtime directory
+  had mode `0700`, unlike the active sealed runtime's mode `0755`; the JSON
+  files themselves were already non-secret read-only metadata.  The packet
+  rolled all fourteen roles back immediately through the recorded role-image
+  map.  The private successor runtime directory is now exactly `0755` while
+  its parent state directory remains `0700`; an isolated non-root, no-network
+  Python image check proved `authority.json`, `core.json` and the two ingestor
+  configs readable.  No identity, trust material, authority record content,
+  Kafka/Redis/SQLite state, V1 or consumer was changed.  The next rollout
+  retry uses this validated mount permission only; it is not a new topology or
+  behavioral change.
+
+  **BAR checkpoint domain-regression repair / approved in scope:** the third
+  startup audit reached every new role but `binance_bar_edge` rejected the
+  existing r14 checkpoint as an invalid watermark; the packet rolled all
+  fourteen roles back before C2.  Read-only inspection proved the checkpoint
+  schema/identity and all 140 binding IDs valid.  Exactly fifteen watermarks
+  were rejected: the five Binance and five OKX `1w` rows plus the five Binance
+  `3d` rows.  They are valid provider calendar boundaries but are not divisible
+  by fixed milliseconds from the Unix epoch.  The new validator's universal
+  modulo rule is therefore a source regression.  The approved narrow repair
+  is provider-neutral calendar-boundary validation for `3d` and `1w`, while
+  keeping strict fixed-duration alignment for every other interval; it must
+  apply the same mapping to the stable scheduler, durable query windows,
+  provider pass-through history and universal warmup planner, then add
+  deterministic regressions using only fixed timestamps, run focused/full
+  source tests, build replacement immutable images, and retain
+  the existing per-role rollback map.  It may not reset, edit or delete the
+  durable BAR checkpoint, data plane, V1, Kafka, Redis, SQLite, identities,
+  Trading System, alpha or order path.
+
+- `2026-08-29 FULL V2 RUNTIME ROLLOUT / CALENDAR-BOUNDARY SOURCE REPAIR / TESTED; REBUILD PENDING`:
+  the repair is implemented across the one shared interval contract and every
+  V2 BAR path that derives a closed boundary: Binance/OKX bar-history adapters,
+  stable BAR scheduler/checkpoint restore, durable spool query windows,
+  provider pass-through history, canary spool query windows and the universal
+  warmup planner.  It preserves the existing public helper signature; only
+  callers that already know a catalog/provider identity pass it explicitly.
+  `1w` is Monday-UTC for both providers; Binance `3d` is Monday-UTC; OKX
+  `3Dutc` stays on its native Unix-UTC grid.  Fixed-duration intervals retain
+  strict epoch alignment.
+
+  **Focused evidence (`PASS`):** an isolated non-root, read-only, no-network
+  Python run using tmpfs-only temporary state passed `102/102` across canonical
+  intervals, Binance/OKX history bootstrap, universal planner/provider-history,
+  stable BAR schedule/materialization/replay and C2 identity/fallback/release
+  suites.  It includes deterministic proof that a valid Binance `3d` Monday
+  watermark restores, an epoch-aligned Binance `3d` watermark rejects, and
+  Binance/OKX planners choose their respective closed boundary.
+
+  **Full-suite evidence (`NOT A RELEASE GATE / NO NEW CALENDAR FAILURE`):**
+  isolated discovery ran `1137` tests in `189.741s` and reported `5` failures,
+  `26` errors and `6` skips.  The failures/errors are outside this diff's
+  interval/bar-edge paths: read-only log mount imports, expired Phase-10.3
+  packet fixtures, old 6-slice/32-route demand assertions after the current
+  five-liquid manifest, and deterministic-ID fixtures in routed-query tests.
+  They are recorded as pre-existing suite hygiene/fixture debt and are not
+  used to certify this rollout.  The focused affected matrix above is the
+  correctness gate for the repaired scope.
+
+  **Next bounded operation:** run `git diff --check`, commit this source and
+  plan slice, build a new immutable Python image from that commit (Rust source
+  is unchanged), update only the private successor image coordinate, then
+  re-run the already approved fourteen-role V2 application rollout with the
+  recorded exact role-image rollback map.  On any failed startup/health/C2
+  gate, restore those fourteen roles only; never reset the r14 checkpoint or
+  any durable data plane.

@@ -9,10 +9,13 @@ from pathlib import Path
 
 from qdl.adapters.intervals import (
     canonical_interval_ms,
+    is_valid_bar_open_ms,
+    latest_closed_boundary_ms,
     okx_bar_size,
     okx_candle_channel,
     okx_interval_from_bar_size,
     okx_interval_from_channel,
+    provider_bar_calendar_anchor_ms,
 )
 from qdl.canonical.market import canonicalize_okx_bar
 from qdl.canonical.trade import TradeContext
@@ -68,6 +71,23 @@ class CanonicalIntervalTests(unittest.TestCase):
             with self.subTest(interval=interval):
                 with self.assertRaises(ValueError):
                     canonical_interval_ms(interval)
+
+    def test_provider_calendar_anchors_preserve_real_multiday_boundaries(self):
+        monday_3d = 1_787_529_600_000  # 2026-08-24T00:00:00Z
+        epoch_3d = 1_787_702_400_000  # 2026-08-26T00:00:00Z
+        monday_week = 1_786_924_800_000  # 2026-08-17T00:00:00Z
+        self.assertEqual(provider_bar_calendar_anchor_ms("3d", provider="BINANCE"), 345_600_000)
+        self.assertEqual(provider_bar_calendar_anchor_ms("3d", provider="OKX"), 0)
+        self.assertEqual(provider_bar_calendar_anchor_ms("1w", provider="BINANCE"), 345_600_000)
+        self.assertEqual(provider_bar_calendar_anchor_ms("1w", provider="OKX"), 345_600_000)
+        self.assertTrue(is_valid_bar_open_ms("3d", monday_3d, provider="BINANCE"))
+        self.assertFalse(is_valid_bar_open_ms("3d", epoch_3d, provider="BINANCE"))
+        self.assertTrue(is_valid_bar_open_ms("3d", epoch_3d, provider="OKX"))
+        self.assertTrue(is_valid_bar_open_ms("1w", monday_week, provider="BINANCE"))
+        self.assertEqual(
+            latest_closed_boundary_ms("3d", monday_3d + 1, provider="BINANCE"),
+            monday_3d,
+        )
 
 
 class OkxBarSizeTests(unittest.TestCase):

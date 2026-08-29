@@ -338,17 +338,18 @@ class StableSpoolQueryBackend:
             return specification.rows, None, None, None
         if requirement.feed is not FeedType.BAR or not requirement.interval:
             raise ValueError("time-range warmup requires a BAR interval")
+        binding = self.catalog.binding_for(requirement)
         interval_ns = _interval_ns(requirement.interval)
         latest_boundary_ns = latest_closed_boundary_ms(
             requirement.interval,
             self._clock_ns() // 1_000_000,
+            provider=binding.instrument.identity.venue,
         ) * 1_000_000
         assert specification.time_range is not None
         start_ns = specification.time_range.start_time_ns
         end_ns = specification.time_range.end_time_ns
         if end_ns > latest_boundary_ns:
             raise ValueError("warmup time range includes an unfinished bar")
-        binding = self.catalog.binding_for(requirement)
         expected_opens = None
         if binding.continuous_calendar:
             start_ns, end_ns, rows = specification.resolved_window(

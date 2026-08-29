@@ -25,6 +25,10 @@ from qdl.adapters.okx.history import (
     OkxCandle,
     OkxCandleHistory,
 )
+from qdl.adapters.intervals import (
+    canonical_interval_ms,
+    provider_bar_calendar_anchor_ms,
+)
 from qdl.canonical.market import canonicalize_okx_bar
 from qdl.canonical.trade import TradeContext
 from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
@@ -351,6 +355,10 @@ class StableBarBootstrapTests(unittest.TestCase):
             effective_at_ns=time.time_ns(),
         )
 
+    class _NoopPublisher:
+        def publish_many(self, values):
+            return tuple(range(len(tuple(values))))
+
     def test_bootstrap_publishes_multi_symbol_real_provider_batches_once(self):
         class Envelope:
             def __init__(self, venue: str, open_time: int):
@@ -393,6 +401,71 @@ class StableBarBootstrapTests(unittest.TestCase):
         self.assertEqual([len(item) for item in publisher.batches], [2] * expected_bindings)
         self.assertEqual(len(edge._last_open_ms), expected_bindings)
         self.assertTrue(edge._history_bootstrapped)
+
+    def test_checkpoint_accepts_provider_calendar_anchored_multiday_watermarks(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-calendar-checkpoint-") as raw:
+            state_path = Path(raw) / "bar-edge.json"
+            seed = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=self._NoopPublisher(),
+                warmup_rows=2,
+                generation_clock_ns=lambda: 1,
+            )
+            source = next(
+                item
+                for item, _ in seed.history_bindings
+                if item.interval == "3d" and item.instrument.identity.venue == "BINANCE"
+            )
+            payload = seed._state_identity_payload(schema="qdl.stable-bar-edge-state.v3")
+            payload["connection_generation"] = 1
+            payload["last_open_ms"] = {source.binding_id: 1_787_529_600_000}
+            state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            restored = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=self._NoopPublisher(),
+                warmup_rows=2,
+                state_path=state_path,
+                generation_clock_ns=lambda: 2,
+            )
+            self.assertEqual(restored._last_open_ms[source.binding_id], 1_787_529_600_000)
+            self.assertEqual(restored.connection_generation, 2)
+
+    def test_checkpoint_rejects_wrong_provider_multiday_anchor(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-calendar-checkpoint-") as raw:
+            state_path = Path(raw) / "bar-edge.json"
+            seed = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=self._NoopPublisher(),
+                warmup_rows=2,
+                generation_clock_ns=lambda: 1,
+            )
+            source = next(
+                item
+                for item, _ in seed.history_bindings
+                if item.interval == "3d" and item.instrument.identity.venue == "BINANCE"
+            )
+            payload = seed._state_identity_payload(schema="qdl.stable-bar-edge-state.v3")
+            payload["connection_generation"] = 1
+            payload["last_open_ms"] = {source.binding_id: 1_787_702_400_000}
+            state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "checkpoint watermark"):
+                StableBinanceBarEdge(
+                    catalog=self.catalog,
+                    acquisition=self.acquisition,
+                    authority=self.authority,
+                    publisher=self._NoopPublisher(),
+                    warmup_rows=2,
+                    state_path=state_path,
+                    generation_clock_ns=lambda: 2,
+                )
 
     def test_production_final_okx_bars_are_polled_after_history_bootstrap(self):
         class Envelope:
@@ -508,12 +581,6 @@ class StableBarBootstrapTests(unittest.TestCase):
                 return tuple(range(len(batch)))
 
         with tempfile.TemporaryDirectory(prefix="qdl-stable-bar-state-") as directory:
-            # C3.5 spans OKX 2d, Binance 3d and weekly bars.  Forty-two days
-            # is their least common fixed-duration boundary, so the fixture
-            # watermark is valid for the complete catalog rather than only the
-            # original 1m bindings.
-            first_open = 3_628_800_000
-            latest_open = 7_257_600_000
             state_path = Path(directory) / "bar-edge.json"
             first_publisher = Publisher()
             first = StableBinanceBarEdge(
@@ -526,19 +593,32 @@ class StableBarBootstrapTests(unittest.TestCase):
                 clock=lambda: 180.0,
                 generation_clock_ns=lambda: 100,
             )
-            with patch(
-                "qdl.runtime.stable_bar_edge.fetch_binance_history",
-                return_value=(
+            def opens(interval: str, provider: str) -> tuple[int, int]:
+                duration = canonical_interval_ms(interval)
+                anchor = provider_bar_calendar_anchor_ms(interval, provider=provider)
+                latest = anchor + 100 * duration
+                return latest - duration, latest
+
+            def binance_history(binding, **_kwargs):
+                first_open, latest_open = opens(binding.interval, "BINANCE")
+                return (
                     Envelope("BINANCE", first_open),
                     Envelope("BINANCE", latest_open),
-                ),
-            ), patch(
-                "qdl.runtime.stable_bar_edge.fetch_okx_history",
-                new_callable=AsyncMock,
-                return_value=(
+                )
+
+            async def okx_history(binding, **_kwargs):
+                first_open, latest_open = opens(binding.interval, "OKX")
+                return (
                     Envelope("OKX", first_open),
                     Envelope("OKX", latest_open),
-                ),
+                )
+
+            with patch(
+                "qdl.runtime.stable_bar_edge.fetch_binance_history",
+                side_effect=binance_history,
+            ), patch(
+                "qdl.runtime.stable_bar_edge.fetch_okx_history",
+                side_effect=okx_history,
             ):
                 expected_bindings = len(first.bindings) + len(first.okx_bindings)
                 self.assertEqual(first.bootstrap_history(), expected_bindings * 2)
@@ -548,7 +628,14 @@ class StableBarBootstrapTests(unittest.TestCase):
             self.assertEqual(persisted["connection_generation"], 100)
             self.assertEqual(persisted["warmup_rows"], 2)
             self.assertEqual(set(persisted["last_open_ms"]), set(first._binding_ids))
-            self.assertEqual(set(persisted["last_open_ms"].values()), {latest_open})
+            expected_last = {
+                source.binding_id: opens(
+                    source.interval or "",
+                    acquisition.runtime,
+                )[1]
+                for source, acquisition in first.history_bindings + first.history_okx_bindings
+            }
+            self.assertEqual(persisted["last_open_ms"], expected_last)
             okx_source = next(
                 source for source, _acquisition in first.history_okx_bindings
                 if source.instrument.native_symbol == "BTC-USDT-SWAP"

@@ -433,10 +433,12 @@ class SpoolCanonicalQueryBackend:
             return selected, specification.rows, len(selected) == specification.rows
         if requirement.feed is not FeedType.BAR or not requirement.interval:
             raise ValueError("time-range warmup requires a BAR interval")
+        binding = self.catalog.binding_for(requirement)
         interval_ns = _interval_ns(requirement.interval)
         latest_boundary_ns = latest_closed_boundary_ms(
             requirement.interval,
             self._clock_ns() // 1_000_000,
+            provider=binding.instrument.identity.venue,
         ) * 1_000_000
         start_ns, end_ns, requested = specification.resolved_window(
             interval_ns=interval_ns,

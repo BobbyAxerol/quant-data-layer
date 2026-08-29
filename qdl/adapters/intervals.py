@@ -77,19 +77,57 @@ def canonical_interval_ms(interval: str) -> int:
     return count * _UNIT_MS[unit]
 
 
-def latest_closed_boundary_ms(interval: str, observed_ms: int) -> int:
+def provider_bar_calendar_anchor_ms(interval: str, *, provider: str | None = None) -> int:
+    """Return the documented open-time anchor for one provider BAR interval.
+
+    Canonical duration and provider calendar anchor are separate concerns.
+    Binance ``3d`` and weekly klines start on the provider's Monday UTC grid;
+    OKX ``3Dutc`` starts on the Unix UTC grid while ``1Wutc`` is Monday
+    anchored.  Keeping this mapping here lets history, scheduling and durable
+    checkpoint validation agree without making a venue-specific exception in
+    one caller.
+    """
+    value = normalise_interval(interval)
+    venue = (provider or "").strip().upper()
+    if value == "1w":
+        return _MONDAY_AFTER_UNIX_EPOCH_MS
+    if value == "3d" and venue == "BINANCE":
+        return _MONDAY_AFTER_UNIX_EPOCH_MS
+    return 0
+
+
+def is_valid_bar_open_ms(
+    interval: str,
+    open_ms: int,
+    *,
+    provider: str | None = None,
+) -> bool:
+    """Return whether an observed BAR open lies on its provider calendar grid."""
+    if isinstance(open_ms, bool) or not isinstance(open_ms, int) or open_ms <= 0:
+        return False
+    duration_ms = canonical_interval_ms(interval)
+    anchor_ms = provider_bar_calendar_anchor_ms(interval, provider=provider)
+    return (open_ms - anchor_ms) % duration_ms == 0
+
+
+def latest_closed_boundary_ms(
+    interval: str,
+    observed_ms: int,
+    *,
+    provider: str | None = None,
+) -> int:
     """Return the latest exclusive closed-bar boundary in UTC.
 
-    Intraday and daily fixed-duration bars are Unix aligned. Canonical weekly
-    bars use the ISO/provider Monday anchor shared by Binance and OKX; flooring
-    them directly from the Thursday Unix epoch would hide a newly closed week
-    until Thursday and delay strategy computation by one bar.
+    Intraday and daily fixed-duration bars are Unix aligned.  Provider-aware
+    callers also get the documented calendar anchor for Binance/OKX multi-day
+    bars, so a durable checkpoint and a provider history cutoff cannot disagree
+    about a valid final BAR.
     """
     if observed_ms <= 0:
         raise ValueError("bar observation time must be positive")
     value = normalise_interval(interval)
     duration_ms = canonical_interval_ms(value)
-    anchor_ms = _MONDAY_AFTER_UNIX_EPOCH_MS if value.endswith("w") else 0
+    anchor_ms = provider_bar_calendar_anchor_ms(value, provider=provider)
     return (observed_ms - anchor_ms) // duration_ms * duration_ms + anchor_ms
 
 
