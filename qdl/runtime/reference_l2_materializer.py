@@ -51,6 +51,7 @@ _REFERENCE_FEED_MAP = {
     DemandFeed.TAKER_FLOW: FeedType.TAKER_FLOW,
     DemandFeed.MARK_PRICE: FeedType.MARK_INDEX_PRICE,
     DemandFeed.INDEX_PRICE: FeedType.MARK_INDEX_PRICE,
+    DemandFeed.MARK_INDEX_PRICE: FeedType.MARK_INDEX_PRICE,
     DemandFeed.CONTRACT_METADATA: FeedType.CONTRACT_METADATA,
     DemandFeed.BASIS: FeedType.BASIS,
     DemandFeed.BOOK_SNAPSHOT: FeedType.BOOK_SNAPSHOT,

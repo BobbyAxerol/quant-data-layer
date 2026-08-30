@@ -109,6 +109,9 @@ consumers:
         feed: BOOK_SNAPSHOT
         interval: null
         source_policy_id: crypto_liquid_v2
+        depth_per_side: 100
+        max_freshness_ms: 60000
+        require_live: true
       - venue: BINANCE
         market: USDM
         product_type: PERPETUAL
@@ -116,6 +119,9 @@ consumers:
         feed: BOOK_DELTA
         interval: null
         source_policy_id: crypto_liquid_v2
+        depth_per_side: 100
+        max_freshness_ms: 2000
+        require_live: true
       - venue: BINANCE
         market: USDM
         product_type: PERPETUAL
@@ -130,6 +136,9 @@ consumers:
         feed: BOOK_SNAPSHOT
         interval: null
         source_policy_id: crypto_liquid_v2
+        depth_per_side: 100
+        max_freshness_ms: 60000
+        require_live: true
       - venue: BINANCE
         market: USDM
         product_type: PERPETUAL
@@ -137,6 +146,9 @@ consumers:
         feed: BOOK_DELTA
         interval: null
         source_policy_id: crypto_liquid_v2
+        depth_per_side: 100
+        max_freshness_ms: 2000
+        require_live: true
       - venue: OKX
         market: SWAP
         product_type: PERPETUAL
@@ -151,6 +163,9 @@ consumers:
         feed: BOOK_SNAPSHOT
         interval: null
         source_policy_id: crypto_liquid_v2
+        depth_per_side: 100
+        max_freshness_ms: 60000
+        require_live: true
       - venue: OKX
         market: SWAP
         product_type: PERPETUAL
@@ -158,6 +173,9 @@ consumers:
         feed: BOOK_DELTA
         interval: null
         source_policy_id: crypto_liquid_v2
+        depth_per_side: 100
+        max_freshness_ms: 2000
+        require_live: true
       - venue: OKX
         market: SWAP
         product_type: PERPETUAL
@@ -172,6 +190,9 @@ consumers:
         feed: BOOK_SNAPSHOT
         interval: null
         source_policy_id: crypto_liquid_v2
+        depth_per_side: 100
+        max_freshness_ms: 60000
+        require_live: true
       - venue: OKX
         market: SWAP
         product_type: PERPETUAL
@@ -179,6 +200,9 @@ consumers:
         feed: BOOK_DELTA
         interval: null
         source_policy_id: crypto_liquid_v2
+        depth_per_side: 100
+        max_freshness_ms: 2000
+        require_live: true
       - venue: BINANCE
         market: USDM
         product_type: PERPETUAL

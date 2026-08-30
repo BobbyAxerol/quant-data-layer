@@ -162,6 +162,8 @@ def _percentile(values: Sequence[float], fraction: float) -> float:
 
 
 def _purpose_for_demand(purpose: DemandPurpose) -> tuple[ConsumerGrade, AccessPurpose]:
+    if purpose is DemandPurpose.EXECUTION:
+        return ConsumerGrade.EXECUTION, AccessPurpose.INTERNAL_EXECUTION
     if purpose is DemandPurpose.ALPHA:
         return ConsumerGrade.ALPHA, AccessPurpose.INTERNAL_ALPHA
     if purpose in {DemandPurpose.RESEARCH, DemandPurpose.OBSERVABILITY}:
@@ -273,12 +275,26 @@ def _demand_reference_work(
         if row.state != "ADMITTED" or row.feed not in {
             DemandFeed.FUNDING_RATE.value,
             DemandFeed.BASIS.value,
+            DemandFeed.MARK_INDEX_PRICE.value,
         }:
             continue
         if row.instrument_uid is None:
             raise Phase113AdmissionError("admitted reference demand lacks canonical instrument identity")
         declared = source_requirement_for_admission(plan.inventory, row)
         grade, _purpose = _purpose_for_demand(declared.purpose)
+        if declared.feed is DemandFeed.MARK_INDEX_PRICE:
+            result.append(_ReferenceWork(ReferenceDataRequirement(
+                instrument_uid=row.instrument_uid,
+                product=ReferenceProduct.MARK_INDEX_PRICE,
+                consumer_grade=grade,
+                source_policy_id=declared.source_policy_id,
+                limit=1,
+                page_size=1,
+                max_pages=1,
+                max_freshness_ms=declared.max_freshness_ms,
+                deadline_ms=deadline_ms,
+            )))
+            continue
         if declared.feed is DemandFeed.FUNDING_RATE:
             settled_end_ms = _last_closed_funding_ms(now_ms)
             # Ask through the bounded provider settlement grace, while the
@@ -327,7 +343,8 @@ def _demand_reference_work(
     # not request. A partial declared reference set is still a contract error.
     if not feeds:
         return ()
-    if not {ReferenceProduct.FUNDING_RATE, ReferenceProduct.BASIS} <= feeds:
+    historical = {ReferenceProduct.FUNDING_RATE, ReferenceProduct.BASIS}
+    if feeds & historical and not historical <= feeds:
         raise Phase113AdmissionError(
             "active demand did not resolve both funding and basis reference contracts"
         )
@@ -615,11 +632,13 @@ async def _admit_references(
     for grade, values in sorted(grouped.items(), key=lambda item: item[0].value):
         for chunk in _chunks(tuple(values), _MAX_BATCH_ITEMS):
             chunk_index += 1
-            purpose = (
-                AccessPurpose.INTERNAL_ALPHA
-                if grade is ConsumerGrade.ALPHA
-                else AccessPurpose.INTERNAL_RESEARCH
-            )
+            purpose = {
+                ConsumerGrade.EXECUTION: AccessPurpose.INTERNAL_EXECUTION,
+                ConsumerGrade.ALPHA: AccessPurpose.INTERNAL_ALPHA,
+                ConsumerGrade.RESEARCH: AccessPurpose.INTERNAL_RESEARCH,
+            }.get(grade)
+            if purpose is None:
+                raise Phase113AdmissionError("reference admission has an unsupported consumer grade")
             result = await service.reference_data_batch_async(
                 ReferenceBatchRequirement(
                     consumer_id=f"qdl.phase113.reference.batch.{chunk_index}",
@@ -723,15 +742,18 @@ async def _run_async(
     provider_timeout_seconds: float,
     deadline_ms: int,
     now_ms: int,
+    include_representative_reference_matrix: bool,
 ) -> dict[str, object]:
     catalog = StableSourceCatalog.from_mapping(admission_plan.plan.bundle.source_catalog)
     service, source = _service(catalog, timeout_seconds=provider_timeout_seconds)
     bar_work = _bar_work(admission_plan, rows=warmup_rows, deadline_ms=deadline_ms)
     reference_work = _demand_reference_work(
         admission_plan, now_ms=now_ms, deadline_ms=deadline_ms
-    ) + _representative_reference_work(
-        catalog, now_ms=now_ms, deadline_ms=deadline_ms
     )
+    if include_representative_reference_matrix:
+        reference_work += _representative_reference_work(
+            catalog, now_ms=now_ms, deadline_ms=deadline_ms
+        )
     started = time.monotonic()
     cpu_before = time.process_time()
     bar_evidence = await _admit_bars(service, bar_work)
@@ -760,6 +782,11 @@ async def _run_async(
         "reference_expected_blocked_count": expected_blocked,
         "reference_partial_count": partial_count,
         "reference_available_count": len(reference_evidence) - expected_blocked - partial_count,
+        "reference_scope": (
+            "DECLARED_PLUS_REPRESENTATIVE_MATRIX"
+            if include_representative_reference_matrix
+            else "DECLARED_ACTIVE_DEMAND_ONLY"
+        ),
         "elapsed_seconds": elapsed,
         "cpu_seconds": time.process_time() - cpu_before,
         "rss_max_kib": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
@@ -783,6 +810,7 @@ def run(
     metadata_timeout_seconds: float = 20.0,
     metadata_attempts: int = 3,
     now_ms: int | None = None,
+    include_representative_reference_matrix: bool = True,
 ) -> dict[str, object]:
     if not 1.0 <= provider_timeout_seconds <= 30.0:
         raise ValueError("provider timeout must be between 1 and 30 seconds")
@@ -806,6 +834,7 @@ def run(
         provider_timeout_seconds=provider_timeout_seconds,
         deadline_ms=deadline_ms,
         now_ms=now_ms if now_ms is not None else time.time_ns() // 1_000_000,
+        include_representative_reference_matrix=include_representative_reference_matrix,
     ))
 
 
@@ -848,6 +877,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--deadline-ms", type=int, default=60_000)
     parser.add_argument("--metadata-timeout-seconds", type=float, default=20.0)
     parser.add_argument("--metadata-attempts", type=int, default=3)
+    parser.add_argument(
+        "--active-demand-only",
+        action="store_true",
+        help="exercise only reference products declared by the active consumer manifest",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:
@@ -861,6 +895,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             deadline_ms=args.deadline_ms,
             metadata_timeout_seconds=args.metadata_timeout_seconds,
             metadata_attempts=args.metadata_attempts,
+            include_representative_reference_matrix=not args.active_demand_only,
         )
     except (
         Phase113AdmissionError,

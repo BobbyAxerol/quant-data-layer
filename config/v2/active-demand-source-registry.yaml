@@ -1,5 +1,5 @@
 schema: qdl.v2.active-demand-source-registry.v1
-revision: 2
+revision: 3
 owner_registry:
   root: trading_system
   path: config/_config/portfolio_account_config_setup.yaml
@@ -69,6 +69,10 @@ admission:
       max_slices: 128
     - venue: BINANCE
       market: USDM
+      feed: MARK_INDEX_PRICE
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
       feed: CONTRACT_METADATA
       max_slices: 128
     - venue: BINANCE
@@ -122,6 +126,10 @@ admission:
     - venue: OKX
       market: SWAP
       feed: INDEX_PRICE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: MARK_INDEX_PRICE
       max_slices: 128
     - venue: OKX
       market: SWAP

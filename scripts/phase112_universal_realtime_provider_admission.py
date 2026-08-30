@@ -795,6 +795,8 @@ def _report(
     admission_plan: ProviderAdmissionPlan,
     sessions: Iterable[SessionEvidence],
     *,
+    observed_bindings: Iterable[ProviderRealtimeBinding] | None = None,
+    separately_captured_l2_bindings: Iterable[ProviderRealtimeBinding] = (),
     elapsed_seconds: float,
     cpu_seconds: float,
     max_rss_kib: int,
@@ -802,6 +804,10 @@ def _report(
     rest_concurrency: int,
 ) -> dict[str, Any]:
     sessions = tuple(sessions)
+    observed_bindings = tuple(
+        admission_plan.bindings if observed_bindings is None else observed_bindings
+    )
+    separately_captured_l2_bindings = tuple(separately_captured_l2_bindings)
     by_binding: dict[str, list[FrameObservation]] = defaultdict(list)
     roles_by_binding: dict[str, set[tuple[str, str, str]]] = defaultdict(set)
     for session in sessions:
@@ -814,7 +820,7 @@ def _report(
     }
     expected_native_roles = {
         (item.venue, item.market, item.feed.value)
-        for item in admission_plan.bindings
+        for item in observed_bindings
         if item.mode == "RUST_NATIVE"
     }
     if reconnect_roles != expected_native_roles:
@@ -823,7 +829,7 @@ def _report(
             f"expected={len(expected_native_roles)} observed={len(reconnect_roles)}"
         )
     rows = []
-    for item in admission_plan.bindings:
+    for item in observed_bindings:
         observations = by_binding.get(item.binding_id, [])
         if not observations:
             raise ProviderAdmissionError(f"provider evidence missing binding={item.binding_id}")
@@ -877,6 +883,10 @@ def _report(
         "inventory_sha256": admission_plan.plan.inventory_sha256,
         "plan": admission_plan.plan.report_payload(),
         "binding_count": len(rows),
+        "separately_captured_l2_binding_count": len(separately_captured_l2_bindings),
+        "separately_captured_l2_binding_ids": [
+            item.binding_id for item in separately_captured_l2_bindings
+        ],
         "websocket_binding_count": sum(item["acquisition_mode"] == "RUST_NATIVE" for item in rows),
         "rest_final_bar_binding_count": sum(item["acquisition_mode"] == "PYTHON_REST" for item in rows),
         "accepted_missing_instrument_count": len(admission_plan.accepted_missing),
@@ -943,7 +953,11 @@ async def run(
         raise ProviderAdmissionError(f"active-demand compile/admission failed: {error}") from error
     final_bars = tuple(item for item in admission_plan.bindings if item.feed.value == "BAR")
     native = tuple(item for item in admission_plan.bindings if item.feed.value in {"TRADE", "QUOTE"})
-    if len(final_bars) + len(native) != len(admission_plan.bindings):
+    l2 = tuple(
+        item for item in admission_plan.bindings
+        if item.feed.value in {"BOOK_SNAPSHOT", "BOOK_DELTA"}
+    )
+    if len(final_bars) + len(native) + len(l2) != len(admission_plan.bindings):
         raise ProviderAdmissionError("universal provider projection contains an unsupported feed")
     rest_sessions, native_sessions = await asyncio.gather(
         _rest_bar_observations(final_bars, max_concurrency=rest_concurrency),
@@ -956,6 +970,8 @@ async def run(
     report = _report(
         admission_plan,
         rest_sessions + native_sessions,
+        observed_bindings=final_bars + native,
+        separately_captured_l2_bindings=l2,
         elapsed_seconds=time.monotonic() - started_wall,
         cpu_seconds=time.process_time() - started_cpu,
         max_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,

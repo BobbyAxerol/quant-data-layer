@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 
@@ -13,6 +14,12 @@ from qdl.certification.phase103_consumer_acceptance import (
     DeliveryClass,
     validate_resume_offsets,
 )
+from qdl.demand import (
+    ActiveDemandCompiler,
+    ActiveDemandSourceRegistry,
+    DemandFeed,
+)
+from qdl.runtime.production_catalog import ProductionDemandManifest
 from qdl_sdk import DataRequirement, Feed, FeedStatusResponse, Grade, StalePolicy
 from scripts.phase103_consumer_receipt_acceptance import _quiet_trade_status_is_observable
 
@@ -99,6 +106,40 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
             },
         )
 
+    def test_typed_books_preserve_explicit_live_acquisition_contract(self) -> None:
+        book_rows = [
+            item for _consumer_id, item in self.requirements
+            if item["feed"] in {"BOOK_SNAPSHOT", "BOOK_DELTA"}
+        ]
+        payload = {
+            "schema": self.demand["schema"],
+            "revision": self.demand["revision"],
+            "consumers": [{
+                "consumer_id": "typed-book-regression",
+                "consumer_grade": "EXECUTION",
+                "requirements": book_rows,
+            }],
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "books.yaml"
+            path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+            manifest = ProductionDemandManifest.load_many((path,))
+        books = [
+            item for item in manifest.demands
+            if item.feed.value in {"BOOK_SNAPSHOT", "BOOK_DELTA"}
+        ]
+        self.assertEqual(len(books), 8)
+        self.assertEqual({item.depth_per_side for item in books}, {100})
+        self.assertTrue(all(item.require_live for item in books))
+        self.assertEqual(
+            {item.max_freshness_ms for item in books if item.feed.value == "BOOK_SNAPSHOT"},
+            {60_000},
+        )
+        self.assertEqual(
+            {item.max_freshness_ms for item in books if item.feed.value == "BOOK_DELTA"},
+            {2_000},
+        )
+
     def test_admission_budget_is_exact_and_all_routes_are_provider_admitted(self) -> None:
         self.assertEqual(self.demand["revision"], 3)
         self.assertEqual(self.registry["revision"], 3)
@@ -128,6 +169,58 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
             },
         )
         self.assertEqual(self.registry["admission"]["max_total_slices"], 72)
+
+    def test_public_mark_index_contract_compiles_without_alias_rewrite(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repository = root / "repository"
+            alpha = root / "execution_alpha"
+            trading = root / "trading_system"
+            (repository / "config/v2").mkdir(parents=True)
+            (trading / "config/_config").mkdir(parents=True)
+            alpha.mkdir()
+            (repository / "config/v2/phase115c-paper-consumer-demand.yaml").write_bytes(
+                DEMAND_PATH.read_bytes()
+            )
+            (trading / "config/_config/portfolio_account_config_setup.yaml").write_text(
+                "alphas:\n  - alpha_id: fixture_alpha\n    allowed_venues: [BINANCE]\n",
+                encoding="utf-8",
+            )
+            registry = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8"))
+            registry["sources"] = [registry["sources"][0]]
+            registry_path = repository / "config/v2/registry.yaml"
+            registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+
+            inventory = ActiveDemandCompiler(
+                registry=ActiveDemandSourceRegistry.load(registry_path),
+                repository_root=repository,
+                execution_alpha_root=alpha,
+                trading_system_root=trading,
+            ).compile()
+
+        marks = [
+            item for item in inventory.requirements
+            if item.feed is DemandFeed.MARK_INDEX_PRICE
+        ]
+        self.assertEqual(len(inventory.requirements), 72)
+        self.assertEqual(len(marks), 4)
+        self.assertTrue(all(item.purpose.value == "EXECUTION" for item in marks))
+        self.assertTrue(all(type(item).from_proto(item.to_proto()) == item for item in marks))
+        books = [
+            item for item in inventory.requirements
+            if item.feed in {DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA}
+        ]
+        self.assertEqual(len(books), 8)
+        self.assertEqual({item.depth_levels for item in books}, {100})
+        self.assertTrue(all(item.require_live for item in books))
+        self.assertEqual(
+            {item.max_freshness_ms for item in books if item.feed is DemandFeed.BOOK_SNAPSHOT},
+            {60_000},
+        )
+        self.assertEqual(
+            {item.max_freshness_ms for item in books if item.feed is DemandFeed.BOOK_DELTA},
+            {2_000},
+        )
 
     @staticmethod
     def _trade_requirement(instrument_uid: str) -> DataRequirement:

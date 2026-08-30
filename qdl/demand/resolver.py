@@ -257,6 +257,7 @@ class CapabilityRegistry:
         DemandFeed.BASIS: "basis",
         DemandFeed.MARK_PRICE: "mark_index_price",
         DemandFeed.INDEX_PRICE: "mark_index_price",
+        DemandFeed.MARK_INDEX_PRICE: "mark_index_price",
         DemandFeed.CONTRACT_METADATA: "contract_metadata",
     }
 

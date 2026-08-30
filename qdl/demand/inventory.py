@@ -1306,11 +1306,28 @@ class ActiveDemandCompiler:
                 if feed is DemandFeed.BAR and not interval:
                     raise InventoryError("production BAR demand needs interval")
                 purpose = DemandPurpose.EXECUTION if grade == "EXECUTION" else DemandPurpose(grade)
-                freshness = (
-                    self._bar_freshness(interval, source)
-                    if feed is DemandFeed.BAR and interval
-                    else 5_000 if feed is DemandFeed.QUOTE else 15_000
-                )
+                if feed in {DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA}:
+                    depth_levels = row.get("depth_per_side")
+                    freshness = row.get("max_freshness_ms")
+                    require_live = row.get("require_live")
+                    if (
+                        isinstance(depth_levels, bool)
+                        or not isinstance(depth_levels, int)
+                        or isinstance(freshness, bool)
+                        or not isinstance(freshness, int)
+                        or not isinstance(require_live, bool)
+                    ):
+                        raise InventoryError(
+                            "production BOOK demand acquisition fields are invalid"
+                        )
+                else:
+                    depth_levels = 0
+                    freshness = (
+                        self._bar_freshness(interval, source)
+                        if feed is DemandFeed.BAR and interval
+                        else 5_000 if feed is DemandFeed.QUOTE else 15_000
+                    )
+                    require_live = True
                 requirement = DataRequirement(
                     consumer_id=owner,
                     purpose=purpose,
@@ -1330,8 +1347,9 @@ class ActiveDemandCompiler:
                     priority=source.priority,
                     ttl_seconds=source.ttl_seconds,
                     require_final_bars=feed is DemandFeed.BAR,
-                    require_live=True,
+                    require_live=require_live,
                     execution_grade=purpose is DemandPurpose.EXECUTION,
+                    depth_levels=depth_levels,
                     configuration_revision=self.registry.revision,
                 )
                 values.append(InventoryCandidate(

@@ -264,6 +264,10 @@ pub enum FeedType {
     /// Additive only: preserves all pre-existing enum values and lets the
     /// demand plane declare catalog-bound metadata without overloading a price.
     ContractMetadata = 13,
+    /// One execution-grade reference snapshot carries both mark and index. The
+    /// legacy MARK_PRICE and INDEX_PRICE aliases remain valid for research
+    /// manifests; this product is the public V2 identity.
+    MarkIndexPrice = 14,
 }
 impl FeedType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -286,6 +290,7 @@ impl FeedType {
             Self::MarkPrice => "FEED_TYPE_MARK_PRICE",
             Self::IndexPrice => "FEED_TYPE_INDEX_PRICE",
             Self::ContractMetadata => "FEED_TYPE_CONTRACT_METADATA",
+            Self::MarkIndexPrice => "FEED_TYPE_MARK_INDEX_PRICE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -305,6 +310,7 @@ impl FeedType {
             "FEED_TYPE_MARK_PRICE" => Some(Self::MarkPrice),
             "FEED_TYPE_INDEX_PRICE" => Some(Self::IndexPrice),
             "FEED_TYPE_CONTRACT_METADATA" => Some(Self::ContractMetadata),
+            "FEED_TYPE_MARK_INDEX_PRICE" => Some(Self::MarkIndexPrice),
             _ => None,
         }
     }

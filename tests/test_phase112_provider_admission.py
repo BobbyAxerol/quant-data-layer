@@ -210,6 +210,44 @@ class UniversalRealtimeProviderAdmissionTests(unittest.TestCase):
         self.assertEqual(report["status"], "PASS")
         self.assertTrue(next(item for item in report["bindings"] if item["binding_id"] == native.binding_id)["reconnect_probed"])
 
+    def test_report_separates_book_capture_from_trade_quote_bar_evidence(self):
+        native = _binding(binding_id="eth-trade", symbol="ETHUSDT")
+        now_ms = time.time_ns() // 1_000_000
+        book = SimpleNamespace(binding_id="eth-book-snapshot")
+        fake_plan = SimpleNamespace(
+            inventory_sha256="a" * 64,
+            report_payload=lambda: {"schema": "test-plan"},
+        )
+        plan = admission.ProviderAdmissionPlan(
+            plan=fake_plan,
+            bindings=(native,),
+            accepted_missing=(),
+            deferred_requirement_ids=(),
+        )
+        primary = admission.SessionEvidence(
+            role=("BINANCE", "USDM", "TRADE"), generation=1,
+            binding_ids=(native.binding_id,), ack_count=1, event_count=1,
+            observations=(admission.FrameObservation(native.binding_id, now_ms, now_ms, "a" * 64, False, "WEBSOCKET", 1),),
+        )
+        reconnect = admission.SessionEvidence(
+            role=("BINANCE", "USDM", "TRADE"), generation=2,
+            binding_ids=(native.binding_id,), ack_count=1, event_count=1,
+            observations=(admission.FrameObservation(native.binding_id, now_ms, now_ms, "b" * 64, False, "WEBSOCKET", 2),),
+        )
+        report = admission._report(
+            plan,
+            (primary, reconnect),
+            observed_bindings=(native,),
+            separately_captured_l2_bindings=(book,),
+            elapsed_seconds=1.0,
+            cpu_seconds=0.1,
+            max_rss_kib=1,
+            max_bindings_per_session=200,
+            rest_concurrency=16,
+        )
+        self.assertEqual(report["binding_count"], 1)
+        self.assertEqual(report["separately_captured_l2_binding_ids"], [book.binding_id])
+
 
 if __name__ == "__main__":
     unittest.main()

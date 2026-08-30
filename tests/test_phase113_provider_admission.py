@@ -193,6 +193,25 @@ class Phase113ProviderAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(item["expected"] == "BLOCKED" for item in evidence), 1)
         self.assertEqual(sum(item["expected"] == "AVAILABLE" for item in evidence), 101)
 
+    async def test_execution_mark_snapshot_uses_execution_entitlement(self):
+        work = admission._ReferenceWork(ReferenceDataRequirement(
+            instrument_uid="fixture-execution-mark",
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id="crypto_liquid_v2",
+            limit=1,
+            page_size=1,
+            max_pages=1,
+            max_freshness_ms=15_000,
+        ))
+        service = _ReferenceService()
+
+        evidence = await admission._admit_references(service, (work,))
+
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(len(service.calls), 1)
+        self.assertIs(service.calls[0][1], AccessPurpose.INTERNAL_EXECUTION)
+
     def test_closed_daily_and_funding_windows_never_include_open_period(self):
         day = 86_400_000
         funding = 8 * 3_600_000

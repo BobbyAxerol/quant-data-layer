@@ -466,6 +466,12 @@ mod tests {
         let mut invalid = requirement();
         invalid.purpose = DemandPurpose::Execution as i32;
         assert!(validate_requirement(&invalid).is_err());
+
+        let mut mark = requirement();
+        mark.purpose = DemandPurpose::Execution as i32;
+        mark.execution_grade = true;
+        mark.feed = FeedType::MarkIndexPrice as i32;
+        assert!(validate_requirement(&mark).is_ok());
         invalid.execution_grade = true;
         assert!(validate_requirement(&invalid).is_ok());
         invalid.ttl_seconds = 5;

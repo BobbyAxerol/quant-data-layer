@@ -307,13 +307,16 @@ def main(argv: list[str] | None = None) -> int:
         inventory_sha256=provider.inventory.manifest_sha256,
         admission_payload=provider.admission.report_payload(),
         metadata_sha256=provider.admission.metadata_sha256,
-        realtime_binding_ids={item.binding_id for item in provider.bindings},
+        realtime_binding_ids={
+            item.binding_id for item in provider.bindings
+            if item.feed.value not in {"BOOK_SNAPSHOT", "BOOK_DELTA"}
+        },
         reference_pairs={
             (str(row.instrument_uid), str(row.feed))
             for row in provider.admission.rows
             if row.state == "ADMITTED"
             and row.instrument_uid is not None
-            and row.feed in {"FUNDING_RATE", "BASIS"}
+            and row.feed in {"FUNDING_RATE", "BASIS", "MARK_INDEX_PRICE"}
         },
         l2_plan=l2_plan,
         admission_path=args.admission_evidence,

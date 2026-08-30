@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ from qdl.demand import (
 )
 from qdl.demand.topology import DemandTopology
 from qdl.ingestion.contracts import plan_shards
+from qdl.query import FeedType
 from qdl.runtime.production_catalog import ProductionCatalogBuilder
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
@@ -243,6 +245,59 @@ class UniversalRealtimePlanTests(unittest.TestCase):
         self.assertEqual(
             plan.owners_by_binding["binance-usdm-ethusdt-trade"],
             ("alpha.binance",),
+        )
+
+    def test_execution_mark_index_is_admitted_but_deferred_to_reference_plane(self):
+        trade = _requirement(
+            consumer_id="execution.paper",
+            venue="BINANCE",
+            market="USDM",
+            product_type="PERPETUAL",
+            symbol="BTCUSDT",
+            feed=DemandFeed.TRADE,
+        )
+        mark = _requirement(
+            consumer_id="execution.paper",
+            venue="BINANCE",
+            market="USDM",
+            product_type="PERPETUAL",
+            symbol="BTCUSDT",
+            feed=DemandFeed.MARK_INDEX_PRICE,
+        )
+        mark = replace(
+            mark,
+            purpose=DemandPurpose.EXECUTION,
+            execution_grade=True,
+            require_live=True,
+            source_policy_id="crypto_liquid_v2",
+        )
+        inventory = ActiveDemandInventory(
+            revision=12,
+            requirements=(trade, mark),
+            source_documents=(),
+            candidates=(),
+            exclusions=(),
+            input_sha256="b" * 64,
+        )
+        admission = admit_provider_metadata(inventory, self._metadata())
+        self.assertTrue(admission.passed)
+        convergence = converge_active_demand(inventory, admission, self._policy(inventory))
+        self.assertTrue(convergence.passed)
+        plan = build_universal_realtime_plan(
+            inventory=inventory,
+            admission=admission,
+            convergence=convergence,
+            builder=ProductionCatalogBuilder(
+                catalog_revision=12,
+                source_policy_revision=12,
+                authority_revision=12,
+            ),
+        )
+        self.assertEqual(plan.binding_count, 1)
+        self.assertEqual(len(plan.deferred_requirement_ids), 1)
+        self.assertEqual(
+            [item.feed for item in provider_realtime_bindings(plan)],
+            [FeedType.TRADE],
         )
 
     def test_generated_plan_loads_and_keeps_four_shared_ingestor_roles(self):

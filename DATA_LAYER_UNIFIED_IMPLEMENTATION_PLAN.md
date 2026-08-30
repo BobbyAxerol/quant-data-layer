@@ -25322,3 +25322,176 @@ real packet must therefore use the existing sealed-binding compose overlay
 is an enforcement boundary, not a new topology. The next permitted work is
 the one-image Trading System build, bounded V2 role activation and the
 300-second no-order acceptance defined above.
+
+#### 24.3.3 Runtime Packet Preflight (`IN PROGRESS`, 2026-08-30)
+
+**Exact activation set.** The pre-existing isolated
+`qdl_v2_stable_candidate` namespace is stopped but its last logs show normal
+query/stream, Rust-core and Binance/OKX ingestor progress before shutdown. Its
+current `RUST_PRIMARY` runtime already declares the four approved native
+identities with `TRADE`, `QUOTE` and `BOOK` at depth `100`; it is therefore
+reused without a core refresh or per-symbol worker. The packet will start only
+its existing Kafka quorum, `stable_redis`, TLS/state init, Binance USD-M and
+OKX Swap ingestors, `binance_bar_edge`, the three existing Rust-core replicas,
+three existing projectors, two query replicas and two stream replicas. It does
+not start Spot/VN/authority-DB/dispatcher roles.
+
+**Bounded artifacts.** Before activation, a fresh real-provider read-only
+admission/realtime/reference/L2 evidence set will compile one sealed
+`trading-system.paper.stable` binding from the current revision-6 manifest.
+One immutable Data Layer Python image from source commit `2a2a83a` will carry
+that manifest and projection code; the already-attested Rust image and current
+runtime directory remain unchanged. One immutable Trading System image from
+commit `5cc703e` will roll `market_data_service` only. The retained rollback
+images are `qdl-v2-python:2.0.0-3a74e73` and
+`tradingsystem-image:v2-primary-c3704b7` respectively.
+
+**Hard exclusions and rollback.** This packet may create normal V2
+provider-derived Kafka/canonical/cache records only. It does not reset Kafka
+offsets, flush Redis, delete SQLite, alter V1, change authority, mutate the
+Trading System database, start an alpha, or call gateway/risk/executor/broker
+paths. On failure it stops only the roles named above and recreates only
+`market_data_service` with its retained image and original sealed binding;
+all shared stores and V1 remain untouched.
+
+#### 24.3.4 Demand-Contract Preflight Correction (`IN PROGRESS / SOURCE ONLY`, 2026-08-30)
+
+The first real-provider preflight stopped fail-closed before any runtime
+mutation because the public revision-6 consumer manifest correctly declares
+the composite execution product `MARK_INDEX_PRICE`, while the older active
+demand compiler accepted only its legacy internal aliases `MARK_PRICE` and
+`INDEX_PRICE`. The error was deterministic:
+`'MARK_INDEX_PRICE' is not a valid DemandFeed`.
+
+**Approved narrow repair.** Add `MARK_INDEX_PRICE` additively to the shared
+demand enum/protobuf/capability mapping and map it to the existing composite
+reference product. Preserve `MARK_PRICE` and `INDEX_PRICE` unchanged for
+existing research manifests. The universal realtime planner must continue to
+defer this product to the reference plane: only `TRADE`, `QUOTE`, final `BAR`
+and `BOOK_*` create realtime provider bindings. No manifest semantic change,
+provider simulation, topology change, runtime role, data-store or order-path
+mutation is allowed in this repair.
+
+**Exit gate.** Regenerate checked-in Python/Rust protobuf sources through Buf;
+pass additive/breaking contract checks, demand/proto round-trip, active
+revision-6 compilation, reference materialization and realtime-deferred-plane
+tests. Then repeat the bounded real-provider admission chain. Any failure
+before immutable image build remains a source-only stop with no runtime
+effect.
+
+#### 24.3.5 Bounded BOOK Acquisition Correction (`IN PROGRESS / SOURCE ONLY`, 2026-08-30)
+
+The second preflight reached the production-demand parser and stopped before a
+provider connection because the twelve typed rows included eight `BOOK_*`
+requirements without their required acquisition contract. `ProductionDemand`
+correctly rejected the candidate with `BOOK demand requires an explicit bounded
+depth`. This is a source-manifest omission, not a Rust, Kafka, provider or
+runtime failure; no evidence, provider record, runtime role or shared store was
+mutated.
+
+**Narrow repair.** Carry the existing stable L2 contract into exactly those
+eight rows: `depth_per_side=100`, `require_live=true`, `60_000ms` freshness for
+snapshots and `2_000ms` for deltas. The production-demand parser already
+requires all three fields and rejects any missing, zero, boolean or unrelated
+feed field. The active-demand compiler must also preserve those three values
+when it maps the manifest row to `DataRequirement`; it must not substitute its
+generic trade/quote freshness defaults. Add a regression that loads this exact
+manifest and proves all eight BOOK requirements retain the bounded values
+through the compiler. No other symbol, venue, interval, product, topology or
+fallback policy changes.
+
+**Exit gate.** Run the isolated manifest/compiler regression together with the
+Phase 12.2 Python and Rust matrices, then repeat the same bounded real-provider
+admission chain. A provider failure remains fail-closed and does not authorize
+the runtime packet.
+
+#### 24.3.6 L2 Evidence-Plane Correction (`IN PROGRESS / SOURCE ONLY`, 2026-08-30)
+
+The next read-only preflight reached the provider harness and stopped before
+opening any provider connection because Phase 112 historically observed only
+`TRADE`, `QUOTE` and final `BAR`, while the new physical plan correctly also
+contains `BOOK_SNAPSHOT`/`BOOK_DELTA`. Treating those L2 bindings as unsupported
+would either hide L2 from release evidence or incorrectly duplicate the Phase
+114 snapshot/delta replay verifier.
+
+**Narrow repair.** Phase 112 now reports only its owned trade/quote/final-bar
+binding set and explicitly names the separately captured L2 binding IDs. Phase
+114 remains the sole real-provider L2 capture/replay authority. Phase 115
+compares Phase-112 evidence only with non-BOOK physical bindings and requires a
+matching Phase-114 evidence set for every BOOK binding. This changes no runtime
+route, provider adapter, contract, fallback policy or data store.
+
+**Exit gate.** Add isolated separation regression, rerun the complete source
+matrix, and repeat Phase 112 -> 113 -> 114 -> 115 from one fresh metadata
+generation. Every evidence artifact must remain real-provider, bounded and
+read-only before the runtime packet is eligible.
+
+#### 24.3.7 Declared-Reference Scope Correction (`IN PROGRESS / SOURCE ONLY`, 2026-08-30)
+
+Phase 113 then exposed an unrelated legacy broad-smoke assumption: its optional
+representative metric matrix tried to infer one policy from every binding of an
+instrument. The approved execution manifest deliberately has two policies for
+the same identity (`crypto_primary_v2` price/BAR and `crypto_liquid_v2`
+mark/L2), so inference is ambiguous and would be semantically unsafe.
+
+**Narrow repair.** Add an explicit `--active-demand-only` verifier mode. In
+this Phase 12.2 packet it warms the declared final BAR routes and reads only
+the declared `MARK_INDEX_PRICE` reference requirements using each requirement's
+own policy and execution entitlement. The existing representative research
+matrix remains available for its prior callers but is not silently assigned a
+policy or included in the execution handoff. Evidence records which scope ran.
+
+**Exit gate.** The active-only real-provider chain must return four exact mark
+snapshots, all declared BAR warmups, and no provider/runtime writes. Then run
+the separate real L2 capture and combine all four evidence artifacts only when
+their inventory and metadata digests match.
+
+#### 24.3.8 Source And Evidence Exit (`PASS / RUNTIME UNCHANGED`, 2026-08-30)
+
+**Narrow defects repaired.** The shared demand contract now represents
+`MARK_INDEX_PRICE` additively, without changing the legacy `MARK_PRICE` or
+`INDEX_PRICE` values. The production-demand compiler preserves the required
+bounded book acquisition values rather than replacing them with generic quote
+freshness. The real-time verifier owns only `TRADE`/`QUOTE`/final `BAR` and
+names the separately captured L2 requirements; Phase 114 remains the one L2
+capture/replay authority. The reference verifier gained an explicit active-
+demand-only mode so it does not infer a false policy when the same canonical
+instrument has independent price/BAR and mark/L2 policies.
+
+**Source verification.** Buf format, lint, and breaking checks passed against
+both checked-in baselines. The isolated, read-only, network-disabled Python
+matrix passed `72/72` tests across typed execution context, demand/protobuf
+round-trip, manifest/compiler preservation, reference materialization,
+Phase-112/113/114/115 evidence compatibility and consumer binding behavior.
+`cargo test -p qdl-venue-core --locked` passed `37/37`. The temporary Cargo
+target was removed after the test; no test image was retained.
+
+**Real-provider evidence, one generation.** Bounded read-only Binance USD-M
+and OKX Swap evidence under `/tmp/qdl-phase12-real.xEQNs0` passed with shared
+inventory SHA `24c8ebda047bf9c8c941bc2d696e2c580923265a7887fe9201f0fc33b4b00354`
+and metadata digests `BINANCE:USDM=4ae35d...6265392`,
+`OKX:SWAP=805ac6...4244b982`. Phase 112 observed the 40 non-BOOK physical
+trade/quote/final-BAR bindings and separately declared all eight bounded L2
+requirements. Phase 113 warmed 20 final-BAR bindings (60 rows) and admitted
+four declared mark/index snapshots only. Phase 114 captured/replayed the four
+physical Binance/OKX BTC/ETH books with their native snapshot/delta semantics.
+All artifacts report zero runtime mutation, order action and persisted raw
+provider bytes.
+
+**Sealed release input.** The evidence compiler prepared universal release
+revision `2`, manifest SHA
+`1f04190793e56b1fff9a39f0a377d54a40f947b6a7d702dfde334f03593021e9`,
+with 72 products (`BAR=30`, `TRADE=20`, `QUOTE=10`, `MARK_INDEX_PRICE=4`,
+`BOOK_SNAPSHOT=4`, `BOOK_DELTA=4`). It rendered only the approved
+`trading-system.paper.stable` binding: 42 routes, binding SHA
+`1bad76a8f28c6dc98776d8cfde8836c46007defd960b418df37b56bdbc29d7f1`.
+This bounded evidence is transient and is not committed; its hashes and
+counts above are the audit record.
+
+**Remaining Phase 12.2 work.** Build one immutable Python projector/query/
+stream image and one immutable Trading System market-data image from these
+tested sources, materialize the sealed binding in the private runtime
+directory, then execute only the already-approved role start and one
+300-second no-order paper acceptance. A failed build, binding check or
+acceptance rolls only `market_data_service` and stops only the packet-started
+V2 roles; it does not authorize a new topology or a broader retry.

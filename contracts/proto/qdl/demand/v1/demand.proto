@@ -30,6 +30,10 @@ enum FeedType {
   // Additive only: preserves all pre-existing enum values and lets the
   // demand plane declare catalog-bound metadata without overloading a price.
   FEED_TYPE_CONTRACT_METADATA = 13;
+  // One execution-grade reference snapshot carries both mark and index. The
+  // legacy MARK_PRICE and INDEX_PRICE aliases remain valid for research
+  // manifests; this product is the public V2 identity.
+  FEED_TYPE_MARK_INDEX_PRICE = 14;
 }
 
 enum DemandState {
