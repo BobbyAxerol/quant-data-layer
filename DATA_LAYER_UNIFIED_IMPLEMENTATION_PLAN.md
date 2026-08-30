@@ -24902,3 +24902,19 @@ consumer routing changed.  A later runtime packet may recreate only
 `query_v2_1` and `query_v2_2` with an immutable image from this source and
 their exact existing image as rollback; it must not merge this repair with an
 ingestor/projector/core topology change.
+
+**C4.17a bounded query-runtime packet (`APPROVED / IN PROGRESS`, 2026-08-30):**
+The owner approved the narrow source-to-runtime handoff required to remove the
+query-edge event-loop defect before the existing V2-primary consumer is
+re-observed. Build exactly one immutable Python image from source commit
+`90f7857`; retain the current query image
+`sha256:ee4fb55d85ed41a63ab9c5fa173d9bdb6622b50dcd73ffa5839d721aae66d37a`
+(`2.0.0-d645fba`) as the exact rollback coordinate. Recreate only
+`query_v2_1` and `query_v2_2`, preserving their existing project, `/runtime`
+mount, TLS mounts, `stable_state`, Kafka, Redis, SQLite, manifest, Rust core,
+ingestors, projectors, streams and V1. A failed start/readiness check restores
+only those two roles to the recorded image; it does not reset offsets, flush a
+cache, delete state, or alter authority. After the two replicas are healthy,
+the already-running Trading System consumer and selected paper alpha are
+observed without forced signal/order. This packet is source/runtime repair
+only; it does not widen consumer scope or promote another alpha.
