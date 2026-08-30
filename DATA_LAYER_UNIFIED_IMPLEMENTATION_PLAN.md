@@ -23765,3 +23765,151 @@ this scope rather than opening a new phase.
   same affected matrix inside it, then roll only the four approved reader roles
   and run one final evidence-bearing 300-second C2 no-order acceptance.  No
   additional image, bundle, service, topology or retry packet is permitted.
+
+  **Quiet-TRADE reader image and narrow rolling packet (`APPROVED / IN
+  PROGRESS`):** one replacement Python reader image was built from committed
+  source `dcb55a298795a30f203d0c4c55cde4a2657e02b4`:
+  `qdl-v2-python:2.0.0-dcb55a2`, image
+  `sha256:6cff4a7a0ad9def132ce7257f0fef2c4e42b3fc5dd8fc2fb75b101592df740e6`.
+  OCI revision, release and runtime user attest respectively to that full
+  commit, `2.0.0-dcb55a2` and `qdl:qdl`; the exact 91-case affected matrix
+  passed inside the image itself with network disabled and read-only execution.
+  The next mutation creates one private mode-`0600` image-only overlay under
+  the existing state root, then uses it with the existing `rollout.env` and
+  C2 reader override to recreate **only** `query_v2_1`, `query_v2_2`,
+  `stream_v2_passive`, and `stream_v2_active`, serially with `--no-deps` and
+  `--no-build`.  The exact rollback for every role is the currently serving
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`
+  image and the already verified unchanged runtime/TLS mounts.  Reader health
+  is `query=200` for both query replicas and exactly one `stream=200` plus one
+  standby `503`; neither stream role name is assumed to own the lease.  V1,
+  Rust, ingest, projector, authority, Kafka, Redis, SQLite, Trading System,
+  alpha and every order path remain excluded.  One failed role restores only
+  itself immediately; a C2 failure restores the four reader roles and ends the
+  packet without source-policy or data-plane changes.
+
+  **Quiet-TRADE reader rollout result (`PASS / C2 PENDING`):** the approved
+  serial rollout completed for exactly `query_v2_1`, `query_v2_2`,
+  `stream_v2_passive`, and `stream_v2_active`, each with `--no-deps --no-build
+  --force-recreate` and the image-only private overlay.  All four now resolve
+  to `sha256:6cff4a7a0ad9def132ce7257f0fef2c4e42b3fc5dd8fc2fb75b101592df740e6`
+  from source `dcb55a298795a30f203d0c4c55cde4a2657e02b4`, with `restart=0` and
+  `OOMKilled=false`. `query_v2_1` Compose readiness is `healthy`; the bounded
+  mTLS readiness probes returned `200` for both query replicas. The stream
+  aliases converged to one `200` lease owner and one expected `503` standby;
+  this is the governed HA invariant, not an availability failure. The only
+  failed probe was a local Python command quoting error before it contacted a
+  role; the corrected mTLS probes passed. No other service was recreated, and
+  V1, Rust/ingestors/projectors, Kafka, Redis, SQLite, Trading System, alpha
+  and every order path remain unchanged.
+
+  **Final C2 execution boundary (`APPROVED / READY`):** create a new private
+  mode-`0700` evidence namespace and bind the currently serving frozen V1
+  `v1.2.2` provenance to `data_layer_service` immediately before execution.
+  Run exactly one disposable, non-root, read-only C2 client on
+  `executor_network` for the existing four consumer identities for at most
+  `300s`. It receives only V2 query/stream aliases, read-only catalog/
+  acquisition/release/authority inputs, approved mTLS/JWT identities, and the
+  manifest-authorized `http://data_layer:8100` cached-read fallback drill;
+  `acceptance.json`, bounded stderr and exit code are the sole host writes.
+  It has no Docker socket, provider credentials, order credentials, durable
+  store write access or persistent cursor. `PASS` requires the receipt to
+  report zero provider connections and zero order actions, with all four
+  consumers completing V2-primary warmup/query/stream/reconnect plus only
+  policy-permitted V1 fallback-return. Any nonzero exit or malformed receipt
+  is terminal for this packet and restores only these four readers to
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`;
+  it is not retried by timing luck.
+
+  **C2 launcher preflight correction (`NON-CERTIFYING`):** the first client
+  shell stopped while opening `/evidence/acceptance.json`, before Python or the
+  C2 harness was invoked, because the new mode-`0700` host evidence namespace
+  remained owned by the host user while the approved client correctly runs as
+  UID/GID `10001`. It made no query/stream/V1 request, provider connection or
+  order action, and it produced no receipt. This is a deterministic evidence
+  mount ownership defect, not an acceptance failure or a reason to alter data
+  policy. Correct only that private namespace: transfer its directory and the
+  two payload-free V1 evidence files to UID/GID `10001`, retain directory
+  mode `0700` and file mode `0600`, then rerun the unchanged client command
+  once. After it exits, return the namespace to the host owner only for bounded
+  inspection/journaling. No reader rollback is required because no C2 code or
+  data-plane request began.
+
+  **C2 execution transport correction (`APPROVED / ONE REAL RUN PENDING`):**
+  the foreground stdin client again left zero-byte stdout/stderr and no
+  `exit-code.txt` after the host command attachment ended, so it cannot supply
+  an evidence-bearing result. This is a launcher lifetime limitation, not a
+  data/contract result; no receipt is claimed. The single real C2 client will
+  instead be detached and auto-removed after completion. The protected
+  mode-`0440` external identity files require a narrowly privileged init step:
+  its entry shell starts as UID `0` with **only** `DAC_OVERRIDE`, `SETUID` and
+  `SETGID`, solely to stream the exact thirteen already-approved identity/trust
+  files from read-only binds into `/tmp` tmpfs. `tar --no-same-owner` runs as
+  UID/GID `10001`, then the shell `exec`s the C2 Python process with
+  `no_new_privs`; before any V2 or V1 request it proves UID `10001` and
+  `CapInh/CapPrm/CapEff/CapAmb=0` in bounded evidence. The Docker bounding set
+  retains only those three bootstrap bits, but `no_new_privs` prevents their
+  reacquisition by the final process. The client has no Docker socket,
+  provider/order credentials or durable-store mount. The exact private evidence
+  namespace is temporarily owned by UID/GID `10001` (`0700` directory, `0600`
+  files) and is returned to the host owner only after completion. This changes
+  no reader/core/provider behavior and creates no service, image, topology or
+  retry packet.
+
+  **Detached launcher identity preflight (`NON-CERTIFYING / RESOLVED`):** the
+  first detached client reached the harness but stopped at the all-four-identity
+  file preflight for `monitoring.multivenue.stable`; it did not construct a
+  product, open query/stream, invoke the V1 drill, or issue an order. A
+  no-network reproduction using the same protected files, capability-minimal
+  bootstrap and final UID `10001` passed the exact parser preflight for all
+  four identities. The defect was the inline nested-shell quoting used only to
+  write optional capability metadata, not a certificate, JWT, trust or data
+  defect. The final client uses one short non-secret `run-c2.sh` inside its
+  private evidence namespace rather than nested command quoting. It writes
+  only final UID/capability metadata, the bounded receipt/stderr/exit code; the
+  script has no provider, order, Docker or durable-store operation. This is the
+  last launcher correction: its C2 result is the packet result, with rollback
+  to the four-reader `e43f903…` map on failure.
+
+  **Final C2 result (`FAIL-CLOSED / ROLLBACK REQUIRED`):** the clean detached
+  client completed its launcher/security preflight as UID `10001` with
+  `CapInh/CapPrm/CapEff/CapAmb=0` and `NoNewPrivs=1`, then reached the real V2
+  stream receipt path. It stopped at `alpha.okx.paper.stable / OKX.SWAP.
+  PERPETUAL.DOGE-USDT / TRADE`: after the bounded quiet observation, the typed
+  status could not prove the required live, non-executable session, so
+  `ContinuityError` terminated C2 before any certificate/receipt could be
+  emitted. This is a correct fail-closed data/session result, not a launcher,
+  identity, V1, order or policy bug. The receipt is intentionally empty;
+  bounded stderr, exit code `1`, V1 binding/provenance and non-secret client
+  security metadata are retained in
+  `c2-20260830T062508Z-quiettrade-final`. The acceptance client is already
+  auto-removed. Per the approved decision boundary, do not retry or weaken
+  recency/session requirements: restore only the four rolled reader roles to
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`,
+  then verify their readiness/HA state and close this packet as non-certified.
+
+  **C2 rollback completion (`PASS / V2 PRIMARY NOT CERTIFIED`):** only
+  `query_v2_1`, `query_v2_2`, `stream_v2_passive`, and `stream_v2_active`
+  were serially recreated to the recorded `e43f903…` rollback image; all have
+  `restart=0` and `OOMKilled=false`. `query_v2_1` is Compose-`healthy` and a
+  bounded mTLS `/health/ready` request to `query_v2_2` returned `200`. Stream
+  HA converged to `stream_v2_passive=200` and `stream_v2_active=503` standby,
+  which is the expected single-lease invariant; a bounded reader-log scan
+  found no fatal/TLS/catalog/OOM record. V1 was not recreated and
+  `http://127.0.0.1:8100/v1/health` remained `200 {status: ok}`. The candidate
+  C2 client is removed, all V1/Rust/ingest/projector/Kafka/Redis/SQLite/
+  Trading-System/alpha/order components remain unchanged, and no order or
+  provider direct-connect evidence was created. The unused, non-certified
+  `qdl-v2-python:2.0.0-dcb55a2` image (`sha256:6cff…740e6`) had no container
+  reference after rollback and was explicitly removed; the `e43f903…` rollback
+  image and every V1 image/volume remain retained.
+
+  **Decision gate:** this packet is now closed as **non-certified**. The
+  quiet-TRADE source contract and its `91/91` isolated matrix passed, but a
+  real V2 session for `OKX DOGE-USDT TRADE` did not meet the contract at the
+  time of acceptance. Therefore V2 primary readers are **not ready for a new
+  rolling handoff**; V1 remains the rollback/serving route. A future task must
+  first diagnose the typed session status and its Rust-core/provider-projection
+  lineage for that exact demand slice, then propose a narrowly tested repair
+  and obtain a new C2 runtime approval. Do not treat a quieter trade channel as
+  connected/fresh by default and do not reuse this evidence as a certificate.
