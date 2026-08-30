@@ -24820,3 +24820,11 @@ new fallback, block or permission audit record. It used real Data Layer V2
 streams; no Data Layer role, provider policy, Kafka/Redis/SQLite state or
 authority was altered. This is evidence for one consumer and one later alpha
 only, not an assertion that every V1 consumer has migrated.
+
+**C4.13 alpha C4 preflight (`APPROVED / DATA LAYER UNCHANGED`):** The sole
+selected Binance paper alpha rendered with the sealed V2 consumer identity and
+binding, V2-primary mode and the declared final-15m/fresh-history routes. Its
+scoped Trading System account is flat with no active lifecycle. This does not
+change Data Layer runtime or authorize another consumer; the next permitted
+runtime mutation is starting that one alpha container after the accepted
+Trading System consumer handoff.
