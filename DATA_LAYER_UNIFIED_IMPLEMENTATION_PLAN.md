@@ -28237,3 +28237,31 @@ state changed. The coherent repair was committed as `500a558` on
 `fix/release-ci-phase71` with the owner identity, then pushed to
 `origin/fix/release-ci-phase71` for review. `dev`/`main` remain untouched until
 a user-approved merge.
+
+## 19. 2026-08-30 Scoped Docker Artifact Cleanup
+
+**Status:** `PASS`
+
+This is an operations-only cleanup after the V2-primary C4 handoff. The
+approved first slice deletes exactly three preflight-verified dangling images:
+`sha256:2d3985a48645`, `sha256:6183f01ca058`, and
+`sha256:4633464381dd`. They have no repository tag and no running or stopped
+container reference. Baseline Docker usage is images `60.81GB` with `39.38GB`
+reclaimable, build cache `70.21GB` with `20.08GB` reclaimable, and host free
+space `84GB`.
+
+**Excluded:** all active images, exact V1/V2 rollback images, build cache,
+stopped containers, Kafka/Redis/SQLite/PostgreSQL/TLS volumes, networks,
+runtime state and source code. No broad `docker system prune`, no `-a`, and no
+`--volumes` are permitted in this slice. Success requires a post-delete image
+inventory and Docker disk measurement; no runtime role may restart.
+
+**Exit (`PASS`):** The exact three image IDs were deleted successfully. Docker
+images decreased from `60.81GB` to `56.62GB`; host free space increased from
+`84GB` to `87GB`. No dangling image remains. Protected
+`market_data_service`, V1 `data_layer_service`, both V2 query replicas and the
+selected V2 alpha were all confirmed `running` with restart count zero. No
+cache, container, volume, Kafka, Redis, SQLite, source or runtime role was
+changed. The next cleanup class remains separately approved only: aged build
+cache or explicitly named stopped test containers, after an independent
+rollback-retention inventory.
