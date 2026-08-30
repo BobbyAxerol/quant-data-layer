@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import logging
 import os
@@ -105,7 +106,10 @@ class StableBinanceBarEdge:
         publisher: KafkaRawPublisher,
         warmup_rows: int = 500,
         max_catchup_rows: int = 1000,
-        settlement_delay_seconds: float = 10.0,
+        settlement_delay_seconds: float = 0.10,
+        final_retry_initial_seconds: float = 0.10,
+        final_retry_max_seconds: float = 1.0,
+        max_concurrent_requests: int = 32,
         state_path: str | Path | None = None,
         clock=time.time,
         generation_clock_ns=time.time_ns,
@@ -114,8 +118,12 @@ class StableBinanceBarEdge:
             raise ValueError("stable BAR warmup rows must be between 1 and 1000")
         if not 1 <= max_catchup_rows <= 1000:
             raise ValueError("stable BAR catch-up rows must be between 1 and 1000")
-        if not 1.0 <= settlement_delay_seconds <= 10.0:
-            raise ValueError("stable BAR settlement delay must be between 1 and 10 seconds")
+        if not 0.01 <= settlement_delay_seconds <= 2.0:
+            raise ValueError("stable BAR initial poll delay must be between 0.01 and 2 seconds")
+        if not 0.01 <= final_retry_initial_seconds <= final_retry_max_seconds <= 5.0:
+            raise ValueError("stable BAR retry bounds are invalid")
+        if not 1 <= max_concurrent_requests <= 64:
+            raise ValueError("stable BAR request concurrency must be between 1 and 64")
         self.catalog = catalog
         self.acquisition = acquisition
         self.authority = authority
@@ -123,6 +131,9 @@ class StableBinanceBarEdge:
         self.warmup_rows = warmup_rows
         self.max_catchup_rows = max_catchup_rows
         self.settlement_delay_seconds = settlement_delay_seconds
+        self.final_retry_initial_seconds = final_retry_initial_seconds
+        self.final_retry_max_seconds = final_retry_max_seconds
+        self.max_concurrent_requests = max_concurrent_requests
         self.state_path = Path(state_path) if state_path is not None else None
         self.clock = clock
         self.generation_clock_ns = generation_clock_ns
@@ -132,6 +143,9 @@ class StableBinanceBarEdge:
         self.binance_session_id = ""
         self.okx_session_id = ""
         self._last_open_ms: dict[str, int] = {}
+        self._retry_attempts: dict[str, int] = {}
+        self._next_retry_at: dict[str, float] = {}
+        self._last_retry_log: dict[str, float] = {}
         self._history_bootstrapped = False
         self._stopped = threading.Event()
 
@@ -451,9 +465,80 @@ class StableBinanceBarEdge:
         )
 
     def _settled_observed_ms(self) -> int:
-        return int(
-            self.clock() * 1000 - self.settlement_delay_seconds * 1000
-        )
+        """Return the real observation clock for provider finality checks.
+
+        The initial poll offset is enforced by `_expected_closed_open_ms`; it
+        must not be subtracted from the provider cutoff.  Subtracting it made
+        every new close look unavailable until the next scheduler pass and
+        turned a small grace into a fixed multi-second latency floor.
+        """
+        return int(self.clock() * 1000)
+
+    def _expected_closed_open_ms(
+        self,
+        source: StableSourceBinding,
+        *,
+        observed_ms: int,
+    ) -> int | None:
+        """Return the exact final BAR target eligible for the first read.
+
+        The provider remains the finality authority.  This method only adds a
+        minimal scheduler offset after the documented boundary; callers keep
+        the same target pinned until an authentic final provider row is
+        accepted and durably acknowledged.
+        """
+        boundary_ms = _latest_source_closed_boundary_ms(source, observed_ms)
+        ready_at_ms = boundary_ms + int(self.settlement_delay_seconds * 1000)
+        if observed_ms < ready_at_ms:
+            return None
+        return boundary_ms - _bar_interval_ms(source.interval or "")
+
+    def _retry_delay_seconds(self, binding_id: str) -> float:
+        attempts = getattr(self, "_retry_attempts", {}).get(binding_id, 0)
+        initial = float(getattr(self, "final_retry_initial_seconds", 0.10))
+        maximum = float(getattr(self, "final_retry_max_seconds", 1.0))
+        return min(initial * (2 ** min(attempts, 8)), maximum)
+
+    def _schedule_retry(
+        self,
+        binding_id: str,
+        *,
+        now: float,
+        error: Exception | None = None,
+    ) -> None:
+        retry_attempts = getattr(self, "_retry_attempts", None)
+        if retry_attempts is None:
+            retry_attempts = self._retry_attempts = {}
+        next_retry_at = getattr(self, "_next_retry_at", None)
+        if next_retry_at is None:
+            next_retry_at = self._next_retry_at = {}
+        delay = self._retry_delay_seconds(binding_id)
+        retry_attempts[binding_id] = retry_attempts.get(binding_id, 0) + 1
+        next_retry_at[binding_id] = now + delay
+
+        # A provider may publish a final row a few hundred milliseconds after
+        # its clock boundary.  That normal race is retried silently. Actual
+        # errors are bounded in logs as well as in request rate.
+        if error is not None:
+            retry_logs = getattr(self, "_last_retry_log", None)
+            if retry_logs is None:
+                retry_logs = self._last_retry_log = {}
+            if now - retry_logs.get(binding_id, 0.0) >= 30.0:
+                logger.warning(
+                    "stable final BAR provider read failed binding=%s retry_in_seconds=%.2f error=%s",
+                    binding_id,
+                    delay,
+                    error,
+                )
+                retry_logs[binding_id] = now
+
+    def _clear_retry(self, binding_id: str) -> None:
+        getattr(self, "_retry_attempts", {}).pop(binding_id, None)
+        getattr(self, "_next_retry_at", {}).pop(binding_id, None)
+        getattr(self, "_last_retry_log", {}).pop(binding_id, None)
+
+    def _retry_is_due(self, binding_id: str, *, now: float) -> bool:
+        return getattr(self, "_next_retry_at", {}).get(binding_id, 0.0) <= now
 
     def bootstrap_history(self) -> int:
         if not self._history_bootstrap_active:
@@ -581,63 +666,146 @@ class StableBinanceBarEdge:
         return tuple(zip(values, opens, strict=True))
 
     def _binding_is_due(self, source: StableSourceBinding, *, observed_ms: int) -> bool:
-        """Return whether a new final BAR can exist after the settled clock."""
-        interval_ms = _bar_interval_ms(source.interval or "")
-        newest_closed_open = (
-            _latest_source_closed_boundary_ms(source, observed_ms)
-            - interval_ms
+        """Return whether the exact currently closed BAR is still unacked."""
+        newest_closed_open = self._expected_closed_open_ms(
+            source, observed_ms=observed_ms
         )
+        if newest_closed_open is None:
+            return False
         previous_open = self._last_open_ms.get(source.binding_id)
         return previous_open is None or previous_open < newest_closed_open
 
     def _next_ready_at(self, now: float) -> float:
-        """Wake at the earliest configured BAR close plus settlement delay."""
+        """Wake for a due target retry or the next provider BAR boundary."""
         candidates = []
+        observed_ms = int(now * 1000)
         for source, _acquisition in self.bindings + self.okx_bindings:
             interval_ms = _bar_interval_ms(source.interval or "")
             boundary_ms = _latest_source_closed_boundary_ms(
                 source,
-                int(now * 1000),
+                observed_ms,
             )
-            ready_at = boundary_ms / 1000 + self.settlement_delay_seconds
-            if ready_at <= now:
-                ready_at += interval_ms / 1000
-            candidates.append(ready_at)
+            expected_open_ms = self._expected_closed_open_ms(
+                source, observed_ms=observed_ms
+            )
+            previous_open_ms = self._last_open_ms.get(source.binding_id)
+            if (
+                expected_open_ms is not None
+                and (previous_open_ms is None or previous_open_ms < expected_open_ms)
+            ):
+                retry_at = getattr(self, "_next_retry_at", {}).get(
+                    source.binding_id, now
+                )
+                candidates.append(max(now, retry_at))
+                continue
+            if expected_open_ms is None:
+                candidates.append(
+                    boundary_ms / 1000 + self.settlement_delay_seconds
+                )
+            else:
+                candidates.append(
+                    (boundary_ms + interval_ms) / 1000
+                    + self.settlement_delay_seconds
+                )
         return min(candidates) if candidates else now + 60.0
+
+    def _fetch_latest(
+        self,
+        source: StableSourceBinding,
+        acquisition: StableAcquisitionBinding,
+        *,
+        observed_ms: int,
+    ):
+        """Read one provider-final BAR without hiding scheduler retry timing."""
+        if acquisition.runtime == "BINANCE":
+            return fetch_latest_closed_bar_raw_envelope(
+                self._binance_binding(source),
+                now_ms=observed_ms,
+                attempts=1,
+                test_provenance=False,
+            )
+        if acquisition.runtime == "OKX":
+            return asyncio.run(fetch_okx_latest(
+                self._okx_binding(source),
+                now_ms=observed_ms,
+                attempts=1,
+                test_provenance=False,
+            ))
+        raise ValueError("stable crypto BAR runtime is unsupported")
 
     def run_cycle(self) -> int:
         if not self._rest_fallback_active:
             return 0
         observed_ms = self._settled_observed_ms()
-        latest = []
-        for source, acquisition in self.bindings:
-            if not self._binding_is_due(source, observed_ms=observed_ms):
-                continue
-            envelope = fetch_latest_closed_bar_raw_envelope(
-                self._binance_binding(source),
-                now_ms=observed_ms,
-                attempts=4,
-                test_provenance=False,
-            )
-            latest.append((source, acquisition, envelope))
-        for source, acquisition in self.okx_bindings:
-            if not self._binding_is_due(source, observed_ms=observed_ms):
-                continue
-            envelope = asyncio.run(fetch_okx_latest(
-                self._okx_binding(source),
-                now_ms=observed_ms,
-                test_provenance=False,
-            ))
-            latest.append((source, acquisition, envelope))
+        now = observed_ms / 1000
+        due = tuple(
+            (source, acquisition)
+            for source, acquisition in self.bindings + self.okx_bindings
+            if self._binding_is_due(source, observed_ms=observed_ms)
+            and self._retry_is_due(source.binding_id, now=now)
+        )
+        if not due:
+            return 0
+
+        latest: dict[str, object] = {}
+        workers = min(
+            len(due), int(getattr(self, "max_concurrent_requests", 32))
+        )
+        with ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="qdl-final-bar",
+        ) as executor:
+            futures = {
+                executor.submit(
+                    self._fetch_latest,
+                    source,
+                    acquisition,
+                    observed_ms=observed_ms,
+                ): (source, acquisition)
+                for source, acquisition in due
+            }
+            for future in as_completed(futures):
+                source, _acquisition = futures[future]
+                try:
+                    latest[source.binding_id] = future.result()
+                except Exception as error:
+                    self._schedule_retry(
+                        source.binding_id,
+                        now=now,
+                        error=error,
+                    )
 
         pending = []
-        for source, acquisition, envelope in latest:
-            pending.extend(
-                (source, item, open_time_ms)
-                for item, open_time_ms in self._pending_for_binding(
+        for source, acquisition in due:
+            envelope = latest.get(source.binding_id)
+            if envelope is None:
+                continue
+            try:
+                values = self._pending_for_binding(
                     source, acquisition, envelope, observed_ms=observed_ms
                 )
+            except Exception as error:
+                self._schedule_retry(
+                    source.binding_id,
+                    now=now,
+                    error=error,
+                )
+                continue
+            if values:
+                pending.extend(
+                    (source, item, open_time_ms)
+                    for item, open_time_ms in values
+                )
+                continue
+            expected_open_ms = self._expected_closed_open_ms(
+                source, observed_ms=observed_ms
             )
+            previous_open_ms = self._last_open_ms.get(source.binding_id)
+            if (
+                expected_open_ms is not None
+                and (previous_open_ms is None or previous_open_ms < expected_open_ms)
+            ):
+                self._schedule_retry(source.binding_id, now=now)
         if not pending:
             return 0
 
@@ -653,6 +821,8 @@ class StableBinanceBarEdge:
                 open_time_ms, acknowledged_opens.get(source.binding_id, -1)
             )
         self._last_open_ms.update(acknowledged_opens)
+        for binding_id in acknowledged_opens:
+            self._clear_retry(binding_id)
         self._persist_state()
         logger.info(
             "stable multi-venue closed BAR ACK count=%s bindings=%s",
@@ -660,6 +830,13 @@ class StableBinanceBarEdge:
             ",".join(sorted(acknowledged_opens)),
         )
         return len(acknowledgements)
+
+    def _loop_sleep_seconds(self, now: float) -> float:
+        if not self._rest_fallback_active:
+            return 60.0
+        # The configured 100ms first poll/retry cannot work when the outer
+        # scheduler imposes a larger arbitrary sleep floor.
+        return max(0.01, self._next_ready_at(now) - now)
 
     def run_forever(self) -> None:
         if not self._history_bootstrap_active:
@@ -684,11 +861,7 @@ class StableBinanceBarEdge:
                 logger.exception(
                     "stable crypto BAR cycle failed consecutive_failures=%s", failures
                 )
-            now = self.clock()
-            if self._rest_fallback_active:
-                delay = max(0.25, self._next_ready_at(now) - now)
-            else:
-                delay = 60.0
+            delay = self._loop_sleep_seconds(self.clock())
             if failures:
                 delay = min(delay, min(2 ** min(failures, 6), 30))
             self._stopped.wait(delay)
@@ -724,7 +897,16 @@ def build_from_environment() -> StableBinanceBarEdge:
             os.environ.get("QDL_STABLE_BAR_MAX_CATCHUP_ROWS", "1000")
         ),
         settlement_delay_seconds=float(
-            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS", "10")
+            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS", "0.10")
+        ),
+        final_retry_initial_seconds=float(
+            os.environ.get("QDL_STABLE_BAR_RETRY_INITIAL_SECONDS", "0.10")
+        ),
+        final_retry_max_seconds=float(
+            os.environ.get("QDL_STABLE_BAR_RETRY_MAX_SECONDS", "1.0")
+        ),
+        max_concurrent_requests=int(
+            os.environ.get("QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS", "32")
         ),
         state_path=os.environ.get(
             "QDL_STABLE_BAR_STATE_PATH",

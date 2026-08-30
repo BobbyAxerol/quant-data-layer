@@ -85,6 +85,10 @@ class Phase115CBarScheduleTests(unittest.TestCase):
         source = SimpleNamespace(binding_id="weekly", interval="1w")
         edge = _edge(source)
         now = 1_785_600_123.0
+        interval_ms = canonical_interval_ms("1w")
+        edge._last_open_ms[source.binding_id] = (
+            latest_closed_boundary_ms("1w", int(now * 1000)) - interval_ms
+        )
         ready = edge._next_ready_at(now)
         self.assertGreaterEqual(ready - now, 60.0 * 60.0)
         self.assertLessEqual(ready - now, 8.0 * 86_400.0)

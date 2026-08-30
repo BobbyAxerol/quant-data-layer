@@ -24918,3 +24918,111 @@ cache, delete state, or alter authority. After the two replicas are healthy,
 the already-running Trading System consumer and selected paper alpha are
 observed without forced signal/order. This packet is source/runtime repair
 only; it does not widen consumer scope or promote another alpha.
+
+**C4.19 fast target-pinned final-BAR delivery (`APPROVED / SOURCE ONLY`,
+2026-08-30):** A measured V2 latency review found that the crypto BAR edge
+deliberately waited ten seconds after every close before making its first
+provider read. The shared alpha candle loop then used a fixed sixty-second
+stale retry and re-derived “latest” from wall time, which can skip a `1m`
+target entirely. This is an avoidable scheduling defect, not a finality
+requirement. The approved repair applies to every enabled Binance USD-M and
+OKX Swap `PYTHON_REST` final-BAR binding through the one shared BAR edge; it
+does not create symbol workers, a new service, a new topic, or a venue-specific
+shortcut.
+
+Scope and invariants:
+
+1. The first real-provider read is scheduled at close plus `0.10s`; a bounded
+   scheduler retries the same expected BAR target at `0.10s` exponential
+   intervals capped at one second until the provider returns that final row.
+   A timer never declares a BAR final, manufactures a value, advances a
+   watermark, or skips a missing target.
+2. Due Binance/OKX reads fan out through one bounded shared concurrency budget,
+   retain deterministic publication order, and isolate one provider failure
+   from unrelated ready bindings. Existing row-shape, interval-boundary,
+   catch-up, exact identity, Kafka ACK and checkpoint invariants remain
+   authoritative.
+3. Rust remains the canonical/data-plane authority and Kafka remains the
+   durable handoff. Python is only the existing vendor REST acquisition edge;
+   switching a binding to native WebSocket BAR is excluded until its separate
+   source/finality certificate exists.
+4. This source slice must not recreate a role, alter V1, Kafka/Redis/SQLite,
+   runtime authority, Trading System, alpha, broker/order path or durable data.
+   The future runtime packet may recreate only `binance_bar_edge` from one
+   immutable Python image and its exact recorded image/runtime configuration is
+   the rollback route.
+
+Required source gates: deterministic close/target scheduling, same-target
+provider-old-row retry, transient provider failure isolation, bounded
+concurrency, no duplicate watermark advance, Binance/OKX exact final-row and
+catch-up behavior, and config coverage for every enabled crypto REST BAR
+binding. A bounded real-provider observation is evidence only after a separate
+runtime approval; no synthetic row may be used outside unit tests.
+
+**C4.19 source exit (`IMPLEMENTED / SOURCE-TESTED / RUNTIME PENDING`,
+2026-08-30):** `qdl.runtime.stable_bar_edge.StableBinanceBarEdge` now treats
+the provider-confirmed closed boundary as the target and makes its first
+Binance USD-M/OKX Swap REST BAR read at `T+0.10s`. A stale row or one provider
+failure schedules only that same binding for `0.10s, 0.20s, 0.40s, 0.80s`, then
+at most one-second intervals; it cannot advance to a later candle, create a
+row, advance a durable watermark, or hide a failed Kafka acknowledgement. One
+shared `ThreadPoolExecutor` bounds due reads to 32 and restores manifest order
+before Kafka publish; the outer loop now has only a `10ms` safety floor, so it
+does not dilute the configured `100ms` first poll/retry. A malformed or
+unavailable history catch-up fences and retries only its binding while a ready
+independent binding may continue; a Kafka ACK failure still fails the entire
+uncommitted publish batch. The sealed compose source config applies this policy
+to every enabled `PYTHON_REST` Binance/OKX BAR binding through
+`binance_bar_edge`; it does not add per-symbol workers or alter the separately
+certified Rust/native lane.
+
+Source gates actually run in a disposable, `--rm`, network-disabled,
+read-only container with `--memory=512m --pids-limit=96`:
+
+```bash
+python -B -m unittest -q \
+  tests.test_c419_fast_final_bar_delivery \
+  tests.test_phase115c_bar_edge_schedule \
+  tests.test_phaseb_stable_deployment
+```
+
+Result: **35/35 passed** in `7.937s`. Coverage includes same-target retry,
+provider and history-catch-up failure isolation, bounded concurrency and
+manifest-order publish, Kafka-ACK-only watermark behavior, no hidden outer
+retry floor, Binance/OKX exact final/catch-up behavior, and configuration
+coverage. `git diff --check` and Python syntax compilation also passed. The
+immutable test image does not ship Ruff, so no lint result is claimed. During
+the regression update, two test-only expectations were corrected: one still
+expected the old whole-cycle catch-up exception and another selected a `12h`
+binding instead of its intended due `1m` fixture. Neither represented a runtime
+failure. The deliberate failure-path test emits simulated provider failures,
+one expected CLI-argument error and one DNSE queue-fence warning; no synthetic
+data enters a runtime path. No image was built, no BuildKit cache was created,
+and all test containers were removed automatically.
+
+Runtime impact: **none**. The active bar-edge still retains its previously
+mounted/image configuration until a separately approved packet recreates only
+`binance_bar_edge` with one immutable image and an exact recorded rollback
+image/runtime directory. V1, Kafka offsets/topology, Redis, SQLite, Rust core,
+projectors, Trading System, alpha containers and every order path remain
+untouched. The future packet must collect bounded real-provider final-BAR
+latency for all enabled bindings before claiming a production latency result.
+
+Artifact hygiene: post-test inventory reported `107` images (`19` active,
+`56.62GB`), `43` containers (`20` active), and `1.445GB` reclaimable BuildKit
+cache. C4.19 ran no image build and produced no retained test container; the
+existing cache cannot truthfully be attributed to this source-only slice. No
+image, cache, volume, network or runtime state was removed without a separate
+scoped retention/cleanup approval. The local syntax gate briefly created only
+`qdl/runtime/__pycache__/stable_bar_edge.cpython-312.pyc` (`43,828` bytes);
+that exact disposable file was removed, reducing its scoped test artifact back
+to zero without touching pre-existing bytecode.
+
+Runtime observation (`READ-ONLY / NOT CAUSED BY C4.19`, 2026-08-30): after the
+source gates, the existing `qdl_v2_stable_candidate-binance_bar_edge-1` and
+`qdl_v2_stable_candidate-query_v2_1-1` were both already `Exited (255)` at
+`2026-08-30T15:33:30Z`, with `oom=false`, empty engine error and restart count
+zero. C4.19 ran only disposable network-disabled containers and did not create,
+stop, recreate or signal any runtime role. This simultaneous external runtime
+state must be diagnosed/restored by its own approved packet before a real
+provider latency certificate or C4.19 runtime application can be claimed.

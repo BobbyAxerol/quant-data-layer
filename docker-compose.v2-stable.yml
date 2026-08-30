@@ -669,7 +669,13 @@ services:
       # Must cover the greatest durable final-BAR warmup declared by the
       # governed Trading System/alpha manifests.
       QDL_STABLE_BAR_WARMUP_ROWS: "1000"
-      QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS: "10"
+      # A final row is provider-confirmed, not timer-confirmed. Start the
+      # first bounded read promptly after the close, then retry that exact
+      # target until it is durably ACKed.
+      QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS: "0.10"
+      QDL_STABLE_BAR_RETRY_INITIAL_SECONDS: "0.10"
+      QDL_STABLE_BAR_RETRY_MAX_SECONDS: "1.0"
+      QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS: "32"
       QDL_STABLE_BAR_STATE_PATH: ${QDL_STABLE_BAR_STATE_PATH:-/var/lib/qdl-stable/runtime/stable-crypto-bar-edge.json}
     volumes:
       - stable_state:/var/lib/qdl-stable

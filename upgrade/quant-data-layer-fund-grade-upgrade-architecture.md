@@ -6092,3 +6092,35 @@ six Binance BTC/ETH perpetual/current-quarter/next-quarter L2 bridges, but
 also records intermittent headerless `418` native-basis responses under shared
 public-IP pressure. No V2 route or consumer authority follows from partial
 evidence.
+
+### C4.19 Fast final-BAR scheduling rule
+
+Finality is a provider-confirmed property of a BAR row, not a fixed local
+settlement timer. For an enabled durable Binance/OKX REST BAR binding, the edge
+therefore schedules its first read at close plus a minimal scheduler offset
+(`100ms`), pins the exact expected open/close boundary, and retries that same
+target through a bounded shared retry policy until the provider exposes a valid
+final row. The retry interval may back off to protect provider quota, but it
+must never roll the request forward to a later candle or silently discard the
+missing one.
+
+The common edge performs provider reads concurrently only within its declared
+global budget, then restores deterministic binding order before Kafka publish.
+Kafka acknowledgement is still the sole condition for advancing the durable
+watermark. A stale/old provider response, a malformed row, a gap, a duplicate
+with changed semantics, or a missing acknowledgement remains fail-closed and
+is retried/reconciled through the existing path. This policy applies equally
+to every configured Binance USD-M and OKX Swap REST BAR binding; it does not
+replace a separately certified native WebSocket final-BAR lane.
+
+**C4.19 source evidence (2026-08-30):** the common Python vendor edge now
+starts at `T+100ms`, pins the intended final boundary, retries only that target
+at a bounded `100ms..1s` cadence, and fans out no more than 32 independent
+provider reads. Its outer sleep floor is `10ms`, so it does not reintroduce a
+hidden quarter-second delay; a catch-up failure is fenced/retried per binding
+instead of blocking independent due bindings. It reorders completed reads back
+to manifest order before Kafka publish. The isolated source gate passed
+`35/35` tests; no runtime role was recreated. This is a scheduler/transport
+improvement only: a provider row is still final only after adapter validation
+and its durable watermark still changes only after Kafka acknowledges every
+published envelope.

@@ -694,14 +694,6 @@ class StableDeploymentContractTests(unittest.TestCase):
         }
         edge._last_open_ms.update(previous_open)
         expected_catchup = 2 * len(binding_pairs)
-        binance_latest = [
-            Envelope("BINANCE", latest_open[source.binding_id])
-            for source, _acquisition in edge.bindings
-        ]
-        okx_latest = [
-            Envelope("OKX", latest_open[source.binding_id])
-            for source, _acquisition in edge.okx_bindings
-        ]
         binance_history = [
             (
                 Envelope("BINANCE", previous_open[source.binding_id] * 2),
@@ -716,14 +708,15 @@ class StableDeploymentContractTests(unittest.TestCase):
             )
             for source, _acquisition in edge.okx_bindings
         ]
+        def fetch_latest(source, acquisition, *, observed_ms):
+            del observed_ms
+            return Envelope(
+                acquisition.runtime,
+                latest_open[source.binding_id],
+            )
+
+        edge._fetch_latest = fetch_latest
         with patch(
-            "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
-            side_effect=binance_latest * 2,
-        ), patch(
-            "qdl.runtime.stable_bar_edge.fetch_okx_latest",
-            new_callable=AsyncMock,
-            side_effect=okx_latest * 2,
-        ), patch(
             "qdl.runtime.stable_bar_edge.fetch_binance_history",
             side_effect=binance_history * 2,
         ), patch(
@@ -748,7 +741,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             latest_open,
         )
 
-    def test_bar_edge_rejects_incomplete_catchup_without_advancing_watermark(self):
+    def test_bar_edge_isolates_incomplete_catchup_without_advancing_watermark(self):
         class Publisher:
             def __init__(self):
                 self.calls = 0
@@ -778,32 +771,37 @@ class StableDeploymentContractTests(unittest.TestCase):
             acquisition=self._legacy_rest_bar_fallback(),
             authority=self.authority,
             publisher=publisher,
-            clock=lambda: 240.0,
+            clock=lambda: 240.1,
         )
+        # This regression isolates one malformed catch-up lane. A data-quality
+        # failure must keep that watermark fenced and retry it, not prevent
+        # unrelated venue/binding lanes from making progress.
+        edge.bindings = tuple(
+            pair for pair in edge.bindings if pair[0].interval == "1m"
+        )[:1]
+        edge.okx_bindings = ()
         binding_ids = [
             source.binding_id
             for source, _acquisition in edge.bindings + edge.okx_bindings
         ]
         edge._last_open_ms.update({binding_id: 60_000 for binding_id in binding_ids})
+        def fetch_latest(source, acquisition, *, observed_ms):
+            del observed_ms
+            return Envelope(acquisition.runtime, 180_000)
+
+        edge._fetch_latest = fetch_latest
         with patch(
-            "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
-            side_effect=[Envelope("BINANCE", 180_000)] * len(edge.bindings),
-        ), patch(
-            "qdl.runtime.stable_bar_edge.fetch_okx_latest",
-            new_callable=AsyncMock,
-            side_effect=[Envelope("OKX", 180_000)] * len(edge.okx_bindings),
-        ), patch(
             "qdl.runtime.stable_bar_edge.fetch_binance_history",
             return_value=(Envelope("BINANCE", 180_000),),
         ):
-            with self.assertRaisesRegex(RuntimeError, "not contiguous"):
-                edge.run_cycle()
+            self.assertEqual(edge.run_cycle(), 0)
 
         self.assertEqual(publisher.calls, 0)
         self.assertEqual(
             edge._last_open_ms,
             {binding_id: 60_000 for binding_id in binding_ids},
         )
+        self.assertEqual(set(edge._next_retry_at), set(binding_ids))
 
     def test_dnse_edge_fences_on_queue_pressure_and_bar_keeps_exact_units(self):
         class Publisher:
@@ -1274,7 +1272,19 @@ class StableComposeAndBundleTests(unittest.TestCase):
         bar_edge = services["binance_bar_edge"]
         self.assertEqual(
             bar_edge["environment"]["QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS"],
-            "10",
+            "0.10",
+        )
+        self.assertEqual(
+            bar_edge["environment"]["QDL_STABLE_BAR_RETRY_INITIAL_SECONDS"],
+            "0.10",
+        )
+        self.assertEqual(
+            bar_edge["environment"]["QDL_STABLE_BAR_RETRY_MAX_SECONDS"],
+            "1.0",
+        )
+        self.assertEqual(
+            bar_edge["environment"]["QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS"],
+            "32",
         )
         self.assertEqual(
             bar_edge["environment"]["QDL_STABLE_BAR_STATE_PATH"],
