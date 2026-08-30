@@ -23913,3 +23913,72 @@ this scope rather than opening a new phase.
   lineage for that exact demand slice, then propose a narrowly tested repair
   and obtain a new C2 runtime approval. Do not treat a quieter trade channel as
   connected/fresh by default and do not reuse this evidence as a certificate.
+
+  **Five-liquid OKX TRADE diagnosis and C2 closure (`APPROVED / IN PROGRESS`,
+  2026-08-30):** approved scope is deliberately limited to the existing
+  `BTC/ETH/SOL/DOGE/BNB` OKX swap TRADE bindings, the shared Rust
+  provider/projection lineage, and one final no-order C2 receipt.  It is
+  governed by `upgrade/quant-data-layer-fund-grade-upgrade-architecture.md`
+  J.7 and this plan's existing Phase-10.5 invariants.  No SLA relaxation,
+  synthetic event, per-symbol worker/container, provider direct connect,
+  Kafka/Redis/SQLite mutation, V1 change, Trading System/alpha change or order
+  action is permitted.  The decision sequence is: (1) read typed status plus
+  snapshot watermark/lineage for all five symbols from both existing query
+  replicas; (2) change shared Rust projection/provider lineage only if that
+  evidence differs from the BTC/ETH control; (3) run a five-symbol regression
+  matrix for quiet-connected, disconnected, reconnect, duplicate/gap and
+  cross-symbol isolation; (4) build one immutable reader image from the tested
+  commit, recreate only the existing four C2 reader roles, run one bounded
+  300-second no-order C2 over the sealed 60-route demand manifest, and promote
+  V2 primary only if its receipt passes.  V1 remains the explicit rollback
+  route throughout; a failed reader/C2 gate restores only the four readers to
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`.
+
+  **Step 1 typed-status evidence (`PASS / NO CORE REPAIR REQUIRED`):** a
+  disposable read-only mTLS/JWT client using only the approved
+  `alpha.okx.paper.stable` identity queried
+  `/v2/feeds/{instrument_uid}/status` and the matching V2 snapshot route from
+  both `query_v2_1` and `query_v2_2`.  It used `tmpfs` identity copies, ended
+  as UID/GID `10001` with no effective/permitted/inheritable/ambient
+  capabilities and `NoNewPrivs=1`; it opened no provider or stream connection,
+  made no order action and wrote no durable state.  All five controls returned
+  `state=LIVE`, `event_recency_state=LIVE`, `provider_session_state=LIVE`,
+  `complete=true`, `gap_open=false`, `execution_eligible=true` and
+  `crypto_primary_v2`; observed session liveness was 645--803 ms.  Each source
+  lineage was authoritative `PRIMARY`, and its watermark matched exactly across
+  replicas: BTC `8403762`, ETH `10338670`, SOL `147500`, DOGE `64324`, BNB
+  `21974`.  Freshness/liveness naturally differed by sampling milliseconds,
+  but no identity, completeness, gap, lineage or watermark divergence was
+  observed.  The rolled-back `e43f903` SDK client lacks its convenience
+  `feed_status()` method, while its V2 HTTP status endpoint is present and
+  returned this typed evidence; that is a reader-image age fact, not a data
+  defect.  Therefore DOGE/BNB do not currently differ from BTC/ETH and no
+  Rust/provider/projection code change is justified.
+
+  **Next bounded implementation:** add only deterministic five-symbol
+  regression coverage at the shared status/handoff boundary, run the affected
+  source matrix, then commit the test/journal slice.  If it passes, build one
+  replacement reader image, recreate only `query_v2_1`, `query_v2_2`,
+  `stream_v2_active` and `stream_v2_passive`, run exactly one C2 acceptance
+  against the existing 60-route manifest, and either promote the manifest's
+  V2-primary route or restore the four-reader V1 rollback image.  No new phase,
+  topology, container class or retry ceremony is authorized.
+
+  **Step 2 five-symbol regression (`PASS`):**
+  `tests.test_phase115c_five_liquid_handoff`,
+  `tests.test_phase103_consumer_receipt_harness`,
+  `tests.test_qdl_sdk_feed_status` and
+  `tests.test_qdl_sdk_stream_projection` passed **30/30** in an existing
+  immutable Python image with `--network none`, read-only source, UID/GID
+  `10001`, dropped capabilities and tmpfs-only writes.  The five-liquid
+  extension proves the exact identity is required for quiet observation,
+  disconnect and `gap_open` fail closed for each symbol, and durable resume is
+  strictly increasing for each identity so duplicate/stale cursors are
+  rejected.  Existing C2 harness coverage exercises the same shared reconnect
+  path and Rust projection invariants.  The Rust source itself was not changed:
+  `exact_duplicate_across_reconnect_is_not_republished` and
+  `stale_generation_and_contiguous_gap_are_quarantined` each passed **1/1** in
+  an ephemeral Rust 1.82 container; the latter ran offline after dependency
+  resolution.  No provider request, Docker runtime role, Kafka, Redis, SQLite,
+  V1, Trading System, alpha or order path changed.  The disposable Cargo target
+  and registry cache were removed before this source slice is committed.
