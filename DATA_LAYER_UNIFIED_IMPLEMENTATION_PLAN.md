@@ -24797,3 +24797,11 @@ Generated requests exactly match TRADE `OBSERVE/3000ms/45000ms` and QUOTE
 authorization authority and was not edited. This adds no Data Layer source,
 provider, durable-state or runtime mutation. The only next packet remains the
 already approved consumer-image rebuild and single `market_data_service` retry.
+
+**C4.10 consumer-image provenance (`PASS / DATA LAYER RUNTIME UNCHANGED`):**
+The corrected Trading System image is immutable image ID
+`sha256:b6bd5253b1d3c8b41e665c3e9636d25f2d13b3979c31767d446fd876c831d49a`
+from consumer revision `52fe5af`. The alpha image need not be rebuilt because
+its C4 deployment mounts its committed shared runtime source while retaining
+the same sealed SDK wheel. No Data Layer image, service, route, provider,
+Kafka, Redis, SQLite or authority changed.
