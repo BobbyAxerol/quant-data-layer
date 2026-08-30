@@ -24812,3 +24812,11 @@ selected with the corrected immutable image and registered typed policy. Its
 canonical database interpolation is non-empty. No Data Layer role, topic,
 Redis namespace, SQLite file, provider connection or authority changes in this
 packet; server-side manifest equality remains the fail-closed guard.
+
+**C4.12 bounded consumer acceptance (`PASS / DATA LAYER UNCHANGED`):** The
+approved Trading System consumer retry admitted all eight demanded V2 crypto
+slices with typed `V2_PRIMARY` heartbeat state, zero unhealthy slices and no
+new fallback, block or permission audit record. It used real Data Layer V2
+streams; no Data Layer role, provider policy, Kafka/Redis/SQLite state or
+authority was altered. This is evidence for one consumer and one later alpha
+only, not an assertion that every V1 consumer has migrated.
