@@ -17,7 +17,11 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DEMAND_PATH = ROOT / "config/v2/stable-crypto-demand.yaml"
-MAX_SLICES = 128
+# This is an operator read-only admission ceiling, not a legacy sample size.
+# Keep it aligned with the public V2 bounded warmup/query contract so a sealed
+# multi-venue demand manifest is never rejected solely because it grew beyond
+# the Phase 10 six-slice fixture.
+MAX_SLICES = 10_000
 
 
 class ProviderAdmissionError(RuntimeError):

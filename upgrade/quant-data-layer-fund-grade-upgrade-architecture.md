@@ -6124,3 +6124,39 @@ to manifest order before Kafka publish. The isolated source gate passed
 improvement only: a provider row is still final only after adapter validation
 and its durable watermark still changes only after Kafka acknowledges every
 published envelope.
+
+## Execution-Grade Market Context Extension
+
+This guide governs Phase 12 in the main plan. The Rust core continues to own
+canonical identity, source ordering, finality, gap and L2 sequence state;
+Python remains the vendor/API projection. The execution context is a consumer
+contract over existing V2 products, not a parallel ingestion topology.
+
+- Closed BARs drive strategy calculation only.
+- QUOTE supplies side-aware execution estimation.
+- MARK_INDEX_PRICE supplies an explicit mark or index risk/trigger reference.
+- BOOK_SNAPSHOT/BOOK_DELTA is required only when the declared intent needs
+  verified microstructure; its generation, sequence and gap state are
+  mandatory then.
+- Public market data never replaces broker private order/algo lifecycle for
+  OCO/bracket state.
+
+The contract is identical for Binance USD-M and OKX Swap. Venue capability may
+choose an internal or native OCO implementation, but it must not alter the
+context schema or silently downgrade an L2-required request. Phase 12.1 is
+source/test only; Phase 12.2 is the only phase allowed to wire consumer
+projection or runtime routes.
+
+### Phase 12.1 Exit Record (2026-08-30)
+
+Phase 12.1 passed source-only certification: the canonical SDK golden matrix
+covered Binance USD-M and OKX Swap for TRADE, QUOTE, MARK_INDEX_PRICE,
+BOOK_SNAPSHOT and BOOK_DELTA; Risk domain policy and Alpha Runtime exact
+history contracts passed their isolated regression suites. The full current
+Binance/OKX BAR manifest (`142` slices) also passed deterministic warmup
+admission after replacing the obsolete `128`/six-slice test bound with the
+shared `10000` V2 bound. Non-positive or missing execution values fail closed,
+and STOP_LIMIT/TAKE_PROFIT_LIMIT were added to the conditional policy before
+closure. No provider, runtime role, manifest, data store or order path was
+mutated. See the main-plan evidence in section 24.2.1 for exact test modules,
+counts and cleanup.

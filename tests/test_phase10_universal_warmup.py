@@ -22,6 +22,7 @@ from qdl.demand import (
     UniverseSelectorKind,
     DemandResolver,
 )
+from qdl.adapters.intervals import okx_candle_channel
 from qdl.query import (
     AccessPurpose,
     BarLifecycle,
@@ -1184,7 +1185,8 @@ class WarmupAdmissionTests(unittest.TestCase):
 
     def test_read_only_admission_covers_every_demanded_bar_without_raw_payload(self):
         demand_path = ROOT / "config/v2/stable-crypto-demand.yaml"
-        self.assertEqual(len(load_warmup_bar_slices(demand_path)), 6)
+        bar_slices = load_warmup_bar_slices(demand_path)
+        self.assertGreater(len(bar_slices), 0)
 
         def rows(binding, limit, now_ms, *, provider):
             step_ms = _fixed_interval_ms(binding.interval)
@@ -1205,7 +1207,7 @@ class WarmupAdmissionTests(unittest.TestCase):
                 else:
                     frame = {
                         "arg": {
-                            "channel": "candle1m",
+                            "channel": okx_candle_channel(binding.interval),
                             "instId": binding.native_symbol,
                         },
                         "data": [[
@@ -1228,15 +1230,32 @@ class WarmupAdmissionTests(unittest.TestCase):
             demand_path,
             CATALOG_PATH,
             rows=3,
-            timeout_seconds=1,
+            timeout_seconds=10,
             clock_ns=lambda: BASE_NS,
             binance_fetcher=binance,
             okx_fetcher=okx,
+            executor=BoundedWarmupExecutor(
+                default_policy=ProviderBudgetPolicy(
+                    max_concurrency=64,
+                    requests_per_second=10_000,
+                    burst_requests=10_000,
+                )
+            ),
+            source_provider_policies={
+                venue: ProviderBudgetPolicy(
+                    max_concurrency=64,
+                    requests_per_second=10_000,
+                    burst_requests=10_000,
+                )
+                for venue in ("BINANCE", "OKX")
+            },
         )
         self.assertEqual(report["status"], "PASS")
-        self.assertEqual(report["slice_count"], 6)
-        self.assertEqual(report["source"]["provider_source_calls"], 6)
-        self.assertEqual(report["source"]["cache_hits"], 6)
+        self.assertEqual(report["slice_count"], len(bar_slices))
+        self.assertEqual(
+            report["source"]["provider_source_calls"], len(bar_slices)
+        )
+        self.assertEqual(report["source"]["cache_hits"], len(bar_slices))
         self.assertEqual(report["production_writes"], 0)
         self.assertFalse(report["raw_payload_persisted"])
         self.assertTrue(all("payload" not in item for item in report["slices"]))
@@ -1346,7 +1365,12 @@ class _SdkStreamTransport:
 
 def _fixed_interval_ms(interval: str) -> int:
     value = int(interval[:-1])
-    return value * {"m": 60_000, "h": 3_600_000, "d": 86_400_000}[interval[-1]]
+    return value * {
+        "m": 60_000,
+        "h": 3_600_000,
+        "d": 86_400_000,
+        "w": 604_800_000,
+    }[interval[-1]]
 
 
 def _sdk_bar(open_ns: int) -> MarketDataView:

@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 import resource
 import time
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 from qdl.query import ConsumerGrade, DataRequirement, FeedType, RecoveryPolicy
 from qdl.runtime.provider_history import (
@@ -23,18 +23,20 @@ from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.warmup import WarmupSpecification
 from qdl.warmup.executor import (
     BoundedWarmupExecutor,
+    ProviderBudgetPolicy,
     RetryableWarmupError,
 )
 from scripts.phase10_real_provider_admission import (
     DEFAULT_DEMAND_PATH,
     DemandSlice,
+    MAX_SLICES,
     _load_slices,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
-MAX_BAR_SLICES = 128
+MAX_BAR_SLICES = MAX_SLICES
 
 
 class WarmupAdmissionError(RuntimeError):
@@ -88,6 +90,8 @@ async def _run_async(
     clock_ns: Callable[[], int],
     binance_fetcher: Callable[..., Any] | None,
     okx_fetcher: Callable[..., Any] | None,
+    executor: BoundedWarmupExecutor[_AdmissionWork, dict[str, Any]] | None,
+    source_provider_policies: Mapping[str, ProviderBudgetPolicy] | None,
 ) -> dict[str, Any]:
     if not 1 <= rows <= 1_000:
         raise WarmupAdmissionError("admission rows must be between 1 and 1000")
@@ -102,6 +106,8 @@ async def _run_async(
         source_kwargs["binance_fetcher"] = binance_fetcher
     if okx_fetcher is not None:
         source_kwargs["okx_fetcher"] = okx_fetcher
+    if source_provider_policies is not None:
+        source_kwargs["provider_policies"] = source_provider_policies
     source = ProviderBarHistorySource(catalog, **source_kwargs)
     works = tuple(
         _AdmissionWork(
@@ -122,9 +128,7 @@ async def _run_async(
         )
         for item in _bar_slices(demand_path)
     )
-    executor: BoundedWarmupExecutor[_AdmissionWork, dict[str, Any]] = (
-        BoundedWarmupExecutor()
-    )
+    executor = executor or BoundedWarmupExecutor()
 
     async def inspect(work: _AdmissionWork) -> dict[str, Any]:
         started = time.perf_counter()
@@ -259,6 +263,8 @@ def run(
     clock_ns: Callable[[], int] = time.time_ns,
     binance_fetcher: Callable[..., Any] | None = None,
     okx_fetcher: Callable[..., Any] | None = None,
+    executor: BoundedWarmupExecutor[_AdmissionWork, dict[str, Any]] | None = None,
+    source_provider_policies: Mapping[str, ProviderBudgetPolicy] | None = None,
 ) -> dict[str, Any]:
     return asyncio.run(_run_async(
         demand_path,
@@ -268,6 +274,8 @@ def run(
         clock_ns=clock_ns,
         binance_fetcher=binance_fetcher,
         okx_fetcher=okx_fetcher,
+        executor=executor,
+        source_provider_policies=source_provider_policies,
     ))
 
 

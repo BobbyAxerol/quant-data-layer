@@ -496,6 +496,47 @@ class SdkStreamProjectionTests(unittest.TestCase):
         self.assertEqual(view.payload.book_generation, 1)
         self.assertTrue(view.quality.execution_eligible)
 
+    def test_execution_context_feed_contract_is_venue_neutral(self):
+        cases = (
+            ("BINANCE", "USDM", "BTCUSDT"),
+            ("OKX", "SWAP", "BTC-USDT-SWAP"),
+        )
+        feeds = (
+            Feed.TRADE,
+            Feed.QUOTE,
+            Feed.MARK_INDEX_PRICE,
+            Feed.BOOK_SNAPSHOT,
+            Feed.BOOK_DELTA,
+        )
+        for venue, market, symbol in cases:
+            for feed in feeds:
+                with self.subTest(venue=venue, feed=feed):
+                    source = template(feed)
+                    source = source.model_copy(
+                        update={
+                            "instrument_id": f"{venue}.{market}.PERPETUAL.{symbol}",
+                            "source": source.source.model_copy(update={"venue": venue}),
+                        }
+                    )
+                    event = envelope(feed)
+                    event.venue = venue
+                    event.market = market
+                    event.product_type = "PERPETUAL" if venue == "BINANCE" else "SWAP"
+                    event.native_symbol = symbol
+                    event.instrument_id = source.instrument_id
+                    view = market_data_view_from_stream(
+                        StreamEvent(11, "signed", event),
+                        template=source,
+                        requirement=self.requirement(feed),
+                        now_ns=NOW + 100_000_000,
+                    )
+                    self.assertEqual(view.source.venue, venue)
+                    self.assertEqual(view.instrument_id, source.instrument_id)
+                    self.assertTrue(view.source.authoritative)
+                    self.assertTrue(view.quality.complete)
+                    self.assertFalse(view.quality.gap_open)
+                    self.assertTrue(view.quality.execution_eligible)
+
     def test_gap_and_stale_alpha_events_obey_typed_policies(self):
         requirement = DataRequirement(
             instrument_uid="uid-1",

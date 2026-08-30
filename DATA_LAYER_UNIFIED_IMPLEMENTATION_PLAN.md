@@ -25061,3 +25061,161 @@ claim. V2 candidate roles remain stopped, so no V2 path was measured or
 promoted. The next V2 runtime packet must repeat the same bounded probe after
 its approved bar-edge/runtime deployment and separately measure close-to-final
 BAR publication.
+
+## 24. Execution-Grade Market Context And Alpha History Contract
+
+### 24.1 Purpose And Two-Phase Boundary
+
+This program closes the semantic gap between a strategy's closed-bar signal,
+its execution intent, and the market-data evidence that Risk/Execution may use
+for a Binance USD-M or OKX Swap order. It reuses the existing V2 canonical
+feeds, Rust L2 state machine, signed query/stream route, and consumer manifest;
+it does not introduce a symbol worker, container, transport, synthetic data
+path, or a venue-specific alpha fork.
+
+Both phases are provider-neutral and must prove Binance and OKX behavior.
+DNSE/VN is intentionally outside this crypto execution-context slice and
+retains its current calendar/provider contract.
+
+| Phase | Status | Scope | Exit |
+| --- | --- | --- | --- |
+| 12.1 Typed Execution Market Context | COMPLETE / SOURCE-TESTED | Source and isolated tests: typed context vocabulary, order-kind policy, alpha warmup/retention contract, Binance/OKX parity. | Contract and domain tests passed; no runtime mutation. |
+| 12.2 Execution Feed Wiring And Paper Acceptance | PLANNED / REQUIRES 12.1 EXIT | Wire V2 quote/mark/L2 into the Trading System cache and selected paper consumers; route V1 only through manifest-approved fallback. | Bounded paper/no-order acceptance and rollback evidence. |
+
+### 24.2 Phase 12.1 - Typed Execution Market Context
+
+**Goal.** Make the source of every execution-relevant value explicit and
+validated before it is used: side-aware executable quote, risk mark/index,
+declared trigger reference, or sequence-valid L2 state. A closed BAR remains
+the strategy signal input; it is never silently treated as an execution quote.
+
+**Scope.**
+
+1. Reuse V2 TRADE, QUOTE, MARK_INDEX_PRICE, BOOK_SNAPSHOT, and BOOK_DELTA
+   contracts. Confirm their identity, authority, freshness, completeness, gap,
+   generation and sequence semantics through a Binance/OKX golden matrix; do
+   not weaken a feed to make a test pass.
+2. Define a provider-neutral execution-context envelope at the Trading System
+   boundary. It must preserve venue/product/native instrument identity, feed
+   provenance, observation time, quality/gap state, bid/ask, mark/index, last
+   price, and (when requested) L2 generation/sequence/checksum state.
+3. Define policy by order intent, not venue spelling:
+   - market: a fresh side-aware quote for execution estimation plus a fresh
+     mark for risk valuation;
+   - passive/ordinary limit: fresh quote; a grid, post-only or
+     market-impact-sensitive intent additionally requires a verified L2 view;
+   - stop/take-profit: explicit MARK, INDEX, or LAST/CONTRACT trigger
+     reference; public book data never substitutes for the broker trigger;
+   - OCO/bracket: private order/algo lifecycle remains the authority. The
+     public context only validates entry/replace decisions. Venue capability
+     decides Binance internal coordination versus an OKX compatible native
+     pair.
+4. Add alpha history declarations warmup_rows and retention_rows, default
+   2500 only where a legacy config has not yet declared values, allow bounded
+   values through 10000, and preserve FIFO/dedup/closed-bar behavior. A
+   strategy requiring 5000 declares it explicitly; warmup must not silently
+   continue with a partial window.
+
+**Invariants.**
+
+- Decimal values, UTC timestamps, canonical instrument identity and venue
+  product never cross-mix.
+- A quiet TRADE session is not an executable price. Session liveness and last
+  event recency remain separate.
+- A gapped, stale, unsequenced or non-authoritative L2 state cannot satisfy an
+  L2-required intent.
+- Existing V1 payloads retain their versioned compatibility path during this
+  source-only phase; no hidden fallback is created for a V2 route declared
+  BLOCKED.
+- No Data Layer, Trading System or alpha runtime service is recreated, no
+  order is submitted, and no Kafka/Redis/SQLite state is mutated.
+
+**Required tests and exit.**
+
+- Data Layer contract/golden tests for both venues and all five context feeds,
+  including missing decimal, zero, wrong identity, stale/gap, duplicate and
+  L2 generation/sequence cases.
+- Trading System pure-domain tests for market, limit, L2-required limit,
+  stop/take-profit and OCO capability policy across Binance and OKX.
+- Alpha runtime tests for explicit/legacy history declarations, 2500 and 5000
+  paged FIFO warmup, exact tail finality, dedup and rejection of insufficient
+  history.
+- Scoped syntax/lint/diff checks. Disposable tests are network-disabled and
+  leave no container, image, cache, data or runtime mutation.
+
+**Rollback and decision boundary.** Source-only changes are reverted by the
+coherent Phase 12.1 commits. Activating typed feeds in cache/risk/execution,
+changing a consumer manifest, or recreating any role belongs only to Phase
+12.2 and requires its own bounded runtime packet.
+
+### 24.2.1 Phase 12.1 Completion Evidence
+
+**Status: COMPLETE / SOURCE-TESTED (2026-08-30).** This phase introduced no
+new data-plane topology. Data Layer V2 remains the canonical provider-neutral
+source for `TRADE`, `QUOTE`, `MARK_INDEX_PRICE`, `BOOK_SNAPSHOT`, and
+`BOOK_DELTA`; its existing catalog rejects non-positive executable
+trade/quote decimals, while the Risk boundary independently rejects a missing
+or zero value rather than coercing it to `0`.
+
+**Implemented and verified.** A cross-venue SDK projection regression now
+proves all five feeds preserve canonical Binance USD-M `BTCUSDT` and OKX Swap
+`BTC-USDT-SWAP` identities, authoritative source state, completeness,
+no-gap state and execution eligibility. The companion Trading System domain
+policy selects a side-aware quote and risk mark for MARKET, requires verified
+L2 only for declared grid/post-only/impact-sensitive LIMIT intents, makes
+MARK/INDEX/LAST trigger references explicit for every supported stop/TP
+variant, and keeps bracket/OCO private lifecycle authority. Alpha Runtime now
+uses declared `warmup_rows`/`retention_rows`, bounded at `10000`, with exact
+deduplicated warmup and FIFO retention; V1 pages at its documented cap and V2
+uses one bounded request. Partial history never becomes strategy-ready.
+
+**Tests actually run, isolated and network-disabled.**
+
+- Data Layer Python 3.12 image:
+  `tests.test_qdl_sdk_stream_projection`,
+  `tests.test_phase104_contract_foundation`,
+  `tests.test_phase104_v2_query_stream_integration`, and
+  `tests.test_active_reference_l2_demand` - `28/28` passed.
+- Data Layer scalable-history image:
+  `tests.test_phase10_universal_warmup` and
+  `tests.test_provider_pass_through_history` - `72/72` passed, including a
+  deterministic full-manifest admission of all `142` current Binance/OKX BAR
+  slices with no network, production writes or raw-frame persistence.
+- Trading System pure-domain image:
+  `test_execution_market_context`, `test_risk_domain_v2`, and
+  `test_risk_market_data_status` - `36/36` passed.
+- Alpha Runtime image:
+  `test_history_window_contract`, `test_runtime_contracts`, and
+  `test_fast_closed_bar_runtime` - `37/37` passed. Its three
+  insufficient-history warnings and one pending-final-bar warning are
+  asserted failure-path cases, not runtime warnings.
+- Scoped Python parse, Ruff and `git diff --check` passed after the final
+  source change.
+
+**Defect found and fixed before exit.** `STOP_LIMIT` and
+`TAKE_PROFIT_LIMIT` are accepted system order types but were initially absent
+from the typed conditional classification. They now require the same explicit
+trigger context as market conditional orders and have Binance/OKX regressions.
+The final history probe also found the old Phase 10 admission utility capped a
+sealed `166`-slice (`142` BAR) manifest at `128` and asserted a legacy six-BAR
+fixture. Its reusable bound is now the shared V2 `10000` maximum, cardinality
+is read from the manifest, and its full-manifest unit fixture injects a fast
+deterministic provider budget without changing production source budgets.
+
+**Runtime, cleanup and remaining boundary.** No role, image, cache, Kafka,
+Redis, SQLite, consumer manifest, alpha, order path or provider was changed.
+All test containers used `--rm`, read-only source mounts and no network;
+phase-created Python bytecode/cache files were removed and no phase-created
+image/build cache exists to prune. Phase 12.2 is a deliberate runtime
+activation boundary, not unresolved Phase 12.1 debt: it needs an explicit
+bounded paper/no-order packet and rollback revision.
+
+### 24.3 Phase 12.2 - Execution Feed Wiring And Paper Acceptance
+
+After 12.1 passes, wire the existing V2 query/stream products into the Trading
+System market cache as distinct typed values rather than overloading the legacy
+price field. Use one shared Binance/OKX route manifest, manifest-governed V1
+fallback only where allowed, and an isolated no-order/paper acceptance for a
+market, passive limit, L2-required grid intent, stop/TP trigger and bracket
+lifecycle observation. Measure freshness, gaps, reconnects, cache fan-in,
+CPU/RAM and no-cross-symbol behavior. Do not create a new runtime topology.
