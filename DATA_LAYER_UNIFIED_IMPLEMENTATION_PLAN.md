@@ -23453,3 +23453,64 @@ this scope rather than opening a new phase.
   acceptance.  The candidate client is removed after its result is recorded;
   it is never a reader rollout.  A failure remains fail-closed on V1 and is
   diagnosed before any further retry.
+
+  **Candidate image attestation (`PASS`):** built exactly one replacement
+  disposable client from `d00caee3ef43d31b50f256d4369f6b661fdd4b83`:
+  `qdl-v2-python:2.0.0-d00caee`, image ID
+  `sha256:9553155ed5b0603b2802ac7dd21fc8c5e0889dfb656eee7119bf28ea625d95df`.
+  OCI revision and release labels exactly match that commit and
+  `2.0.0-d00caee`; image user is `qdl:qdl`.  It is not referenced by any
+  running role.  The prior `8e398be` candidate remains only until the new C2
+  result is recorded, then it is eligible for exact-image cleanup.  The next
+  approved action writes one fresh payload-free current-V1 binding in a new C2
+  evidence namespace before the single no-order acceptance attempt.
+
+  **Fresh C2 result (`FAIL-CLOSED`, no certificate):** the scoped client
+  `c2-20260830T032839Z-fresh-snapshot` exited `1` before emitting a receipt.
+  It exposed two independent acceptance-harness defects while all existing V2
+  readers, Rust cores and ingestors remained running: (1) concurrent stream
+  acknowledgement attempted to atomically save a cursor beneath a
+  `TemporaryDirectory` that had already been removed, and (2) an allowed
+  **Binance** `DOGEUSDT` V1 fallback probe was correctly rejected because its
+  then-current cached payload failed the declared positive `trade.price`
+  contract.  The concurrent `OKX DOGE` context in the stderr belongs to the
+  separate cursor-cleanup error and must not be misreported as a V1 fallback.
+  No payload was retained by design.  No order, direct provider connection, route change,
+  service recreate, Kafka/Redis/SQLite mutation, Trading System or alpha
+  mutation occurred.  Retain the bounded stderr/exit code and the fresh V1
+  binding as failure evidence.
+
+  **Approved repair boundary:** diagnose the cursor lifetime and exact
+  V1-payload/route mismatch using source and bounded read-only internal data
+  only.  Fix only the C2 client/manifest fallback policy and its tests: each
+  concurrent receipt must own a valid tmpfs cursor parent for its full stream
+  acknowledgement lifetime, and a V1 fallback may remain permitted only if the
+  real V1 contract is semantically valid for that product; otherwise it must
+  be `BLOCKED`, never silently accepted.  No reader/core/ingestor/provider
+  adapter, V1 service, topology, route runtime, data plane, Trading System,
+  alpha or order path is in scope.  Do not retry C2 until source tests prove
+  both repairs; a new candidate image is justified only after that different
+  source commit is complete.
+
+  **V1 fallback diagnosis (`PASS`, bounded internal cache reads):** the five
+  currently manifest-authorized Binance USD-M trade probes for the Trading
+  System paper contract (`BNB/BTC/DOGE/ETH/SOL`) each returned HTTP `200` and
+  passed the real fallback validator, including positive decimal price,
+  identity, market and freshness checks.  Observed source ages were
+  `141-952ms`; response sizes were `394-398` bytes.  The endpoint is the
+  existing V1 cache API and may perform its normal demand-registry touch; the
+  disposable read made no direct venue connection, order action, route change,
+  service recreate, Kafka/SQLite deletion or Redis flush.  This proves the
+  route is presently semantically usable but does not weaken its existing
+  fail-closed validator if a future V1 cache value is invalid.
+
+  **Cursor-lifecycle source repair (`PASS`):** added one common
+  cancel-and-drain helper to the C2 harness.  Both concurrent consumer groups
+  and concurrent products now await all cancelled siblings before `run()` can
+  remove its tmpfs cursor directory.  The regression proves a failing group
+  drains a waiting sibling before control returns.  The isolated immutable
+  `d00caee` image with a read-only source mount, network disabled, UID/GID
+  `10001` and tmpfs-only scratch passed the complete affected C2 matrix:
+  `80/80 PASS` in `26.503s`; `git diff --check` passed.  The next bounded step
+  is to commit this source/plan slice, build one replacement C2 client image,
+  then run one fresh C2 acceptance with the same V1 fallback binding rules.

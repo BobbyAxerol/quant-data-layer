@@ -294,7 +294,19 @@ async def _run_consumer_groups(
     that bounded wait concurrently, not one group after another.
     """
     tasks = tuple(asyncio.create_task(run_group(consumer_id)) for consumer_id in consumer_ids)
-    return tuple(await asyncio.gather(*tasks))
+    return await _gather_or_cancel(tasks)
+
+
+async def _gather_or_cancel(tasks):
+    """Drain sibling work before a caller removes its scoped cursor state."""
+    try:
+        return tuple(await asyncio.gather(*tasks))
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 async def run(args: argparse.Namespace) -> dict[str, object]:
@@ -375,7 +387,10 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         )
         if not consumer_products:
             raise ValueError(f"Phase 10.5 consumer has no V2 products: {consumer_id}")
-        ordered = await asyncio.gather(*(certify(product) for product in consumer_products))
+        product_tasks = tuple(
+            asyncio.create_task(certify(product)) for product in consumer_products
+        )
+        ordered = await _gather_or_cancel(product_tasks)
         fallback_details: list[dict[str, object]] = []
         for probe in (item for item in probes if item.consumer_id == consumer_id):
             product = products_by_identity[probe.identity]

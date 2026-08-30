@@ -222,6 +222,24 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_group_failure_cancels_and_drains_siblings_before_cleanup(self) -> None:
+        sibling_started = asyncio.Event()
+        sibling_drained = asyncio.Event()
+
+        async def run_group(consumer_id: str):
+            if consumer_id == "failing":
+                await sibling_started.wait()
+                raise RuntimeError("expected C2 failure")
+            try:
+                sibling_started.set()
+                await asyncio.Event().wait()
+            finally:
+                sibling_drained.set()
+
+        with self.assertRaisesRegex(RuntimeError, "expected C2 failure"):
+            await _run_consumer_groups(("failing", "sibling"), run_group)
+        self.assertTrue(sibling_drained.is_set())
+
 
 if __name__ == "__main__":
     unittest.main()
