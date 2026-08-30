@@ -24130,6 +24130,20 @@ this scope rather than opening a new phase.
   release regression passed **30/30** network-free cases, including the bounded
   Compose override assertion, provenance, route-plan and observation coverage.
 
+  **Legacy Compose-ownership correction (`APPROVED / RUNTIME PENDING`):** the
+  serving `data_layer_service` is a legacy unmanaged container (no Compose
+  project/service labels), so an initial Compose recreate correctly failed
+  before stopping it and left one non-running candidate container. The repair
+  is explicit: remove only that `Created` candidate, stop/remove only the
+  legacy `data_layer_service`, then use the preflighted Compose packet to create
+  the same `data_layer_service` name with the attested V1 patch image. This
+  entails a brief V1 HTTP/stream interruption. Rollback uses the same packet
+  with exact image ID `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`;
+  all three bind mounts, both existing networks, loopback port and restart
+  policy remain invariant. No `--remove-orphans`, volume/data deletion, Redis
+  mutation, Kafka mutation, V2 role, Trading System, alpha or order action is
+  permitted.
+
   **Source implementation and evidence (`PASS / RUNTIME PENDING`):**
   `app.stream.async_live_feed` now accepts a Binance trade frame only when `p`
   is a finite decimal strictly greater than zero; `None`, empty, zero, `NaN`,
