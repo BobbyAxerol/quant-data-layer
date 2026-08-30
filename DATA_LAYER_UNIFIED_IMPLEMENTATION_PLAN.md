@@ -24747,3 +24747,11 @@ identical semantic SHA-256
 The legacy comparator's one newer in-progress bar is explicitly excluded; V2
 does not claim it is final. This consumes real provider data only and leaves
 every Data Layer role, topic, cache, authority and consumer runtime unchanged.
+
+**C4.7 bounded consumer handoff ready (`APPROVED / PENDING ROLLING`):** The
+consumer packet has a successful compose render for one Trading System role
+only: `market_data_service` receives the attested V2 image, TLS/JWT and sealed
+`trading-system.paper.stable` binding. The render contains no Data Layer V2
+role mutation; V1, Kafka, Redis, SQLite, provider workers and authority remain
+excluded. Runtime acceptance must fail closed and restore only that service's
+recorded V1 image before the selected alpha is eligible to start.
