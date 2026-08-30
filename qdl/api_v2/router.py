@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
@@ -627,7 +628,8 @@ async def snapshot(
     access.require_permission(DataPlanePermission.SNAPSHOT_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    result = service.snapshot(
+    result = await asyncio.to_thread(
+        service.snapshot,
         requirement,
         purpose=purpose,
     )
@@ -909,7 +911,7 @@ async def feed_status(
         "schema": "qdl.feed-status.v2",
         "instrument_uid": instrument_uid,
         "feed": feed.value,
-        "quality": asdict(service.status(requirement)),
+        "quality": asdict(await asyncio.to_thread(service.status, requirement)),
     }
 
 
@@ -932,7 +934,7 @@ async def readiness(
         requirements,
         require_all=body.require_all,
     )
-    result = service.readiness(batch, purpose=purpose)
+    result = await asyncio.to_thread(service.readiness, batch, purpose=purpose)
     items = []
     for item in result.results:
         problem = None

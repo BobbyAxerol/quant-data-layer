@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import time
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -39,6 +41,9 @@ from qdl.query import (
     WarmupSpecification,
     WarmupTimeRange,
 )
+
+
+router_module = importlib.import_module("qdl.api_v2.router")
 
 
 def contract() -> ContractMetadata:
@@ -248,6 +253,44 @@ class Phase5ApiTests(unittest.TestCase):
         gaps = self.client.get("/v2/data-quality/gaps").json()["items"]
         self.assertEqual(gaps[0]["source_id"], "OKX_DIRECT")
         self.assertEqual(self.client.get("/v2/system/readiness").json()["authority"], "V1")
+
+    def test_sync_query_routes_use_the_existing_thread_boundary(self):
+        calls = []
+        original = router_module.asyncio.to_thread
+
+        async def record(callable_, *args, **kwargs):
+            calls.append(callable_.__name__)
+            return await original(callable_, *args, **kwargs)
+
+        requirement = {
+            "instrument_uid": self.binance.instrument_uid,
+            "feed": "BAR",
+            "consumer_grade": "ALPHA",
+            "source_policy_id": "alpha_crypto_primary_v1",
+            "interval": "1m",
+            "max_freshness_ms": 10_000,
+        }
+        with patch.object(router_module.asyncio, "to_thread", new=record):
+            snapshot = self.client.get(
+                f"/v2/market-data/{self.binance.instrument_uid}/snapshot",
+                params=self.params(),
+            )
+            status = self.client.get(
+                f"/v2/feeds/{self.binance.instrument_uid}/status",
+                params=self.params(),
+            )
+            readiness = self.client.post(
+                "/v2/system/readiness:check",
+                json={
+                    "consumer_id": self.consumer_id,
+                    "requirements": [requirement],
+                },
+            )
+
+        self.assertEqual(snapshot.status_code, 200, snapshot.text)
+        self.assertEqual(status.status_code, 200, status.text)
+        self.assertEqual(readiness.status_code, 200, readiness.text)
+        self.assertEqual(calls, ["snapshot", "status", "readiness"])
 
     def test_batch_partial_semantics_and_execution_fail_closed(self):
         missing = self.requirement.__dict__ | {

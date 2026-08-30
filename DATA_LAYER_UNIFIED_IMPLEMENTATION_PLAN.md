@@ -24853,3 +24853,52 @@ bytes are real provider/V2 data; no synthetic source, Data Layer runtime
 mutation or direct venue connection by the alpha was introduced. This closes
 the explicitly approved C4 bounded acceptance only. V1 remains the recorded
 rollback route, and later consumer/alpha expansion requires its own scope.
+
+**C4.17 Trading System observed-TRADE semantic repair (`IN PROGRESS / DATA
+LAYER RUNTIME UNCHANGED`):** Read-only governed `feed_status` evidence from
+the already-approved Trading System consumer distinguishes a quiet trade event
+from a dead provider session: Binance USD-M BTCUSDT and OKX Swap
+BTC-USDT-SWAP both returned `state=LIVE`, `provider_session_state=LIVE`,
+`complete=true`, `gap_open=false` and sub-second session liveness, but
+`event_recency_state=STALE`, `execution_eligible=false` and
+`LAST_EVENT_STALE`. This is the documented `TRADE + OBSERVE` condition. The
+consumer bridge currently rejects that view as an execution cache value and
+incorrectly labels it as a stream disconnect; the planned Trading System-only
+repair must retain the non-executable-price prohibition while representing the
+healthy session truthfully. No provider, Rust core, source binding, manifest,
+Kafka, Redis, SQLite, authority or V1 runtime change is authorized by this
+entry. One query replica's self-health TLS timeout is recorded separately for
+read-only diagnosis and must not be hidden by consumer fallback or an SLA
+relaxation.
+
+**C4.17a query REST event-loop isolation (`IN PROGRESS / SOURCE ONLY`):**
+The same read-only investigation found that the V2 REST router invokes the
+synchronous `V2QueryService.snapshot`, `status`, and `readiness` methods from
+async endpoints. A routed provider-history lookup or SQLite query can therefore
+occupy the Uvicorn event loop and make `/health/ready` flap despite otherwise
+healthy replicas. This is a provider-neutral query-edge defect, not a reason
+to weaken readiness timing or pin consumers to one replica. The narrow repair
+runs only those synchronous service calls through the existing worker-thread
+boundary, retaining the same request deadline, identity/entitlement/quality
+enforcement and response schema. Required tests prove a deliberately blocked
+backend does not block a concurrent health request, while snapshot/status/
+readiness success and fail-closed semantics remain unchanged. No role, image,
+manifest, Kafka, Redis, SQLite, authority or consumer routing changes are
+authorized until this source gate passes.
+
+**C4.17a source exit (`PASS / RUNTIME PENDING`, 2026-08-30):** The public V2
+router now dispatches only the synchronous `snapshot`, `feed-status` and
+batch `readiness` service calls through `asyncio.to_thread`.  Request parsing,
+entitlement/identity enforcement, deadline semantics, exception-to-problem
+mapping and public response schemas are unchanged.  This removes the query
+edge's ability to occupy the Uvicorn event loop during a bounded SQLite or
+provider-history lookup; it does not relax readiness or conceal a failing
+dependency.  A Python 3.12, read-only, network-disabled source regression
+passed **13/13** for V2 REST/API and typed SDK status behavior, including the
+new assertion that all three routes use the existing thread boundary.  Scoped
+Ruff in isolated Python-3.12 mode passed.  No Data Layer role, image, bundle,
+manifest, Kafka, Redis, SQLite, provider connection, authority, V1 route or
+consumer routing changed.  A later runtime packet may recreate only
+`query_v2_1` and `query_v2_2` with an immutable image from this source and
+their exact existing image as rollback; it must not merge this repair with an
+ingestor/projector/core topology change.
