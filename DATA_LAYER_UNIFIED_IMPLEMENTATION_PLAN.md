@@ -23997,3 +23997,22 @@ this scope rather than opening a new phase.
   capabilities dropped and tmpfs-only writes.  The image is the sole candidate
   for the four existing reader roles; no Rust image, service, worker, provider
   call, durable-store mutation or runtime rollout occurred in this gate.
+
+  **Step 4 four-reader C2 packet (`APPROVED / READY`):** use the existing
+  `qdl_v2_stable_candidate` Compose project, unchanged runtime directory,
+  TLS mounts, Kafka/Redis/SQLite volumes and Phase-10.5 C2 override.  A private
+  mode-`0600` image-only overlay selects candidate
+  `sha256:2f000e94d990e2f996a576748277044b4615c0f70b6e2660fa4c56d1199d6937`
+  for exactly `query_v2_1`, `query_v2_2`, `stream_v2_passive` and
+  `stream_v2_active`; each is serially recreated with `--no-deps --no-build
+  --force-recreate`.  Readiness requires both query replicas to answer their
+  mTLS ready route and exactly one stream role to own the lease (`200`) while
+  its standby returns `503`.  On a failed recreate, health check or the one
+  C2 receipt, restore only those four roles to their verified current image
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`
+  using the same runtime mounts.  Rust/ingestors/projectors, V1, Kafka topology
+  and offsets, Redis, SQLite, Trading System, alpha and every order path remain
+  excluded.  After reader health, create a fresh scoped evidence namespace and
+  run exactly one non-root, read-only, no-order C2 for at most 300 seconds over
+  the sealed 60-route manifest; only a passing receipt permits the separately
+  recorded V2-primary manifest promotion.
