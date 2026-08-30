@@ -1,4 +1,5 @@
 import asyncio
+from decimal import Decimal, InvalidOperation
 import json
 import logging
 import traceback
@@ -106,13 +107,28 @@ class StreamBackpressureTimeout(RuntimeError):
     """The bounded publisher queue could not accept a provider event in time."""
 
 
+def _is_positive_finite_decimal(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+    return decimal_value.is_finite() and decimal_value > 0
+
+
 def valid_provider_frame(source: str, item: object, interval: str = "1m") -> bool:
     """Return true only for a complete frame belonging to the configured feed."""
     if not isinstance(item, dict):
         return False
     if source.endswith("_trade"):
         required = ("s", "p", "q", "t", "T")
-        return item.get("e") == "trade" and all(item.get(field) is not None for field in required)
+        return (
+            item.get("e") == "trade"
+            and all(item.get(field) is not None for field in required)
+            and bool(str(item["s"]).strip())
+            and _is_positive_finite_decimal(item["p"])
+        )
     if source.endswith("_kline"):
         kline = item.get("k")
         required = ("s", "i", "t", "T", "o", "h", "l", "c", "v", "x")

@@ -104,6 +104,24 @@ class Phase105FallbackAcceptanceTests(unittest.TestCase):
         self.assertNotIn("payload", trade_result)
         self.assertEqual(trade_result["source_age_ms"], 500)
 
+    def test_trade_price_missing_zero_or_nonfinite_fails_with_probe_context(self) -> None:
+        trade = next(item for item in self.probes if item.feed == "TRADE")
+        for price in (None, "0", "NaN"):
+            with self.subTest(price=price):
+                payload = {
+                    "symbol": trade.native_symbol,
+                    "market": "binance_usdm",
+                    "quantity": "0.5",
+                    "trade_time": 1_000_000,
+                }
+                if price is not None:
+                    payload["price"] = price
+                with self.assertRaisesRegex(
+                    ValueError,
+                    rf"trade\.price.*consumer={trade.consumer_id}.*symbol={trade.native_symbol}",
+                ):
+                    validate_v1_fallback_payload(payload=payload, probe=trade, now_ms=1_000_500)
+
     def test_invalid_trade_symbol_fails_closed(self) -> None:
         trade = next(item for item in self.probes if item.feed == "TRADE")
         with self.assertRaisesRegex(ValueError, "symbol"):

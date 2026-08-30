@@ -239,13 +239,18 @@ def validate_v1_fallback_payload(
         raise ValueError("Phase 10.5 V1 fallback response exceeds the bounded contract")
     received_ms = int(time.time() * 1000) if now_ms is None else now_ms
     if probe.policy.startswith("BINANCE_TRADE"):
-        if str(payload.get("symbol", "")).upper() != probe.native_symbol:
-            raise ValueError("Phase 10.5 V1 trade symbol differs from manifest")
-        if str(payload.get("market", "")).lower() != "binance_usdm":
-            raise ValueError("Phase 10.5 V1 trade market differs from Binance USD-M")
-        _positive_decimal(payload.get("price"), "trade.price")
-        _positive_decimal(payload.get("quantity"), "trade.quantity", allow_zero=True)
-        event_ms = _millis(payload.get("trade_time", payload.get("event_time")), "trade_time")
+        try:
+            if str(payload.get("symbol", "")).upper() != probe.native_symbol:
+                raise ValueError("Phase 10.5 V1 trade symbol differs from manifest")
+            if str(payload.get("market", "")).lower() != "binance_usdm":
+                raise ValueError("Phase 10.5 V1 trade market differs from Binance USD-M")
+            _positive_decimal(payload.get("price"), "trade.price")
+            _positive_decimal(payload.get("quantity"), "trade.quantity", allow_zero=True)
+            event_ms = _millis(payload.get("trade_time", payload.get("event_time")), "trade_time")
+        except ValueError as error:
+            raise ValueError(
+                f"{error} consumer={probe.consumer_id} symbol={probe.native_symbol} path={probe.path}"
+            ) from error
         kind = "BINANCE_TRADE"
     elif probe.policy == "BINANCE_BAR_GENERIC":
         if payload.get("e") != "kline" or str(payload.get("s", "")).upper() != probe.native_symbol:

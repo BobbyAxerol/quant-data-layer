@@ -81,6 +81,16 @@ class RuntimeReadinessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "wrong-feed"):
             provider_items("binance_futures_kline", self.trade_frame(), "1m")
 
+    def test_trade_frame_rejects_missing_zero_and_nonfinite_price(self):
+        self.assertTrue(valid_provider_frame("binance_futures_trade", self.trade_frame(), "1m"))
+        for price in (None, "", "0", "NaN", "Infinity"):
+            with self.subTest(price=price):
+                frame = self.trade_frame()
+                frame["p"] = price
+                self.assertFalse(valid_provider_frame("binance_futures_trade", frame, "1m"))
+                with self.assertRaisesRegex(ValueError, "invalid or wrong-feed"):
+                    provider_items("binance_futures_trade", frame, "1m")
+
     def test_trade_and_kline_readiness_are_independent(self):
         supervisor = StreamSupervisor(first_frame_timeout_seconds=5, stale_after_seconds=180)
         trade = supervisor.register_shard("binance_futures_trade", "wss://trade")

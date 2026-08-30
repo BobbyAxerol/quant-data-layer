@@ -24066,3 +24066,68 @@ this scope rather than opening a new phase.
   adapter. It must not change V2/Rust contracts, provider logic, route policy
   or any SLA. Only after that repair has its own approval may a new C2 packet
   be proposed; V1 remains the serving and rollback route.
+
+  **V1 fallback correction (`APPROVED / IN PROGRESS`, 2026-08-30):** the owner
+  approved one narrow continuation of the failed C2 path: make at most one
+  bounded normal V1 cached-read probe per manifest-approved Binance USD-M trade
+  symbol (`BTC/ETH/SOL/DOGE/BNB`), retain only endpoint status, top-level/nested
+  key names, value types and a payload digest, then correct the shared V1
+  fallback validator only if the documented response places the positive trade
+  price under a different canonical field. Add deterministic valid, missing and
+  zero-price tests, run the affected fallback/C2 source matrix and commit the
+  tested source slice.
+  No V2/Rust/provider/route-policy/SLA change, new service, topology, durable
+  store mutation, direct venue connection or order action is allowed. The V1
+  endpoint may refresh its ordinary short-lived demand entry as any normal
+  cached read does, but no payload is retained in repository evidence. A new
+  C2 or reader recreate is not included in this source slice: after a passing
+  source result, it requires one explicit packet naming the same four reader
+  roles, image SHA, 60-route scope and `e43f903…` rollback coordinate.
+
+  **Live diagnosis and corrected narrow scope (`CONFIRMED`):** direct bounded
+  reads for all five approved Binance USD-M symbols returned `200` with a
+  positive top-level numeric `price`; the exact `data_layer:8100` DNS path from
+  an existing V2 query replica returned the same schema. Therefore there is no
+  alternate field to map and no V2/query-network defect. The retained C2 probe
+  set contains the expected ten Binance trade reads (five symbols for each of
+  the Trading System and Binance-alpha paper identities). The immutable V1
+  image currently serving `data_layer_service` predates the source validator:
+  it accepts any non-empty raw trade item and projects `float(p)` directly.
+  Consequently a provider frame with `p=NaN`, infinity or zero can become a
+  V1 cached `null`/invalid price and reproduce the observed validator failure.
+  This is the shared V1 ingress defect to repair, not an adapter remap.
+
+  The approved correction is limited to: reject non-finite/non-positive Binance
+  trade prices before they enter the V1 queue; preserve the existing fail-closed
+  fallback validator while attaching its manifest probe identity to an invalid
+  payload error; and add valid/missing/zero/non-finite regression coverage.
+  The source gate remains network-free. If it passes, the only runtime action
+  required for the repair is one immutable replacement image and a bounded
+  recreate of `data_layer_service`, with current V1 image
+  `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`
+  as rollback. The subsequent C2 packet remains exactly four existing readers,
+  the same 60 routes and `e43f903…` reader rollback; no other role, topology,
+  durable store, Trading System, alpha or order path is in scope.
+
+  **Source implementation and evidence (`PASS / RUNTIME PENDING`):**
+  `app.stream.async_live_feed` now accepts a Binance trade frame only when `p`
+  is a finite decimal strictly greater than zero; `None`, empty, zero, `NaN`,
+  infinity and booleans are rejected before the bounded publisher queue. This
+  preserves the public V1 payload shape and does not alter retries, reconnect
+  policy, provider selection or any V2/Rust path. The fallback validator remains
+  fail-closed and now appends only `consumer`, native `symbol` and endpoint path
+  to a rejected Binance trade error, so a future receipt identifies the failing
+  declared probe without retaining payload data.
+
+  Deterministic ingress and fallback tests cover valid, missing, zero and
+  non-finite price cases. `git diff --check` and `py_compile` passed. The exact
+  network-free regression matrix passed **65/65** in a disposable, read-only,
+  non-root (`10001`) existing test image with all capabilities dropped and no
+  runtime mounts: ingress correctness `15`, C2 consumer acceptance `5`,
+  fallback `7`, handoff `13`, identity `9`, five-liquid handoff `5`, SDK feed
+  status `3` and SDK stream `8`. An earlier shell invocation used
+  the base interpreter rather than the image virtualenv and failed before any
+  case ran due to missing `yaml`; it was superseded by the explicit
+  `/opt/venv/bin/python` matrix above. Test containers were removed
+  automatically. No runtime image, container, Kafka, Redis, SQLite, V1 data,
+  Trading System, alpha or order path changed in this source slice.
