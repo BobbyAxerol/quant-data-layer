@@ -24188,6 +24188,263 @@ this scope rather than opening a new phase.
   ingress/projection, fallback, route plan, handoff, identity, stable-release
   certification, observations and universal-release policy.
 
+  **V1.2.4 image preflight (`PASS / ROLLOUT PENDING`):**
+  `qdl-v1-fallback:v1.2.4-2b0dcf7` was built from the detached corrected source
+  with image ID `sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65`.
+  OCI revision/version, source-tree and Dockerfile labels all attest exactly to
+  `2b0dcf7…`; the payload-free V1 provenance record passed. The baked image
+  passed **23/23** offline, non-root ingress/fallback tests. The only permitted
+  runtime mutation is now one `data_layer_service` recreate with the exact
+  preflighted mounts; failure rolls immediately to `d17085e…f0b50`.
+
+  **V1.2.4 bounded rollout and C2 retry packet (`APPROVED / EXECUTING`,
+  2026-08-30):** the corrected immutable image
+  `qdl-v1-fallback:v1.2.4-2b0dcf7`
+  (`sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65`)
+  now serves only the existing `data_layer_service`, retaining its loopback
+  `8100` port, read-only `.env`, data/log binds and the two existing networks.
+  A bounded post-rollout probe confirmed positive cached Binance USD-M trade
+  prices for `BTC/ETH/SOL/DOGE/BNB`; no raw payload was retained.  The shared
+  boundary is now explicit: a complete finite zero/non-positive provider
+  trade frame remains transport/session-valid, but is discarded before it can
+  update a latest-price cache or stream.  Missing, blank and non-finite prices
+  remain ingress-invalid.  V1 public payload shape, V2/Rust code, source
+  authority, route policy, provider selection and all order paths are
+  unchanged.
+
+  The one allowed retry is a client-only, 300-second C2 receipt over exactly
+  the already sealed 60 routes: `trading-system.paper.stable` (30),
+  `alpha.binance.paper.stable` (15), and `alpha.okx.paper.stable` (15).
+  It targets the four existing V2 reader roles on their proven rollback image
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`;
+  no reader recreate is required because this correction is V1-only.  Before
+  the client starts, a fresh payload-free binding ties the v1.2.4 provenance
+  to the currently serving V1 container.  The client may read V2 and the
+  explicitly allowed local V1 cached trade routes only; it has no provider
+  credential, Docker socket, order capability or durable-store mount.  V1
+  fallback remains blocked for all non-permitted products.  Failure removes
+  only the disposable client/evidence namespace and leaves V1 plus all four
+  readers untouched; no component rollback or topology mutation is needed.
+
+  A simultaneous broad V1 Binance kline batch first-frame timeout was observed
+  after the V1 restart.  It is not used by this C2 fallback drill (BAR routes
+  are V2-only), so it is recorded as an unrelated V1 feed-health observation,
+  not converted into an expanded repair or a reason to relax the trade
+  contract.  The retry must still prove V2 warmup, signed cursor/replay,
+  reconnect, V2-primary reads, allowed `V2 -> V1 -> V2` trade fallback and
+  `BLOCKED` non-fallback behavior with zero order/signal/sizing mutation.
+
+  **C2 launcher correction (`NO DATA REQUEST / RETRY CONTINUES`):** the first
+  disposable-client bootstrap exited before copying an identity, opening a V1
+  or V2 connection, or writing an acceptance receipt because `setpriv` tried
+  to change the Linux bounding set without `CAP_SETPCAP`.  That capability is
+  intentionally not granted.  The launcher now omits that redundant operation:
+  its root bootstrap retains only `DAC_OVERRIDE`, `SETUID` and `SETGID`; the
+  `setpriv` transition to UID/GID `10001` clears its permitted/effective set
+  and applies `NoNewPrivs=1`, which the final client records before requests.
+  This is a launcher-only correction, not a second C2 data attempt and not a
+  runtime/service mutation.
+
+  The corrected launcher then reached its identity-copy boundary but stopped
+  before any network request because a root-owned `0700` tmpfs input directory
+  prevented final UID `10001` from extracting the already approved files.  The
+  final UID now creates both tmpfs input/output directories before extraction.
+  No identity content, V1/V2 response, service state or durable data was read
+  or changed by either preflight failure; the single actual C2 observation has
+  not begun.
+
+  A final filesystem-only launcher preflight exposed the same intended
+  non-root boundary: the host-owned `run-c2.sh` was mode `0700`, so UID `10001`
+  could not open it.  It is now executable/readable (`0755`) without changing
+  its content; the bootstrap also always emits an exit code if the child cannot
+  start.  This occurred before the script could issue a V1/V2 request.  The
+  C2 observation count remains zero and the next invocation is the sole
+  300-second data-plane receipt.
+
+  **C2 client provenance correction (`NO DATA REQUEST / ONE DISPOSABLE IMAGE`):**
+  the first launch that reached the C2 Python entrypoint stopped before a V1 or
+  V2 request because the V1.2.4 serving image is correctly built from
+  `2b0dcf7…`, while the C2 release constants were advanced to `v1.2.4` in
+  `d645fba…`.  Using the serving V1 binary as the C2 client would therefore
+  falsely validate an older frozen provenance contract.  The repair is one
+  immutable, disposable **client-only** Python image from `d645fba…`; it will
+  neither serve traffic nor replace any V1/V2 role and will be removed after
+  the receipt.  This corrects the attestation boundary without changing V1
+  fallback, V2/Rust behavior, route policy, reader state or data plane.
+
+  **C2 active-reader manifest drift (`CONFIRMED / FOUR-READER ALIGNMENT
+  REQUIRED`):** the first current-client C2 request reached the authenticated
+  V2 query plane and was correctly rejected before a market-data response:
+  `workload token is not bound to the active consumer manifest revision` for
+  `trading-system.paper.stable / OKX DOGE 1m`.  Both active query replicas
+  expose the same older baked manifests (`trading-system=4`,
+  `alpha-binance=6`, `alpha-okx=6`), while the approved source manifest is
+  (`trading-system=5`, `alpha-binance=6`, `alpha-okx=6`).  This is deterministic
+  reader-image/config drift after the prior rollback, not a data, provider,
+  V1 fallback, Rust, identity or route-policy defect.
+
+  The bounded repair is one immutable Python reader image built from committed
+  `d645fba…`, then a serial rolling recreate of only
+  `query_v2_1`, `query_v2_2`, `stream_v2_active`, and `stream_v2_passive`
+  using their unchanged runtime directory, TLS, Kafka/Redis/SQLite and
+  networks.  It changes no other V2 role, V1, Trading System, alpha or order
+  path.  The exact rollback remains the four-role image
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`
+  with the same mounts.  Before rolling, run the source C2/manifest regression
+  in the immutable candidate; after reader readiness, run one final 300-second
+  C2 against the sealed 60-route scope.  The two early C2 stops retain only
+  compact terminal evidence and did not return market data or take any order
+  action.
+
+  **Four-reader manifest alignment (`PASS / FINAL C2 PENDING`):** candidate
+  `sha256:ee4fb55d85ed41a63ab9c5fa173d9bdb6622b50dcd73ffa5839d721aae66d37a`
+  (committed source `d645fba`, version `2.0.0-d645fba`) passed **28/28**
+  focused offline, non-root C2/manifest/fallback tests. An image-only Compose
+  overlay was rendered first and preserved the existing runtime bind, TLS/state
+  volumes, networks, manifest paths and config revision. Only the four named
+  reader roles were recreated serially. All are `running`, `restart=0` and
+  `OOMKilled=false`; `query_v2_1` is Docker-healthy and the other three have
+  no Docker healthcheck with no bounded startup fatal/TLS/manifest error.
+  Both query replicas now load `trading-system.paper.stable=5`,
+  `alpha.binance.paper.stable=6` and `alpha.okx.paper.stable=6`. V1,
+  Rust/ingestors/projectors, Kafka/Redis/SQLite, Trading System, alpha and
+  order paths were untouched. The exact image-only rollback remains
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`
+  for those same four roles. A fresh v1.2.4 runtime binding precedes one final
+  300-second C2 receipt; no timing retry or route mutation is permitted.
+
+  **Aligned C2 result (`FAIL-CLOSED / HANDOFF HARNESS REPAIR REQUIRED`):** the
+  detached 300-second C2 completed with the final process at UID `10001`, zero
+  effective/permitted/inheritable/ambient capabilities and `NoNewPrivs=1`.
+  V1.2.4 provenance/binding and workload-manifest authentication passed; no
+  order action, direct provider connection or durable-store mutation occurred.
+  It timed out in the shared signed-cursor stream-resume path while waiting for
+  an event.  The bounded terminal trace identifies no product because the
+  outer observation timeout cancels the pending gRPC receive before the product
+  context is attached.  This cannot be accepted as an evidence pass, but it
+  also is not a reason to relax a freshness SLA: a bounded C2 over multi-hour/
+  daily final-BAR routes must prove replay from an already retained signed
+  cursor/history boundary rather than require a new live event inside five
+  minutes.  The repair scope is the shared C2 handoff helper only: attach
+  product identity to cancellation/timeout, preserve the strict live check for
+  `TRADE`, and use the existing aligned retained-history cursor for non-
+  execution `BAR` replay.  No provider fallback, generated event, reader
+  topology, route policy or service/container class is authorized.  The four
+  aligned readers, V1 and all excluded components remain running unchanged.
+
+  **C2 bounded scheduling correction (`APPROVED / EXECUTING`, 2026-08-30):**
+  the real receipt used the harness default of four concurrent product tasks
+  for a sealed 60-route scope.  Each route independently performs a strict
+  query plus primary/secondary stream handoff, so that queue can consume the
+  entire 300-second C2 observation before all existing tasks are serviced.
+  This is an acceptance-client scheduling defect, not a market-data freshness
+  or V1 fallback failure.  The next receipt uses the already declared maximum
+  of eight concurrent tasks; it does not widen any request timeout, relax any
+  product SLA, change the 300-second ceiling, alter a route, or create another
+  service/image/bundle.  It remains a disposable non-root client with exactly
+  the same 60 V2 routes and only the already-authorized local V1 cached TRADE
+  fallback drill.  A terminal result will decide the next action; a failure is
+  retained as compact evidence rather than retried by timing luck.
+
+  **C2 bootstrap UID correction (`NO DATA REQUEST`):** the first concurrency-8
+  launch inherited the image's default UID `10001`, so it could not read the
+  intentionally private root-bootstrap script and exited before creating an
+  output file or opening any endpoint.  The disposable launch must start only
+  its bootstrap as UID/GID `0:0` with the already bounded
+  `DAC_OVERRIDE/SETUID/SETGID` capabilities; that script immediately switches
+  the actual C2 client to UID/GID `10001` with zero capabilities and
+  `NoNewPrivs=1`.  The correction changes no C2 request, service, image,
+  route or data-plane state.  The existing private evidence namespace and its
+  fresh V1 binding remain valid because no client data request occurred.
+
+  **C2 concurrency-8 result (`FAIL-CLOSED / TYPED STATUS DIAGNOSIS REQUIRED`):**
+  the corrected disposable client reached the real V2 stream path with final
+  UID `10001`, zero effective/permitted/inheritable/ambient capabilities and
+  `NoNewPrivs=1`.  It failed before the 300-second ceiling at the exact route
+  `alpha.okx.paper.stable / OKX.SWAP.PERPETUAL.BNB-USDT / TRADE`: the governed
+  two-second quiet-trade observation received no event and its primary typed
+  status did not satisfy the existing live, complete, gap-free,
+  non-executable-session predicate.  The compact terminal error SHA is
+  `220a3394...402f532`; no order, provider direct connection, V1 fallback
+  request, Kafka/Redis/SQLite write, service recreate or route change occurred.
+  The next allowed read is a compact typed-status comparison for this exact
+  requirement on both V2 query replicas.  It must identify the failing field
+  before any projection/provider change; neither the event freshness SLA nor
+  the quiet-session predicate may be weakened to force C2 through.
+
+  **OKX BNB typed-status diagnosis (`CONFIRMED`):** a separate disposable,
+  read-only status probe used the same alpha-OKX identity and queried both
+  V2 query replicas for the exact blocked requirement.  Both returned the
+  same identity/policy and `state=LIVE`, `event_recency_state=LIVE`,
+  `provider_session_state=LIVE`, `provider_session_liveness_ms=459`,
+  `complete=true`, `gap_open=false`, and `execution_eligible=true`.  Therefore
+  the C2 failure is not a missing price, stale provider, open gap, incomplete
+  projection or cross-replica mismatch.  The two-second stream subscription
+  received no event then incorrectly attempted the *quiet non-executable*
+  branch against this fresh executable status.  The required narrow repair is
+  stream-handoff behavior: a subscription without an event must either fail
+  over to the governed peer and obtain an event/cursor replay, or report the
+  existing real live status as a stream-delivery failure.  It must not relabel
+  a fresh executable feed as quiet, relax the event/session SLA, synthesize an
+  event or change provider/Rust/data-plane policy.  The status probe exited
+  zero, retained only the compact fields above, and made no order, provider
+  direct connection or durable write.
+
+  **C2 fresh-session observation correction (`APPROVED / IN PROGRESS`,
+  2026-08-30):** the bounded per-peer read confirms the exact topology rather
+  than a provider or price defect: `qdl-v2-stream-a` accepted the signed
+  cursor and emitted `REPLAYING` then `LIVE`, while `qdl-v2-stream-b` correctly
+  returned `GATEWAY_FENCED` because it is passive.  The leader delivered no
+  *new* BNB trade during the two-second observation.  C2 currently treats that
+  absence as the special quiet/stale case and therefore rejects the independently
+  verified fresh, complete, gap-free and execution-eligible status.  The
+  approved source-only correction is confined to the shared C2 receipt helper:
+  after a signed cursor is accepted and both control records are observed, it
+  records `LIVE_OBSERVED_NO_NEW_CURSOR` only when the typed status has exact
+  identity/policy plus `LIVE` event recency/session, bounded session heartbeat,
+  complete coverage, no gap and execution eligibility.  The existing
+  `QUIET_OBSERVED_NO_CURSOR` remains only for the prior live-session,
+  stale-event, non-executable `OBSERVE` contract.  Disconnect, stale session,
+  incomplete/gap, wrong identity/policy, invalid price and all blocked routes
+  remain fail-closed.  This does not loosen any data freshness SLA, synthesize
+  an event, change provider/Rust/runtime/data-plane state, or claim a cursor
+  replay that did not occur; BAR retained replay remains strict and TRADE
+  evidence explicitly distinguishes an accepted signed cursor with no new
+  event.  Required exit evidence: deterministic fresh/quiet/disconnected/gap/
+  cross-identity tests, the existing V1 valid/missing/zero/non-finite matrix,
+  one disposable client image only if its source changes, then exactly one
+  300-second C2 receipt over the sealed 60 routes.  Rollback is to retain the
+  current reader/V1 runtime unchanged and remove only the disposable client
+  image/evidence namespace on failure.
+
+  **C2 source exit (`PASS / ONE CLIENT-ONLY RECEIPT PENDING`):** the helper now
+  records one of three truthful durable outcomes: `DURABLE_CURSOR_REPLAYED`,
+  `LIVE_OBSERVED_NO_NEW_CURSOR` or `QUIET_OBSERVED_NO_CURSOR`; an event after
+  the second controlled open is separately marked
+  `LIVE_EVENT_AFTER_REOPEN_NO_CURSOR`.  It never calls any of these a replay
+  without an acknowledged/resumed offset.  The exact source regression passed
+  **55/55** in one disposable network-none, read-only UID `10001` container:
+  C2 historical replay, fresh-no-new-print, valid quiet observation,
+  signed-control absence, event-after-reopen, disconnected/stale-session/gap/
+  wrong-policy rejection, manifest/identity/fallback semantics, and the V1
+  valid/missing/zero/non-finite ingress boundary.  The warning lines emitted by
+  deliberately failing provider reconnect fixtures are expected test fixtures;
+  no provider request, runtime mount, service, data plane or order path changed.
+  The next and only runtime action is a new immutable disposable C2 client image
+  from this source, followed by exactly one 300-second receipt.  Existing V1
+  and the four V2 reader containers remain untouched.
+
+  **C2 execution transport correction (`NO RECEIPT / DETACHED LAUNCH
+  REQUIRED`):** a foreground tool attachment ended around its 30-second yield
+  boundary before the disposable client flushed `exit-code`, security or
+  acceptance evidence. Its container was auto-removed and no receipt exists,
+  so this cannot be counted as a C2 result or reused as a failure/pass claim.
+  The final client will launch detached with the same immutable image, mounts,
+  identities, 60-route scope and 300-second bound; host polling reads only its
+  compact evidence namespace after it exits. This changes neither the client
+  contract nor any runtime role, and avoids an execution-tool lifetime from
+  corrupting an otherwise bounded no-order observation.
+
   **Source implementation and evidence (`PASS / RUNTIME PENDING`):**
   `app.stream.async_live_feed` now accepts a Binance trade frame only when `p`
   is a finite decimal strictly greater than zero; `None`, empty, zero, `NaN`,

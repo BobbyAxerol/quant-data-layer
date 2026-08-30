@@ -298,13 +298,42 @@ def _quiet_trade_status_is_observable(product: AcceptanceProduct, requirement, s
     )
 
 
-async def _assert_quiet_trade_session(
+def _fresh_trade_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
+    """Accept a live trade session that simply has no new print in this probe."""
+    quality = status.quality
+    return (
+        _allows_quiet_trade_observation(product, requirement)
+        and status.instrument_uid == requirement.instrument_uid
+        and status.feed is requirement.feed
+        and quality.policy_id == requirement.source_policy_id
+        and quality.state == "LIVE"
+        and quality.event_recency_state == "LIVE"
+        and quality.provider_session_state == "LIVE"
+        and quality.provider_session_liveness_ms is not None
+        and quality.provider_session_liveness_ms <= requirement.max_session_liveness_ms
+        and quality.complete
+        and not quality.gap_open
+        and quality.execution_eligible
+    )
+
+
+def _require_signed_cursor_controls(controls: list[str]) -> None:
+    required = {"REPLAYING", "LIVE"}
+    missing = required.difference(controls)
+    if missing:
+        raise ContinuityError(
+            "CURSOR_INVALID",
+            "C2 no-event TRADE observation did not confirm the signed cursor stream",
+        )
+
+
+async def _classify_no_event_trade_session(
     client: AsyncDataLayerClient,
     *,
     product: AcceptanceProduct,
     requirement,
     timeout_seconds: float,
-) -> None:
+) -> str:
     try:
         status = await asyncio.wait_for(
             client.feed_status(requirement),
@@ -314,10 +343,14 @@ async def _assert_quiet_trade_session(
         raise ContinuityError(
             "DATA_STALE", "C2 quiet TRADE status did not return before its deadline"
         ) from timeout
-    if not _quiet_trade_status_is_observable(product, requirement, status):
-        raise ContinuityError(
-            "DATA_STALE", "C2 quiet TRADE observation requires a live non-executable session"
-        )
+    if _fresh_trade_status_is_observable(product, requirement, status):
+        return "FRESH_EXECUTABLE"
+    if _quiet_trade_status_is_observable(product, requirement, status):
+        return "QUIET_NON_EXECUTABLE"
+    raise ContinuityError(
+        "DATA_STALE",
+        "C2 no-event TRADE observation requires a live fresh/executable or quiet/non-executable session",
+    )
 
 
 def _stream_handoff_mode(
@@ -325,13 +358,26 @@ def _stream_handoff_mode(
     *,
     acknowledged_offset: int | None,
     resumed_offset: int | None,
+    no_event_sessions: tuple[str, ...] = (),
 ) -> str:
     if (acknowledged_offset is None) != (resumed_offset is None):
         raise ValueError("C2 stream handoff evidence is incomplete")
     if product.delivery is not DeliveryClass.DURABLE:
         return "NOT_APPLICABLE"
     if acknowledged_offset is None:
-        return "QUIET_OBSERVED_NO_CURSOR"
+        if len(no_event_sessions) != 2:
+            raise ValueError("C2 no-event stream evidence requires both sessions")
+        if no_event_sessions[-1] == "EVENT_AFTER_REOPEN":
+            if no_event_sessions[0] not in {"FRESH_EXECUTABLE", "QUIET_NON_EXECUTABLE"}:
+                raise ValueError("C2 no-event stream evidence has an invalid initial session")
+            return "LIVE_EVENT_AFTER_REOPEN_NO_CURSOR"
+        if all(item == "FRESH_EXECUTABLE" for item in no_event_sessions):
+            return "LIVE_OBSERVED_NO_NEW_CURSOR"
+        if all(item == "QUIET_NON_EXECUTABLE" for item in no_event_sessions):
+            return "QUIET_OBSERVED_NO_CURSOR"
+        return "MIXED_LIVE_QUIET_NO_NEW_CURSOR"
+    if no_event_sessions:
+        raise ValueError("C2 cursor replay cannot include no-event session evidence")
     return "DURABLE_CURSOR_REPLAYED"
 
 
@@ -579,9 +625,9 @@ async def _stream_resume(
     grpc_target: str,
     state_dir: Path,
     timeout_seconds: float,
-) -> tuple[int | None, int | None, tuple[str, ...]]:
+) -> tuple[int | None, int | None, tuple[str, ...], tuple[str, ...]]:
     if product.delivery is not DeliveryClass.DURABLE:
-        return None, None, ()
+        return None, None, (), ()
     cursor_path = _cursor_path(state_dir, product)
     requirement = sdk_requirement(product)
     historical_replay = _uses_historical_bar_replay(product)
@@ -590,6 +636,7 @@ async def _stream_resume(
     event_timeout_seconds = _stream_event_timeout_seconds(product, timeout_seconds)
     quiet_trade_observation = _allows_quiet_trade_observation(product, requirement)
     quiet_primary = False
+    no_event_sessions: list[str] = []
     first_controls: list[str] = []
     first_offset: int | None = None
     first_client = _client(
@@ -628,12 +675,13 @@ async def _stream_resume(
                     ),
                 )
                 if first is None:
-                    await _assert_quiet_trade_session(
+                    _require_signed_cursor_controls(first_controls)
+                    no_event_sessions.append(await _classify_no_event_trade_session(
                         first_client,
                         product=product,
                         requirement=requirement,
                         timeout_seconds=timeout_seconds,
-                    )
+                    ))
                     quiet_primary = True
             else:
                 first, first_controls = await _next_data(
@@ -667,9 +715,9 @@ async def _stream_resume(
     try:
         if quiet_primary:
             # No first event means no cursor checkpoint exists to resume. Both
-            # replicas still open their governed stream and must either deliver
-            # a validated event or independently prove a live, non-executable
-            # quiet session. This is observation evidence only, never replay.
+            # reconnect sessions must accept the signed cursor and independently
+            # prove either fresh executable or quiet non-executable session
+            # quality. This is observation evidence only, never replay.
             async with _strict_warmup_then_stream_for_c2(
                 resumed_client,
                 product=product,
@@ -684,12 +732,13 @@ async def _stream_resume(
                     ),
                 )
                 if observed is None:
-                    await _assert_quiet_trade_session(
+                    _require_signed_cursor_controls(observed_controls)
+                    no_event_sessions.append(await _classify_no_event_trade_session(
                         resumed_client,
                         product=product,
                         requirement=requirement,
                         timeout_seconds=timeout_seconds,
-                    )
+                    ))
                 else:
                     observed_view = market_data_view_from_stream(
                         observed,
@@ -697,7 +746,14 @@ async def _stream_resume(
                         requirement=stream_requirement,
                     )
                     validate_product_view(product, observed_view)
-                return None, None, tuple(first_controls + observed_controls)
+                    session.acknowledge(observed)
+                    no_event_sessions.append("EVENT_AFTER_REOPEN")
+                return (
+                    None,
+                    None,
+                    tuple(first_controls + observed_controls),
+                    tuple(no_event_sessions),
+                )
 
         assert first_offset is not None
         async with _strict_warmup_then_stream_for_c2(
@@ -744,6 +800,7 @@ async def _stream_resume(
                         first_offset,
                         acknowledged_offset,
                         tuple(first_controls + resumed_controls),
+                        (),
                     )
             raise AssertionError(
                 "historical BAR replay did not converge through the strict current watermark"
@@ -793,7 +850,7 @@ async def _certify_product(
     finally:
         await primary.close()
         await secondary.close()
-    acknowledged, resumed, controls = await _stream_resume(
+    acknowledged, resumed, controls, no_event_sessions = await _stream_resume(
         product,
         identity=identity,
         primary_url=primary_url,
@@ -819,7 +876,10 @@ async def _certify_product(
         product,
         acknowledged_offset=acknowledged,
         resumed_offset=resumed,
+        no_event_sessions=no_event_sessions,
     )
+    if no_event_sessions:
+        result["stream_no_event_sessions"] = list(no_event_sessions)
     return result
 
 
