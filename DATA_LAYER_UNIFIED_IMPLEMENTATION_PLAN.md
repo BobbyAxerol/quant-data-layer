@@ -24755,3 +24755,45 @@ only: `market_data_service` receives the attested V2 image, TLS/JWT and sealed
 role mutation; V1, Kafka, Redis, SQLite, provider workers and authority remain
 excluded. Runtime acceptance must fail closed and restore only that service's
 recorded V1 image before the selected alpha is eligible to start.
+
+**C4.8 first runtime stop and entitlement-contract repair (`FAILED CLOSED /
+ROLLBACK COMPLETE / SOURCE REPAIR APPROVED`):** The approved roll recreated
+only `market_data_service` on the attested V2 image. mTLS/JWT and the sealed
+binding loaded correctly, but all selected `TRADE` stream bootstraps were
+rejected with `PERMISSION_DENIED: data requirement is outside the registered
+consumer manifest`; no V1 fallback was selected and the alpha was never
+started. The service was immediately recreated to its recorded V1 image
+`sha256:ab4e36aab9ef254b498edb75de25a3e4c19f50eb6eb23509c6483b0fed9b5a11`.
+No V1/Data Layer role, Kafka, Redis, SQLite, order, position or alpha state was
+changed. Root cause is exact and source-owned: the portable route binding and
+consumer facades carried identity/source-policy/freshness but omitted the V2
+manifest's realtime entitlement fields `event_recency_policy=OBSERVE` and
+`max_session_liveness_ms=45000`. The server correctly rejects a request that
+does not match those fields. Repair scope is limited to propagating this typed
+entitlement through the shared binding/facade, adding regression coverage for
+TRADE/QUOTE and preserving strict server-side equality. It must not loosen an
+SLA, add a fallback, alter a registered manifest, or mutate runtime state. A
+new immutable consumer image and the same one-service rollback packet are
+permitted only after the source gates pass.
+
+**C4.8 client-contract source result (`PASS / DATA LAYER RUNTIME UNCHANGED`):**
+The repair landed only in the shared Trading System and alpha consumer facades.
+They now reproduce the registered paper realtime request contract: TRADE
+`OBSERVE` plus 45-second provider-session bound, Trading System TRADE 3-second
+and QUOTE 2-second freshness, and no policy on BAR. Both facades choose the
+stricter client/binding freshness value. This preserves the server's manifest
+as authorization authority; no Data Layer service, manifest, provider session,
+Kafka, Redis, SQLite, authority or durable record changed. Disposable
+network-disabled source gates passed `43/43` Trading System V2 tests and
+`37/37` alpha runtime tests. The next C4 retry may rebuild only the two already
+approved consumer images and recreate only `market_data_service`; the alpha
+still remains stopped until that service reports admitted typed V2 slices.
+
+**C4.9 registered-contract cross-check (`PASS / DATA LAYER RUNTIME UNCHANGED`):**
+The consumer repair was independently checked against the registered
+`trading-system-paper` YAML in an isolated, network-disabled container.
+Generated requests exactly match TRADE `OBSERVE/3000ms/45000ms` and QUOTE
+`2000ms/no-event-recency/45000ms`; the manifest remains the server-side
+authorization authority and was not edited. This adds no Data Layer source,
+provider, durable-state or runtime mutation. The only next packet remains the
+already approved consumer-image rebuild and single `market_data_service` retry.
