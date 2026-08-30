@@ -628,3 +628,97 @@ def warmup_content_fingerprint(rows: Sequence[object]) -> str:
     return hashlib.sha256(
         json.dumps(values, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def validate_final_bar_warmup_windows(
+    primary_rows: Sequence[object],
+    secondary_rows: Sequence[object],
+) -> dict[str, object]:
+    """Prove replica parity across one bounded final-BAR window rollover.
+
+    Query replicas can independently materialize a newly closed bar between
+    sequential warmup requests.  The immutable overlap must still be exactly
+    equal, and only a one-row opposite head/tail shift is acceptable.  This is
+    receipt-only validation; it does not alter query or provider semantics.
+    """
+    primary = tuple(primary_rows)
+    secondary = tuple(secondary_rows)
+    if not primary or not secondary:
+        raise ValueError("V2 BAR warmup is empty")
+    if len(primary) != len(secondary):
+        raise ValueError("V2 BAR warmup replica row counts differ")
+
+    def by_open_time(
+        rows: tuple[object, ...],
+        label: str,
+    ) -> tuple[tuple[int, ...], dict[int, object]]:
+        ordered: list[int] = []
+        indexed: dict[int, object] = {}
+        for view in rows:
+            open_time_ns = getattr(getattr(view, "payload", None), "open_time_ns", None)
+            if (
+                isinstance(open_time_ns, bool)
+                or not isinstance(open_time_ns, int)
+                or open_time_ns <= 0
+            ):
+                raise ValueError(f"V2 {label} BAR warmup has an invalid open time")
+            if ordered and open_time_ns <= ordered[-1]:
+                raise ValueError(f"V2 {label} BAR warmup is duplicate or out of order")
+            ordered.append(open_time_ns)
+            indexed[open_time_ns] = view
+        return tuple(ordered), indexed
+
+    primary_times, primary_by_open = by_open_time(primary, "primary")
+    secondary_times, secondary_by_open = by_open_time(secondary, "secondary")
+    common_times = tuple(item for item in primary_times if item in secondary_by_open)
+    if not common_times:
+        raise ValueError("V2 BAR warmup replicas have no immutable common window")
+
+    primary_indexes = tuple(primary_times.index(item) for item in common_times)
+    secondary_indexes = tuple(secondary_times.index(item) for item in common_times)
+
+    def contiguous(indexes: tuple[int, ...]) -> bool:
+        return indexes == tuple(range(indexes[0], indexes[-1] + 1))
+
+    if not contiguous(primary_indexes) or not contiguous(secondary_indexes):
+        raise ValueError("V2 BAR warmup replica overlap is not contiguous")
+
+    primary_only_indexes = tuple(
+        index for index, item in enumerate(primary_times) if item not in secondary_by_open
+    )
+    secondary_only_indexes = tuple(
+        index for index, item in enumerate(secondary_times) if item not in primary_by_open
+    )
+    if not primary_only_indexes and not secondary_only_indexes:
+        comparison = "EXACT"
+    else:
+        if (
+            len(primary_only_indexes) != 1
+            or len(secondary_only_indexes) != 1
+            or len(common_times) != len(primary_times) - 1
+        ):
+            raise ValueError("V2 BAR warmup replica shift exceeds one final BAR")
+        primary_index = primary_only_indexes[0]
+        secondary_index = secondary_only_indexes[0]
+        last_index = len(primary_times) - 1
+        if (primary_index, secondary_index) not in {(0, last_index), (last_index, 0)}:
+            raise ValueError("V2 BAR warmup replica shift is not an opposite window boundary")
+        comparison = "SINGLE_FINAL_BAR_ROLLOVER"
+
+    for open_time_ns in common_times:
+        if content_fingerprint(primary_by_open[open_time_ns]) != content_fingerprint(
+            secondary_by_open[open_time_ns]
+        ):
+            raise ValueError("V2 BAR warmup replicas differ on immutable common BAR content")
+
+    common_rows = tuple(primary_by_open[item] for item in common_times)
+    return {
+        "comparison": comparison,
+        "primary_content_sha256": warmup_content_fingerprint(primary),
+        "secondary_content_sha256": warmup_content_fingerprint(secondary),
+        "common_content_sha256": warmup_content_fingerprint(common_rows),
+        "primary_row_count": len(primary),
+        "secondary_row_count": len(secondary),
+        "common_row_count": len(common_rows),
+        "tail_skew_rows": len(primary_only_indexes),
+    }

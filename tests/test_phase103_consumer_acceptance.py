@@ -17,6 +17,7 @@ from qdl.certification.phase103_consumer_acceptance import (
     compact_receipt_evidence,
     sdk_requirement,
     validate_product_view,
+    validate_final_bar_warmup_windows,
     validate_replica_views,
     validate_resume_offsets,
     warmup_content_fingerprint,
@@ -25,6 +26,7 @@ from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from scripts.phase103_consumer_receipt_acceptance import (
     _query_product,
+    _query_product_with_quality,
     _stream_event_timeout_seconds,
 )
 from qdl_sdk import MarketDataView
@@ -200,6 +202,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         execution_eligible: bool | None = None,
         freshness_ms: int = 1,
         gap_open: bool = False,
+        open_time_ns: int = 1_000_000_000,
     ) -> MarketDataView:
         d = self._decimal
         if product.feed.value == "TRADE":
@@ -226,8 +229,8 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             payload = {
                 "feed": "BAR",
                 "interval": product.interval,
-                "open_time_ns": 1_000_000_000,
-                "close_time_ns": 60_999_000_000,
+                "open_time_ns": open_time_ns,
+                "close_time_ns": open_time_ns + 59_999_000_000,
                 "open": d("10"),
                 "high": d("12"),
                 "low": d("9"),
@@ -428,6 +431,145 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         )
         self.assertNotEqual(primary_hash, secondary_hash)
 
+    def test_final_bar_warmup_window_allows_only_one_boundary_rollover(self):
+        bar = self._product(feed="BAR")
+        minute = 60_000_000_000
+
+        def window(opens, *, closes=None):
+            return tuple(
+                self._view(
+                    bar,
+                    open_time_ns=open_time_ns,
+                    close=(closes or {}).get(open_time_ns, "10.2"),
+                )
+                for open_time_ns in opens
+            )
+
+        exact = window((minute, 2 * minute, 3 * minute))
+        exact_evidence = validate_final_bar_warmup_windows(exact, exact)
+        self.assertEqual(exact_evidence["comparison"], "EXACT")
+        self.assertEqual(exact_evidence["common_row_count"], 3)
+        self.assertEqual(exact_evidence["tail_skew_rows"], 0)
+
+        primary = window((minute, 2 * minute, 3 * minute))
+        secondary = window((2 * minute, 3 * minute, 4 * minute))
+        rollover = validate_final_bar_warmup_windows(primary, secondary)
+        self.assertEqual(rollover["comparison"], "SINGLE_FINAL_BAR_ROLLOVER")
+        self.assertEqual(rollover["common_row_count"], 2)
+        self.assertEqual(rollover["tail_skew_rows"], 1)
+        self.assertNotEqual(
+            rollover["primary_content_sha256"],
+            rollover["secondary_content_sha256"],
+        )
+
+    def test_final_bar_warmup_window_rejects_immutable_or_multi_row_divergence(self):
+        bar = self._product(feed="BAR")
+        minute = 60_000_000_000
+
+        def window(opens, *, closes=None):
+            return tuple(
+                self._view(
+                    bar,
+                    open_time_ns=open_time_ns,
+                    close=(closes or {}).get(open_time_ns, "10.2"),
+                )
+                for open_time_ns in opens
+            )
+
+        primary = window((minute, 2 * minute, 3 * minute))
+        conflicting = window(
+            (2 * minute, 3 * minute, 4 * minute),
+            closes={2 * minute: "10.3"},
+        )
+        with self.assertRaisesRegex(ValueError, "immutable common BAR content"):
+            validate_final_bar_warmup_windows(primary, conflicting)
+
+        with self.assertRaisesRegex(ValueError, "exceeds one final BAR"):
+            validate_final_bar_warmup_windows(
+                primary,
+                window((3 * minute, 4 * minute, 5 * minute)),
+            )
+        with self.assertRaisesRegex(ValueError, "overlap is not contiguous"):
+            validate_final_bar_warmup_windows(
+                window((minute, 2 * minute, 3 * minute, 4 * minute)),
+                window((minute, 3 * minute, 4 * minute, 5 * minute)),
+            )
+        with self.assertRaisesRegex(ValueError, "row counts differ"):
+            validate_final_bar_warmup_windows(
+                window((minute, 2 * minute, 3 * minute)),
+                window((minute, 2 * minute)),
+            )
+
+    def test_query_product_accepts_a_single_final_bar_rollover(self):
+        bar = self._product(feed="BAR")
+        minute = 60_000_000_000
+        primary_rows = [
+            self._view(bar, open_time_ns=minute),
+            self._view(bar, open_time_ns=2 * minute),
+            self._view(bar, open_time_ns=3 * minute),
+        ]
+        secondary_rows = [
+            self._view(bar, open_time_ns=2 * minute),
+            self._view(bar, open_time_ns=3 * minute),
+            self._view(bar, open_time_ns=4 * minute),
+        ]
+
+        class WarmupClient:
+            def __init__(self, rows):
+                self.rows = rows
+
+            async def warmup(self, requirement):
+                self.requirement = requirement
+                return SimpleNamespace(data=self.rows)
+
+        primary = WarmupClient(primary_rows)
+        secondary = WarmupClient(secondary_rows)
+        primary_hash, secondary_hash, _, _ = asyncio.run(
+            _query_product(bar, primary=primary, secondary=secondary)
+        )
+        self.assertNotEqual(primary_hash, secondary_hash)
+        self.assertEqual(primary.requirement, sdk_requirement(bar))
+        self.assertEqual(secondary.requirement, sdk_requirement(bar))
+
+        quality_primary = WarmupClient(primary_rows)
+        quality_secondary = WarmupClient(secondary_rows)
+        result = asyncio.run(
+            _query_product_with_quality(
+                bar,
+                primary=quality_primary,
+                secondary=quality_secondary,
+            )
+        )
+        self.assertEqual(result[5]["comparison"], "SINGLE_FINAL_BAR_ROLLOVER")
+        self.assertEqual(result[5]["common_row_count"], 2)
+
+    def test_provider_pass_through_bar_keeps_exact_replica_comparison(self):
+        durable = self._product(feed="BAR")
+        bar = replace(
+            durable,
+            delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
+            binding_id=None,
+        )
+        minute = 60_000_000_000
+
+        class WarmupClient:
+            def __init__(self, rows):
+                self.rows = rows
+
+            async def warmup(self, requirement):
+                return SimpleNamespace(data=self.rows)
+
+        primary = WarmupClient([
+            self._view(bar, open_time_ns=minute),
+            self._view(bar, open_time_ns=2 * minute),
+        ])
+        secondary = WarmupClient([
+            self._view(bar, open_time_ns=2 * minute),
+            self._view(bar, open_time_ns=3 * minute),
+        ])
+        with self.assertRaisesRegex(ValueError, "diverged"):
+            asyncio.run(_query_product(bar, primary=primary, secondary=secondary))
+
     def test_historical_bar_keeps_domain_checks_but_not_current_sla(self):
         bar = self._product(feed="BAR")
         current = self._view(
@@ -459,9 +601,16 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
 
     def test_warmup_applies_current_quality_only_to_last_closed_bar(self):
         bar = self._product(feed="BAR")
-        current = self._view(bar)
+        minute = 60_000_000_000
+        current = self._view(bar, open_time_ns=2 * minute)
         historical = current.model_copy(
             update={
+                "payload": current.payload.model_copy(
+                    update={
+                        "open_time_ns": minute,
+                        "close_time_ns": minute + 59_999_000_000,
+                    }
+                ),
                 "quality": current.quality.model_copy(
                     update={
                         "state": "STALE",

@@ -40,6 +40,7 @@ from qdl.certification.phase103_consumer_acceptance import (
     content_fingerprint,
     sdk_requirement,
     validate_product_view,
+    validate_final_bar_warmup_windows,
     validate_replica_views,
     validate_resume_offsets,
     warmup_content_fingerprint,
@@ -246,7 +247,7 @@ async def _query_product(
     primary: AsyncDataLayerClient,
     secondary: AsyncDataLayerClient,
 ) -> tuple[str, str | None, float, float | None]:
-    primary_hash, secondary_hash, primary_ms, secondary_ms, _quality = (
+    primary_hash, secondary_hash, primary_ms, secondary_ms, _quality, _bar_alignment = (
         await _query_product_with_quality(
             product, primary=primary, secondary=secondary
         )
@@ -259,9 +260,17 @@ async def _query_product_with_quality(
     *,
     primary: AsyncDataLayerClient,
     secondary: AsyncDataLayerClient,
-) -> tuple[str, str | None, float, float | None, dict[str, object]]:
+) -> tuple[
+    str,
+    str | None,
+    float,
+    float | None,
+    dict[str, object],
+    dict[str, object] | None,
+]:
     """Query both replicas and retain only compact quality evidence for B3."""
     requirement = sdk_requirement(product)
+    bar_alignment: dict[str, object] | None = None
     primary_started = time.perf_counter()
     if product.feed.value == "BAR":
         primary_response = await primary.warmup(requirement)
@@ -287,9 +296,15 @@ async def _query_product_with_quality(
         secondary_view = secondary_response.data[-1]
         validate_product_view(product, secondary_view)
         secondary_hash = warmup_content_fingerprint(secondary_response.data)
-        if product.delivery is DeliveryClass.DURABLE and primary_hash != secondary_hash:
-            raise AssertionError("V2 query replicas diverged on a final BAR warmup")
-        validate_replica_views(product, primary_view, secondary_view)
+        if product.delivery is DeliveryClass.DURABLE:
+            bar_alignment = validate_final_bar_warmup_windows(
+                primary_response.data,
+                secondary_response.data,
+            )
+            primary_hash = str(bar_alignment["primary_content_sha256"])
+            secondary_hash = str(bar_alignment["secondary_content_sha256"])
+        else:
+            validate_replica_views(product, primary_view, secondary_view)
     else:
         secondary_response = await secondary.snapshot(requirement)
         secondary_latency_ms = (time.perf_counter() - secondary_started) * 1000
@@ -307,6 +322,7 @@ async def _query_product_with_quality(
             "primary": compact_view_quality(primary_view, observed_at_ns=observed_at_ns),
             "secondary": compact_view_quality(secondary_view, observed_at_ns=observed_at_ns),
         },
+        bar_alignment,
     )
 
 
@@ -457,6 +473,7 @@ async def _certify_product(
             primary_ms,
             secondary_ms,
             quality,
+            bar_alignment,
         ) = await _query_product_with_quality(
             product,
             primary=primary,
@@ -484,6 +501,8 @@ async def _certify_product(
         resumed_offset=resumed,
     )
     result["release_quality"] = quality
+    if bar_alignment is not None:
+        result["bar_replica_alignment"] = bar_alignment
     result["control_codes"] = list(controls)
     return result
 

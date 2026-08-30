@@ -23298,3 +23298,64 @@ this scope rather than opening a new phase.
   commit, update only the private reader image coordinate, rolling-recreate
   the four query/stream readers, then require DOGE status `LIVE` before a new
   full C2 acceptance.
+
+- `2026-08-30 C2 FINAL-BAR REPLICA WINDOW ALIGNMENT / APPROVED SOURCE REPAIR`:
+  the reader-only deployment from `572dca2` built immutable Python image
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`
+  and rolled exactly `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+  `stream_v2_passive`; no Rust, ingestor, projector, authority, V1, Kafka,
+  Redis, SQLite, Trading System, alpha, or order component changed.  A bounded
+  authenticated DOGE read then confirmed the repaired provider-session path:
+  `state=LIVE`, `provider_session_state=LIVE`, with the stale last-trade fact
+  retained as `event_recency_state=STALE` and no execution eligibility granted.
+
+  The following real C2 run passed that DOGE route but failed closed at
+  `trading-system.paper.stable / BINANCE.USDM.PERPETUAL.BTC-USDT / BAR / 1m`
+  because the acceptance harness hashed two independently-read moving
+  1,000-row warmup windows byte-for-byte.  A compact read-only diagnostic
+  immediately afterward found both replicas at the same final-BAR hash,
+  row count and closing boundary.  This proves a sequential final-bar rollover
+  race in the *acceptance comparison*, not a canonical conflict, provider
+  fallback, gap, or reader divergence.
+
+  **Approved narrow correction:** keep strict identity, finality, gap and
+  per-bar immutable-content validation.  For durable BAR warmups only, the C2
+  harness may accept exactly one rolling-window boundary shift: equal row
+  counts, an exact contiguous common final-BAR window, identical fingerprints
+  for every common `open_time_ns`, and at most one opposite head/tail row on
+  each replica.  It must reject a revision/content difference for the same
+  bar, non-contiguous overlap, unequal lengths, a multi-row shift, or any
+  TRADE/QUOTE divergence.  The payload-free receipt records full-window
+  hashes plus bounded common-window/count evidence; it never records BAR
+  payloads or loosens a public V2 query contract.
+
+  **Test/rollback/exit:** add deterministic exact, one-row rollover,
+  conflicting-common-row and multi-row/non-contiguous rejection tests, then
+  run the focused C2/Phase-10.5 regression in an isolated no-network image.
+  Build at most one immutable Python candidate only if those source tests pass;
+  no running role needs recreation because the change is acceptance-client
+  logic.  Run one fresh 300-second C2 no-order acceptance only after the
+  candidate image is attested and a fresh V1 fallback binding is created.  A
+  failed C2 keeps V1 fallback and does not mutate runtime or data-plane state;
+  remove only the scoped disposable client/evidence namespace after recording
+  its bounded failure result.
+
+  **Source-test result:** the isolated immutable `572dca2` Python image ran
+  `tests.test_phase103_consumer_acceptance` and
+  `tests.test_phase105_release_certification` with network disabled, a
+  read-only source mount, non-root UID `10001`, and tmpfs-only scratch/logs:
+  `22/22 PASS` in `7.027s`.  The proof covers exact windows, a single final
+  boundary rollover, immutable common-row conflict, multi-row shift,
+  non-contiguous overlap, unequal lengths, receipt alignment recording,
+  quiet connected trade behavior, cursor/fallback contract and release
+  certification.  No runtime role, provider request, Kafka/Redis/SQLite/V1
+  state, Trading System, alpha, signal, sizing or order action occurred.
+
+  **Expanded regression:** the complete focused C2/Phase-10.5 matrix then
+  passed `48/48` in `15.729s`, including the four consumer manifests, identity
+  construction, bounded concurrent group ordering, V1 fallback-return and
+  BLOCKED policy, stable release route validation and certificate gates.  The
+  durable-only rollover rule and the provider-pass-through exact-comparison
+  regression both passed.  `ruff` is not installed in the immutable runtime
+  image, so no package was downloaded or installed merely to lint this
+  acceptance-only slice; `git diff --check` remains the formatting gate.
