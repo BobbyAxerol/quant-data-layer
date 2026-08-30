@@ -23914,7 +23914,7 @@ this scope rather than opening a new phase.
   and obtain a new C2 runtime approval. Do not treat a quieter trade channel as
   connected/fresh by default and do not reuse this evidence as a certificate.
 
-  **Five-liquid OKX TRADE diagnosis and C2 closure (`APPROVED / IN PROGRESS`,
+  **Five-liquid OKX TRADE diagnosis and C2 closure (`FAIL-CLOSED / CLOSED`,
   2026-08-30):** approved scope is deliberately limited to the existing
   `BTC/ETH/SOL/DOGE/BNB` OKX swap TRADE bindings, the shared Rust
   provider/projection lineage, and one final no-order C2 receipt.  It is
@@ -23998,7 +23998,7 @@ this scope rather than opening a new phase.
   for the four existing reader roles; no Rust image, service, worker, provider
   call, durable-store mutation or runtime rollout occurred in this gate.
 
-  **Step 4 four-reader C2 packet (`APPROVED / READY`):** use the existing
+  **Step 4 four-reader C2 packet (`EXECUTED / ROLLED BACK`):** use the existing
   `qdl_v2_stable_candidate` Compose project, unchanged runtime directory,
   TLS mounts, Kafka/Redis/SQLite volumes and Phase-10.5 C2 override.  A private
   mode-`0600` image-only overlay selects candidate
@@ -24027,3 +24027,42 @@ this scope rather than opening a new phase.
   workload identities, V2 query/stream aliases and the locally authorized V1
   cached-read fallback drill.  It has no venue credential, order capability,
   Docker socket or durable-store mount.
+
+  **Step 5 C2 result and rollback (`FAIL-CLOSED / ROLLED BACK`,
+  2026-08-30):** the one permitted C2 client ran for the pinned 60-route scope
+  and terminated before a certificate was written. It ran as UID/GID `10001`
+  with `NoNewPrivs=1`, no effective/permitted/inheritable/ambient capabilities,
+  no Docker socket, no provider credential, no order capability and no durable
+  state mount. The exact terminal error was
+  `ValueError: Phase 10.5 V1 trade.price is not a valid positive decimal`,
+  raised by the approved V1 cached-read fallback validator before the
+  V2-to-V1-to-V2 drill could be certified. This is a V1 compatibility payload
+  defect in the fallback path, not a DOGE/BNB status divergence, Rust-core
+  projection/provider-lineage defect, session-liveness failure or a reason to
+  relax the event SLA. The receipt remains terminal evidence; it is not retried
+  by timing luck.
+
+  Only the four reader roles named in Step 4 were restored, serially and with
+  their unchanged runtime mounts, to
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`.
+  Both query mTLS ready endpoints returned `200` after rollback; each reader
+  had `OOMKilled=false` and `RestartCount=0`. V1 remained on
+  `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`
+  without a restart. Kafka topology/offsets, Redis, SQLite, Rust/ingest/
+  projector roles, Trading System, alpha and every order path were unchanged.
+  After verifying no container referenced them, the disposable candidate image
+  `qdl-v2-python:2.0.0-8d36eb0`
+  (`sha256:2f000e94d990e2f996a576748277044b4615c0f70b6e2660fa4c56d1199d6937`)
+  and its image-only `reader-r7-8d36eb0` overlay were removed. The four
+  rollback readers remained running on `e43f903…`; the V1 image, rollback
+  reader image and scoped C2 terminal evidence are retained.
+
+  **Decision boundary:** this approved five-liquid task is implemented through
+  its one allowed C2 attempt but is **not certified** and does not permit
+  `V2_PRIMARY`. A separate narrow V1 compatibility task must first determine
+  whether the bounded V1 Binance trade response is genuinely incomplete or
+  whether a valid documented field is being projected under a different name,
+  then add valid/missing/zero regression coverage to the shared fallback
+  adapter. It must not change V2/Rust contracts, provider logic, route policy
+  or any SLA. Only after that repair has its own approval may a new C2 packet
+  be proposed; V1 remains the serving and rollback route.
