@@ -43,7 +43,7 @@ def main() -> int:
     source_commit = _run("git", "-C", str(source), "rev-parse", "HEAD")
     source_tree = _run("git", "-C", str(source), "rev-parse", "HEAD^{tree}")
     if source_commit != V1_FALLBACK_COMMIT:
-        raise SystemExit("V1 source repository is not checked out at the frozen v1.2.2 commit")
+        raise SystemExit("V1 source repository is not checked out at the frozen release commit")
     image_payload = _run("docker", "image", "inspect", args.image)
     image = json.loads(image_payload)
     if not isinstance(image, list) or len(image) != 1 or not isinstance(image[0], dict):

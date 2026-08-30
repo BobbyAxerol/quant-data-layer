@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 8
+revision: 9
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
@@ -14,9 +14,9 @@ capability_matrix:
   sha256: 81347a88866a54ed99cfbf25979d8e5912c98084f97f8a997a608dc9e03af6bf
   revision: 5
 v1_fallback:
-  release_tag: v1.2.2
-  source_commit: 85c25df631e263281bd546de69efcaf6146c93ef
-  image_reference: data-layer:v0.1.0
+  release_tag: v1.2.3
+  source_commit: b259b63ae73cf5f8bf75463578c9f5cb477c6c08
+  image_reference: qdl-v1-fallback:v1.2.3-b259b63
   api_contract: V1
   health_endpoint: /v1/health
   runtime_image_verification_required: true

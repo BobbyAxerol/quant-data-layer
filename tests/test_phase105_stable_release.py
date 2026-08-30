@@ -31,10 +31,10 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
     def test_release_scope_is_per_requirement_and_fails_closed(self):
         plan = self.load()
         self.assertEqual(plan.contract_version, "2.0.0")
-        self.assertEqual(plan.v1_fallback.release_tag, "v1.2.2")
+        self.assertEqual(plan.v1_fallback.release_tag, "v1.2.3")
         self.assertEqual(
             plan.v1_fallback.source_commit,
-            "85c25df631e263281bd546de69efcaf6146c93ef",
+            "b259b63ae73cf5f8bf75463578c9f5cb477c6c08",
         )
         self.assertEqual(len(plan.consumers), 5)
         self.assertEqual(len(plan.products()), 68)

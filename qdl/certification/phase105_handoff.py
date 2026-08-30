@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Mapping
 
 
-V1_FALLBACK_COMMIT = "85c25df631e263281bd546de69efcaf6146c93ef"
-V1_FALLBACK_VERSION = "v1.2.2"
+V1_FALLBACK_COMMIT = "b259b63ae73cf5f8bf75463578c9f5cb477c6c08"
+V1_FALLBACK_VERSION = "v1.2.3"
 
 EXTERNAL_IDENTITY_SPECS = {
     "stable-monitoring-rs256-v1": {
@@ -642,7 +642,7 @@ def v1_image_attestation(
 ) -> dict[str, object]:
     """Validate Docker inspect data and return secret-free provenance evidence."""
     if source_commit != V1_FALLBACK_COMMIT or not _COMMIT.fullmatch(source_commit):
-        raise ValueError("V1 fallback source commit is not the frozen v1.2.2 commit")
+        raise ValueError("V1 fallback source commit is not the frozen release commit")
     if not re.fullmatch(r"[0-9a-f]{40}", source_tree):
         raise ValueError("V1 fallback source tree is invalid")
     if not re.fullmatch(r"[0-9a-f]{64}", dockerfile_sha256):

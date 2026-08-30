@@ -24131,3 +24131,39 @@ this scope rather than opening a new phase.
   `/opt/venv/bin/python` matrix above. Test containers were removed
   automatically. No runtime image, container, Kafka, Redis, SQLite, V1 data,
   Trading System, alpha or order path changed in this source slice.
+
+  **Immutable V1 patch provenance (`APPROVED / IN PROGRESS`):** the repaired
+  source is frozen at `b259b63ae73cf5f8bf75463578c9f5cb477c6c08` and is the
+  sole input for a replacement V1 fallback release `v1.2.3`. The release route
+  and universal rollback policy will reference that commit and the resulting
+  immutable image coordinate; V1 public endpoints, response schema and route
+  policy remain unchanged. A detached worktree at that exact commit will build
+  one `qdl-v1-fallback:v1.2.3-b259b63` image with OCI revision/version plus
+  source-tree and Dockerfile labels. It will be attested before use.
+
+  The approved runtime repair is bounded to recreating only
+  `data_layer_service` with that attested image and its existing `/app/data`,
+  `/app/logs`, port and network mounts. Current V1 image
+  `sha256:d17085e84ab89e77dc07495cac92535564546575dd65f419050cb7951f7f0b50`
+  with the same runtime mounts is the sole rollback. No V2 role, Kafka
+  topology/offset, Redis flush, SQLite deletion, volume, Trading System, alpha
+  or order path may be changed. After bounded V1 schema/health verification,
+  the existing C2 packet may recreate only the four previously approved reader
+  roles and run exactly one 60-route, no-order, 300-second receipt; its reader
+  rollback remains `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`.
+
+  During the provenance regression, one existing observation test still expected
+  the superseded `28 V2 + 4 V1 = 32` inventory even though the unchanged sealed
+  release manifest has long contained `64 V2 + 4 V1 = 68` routes. The test is
+  corrected to the actual manifest cardinality; no route, product or runtime
+  policy changes with that correction.
+
+  **Provenance source gate (`PASS`):** the route/policy reference and
+  attestation constants now bind V1 fallback release `v1.2.3` to source commit
+  `b259b63…`, with a distinct route/policy revision and no V1 API schema
+  change. The network-free, read-only non-root provenance/release regression
+  passed **56/56**: route-plan integrity, fallback contract, handoff identity,
+  stable-release certification, observation bundle and universal-release policy
+  coverage. Together with the preceding ingress matrix, this authorizes only
+  the bounded immutable V1 image build and `data_layer_service` recreate
+  described above; it does not certify C2 or alter V2-primary routing.

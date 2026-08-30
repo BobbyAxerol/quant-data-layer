@@ -138,7 +138,7 @@ class Phase105FallbackAcceptanceTests(unittest.TestCase):
             "source_commit": self.release.v1_fallback.source_commit,
             "source_tree": "b" * 40,
             "dockerfile_sha256": "c" * 64,
-            "version": "v1.2.2",
+            "version": self.release.v1_fallback.release_tag,
         }
         result = validate_v1_provenance(self.release, provenance)
         self.assertEqual(result["source_commit"], self.release.v1_fallback.source_commit)

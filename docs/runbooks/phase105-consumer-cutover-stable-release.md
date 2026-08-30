@@ -44,9 +44,9 @@ Route meanings are deliberately narrow:
 | `V2_PRIMARY` + `BLOCKED` | V2 is normal; no V1 semantic equivalent has been certified, so the affected read must block rather than silently degrade. |
 | `V1_PRIMARY` + `NONE` | Explicitly excluded from this V2 release. VN/DNSE remains on V1 until its real-provider gate is accepted. |
 
-`data-layer:v0.1.0` is only the declared V1 image reference. Before a runtime
+`qdl-v1-fallback:v1.2.3-b259b63` is only the declared V1 image reference. Before a runtime
 handoff, the 10.5-B/C packet must verify the running V1 image/source label or
-immutable digest against the frozen `v1.2.2` commit; a mutable tag alone is not
+immutable digest against the frozen `v1.2.3` commit; a mutable tag alone is not
 release evidence.
 
 ## Readiness And Observability Contract
@@ -144,7 +144,7 @@ The later runtime approval must name all of the following, exactly:
    Its only retained output is the payload-free receipt namespace
    `/home/bobby/.local/state/qdl-v2/phase105b-<UTC>/`, removed on a failed
    probe unless an operator explicitly preserves it for diagnosis.
-6. A V1 digest-to-commit attestation for the frozen `v1.2.2` fallback before
+6. A V1 digest-to-commit attestation for the frozen `v1.2.3` fallback before
    any forced-fallback assertion, plus a payload-free binding of that receipt
    to the **currently serving** `data_layer_service` immutable image digest.
    An historical attestation for a different image is not reusable. Without
@@ -188,7 +188,7 @@ which also mentions `rust_core` for an unrelated capacity packet.
 
 If the active V1 image has been pruned and no current-serving provenance can
 be made, the only permitted C2 repair is an operator-approved replacement of
-`data_layer_service` from the frozen `v1.2.2` source. Preserve the original
+`data_layer_service` from the frozen `v1.2.3` source. Preserve the original
 stopped container as rollback; do not use `docker commit` as provenance. The
 replacement retains only the existing data/log mounts, port, network aliases,
 and the pre-existing `.env` as a read-only controlled secret reference; it
