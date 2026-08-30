@@ -53,15 +53,22 @@ def reference_requirement_eligible(
     This is an admission predicate only. It neither opens a provider connection
     nor promises that every venue supports every reference metric; an adapter
     reports unavailable products as typed provider results. The predicate keeps
-    unbound metadata from accidentally authorising replay, execution, or an
-    unrelated instrument/feed.
+    unbound metadata from accidentally authorising replay or an unrelated
+    instrument/feed. Its only execution-grade exception is the official
+    one-row `MARK_INDEX_PRICE` snapshot used by typed risk validation.
     """
 
     return (
         instrument.instrument_uid == requirement.instrument_uid
         and requirement.feed in _REFERENCE_FEEDS
-        and requirement.consumer_grade
-        in {ConsumerGrade.ALPHA, ConsumerGrade.RESEARCH}
+        and (
+            requirement.consumer_grade
+            in {ConsumerGrade.ALPHA, ConsumerGrade.RESEARCH}
+            or (
+                requirement.consumer_grade is ConsumerGrade.EXECUTION
+                and requirement.feed is FeedType.MARK_INDEX_PRICE
+            )
+        )
         and requirement.recovery is RecoveryPolicy.FRESH_SNAPSHOT
         and not requirement.require_final_bars
         and (
@@ -89,7 +96,7 @@ class ReferenceRuntime:
             ) from error
 
     def entitlement_grants(self) -> tuple[EntitlementGrant, ...]:
-        """Reference data is research/alpha input, never execution authority."""
+        """Grant only official mark/index snapshots to execution callers."""
 
         return tuple(
             EntitlementGrant(
@@ -98,6 +105,7 @@ class ReferenceRuntime:
                 purposes=frozenset({
                     AccessPurpose.INTERNAL_ALPHA,
                     AccessPurpose.INTERNAL_RESEARCH,
+                    AccessPurpose.INTERNAL_EXECUTION,
                 }),
                 products=frozenset({
                     DataProduct.CANONICAL_HISTORY,

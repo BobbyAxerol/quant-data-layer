@@ -77,7 +77,7 @@ class PassThroughWiringTests(unittest.TestCase):
         self.assertNotIsInstance(service.backend, RoutedQueryBackend)
         self.assertIsNone(service.reference_batch)
 
-    def test_reference_capability_is_separate_and_never_execution_entitled(self):
+    def test_reference_capability_is_separate_and_execution_is_shape_gated(self):
         service, backend, _ = self._stack(enabled=False, reference_enabled=True)
         self.assertIsInstance(backend, StableSpoolQueryBackend)
         self.assertNotIsInstance(service.backend, RoutedQueryBackend)
@@ -100,7 +100,9 @@ class PassThroughWiringTests(unittest.TestCase):
             at_ns=1,
         )
         self.assertTrue(alpha.allowed)
-        self.assertFalse(execution.allowed)
+        # The reference runtime can authenticate an execution caller, but the
+        # typed ReferenceDataRequirement still permits only one MARK snapshot.
+        self.assertTrue(execution.allowed)
 
     def test_an_unbound_instrument_is_unresolvable_while_disabled(self):
         registry = self.catalog.instrument_registry()

@@ -286,6 +286,40 @@ class ProductionCatalogTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "does not expose"):
                 ProductionDemandManifest.load_many([path])
 
+    def test_book_demand_requires_explicit_bounded_acquisition_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = {
+                "venue": "BINANCE", "market": "USDM",
+                "product_type": "PERPETUAL", "native_symbol": "BTCUSDT",
+                "feed": "BOOK_DELTA", "interval": None,
+                "source_policy_id": "crypto_liquid_v2",
+            }
+            payload = {
+                "schema": "qdl.v2.production-demand.v1",
+                "revision": 1,
+                "consumers": [{
+                    "consumer_id": "execution", "consumer_grade": "EXECUTION",
+                    "requirements": [base],
+                }],
+            }
+            import yaml
+            path = root / "book.yaml"
+            path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "fields are invalid"):
+                ProductionDemandManifest.load_many([path])
+
+            payload["consumers"][0]["requirements"][0] = {
+                **base,
+                "depth_per_side": 100,
+                "max_freshness_ms": 2_000,
+                "require_live": True,
+            }
+            path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+            demand = ProductionDemandManifest.load_many([path]).demands
+            self.assertEqual(len(demand), 1)
+            self.assertEqual(demand[0].depth_per_side, 100)
+
     def test_catalog_accepts_all_certified_fixed_bar_intervals_and_scales_staleness(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

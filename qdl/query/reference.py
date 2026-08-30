@@ -6,8 +6,10 @@ the public-query bridge: it keeps that exact-record invariant while making the
 same consumer manifest, source-policy and grade checks that protect BAR
 warmups apply to reference data as well.
 
-Reference data is an alpha/research input.  It is never an execution-grade
-price source and it never cross-venue substitutes a missing provider product.
+Reference data is alpha/research input except the narrow, provider-authentic
+``MARK_INDEX_PRICE`` snapshot used by execution trigger/risk validation. It
+never cross-venue substitutes a missing provider product or replaces private
+broker lifecycle state.
 """
 
 from __future__ import annotations
@@ -15,7 +17,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from qdl.domain.instrument import InstrumentRecord
-from qdl.query.contracts import ConsumerGrade, DataRequirement, FeedType
+from qdl.query.contracts import (
+    ConsumerGrade,
+    DataRequirement,
+    FeedType,
+    RecoveryPolicy,
+)
 from qdl.reference.contracts import (
     BasisSeries,
     LongShortKind,
@@ -88,8 +95,14 @@ class ReferenceDataRequirement:
             raise TypeError("reference product must use ReferenceProduct")
         if not isinstance(self.consumer_grade, ConsumerGrade):
             raise TypeError("reference consumer_grade must use ConsumerGrade")
-        if self.consumer_grade is ConsumerGrade.EXECUTION:
-            raise ValueError("reference data cannot be requested as execution-grade data")
+        execution_mark_snapshot = (
+            self.consumer_grade is ConsumerGrade.EXECUTION
+            and self.product is ReferenceProduct.MARK_INDEX_PRICE
+        )
+        if self.consumer_grade is ConsumerGrade.EXECUTION and not execution_mark_snapshot:
+            raise ValueError(
+                "only MARK_INDEX_PRICE may be requested as execution-grade reference data"
+            )
         if self.consumer_grade is ConsumerGrade.UNSPECIFIED:
             raise ValueError("reference consumer_grade cannot be UNSPECIFIED")
         if (self.start_time_ns is None) != (self.end_time_ns is None):
@@ -125,6 +138,7 @@ class ReferenceDataRequirement:
             max_freshness_ms=self.max_freshness_ms,
             require_full_coverage=self.require_full_coverage,
             require_final_bars=False,
+            recovery=RecoveryPolicy.FRESH_SNAPSHOT,
         )
 
     def to_reference_request(self, instrument: InstrumentRecord) -> ReferenceRequest:
@@ -178,6 +192,19 @@ class ReferenceDataRequirement:
         if self.product in {ReferenceProduct.MARK_INDEX_PRICE, ReferenceProduct.CONTRACT_METADATA}:
             if has_history or self.interval is not None:
                 raise ValueError(f"{self.product.value} is a snapshot request")
+        execution_mark_snapshot = (
+            self.consumer_grade is ConsumerGrade.EXECUTION
+            and self.product is ReferenceProduct.MARK_INDEX_PRICE
+        )
+        if execution_mark_snapshot and (
+            self.limit != 1
+            or self.page_size not in {None, 1}
+            or self.max_pages != 1
+            or not self.require_full_coverage
+        ):
+            raise ValueError(
+                "execution MARK_INDEX_PRICE requires one complete snapshot row"
+            )
         if self.product is ReferenceProduct.LONG_SHORT_RATIO and self.long_short_kind is None:
             raise ValueError("LONG_SHORT_RATIO requires long_short_kind")
         if self.product is not ReferenceProduct.LONG_SHORT_RATIO and self.long_short_kind is not None:

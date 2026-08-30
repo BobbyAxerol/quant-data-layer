@@ -49,11 +49,11 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
 
     def test_exact_five_liquid_consumer_route_scope(self) -> None:
         requirements = self.requirements
-        self.assertEqual(len(requirements), 60)
+        self.assertEqual(len(requirements), 72)
         self.assertEqual(
             Counter(consumer_id for consumer_id, _ in requirements),
             {
-                "trading-system.paper.stable": 30,
+                "trading-system.paper.stable": 42,
                 "alpha.binance.paper.stable": 15,
                 "alpha.okx.paper.stable": 15,
             },
@@ -83,11 +83,25 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
             },
             OKX_SYMBOLS,
         )
-        self.assertFalse(any(item["feed"].startswith("BOOK_") for _, item in requirements))
+        typed = [
+            item
+            for consumer_id, item in requirements
+            if consumer_id == "trading-system.paper.stable"
+            and item["feed"] in {"MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELTA"}
+        ]
+        self.assertEqual(len(typed), 12)
+        self.assertEqual(
+            {(item["feed"], item["source_policy_id"]) for item in typed},
+            {
+                ("MARK_INDEX_PRICE", "crypto_liquid_v2"),
+                ("BOOK_SNAPSHOT", "crypto_liquid_v2"),
+                ("BOOK_DELTA", "crypto_liquid_v2"),
+            },
+        )
 
     def test_admission_budget_is_exact_and_all_routes_are_provider_admitted(self) -> None:
-        self.assertEqual(self.demand["revision"], 2)
-        self.assertEqual(self.registry["revision"], 2)
+        self.assertEqual(self.demand["revision"], 3)
+        self.assertEqual(self.registry["revision"], 3)
         usage = Counter(
             (item["venue"], item["market"], item["feed"])
             for _, item in self.requirements
@@ -102,12 +116,18 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
                 ("BINANCE", "USDM", "BAR"): (15, 15),
                 ("BINANCE", "USDM", "QUOTE"): (5, 5),
                 ("BINANCE", "USDM", "TRADE"): (10, 10),
+                ("BINANCE", "USDM", "MARK_INDEX_PRICE"): (2, 2),
+                ("BINANCE", "USDM", "BOOK_SNAPSHOT"): (2, 2),
+                ("BINANCE", "USDM", "BOOK_DELTA"): (2, 2),
                 ("OKX", "SWAP", "BAR"): (15, 15),
                 ("OKX", "SWAP", "QUOTE"): (5, 5),
                 ("OKX", "SWAP", "TRADE"): (10, 10),
+                ("OKX", "SWAP", "MARK_INDEX_PRICE"): (2, 2),
+                ("OKX", "SWAP", "BOOK_SNAPSHOT"): (2, 2),
+                ("OKX", "SWAP", "BOOK_DELTA"): (2, 2),
             },
         )
-        self.assertEqual(self.registry["admission"]["max_total_slices"], 60)
+        self.assertEqual(self.registry["admission"]["max_total_slices"], 72)
 
     @staticmethod
     def _trade_requirement(instrument_uid: str) -> DataRequirement:

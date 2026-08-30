@@ -79,8 +79,14 @@ class ReferenceRequirement(ClosedModel):
 
     @model_validator(mode="after")
     def valid_shape(self):
-        if self.consumer_grade is Grade.EXECUTION:
-            raise ValueError("reference data cannot be execution-grade")
+        execution_mark_snapshot = (
+            self.consumer_grade is Grade.EXECUTION
+            and self.product is ReferenceProduct.MARK_INDEX_PRICE
+        )
+        if self.consumer_grade is Grade.EXECUTION and not execution_mark_snapshot:
+            raise ValueError(
+                "only MARK_INDEX_PRICE may be requested as execution-grade reference data"
+            )
         if (self.start_time_ns is None) != (self.end_time_ns is None):
             raise ValueError("reference start_time_ns and end_time_ns are required together")
         if self.start_time_ns is not None:
@@ -111,6 +117,15 @@ class ReferenceRequirement(ClosedModel):
             ReferenceProduct.CONTRACT_METADATA,
         } and (historical or self.interval is not None):
             raise ValueError("reference snapshot product cannot declare history or interval")
+        if execution_mark_snapshot and (
+            self.limit != 1
+            or self.page_size not in {None, 1}
+            or self.max_pages != 1
+            or not self.require_full_coverage
+        ):
+            raise ValueError(
+                "execution MARK_INDEX_PRICE requires one complete snapshot row"
+            )
         if self.product is ReferenceProduct.LONG_SHORT_RATIO:
             if self.long_short_kind is None:
                 raise ValueError("long/short ratio requires long_short_kind")

@@ -9,6 +9,7 @@ from qdl.certification.phase103_consumer_acceptance import (
     build_manifest_acceptance_scope,
 )
 from qdl.consumer import StableReleaseRoutePlan, requirement_key
+from qdl.query import FeedType
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 
@@ -19,6 +20,7 @@ PHASE105_PAPER_CONSUMER_IDS = frozenset({
     "alpha.binance.paper.stable",
     "alpha.okx.paper.stable",
 })
+_PHASE105_RECEIPT_FEEDS = frozenset({FeedType.TRADE, FeedType.QUOTE, FeedType.BAR})
 
 
 def build_release_consumer_acceptance_scope(
@@ -57,11 +59,17 @@ def build_release_consumer_acceptance_scope(
         acquisition=acquisition,
         expected_consumer_ids=expected_consumer_ids,
         schema="qdl.phase105.consumer-acceptance-scope.v1",
+        requirement_filter=lambda requirement: requirement.feed in _PHASE105_RECEIPT_FEEDS,
     )
     routes = {
         (consumer.consumer_id, product.requirement_key): product
         for consumer in selected
         for product in consumer.products
+    }
+    requirements_by_route = {
+        (consumer.consumer_id, requirement_key(requirement)): requirement
+        for consumer in selected
+        for requirement in consumer.manifest.requirements
     }
     actual = {
         (product.consumer_id, requirement_key(product.requirement))
@@ -70,7 +78,10 @@ def build_release_consumer_acceptance_scope(
     expected = {
         identity
         for identity, product in routes.items()
-        if product.route == "V2_PRIMARY"
+        if (
+            product.route == "V2_PRIMARY"
+            and requirements_by_route[identity].feed in _PHASE105_RECEIPT_FEEDS
+        )
     }
     if actual != expected:
         raise ValueError("Phase 10.5 acceptance products differ from V2 release routes")

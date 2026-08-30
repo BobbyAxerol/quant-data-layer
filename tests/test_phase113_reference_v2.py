@@ -14,7 +14,6 @@ import unittest
 from fastapi.testclient import TestClient
 
 from qdl.api_v2 import create_v2_app
-from qdl.domain.capabilities import CapabilityAvailability, FeedCapability
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
     AssetClass,
@@ -38,7 +37,6 @@ from qdl.query.reference import ReferenceBatchRequirement, ReferenceDataRequirem
 from qdl.reference.batch import ReferenceBatch, ReferenceBatchPolicy
 from qdl.reference.contracts import (
     BasisSeries,
-    LongShortKind,
     ReferenceCoverage,
     ReferenceFetch,
     ReferenceLineage,
@@ -202,7 +200,7 @@ class ReferenceRequirementAndSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.binance = record(venue="BINANCE", market="USDM", symbol="BTCUSDT", base="BTC")
         self.okx = record(venue="OKX", market="SWAP", symbol="ETH-USDT-SWAP", base="ETH")
 
-    def test_reference_requirement_is_manifest_bounded_and_execution_forbidden(self):
+    def test_reference_requirement_is_manifest_bounded_and_only_mark_is_execution_eligible(self):
         requirement = ReferenceDataRequirement(
             instrument_uid=self.binance.instrument_uid,
             product=ReferenceProduct.FUNDING_RATE,
@@ -216,7 +214,7 @@ class ReferenceRequirementAndSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gate.feed, FeedType.FUNDING_RATE)
         self.assertEqual(gate.warmup_limit, 365)
         self.assertFalse(gate.require_final_bars)
-        with self.assertRaisesRegex(ValueError, "execution-grade"):
+        with self.assertRaisesRegex(ValueError, "only MARK_INDEX_PRICE"):
             ReferenceDataRequirement(
                 instrument_uid=self.binance.instrument_uid,
                 product=ReferenceProduct.FUNDING_RATE,
@@ -224,6 +222,29 @@ class ReferenceRequirementAndSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 source_policy_id="reference_primary_v2",
                 start_time_ns=NOW_NS - 1_000_000,
                 end_time_ns=NOW_NS,
+            )
+        mark = ReferenceDataRequirement(
+            instrument_uid=self.binance.instrument_uid,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id="crypto_liquid_v2",
+            limit=1,
+            page_size=1,
+            max_pages=1,
+        )
+        mark_gate = mark.data_requirement
+        self.assertEqual(mark_gate.feed, FeedType.MARK_INDEX_PRICE)
+        self.assertEqual(mark_gate.recovery.value, "FRESH_SNAPSHOT")
+        self.assertFalse(mark_gate.require_final_bars)
+        with self.assertRaisesRegex(ValueError, "one complete snapshot row"):
+            ReferenceDataRequirement(
+                instrument_uid=self.binance.instrument_uid,
+                product=ReferenceProduct.MARK_INDEX_PRICE,
+                consumer_grade=ConsumerGrade.EXECUTION,
+                source_policy_id="crypto_liquid_v2",
+                limit=2,
+                page_size=1,
+                max_pages=1,
             )
 
     async def test_provider_lane_caps_same_venue_and_timeout_is_typed(self):

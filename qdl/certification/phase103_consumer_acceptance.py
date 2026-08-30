@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
 from qdl.consumer.manifest import ConsumerManifest, ConsumerManifestLoader
 from qdl.query import DataRequirement, FeedType, RecoveryPolicy, StalePolicy
@@ -275,13 +275,17 @@ def build_manifest_acceptance_scope(
     acquisition: StableAcquisitionPlan,
     expected_consumer_ids: frozenset[str],
     schema: str,
+    requirement_filter: Callable[[DataRequirement], bool] | None = None,
 ) -> ConsumerAcceptanceScope:
     """Build a governed crypto acceptance matrix from registered manifests.
 
     The catalog owns identity/lineage while the acquisition plan owns whether a
     canonical product is active. A future 15m alpha window is legal only when
     it states ``FRESH_SNAPSHOT`` explicitly; it is never promoted to durable
-    replay by this helper.
+    replay by this helper.  Later product families can reuse the manifest
+    identity envelope while retaining their own receipt contract by supplying
+    a narrow filter; this Phase-10.3 receipt never silently changes feed
+    semantics.
     """
     manifests = tuple(
         ConsumerManifestLoader.load(path) for path in _manifest_paths(manifest_paths)
@@ -298,6 +302,8 @@ def build_manifest_acceptance_scope(
     excluded: list[ExcludedRequirement] = []
     for manifest in manifests:
         for requirement in manifest.requirements:
+            if requirement_filter is not None and not requirement_filter(requirement):
+                continue
             item = _product_for_requirement(
                 manifest,
                 requirement,

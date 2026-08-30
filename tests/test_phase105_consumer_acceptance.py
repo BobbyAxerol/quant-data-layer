@@ -59,7 +59,14 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             for consumer in self.release.consumers
             if consumer.consumer_id in PHASE105_PAPER_CONSUMER_IDS
             for product in consumer.products
-            if product.route == "V2_PRIMARY"
+            if (
+                product.route == "V2_PRIMARY"
+                and next(
+                    requirement
+                    for requirement in consumer.manifest.requirements
+                    if requirement_key(requirement) == product.requirement_key
+                ).feed in {FeedType.TRADE, FeedType.QUOTE, FeedType.BAR}
+            )
         }
         actual = {
             (item.consumer_id, requirement_key(item.requirement))
@@ -82,7 +89,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             },
         )
 
-    def test_five_liquid_selection_is_exactly_the_sixty_declared_routes(self):
+    def test_five_liquid_selection_is_exactly_the_sixty_trade_quote_bar_routes(self):
         scope = build_release_consumer_acceptance_scope(
             self.release,
             catalog=self.catalog,
@@ -102,6 +109,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             )
             for consumer in self.five_liquid_demand["consumers"]
             for requirement in consumer["requirements"]
+            if requirement["feed"] in {"TRADE", "QUOTE", "BAR"}
         }
         actual = {
             (
@@ -167,6 +175,39 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             and item.requirement.max_session_liveness_ms == 45_000
             and item.requirement.stale_policy is StalePolicy.BLOCK
             for item in quotes
+        ))
+
+    def test_execution_mark_and_l2_routes_are_exact_and_fail_closed(self):
+        consumer = next(
+            item
+            for item in self.release.consumers
+            if item.consumer_id == "trading-system.paper.stable"
+        )
+        requirements = {
+            requirement_key(item): item for item in consumer.manifest.requirements
+        }
+        typed = [
+            (route, requirements[route.requirement_key])
+            for route in consumer.products
+            if requirements[route.requirement_key].feed in {
+                FeedType.MARK_INDEX_PRICE,
+                FeedType.BOOK_SNAPSHOT,
+                FeedType.BOOK_DELTA,
+            }
+        ]
+        self.assertEqual(len(typed), 12)
+        self.assertTrue(all(route.route == "V2_PRIMARY" for route, _ in typed))
+        self.assertTrue(all(route.fallback == "BLOCKED" for route, _ in typed))
+        self.assertEqual(
+            {requirement.source_policy_id for _, requirement in typed},
+            {"crypto_liquid_v2"},
+        )
+        self.assertTrue(all(
+            requirement.consumer_grade.value == "EXECUTION"
+            and requirement.interval is None
+            and requirement.require_final_bars is False
+            and requirement.require_full_coverage is True
+            for _, requirement in typed
         ))
 
 

@@ -17,7 +17,7 @@ from qdl.adapters.intervals import (
     okx_candle_channel,
 )
 from qdl.adapters.okx.instruments import parse_public_instrument
-from qdl.domain.instrument import InstrumentRecord, InstrumentStatus, ProductType
+from qdl.domain.instrument import InstrumentRecord, InstrumentStatus
 from qdl.query import ConsumerGrade, FeedType
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
@@ -174,10 +174,12 @@ class ProductionDemandManifest:
         grade: ConsumerGrade,
         raw: Any,
     ) -> ProductionDemand:
-        if not isinstance(raw, dict) or set(raw) != {
+        required = {
             "venue", "market", "product_type", "native_symbol",
             "feed", "interval", "source_policy_id",
-        }:
+        }
+        book_fields = {"depth_per_side", "max_freshness_ms", "require_live"}
+        if not isinstance(raw, dict) or not required <= set(raw):
             raise ValueError("production demand requirement fields are invalid")
         venue = str(raw["venue"]).strip().upper()
         market = str(raw["market"]).strip().upper()
@@ -186,6 +188,25 @@ class ProductionDemandManifest:
         source_policy = str(raw["source_policy_id"]).strip()
         feed = FeedType(str(raw["feed"]).strip().upper())
         interval = str(raw["interval"]).strip() if raw["interval"] is not None else None
+        expected = required | book_fields if feed in _BOOK_FEEDS else required
+        if set(raw) != expected:
+            raise ValueError("production demand requirement fields are invalid")
+        if feed in _BOOK_FEEDS:
+            depth_per_side = raw["depth_per_side"]
+            max_freshness_ms = raw["max_freshness_ms"]
+            require_live = raw["require_live"]
+            if (
+                isinstance(depth_per_side, bool)
+                or not isinstance(depth_per_side, int)
+                or isinstance(max_freshness_ms, bool)
+                or not isinstance(max_freshness_ms, int)
+                or not isinstance(require_live, bool)
+            ):
+                raise ValueError("BOOK demand acquisition fields have invalid types")
+        else:
+            depth_per_side = 0
+            max_freshness_ms = None
+            require_live = False
         return ProductionDemand(
             consumer_id=consumer_id,
             consumer_grade=grade,
@@ -196,6 +217,9 @@ class ProductionDemandManifest:
             feed=feed,
             interval=interval,
             source_policy_id=source_policy,
+            depth_per_side=depth_per_side,
+            max_freshness_ms=max_freshness_ms,
+            require_live=require_live,
         )
 
 

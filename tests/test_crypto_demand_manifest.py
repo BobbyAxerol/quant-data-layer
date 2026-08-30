@@ -98,7 +98,21 @@ class CommittedDemandManifestTests(unittest.TestCase):
         self.assertGreaterEqual(self.manifest.revision, 1)
 
     def test_demand_and_catalog_agree_in_both_directions(self):
-        self.assertEqual(self._demand_keys(), self._catalog_crypto_keys())
+        demand = self._demand_keys()
+        catalog = self._catalog_crypto_keys()
+        self.assertTrue(demand <= catalog)
+
+        # Dated BTC/ETH contracts are pre-registered for the shared Rust L2
+        # core, but only the four perpetuals are active Phase-2 demand.  A
+        # new dormant capability must still be an L2 book on a dated leg; no
+        # price/bar product may silently fall outside the active inventory.
+        dormant = catalog - demand
+        self.assertTrue(dormant)
+        self.assertTrue(all(
+            feed in {FeedType.BOOK_SNAPSHOT.value, FeedType.BOOK_DELTA.value}
+            and (market == "FUTURES" or "_" in native_symbol)
+            for _venue, market, native_symbol, feed, _interval in dormant
+        ))
 
     def test_every_crypto_family_in_the_catalog_is_expressible(self):
         families = {
@@ -108,6 +122,22 @@ class CommittedDemandManifestTests(unittest.TestCase):
         self.assertIn(("BINANCE", "USDM", "PERPETUAL"), families)
         self.assertIn(("OKX", "SPOT", "SPOT"), families)
         self.assertIn(("OKX", "SWAP", "PERPETUAL"), families)
+
+    def test_execution_l2_demand_is_bounded_and_live(self):
+        books = [
+            item for item in self.manifest.demands
+            if item.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}
+        ]
+        self.assertEqual(len(books), 8)
+        self.assertTrue(all(item.depth_per_side == 100 for item in books))
+        self.assertTrue(all(item.require_live for item in books))
+        self.assertEqual(
+            {item.feed: item.max_freshness_ms for item in books},
+            {
+                FeedType.BOOK_SNAPSHOT: 60_000,
+                FeedType.BOOK_DELTA: 2_000,
+            },
+        )
 
 
 class AcquisitionRecipeTests(unittest.TestCase):

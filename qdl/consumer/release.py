@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Iterable
 
 import yaml
 
@@ -34,6 +34,29 @@ def _pass_through_eligible(catalog: StableSourceCatalog, requirement: object) ->
     from qdl.runtime.provider_history import pass_through_eligible
 
     return pass_through_eligible(catalog, requirement)  # type: ignore[arg-type]
+
+
+def _execution_reference_eligible(
+    catalog: StableSourceCatalog,
+    requirement: object,
+) -> bool:
+    """Permit only the typed execution mark/index reference product.
+
+    Reference snapshots are not BAR pass-through and do not acquire a durable
+    market-data binding.  They remain strictly limited to the catalog's
+    provider-authentic `crypto_liquid_v2` policy.
+    """
+
+    from qdl.reference.runtime import reference_requirement_eligible
+
+    try:
+        instrument = catalog.instrument_for(requirement.instrument_uid)  # type: ignore[attr-defined]
+    except (AttributeError, KeyError):
+        return False
+    return (
+        getattr(requirement, "source_policy_id", None) == "crypto_liquid_v2"
+        and reference_requirement_eligible(instrument, requirement)  # type: ignore[arg-type]
+    )
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -328,14 +351,27 @@ class StableReleaseRoutePlan:
                     "venue", "market", "product_type", "native_symbol", "feed",
                     "interval", "source_policy_id",
                 }
-                if set(requirement) != required:
+                feed = str(requirement.get("feed", "")).upper()
+                book_fields = {"depth_per_side", "max_freshness_ms", "require_live"}
+                expected = required | book_fields if feed in {
+                    "BOOK_SNAPSHOT", "BOOK_DELTA"
+                } else required
+                if set(requirement) != expected:
                     raise ValueError("stable release crypto demand requirement fields differ")
+                if feed in {"BOOK_SNAPSHOT", "BOOK_DELTA"} and (
+                    isinstance(requirement["depth_per_side"], bool)
+                    or not isinstance(requirement["depth_per_side"], int)
+                    or isinstance(requirement["max_freshness_ms"], bool)
+                    or not isinstance(requirement["max_freshness_ms"], int)
+                    or not isinstance(requirement["require_live"], bool)
+                ):
+                    raise ValueError("stable release crypto BOOK demand fields are invalid")
                 keys.add((
                     str(requirement["venue"]).upper(),
                     str(requirement["market"]).upper(),
                     str(requirement["product_type"]).upper(),
                     str(requirement["native_symbol"]).upper(),
-                    str(requirement["feed"]).upper(),
+                    feed,
                     str(requirement["interval"]) if requirement["interval"] is not None else None,
                     str(requirement["source_policy_id"]),
                 ))
@@ -409,7 +445,10 @@ class StableReleaseRoutePlan:
         try:
             binding = catalog.binding_for(requirement)
         except (KeyError, ValueError):
-            if not _pass_through_eligible(catalog, requirement):
+            if not (
+                _execution_reference_eligible(catalog, requirement)
+                or _pass_through_eligible(catalog, requirement)
+            ):
                 raise ValueError("stable release product has no V2 source")
         if product.route == _V2_ROUTE:
             if venue not in _V2_VENUES:

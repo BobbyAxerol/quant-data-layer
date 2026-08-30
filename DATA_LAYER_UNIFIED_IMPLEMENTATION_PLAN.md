@@ -25219,3 +25219,106 @@ fallback only where allowed, and an isolated no-order/paper acceptance for a
 market, passive limit, L2-required grid intent, stop/TP trigger and bracket
 lifecycle observation. Measure freshness, gaps, reconnects, cache fan-in,
 CPU/RAM and no-cross-symbol behavior. Do not create a new runtime topology.
+
+#### 24.3.1 Activation Record (`IN PROGRESS`, 2026-08-30)
+
+**Approved scope.** Phase 12.2 activates only the existing provider-neutral
+V2 hot-feed products required by the typed execution contract for the bounded
+paper consumer `trading-system.paper.stable`:
+
+- Binance USD-M `BTCUSDT` and `ETHUSDT`;
+- OKX Swap `BTC-USDT-SWAP` and `ETH-USDT-SWAP`;
+- `QUOTE`, `MARK_INDEX_PRICE`, `BOOK_SNAPSHOT`, and `BOOK_DELTA`, alongside
+  the already-routed `TRADE` and final `BAR` slices.
+
+It reuses the current Rust canonical/L2 authority, query, stream, projector,
+and the existing Trading System `market_data_service`. No symbol worker,
+per-venue service, synthetic provider record, direct venue connection from an
+alpha, or new runtime topology is permitted. DNSE/VN is excluded and retains
+its existing V1/calendar path.
+
+**Observed starting state.** The Trading System bridge is configured
+`V2_PRIMARY`, but its V2 query/stream peer roles are currently stopped. Its
+bounded logs show name-resolution reconnect failures for the existing
+Binance/OKX `TRADE` and `BAR` routes. This is an in-scope activation defect,
+not a reason to silently use a cross-venue or undeclared fallback.
+
+**Invariants.** V1 remains the only fallback where the sealed route binding
+permits it; `BLOCKED` remains blocked. The runtime packet may start/recreate
+only the already-declared V2 data-plane roles and the single Trading System
+market-data projector using an explicitly retained rollback image. It must not
+reset Kafka offsets, flush Redis, delete SQLite, change V1, mutate Trading
+System database rows, start/recreate an alpha, invoke the order path, submit a
+broker request, or alter strategy signal/sizing state.
+
+**Required source gates.** Add typed-cache projection and composition tests
+for Binance/OKX identity isolation, side-aware quote, mark/index, verified
+L2 snapshot/delta, stale/gap/zero/missing values, manifest fallback and
+`BLOCKED` behavior. Tests are isolated and network-disabled. The existing
+consumer-demand compiler must prove the four named instruments are entitled to
+every hot feed before a sealed binding is materialized.
+
+**Implementation decision (2026-08-30).** `MARK_INDEX_PRICE` is the sole
+reference product admitted at execution grade in this phase, and only as a
+fresh, single-row, provider-authentic snapshot for the exact catalog identity.
+It is a trigger/risk reference, never broker lifecycle authority. Funding,
+open interest, long/short, taker flow, metadata and basis remain
+alpha/research-only. No last-trade substitution, synthetic value or
+cross-venue fallback is permitted.
+
+**Runtime acceptance and rollback.** After source gates pass, build at most
+one immutable Trading System projector image and retain the current
+`tradingsystem-image:v2-primary-c3704b7` as its rollback. Start only the
+existing V2 roles required to serve the above bounded slices, then roll only
+`market_data_service`. Run one 300-second no-order paper acceptance that
+reads real provider-derived V2 data and evaluates market, ordinary limit,
+L2-required grid/post-only, explicit stop/TP trigger and bracket lifecycle
+observation without publishing an order, signal or sizing mutation. Record
+freshness, gap/reconnect, cache fan-in, no-cross-symbol, CPU/RAM and route
+selection evidence. Rollback is stop the started V2 roles and recreate only
+`market_data_service` with the retained image/runtime mount; V1 state and all
+shared stores remain untouched. Disposable acceptance clients use an isolated
+namespace and are removed at exit.
+
+#### 24.3.2 Source Gate Record (`PASS / RUNTIME UNCHANGED`, 2026-08-30)
+
+**Implemented.** The bounded `trading-system.paper.stable` consumer manifest
+now has revision `6` and exactly twelve additional execution-grade routes:
+`MARK_INDEX_PRICE`, `BOOK_SNAPSHOT` and `BOOK_DELTA` for Binance USD-M
+`BTCUSDT`/`ETHUSDT` and OKX Swap `BTC-USDT-SWAP`/`ETH-USDT-SWAP`. The active
+crypto demand moved to revision `5` and declares bounded L2 metadata
+(`depth_per_side=100`, live requirement and feed-specific freshness) for the
+same four identities. The sealed release route is V2-primary and `BLOCKED` for
+these typed feeds; no generic last-price, cross-venue or V1 semantic fallback
+was added.
+
+`MARK_INDEX_PRICE` admission is strict execution-grade pass-through: one row,
+complete coverage, provider lineage, non-missing mark and index fields. Rust
+canonical/catalog admission accepts the bounded L2 demand fields only for
+book feeds and rejects malformed/boolean/string substitutions. Existing
+Phase-10.5 receipt semantics remain limited to `TRADE`/`QUOTE`/final `BAR`;
+typed reference/L2 routes have their own contract coverage rather than
+rewriting historical receipts.
+
+**Tests actually run.** In a disposable `--read-only --network none` QDL
+container, `62/62` tests passed in `15.988s` across consumer acceptance,
+stable release/routing observations, five-liquid handoff, reference V2,
+catalog-demand consistency, pass-through wiring, crypto demand and production
+catalog suites. This verifies exact Binance/OKX identity, decimal/missing
+semantics, entitlement, release-routing counts and L2 bounded parameters. No
+provider call, role, image, Kafka/Redis/SQLite state, V1 route, Trading System
+service, alpha, signal or order was changed.
+
+Scoped Python `compileall` and isolated Ruff checks also passed. The QDL
+project's Poetry `^3.10` spec is intentionally not rewritten for the separate
+Ruff image; lint ran with `--isolated`, while the authoritative Python 3.12
+QDL image executed the contract suite above.
+
+**Runtime decision.** A static Trading System route map can select only
+V2/V1/BLOCK and intentionally carries no source-policy/freshness values. The
+real packet must therefore use the existing sealed-binding compose overlay
+(`docker-compose.data-layer-v2-phase115c.yml`) with one freshly rendered
+`trading-system.paper.stable` binding and matching release-manifest SHA. This
+is an enforcement boundary, not a new topology. The next permitted work is
+the one-image Trading System build, bounded V2 role activation and the
+300-second no-order acceptance defined above.

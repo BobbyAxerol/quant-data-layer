@@ -168,12 +168,8 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
                 checked.append((manifest.consumer_id, requirement.interval))
         self.assertEqual(
             checked,
-            [
-                ("alpha.binance.paper.stable", "15m"),
-                ("alpha.binance.paper.stable", "15m"),
-                ("alpha.okx.paper.stable", "1h"),
-                ("alpha.okx.paper.stable", "1h"),
-            ],
+            [("alpha.binance.paper.stable", "15m")] * 5
+            + [("alpha.okx.paper.stable", "1h")] * 5,
         )
 
     def test_a_requirement_no_source_can_answer_still_fails(self):
@@ -252,12 +248,10 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
                 replace(requirement, recovery=RecoveryPolicy.SNAPSHOT_AND_REPLAY),
             )
         )
-        self.assertFalse(
-            reference_requirement_eligible(
-                instrument,
-                replace(requirement, consumer_grade=ConsumerGrade.EXECUTION),
-            )
-        )
+        execution_mark = replace(requirement, consumer_grade=ConsumerGrade.EXECUTION)
+        self.assertTrue(reference_requirement_eligible(instrument, execution_mark))
+        with self.assertRaisesRegex(ValueError, "execution-price validation"):
+            replace(execution_mark, feed=FeedType.FUNDING_RATE)
         other = next(
             item for item in self.catalog.instruments if item.instrument_uid != instrument.instrument_uid
         )

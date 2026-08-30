@@ -1,5 +1,5 @@
 schema: qdl.v2.production-demand.v1
-revision: 3
+revision: 5
 consumers:
 - consumer_id: trading-system.paper.stable
   consumer_grade: EXECUTION
@@ -193,6 +193,87 @@ consumers:
     feed: TRADE
     interval: null
     source_policy_id: crypto_primary_v2
+  # Typed execution L2 is bound only for the four certified perpetuals.
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BOOK_SNAPSHOT
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    depth_per_side: 100
+    max_freshness_ms: 60000
+    require_live: true
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BOOK_DELTA
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    depth_per_side: 100
+    max_freshness_ms: 2000
+    require_live: true
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BOOK_SNAPSHOT
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    depth_per_side: 100
+    max_freshness_ms: 60000
+    require_live: true
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BOOK_DELTA
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    depth_per_side: 100
+    max_freshness_ms: 2000
+    require_live: true
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BOOK_SNAPSHOT
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    depth_per_side: 100
+    max_freshness_ms: 60000
+    require_live: true
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BOOK_DELTA
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    depth_per_side: 100
+    max_freshness_ms: 2000
+    require_live: true
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BOOK_SNAPSHOT
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    depth_per_side: 100
+    max_freshness_ms: 60000
+    require_live: true
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BOOK_DELTA
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    depth_per_side: 100
+    max_freshness_ms: 2000
+    require_live: true
   - venue: OKX
     market: SWAP
     product_type: PERPETUAL
