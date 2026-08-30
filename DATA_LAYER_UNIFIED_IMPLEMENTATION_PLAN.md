@@ -28265,3 +28265,40 @@ cache, container, volume, Kafka, Redis, SQLite, source or runtime role was
 changed. The next cleanup class remains separately approved only: aged build
 cache or explicitly named stopped test containers, after an independent
 rollback-retention inventory.
+
+## 20. 2026-08-30 Full Unused Image And Build-Cache Cleanup
+
+**Status:** `APPROVED / IN PROGRESS`
+
+Owner approved removal of build/test artifacts not used by a running service.
+Preflight resolved `22` exited containers and `87` image digests after
+subtracting every image digest referenced by a running container. The exact
+Trading System rollback image
+`tradingsystem-image:v2-primary-b29ae8b`
+(`sha256:3336ba35a66553d67ea10a4f20485656076fa3bac433714cb4ae6ecde0b1fbda`)
+is explicitly retained even though it is not active. Cleanup removes the 20
+explicitly classified disposable test/old-alpha/disabled-spot containers. It
+retains stopped `qdl_v2_stable_candidate-kafka1-1` and
+`portal-execution-edge-projection-migrator-1` because they can still carry
+operational/evidence meaning. It then removes computed unused image digests
+without force, then unused BuildKit cache with `docker builder prune --all
+--force`.
+
+**Excluded:** all running containers and their images, the exact retained
+rollback image, every volume (including Kafka, Redis, SQLite, PostgreSQL and
+TLS), all networks, source/worktrees and runtime configuration. No
+`docker system prune`, no image force-delete and no `--volumes` are permitted.
+Postconditions are active-role restart count zero, retained rollback image
+present, no exited test container, and recorded Docker disk delta.
+
+**Partial execution / decision gate:** Twenty explicitly classified stopped
+alpha/test/disabled-spot containers were removed without any volume removal.
+The two retained stopped containers remain
+`qdl_v2_stable_candidate-kafka1-1` and
+`portal-execution-edge-projection-migrator-1`. The broad removal of all 87
+non-active images was intentionally not executed: that set includes historical
+rollback/recovery/evidence images whose loss is irreversible even though no
+running service references them. A further owner approval must explicitly
+authorize deleting every non-active image except the retained
+`b29ae8b` rollback image. Until then, no image or build cache is removed by
+this slice.
