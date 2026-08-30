@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Mapping
 
 
-V1_FALLBACK_COMMIT = "b259b63ae73cf5f8bf75463578c9f5cb477c6c08"
-V1_FALLBACK_VERSION = "v1.2.3"
+V1_FALLBACK_COMMIT = "2b0dcf74454c9f87c352d3c47389955aeb955804"
+V1_FALLBACK_VERSION = "v1.2.4"
 
 EXTERNAL_IDENTITY_SPECS = {
     "stable-monitoring-rs256-v1": {

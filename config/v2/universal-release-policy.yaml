@@ -1,17 +1,17 @@
 # Phase 11.5 source policy.  This is not a runtime switch: a generated release
 # artifact binds this policy to one fresh admitted active-demand inventory.
 schema: qdl.v2.universal-release-policy.v1
-revision: 3
+revision: 4
 contract_version: 2.0.0
 capability_matrix:
   path: config/v2/stable-capabilities.yaml
   sha256: 81347a88866a54ed99cfbf25979d8e5912c98084f97f8a997a608dc9e03af6bf
   revision: 5
 v1_rollback:
-  release_tag: v1.2.3
-  source_commit: b259b63ae73cf5f8bf75463578c9f5cb477c6c08
-  image_reference: qdl-v1-fallback:v1.2.3-b259b63
-  manifest_revision: v1.2.3-b259b63
+  release_tag: v1.2.4
+  source_commit: 2b0dcf74454c9f87c352d3c47389955aeb955804
+  image_reference: qdl-v1-fallback:v1.2.4-2b0dcf7
+  manifest_revision: v1.2.4-2b0dcf7
 resource_budget:
   max_consumer_lag: 10000
   max_cpu_millicores: 750

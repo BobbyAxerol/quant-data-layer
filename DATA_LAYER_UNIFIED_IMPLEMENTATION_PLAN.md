@@ -24179,6 +24179,15 @@ this scope rather than opening a new phase.
   pending a replacement image from this corrected source. The earlier
   `v1.2.3` candidate is terminal evidence only and must not be redeployed.
 
+  **Corrected immutable provenance (`APPROVED / IN PROGRESS`):** source commit
+  `2b0dcf74454c9f87c352d3c47389955aeb955804` supersedes the terminal
+  `v1.2.3` candidate. The replacement is `v1.2.4`, with route-policy revisions
+  advanced to bind `qdl-v1-fallback:v1.2.4-2b0dcf7`. A new immutable image and
+  attestation are required; no prior V1 provenance evidence may be reused.
+  The full targeted source matrix passed **72/72** network-free tests across
+  ingress/projection, fallback, route plan, handoff, identity, stable-release
+  certification, observations and universal-release policy.
+
   **Source implementation and evidence (`PASS / RUNTIME PENDING`):**
   `app.stream.async_live_feed` now accepts a Binance trade frame only when `p`
   is a finite decimal strictly greater than zero; `None`, empty, zero, `NaN`,
