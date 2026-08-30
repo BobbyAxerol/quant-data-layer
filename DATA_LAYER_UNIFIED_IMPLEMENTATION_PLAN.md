@@ -24805,3 +24805,10 @@ from consumer revision `52fe5af`. The alpha image need not be rebuilt because
 its C4 deployment mounts its committed shared runtime source while retaining
 the same sealed SDK wheel. No Data Layer image, service, route, provider,
 Kafka, Redis, SQLite or authority changed.
+
+**C4.11 consumer retry preflight (`APPROVED / DATA LAYER UNCHANGED`):** The
+bounded consumer compose render confirms only Trading System `market_data` is
+selected with the corrected immutable image and registered typed policy. Its
+canonical database interpolation is non-empty. No Data Layer role, topic,
+Redis namespace, SQLite file, provider connection or authority changes in this
+packet; server-side manifest equality remains the fail-closed guard.
