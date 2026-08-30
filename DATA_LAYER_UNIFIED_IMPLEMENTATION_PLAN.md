@@ -23118,3 +23118,44 @@ this scope rather than opening a new phase.
   directory, trust/identity files, authority, Kafka, Redis, SQLite, V1 and
   every rollback image remain unchanged.  The exact fourteen-role rollback
   map remains SHA-256 `eb16bae1b8714a26b7e70a88f14b5ea29031e06d926e8f30853f108613c5db15`.
+
+- `2026-08-30 FULL V2 RUNTIME ROLLOUT / C2 PRECONDITION CORRECTION / PENDING
+  REAPPLY`:
+  the first fourteen-role application rollout reached healthy readers and
+  atomically written Rust session-liveness records, but the single C2 client
+  stopped fail-closed at `trading-system.paper.stable / OKX.SWAP.PERPETUAL.
+  DOGE-USDT / TRADE` with `DATA_STALE` before its observation window.  The
+  automatic packet rollback restored the recorded fourteen role-specific
+  image/runtime coordinates; V1, Kafka topology and offsets, Redis, SQLite,
+  Trading System, alpha and every order path were untouched.
+
+  **Diagnosis correction:** this is not a missing `OBSERVE` declaration.
+  Direct source/manifest verification proves every governed paper `TRADE`
+  requirement already carries `event_recency_policy=OBSERVE` and
+  `max_session_liveness_ms=45000`; the query/SDK source accepts a quiet trade
+  only when its `source_session_id`, `connection_generation` and
+  `config_revision` exactly match a live Rust heartbeat.  Read-only inspection
+  after rollback shows why a retry cannot be treated as luck: the newly
+  restarted old ingestors immediately emitted canonical DOGE events with new
+  generations while the retained heartbeat files still identify the prior
+  stopped generations.  That mismatch is intentionally `UNKNOWN/STALE` and
+  prevents a new connection from blessing an event from an older connection.
+  The same transient can exist directly after any ingestor rolling recreate.
+
+  **Next approved bounded operation:** no source contract, provider adapter,
+  service topology or per-symbol worker is added.  Reapply the already
+  approved fourteen-role V2 packet using Python
+  `sha256:b482e31706a1182297caec707545a4f0405fcf8172e6ae841568a5e75c588a09`,
+  unchanged Rust
+  `sha256:cfb686cf23fce8bea8c9c29c31630571bb6aad1b3a137f6dae1d28644649951f`,
+  and successor runtime
+  `session-liveness-43cdbe3-20260829T162719Z/runtime`.  Before the one allowed
+  300-second C2 run, require bounded read-only convergence evidence that the
+  existing native ingestors are `LIVE`, their current session files are fresh,
+  and both query replicas are ready; this is a deterministic startup gate,
+  not a policy relaxation or a retry loop.  C2 still requires all governed
+  V2-primary reads, signed replay/reconnect, permitted V1 fallback-return and
+  blocked-route behavior.  Any failed startup/convergence/C2 gate restores
+  exactly the existing fourteen-role rollback map.  The disposable C2 client
+  and its exact failed evidence namespace are removed after the recorded
+  result; no market payload is retained.
