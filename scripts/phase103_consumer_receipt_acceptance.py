@@ -365,6 +365,15 @@ def _stream_handoff_mode(
     if product.delivery is not DeliveryClass.DURABLE:
         return "NOT_APPLICABLE"
     if acknowledged_offset is None:
+        if (
+            len(no_event_sessions) == 2
+            and no_event_sessions[0] == "CURSOR_ACKNOWLEDGED"
+            and no_event_sessions[1] in {
+                "FRESH_EXECUTABLE_AFTER_CURSOR",
+                "QUIET_NON_EXECUTABLE_AFTER_CURSOR",
+            }
+        ):
+            return "SIGNED_CURSOR_REOPENED_NO_NEW_EVENT"
         if len(no_event_sessions) != 2:
             raise ValueError("C2 no-event stream evidence requires both sessions")
         if no_event_sessions[-1] == "EVENT_AFTER_REOPEN":
@@ -771,10 +780,33 @@ async def _stream_resume(
                 else 1
             )
             for _ in range(maximum):
-                resumed, controls = await _next_data(
-                    session,
-                    timeout_seconds=event_timeout_seconds,
-                )
+                if quiet_trade_observation:
+                    resumed, controls = await _next_data_or_timeout(
+                        session,
+                        timeout_seconds=min(
+                            event_timeout_seconds,
+                            _QUIET_TRADE_STREAM_OBSERVATION_SECONDS,
+                        ),
+                    )
+                    if resumed is None:
+                        _require_signed_cursor_controls(controls)
+                        no_event_session = await _classify_no_event_trade_session(
+                            resumed_client,
+                            product=product,
+                            requirement=requirement,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        return (
+                            None,
+                            None,
+                            tuple(first_controls + controls),
+                            ("CURSOR_ACKNOWLEDGED", f"{no_event_session}_AFTER_CURSOR"),
+                        )
+                else:
+                    resumed, controls = await _next_data(
+                        session,
+                        timeout_seconds=event_timeout_seconds,
+                    )
                 resumed_controls.extend(controls)
                 resumed_view = market_data_view_from_stream(
                     resumed,

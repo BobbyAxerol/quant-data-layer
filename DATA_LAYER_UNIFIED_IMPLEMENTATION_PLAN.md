@@ -24417,22 +24417,48 @@ this scope rather than opening a new phase.
   current reader/V1 runtime unchanged and remove only the disposable client
   image/evidence namespace on failure.
 
+  **C2 resumed-cursor no-print correction (`APPROVED / IN PROGRESS`):** the
+  first repaired receipt proved that the initial BNB session can deliver and
+  checkpoint a real event, then exposed the symmetric condition after the
+  governed reopen: the resumed signed cursor was accepted but no later trade
+  arrived before the bounded observation.  The same helper will classify this
+  as `SIGNED_CURSOR_REOPENED_NO_NEW_EVENT` only after `REPLAYING` and `LIVE`
+  controls on the **resumed checkpoint cursor** plus the exact fresh/quiet
+  typed status checks above.  It records no offset pair because no post-resume
+  event was observed, and never calls it `DURABLE_CURSOR_REPLAYED`.  BAR and
+  every non-OBSERVE route retain strict numeric replay offsets.  This is one
+  shared C2-client code correction with source tests; it changes no provider,
+  Rust code, route, runtime role, SLA or data-plane behavior.
+
   **C2 source exit (`PASS / ONE CLIENT-ONLY RECEIPT PENDING`):** the helper now
-  records one of three truthful durable outcomes: `DURABLE_CURSOR_REPLAYED`,
+  records one of four truthful durable outcomes: `DURABLE_CURSOR_REPLAYED`,
   `LIVE_OBSERVED_NO_NEW_CURSOR` or `QUIET_OBSERVED_NO_CURSOR`; an event after
   the second controlled open is separately marked
-  `LIVE_EVENT_AFTER_REOPEN_NO_CURSOR`.  It never calls any of these a replay
+  `LIVE_EVENT_AFTER_REOPEN_NO_CURSOR`, while a checkpointed reopen with no
+  later print is `SIGNED_CURSOR_REOPENED_NO_NEW_EVENT`. It never calls any of
+  these a replay
   without an acknowledged/resumed offset.  The exact source regression passed
-  **55/55** in one disposable network-none, read-only UID `10001` container:
+  **56/56** in one disposable network-none, read-only UID `10001` container:
   C2 historical replay, fresh-no-new-print, valid quiet observation,
-  signed-control absence, event-after-reopen, disconnected/stale-session/gap/
-  wrong-policy rejection, manifest/identity/fallback semantics, and the V1
+  signed-control absence, event-after-reopen, checkpointed-reopen-without-new-
+  print, disconnected/stale-session/gap/wrong-policy rejection,
+  manifest/identity/fallback semantics, and the V1
   valid/missing/zero/non-finite ingress boundary.  The warning lines emitted by
   deliberately failing provider reconnect fixtures are expected test fixtures;
   no provider request, runtime mount, service, data plane or order path changed.
   The next and only runtime action is a new immutable disposable C2 client image
   from this source, followed by exactly one 300-second receipt.  Existing V1
   and the four V2 reader containers remain untouched.
+
+  **C2 retry correction exit (`PASS / REBUILD DISPOSABLE CLIENT ONLY`):** the
+  resumed-cursor branch now records an acknowledged initial cursor plus a
+  separately classified, no-new-event second session without fabricating a
+  resume offset.  The same `56/56` matrix proves that this path remains
+  distinct from strict numeric replay, while all negative quality cases fail.
+  The prior `qdl-v2-c2-client:99b1628` did exactly one real receipt and is
+  terminal evidence only; it must be removed after the replacement client is
+  built.  No serving V1/V2 image, role or data state changes in this source
+  correction.
 
   **C2 execution transport correction (`NO RECEIPT / DETACHED LAUNCH
   REQUIRED`):** a foreground tool attachment ended around its 30-second yield
