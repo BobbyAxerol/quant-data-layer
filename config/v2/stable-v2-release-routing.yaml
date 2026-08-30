@@ -199,8 +199,8 @@ consumers:
     reason: VN_REAL_PROVIDER_GATE_UNEXERCISED
 - consumer_id: trading-system.paper.stable
   manifest: /app/consumers/stable/trading-system-paper.yaml
-  manifest_revision: 4
-  manifest_sha256: 924a5b377c2a930974834669e17f14d15b2b197ba55d40eef8fbf80559679865
+  manifest_revision: 5
+  manifest_sha256: 8a6040b5fe8f30bda97d9584749a833c4443c83f0e18f6b11d5a74f186b3ce67
   demand_revision: 3
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2

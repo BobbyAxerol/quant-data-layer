@@ -17,10 +17,10 @@ import shutil
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Iterator
+from typing import AsyncIterator, Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -66,12 +66,14 @@ from qdl_sdk import (
     WorkloadTlsConfig,
     market_data_view_from_stream,
 )
+from qdl_sdk.errors import ContinuityError, DataLayerError
 
 
 DEFAULT_CATALOG = ROOT / "config/v2/stable-source-bindings.yaml"
 DEFAULT_ACQUISITION = ROOT / "config/v2/stable-acquisition-bindings.yaml"
 DEFAULT_TRADING_MANIFEST = ROOT / "consumers/stable/trading-system-paper.yaml"
 DEFAULT_ALPHA_MANIFEST = ROOT / "consumers/stable/alpha-binance-paper.yaml"
+_QUIET_QUOTE_RETRY_SECONDS = 0.2
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,10 +248,14 @@ async def _query_product(
     *,
     primary: AsyncDataLayerClient,
     secondary: AsyncDataLayerClient,
+    timeout_seconds: float = 15.0,
 ) -> tuple[str, str | None, float, float | None]:
     primary_hash, secondary_hash, primary_ms, secondary_ms, _quality, _bar_alignment = (
         await _query_product_with_quality(
-            product, primary=primary, secondary=secondary
+            product,
+            primary=primary,
+            secondary=secondary,
+            timeout_seconds=timeout_seconds,
         )
     )
     return primary_hash, secondary_hash, primary_ms, secondary_ms
@@ -260,6 +266,7 @@ async def _query_product_with_quality(
     *,
     primary: AsyncDataLayerClient,
     secondary: AsyncDataLayerClient,
+    timeout_seconds: float = 15.0,
 ) -> tuple[
     str,
     str | None,
@@ -281,7 +288,12 @@ async def _query_product_with_quality(
         validate_product_view(product, primary_view)
         primary_hash = warmup_content_fingerprint(primary_response.data)
     else:
-        primary_response = await primary.snapshot(requirement)
+        primary_response = await _strict_snapshot_for_c2(
+            primary,
+            product=product,
+            requirement=requirement,
+            timeout_seconds=timeout_seconds,
+        )
         primary_latency_ms = (time.perf_counter() - primary_started) * 1000
         primary_view = primary_response.data
         validate_product_view(product, primary_view)
@@ -306,7 +318,12 @@ async def _query_product_with_quality(
         else:
             validate_replica_views(product, primary_view, secondary_view)
     else:
-        secondary_response = await secondary.snapshot(requirement)
+        secondary_response = await _strict_snapshot_for_c2(
+            secondary,
+            product=product,
+            requirement=requirement,
+            timeout_seconds=timeout_seconds,
+        )
         secondary_latency_ms = (time.perf_counter() - secondary_started) * 1000
         secondary_view = secondary_response.data
         primary_hash, secondary_hash = validate_replica_views(
@@ -324,6 +341,141 @@ async def _query_product_with_quality(
         },
         bar_alignment,
     )
+
+
+def _quiet_quote_is_retryable(
+    product: AcceptanceProduct,
+    requirement,
+    status,
+) -> bool:
+    """Allow only quiet, connected BBO observation to wait for a fresh quote."""
+    quality = status.quality
+    return (
+        product.feed.value == "QUOTE"
+        and requirement.max_session_liveness_ms is not None
+        and status.instrument_uid == requirement.instrument_uid
+        and status.feed is requirement.feed
+        and quality.policy_id == requirement.source_policy_id
+        and quality.state == "STALE"
+        and quality.event_recency_state == "STALE"
+        and quality.provider_session_state == "LIVE"
+        and quality.provider_session_liveness_ms is not None
+        and quality.provider_session_liveness_ms <= requirement.max_session_liveness_ms
+        and quality.complete
+        and not quality.gap_open
+        and not quality.execution_eligible
+    )
+
+
+async def _wait_for_quiet_quote_retry(
+    client: AsyncDataLayerClient,
+    *,
+    product: AcceptanceProduct,
+    requirement,
+    error: DataLayerError,
+    deadline: float,
+    retry_delay_seconds: float = _QUIET_QUOTE_RETRY_SECONDS,
+) -> None:
+    if product.feed.value != "QUOTE" or error.code != "DATA_STALE":
+        raise error
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ContinuityError(
+            "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+        ) from error
+    try:
+        status = await asyncio.wait_for(client.feed_status(requirement), timeout=remaining)
+    except TimeoutError as timeout:
+        raise ContinuityError(
+            "DATA_STALE", "C2 quiet QUOTE status did not return before its deadline"
+        ) from timeout
+    if not _quiet_quote_is_retryable(product, requirement, status):
+        raise ContinuityError(
+            "DATA_STALE", "C2 quiet QUOTE retry requires a live provider session"
+        ) from error
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ContinuityError(
+            "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+        ) from error
+    await asyncio.sleep(min(retry_delay_seconds, remaining))
+
+
+async def _strict_snapshot_for_c2(
+    client: AsyncDataLayerClient,
+    *,
+    product: AcceptanceProduct,
+    requirement,
+    timeout_seconds: float,
+) -> object:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ContinuityError(
+                "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+            )
+        try:
+            return await asyncio.wait_for(client.snapshot(requirement), timeout=remaining)
+        except DataLayerError as error:
+            await _wait_for_quiet_quote_retry(
+                client,
+                product=product,
+                requirement=requirement,
+                error=error,
+                deadline=deadline,
+            )
+            continue
+        except TimeoutError as timeout:
+            raise ContinuityError(
+                "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+            ) from timeout
+
+
+@asynccontextmanager
+async def _strict_warmup_then_stream_for_c2(
+    client: AsyncDataLayerClient,
+    *,
+    product: AcceptanceProduct,
+    requirement,
+    timeout_seconds: float,
+    resume_restored_state: bool = False,
+) -> AsyncIterator[object]:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ContinuityError(
+                "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+            )
+        context = client.warmup_then_stream(
+            requirement,
+            resume_restored_state=resume_restored_state,
+        )
+        try:
+            session = await asyncio.wait_for(context.__aenter__(), timeout=remaining)
+        except DataLayerError as error:
+            await _wait_for_quiet_quote_retry(
+                client,
+                product=product,
+                requirement=requirement,
+                error=error,
+                deadline=deadline,
+            )
+            continue
+        except TimeoutError as timeout:
+            raise ContinuityError(
+                "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+            ) from timeout
+        try:
+            yield session
+        except BaseException:
+            if await context.__aexit__(*sys.exc_info()):
+                return
+            raise
+        else:
+            await context.__aexit__(None, None, None)
+            return
 
 
 async def _stream_resume(
@@ -365,7 +517,12 @@ async def _stream_resume(
                 latest_open_time_ns=int(strict_current.payload.open_time_ns),
             )
             event_timeout_seconds = timeout_seconds
-        async with first_client.warmup_then_stream(stream_requirement) as session:
+        async with _strict_warmup_then_stream_for_c2(
+            first_client,
+            product=product,
+            requirement=stream_requirement,
+            timeout_seconds=timeout_seconds,
+        ) as session:
             first, first_controls = await _next_data(
                 session,
                 timeout_seconds=event_timeout_seconds,
@@ -393,8 +550,11 @@ async def _stream_resume(
         timeout_seconds=timeout_seconds,
     )
     try:
-        async with resumed_client.warmup_then_stream(
-            stream_requirement,
+        async with _strict_warmup_then_stream_for_c2(
+            resumed_client,
+            product=product,
+            requirement=stream_requirement,
+            timeout_seconds=timeout_seconds,
             resume_restored_state=True,
         ) as session:
             acknowledged_offset = first_offset
@@ -478,6 +638,7 @@ async def _certify_product(
             product,
             primary=primary,
             secondary=secondary,
+            timeout_seconds=timeout_seconds,
         )
     finally:
         await primary.close()

@@ -152,6 +152,23 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             for item in trades
         ))
 
+    def test_paper_quote_routes_keep_strict_freshness_and_session_sla(self):
+        scope = build_release_consumer_acceptance_scope(
+            self.release,
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            consumer_ids=FIVE_LIQUID_CONSUMER_IDS,
+        )
+        quotes = [item for item in scope.products if item.feed is FeedType.QUOTE]
+        self.assertEqual(len(quotes), 10)
+        self.assertTrue(all(
+            item.requirement.event_recency_policy is None
+            and item.requirement.max_freshness_ms == 2_000
+            and item.requirement.max_session_liveness_ms == 45_000
+            and item.requirement.stale_policy is StalePolicy.BLOCK
+            for item in quotes
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()

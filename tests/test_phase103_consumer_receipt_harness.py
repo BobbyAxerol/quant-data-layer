@@ -11,6 +11,8 @@ from unittest.mock import ANY, call, patch
 from scripts.phase103_consumer_receipt_acceptance import (
     _cursor_directory,
     _historical_bar_replay_requirement,
+    _strict_snapshot_for_c2,
+    _strict_warmup_then_stream_for_c2,
     _stream_resume,
     _uses_historical_bar_replay,
     _validated_packet,
@@ -37,10 +39,12 @@ from qdl_sdk import (
     ControlEvent,
     DataRequirement,
     Feed,
+    FeedStatusResponse,
     Grade,
     StalePolicy,
     StreamEvent,
 )
+from qdl_sdk.errors import ContinuityError, DataLayerError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -449,6 +453,164 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_client.warmup_calls, [])
         self.assertEqual(first_client.stream_calls, [(requirement, False)])
         self.assertEqual(resumed_client.stream_calls, [(requirement, True)])
+
+
+class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _requirement() -> DataRequirement:
+        return DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.QUOTE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=2_000,
+            max_session_liveness_ms=45_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+
+    @staticmethod
+    def _product():
+        return SimpleNamespace(feed=Feed.QUOTE)
+
+    @staticmethod
+    def _status(
+        requirement: DataRequirement,
+        *,
+        provider_session_state: str = "LIVE",
+        provider_session_liveness_ms: int | None = 10,
+    ) -> FeedStatusResponse:
+        return FeedStatusResponse.model_validate({
+            "schema": "qdl.feed-status.v2",
+            "instrument_uid": requirement.instrument_uid,
+            "feed": requirement.feed.value,
+            "quality": {
+                "state": "STALE",
+                "freshness_ms": 2_001,
+                "event_recency_state": "STALE",
+                "provider_session_state": provider_session_state,
+                "provider_session_liveness_ms": provider_session_liveness_ms,
+                "gap_open": False,
+                "complete": True,
+                "execution_eligible": False,
+                "policy_id": requirement.source_policy_id,
+                "flags": [],
+            },
+        })
+
+    class _Client:
+        def __init__(self, snapshots, status):
+            self._snapshots = iter(snapshots)
+            self._status = status
+            self.snapshot_calls = 0
+            self.status_calls = 0
+
+        async def snapshot(self, _requirement):
+            self.snapshot_calls += 1
+            value = next(self._snapshots)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+
+        async def feed_status(self, _requirement):
+            self.status_calls += 1
+            return self._status
+
+    class _StreamContext:
+        def __init__(self, value):
+            self._value = value
+
+        async def __aenter__(self):
+            if isinstance(self._value, BaseException):
+                raise self._value
+            return self._value
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class _StreamClient(_Client):
+        def __init__(self, stream_entries, status):
+            super().__init__((), status)
+            self._stream_entries = iter(stream_entries)
+            self.stream_calls = 0
+
+        def warmup_then_stream(self, _requirement, *, resume_restored_state=False):
+            self.stream_calls += 1
+            return Phase103QuietQuoteRetryTests._StreamContext(
+                next(self._stream_entries)
+            )
+
+    async def test_quiet_connected_quote_retries_only_until_a_fresh_snapshot_arrives(self):
+        requirement = self._requirement()
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "stale BBO"), "fresh-snapshot"),
+            self._status(requirement),
+        )
+
+        result = await _strict_snapshot_for_c2(
+            client,
+            product=self._product(),
+            requirement=requirement,
+            timeout_seconds=0.25,
+        )
+
+        self.assertEqual(result, "fresh-snapshot")
+        self.assertEqual(client.snapshot_calls, 2)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_disconnected_quote_never_retries_or_accepts_stale_data(self):
+        requirement = self._requirement()
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "stale BBO"),),
+            self._status(requirement, provider_session_state="DISCONNECTED"),
+        )
+
+        with self.assertRaisesRegex(ContinuityError, "live provider session"):
+            await _strict_snapshot_for_c2(
+                client,
+                product=self._product(),
+                requirement=requirement,
+                timeout_seconds=0.25,
+            )
+
+        self.assertEqual(client.snapshot_calls, 1)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_quiet_quote_deadline_fails_closed_without_a_fresh_snapshot(self):
+        requirement = self._requirement()
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "stale BBO"),),
+            self._status(requirement),
+        )
+
+        with self.assertRaisesRegex(ContinuityError, "before its deadline"):
+            await _strict_snapshot_for_c2(
+                client,
+                product=self._product(),
+                requirement=requirement,
+                timeout_seconds=0.01,
+            )
+
+        self.assertEqual(client.snapshot_calls, 1)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_quiet_connected_quote_stream_handoff_retries_before_yielding(self):
+        requirement = self._requirement()
+        session = SimpleNamespace(warmup=SimpleNamespace(data=[object()]))
+        client = self._StreamClient(
+            (DataLayerError("DATA_STALE", "stale BBO"), session),
+            self._status(requirement),
+        )
+
+        async with _strict_warmup_then_stream_for_c2(
+            client,
+            product=self._product(),
+            requirement=requirement,
+            timeout_seconds=0.25,
+        ) as result:
+            self.assertIs(result, session)
+
+        self.assertEqual(client.stream_calls, 2)
+        self.assertEqual(client.status_calls, 1)
 
 
 if __name__ == "__main__":

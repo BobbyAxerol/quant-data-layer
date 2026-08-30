@@ -109,6 +109,28 @@ class RestQueryTransport:
         )
         return self._decode(response)
 
+    async def feed_status(
+        self, requirement: DataRequirement, *, consumer_id: str
+    ) -> dict:
+        """Read governed quality without treating stale data as a snapshot."""
+        headers = await self._headers(requirement, consumer_id)
+        params = requirement.query_params()
+        for field in (
+            "limit",
+            "interval_source_policy",
+            "max_cache_age_ms",
+            "deadline_ms",
+            "start_time_ns",
+            "end_time_ns",
+        ):
+            params.pop(field, None)
+        response = await self._client.get(
+            f"/v2/feeds/{requirement.instrument_uid}/status",
+            params=params,
+            headers=headers,
+        )
+        return self._decode(response)
+
     async def instruments(
         self,
         *,

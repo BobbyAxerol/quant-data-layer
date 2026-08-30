@@ -13,6 +13,7 @@ from qdl_sdk.models import (
     ControlEvent,
     DataRequirement,
     Feed,
+    FeedStatusResponse,
     Grade,
     InstrumentPageResponse,
     InstrumentResponse,
@@ -41,6 +42,7 @@ class QueryTransport(Protocol):
         require_all: bool,
     ) -> dict: ...
     async def snapshot(self, requirement: DataRequirement, *, consumer_id: str) -> dict: ...
+    async def feed_status(self, requirement: DataRequirement, *, consumer_id: str) -> dict: ...
     async def instruments(
         self,
         *,
@@ -211,6 +213,31 @@ def _validate_query_payload(
                 raise ContinuityError(
                     "PARTIAL_RESULT", "BAR warmup escapes the requested time range"
                 )
+    return response
+
+
+def _validate_feed_status_payload(
+    requirement: DataRequirement, payload: dict
+) -> FeedStatusResponse:
+    """Validate status identity without reapplying snapshot freshness policy."""
+    try:
+        response = FeedStatusResponse.model_validate(payload)
+    except ValidationError as error:
+        raise ContinuityError(
+            "SCHEMA_NOT_SUPPORTED", "feed-status response violates the typed V2 contract"
+        ) from error
+    if response.instrument_uid != requirement.instrument_uid:
+        raise ContinuityError(
+            "CONFLICT", "feed-status instrument does not match requirement"
+        )
+    if response.feed is not requirement.feed:
+        raise ContinuityError(
+            "CONFLICT", "feed-status feed does not match requirement"
+        )
+    if response.quality.policy_id != requirement.source_policy_id:
+        raise ContinuityError(
+            "CONFLICT", "feed-status source policy does not match requirement"
+        )
     return response
 
 
@@ -412,6 +439,18 @@ class AsyncDataLayerClient:
         assert isinstance(response, SnapshotResponse)
         self._record_query("/v2/market-data/snapshot", response)
         return response
+
+    async def feed_status(self, requirement: DataRequirement) -> FeedStatusResponse:
+        """Return typed provider/session quality for a governed requirement.
+
+        Status intentionally exposes a stale event as status, rather than
+        converting it into a usable snapshot.  Callers must still use
+        :meth:`snapshot` or :meth:`warmup` before acting on market data.
+        """
+        payload = await self.query_transport.feed_status(
+            requirement, consumer_id=self.consumer_id
+        )
+        return _validate_feed_status_payload(requirement, payload)
 
     async def warmup(self, requirement: DataRequirement) -> WarmupResponse:
         payload = await self.query_transport.warmup(
@@ -858,6 +897,13 @@ class DataLayerClientV2:
             asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(self.async_client.snapshot(requirement))
+        raise RuntimeError("sync SDK cannot run inside an active event loop")
+
+    def feed_status(self, requirement: DataRequirement) -> FeedStatusResponse:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.async_client.feed_status(requirement))
         raise RuntimeError("sync SDK cannot run inside an active event loop")
 
     def warmup_batch(

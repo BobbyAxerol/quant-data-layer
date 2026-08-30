@@ -23514,3 +23514,90 @@ this scope rather than opening a new phase.
   `80/80 PASS` in `26.503s`; `git diff --check` passed.  The next bounded step
   is to commit this source/plan slice, build one replacement C2 client image,
   then run one fresh C2 acceptance with the same V1 fallback binding rules.
+
+- `2026-08-30 C2 QUIET-QUOTE SESSION REPAIR / APPROVED IN-SCOPE`:
+  the `f6fe2ca` C2 retry reached the governed V2 route and failed closed before
+  producing a receipt at `trading-system.paper.stable / OKX.SWAP.PERPETUAL.
+  BNB-USDT / QUOTE` with `DATA_STALE`.  This is not the earlier cursor
+  lifecycle defect: the cursor repair held and no temporary-path error
+  occurred.  A bounded read-only status observation immediately afterwards
+  found the same strict product `LIVE`, with `435ms` snapshot freshness and
+  `execution_eligible=true`; native OKX public session records were also
+  `LIVE` at runtime revision `14`.  The deterministic gap is that the ten
+  Trading System paper `QUOTE` requirements declare a strict `2000ms` event
+  freshness threshold but no `max_session_liveness_ms`, so the quality contract
+  cannot distinguish a quiet connected BBO feed from a disconnected provider
+  session during stream handoff.
+
+  **Approved scope and invariants:** version only
+  `trading-system.paper.stable` from manifest revision `4` to `5`, add the
+  existing `45000ms` session-liveness threshold to its ten `QUOTE`
+  requirements, and update the sealed stable routing digest.  Add a C2
+  acceptance-only bounded stream-open helper: only an initial strict `QUOTE`
+  `DATA_STALE` with a governed `LIVE` session may wait/retry until the existing
+  C2 deadline; it must subsequently obtain a genuinely fresh strict snapshot.
+  It never returns stale quote data, never changes `execution_eligible`, never
+  alters existing SDK/public endpoint semantics, and all BAR/TRADE, disconnected,
+  unknown, over-SLA, gap and deadline cases remain fail-closed.  This is a
+  reusable feed-policy distinction, not a venue-specific bypass.
+
+  **Test/rollback gate:** add deterministic quiet-connected,
+  quiet-disconnected and deadline-expiry harness tests; prove manifest
+  digest/routing integrity and retain the complete affected isolated suite.
+  After source exit, build exactly one immutable Python candidate, roll only
+  `query_v2_1`, `query_v2_2`, `stream_v2_active` and `stream_v2_passive` so
+  they load revision `5`, then run one fresh payload-free C2 no-order
+  acceptance with the current bound V1 rollback.  V1, Rust/ingestors/projectors,
+  Kafka topology/offsets, Redis, SQLite, Trading System, alpha and order paths
+  remain untouched.  Rollback is those four readers to their current
+  `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`
+  image and current runtime bundle; no retry may be passed by relaxed SLA or
+  timing luck.
+
+  **Source implementation and exit (`PASS`):** the governed Trading System
+  paper manifest is now revision `5`, canonical SHA-256
+  `8a6040b5fe8f30bda97d9584749a833c4443c83f0e18f6b11d5a74f186b3ce67`.
+  All ten strict `QUOTE` requirements retain `max_freshness_ms=2000`,
+  `stale_policy=BLOCK`, no observed-event relaxation, and now declare
+  `max_session_liveness_ms=45000`; stable release routing is bound to that
+  exact revision/digest.  The additive SDK `feed_status()` method exposes the
+  existing governed `/v2/feeds/{instrument_uid}/status` contract as typed
+  quality, validating identity/feed/policy but deliberately not converting a
+  stale status into a snapshot.  The C2 harness uses it only after initial
+  strict `QUOTE` `DATA_STALE`: a `STALE` event may wait in bounded `200ms`
+  steps only when its session is `LIVE`, within the declared SLA, complete,
+  gap-free and still non-execution-eligible.  It then retries the original
+  strict snapshot/stream open and accepts only a fresh result.  Disconnected,
+  unknown, over-SLA, incomplete, gapped, non-QUOTE, non-`DATA_STALE` and
+  deadline paths remain terminal failures.
+
+  **Isolated evidence (`PASS`):** using existing immutable
+  `qdl-v2-python:2.0.0-f6fe2ca` with network disabled, read-only source mount,
+  UID/GID `10001`, all capabilities dropped and tmpfs-only `/tmp`, the focused
+  contract/harness matrix passed `38/38` in `11.383s`.  The complete affected
+  C2 matrix then passed `88/88` in `26.968s`:
+  `test_qdl_sdk_feed_status`, `test_phase103_consumer_acceptance`,
+  `test_phase103_consumer_receipt_harness`,
+  `test_phase103_shared_primary_handoff`,
+  `test_phase105_consumer_acceptance`, `test_phase105_identity_acceptance`,
+  `test_phase105_fallback_acceptance`, `test_phase105_stable_release`,
+  `test_phase105_release_certification`, and `test_routed_query_backend`.
+  The added deterministic cases prove quiet-connected snapshot and stream
+  handoff both retry only until a fresh result appears; disconnected session
+  and deadline expiry fail closed; the REST transport uses the exact status
+  route and excludes warmup-only query parameters.  `git diff --check` and
+  `py_compile` passed.  These tests made no provider call and no mutation to
+  runtime roles, V1, Kafka, Redis, SQLite, Trading System, alpha or order
+  paths.
+
+  **Commit boundary:** this complete source/contract/test/journal slice is
+  committed before any candidate image build or reader rollout.  It has no
+  runtime mutation and remains independently revertible as one commit.
+
+  **Next bounded action:** build exactly one immutable Python reader candidate
+  from this committed slice, attest it, generate
+  the governed revision-`5` runtime material, roll only the four approved
+  query/stream reader roles, and run one fresh C2 no-order acceptance.  If the
+  result fails, restore only those four roles to the recorded `e43f903` image
+  and retain compact evidence; do not alter source policy, quote SLA, V1 or the
+  data plane to force an acceptance.

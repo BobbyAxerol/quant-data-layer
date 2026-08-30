@@ -5,7 +5,7 @@ metadata:
   owner: trading-platform
   subject: spiffe://qdl/paper/trading-system-stable
   environment: paper
-  revision: 4
+  revision: 5
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -60,6 +60,7 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
@@ -72,6 +73,7 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
@@ -138,6 +140,7 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
@@ -150,6 +153,7 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
@@ -202,6 +206,7 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
@@ -241,6 +246,7 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
@@ -280,6 +286,7 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
@@ -319,6 +326,7 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
@@ -358,6 +366,7 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
@@ -397,6 +406,7 @@ spec:
     source_policy_id: crypto_primary_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
