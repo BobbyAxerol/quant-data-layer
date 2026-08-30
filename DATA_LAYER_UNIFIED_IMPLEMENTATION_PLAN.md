@@ -25495,3 +25495,110 @@ directory, then execute only the already-approved role start and one
 300-second no-order paper acceptance. A failed build, binding check or
 acceptance rolls only `market_data_service` and stops only the packet-started
 V2 roles; it does not authorize a new topology or a broader retry.
+
+#### 24.3.9 Bounded Runtime Packet (`READY / NOT YET APPLIED`, 2026-08-30)
+
+**Immutable artifacts.** The Data Layer image built from `6b217aa` is
+`qdl-v2-python:2.0.0-6b217aa`, image ID
+`sha256:2684b52e15d2a2caab361f5f1c632d9040b23617cf2f6deaf9b8371da58417ee`.
+The Trading System image built from the typed-feed code at `5cc703e` plus its
+packet journal is `tradingsystem-image:v2-primary-3636757`, image ID
+`sha256:3bafd2ca9f9bf5365a7760ef71ff92db3e1f0705376caa6bd19ab0110187f90a`.
+The QDL image reran the 72-test isolated matrix successfully. The Trading
+System source rebuilt its vendor SDK dependency and passed the four typed V2
+unit modules (`50/50`) plus a no-network public-import smoke. A pre-existing
+test image stopped at collection because it contained an older `qdl_sdk`
+without `FeedStatusResponse`; rebuilding from the locked source corrected the
+test environment, not product source.
+
+**Exact runtime configuration.** Reuse the existing
+`session-liveness-43cdbe3-20260829T162719Z` runtime directory,
+`RUST_PRIMARY` Rust image and all current certificates/state. Install only the
+new mode-0600 sealed binding in a private Phase-12 subdirectory, validate its
+SHA `1bad76a8...c29d7f1` before mount, and set the release SHA to
+`1f041907...593021e9`. Do not overwrite the older binding. The retained
+rollback images are `qdl-v2-python:2.0.0-3a74e73` and
+`tradingsystem-image:v2-primary-c3704b7`; rollback restores only the previous
+`market_data_service` image/binding and stops only Phase-12-started V2 roles.
+
+**Exact activation set.** Start the stopped existing `kafka1`, `kafka2`,
+`kafka3`, `stable_redis`, `stable_state_init`, `stable_tls_init`,
+`ingestor_binance_usdm`, `ingestor_okx_swap`, `binance_bar_edge`,
+`rust_core`, `rust_core_2`, `rust_core_3`, `projector_v2`, `projector_v2_2`,
+`projector_v2_3`, `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive`; then recreate only Trading System `market_data_service`.
+No other role, V1 container, Kafka topic/offset, Redis flush, SQLite state,
+database row, alpha, broker or order path is allowed. Normal provider-derived
+V2 data-plane writes are the only accepted writes.
+
+**Acceptance.** Observe a single 300-second no-order window through the
+actual Trading System V2-primary consumer. It must project separate
+trade/quote/mark/book/final-BAR values for the four sealed identities, retain
+`BLOCKED` behavior, show no cross-symbol/venue mix or unbounded cache fan-in,
+and leave order/signal/sizing counts unchanged. The receipt is payload-free,
+kept in a new private mode-0600 namespace, and removed after hashes/counts are
+recorded here. Any failed readiness, typed freshness, gap/reconnect or
+resource check executes the narrow rollback above.
+
+#### 24.3.10 BAR-Edge Binding-Projection Correction (`IN PROGRESS / IN-SCOPE`, 2026-08-30)
+
+**Observed before Trading System handoff.** The first approved V2 role start
+showed `binance_bar_edge` reading the image-default stable catalog and
+acquisition plan. It consequently attempted BAR REST reads for legacy-wide
+intervals such as SOL `3m/6h`, DOGE `15m` and OKX swap `2h`. Those routes are
+not present in the sealed `trading-system.paper.stable` binding and must not
+be acquired merely because the runtime image retains a broader capability
+catalog. This is a bounded configuration-isolation defect; it is not a
+provider failure and did not reach Trading System or the order path.
+
+**Approved repair.** Materialize a private, read-only BAR-edge catalog and
+acquisition projection directly from the sealed consumer binding plus the
+validated stable catalog/acquisition documents. The projection must retain
+only exact `BAR` requirements `(venue, market, native_symbol, interval)` in
+the binding, preserve canonical identities, topics and provider policy, and
+reject an unknown, duplicate, missing, non-final or non-BAR mapping. The
+current binding contains ten base BAR routes at `1m` for the five existing
+Binance USD-M/OKX Swap symbols; typed `MARK_INDEX_PRICE` and L2 remain the
+four approved BTC/ETH identities and do not enter the BAR edge. No symbol or
+interval is hard-coded in source.
+
+**Runtime wiring and rollback.** The generated private YAML documents live
+under the already-approved V2 runtime directory and are mounted through the
+existing `/runtime` read-only mount. A private Compose override changes only
+`binance_bar_edge`'s two catalog/acquisition environment paths. The approved
+role set is restarted only after source tests pass. Rollback removes the
+override from the bounded Compose invocation and stops only the packet-started
+V2 roles; V1, Kafka offsets/topology, Redis, SQLite, Trading System, alpha
+and order paths remain untouched.
+
+**Exit gates.** Network-disabled unit tests prove exact binding projection,
+default-document non-mutation, rejection of mismatches and source/acquisition
+loader validity. After the already-approved V2 role restart, structured
+BAR-edge logs must show only the ten sealed `1m` routes and no legacy-wide
+interval fetch. Only then may `market_data_service` be recreated and the one
+300-second no-order acceptance begin.
+
+**Source correction evidence (`PASS / RUNTIME UNCHANGED`, 2026-08-30).**
+`scripts/phase12_materialize_bound_bar_edge.py` now validates the signed
+`ConsumerRouteBinding`, resolves each live final-BAR requirement by complete
+canonical identity, and emits a separate catalog/acquisition pair only after
+both strict runtime loaders accept it. It refuses unknown/duplicate mappings,
+non-final BARs, malformed document coverage and non-REST BAR acquisition;
+the source documents are copied, never edited. The network-disabled,
+read-only immutable QDL image ran the new projection regression plus the
+stable edge suite: `49/49` passed with one optional isolated-Redis skip.
+
+The sealed private binding dry-run, executed as its owning non-root runtime
+UID with network disabled, returned exactly ten `1m` BAR IDs: five Binance
+USD-M and five OKX Swap. It produced catalog SHA
+`95cbfbcc8338453636ddd460e1e39558272f5f9481e4437da0cf5a22b37c6c87` and
+acquisition SHA
+`31b89fb67a7415a97a722423cf667ee812b7a09644bcb2a839c86ead095698ca`, bound
+to consumer-binding SHA
+`1bad76a8f28c6dc98776d8cfde8836c46007defd960b418df37b56bdbc29d7f1`.
+The first dry run under UID `10001` correctly could not read the mode-0600
+consumer binding; rerunning the control-plane tool as the binding owner UID
+`1001` succeeded. The generated BAR YAML itself is non-secret and will be
+read-only/0644 under the existing `/runtime` mount. No provider, role, image,
+Kafka, Redis, SQLite, V1, Trading System, alpha or order action changed in
+this source/evidence slice.
