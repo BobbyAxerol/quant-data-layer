@@ -24587,3 +24587,47 @@ this scope rather than opening a new phase.
   regressions. The gRPC GOAWAY and provider-reconnect lines are intentional
   fault fixtures. No runtime image, role, Kafka, Redis, SQLite, V1, Trading
   System, alpha, provider or order path changed during this source slice.
+
+  **C2 launcher permission correction (`NO DATA REQUEST`):** the first
+  post-reader-roll container exited in 0.34 seconds before loading an identity
+  or opening V1/V2 because the copied `/run-c2.sh` was mode `0700` for the host
+  owner while the bootstrap correctly drops the actual client to UID `10001`.
+  The final shell therefore could not open the script. No acceptance receipt,
+  provider request, fallback read, durable write or order action exists, so
+  this is not counted as the one C2 observation. The scoped correction is to
+  make only the two non-secret launcher scripts executable/readable (`0755`);
+  evidence/private inputs remain `0600`. The same image, routes, network,
+  identity files, 300-second bound and no-order command will then run once.
+
+  **C2 strict-stream runtime exit (`PASS / V2 HANDOFF EVIDENCE COMPLETE`):**
+  immutable reader image
+  `sha256:8ed5b9954b99a41e9314fd008f034be1dd685e665514f2dc020b5c23a96eb0f0`
+  (`qdl-v2-python:2.0.0-c793ed9`, OCI revision
+  `c793ed9af50c421f2fa9157cfa49f0f1d25cad48`) was built from the committed
+  source. Only `stream_v2_passive`, then `stream_v2_active`, were serially
+  recreated with their existing runtime bind, TLS/state volumes and networks.
+  Both are `running`, `restart=0`, `OOMKilled=false`. The exact rollback is the
+  previously running stream-reader image
+  `sha256:ee4fb55d85ed41a63ab9c5fa173d9bdb6622b50dcd73ffa5839d721aae66d37a`
+  with the same mounts; query replicas, Rust, ingestors, projectors, V1,
+  Kafka/Redis/SQLite, Trading System, alpha and order path were not recreated
+  or changed.
+
+  The sole real C2 receipt completed `PASS_V2_DATA_PLANE_ONLY` in **221.81 s**
+  within its 300-second bound. It authenticated and read all `60` sealed V2
+  routes: Trading System paper `30`, alpha Binance paper `15` and alpha OKX
+  paper `15`; `50` were durable products. It recorded `0` direct provider
+  connections, `0` order actions, no secret values and removed its local cursor
+  directory. The governed fallback drill proved all `10` allowed Binance
+  TRADE routes `V2_PRIMARY -> V1_FALLBACK -> V2_PRIMARY`; all `50` blocked
+  routes made `0` V1 requests. The V1 reads were bounded cached reads only.
+  Both V2 stream replicas stayed up on the new image and `c2.stderr` was empty.
+  Compact receipt SHA-256:
+  `d4a569ef948e5e6a372615fcb6689f669bea3a173237f2cbf911e4eed04534a1`;
+  resource capture recorded `73` CPU millicores and `268,673,024` RSS bytes
+  for the disposable acceptance process. The finished C2 container and the
+  two superseded disposable client-only images were deleted; the compact
+  evidence namespace, active image and rollback image remain. This closes the
+  approved stale-frame/C2 repair; it does not itself recreate actual Trading
+  System or alpha processes, which may now consume their already-certified
+  V2-primary routes through the versioned handoff configuration.
