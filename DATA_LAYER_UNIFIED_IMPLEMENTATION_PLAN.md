@@ -25602,3 +25602,70 @@ consumer binding; rerunning the control-plane tool as the binding owner UID
 read-only/0644 under the existing `/runtime` mount. No provider, role, image,
 Kafka, Redis, SQLite, V1, Trading System, alpha or order action changed in
 this source/evidence slice.
+
+#### 24.3.11 Runtime-Image And Projection-Cache Repair (`IN PROGRESS / IN-SCOPE`, 2026-08-30)
+
+**Observed deterministic startup failures.** The runtime's pinned Python
+digest `sha256:b482...` predates the source fast-final-BAR correction: it
+rejects the already-declared `QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS=0.10`
+with a stale `1..10` second validator, while current source validates the
+bounded `0.01..2.0` interval and the Compose contract/test declares `0.10`.
+This is image provenance drift, not an invitation to change the finality
+policy. Separately, all three V2 projectors correctly stopped with
+`ProjectionCacheMismatch`: the isolated ephemeral Redis cache lost its cache
+identity while the V2 SQLite spool remained non-empty. No projector may bind a
+new Redis identity to that old spool without an explicit rebuild.
+
+**Approved narrow repair.** Build one immutable Python image from the current
+tested source revision and pass its exact digest only to the existing Phase-12
+V2 role invocation, retaining the currently running `b482...` image and the
+declared `3a74...` image as rollback coordinates. Then execute the existing,
+previously approved `rebuild_v2_stable_projection_cache.py` runbook exactly:
+stop only V2 query/projector/stream roles; remove only their
+`canonical-cache.sqlite3` + WAL/SHM; flush only `stable_redis`; reset only
+`stable-projector-v1` on V2 canonical; restart stream -> projector -> query
+after bounded zero-lag/readiness checks. It does not touch V1, Kafka topology
+or offsets outside that V2 projector group, Trading System, alpha or order
+state. BAR-edge is then recreated with the sealed ten-route override.
+
+**Exit gates.** The new image must run the Phase-12 source matrix before use.
+The recovery runbook must emit its scoped plan/receipt and all three projectors
+must bind the rebuilt cache identity. BAR-edge must stay up, log only the ten
+sealed `1m` bindings, and produce authentic final-bar ACKs before any
+`market_data_service` recreation or no-order acceptance.
+
+**Execution boundary (2026-08-30).** The runbook dry-run verified its exact
+seven-role/three-file/one-Redis-DB scope, but the environment's destructive
+action guard rejected its `--apply` because this Phase-12 packet originally
+declared no Redis flush or SQLite deletion. No stop, deletion, flush or offset
+reset occurred. The non-destructive image-provenance/BAR-edge correction may
+continue, but projector/query/stream acceptance remains blocked until either
+an explicitly approved scoped cache rebuild is rerun or a separately proven
+non-destructive recovery preserves full cache correctness.
+
+**BAR-edge runtime evidence (`PASS / HANDOFF BLOCKED`, 2026-08-30).** The
+existing `binance_bar_edge` role was recreated only with the sealed private
+projection override and the already-tested immutable Python image
+`sha256:2684b52e15d2a2caab361f5f1c632d9040b23617cf2f6deaf9b8371da58417ee`.
+It mounts the generated source/acquisition documents at
+`/runtime/phase12-bar-edge-1bad76a8f28c/{catalog,acquisition}.yaml` and uses
+the new namespaced V2 checkpoint
+`/var/lib/qdl-stable/runtime/phase12-bar-edge-1bad76a8f28c.json`; no historical
+checkpoint, V1 state or shared store was deleted or rewritten. It bootstrapped
+exactly `10` sealed one-minute BAR bindings with `10,000` real provider rows.
+Three consecutive close cycles then ACKed all five Binance USD-M and all five
+OKX Swap routes (`BTC`, `ETH`, `SOL`, `DOGE`, `BNB`) with no warning, retry,
+legacy-wide interval fetch or restart. Post-bootstrap resource observation was
+`0.01%` CPU and `108.9 MiB / 512 MiB` memory.
+
+**Fail-closed handoff decision.** All three `projector_v2` replicas remain
+stopped solely with the expected `ProjectionCacheMismatch: stable Redis cache
+identity is missing for a non-empty spool`; query/stream cannot prove a
+correct cache view until that condition is repaired. Consequently this packet
+has not recreated Trading System `market_data_service`, has not started an
+alpha, and has not run the 300-second no-order paper acceptance. The only
+remaining in-scope repair is the documented, exact scoped cache rebuild above;
+it requires a fresh explicit approval for the seven V2 cache-user stops,
+three V2 SQLite cache-file removals, `stable_redis` DB-only flush and bounded
+`stable-projector-v1` reset. V1, Trading System, alpha and every order path
+remain untouched.
