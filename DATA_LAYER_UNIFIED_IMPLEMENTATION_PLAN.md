@@ -24828,3 +24828,17 @@ scoped Trading System account is flat with no active lifecycle. This does not
 change Data Layer runtime or authorize another consumer; the next permitted
 runtime mutation is starting that one alpha container after the accepted
 Trading System consumer handoff.
+
+**C4.14 alpha client construction failure (`FAILED CLOSED / DATA LAYER
+UNCHANGED`):** The selected alpha stopped before issuing any V2 request because
+its local handler thread created the gRPC client before its own SDK event loop.
+This is a consumer runtime ownership bug, not a provider, contract, manifest,
+identity or Data Layer failure. The only repair is in the shared alpha gateway
+factory path with a non-main-thread test; Data Layer runtime and all durable
+state remain unchanged.
+
+**C4.15 alpha consumer loop repair (`PASS / DATA LAYER UNCHANGED`):** The
+shared alpha gateway now owns client creation on its SDK loop and has a passing
+non-main-thread regression (**39/39** runtime tests). No Data Layer protocol,
+manifest, image, role, provider call or durable state changed. The only
+permitted next mutation is one retry of the same selected alpha container.
