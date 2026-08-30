@@ -2102,6 +2102,10 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             values = self.environment(root)
             config = StableRuntimeConfig.from_environment("query_v2", values)
             self.assertEqual(config.request_deadline_seconds, 10.0)
+            self.assertEqual(
+                config.session_liveness_dir,
+                root / "state" / "session-liveness",
+            )
             values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "90"
             self.assertEqual(
                 StableRuntimeConfig.from_environment("query_v2", values).request_deadline_seconds,

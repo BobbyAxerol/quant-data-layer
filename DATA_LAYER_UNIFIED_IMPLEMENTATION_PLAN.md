@@ -23159,3 +23159,142 @@ this scope rather than opening a new phase.
   exactly the existing fourteen-role rollback map.  The disposable C2 client
   and its exact failed evidence namespace are removed after the recorded
   result; no market payload is retained.
+
+- `2026-08-30 C2 CLIENT BOOTSTRAP PREFLIGHT / NON-ACCEPTANCE`:
+  the first disposable invocation exited before any SDK, V2, V1, gRPC,
+  provider or order request because its intentionally capability-dropped root
+  bootstrap could not read the owner-only host identity bind mount
+  (`cp ... monitoring/ca.crt: Permission denied`).  `receipt.json` is zero
+  bytes; the `--rm` client is absent.  Both query replicas and both native
+  ingestors remain `running`, `restart=0`, `OOMKilled=false` on the new V2
+  images.  This is a client-material preflight failure, not a C2 runtime or
+  data-plane gate, so the healthy fourteen-role rollout is retained.
+
+  **Narrow invocation repair:** the disposable container receives only
+  `DAC_OVERRIDE`, `CHOWN` and `SETUID` during its root bootstrap so it can copy
+  the exact approved identity files from read-only host mounts into its own
+  tmpfs and transfer their ownership to UID/GID `10001`.  It then `exec`s the
+  C2 interpreter as UID `10001` with `no_new_privs`; it has no retained Docker
+  socket, provider credential, execution credential, writable host mount or
+  capability.  This changes no source, image, service, identity, runtime,
+  Kafka, Redis, SQLite, V1, Trading System, alpha or order path.  Remove only
+  the exact failed `c2-20260830T020554Z-converged` namespace after preserving
+  this diagnosis, create one fresh namespace/V1 binding, and run the one real
+  300-second C2 acceptance from zero.
+
+- `2026-08-30 C2 CLIENT BOOTSTRAP PREFLIGHT / SECOND NON-ACCEPTANCE`:
+  the corrected UID/capability bootstrap reached its local copy stage but
+  exited before any SDK, V2, V1, gRPC, provider or order request because the
+  immutable V1 provenance mount is a directory and the invocation used
+  file-only `cp` (`cp: -r not specified; omitting directory`).  The receipt is
+  zero bytes and the disposable `--rm` client is absent.  This is again a
+  local client invocation defect, not a V2 data-plane or runtime failure;
+  the healthy fourteen-role V2 rollout remains in place.  The only correction
+  is to copy that already-approved read-only provenance directory with
+  `cp -a` into the existing tmpfs before dropping to UID `10001`; all other
+  mounts, capabilities, identity files, endpoint arguments, runtime roles,
+  V1, Kafka, Redis, SQLite, Trading System, alpha and order path remain
+  unchanged.  The exact failed evidence namespace
+  `c2-20260830T021009Z-converged` is retained as compact preflight evidence;
+  the next fresh namespace is the one permitted real C2 data-plane attempt.
+
+- `2026-08-30 C2 CLIENT LAUNCH PREFLIGHT / THIRD NON-ACCEPTANCE`:
+  the fresh V1 binding passed against the current immutable serving V1 image,
+  but the host launcher invoked a mode-`0644` temporary helper directly and
+  the host shell returned `126` (`Permission denied`) before Docker created a
+  client container.  The scoped receipt remains zero bytes and no SDK/V2/V1/
+  gRPC/provider/order request occurred.  This is not an acceptance attempt or
+  a V2 runtime result.  The correction is solely to invoke the same reviewed
+  helper as `bash /tmp/...`, retaining its root bootstrap, tmpfs-only material
+  copy, non-root C2 interpreter and all existing mounts/limits.  The next
+  fresh namespace receives a newly bound current V1 receipt; the exact failed
+  launcher namespace is then removed as an approved disposable artifact.
+
+- `2026-08-30 C2 CLIENT COPY PREFLIGHT / FOURTH NON-ACCEPTANCE`:
+  the fresh launcher correctly created the disposable Docker client but exited
+  inside its tmpfs bootstrap before the interpreter started: `cp -a` attempted
+  to preserve bind-mount ownership/mode and was denied by the deliberately
+  minimal capability set.  The receipt is zero bytes; no SDK/V2/V1/gRPC/
+  provider/order call occurred.  The correction is restricted to `cp -R`
+  followed by the already-reviewed explicit `chown` and restrictive key
+  `chmod` in tmpfs.  It neither grants a new capability nor changes source,
+  image, identity, runtime, V1, Kafka, Redis, SQLite, Trading System, alpha or
+  order path.  Remove this exact disposable namespace, bind a fresh current
+  V1 evidence file, and make the remaining real C2 attempt.
+
+- `2026-08-30 C2 CLIENT MODE PREFLIGHT / FIFTH NON-ACCEPTANCE`:
+  after the copy repair, the client again exited during its tmpfs-only setup:
+  it changed ownership to UID `10001` before applying restrictive key modes,
+  while its deliberate capability set does not include post-ownership
+  `FOWNER`.  No interpreter, SDK, V2, V1, gRPC, provider or order request
+  started and the receipt is zero bytes.  The narrow correction is ordering
+  only: apply key mode while root still owns the tmpfs copies, then transfer
+  ownership and drop to UID `10001`.  A no-endpoint bootstrap preflight must
+  prove that exact sequence before the one remaining C2 data-plane run; no
+  source, image, identity, runtime role, V1, Kafka, Redis, SQLite, Trading
+  System, alpha or order path change is authorized.
+
+- `2026-08-30 C2 REAL DATA-PLANE ACCEPTANCE / FAIL-CLOSED / ROLLED BACK`:
+  the bootstrap preflight passed under UID `10001`; the one real C2 client then
+  reached V2 and failed at `trading-system.paper.stable / OKX.SWAP.PERPETUAL.
+  DOGE-USDT / TRADE` with `required data exceeds its freshness policy`.
+  `receipt.json` remains zero bytes, so no pass certificate was issued.  The
+  approved fourteen-role rollback completed successfully using the recorded
+  per-role map; V1, Kafka topology/offsets, Redis, SQLite, Trading System,
+  alpha and the order path were not changed.  Static manifest verification
+  proves this route is correctly declared `event_recency_policy=OBSERVE`,
+  `max_freshness_ms=3000`, `max_session_liveness_ms=45000`, grade
+  `EXECUTION`, policy `crypto_primary_v2`; the cause is therefore runtime
+  quality materialization, not a missing entitlement declaration.
+
+  **Next bounded diagnosis:** reapply the already-approved fourteen-role V2
+  packet only, wait for its existing liveness convergence, then issue one
+  read-only authenticated V2 `feed-status` request for this governed DOGE
+  route and retain only compact quality fields (state, event recency,
+  provider-session state/age, completeness, gap and policy).  This diagnostic
+  has no V1 fallback, stream replay, provider call, order action or durable
+  write.  If the result is not `LIVE` with a matching provider session, roll
+  back the same fourteen roles and repair only the demonstrated source path;
+  do not retry C2 by timing luck.
+
+- `2026-08-30 C2 DOGE QUALITY DIAGNOSIS / SOURCE REPAIR AUTHORIZED IN-SCOPE`:
+  the bounded authenticated V2 status read returned HTTP `200` with compact
+  quality `state=STALE`, `event_recency_state=LIVE`,
+  `provider_session_state=UNKNOWN`, flag `SOURCE_SESSION_UNAVAILABLE`, no
+  gap and a sub-three-second event age.  Read-only canonical/state comparison
+  proved the latest DOGE event and a `LIVE` OKX heartbeat have the same hashed
+  session identity, generation `16` and config revision `14`.  The defect is
+  therefore deterministic path composition: the compose state root is already
+  `/var/lib/qdl-stable/runtime`, while `StableRuntimeConfig.session_liveness_dir`
+  appended a second `/runtime`, making query/stream read
+  `/var/lib/qdl-stable/runtime/runtime/session-liveness` instead of the native
+  ingestor write path `/var/lib/qdl-stable/runtime/session-liveness`.
+
+  **Approved repair scope:** change the one canonical config property to use
+  `state_dir / session-liveness`, add a regression covering the deployed root
+  shape, run focused config/session/quiet-feed tests and a full affected
+  Python suite in an isolated immutable image, then build one replacement
+  Python image.  Recreate only `query_v2_1`, `query_v2_2`,
+  `stream_v2_active`, and `stream_v2_passive` to that image; Rust core,
+  ingestors, projectors, bar edge, authority, V1, Kafka, Redis, SQLite,
+  Trading System, alpha and order paths remain untouched.  A failed reader
+  health or status gate restores those four roles to their current image.
+
+- `2026-08-30 SESSION-LIVENESS PATH REPAIR / SOURCE TESTED / IMAGE PENDING`:
+  implemented the single canonical path correction in
+  `qdl/runtime/stable.py` and added a deployed-root regression in
+  `tests/test_phaseb_stable_edge.py`.  The fixed query/stream path is now
+  `<QDL_STABLE_STATE_DIR>/session-liveness`, exactly matching the native
+  ingestor writer; this does not alter any event, decimal, provider contract,
+  public endpoint, manifest, V1 fallback policy or authority rule.
+
+  **Isolated test evidence:** `20/20` focused runtime/session-liveness/
+  Phase-10.5 tests passed.  The full affected stable edge plus handoff suite
+  passed `59/60`, skipped `1`, in `11.506s`; the skip is pre-declared.  A
+  broader `33`-test convenience aggregate had one unrelated stale
+  Phase-10.3 sealed-fence fixture error before the affected suite was run;
+  it does not exercise this path and is not used as evidence.  Next: commit
+  the tested source/plan slice, build one immutable Python image from that
+  commit, update only the private reader image coordinate, rolling-recreate
+  the four query/stream readers, then require DOGE status `LIVE` before a new
+  full C2 acceptance.

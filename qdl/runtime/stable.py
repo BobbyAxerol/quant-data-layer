@@ -243,7 +243,9 @@ class StableRuntimeConfig:
     def session_liveness_dir(self) -> Path:
         """Shared read-only query view of bounded ingestor session state."""
 
-        return self.state_dir / "runtime" / "session-liveness"
+        # QDL_STABLE_STATE_DIR is the mounted runtime root, not its parent.
+        # Native ingestors write ``<state_dir>/session-liveness/<lane>``.
+        return self.state_dir / "session-liveness"
 
     @classmethod
     def from_environment(
