@@ -24734,3 +24734,16 @@ consumer repositories now test against this exact artifact; Alpha runtime
 passed **35/35** and Trading System V2 suites passed **39/39** in isolated
 containers. The temporary Trading System test image was deleted. No Data Layer
 runtime object, provider byte, cache, route or authority changed.
+
+**C4.6 consumer-image and final-bar evidence (`PASS / RUNTIME UNCHANGED`):**
+Execution Alpha image `sha256:21ce74f96ab635143dfebcaed1987b4a44f3603372831de05615f7fbad067703`
+and Trading System image
+`sha256:313b875801ff7ed9e941da3e4e91170dcd4fe6a44874503d1784d2ea64d04fe9`
+embed the same sealed SDK wheel. A read-only authenticated V2 probe verified
+1,000 ETHUSDT/15m final bars against the equivalent V1 final window with
+identical semantic SHA-256
+`e6953c2777c00f5a7a231d5f9a6c0f5ac772907882e0987b31ccc8e2d041037c`,
+`all_closed=true`, durable latest/tail agreement and zero V1 fallback events.
+The legacy comparator's one newer in-progress bar is explicitly excluded; V2
+does not claim it is final. This consumes real provider data only and leaves
+every Data Layer role, topic, cache, authority and consumer runtime unchanged.
