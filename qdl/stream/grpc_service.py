@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
 import grpc
 
 from qdl.marketdata.v2 import market_data_pb2
-from qdl.query import AccessPurpose, DataRequirement, QueryServiceError, V2QueryService
+from qdl.query import (
+    AccessPurpose,
+    DataRequirement,
+    QueryServiceError,
+    StalePolicy,
+    V2QueryService,
+)
 from qdl.query.v2 import query_pb2
 from qdl.replay import ReplayGapError
 from qdl.runtime.stable_catalog import canonical_payload_interval
@@ -152,10 +160,12 @@ class GrpcMarketDataService:
         query_service: V2QueryService,
         snapshot_loader: SnapshotLoader,
         cursor_scope_validator: CursorScopeValidator | None = None,
+        clock_ns: Callable[[], int] = time.time_ns,
     ) -> None:
         self.gateway = gateway
         self.query_service = query_service
         self.snapshot_loader = snapshot_loader
+        self._clock_ns = clock_ns
         self.cursor_scope_validator = (
             cursor_scope_validator or FeedScopedCursorScopeValidator()
         )
@@ -169,16 +179,31 @@ class GrpcMarketDataService:
             event=envelope,
         )
 
-    @staticmethod
     def _matches_requirement(
-        stored: StoredEvent, requirement: DataRequirement,
+        self, stored: StoredEvent, requirement: DataRequirement,
     ) -> bool:
-        """Keep logical products exact when they share a physical partition."""
+        """Keep product identity and strict freshness exact before delivery."""
 
         envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+        if (
+            envelope.WhichOneof("payload") != requirement.feed.value.lower()
+            or canonical_payload_interval(envelope) != requirement.interval
+        ):
+            return False
+        if (
+            requirement.max_freshness_ms is None
+            or requirement.effective_event_recency_policy
+            not in {StalePolicy.BLOCK, StalePolicy.PAUSE}
+        ):
+            return True
+        observed_at_ns = (
+            int(envelope.bar.close_time_ns)
+            if requirement.feed.value == "BAR"
+            else int(envelope.source_event_time_ns)
+        )
         return (
-            envelope.WhichOneof("payload") == requirement.feed.value.lower()
-            and canonical_payload_interval(envelope) == requirement.interval
+            self._clock_ns() - observed_at_ns
+            <= requirement.max_freshness_ms * 1_000_000
         )
 
     async def subscribe(self, request: query_pb2.SubscribeRequest, context):

@@ -24529,3 +24529,61 @@ this scope rather than opening a new phase.
   coverage. Together with the preceding ingress matrix, this authorizes only
   the bounded immutable V1 image build and `data_layer_service` recreate
   described above; it does not certify C2 or alter V2-primary routing.
+
+  **C2 strict-stream stale-frame admission correction (`APPROVED / IN
+  PROGRESS`, 2026-08-30):** the replacement C2 client reached a distinct,
+  real V2 defect before its 300-second bound. For the exact
+  `trading-system.paper.stable / OKX.SWAP.PERPETUAL.SOL-USDT / QUOTE`
+  requirement, both query replicas report the same `LIVE`, complete,
+  gap-free, execution-eligible state and a live provider session (133 ms).
+  The resumed V2 stream nevertheless delivered an older quote physical record
+  after the fresh snapshot; the SDK correctly rejected that record under the
+  already-declared strict freshness policy. This is neither a missing/zero V1
+  `price` payload nor a provider, Rust, identity, policy, route or consumer
+  defect.
+
+  The approved repair is one shared V2 stream-admission correction only:
+  `GrpcMarketDataService` will continue to require exact feed/interval, and
+  will additionally suppress a physical record whose canonical event time is
+  older than `max_freshness_ms` when the requirement's effective event-recency
+  policy is `BLOCK` or `PAUSE`. BAR uses its canonical `close_time_ns`; every
+  other feed uses `source_event_time_ns`, exactly matching the SDK projection
+  contract. `OBSERVE` remains lossless/visible, no event is synthesized, and
+  an initially skipped physical record is still cursor-recorded before being
+  omitted so signed resume never loops over it. This prevents a strict
+  consumer or alpha from receiving a frame it must immediately reject while
+  retaining the raw durable record and all normal provider data-plane writes.
+
+  Before any runtime action, deterministic source tests must prove strict
+  initial/live stale suppression, `OBSERVE` preservation, BAR close-time
+  semantics, exact feed/interval isolation and cursor advancement. The only
+  potential runtime mutation after those tests is an image-only serial recreate
+  of `stream_v2_passive`, then `stream_v2_active`, with their existing
+  `/runtime`, TLS/state mounts and networks. V1, query replicas, Rust,
+  ingestors, projectors, Kafka topology/offsets, Redis, SQLite, Trading
+  System, alpha and every order path remain excluded. The exact current active
+  reader image will be recorded immediately before the roll and is the rollback
+  image for those same two roles. After readiness, one replacement disposable
+  300-second C2 receipt remains the sole acceptance attempt for the sealed
+  60-route scope; it must be removed with its client image after a terminal
+  result. A further failure is evidence, not permission to widen freshness or
+  add a new retry ceremony.
+
+  **C2 strict-stream source exit (`PASS / TWO-READER ROLL PENDING`):**
+  `qdl.stream.grpc_service.GrpcMarketDataService` now uses the same canonical
+  freshness timestamp as `qdl_sdk.projection`: final BAR `close_time_ns`, all
+  other feeds `source_event_time_ns`. A strict `BLOCK`/`PAUSE` requirement does
+  not receive an older physical record; an `OBSERVE` requirement still does.
+  The durable record is not deleted and initial replay advances its signed
+  cursor before the stale record is omitted. This removes the exact SOL quote
+  failure mode without changing a freshness bound or hiding observed data.
+
+  `git diff --check` and in-memory Python compilation passed. In an existing
+  disposable, network-none, read-only UID `10001` image, the stream/SDK/C2
+  matrix passed **87/87** in 5.152 seconds: `23` stream gateway/gRPC cases
+  including strict initial and live stale suppression, cursor advancement,
+  BAR close-time semantics, `OBSERVE` preservation and interval isolation;
+  plus SDK projection, C2 receipt, identity, fallback and runtime-correctness
+  regressions. The gRPC GOAWAY and provider-reconnect lines are intentional
+  fault fixtures. No runtime image, role, Kafka, Redis, SQLite, V1, Trading
+  System, alpha, provider or order path changed during this source slice.

@@ -34,6 +34,7 @@ from qdl.query import (
     MemoryMarketDataBackend,
     QualityMetadata,
     SourceMetadata,
+    StalePolicy,
     V2QueryService,
 )
 from qdl.query.v2 import query_pb2
@@ -72,6 +73,7 @@ from tests.phase7_support import make_identity, make_token, manifest_mapping
 
 STREAM = "md.canonical.v2.bar"
 BOOK_STREAM = "md.canonical.v2.book_snapshot"
+QUOTE_STREAM = "md.canonical.v2.quote"
 
 
 def instrument() -> InstrumentRecord:
@@ -140,6 +142,47 @@ def durable(record: InstrumentRecord, index: int, *, revision: int = 0) -> Durab
         index.to_bytes(16, "big"),
         message.SerializeToString(),
         1_000_000_000 + index,
+    )
+
+
+def durable_bar_at(
+    record: InstrumentRecord,
+    index: int,
+    *,
+    source_event_time_ns: int,
+    close_time_ns: int,
+) -> DurableEvent:
+    message = envelope(record, index)
+    message.source_event_time_ns = source_event_time_ns
+    message.received_at_ns = source_event_time_ns
+    message.bar.close_time_ns = close_time_ns
+    return DurableEvent(
+        STREAM,
+        f"{record.instrument_uid}/bar/BINANCE_DIRECT",
+        bytes(message.event_id),
+        message.SerializeToString(),
+        max(1, source_event_time_ns),
+    )
+
+
+def durable_quote(
+    record: InstrumentRecord,
+    index: int,
+    *,
+    source_event_time_ns: int,
+) -> DurableEvent:
+    message = envelope(record, index)
+    message.ClearField("bar")
+    message.schema_name = "qdl.marketdata.quote"
+    message.source_event_time_ns = source_event_time_ns
+    message.received_at_ns = source_event_time_ns
+    message.quote.CopyFrom(market_data_pb2.Quote())
+    return DurableEvent(
+        QUOTE_STREAM,
+        f"{record.instrument_uid}/quote/BINANCE_DIRECT",
+        bytes(message.event_id),
+        message.SerializeToString(),
+        max(1, source_event_time_ns),
     )
 
 
@@ -405,6 +448,113 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         await self.gateway.publish(durable(self.record, 2))
         self.assertEqual((await restarted.next_live()).stored.cursor.offset, 2)
         await restarted.close()
+
+    async def test_strict_stream_skips_stale_initial_and_live_records(self):
+        now_ns = 10_000_000_000
+        partition = f"{self.record.instrument_uid}/quote/BINANCE_DIRECT"
+        token = self.handoff.issue(
+            consumer_id=self.consumer_id,
+            snapshot_id="quote-snapshot-0",
+            snapshot_watermark=Cursor(QUOTE_STREAM, partition, 0),
+            ttl_seconds=3600,
+        ).token
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, token),
+            clock_ns=lambda: now_ns,
+        )
+        requirement = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.QUOTE,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            max_freshness_ms=100,
+        )
+        await self.gateway.publish(durable_quote(
+            self.record, 1, source_event_time_ns=now_ns - 1_000_000_000,
+        ))
+        await self.gateway.publish(durable_quote(
+            self.record, 2, source_event_time_ns=now_ns - 1,
+        ))
+        subscription = await self.gateway.open(
+            consumer_id=self.consumer_id,
+            stream=QUOTE_STREAM,
+            partition_key=partition,
+            token=token,
+            accepts=lambda stored: service._matches_requirement(stored, requirement),
+        )
+        try:
+            delivered = []
+            for stored in subscription.initial:
+                matches = subscription.accepts(stored)
+                record = await subscription.record(stored)
+                if matches:
+                    delivered.append(record)
+            self.assertEqual([record.stored.cursor.offset for record in delivered], [2])
+            self.assertEqual(
+                self.handoff.resolve_scope(
+                    token=subscription.token, consumer_id=self.consumer_id,
+                ).watermark_offset,
+                2,
+            )
+
+            await self.gateway.publish(durable_quote(
+                self.record, 3, source_event_time_ns=now_ns - 1_000_000_000,
+            ))
+            await self.gateway.publish(durable_quote(
+                self.record, 4, source_event_time_ns=now_ns - 1,
+            ))
+            live = await asyncio.wait_for(subscription.next_live(), timeout=0.5)
+            self.assertEqual(live.stored.cursor.offset, 4)
+            subscription.mark_delivered()
+        finally:
+            await subscription.close()
+
+    async def test_stream_freshness_uses_bar_close_and_preserves_observe(self):
+        now_ns = 10_000_000_000
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, self.token),
+            clock_ns=lambda: now_ns,
+        )
+        stored = await self.gateway.publish(durable_bar_at(
+            self.record,
+            1,
+            source_event_time_ns=now_ns - 1,
+            close_time_ns=now_ns - 1_000_000_000,
+        ))
+        assert stored is not None
+        strict = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.BAR,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            interval="1m",
+            max_freshness_ms=100,
+        )
+        observed = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.BAR,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            interval="1m",
+            max_freshness_ms=100,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=1_000,
+        )
+        wrong_interval = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.BAR,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            interval="5m",
+            max_freshness_ms=100,
+        )
+        self.assertFalse(service._matches_requirement(stored, strict))
+        self.assertTrue(service._matches_requirement(stored, observed))
+        self.assertFalse(service._matches_requirement(stored, wrong_interval))
 
     async def test_grpc_filters_interleaved_book_feeds_before_buffering(self):
         partition = f"{self.record.instrument_uid}/book_snapshot/BINANCE_DIRECT"
