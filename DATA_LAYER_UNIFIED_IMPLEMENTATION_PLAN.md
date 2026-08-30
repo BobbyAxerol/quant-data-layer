@@ -24109,6 +24109,27 @@ this scope rather than opening a new phase.
   the same 60 routes and `e43f903…` reader rollback; no other role, topology,
   durable store, Trading System, alpha or order path is in scope.
 
+  **Runtime preflight correction (`IMPLEMENTED / CONFIG TEST PENDING`):** the
+  original image-only Compose override retained V1 `data` and `logs` but omitted
+  the existing read-only `/app/.env` bind. The override now preserves that exact
+  controlled secret/config mount as well. This prevents a replacement image
+  from silently changing V1 configuration; it does not expose, copy or record
+  the file's values.
+
+  **Image and packet preflight (`PASS / RUNTIME PENDING`):** one V1 image was
+  built from a detached, clean worktree at `b259b63…` without a source bind:
+  `qdl-v1-fallback:v1.2.3-b259b63`, image ID
+  `sha256:40fc9e75be969f44acef18ea91614436e85c172c4055014946d93bd98354dd9b`.
+  Its OCI revision/version and `io.qdl.source-tree`/Dockerfile digest labels
+  exactly match the frozen source. The baked image passed **22/22** offline,
+  non-root ingress/fallback tests. Rendered Compose confirms the replacement
+  retains only the existing loopback `8100` port, `bobby_network` and
+  `executor_network`, and the three existing binds (`.env:ro`, `data`, `logs`).
+  The image is built but not serving; current V1 remains `d17085e…` until
+  attestation and the bounded recreate execute. The post-preflight packet and
+  release regression passed **30/30** network-free cases, including the bounded
+  Compose override assertion, provenance, route-plan and observation coverage.
+
   **Source implementation and evidence (`PASS / RUNTIME PENDING`):**
   `app.stream.async_live_feed` now accepts a Binance trade frame only when `p`
   is a finite decimal strictly greater than zero; `None`, empty, zero, `NaN`,

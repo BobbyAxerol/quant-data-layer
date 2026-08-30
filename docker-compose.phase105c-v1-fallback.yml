@@ -3,5 +3,6 @@ services:
     build: !reset null
     image: ${QDL_PHASE105C_V1_IMAGE:?set immutable V1 fallback image}
     volumes: !override
+      - ${QDL_PHASE105C_V1_ENV_FILE:-/home/bobby/data_layer/.env}:/app/.env:ro
       - ${QDL_PHASE105C_V1_DATA_DIR:-/home/bobby/data_layer/data}:/app/data
       - ${QDL_PHASE105C_V1_LOG_DIR:-/home/bobby/data_layer/logs}:/app/logs
