@@ -13,6 +13,7 @@ from scripts.phase103_consumer_receipt_acceptance import (
     _historical_bar_replay_requirement,
     _strict_snapshot_for_c2,
     _strict_warmup_then_stream_for_c2,
+    _stream_handoff_mode,
     _stream_resume,
     _uses_historical_bar_replay,
     _validated_packet,
@@ -453,6 +454,267 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_client.warmup_calls, [])
         self.assertEqual(first_client.stream_calls, [(requirement, False)])
         self.assertEqual(resumed_client.stream_calls, [(requirement, True)])
+
+
+class Phase103QuietTradeStreamTests(unittest.IsolatedAsyncioTestCase):
+    class _Session:
+        def __init__(self, *, items=(), quiet: bool = False):
+            self.warmup = SimpleNamespace(data=[object()])
+            self._items = iter(items)
+            self._quiet = quiet
+            self.acknowledged = []
+
+        async def __anext__(self):
+            if self._quiet:
+                await asyncio.Event().wait()
+            try:
+                return next(self._items)
+            except StopIteration as error:
+                raise StopAsyncIteration from error
+
+        def acknowledge(self, event):
+            self.acknowledged.append(event)
+
+    class _Context:
+        def __init__(self, session):
+            self._session = session
+
+        async def __aenter__(self):
+            return self._session
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class _Client:
+        def __init__(self, *, sessions, status=None):
+            self._sessions = iter(sessions)
+            self._status = status
+            self.stream_calls = []
+            self.status_calls = 0
+            self.closed = False
+
+        def warmup_then_stream(self, requirement, *, resume_restored_state=False):
+            self.stream_calls.append((requirement, resume_restored_state))
+            return Phase103QuietTradeStreamTests._Context(next(self._sessions))
+
+        async def feed_status(self, _requirement):
+            self.status_calls += 1
+            if isinstance(self._status, BaseException):
+                raise self._status
+            if self._status is None:
+                raise AssertionError("normal durable replay must not query quiet status")
+            return self._status
+
+        async def close(self):
+            self.closed = True
+
+    @staticmethod
+    def _requirement(*, event_recency_policy: StalePolicy = StalePolicy.OBSERVE):
+        return DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=15_000,
+            max_session_liveness_ms=45_000,
+            event_recency_policy=event_recency_policy,
+            stale_policy=StalePolicy.BLOCK,
+        )
+
+    @staticmethod
+    def _product(requirement):
+        return SimpleNamespace(
+            delivery=DeliveryClass.DURABLE,
+            feed=Feed.TRADE,
+            interval=None,
+            requirement=requirement,
+            identity=(
+                "alpha.okx.paper.stable",
+                requirement.instrument_uid,
+                "TRADE",
+                "",
+                requirement.source_policy_id,
+            ),
+        )
+
+    @staticmethod
+    def _status(
+        requirement,
+        *,
+        provider_session_state: str = "LIVE",
+        provider_session_liveness_ms: int | None = 10,
+        gap_open: bool = False,
+        execution_eligible: bool = False,
+    ) -> FeedStatusResponse:
+        return FeedStatusResponse.model_validate({
+            "schema": "qdl.feed-status.v2",
+            "instrument_uid": requirement.instrument_uid,
+            "feed": requirement.feed.value,
+            "quality": {
+                "state": "LIVE",
+                "freshness_ms": requirement.max_freshness_ms + 1,
+                "event_recency_state": "STALE",
+                "provider_session_state": provider_session_state,
+                "provider_session_liveness_ms": provider_session_liveness_ms,
+                "gap_open": gap_open,
+                "complete": True,
+                "execution_eligible": execution_eligible,
+                "policy_id": requirement.source_policy_id,
+                "flags": [],
+            },
+        })
+
+    async def test_quiet_live_trade_observes_two_sessions_without_cursor_claim(self):
+        requirement = self._requirement()
+        product = self._product(requirement)
+        first_session = self._Session(quiet=True)
+        second_session = self._Session(quiet=True)
+        first_client = self._Client(
+            sessions=(first_session,), status=self._status(requirement)
+        )
+        second_client = self._Client(
+            sessions=(second_session,), status=self._status(requirement)
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-quiet-trade-") as raw:
+            with patch(
+                "scripts.phase103_consumer_receipt_acceptance.sdk_requirement",
+                return_value=requirement,
+            ), patch(
+                "scripts.phase103_consumer_receipt_acceptance._client",
+                side_effect=(first_client, second_client),
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
+
+        self.assertEqual(result, (None, None, ()))
+        self.assertEqual(
+            _stream_handoff_mode(
+                product,
+                acknowledged_offset=result[0],
+                resumed_offset=result[1],
+            ),
+            "QUIET_OBSERVED_NO_CURSOR",
+        )
+        self.assertEqual(first_client.stream_calls, [(requirement, False)])
+        self.assertEqual(second_client.stream_calls, [(requirement, False)])
+        self.assertEqual(first_client.status_calls, 1)
+        self.assertEqual(second_client.status_calls, 1)
+        self.assertEqual(first_session.acknowledged, [])
+        self.assertEqual(second_session.acknowledged, [])
+
+    async def test_delivered_observed_trade_keeps_strict_cursor_replay(self):
+        requirement = self._requirement()
+        product = self._product(requirement)
+        first = StreamEvent(10, "resume-10", object())
+        resumed = StreamEvent(11, "resume-11", object())
+        first_session = self._Session(items=(first,))
+        second_session = self._Session(items=(resumed,))
+        first_client = self._Client(sessions=(first_session,))
+        second_client = self._Client(sessions=(second_session,))
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-delivered-trade-") as raw:
+            with (
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.sdk_requirement",
+                    return_value=requirement,
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._client",
+                    side_effect=(first_client, second_client),
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream",
+                    return_value=SimpleNamespace(),
+                ),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
+
+        self.assertEqual(result, (10, 11, ()))
+        self.assertEqual(
+            _stream_handoff_mode(
+                product,
+                acknowledged_offset=result[0],
+                resumed_offset=result[1],
+            ),
+            "DURABLE_CURSOR_REPLAYED",
+        )
+        self.assertEqual(first_session.acknowledged, [first])
+        self.assertEqual(second_session.acknowledged, [resumed])
+        self.assertEqual(second_client.stream_calls, [(requirement, True)])
+
+    async def test_quiet_trade_rejects_disconnected_stale_session_gap_and_wrong_policy(self):
+        requirement = self._requirement()
+        product = self._product(requirement)
+        invalid_statuses = {
+            "disconnected": self._status(
+                requirement, provider_session_state="DISCONNECTED"
+            ),
+            "stale_session": self._status(
+                requirement, provider_session_liveness_ms=45_001
+            ),
+            "open_gap": self._status(requirement, gap_open=True),
+            "execution_eligible": self._status(requirement, execution_eligible=True),
+        }
+        for name, status in invalid_statuses.items():
+            with self.subTest(status=name), tempfile.TemporaryDirectory(
+                prefix="qdl-c2-quiet-trade-invalid-"
+            ) as raw:
+                client = self._Client(sessions=(self._Session(quiet=True),), status=status)
+                with patch(
+                    "scripts.phase103_consumer_receipt_acceptance.sdk_requirement",
+                    return_value=requirement,
+                ), patch(
+                    "scripts.phase103_consumer_receipt_acceptance._client",
+                    return_value=client,
+                ), self.assertRaisesRegex(ContinuityError, "live non-executable session"):
+                    await _stream_resume(
+                        product,
+                        identity=SimpleNamespace(),
+                        primary_url="https://query-primary",
+                        secondary_url="https://query-secondary",
+                        grpc_target="stream:8210",
+                        state_dir=Path(raw),
+                        timeout_seconds=0.01,
+                    )
+
+        blocked_requirement = self._requirement(event_recency_policy=StalePolicy.BLOCK)
+        blocked_product = self._product(blocked_requirement)
+        blocked_client = self._Client(sessions=(self._Session(quiet=True),))
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-quiet-trade-policy-") as raw:
+            with patch(
+                "scripts.phase103_consumer_receipt_acceptance.sdk_requirement",
+                return_value=blocked_requirement,
+            ), patch(
+                "scripts.phase103_consumer_receipt_acceptance._client",
+                return_value=blocked_client,
+            ), self.assertRaises(TimeoutError):
+                await _stream_resume(
+                    blocked_product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
+        self.assertEqual(blocked_client.status_calls, 0)
 
 
 class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):

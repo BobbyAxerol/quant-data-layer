@@ -23601,3 +23601,167 @@ this scope rather than opening a new phase.
   result fails, restore only those four roles to the recorded `e43f903` image
   and retain compact evidence; do not alter source policy, quote SLA, V1 or the
   data plane to force an acceptance.
+
+  **Revision-5 reader rollout packet (`APPROVED / IN PROGRESS`):** build exactly
+  one Python image from committed source `9b606a64363c1667d67bef687231ca7577f8918c`,
+  tagged `qdl-v2-python:2.0.0-9b606a6` and labelled with that full OCI revision.
+  After attestation, write one private `0600` image-only overlay beneath the
+  existing governed state root
+  `session-liveness-43cdbe3-20260829T162719Z`; it changes only
+  `QDL_STABLE_PYTHON_IMAGE` to the attested image ID.  It neither copies nor
+  rewrites the existing private `rollout.env`, runtime JSON, authority, TLS,
+  Kafka, Redis or SQLite state.  Rendered Compose must combine the existing
+  `rollout.env`, that image-only overlay, and
+  `docker-compose.phase105c-c2.override.yml` and select exactly
+  `query_v2_1`, `query_v2_2`, `stream_v2_passive`, then
+  `stream_v2_active`.  The override's `rust_core` declaration supplies the
+  already-running provider-admission URL but is not a selected/recreated role.
+  Record the current per-role image `sha256:e43f903ebcfba94ffe7ac15bac8ae9eac727d105a5dc77c74a778c34babef207`
+  and unchanged runtime mount as rollback; a failed startup, health or C2 gate
+  recreates only those four roles with that image and the same runtime mount.
+  Before any role changes, run the complete 88-test affected matrix in the new
+  immutable image and prove the rendered Compose scope.  After reader health,
+  bind a new current-V1 fallback receipt in a fresh C2 namespace and run one
+  300-second no-order acceptance.  V1, Rust/ingestors/projectors, Kafka
+  topology/offsets, Redis, SQLite, Trading System, alpha and every order path
+  remain excluded.
+
+  **Candidate build and preflight (`PASS`):** exactly one image was built from
+  the committed source: `qdl-v2-python:2.0.0-9b606a6`, image ID
+  `sha256:df4db9dd0bcf8a1c0ac3ddee826331e5ac4e8f33df8fc86b214b7205253b8d96`.
+  Its OCI revision exactly equals
+  `9b606a64363c1667d67bef687231ca7577f8918c`, release label is
+  `2.0.0-9b606a6`, and image user is `qdl:qdl`.  With network disabled,
+  read-only source, UID/GID `10001`, all Linux capabilities dropped and a
+  tmpfs-only `/tmp`, the complete affected matrix passed **88/88** in the new
+  immutable image.  The one private overlay
+  `.../session-liveness-43cdbe3-20260829T162719Z/reader-r5-9b606a6-20260830T041955Z/reader-r5.env`
+  is mode `0600` and contains only the new Python image ID.  Existing private
+  `rollout.env` is preserved.  `docker compose config -q` against those two
+  env files and the existing narrow C2 override passed; the rendered four
+  selected reader services resolve to the new image.  No role, provider,
+  Kafka, Redis, SQLite, V1, Trading System, alpha or order path changed during
+  build/test/preflight.
+
+  **Next bounded mutation:** serially recreate only `query_v2_1`, then
+  `query_v2_2`, `stream_v2_passive`, and `stream_v2_active` with `--no-deps
+  --force-recreate`, the existing runtime/TLS mounts and the revision-5 image
+  overlay.  Verify each target reaches readiness before proceeding.  A failed
+  role immediately restores only that role to `e43f903…` with its unchanged
+  runtime mount; no other role is advanced.  After all four are healthy,
+  create a fresh current-V1 binding and run the single C2 no-order acceptance.
+
+  **Reader runtime rollout (`PASS`):** the first scripted attempt correctly
+  stopped before C2 when it treated a stream standby's expected `503` as a
+  readiness failure.  It was immediately restored to the exact four-reader
+  `e43f903…` rollback image map; no C2 client, provider request, V1, core,
+  ingestor, projector, Kafka, Redis, SQLite, Trading System, alpha or order
+  mutation occurred.  The retry used transparent serial commands rather than
+  that opaque helper: `query_v2_1`, `query_v2_2`, `stream_v2_passive`, then
+  `stream_v2_active`, each with `--no-deps --no-build --force-recreate` and the
+  sealed existing runtime/TLS mounts.  All four now run
+  `sha256:df4db9dd0bcf8a1c0ac3ddee826331e5ac4e8f33df8fc86b214b7205253b8d96`,
+  `restart=0`, `OOMKilled=false`; both query `/health/ready` checks return
+  `200`.  Stream HA converged with exactly one current lease owner
+  (`stream_v2_passive=200`, `stream_v2_active=503` standby), which is the
+  expected invariant rather than an error.  V1 and all excluded roles remain
+  on their prior image/runtime/state.
+
+  **Next bounded action:** write one fresh payload-free current-serving V1
+  runtime binding using the already frozen `v1.2.2` provenance, then launch one
+  disposable `--rm`, read-only, non-root C2 client for the exact four paper
+  identities on `executor_network`, bounded to `300s`.  It may use only V2
+  query/stream aliases and the manifest-authorized local V1 cached-read drill.
+  On any failure, retain compact error evidence and restore only the four
+  reader roles to the recorded `e43f903…` image map; no policy/SLA/data-plane
+  mutation is permitted to force a pass.
+
+  **First C2 invocation (`NON-CERTIFYING / ROLLED BACK`):** a fresh V1 binding
+  passed for serving image `sha256:d17085e…f7f0b50`, and the disposable C2
+  container started against the revision-5 readers.  The host command
+  attachment ended before the container emitted its terminal result; Docker
+  then honored `--rm`, leaving only `exit=1` and a zero-byte receipt/stderr.
+  There is therefore no payload, secret or claim of acceptance, but also no
+  bounded error evidence with which to classify the exit as a data or launcher
+  defect.  This is a collector/orchestration failure, not evidence that a
+  freshness policy may be relaxed.  The four readers were immediately restored
+  to `e43f903…`; V1, Rust/ingestors/projectors, Kafka, Redis, SQLite, Trading
+  System, alpha and order paths remained untouched.
+
+  **One certifiable C2 execution rule:** the next and only certifiable C2 run
+  reuses the exact committed image, identity set, runtime, route scope and
+  300-second bound.  The disposable non-root `--rm` client has a single
+  mode-`0700` evidence namespace mounted read-write solely to write its
+  payload-free `acceptance.json`, bounded `c2.stderr` and `exit-code.txt`;
+  cursors remain on `/tmp` tmpfs and all source/identity/runtime inputs remain
+  read-only.  This eliminates host-attachment loss without granting Docker,
+  provider, execution or durable-store access.  A fresh current-V1 binding is
+  still required.  If this evidence-bearing run fails, the exact error is
+  retained and the readers roll back; it is not rerun by timing luck.
+
+  **C2 quiet-TRADE receipt correction (`APPROVED / IN PROGRESS`):** the
+  evidence-bearing revision-5 C2 run failed at
+  `alpha.okx.paper.stable / OKX.SWAP.PERPETUAL.BNB-USDT / TRADE`: both the
+  strict query path and provider session were healthy, but `_stream_resume`
+  required a new durable event inside its 15-second observation window.  This
+  conflicts with the governed `TRADE` contract: an
+  `event_recency_policy=OBSERVE` requirement may intentionally see no recent
+  trade while the provider session is `LIVE`; it remains non-executable and
+  must never be represented as fresh market data.  The source-only repair is
+  limited to C2 receipt semantics.  For **only** durable `TRADE` requirements
+  with `OBSERVE`, a missing first stream event may be recorded as
+  `QUIET_OBSERVED_NO_CURSOR` only after each replica independently either
+  delivers a normally validated event or reports an identity- and
+  policy-matching quiet status with `state=LIVE`, `event_recency_state=STALE`,
+  `provider_session_state=LIVE`, declared session liveness within SLA, complete
+  coverage, no open gap and `execution_eligible=false`.  It records no
+  acknowledged/resumed cursor,
+  claims no replay or data delivery, and does not alter the public SDK,
+  provider, Rust core, reader/server, snapshot, execution or route semantics.
+  Every non-`TRADE`, non-`OBSERVE`, disconnected/unknown/over-SLA/incomplete/
+  gapped or execution-eligible condition remains a terminal failure; an event
+  that is delivered continues through the existing strict cursor-replay path.
+
+  **Correction test/rollback gate:** add deterministic tests for quiet-live
+  primary/secondary observation, a normal delivered TRADE replay, and
+  disconnected, stale-session, gap and wrong-policy failures.  Run the
+  affected isolated contract/harness matrix from the existing immutable image
+  with a read-only source mount and no network before building exactly one
+  replacement Python reader image.  Then, and only then, roll the same four
+  approved reader roles and execute one final evidence-bearing C2 no-order
+  run.  Any source, build, reader-health or C2 failure restores those four
+  readers to `e43f903…`; V1, Rust/ingestors/projectors, Kafka, Redis, SQLite,
+  Trading System, alpha and the order path remain excluded throughout.
+
+  **Quiet-TRADE source implementation and test exit (`PASS`):**
+  `scripts/phase103_consumer_receipt_acceptance.py` now has a bounded
+  two-second C2-only observation path for a potentially quiet governed TRADE
+  session.  It is entered solely by the durable `TRADE + OBSERVE` requirement
+  predicate; the normal delivered-event path still validates the stream view,
+  acknowledges the first event, opens the second replica with
+  `resume_restored_state=true`, and verifies strictly increasing offsets.  If
+  the first stream is quiet, the first replica must pass the exact quiet-status
+  predicate.  The second replica then opens a new governed subscription (no
+  nonexistent cursor is fabricated) and must either deliver a normally
+  validated event or pass the same quiet-status predicate.  The receipt exposes
+  `stream_handoff=QUIET_OBSERVED_NO_CURSOR` with both offsets `null`, rather
+  than claiming durable replay; ordinary durable products remain
+  `DURABLE_CURSOR_REPLAYED` and provider pass-through remains `NOT_APPLICABLE`.
+  No public SDK behavior, data-plane policy or execution eligibility changed.
+
+  **Isolated source evidence (`PASS`):** the targeted harness/acceptance matrix
+  passed **37/37**.  New deterministic cases prove two-replica quiet-live
+  observation produces no cursor claim, a delivered observed trade retains the
+  normal strict cursor replay, and disconnected, over-SLA, gapped,
+  execution-eligible or `BLOCK`-policy cases fail closed.  The complete affected
+  C2/release matrix passed **91/91** in immutable image
+  `qdl-v2-python:2.0.0-9b606a6` (`sha256:df4db9…b8d96`), with network disabled,
+  read-only source mount, UID/GID `10001`, capabilities dropped and tmpfs-only
+  writable paths.  `py_compile` and `git diff --check` also passed.  This is
+  source-only evidence: it made no provider call or runtime mutation.
+
+  **Next bounded action:** commit this source/test/journal correction, build
+  exactly one replacement Python reader image bound to that commit, rerun the
+  same affected matrix inside it, then roll only the four approved reader roles
+  and run one final evidence-bearing 300-second C2 no-order acceptance.  No
+  additional image, bundle, service, topology or retry packet is permitted.

@@ -74,6 +74,7 @@ DEFAULT_ACQUISITION = ROOT / "config/v2/stable-acquisition-bindings.yaml"
 DEFAULT_TRADING_MANIFEST = ROOT / "consumers/stable/trading-system-paper.yaml"
 DEFAULT_ALPHA_MANIFEST = ROOT / "consumers/stable/alpha-binance-paper.yaml"
 _QUIET_QUOTE_RETRY_SECONDS = 0.2
+_QUIET_TRADE_STREAM_OBSERVATION_SECONDS = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +242,97 @@ async def _next_data(session, *, timeout_seconds: float) -> tuple[StreamEvent, l
             return item, controls
         raise AssertionError("V2 SDK stream emitted an unknown event type")
     raise AssertionError("V2 SDK stream emitted controls without market data")
+
+
+async def _next_data_or_timeout(
+    session,
+    *,
+    timeout_seconds: float,
+) -> tuple[StreamEvent | None, list[str]]:
+    """Observe one stream without manufacturing data when a trade channel is quiet."""
+    controls: list[str] = []
+    deadline = time.monotonic() + timeout_seconds
+    for _ in range(8):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None, controls
+        try:
+            item = await asyncio.wait_for(session.__anext__(), timeout=remaining)
+        except TimeoutError:
+            return None, controls
+        if isinstance(item, ControlEvent):
+            controls.append(item.code)
+            continue
+        if isinstance(item, StreamEvent):
+            return item, controls
+        raise AssertionError("V2 SDK stream emitted an unknown event type")
+    return None, controls
+
+
+def _allows_quiet_trade_observation(product: AcceptanceProduct, requirement) -> bool:
+    """Whether this no-order C2 probe may observe a quiet live trade channel."""
+    return (
+        product.delivery is DeliveryClass.DURABLE
+        and product.feed.value == "TRADE"
+        and requirement.effective_event_recency_policy is SdkStalePolicy.OBSERVE
+        and requirement.max_session_liveness_ms is not None
+    )
+
+
+def _quiet_trade_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
+    """Keep a quiet session distinct from fresh/executable market data."""
+    quality = status.quality
+    return (
+        _allows_quiet_trade_observation(product, requirement)
+        and status.instrument_uid == requirement.instrument_uid
+        and status.feed is requirement.feed
+        and quality.policy_id == requirement.source_policy_id
+        and quality.state == "LIVE"
+        and quality.event_recency_state == "STALE"
+        and quality.provider_session_state == "LIVE"
+        and quality.provider_session_liveness_ms is not None
+        and quality.provider_session_liveness_ms <= requirement.max_session_liveness_ms
+        and quality.complete
+        and not quality.gap_open
+        and not quality.execution_eligible
+    )
+
+
+async def _assert_quiet_trade_session(
+    client: AsyncDataLayerClient,
+    *,
+    product: AcceptanceProduct,
+    requirement,
+    timeout_seconds: float,
+) -> None:
+    try:
+        status = await asyncio.wait_for(
+            client.feed_status(requirement),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError as timeout:
+        raise ContinuityError(
+            "DATA_STALE", "C2 quiet TRADE status did not return before its deadline"
+        ) from timeout
+    if not _quiet_trade_status_is_observable(product, requirement, status):
+        raise ContinuityError(
+            "DATA_STALE", "C2 quiet TRADE observation requires a live non-executable session"
+        )
+
+
+def _stream_handoff_mode(
+    product: AcceptanceProduct,
+    *,
+    acknowledged_offset: int | None,
+    resumed_offset: int | None,
+) -> str:
+    if (acknowledged_offset is None) != (resumed_offset is None):
+        raise ValueError("C2 stream handoff evidence is incomplete")
+    if product.delivery is not DeliveryClass.DURABLE:
+        return "NOT_APPLICABLE"
+    if acknowledged_offset is None:
+        return "QUIET_OBSERVED_NO_CURSOR"
+    return "DURABLE_CURSOR_REPLAYED"
 
 
 async def _query_product(
@@ -496,6 +588,10 @@ async def _stream_resume(
     stream_requirement = requirement
     strict_watermark: int | None = None
     event_timeout_seconds = _stream_event_timeout_seconds(product, timeout_seconds)
+    quiet_trade_observation = _allows_quiet_trade_observation(product, requirement)
+    quiet_primary = False
+    first_controls: list[str] = []
+    first_offset: int | None = None
     first_client = _client(
         identity,
         base_url=primary_url,
@@ -523,22 +619,41 @@ async def _stream_resume(
             requirement=stream_requirement,
             timeout_seconds=timeout_seconds,
         ) as session:
-            first, first_controls = await _next_data(
-                session,
-                timeout_seconds=event_timeout_seconds,
-            )
-            first_view = market_data_view_from_stream(
-                first,
-                template=session.warmup.data[-1],
-                requirement=stream_requirement,
-            )
-            validate_product_view(
-                product,
-                first_view,
-                require_current_quality=not historical_replay,
-            )
-            session.acknowledge(first)
-            first_offset = first.logical_offset
+            if quiet_trade_observation:
+                first, first_controls = await _next_data_or_timeout(
+                    session,
+                    timeout_seconds=min(
+                        event_timeout_seconds,
+                        _QUIET_TRADE_STREAM_OBSERVATION_SECONDS,
+                    ),
+                )
+                if first is None:
+                    await _assert_quiet_trade_session(
+                        first_client,
+                        product=product,
+                        requirement=requirement,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    quiet_primary = True
+            else:
+                first, first_controls = await _next_data(
+                    session,
+                    timeout_seconds=event_timeout_seconds,
+                )
+            if not quiet_primary:
+                assert first is not None
+                first_view = market_data_view_from_stream(
+                    first,
+                    template=session.warmup.data[-1],
+                    requirement=stream_requirement,
+                )
+                validate_product_view(
+                    product,
+                    first_view,
+                    require_current_quality=not historical_replay,
+                )
+                session.acknowledge(first)
+                first_offset = first.logical_offset
     finally:
         await first_client.close()
 
@@ -550,6 +665,41 @@ async def _stream_resume(
         timeout_seconds=timeout_seconds,
     )
     try:
+        if quiet_primary:
+            # No first event means no cursor checkpoint exists to resume. Both
+            # replicas still open their governed stream and must either deliver
+            # a validated event or independently prove a live, non-executable
+            # quiet session. This is observation evidence only, never replay.
+            async with _strict_warmup_then_stream_for_c2(
+                resumed_client,
+                product=product,
+                requirement=stream_requirement,
+                timeout_seconds=timeout_seconds,
+            ) as session:
+                observed, observed_controls = await _next_data_or_timeout(
+                    session,
+                    timeout_seconds=min(
+                        event_timeout_seconds,
+                        _QUIET_TRADE_STREAM_OBSERVATION_SECONDS,
+                    ),
+                )
+                if observed is None:
+                    await _assert_quiet_trade_session(
+                        resumed_client,
+                        product=product,
+                        requirement=requirement,
+                        timeout_seconds=timeout_seconds,
+                    )
+                else:
+                    observed_view = market_data_view_from_stream(
+                        observed,
+                        template=session.warmup.data[-1],
+                        requirement=stream_requirement,
+                    )
+                    validate_product_view(product, observed_view)
+                return None, None, tuple(first_controls + observed_controls)
+
+        assert first_offset is not None
         async with _strict_warmup_then_stream_for_c2(
             resumed_client,
             product=product,
@@ -665,6 +815,11 @@ async def _certify_product(
     if bar_alignment is not None:
         result["bar_replica_alignment"] = bar_alignment
     result["control_codes"] = list(controls)
+    result["stream_handoff"] = _stream_handoff_mode(
+        product,
+        acknowledged_offset=acknowledged,
+        resumed_offset=resumed,
+    )
     return result
 
 
