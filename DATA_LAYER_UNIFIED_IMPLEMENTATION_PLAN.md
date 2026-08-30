@@ -24016,3 +24016,14 @@ this scope rather than opening a new phase.
   run exactly one non-root, read-only, no-order C2 for at most 300 seconds over
   the sealed 60-route manifest; only a passing receipt permits the separately
   recorded V2-primary manifest promotion.
+
+  **C2 scope pin:** the legacy default C2 selection would include four extra
+  monitoring products and therefore evaluate 64 routes.  This packet passes
+  only `trading-system.paper.stable`, `alpha.binance.paper.stable` and
+  `alpha.okx.paper.stable` explicitly, producing the approved **60** routes
+  (`30 + 15 + 15`).  Monitoring is not silently skipped from a 64-route
+  certificate; it is outside this five-liquid paper handoff and remains on its
+  own existing route.  The runtime client receives only those three approved
+  workload identities, V2 query/stream aliases and the locally authorized V1
+  cached-read fallback drill.  It has no venue credential, order capability,
+  Docker socket or durable-store mount.
