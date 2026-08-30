@@ -24842,3 +24842,14 @@ shared alpha gateway now owns client creation on its SDK loop and has a passing
 non-main-thread regression (**39/39** runtime tests). No Data Layer protocol,
 manifest, image, role, provider call or durable state changed. The only
 permitted next mutation is one retry of the same selected alpha container.
+
+**C4.16 bounded consumer/alpha evidence (`PASS / DATA LAYER UNCHANGED`):**
+The accepted V2 Trading System consumer remained `8/8 READY` while the selected
+Binance paper alpha completed one real final-15m cycle. The alpha used V2's
+declared provider-history warmup product and V2-primary final-bar route; its
+post-retry audit has zero fallback, block and permission records, and it made
+no order/position side effect because the strategy signal was flat. All market
+bytes are real provider/V2 data; no synthetic source, Data Layer runtime
+mutation or direct venue connection by the alpha was introduced. This closes
+the explicitly approved C4 bounded acceptance only. V1 remains the recorded
+rollback route, and later consumer/alpha expansion requires its own scope.
