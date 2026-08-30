@@ -24144,6 +24144,41 @@ this scope rather than opening a new phase.
   mutation, Kafka mutation, V2 role, Trading System, alpha or order action is
   permitted.
 
+  **Patch runtime rejection (`FAIL-CLOSED / ROLLBACK REQUIRED`):** after the
+  bounded replacement, local cached REST reads for all five symbols remained
+  positive and the new container had the exact image/mount provenance, but the
+  live V1 trade receiver emitted repeated schema rejection warnings and V1
+  health became degraded. A separate real-provider sample of the exact Binance
+  `@trade` envelope was valid, so the fault is not evidence that price values
+  should be accepted loosely. The patch image is therefore not eligible for C2.
+  Restore only `data_layer_service` to `d17085e…f0b50` immediately using the
+  preflighted packet, then add a schema-only rejection reason to identify the
+  actual live frame condition. No C2, reader rollout, authority change or
+  routing promotion may occur while this V1 regression is unresolved.
+
+  **Corrected ingress/projection boundary (`CONFIRMED / IMPLEMENTING`):** an
+  exact 15-second sample of V1 batch zero received `1,221` genuine Binance
+  `@trade` envelopes: `1,220` carried a positive finite price and one carried
+  a complete, otherwise valid `trade` envelope with a non-positive `p`. A
+  non-positive provider price is not execution-eligible, but it is not a
+  transport/session failure. The shared correction therefore keeps complete
+  finite envelopes observable for session liveness, while the Redis/latest
+  trade projection drops non-positive/non-finite values before any cache or
+  stream update. Missing/empty/non-finite price remains rejected at ingress.
+  This preserves prior valid cached price, avoids warning storms and does not
+  relax the V1 fallback validator, which still requires a positive decimal.
+
+  **Corrected source evidence (`PASS / NEW IMAGE REQUIRED`):** the revised
+  ingress/projection boundary passed **46/46** network-free runtime, fallback,
+  handoff, release-route and observation tests. A bounded twelve-second real
+  Binance sample on the exact cached batch-zero URL observed `1,028` complete
+  finite transport frames: `1,026` positive execution prices and `2`
+  non-positive prices. All `1,028` remained session-valid; only the two invalid
+  execution prices would be dropped before cache projection. V1 has been rolled
+  back to `d17085e…f0b50` and is healthy (`trade=true`, `kline=true`, `status=ok`)
+  pending a replacement image from this corrected source. The earlier
+  `v1.2.3` candidate is terminal evidence only and must not be redeployed.
+
   **Source implementation and evidence (`PASS / RUNTIME PENDING`):**
   `app.stream.async_live_feed` now accepts a Binance trade frame only when `p`
   is a finite decimal strictly greater than zero; `None`, empty, zero, `NaN`,

@@ -81,15 +81,22 @@ class RuntimeReadinessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "wrong-feed"):
             provider_items("binance_futures_kline", self.trade_frame(), "1m")
 
-    def test_trade_frame_rejects_missing_zero_and_nonfinite_price(self):
+    def test_trade_frame_rejects_missing_and_nonfinite_price(self):
         self.assertTrue(valid_provider_frame("binance_futures_trade", self.trade_frame(), "1m"))
-        for price in (None, "", "0", "NaN", "Infinity"):
+        for price in (None, "", "NaN", "Infinity"):
             with self.subTest(price=price):
                 frame = self.trade_frame()
                 frame["p"] = price
                 self.assertFalse(valid_provider_frame("binance_futures_trade", frame, "1m"))
                 with self.assertRaisesRegex(ValueError, "invalid or wrong-feed"):
                     provider_items("binance_futures_trade", frame, "1m")
+
+        zero_price = self.trade_frame()
+        zero_price["p"] = "0"
+        self.assertTrue(valid_provider_frame("binance_futures_trade", zero_price, "1m"))
+        self.assertEqual(
+            provider_items("binance_futures_trade", zero_price, "1m"), [zero_price]
+        )
 
     def test_trade_and_kline_readiness_are_independent(self):
         supervisor = StreamSupervisor(first_frame_timeout_seconds=5, stale_after_seconds=180)
@@ -259,6 +266,31 @@ class BackpressureTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(cache.items[0]["key"], "kline:5m:BTCUSDT")
         self.assertEqual(cache.items[0]["channel"], "stream:kline:5m:BTCUSDT")
+
+    async def test_publisher_drops_nonpositive_trade_price_before_cache(self):
+        class Cache:
+            def __init__(self):
+                self.items = []
+
+            async def push_batch(self, items):
+                self.items.extend(items)
+
+        queue = asyncio.Queue()
+        cache = Cache()
+        await queue.put(
+            (
+                "binance_futures_trade",
+                {"s": "BTCUSDT", "p": "0", "q": "1", "t": 1, "T": 2, "m": False},
+            )
+        )
+        task = asyncio.create_task(
+            redis_publisher_task(queue, cache, interval="1m", supervisor=StreamSupervisor())
+        )
+        await asyncio.sleep(0.1)
+        task.cancel()
+        await task
+
+        self.assertEqual(cache.items, [])
 
 class DemandKlineRecoveryTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod

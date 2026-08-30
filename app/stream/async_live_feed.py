@@ -107,14 +107,23 @@ class StreamBackpressureTimeout(RuntimeError):
     """The bounded publisher queue could not accept a provider event in time."""
 
 
-def _is_positive_finite_decimal(value: object) -> bool:
+def _finite_decimal(value: object) -> Decimal | None:
     if isinstance(value, bool):
-        return False
+        return None
     try:
         decimal_value = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
-        return False
-    return decimal_value.is_finite() and decimal_value > 0
+        return None
+    return decimal_value if decimal_value.is_finite() else None
+
+
+def _is_finite_decimal(value: object) -> bool:
+    return _finite_decimal(value) is not None
+
+
+def _is_positive_finite_decimal(value: object) -> bool:
+    decimal_value = _finite_decimal(value)
+    return decimal_value is not None and decimal_value > 0
 
 
 def valid_provider_frame(source: str, item: object, interval: str = "1m") -> bool:
@@ -127,7 +136,7 @@ def valid_provider_frame(source: str, item: object, interval: str = "1m") -> boo
             item.get("e") == "trade"
             and all(item.get(field) is not None for field in required)
             and bool(str(item["s"]).strip())
-            and _is_positive_finite_decimal(item["p"])
+            and _is_finite_decimal(item["p"])
         )
     if source.endswith("_kline"):
         kline = item.get("k")
@@ -340,6 +349,9 @@ async def redis_publisher_task(
 
                     event_ts = data.get("T") or data.get("E") or 0
                     trade_price = data.get("p")
+                    if not _is_positive_finite_decimal(trade_price):
+                        # Valid provider transport frame, but never an execution price.
+                        continue
                     trade_qty = data.get("q")
                     side = "buy" if not data.get("m", False) else "sell"
                     payload = {
