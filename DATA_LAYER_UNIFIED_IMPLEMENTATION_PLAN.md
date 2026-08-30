@@ -25026,3 +25026,38 @@ zero. C4.19 ran only disposable network-disabled containers and did not create,
 stop, recreate or signal any runtime role. This simultaneous external runtime
 state must be diagnosed/restored by its own approved packet before a real
 provider latency certificate or C4.19 runtime application can be claimed.
+
+**Read-only 100-candle endpoint latency probe (`OBSERVED / V1 ACTIVE ONLY`,
+2026-08-30):** the operator requested an end-to-end request budget for one
+common `100`-candle calculation. This probe did not deploy C4.19, start V2,
+write Kafka/Redis/SQLite/DB, create an image/container, issue an order, or
+change any runtime configuration. It exercised the currently active
+`data_layer_service` image `qdl-v1-fallback:v1.2.4-2b0dcf7` through the exact
+Trading System `DataLayerClient` call shape: `GET
+/v1/crypto/ohlcv/okx/BTC-USDT-SWAP?interval=1m&limit=100`. The V1 history
+route is a real OKX public REST pass-through (`cached=false`, `stored=false`),
+so each sample includes the consumer-to-Data-Layer hop, route/serialization,
+and the actual Data-Layer-to-OKX provider request. Every call validated exact
+venue identity and exactly `100` returned rows; samples used a fresh client per
+request, with a `150ms` inter-request pause.
+
+| Observed path | Samples | Result | p50 | p95 | p99 | 500ms calculation budget, p50/p95/p99 |
+| --- | ---: | --- | ---: | ---: | ---: | --- |
+| `market_data_service -> DataLayer -> OKX` | 20 | `20/20`, exact 100 rows | `97.389ms` | `112.813ms` | `114.331ms` | `597.389 / 612.813 / 614.331ms` |
+| `risk_engine_service -> DataLayer -> OKX` | 20 | `20/20`, exact 100 rows | `99.917ms` | `119.648ms` | `167.977ms` | `599.917 / 619.648 / 667.977ms` |
+| `paper_execution_service -> DataLayer -> OKX` | 20 | `20/20`, exact 100 rows | `97.386ms` | `122.852ms` | `219.098ms` | `597.386 / 622.852 / 719.098ms` |
+| `data_layer_service -> OKX` public `/api/v5/market/candles` | 20 | `20/20`, exact 100 rows | `86.808ms` | `103.677ms` | `106.664ms` | `586.808 / 603.677 / 606.664ms` |
+| `market_data_service -> OKX` direct public GET | 20 | `20/20`, exact 100 rows | `85.516ms` | `92.228ms` | `93.104ms` | `585.516 / 592.228 / 593.104ms` |
+
+The direct consumer-to-OKX row is a network lower bound only and is not a
+permitted steady-state consumer architecture: Trading System consumers must
+continue to use Data Layer. Do not add the `data_layer_service -> OKX` latency
+to the consumer endpoint latency: it is already included in the end-to-end V1
+route. The observed median V1 route overhead over the provider-edge median is
+roughly `10-13ms`; tails are independent short samples, not additive segment
+budgets. This is a `n=20` read-only diagnostic, not a V2 latency certificate,
+final-BAR certificate, long-duration capacity soak, or order/broker latency
+claim. V2 candidate roles remain stopped, so no V2 path was measured or
+promoted. The next V2 runtime packet must repeat the same bounded probe after
+its approved bar-edge/runtime deployment and separately measure close-to-final
+BAR publication.
