@@ -23968,9 +23968,13 @@ this scope rather than opening a new phase.
   `tests.test_phase115c_five_liquid_handoff`,
   `tests.test_phase103_consumer_receipt_harness`,
   `tests.test_qdl_sdk_feed_status` and
-  `tests.test_qdl_sdk_stream_projection` passed **30/30** in an existing
-  immutable Python image with `--network none`, read-only source, UID/GID
-  `10001`, dropped capabilities and tmpfs-only writes.  The five-liquid
+  `tests.test_qdl_sdk_stream_projection` passed **36/36** in an existing
+  immutable Python image with `--network none`, a read-only source mount whose
+  working directory was explicitly `/workspace`, UID/GID `10001`, dropped
+  capabilities and tmpfs-only writes.  An earlier `30/30` command ran from
+  `/app` and therefore selected the image's older test tree despite its source
+  mount; it is superseded and is not used as this slice's evidence.  The
+  five-liquid
   extension proves the exact identity is required for quiet observation,
   disconnect and `gap_open` fail closed for each symbol, and durable resume is
   strictly increasing for each identity so duplicate/stale cursors are
@@ -23982,3 +23986,14 @@ this scope rather than opening a new phase.
   resolution.  No provider request, Docker runtime role, Kafka, Redis, SQLite,
   V1, Trading System, alpha or order path changed.  The disposable Cargo target
   and registry cache were removed before this source slice is committed.
+
+  **Step 3 immutable reader-image gate (`PASS / RUNTIME PENDING`):** exactly
+  one Python image was built from source commit `8d36eb0` without `--pull`:
+  `qdl-v2-python:2.0.0-8d36eb0`
+  (`sha256:2f000e94d990e2f996a576748277044b4615c0f70b6e2660fa4c56d1199d6937`).
+  Its OCI revision label is the full source SHA and its version label is
+  `2.0.0-8d36eb0`.  The exact affected matrix passed **36/36** inside that
+  immutable image with network disabled, read-only filesystem, UID/GID `10001`,
+  capabilities dropped and tmpfs-only writes.  The image is the sole candidate
+  for the four existing reader roles; no Rust image, service, worker, provider
+  call, durable-store mutation or runtime rollout occurred in this gate.
