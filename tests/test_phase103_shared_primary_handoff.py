@@ -16,6 +16,7 @@ from qdl.consumer.stable import (
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
+    AuthorityPromotionScope,
     StableAcquisitionPlan,
     stable_authority_record,
 )
@@ -25,16 +26,14 @@ from scripts.phase103_prepare_shared_primary_packet import (
     validate_prepared_shared_primary_bundle,
     validate_shared_primary_packet,
 )
-from scripts.phase103_packet_contract import (
-    SHARED_PRIMARY_CRYPTO_BINDING_COUNT,
-    authority_scoped_bar_state_path,
-)
+from scripts.phase103_packet_contract import authority_scoped_bar_state_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 ACQUISITION_PATH = ROOT / "config/v2/stable-acquisition-bindings.yaml"
 ROUTE_PATH = ROOT / "config/v2/stable-primary-consumer-routing.yaml"
+PROMOTION_SCOPE_PATH = ROOT / "config/v2/stable-authority-promotion-scope.yaml"
 
 
 class SharedPrimaryConsumerRouteTests(unittest.TestCase):
@@ -125,6 +124,13 @@ class SharedPrimaryConsumerRouteTests(unittest.TestCase):
 
 
 class SharedPrimaryPacketTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.catalog = StableSourceCatalog.load(CATALOG_PATH)
+        self.promotion_scope = AuthorityPromotionScope.load(
+            PROMOTION_SCOPE_PATH,
+            catalog=self.catalog,
+        )
+
     def packet(
         self,
         output_dir: Path,
@@ -214,7 +220,11 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             )
             self.assertEqual(
                 packet["acceptance"]["crypto_binding_count"],
-                SHARED_PRIMARY_CRYPTO_BINDING_COUNT,
+                len(self.promotion_scope.binding_ids),
+            )
+            self.assertEqual(
+                packet["acceptance"]["crypto_binding_scope_sha256"],
+                self.promotion_scope.digest(),
             )
             handoff = packet["trading_system_handoff"]
             lock = handoff["route_lock"]
@@ -245,14 +255,18 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             core = json.loads((runtime / "core.json").read_text(encoding="utf-8"))
             self.assertEqual(core["raw_topics"], ["md.raw.realtime.v2"])
             self.assertTrue(core["strict_subscription_scope"])
-            enabled_bindings = sum(
-                item.enabled
-                for item in StableAcquisitionPlan.load(
-                    ACQUISITION_PATH,
-                    catalog=StableSourceCatalog.load(CATALOG_PATH),
-                ).bindings
+            acquisition = StableAcquisitionPlan.load(
+                ACQUISITION_PATH,
+                catalog=self.catalog,
             )
-            self.assertEqual(len(core["core"]["bindings"]), enabled_bindings)
+            expected_core = acquisition.core_config(
+                catalog=self.catalog,
+                authority=packet["authority"],
+            )
+            self.assertEqual(
+                core["core"]["bindings"],
+                expected_core["core"]["bindings"],
+            )
 
     def test_checkpoint_path_fences_python_artifact_and_schema(self):
         with tempfile.TemporaryDirectory(prefix="qdl-phase103-packet-") as directory:
@@ -323,7 +337,11 @@ class SharedPrimaryPacketTests(unittest.TestCase):
             bad_scope["acceptance"]["crypto_binding_count"] -= 1
             self.reseal(bad_scope)
             with self.assertRaisesRegex(ValueError, "acceptance scope"):
-                validate_shared_primary_packet(bad_scope)
+                validate_prepared_shared_primary_bundle(
+                    bad_scope,
+                    runtime_dir=root / "packet" / "runtime",
+                    now_ns=1_800_000_000_000_000_001,
+                )
 
             bad_handoff = copy.deepcopy(packet)
             bad_handoff["trading_system_handoff"]["route_lock"]["route_manifest"][

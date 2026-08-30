@@ -33,10 +33,23 @@ PHASE103_CONSUMER_IDS = frozenset(
 
 
 class DeliveryClass(StrEnum):
-    """Whether a requirement has canonical replay or a fresh provider window."""
+    """The weakest source semantics a governed request is allowed to receive.
+
+    A ``FRESH_SNAPSHOT`` BAR can use a non-authoritative provider window when
+    its retained canonical partition is incomplete. If that partition is
+    complete, the router may return the stronger durable primary result.
+    """
 
     DURABLE = "DURABLE"
     PROVIDER_PASS_THROUGH = "PROVIDER_PASS_THROUGH"
+
+
+def _allows_provider_snapshot(requirement: DataRequirement) -> bool:
+    return (
+        requirement.feed is FeedType.BAR
+        and bool(requirement.interval)
+        and requirement.recovery is RecoveryPolicy.FRESH_SNAPSHOT
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,11 +218,7 @@ def _product_for_requirement(
     try:
         binding: StableSourceBinding = catalog.binding_for(requirement)
     except KeyError:
-        if not (
-            requirement.feed is FeedType.BAR
-            and requirement.interval
-            and requirement.recovery is RecoveryPolicy.FRESH_SNAPSHOT
-        ):
+        if not _allows_provider_snapshot(requirement):
             raise ValueError(
                 "crypto consumer requirement has neither a durable binding nor "
                 "an explicit provider pass-through policy"
@@ -249,7 +258,11 @@ def _product_for_requirement(
         feed=requirement.feed,
         interval=requirement.interval,
         source_policy_id=requirement.source_policy_id,
-        delivery=DeliveryClass.DURABLE,
+        delivery=(
+            DeliveryClass.PROVIDER_PASS_THROUGH
+            if _allows_provider_snapshot(requirement)
+            else DeliveryClass.DURABLE
+        ),
         binding_id=binding.binding_id,
         requirement=requirement,
     )
@@ -540,11 +553,22 @@ def validate_product_view(
         ):
             raise ValueError("execution-grade durable V2 receipt is not eligible")
     elif product.delivery is DeliveryClass.PROVIDER_PASS_THROUGH:
-        if (
-            view.source.authoritative
+        if not _allows_provider_snapshot(product.requirement):
+            raise ValueError("provider pass-through receipt has invalid authority semantics")
+        if view.source.venue != product.venue:
+            raise ValueError("provider pass-through receipt has an invalid venue")
+        if product.binding_id is not None and view.source.provider != product.provider:
+            raise ValueError("provider pass-through receipt has an invalid provider")
+        durable_upgrade = (
+            view.source.source_role == "PRIMARY" and view.source.authoritative
+        )
+        if durable_upgrade:
+            if require_current_quality and view.quality.state != "LIVE":
+                raise ValueError("durable upgrade receipt is not live")
+        elif (
+            view.source.source_role != "REFERENCE"
+            or view.source.authoritative
             or view.quality.execution_eligible
-            or product.feed is not FeedType.BAR
-            or product.requirement.recovery is not RecoveryPolicy.FRESH_SNAPSHOT
         ):
             raise ValueError("provider pass-through receipt has invalid authority semantics")
     else:  # pragma: no cover - protected by DeliveryClass and scope construction.

@@ -92,18 +92,26 @@ class RoutedQueryBackendTests(unittest.TestCase):
 
     def _catalog_with_unbound_instrument(self):
         payload = yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8"))
-        spare = copy.deepcopy(payload["instruments"][0])
+        spare = next(
+            copy.deepcopy(item)
+            for item in payload["instruments"]
+            if (
+                item["venue"] == "BINANCE"
+                and item["market"] == "USDM"
+                and item["product_type"] == "PERPETUAL"
+            )
+        )
         identity = InstrumentIdentity.create(
             venue="BINANCE",
             market="USDM",
             product_type=ProductType("PERPETUAL"),
-            canonical_symbol="SOL-USDT",
+            canonical_symbol="QDLTEST-USDT",
         )
         spare["instrument_uid"] = identity.instrument_uid
         spare["instrument_id"] = identity.instrument_id
-        spare["canonical_symbol"] = "SOL-USDT"
-        spare["native_symbol"] = "SOLUSDT"
-        spare["base_asset"] = "SOL"
+        spare["canonical_symbol"] = "QDLTEST-USDT"
+        spare["native_symbol"] = "QDLTESTUSDT"
+        spare["base_asset"] = "QDLTEST"
         payload["instruments"].append(spare)
         directory = Path(tempfile.mkdtemp())
         path = directory / "catalog.yaml"

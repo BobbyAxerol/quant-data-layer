@@ -23359,3 +23359,97 @@ this scope rather than opening a new phase.
   regression both passed.  `ruff` is not installed in the immutable runtime
   image, so no package was downloaded or installed merely to lint this
   acceptance-only slice; `git diff --check` remains the formatting gate.
+
+  **Candidate attestation:** built exactly one immutable C2-client image from
+  source commit `8e398be`: `qdl-v2-python:2.0.0-8e398be`, image ID
+  `sha256:493cd90c01ee00ff1fc55ae1939ea1cde80188c13d0e58f294d74c0bced41748`.
+  Its OCI revision/version labels match that source/release.  It is not a
+  reader rollout and does not replace a running role; it exists solely for
+  the fresh disposable C2 client, after which it is the only new image
+  retained pending the final result.
+
+- `2026-08-30 C2 BTC 15M LINEAGE DIAGNOSIS / SOURCE TESTED / C2 RETRY PENDING`:
+  the fresh, disposable C2 attempt using that candidate passed the prior
+  DOGE/session and rolling-window gates, then failed closed while validating
+  the alpha Binance `BTC-USDT` durable `BAR 15m` warmup receipt as
+  authoritative/live.  The manifest and source catalog declare the product
+  as `BINANCE_DIRECT`, `PRIMARY`, authoritative, so the next action is one
+  authenticated, read-only query of that exact product to inspect only
+  bounded identity/provenance/quality fields.  This is not a C2 retry and
+  cannot write provider, Kafka, Redis, SQLite, V1, Trading System, alpha or
+  order state.  Do not weaken receipt validation: a source change is allowed
+  only if the query proves a real provider/authority projection mismatch;
+  otherwise repair the harness with a regression test.  The failed scoped
+  C2 namespace remains evidence until this diagnosis is recorded; rollback
+  remains V1 routing and no runtime role has been changed by this step.
+
+  **Read-only finding and approved narrow repair:** the exact V2 query returned
+  `500` final `BTC-USDT 15m` BARs from `BINANCE_DIRECT` with a valid policy and
+  no reported response gap, but correctly marked them `REFERENCE` and
+  non-authoritative.  The canonical partition has `1,011` final records with
+  one historical `73`-BAR discontinuity (`2026-08-28T08:30Z` to
+  `2026-08-29T03:00Z`) inside the requested `500`-BAR window.  Therefore the
+  router correctly used the manifest's `FRESH_SNAPSHOT` provider recovery
+  path; this is not a provider, Rust, projector, or primary-source mutation.
+  C2's static scope incorrectly labeled any enabled catalog binding as
+  `DURABLE`, even when the governed requirement explicitly permits a fresh
+  provider window and the router selects it because durable coverage is
+  partial.
+
+  Repair only the C2 contract/harness: classify eligible `BAR` plus
+  `FRESH_SNAPSHOT` requirements as `PROVIDER_PASS_THROUGH` even when they also
+  have a bound partition; retain the binding ID and expected provider for
+  audit.  Receipt validation must accept either the permitted non-authoritative
+  `REFERENCE` response or a stronger authoritative `PRIMARY` spool response,
+  while still rejecting venue/provider mismatch, fake authority, an invalid
+  role, incomplete/gapped response, execution eligibility on pass-through,
+  and every non-BAR/non-snapshot downgrade.  Durable replay/stream proof stays
+  required only for `SNAPSHOT_AND_REPLAY` products.  This is source-only,
+  creates no image/service/runtime change, and must pass focused contract and
+  C2 harness tests before exactly one fresh C2 acceptance retry.
+
+  **Sealed-packet regression found while running the affected matrix:** the
+  dependency-free Phase-10.3 packet contract still hard-coded `64` authority
+  bindings, whereas the current checked catalog/acquisition/promotion scope
+  agree on `184` enabled Binance/OKX bindings.  This is a stale test/packet
+  fence, not a runtime failure and not a reason to reduce the active universe.
+  Repair the source-only packet metadata so the generator records the actual
+  scope count and digest in its already sealed runtime manifest; the
+  dependency-free validator checks basic shape, while prepared-bundle
+  validation compares packet count/digest to that immutable manifest.  This
+  preserves tamper detection without another static cardinality constant.
+  Update the stale router fixture to use a private test-only instrument ID
+  rather than the now-real `SOL` catalog identity.  No packet is generated for
+  runtime use, no image is built, and no service/data-plane mutation is in
+  scope for these source corrections.
+
+  **Physical-binding assertion refinement / in scope:** the affected source
+  matrix also exposed a stale packet-test assumption: `188` enabled acquisition
+  bindings are logical contracts, while the shared Rust core correctly
+  coalesces the twelve L2 snapshot/delta alias pairs into `176` physical
+  provider inputs.  The authority promotion scope remains independently
+  sealed as `184` logical IDs.  Repair the test to compare the serialized core
+  inputs against `StableAcquisitionPlan.core_config` for the sealed authority,
+  while retaining the separate dynamic scope count/digest assertions.  Do not
+  change the catalog, acquisition selection, L2 coalescing, runtime bundle,
+  topology, image, or any data-plane state.
+
+  **Source-test exit (`PASS`):** the existing immutable
+  `qdl-v2-python:2.0.0-8e398be` image ran the exact affected matrix with
+  network disabled, a read-only source mount, UID/GID `10001`, and tmpfs-only
+  scratch state: `79/79 PASS` in `26.382s`.  It covers C2 product construction
+  and receipt validation, durable replay versus snapshot policy, quiet-live
+  session behavior, signed cursor/reconnect harness behavior, packet sealing
+  and tamper detection, V2-primary/V1-fallback/BLOCKED route policy, stable
+  release gates, and routed provider history.  The packet regression now
+  verifies logical authority scope independently of coalesced physical core
+  inputs.  `git diff --check` passed.  No image was built, no provider call was
+  made, and no service, Kafka, Redis, SQLite, V1, Trading System, alpha or
+  order path changed during these tests.
+
+  **Next bounded action:** commit this source-and-plan slice, build exactly one
+  new immutable disposable C2-client image from that commit, attest its labels,
+  bind a fresh V1 fallback receipt, and run one fresh 300-second no-order C2
+  acceptance.  The candidate client is removed after its result is recorded;
+  it is never a reader rollout.  A failure remains fail-closed on V1 and is
+  diagnosed before any further retry.

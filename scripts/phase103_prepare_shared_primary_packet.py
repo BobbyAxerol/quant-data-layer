@@ -45,7 +45,6 @@ from scripts.phase103_packet_contract import (
     REALTIME_RAW_TOPIC as _REALTIME_RAW_TOPIC,
     REQUIRED_CRYPTO_EVIDENCE as _REQUIRED_CRYPTO_EVIDENCE,
     SCHEMA,
-    SHARED_PRIMARY_CRYPTO_BINDING_COUNT,
     SHARED_REALTIME_CORE_GROUP_ID,
     SHARED_REALTIME_CORE_ID_PREFIX,
     authority_scoped_bar_state_path,
@@ -104,6 +103,8 @@ def _runtime_manifest(
     trading_system_handoff: Mapping[str, Any],
     source_commit: str,
     python_image_digest: str,
+    authority_promotion_binding_count: int,
+    authority_promotion_scope_sha256: str,
 ) -> dict[str, Any]:
     return {
         "schema": RUNTIME_MANIFEST_SCHEMA,
@@ -115,6 +116,8 @@ def _runtime_manifest(
         "core_group_id": SHARED_REALTIME_CORE_GROUP_ID,
         "core_transactional_id_prefix": f"{SHARED_REALTIME_CORE_ID_PREFIX}-",
         "core_worker_count": STABLE_CORE_WORKER_COUNT,
+        "authority_promotion_binding_count": authority_promotion_binding_count,
+        "authority_promotion_scope_sha256": authority_promotion_scope_sha256,
         "runtime_files": dict(runtime_digests),
         "sealed_consumer_route": dict(sealed_route),
         "trading_system_handoff": dict(trading_system_handoff),
@@ -181,8 +184,6 @@ def prepare_shared_primary_packet(
         ROOT / "config/v2/stable-authority-promotion-scope.yaml",
         catalog=catalog,
     )
-    if len(scope.binding_ids) != SHARED_PRIMARY_CRYPTO_BINDING_COUNT:
-        raise ValueError("authority promotion scope differs from the sealed packet fence")
     authority = stable_authority_record(
         rust_image_digest=rust_image_digest,
         capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
@@ -220,6 +221,8 @@ def prepare_shared_primary_packet(
         trading_system_handoff=trading_system_handoff,
         source_commit=source_commit,
         python_image_digest=python_image_digest,
+        authority_promotion_binding_count=len(scope.binding_ids),
+        authority_promotion_scope_sha256=scope.digest(),
     )
     manifest_path = runtime_dir / "shared-primary-runtime-manifest.json"
     manifest_path.write_bytes(_canonical_bytes(manifest) + b"\n")
@@ -269,6 +272,7 @@ def prepare_shared_primary_packet(
         },
         "acceptance": {
             "crypto_binding_count": len(scope.binding_ids),
+            "crypto_binding_scope_sha256": scope.digest(),
             "required_crypto_evidence": list(_REQUIRED_CRYPTO_EVIDENCE),
             "observation_seconds": observation_seconds,
             "v1_fallback_return_required": True,

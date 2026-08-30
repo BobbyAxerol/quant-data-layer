@@ -97,7 +97,6 @@ REQUIRED_CRYPTO_EVIDENCE = (
     "cpu_ram_io",
     "fallback_count",
 )
-SHARED_PRIMARY_CRYPTO_BINDING_COUNT = 64
 TRADING_SYSTEM_HANDOFF_LOCK_SCHEMA = "qdl.v2.external-consumer-route-lock.v1"
 TRADING_SYSTEM_HANDOFF_CONSUMER_ID = "trading-system.paper.stable"
 TRADING_SYSTEM_HANDOFF_SERVICE = "market_data"
@@ -421,12 +420,18 @@ def validate_shared_primary_packet(packet: Mapping[str, Any]) -> None:
         raise ValueError("shared primary packet rollback protections differ from the plan")
     acceptance = packet["acceptance"]
     if not isinstance(acceptance, dict) or set(acceptance) != {
-        "crypto_binding_count", "required_crypto_evidence", "observation_seconds",
+        "crypto_binding_count", "crypto_binding_scope_sha256",
+        "required_crypto_evidence", "observation_seconds",
         "v1_fallback_return_required", "vn_primary_requires_in_session_evidence",
     }:
         raise ValueError("shared primary packet acceptance fields are invalid")
     if (
-        acceptance.get("crypto_binding_count") != SHARED_PRIMARY_CRYPTO_BINDING_COUNT
+        not isinstance(acceptance.get("crypto_binding_count"), int)
+        or isinstance(acceptance.get("crypto_binding_count"), bool)
+        or acceptance["crypto_binding_count"] < 1
+        or not isinstance(acceptance.get("crypto_binding_scope_sha256"), str)
+        or len(acceptance["crypto_binding_scope_sha256"]) != 64
+        or any(value not in "0123456789abcdef" for value in acceptance["crypto_binding_scope_sha256"])
         or acceptance.get("required_crypto_evidence") != list(REQUIRED_CRYPTO_EVIDENCE)
         or not isinstance(acceptance.get("observation_seconds"), int)
         or not 60 <= acceptance["observation_seconds"] <= 1_800
@@ -515,6 +520,14 @@ def validate_prepared_shared_primary_bundle(
         or manifest.get("runtime_files") != manifest_files
     ):
         raise ValueError("shared primary runtime manifest differs from the packet")
+    acceptance = packet["acceptance"]
+    if (
+        manifest.get("authority_promotion_binding_count")
+        != acceptance["crypto_binding_count"]
+        or manifest.get("authority_promotion_scope_sha256")
+        != acceptance["crypto_binding_scope_sha256"]
+    ):
+        raise ValueError("shared primary packet acceptance scope differs from runtime")
     return {
         "status": "PASS",
         "packet_sha256": packet["packet_sha256"],

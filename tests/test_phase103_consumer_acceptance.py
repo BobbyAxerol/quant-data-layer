@@ -65,14 +65,15 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         self.assertEqual(len(scope.products), 45)
         self.assertEqual(
             sum(item.delivery is DeliveryClass.DURABLE for item in scope.products),
-            45,
+            40,
         )
         pass_through = [
             item
             for item in scope.products
             if item.delivery is DeliveryClass.PROVIDER_PASS_THROUGH
         ]
-        self.assertEqual(pass_through, [])
+        self.assertEqual(len(pass_through), 5)
+        self.assertTrue(all(item.binding_id is not None for item in pass_through))
         self.assertEqual(
             {
                 item.binding_id
@@ -256,9 +257,9 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 "payload": payload,
                 "source": {
                     "venue": product.venue,
-                    "provider": product.provider if durable else "BINANCE_DIRECT",
+                    "provider": product.provider,
                     "source_id": "source-1",
-                    "source_role": "PRIMARY",
+                    "source_role": "PRIMARY" if durable else "REFERENCE",
                     "authoritative": (
                         durable if source_authoritative is None else source_authoritative
                     ),
@@ -359,20 +360,40 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 product = self._product(feed=feed)
                 validate_product_view(product, self._view(product))
 
-        pass_through = replace(
-            self._product(
-                feed="BAR",
-                consumer_id="alpha.binance.paper.stable",
-                interval="15m",
-            ),
+        pass_through = self._product(
+            feed="BAR",
             delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
-            binding_id=None,
+            consumer_id="alpha.binance.paper.stable",
+            interval="15m",
         )
         validate_product_view(pass_through, self._view(pass_through))
+        baseline = self._view(pass_through)
+        durable_upgrade = baseline.model_copy(
+            update={
+                "source": baseline.source.model_copy(
+                    update={"source_role": "PRIMARY", "authoritative": True}
+                ),
+                "quality": baseline.quality.model_copy(
+                    update={"execution_eligible": True}
+                ),
+            }
+        )
+        validate_product_view(pass_through, durable_upgrade)
         with self.assertRaisesRegex(ValueError, "pass-through"):
             validate_product_view(
                 pass_through,
                 self._view(pass_through, source_authoritative=True),
+            )
+        with self.assertRaisesRegex(ValueError, "provider"):
+            validate_product_view(
+                pass_through,
+                baseline.model_copy(
+                    update={
+                        "source": baseline.source.model_copy(
+                            update={"provider": "WRONG_PROVIDER"}
+                        )
+                    }
+                ),
             )
 
     def test_bad_quality_decimal_and_replica_divergence_fail_closed(self):
@@ -544,11 +565,11 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         self.assertEqual(result[5]["common_row_count"], 2)
 
     def test_provider_pass_through_bar_keeps_exact_replica_comparison(self):
-        durable = self._product(feed="BAR")
-        bar = replace(
-            durable,
+        bar = self._product(
+            feed="BAR",
             delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
-            binding_id=None,
+            consumer_id="alpha.binance.paper.stable",
+            interval="15m",
         )
         minute = 60_000_000_000
 
@@ -647,6 +668,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         )
         alpha_bar = self._product(
             feed="BAR",
+            delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
             consumer_id="alpha.binance.paper.stable",
             interval="15m",
         )
