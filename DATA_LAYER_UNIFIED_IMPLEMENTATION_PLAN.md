@@ -28268,37 +28268,49 @@ rollback-retention inventory.
 
 ## 20. 2026-08-30 Full Unused Image And Build-Cache Cleanup
 
-**Status:** `APPROVED / IN PROGRESS`
+**Status:** `PARTIAL PASS / IMAGE-RETENTION ACKNOWLEDGEMENT REQUIRED`
 
-Owner approved removal of build/test artifacts not used by a running service.
-Preflight resolved `22` exited containers and `87` image digests after
-subtracting every image digest referenced by a running container. The exact
-Trading System rollback image
-`tradingsystem-image:v2-primary-b29ae8b`
-(`sha256:3336ba35a66553d67ea10a4f20485656076fa3bac433714cb4ae6ecde0b1fbda`)
-is explicitly retained even though it is not active. Cleanup removes the 20
+Owner explicitly approved removal of all build/test artifacts not needed by a
+container, accepting that a future test rebuilds its own image. Preflight
+resolved `22` exited containers and `87` image digests after subtracting every
+image digest referenced by a running container. Cleanup already removed the 20
 explicitly classified disposable test/old-alpha/disabled-spot containers. It
 retains stopped `qdl_v2_stable_candidate-kafka1-1` and
 `portal-execution-edge-projection-migrator-1` because they can still carry
-operational/evidence meaning. It then removes computed unused image digests
-without force, then unused BuildKit cache with `docker builder prune --all
---force`.
+operational/evidence meaning. The prior optional rollback image
+`tradingsystem-image:v2-primary-b29ae8b` is no longer an automatic retention:
+if no container references it, `docker image prune -a` may remove it under this
+approval. The cleanup uses Docker's non-force reachability rule, then removes
+unused BuildKit cache with `docker builder prune --all --force`.
 
-**Excluded:** all running containers and their images, the exact retained
-rollback image, every volume (including Kafka, Redis, SQLite, PostgreSQL and
-TLS), all networks, source/worktrees and runtime configuration. No
-`docker system prune`, no image force-delete and no `--volumes` are permitted.
-Postconditions are active-role restart count zero, retained rollback image
-present, no exited test container, and recorded Docker disk delta.
+**Excluded:** all containers and all images referenced by them, every volume
+(including Kafka, Redis, SQLite, PostgreSQL and TLS), all networks,
+source/worktrees and runtime configuration. No `docker system prune`, no image
+force-delete, no container prune and no `--volumes` are permitted.
+Postconditions are active-role restart count zero, retained stopped operational
+containers present, and recorded Docker disk delta.
 
-**Partial execution / decision gate:** Twenty explicitly classified stopped
+**Execution record (pre-run):** Twenty explicitly classified stopped
 alpha/test/disabled-spot containers were removed without any volume removal.
 The two retained stopped containers remain
 `qdl_v2_stable_candidate-kafka1-1` and
-`portal-execution-edge-projection-migrator-1`. The broad removal of all 87
-non-active images was intentionally not executed: that set includes historical
-rollback/recovery/evidence images whose loss is irreversible even though no
-running service references them. A further owner approval must explicitly
-authorize deleting every non-active image except the retained
-`b29ae8b` rollback image. Until then, no image or build cache is removed by
-this slice.
+`portal-execution-edge-projection-migrator-1`. On 2026-08-30 the owner approved
+the remaining non-referenced image and BuildKit-cache cleanup. Docker will
+decide reachability without `--force`; images referenced by either retained
+stopped container remain protected. This approval does not cover any volume,
+network, container, source, or runtime mutation.
+
+**Execution record (cache pass):** `docker builder prune --all --force` ran
+without touching images, containers, volumes, networks, source, or runtime
+configuration. Docker build cache moved from `70.21GB` (`20.08GB`
+reclaimable) to `2.071GB` (`0B` reclaimable); filesystem free space is now
+`112GB`. The exact postcondition check found all `42/42` running containers in
+`running` state with `restart_count=0`.
+
+**Image decision gate:** The Docker safety guard rejected broad
+`docker image prune --all --force` because the operation would also delete the
+previously documented but inactive V2 rollback image `b29ae8b` and historical
+recovery/evidence images. No image was removed by that rejected command. A
+fresh owner acknowledgement after this risk disclosure is required before
+removing those non-referenced images. The materially safe cache cleanup above
+is complete; all volumes and runtime services remain intact.
