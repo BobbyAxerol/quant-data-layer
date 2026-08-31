@@ -27820,3 +27820,99 @@ offsets, Redis, SQLite, Trading System, alpha and order paths remain excluded.
 After both stream replicas are ready and error-free, one replacement
 four-identity, 149-route C2 no-order receipt is permitted in a fresh
 payload-free namespace.
+
+**149-route C2 strict live-delivery stream runtime packet (`PREPARED /
+EXECUTING`, 2026-08-31).** Commit `82c35db8e7fdf6a1e8896f83e8b08cc465131468`
+was built once as `qdl-v2-python:2.0.0-v2-stream-r18-82c35db`, immutable image
+`sha256:6859cfb0359e94816986e4e9b7a4a9f6486dd9fce6ac607b04e275086efbd42b`.
+The image's OCI revision/version labels match the commit/tag, and its
+network-disabled immutable matrix passed **117/117** in `5.329s`. The
+payload-free packet is
+`/home/bobby/.local/state/qdl-v2/stream-freshness-82c35db-20260831T172712Z/packet.json`
+(SHA-256 `7fecce30...abe54030`); its two-service image override is
+`stream-r18.override.yml` (SHA-256 `b93d302a...e8447421`).
+
+The sealed Compose configuration passed before apply. It may serially recreate
+only `stream_v2_active`, then `stream_v2_passive`, with `--no-deps` and the
+existing runtime/TLS/state mounts. Their current
+`sha256:947cf8a7c81315b1446d78271dbd99d498d46fb2e9b471da734d55ceeef8145a`
+image is retained for direct rollback. The packet must not recreate query,
+Rust, ingestors, bar edge, projectors, V1, Kafka, Redis, SQLite, Trading
+System, alpha or any order component. Exit requires both stream roles healthy,
+restart-free and non-OOM with a bounded error scan, then exactly one fresh
+four-identity, 149-route, 300-second C2 no-order receipt. No credentials or
+market payloads are retained in the packet/evidence.
+
+**149-route C2 reference-lane transport correction (`EXECUTING`, 2026-08-31).**
+The first replacement receipt completed the repaired live-stream path but
+failed closed while calling V2 `reference:batch`: the disposable client had
+opened eight reference batches concurrently, while each query replica's shared
+provider lane is intentionally bounded to four. The resulting queued request
+crossed the client transport deadline and raised `httpx.ReadTimeout`; no
+market payload was accepted and the receipt is empty. This is not evidence of
+a provider, catalog, native-BASIS, L2, or stream-freshness defect.
+
+The corrective action is limited to the disposable C2 launcher: align its
+outer concurrency with the declared provider lane (`4`, not `8`) and run one
+fresh 300-second four-identity/149-route receipt. It does not relax any
+product deadline, freshness SLA, provider retry bound, manifest, fallback
+policy, query runtime, stream runtime, Kafka, Redis, SQLite, V1, Trading
+System, alpha, or order path. The receipt remains required to prove genuine
+V2 response behavior rather than a synthetic pass.
+
+**149-route C2 lane-aligned diagnosis (`PASS / FRESH RETRY READY`,
+2026-08-31).** The lane-aligned C2 replacement advanced through its reference
+work, then failed closed on `trading-system.paper.stable /
+OKX.SWAP.PERPETUAL.SOL-USDT / QUOTE` before emitting a receipt. This did not
+justify changing the QUOTE SLA or route. A disposable, V2-only diagnostic using
+the exact Trading System paper identity read both query replicas after the
+failure: both returned a complete, gap-free, execution-eligible `LIVE` SOL
+quote with `freshness_ms` approximately `523/522` and live provider-session
+liveness approximately `494/512ms`; both strict snapshots returned `OK`.
+
+Read-only canonical evidence independently shows continuous SOL/DOGE/BNB OKX
+quote, trade, book and final-BAR partitions. Therefore the active ingestor and
+Rust mappings are present and data-plane healthy; the failed receipt was a
+bounded acceptance race, not an absent symbol route. The diagnostic used only
+V2 query endpoints through the declared workload identity, made no direct
+provider or V1 calls, placed no order, and retained only compact typed quality
+fields.
+
+**149-route C2 bounded-scheduler correction (`EXECUTING`, 2026-08-31).**
+The lane-aligned retry removed the `reference:batch` transport timeout and
+advanced through reference work, but its single shared concurrency semaphore
+also throttled all `74` durable query/stream products to four. The full
+four-identity receipt consequently reached its deliberate `300s` ceiling and
+cancelled waiting work; it emitted no acceptance receipt. This is an
+acceptance-scheduler defect, not a data-plane failure: the exact Trading
+System V2 identity subsequently read the formerly failing OKX SOL QUOTE from
+both replicas as `LIVE`, complete, gap-free and execution-eligible with
+sub-second freshness, and strict snapshots were `OK`.
+
+The narrow source correction separates two existing budgets in the disposable
+C2 client: durable product reads use the requested observation concurrency;
+on-demand reference batches are independently capped at the declared shared
+provider lane of four. It preserves the 300-second total bound, all product
+freshness/deadline contracts, full 149-route scope, V1 fallback drill, and
+fail-closed behavior. No provider, Rust core, query/stream runtime, manifest,
+Kafka, Redis, SQLite, V1, Trading System, alpha or order component changes.
+Required exit is a deterministic concurrency regression, existing C2/SDK/
+reference matrices, one immutable disposable C2 client build, then one fresh
+full C2 receipt.
+
+**149-route C2 bounded-scheduler source exit (`PASS / CLIENT BUILD READY`,
+2026-08-31).** The C2 client now has distinct semaphores: durable
+query/stream products retain the caller's bounded observation concurrency;
+on-demand reference batches use `min(observation_concurrency, 4)`, matching
+the shared `ReferenceBatch` provider lane. The receipt scope, per-product
+deadlines, 300-second ceiling, V1 fallback drill and all fail-closed semantics
+are unchanged. A new deterministic regression proves `1 -> 1`, `4 -> 4`,
+`8 -> 4`, and rejects a non-positive budget.
+
+In the existing immutable Python environment with source mounted read-only,
+network disabled and UID/GID `10001`, the targeted C2/reference/SDK matrix
+passed **60/60** in `9.098s`: identity, consumer-scope, reference/L2,
+fallback, durable cursor/reconnect, stream filtering and strict freshness
+coverage. No runtime service or data state was modified by that test. The next
+operation is exactly one disposable C2-client image from this source followed
+by one fresh 149-route receipt; no serving image is rebuilt.

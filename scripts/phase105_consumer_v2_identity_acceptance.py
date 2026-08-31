@@ -77,6 +77,7 @@ _C2_STREAM_TARGETS = frozenset({
     "qdl-v2-stream-a:8210",
     "qdl-v2-stream-b:8210",
 })
+_MAX_REFERENCE_BATCH_CONCURRENCY = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +98,14 @@ def _authority(path: Path) -> dict[str, object]:
     if value.get("mode") != "RUST_PRIMARY" or value.get("public_write_allowed") is not False:
         raise ValueError("Phase 10.5 identity acceptance requires fenced RUST_PRIMARY")
     return value
+
+
+def _reference_batch_concurrency(observation_concurrency: int) -> int:
+    """Keep C2 provider reads within the shared ReferenceBatch lane budget."""
+
+    if observation_concurrency < 1:
+        raise ValueError("C2 observation concurrency must be positive")
+    return min(observation_concurrency, _MAX_REFERENCE_BATCH_CONCURRENCY)
 
 
 def _identity_files(args: argparse.Namespace) -> dict[str, IdentityFiles]:
@@ -496,10 +505,13 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     started = time.monotonic()
     process_started = time.process_time()
     temporary = Path(tempfile.mkdtemp(prefix="qdl-phase105-v2-identity-"))
-    semaphore = asyncio.Semaphore(args.concurrency)
+    product_semaphore = asyncio.Semaphore(args.concurrency)
+    reference_semaphore = asyncio.Semaphore(
+        _reference_batch_concurrency(args.concurrency)
+    )
 
     async def certify(product: AcceptanceProduct) -> dict[str, object]:
-        async with semaphore:
+        async with product_semaphore:
             try:
                 return await _certify_product(
                     product,
@@ -546,7 +558,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             state_dir=temporary / consumer_id.replace(".", "-") / "references",
             timeout_seconds=args.timeout_seconds,
             deadline_monotonic=started + args.observation_seconds,
-            semaphore=semaphore,
+            semaphore=reference_semaphore,
         ))
         task_results = await _gather_or_cancel((*product_tasks, reference_task))
         ordered = tuple(task_results[:len(product_tasks)])

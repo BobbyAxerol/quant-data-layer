@@ -17,6 +17,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _identity_files,
     _identity_files_for_consumers,
     _route_summary,
+    _reference_batch_concurrency,
     _run_consumer_groups,
     _v1_base_url,
     parser,
@@ -147,6 +148,13 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(ValueError, "requires exactly"):
                     _c2_grpc_targets(value)
+
+    def test_reference_batches_are_capped_without_throttling_product_reads(self) -> None:
+        self.assertEqual(_reference_batch_concurrency(1), 1)
+        self.assertEqual(_reference_batch_concurrency(4), 4)
+        self.assertEqual(_reference_batch_concurrency(8), 4)
+        with self.assertRaisesRegex(ValueError, "positive"):
+            _reference_batch_concurrency(0)
 
     def test_route_summary_counts_declared_v1_and_blocked_without_claiming_transition(self) -> None:
         requirement = DataRequirement(
