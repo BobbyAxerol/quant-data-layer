@@ -27128,3 +27128,51 @@ three perpetual BOOK mappings in `core.json`, `core-002.json`, and
 `core-003.json`, rolls precisely those three existing Rust core replicas, then
 applies the already-tested two-ingestor mappings and reruns C2. It is not
 authorized by this packet.
+
+
+**149-route L2 core-mapping convergence (`APPROVED / IN PROGRESS`,
+2026-08-31).** Owner approval expands the bounded handoff only far enough to
+finish the already-declared 149-route C2: render and verify the current
+provider-neutral catalog/acquisition against `core.json`, `core-002.json`, and
+`core-003.json`; permit only additive Binance USD-M and OKX Swap perpetual
+BOOK normalization mappings for SOL, DOGE and BNB; atomically stage exact
+rollback copies; serially recreate only `rust_core`, `rust_core_2`,
+`rust_core_3`, then reapply/recreate only `ingestor_binance_usdm` and
+`ingestor_okx_swap`; and run one bounded 149-route four-identity C2 for at
+most 300 seconds. Source acceptance must prove the generated core diff has no
+authority, non-binding, BAR, TRADE, QUOTE, source-contract, order, image or
+topology drift; runtime acceptance must prove all five crypto symbols produce
+verified L2 snapshot/delta products before C2. V1, Kafka topology/offsets,
+Redis, SQLite, projectors, bar edge, query/stream, Trading System, alpha,
+broker and order paths remain excluded. Normal authentic L2 raw/canonical/cache
+writes for the newly admitted books are allowed. Rollback is exact: restore
+the three core JSON backups and serially recreate those three cores, restore
+the two ingestor JSON backups and serially recreate those two ingestors. No
+new image, topic, service, volume, symbol worker or fallback is allowed.
+
+
+**149-route L2 core-mapping source exit (`PASS / RUNTIME APPLY AUTHORIZED`,
+2026-08-31).** Added `scripts/refresh_v2_l2_core_runtime.py`, a dry-run-first
+compiler for exactly `core.json`, `core-002.json` and `core-003.json`. It
+renders the current catalog/acquisition with the active authority, verifies all
+176 existing source IDs against the generated contract while allowing only the
+already-measured `instrument_catalog_revision` metadata difference, and appends
+exactly six declared perpetual BOOK mappings: Binance USD-M and OKX Swap BNB,
+DOGE and SOL. It rejects authority drift, any semantic active-binding drift,
+unknown active binding, missing/extra additive source ID, non-L2 addition and
+an invalid state output path. It preserves target modes in rollback material,
+uses fsync-backed atomic replacement, and emits only hashes/modes/source IDs in
+its receipt.
+
+The new compiler suite plus both pre-existing bounded-runtime refresh suites
+passed **13/13** in **9.517s** in immutable, non-root, network-disabled
+`qdl-v2-python:2.0.0-7c29542`; Python compilation passed. A live-runtime
+read-only dry-run rendered all three cores from `176 -> 182` mappings, adding
+the same six source IDs with authority SHA-256
+`1cd55d7...981fb1078` preserved and `production_mutations=0`. It confirmed
+all 176 shared source IDs differ from the generated catalog only in
+`instrument_catalog_revision`, never contract fields. The next operation is
+now authorized: apply this compiler to one new private state directory; roll
+`rust_core`, `rust_core_2`, `rust_core_3` serially on their existing immutable
+image and mounts; reapply the tested two-ingestor mapping; then observe real
+L2 and one C2. No other role or state is in scope.
