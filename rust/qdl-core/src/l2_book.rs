@@ -799,15 +799,12 @@ impl L2BookCore {
     }
 }
 
-fn parse_snapshot_levels(
-    inputs: &[BookLevelInput],
-) -> Result<
-    (
-        BTreeMap<ExactDecimal, BookLevel>,
-        BTreeMap<ExactDecimal, BookLevel>,
-    ),
-    BookError,
-> {
+type BookSideMaps = (
+    BTreeMap<ExactDecimal, BookLevel>,
+    BTreeMap<ExactDecimal, BookLevel>,
+);
+
+fn parse_snapshot_levels(inputs: &[BookLevelInput]) -> Result<BookSideMaps, BookError> {
     let levels = parse_levels(inputs)?;
     let mut bids = BTreeMap::new();
     let mut asks = BTreeMap::new();

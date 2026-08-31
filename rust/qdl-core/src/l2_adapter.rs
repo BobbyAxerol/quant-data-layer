@@ -94,6 +94,28 @@ struct BufferedBinanceDelta {
     updates: Vec<BookLevelInput>,
 }
 
+/// Provider frame details that vary independently from the core state outcome.
+/// Keeping them together makes each adapter transition explicit without
+/// widening the internal state-transition API.
+#[derive(Debug)]
+struct TransitionMetadata {
+    observed_at_ms: Option<i64>,
+    native_sequence_start: Option<u64>,
+    previous_sequence: Option<u64>,
+    updates: Vec<BookLevelInput>,
+}
+
+impl TransitionMetadata {
+    fn empty(observed_at_ms: Option<i64>) -> Self {
+        Self {
+            observed_at_ms,
+            native_sequence_start: None,
+            previous_sequence: None,
+            updates: vec![],
+        }
+    }
+}
+
 impl L2BookAdapter {
     pub fn binance_diff_depth(
         identity: BookIdentity,
@@ -212,10 +234,7 @@ impl L2BookAdapter {
                 BookTransitionKind::Snapshot,
                 BookPublication::None,
                 BookOutcome::Keepalive,
-                observed_at_ms,
-                None,
-                None,
-                vec![],
+                TransitionMetadata::empty(observed_at_ms),
             ));
         }
         let outcome = self.core.apply_snapshot(&BookSnapshot {
@@ -231,10 +250,7 @@ impl L2BookAdapter {
                 BookTransitionKind::Snapshot,
                 BookPublication::None,
                 outcome,
-                observed_at_ms,
-                None,
-                None,
-                vec![],
+                TransitionMetadata::empty(observed_at_ms),
             ));
         }
         self.replay_binance_bootstrap(generation, observed_at_ms)
@@ -259,10 +275,7 @@ impl L2BookAdapter {
                 BookTransitionKind::Delta,
                 BookPublication::None,
                 BookOutcome::BufferedAwaitingBootstrap,
-                optional_time(raw, &["E", "T"])?,
-                None,
-                None,
-                vec![],
+                TransitionMetadata::empty(optional_time(raw, &["E", "T"])?),
             ));
         }
         self.apply_binance_delta(delta)
@@ -350,10 +363,12 @@ impl L2BookAdapter {
                 publication
             },
             outcome,
-            observed_at_ms,
-            native_sequence_start,
-            previous_sequence,
-            updates,
+            TransitionMetadata {
+                observed_at_ms,
+                native_sequence_start,
+                previous_sequence,
+                updates,
+            },
         ))
     }
 
@@ -364,10 +379,7 @@ impl L2BookAdapter {
             BookTransitionKind::Lifecycle,
             BookPublication::None,
             outcome,
-            None,
-            None,
-            None,
-            vec![],
+            TransitionMetadata::empty(None),
         )
     }
 
@@ -378,10 +390,7 @@ impl L2BookAdapter {
             BookTransitionKind::Lifecycle,
             BookPublication::None,
             outcome,
-            None,
-            None,
-            None,
-            vec![],
+            TransitionMetadata::empty(None),
         )
     }
 
@@ -405,10 +414,7 @@ impl L2BookAdapter {
         kind: BookTransitionKind,
         publication: BookPublication,
         outcome: BookOutcome,
-        observed_at_ms: Option<i64>,
-        native_sequence_start: Option<u64>,
-        previous_sequence: Option<u64>,
-        updates: Vec<BookLevelInput>,
+        metadata: TransitionMetadata,
     ) -> BookTransition {
         BookTransition {
             kind,
@@ -418,10 +424,10 @@ impl L2BookAdapter {
             generation: self.core.generation(),
             snapshot_sequence: self.core.snapshot_sequence(),
             last_sequence: self.core.last_sequence(),
-            observed_at_ms,
-            native_sequence_start,
-            previous_sequence,
-            updates,
+            observed_at_ms: metadata.observed_at_ms,
+            native_sequence_start: metadata.native_sequence_start,
+            previous_sequence: metadata.previous_sequence,
+            updates: metadata.updates,
             view: self.core.view(),
             materialized_snapshot_at_ms: None,
         }
@@ -498,10 +504,7 @@ impl L2BookAdapter {
                         BookTransitionKind::Snapshot,
                         BookPublication::None,
                         outcome,
-                        final_observed_at_ms,
-                        None,
-                        None,
-                        vec![],
+                        TransitionMetadata::empty(final_observed_at_ms),
                     ));
                 }
             }
@@ -518,10 +521,7 @@ impl L2BookAdapter {
             } else {
                 BookOutcome::BootstrapApplied
             },
-            final_observed_at_ms,
-            None,
-            None,
-            vec![],
+            TransitionMetadata::empty(final_observed_at_ms),
         ))
     }
 
@@ -542,10 +542,12 @@ impl L2BookAdapter {
             BookTransitionKind::Delta,
             publication,
             outcome,
-            delta.observed_at_ms,
-            Some(delta.sequence_start),
-            delta.previous_sequence,
-            delta.updates,
+            TransitionMetadata {
+                observed_at_ms: delta.observed_at_ms,
+                native_sequence_start: Some(delta.sequence_start),
+                previous_sequence: delta.previous_sequence,
+                updates: delta.updates,
+            },
         ))
     }
 
