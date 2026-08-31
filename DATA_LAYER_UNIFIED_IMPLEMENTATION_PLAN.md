@@ -26929,3 +26929,33 @@ query/stream role, Trading System, alpha, signal, sizing or order path changed.
 The next allowed action is one coherent source commit, one disposable immutable
 C2-client build from that commit, then exactly one four-identity 300-second
 no-order C2 acceptance against the already-approved recovered projector set.
+
+**Full-scope C2 mapper preflight (`FAIL-CLOSED / SOURCE REPAIR IN PROGRESS`,
+2026-08-31).** The first full-scope disposable client auto-removed before any
+V1/V2/provider request, cursor, Kafka, Redis, SQLite, order, signal or route
+mutation. Its empty receipt and stderr digest
+`fd1fe0df3a20b43ca6335fa80a8f402b46e769f534285aa3085fcccb9f0057af` record
+the deterministic local contract failure: the shared reference mapper did not
+set the one-row snapshot shape required by the public SDK for the existing
+`EXECUTION` `MARK_INDEX_PRICE` requirements. The narrow repair is limited to
+that generic mapper: execution mark/index requests must explicitly retain full
+coverage with `limit=1`, `page_size=1` and `max_pages=1`. A regression will
+cover this exact shape; all alpha/research reference requests retain their
+declared bounded-history/default shape. The replacement client will be rebuilt
+from the corrected commit and run one replacement full-scope C2 only after its
+network-disabled image matrix passes. Runtime roles, projector image, V1,
+Kafka, Redis, SQLite, Rust, ingestors, readers, Trading System, alpha and the
+order path remain excluded.
+
+**Full-scope C2 mapper repair (`PASS / COMMIT PENDING`, 2026-08-31).** The
+shared V2 reference mapper now emits the only SDK-valid execution mark/index
+shape: one complete snapshot row (`limit=1`, `page_size=1`, `max_pages=1`). It
+does not change any source, provider, policy, SLA, fallback, data product or
+runtime configuration. The targeted execution-mark contract regression and the
+complete affected source matrix passed **94/94** in `27.942s` from a
+network-disabled, read-only, non-root container; AST syntax and
+`git diff --check` also passed. The prior failed client had sent no data
+request, so it does not consume the approved real C2 observation attempt. The
+next action is one commit, one replacement immutable client build, then one
+full four-identity C2 acceptance bounded to 300 seconds against unchanged
+runtime.

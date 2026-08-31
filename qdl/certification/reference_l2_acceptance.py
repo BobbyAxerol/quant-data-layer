@@ -236,6 +236,11 @@ def reference_request_for_requirement(
         })
     if product is ReferenceProduct.LONG_SHORT_RATIO:
         values["long_short_kind"] = LongShortKind.GLOBAL_ACCOUNT
+    if product is ReferenceProduct.MARK_INDEX_PRICE and requirement.consumer_grade is ConsumerGrade.EXECUTION:
+        # Execution may use only the current complete mark/index snapshot.
+        # Keep this explicit instead of inheriting the alpha/research batch
+        # defaults, which would make the public SDK reject the request.
+        values.update({"limit": 1, "page_size": 1, "max_pages": 1})
     if product is ReferenceProduct.BASIS:
         values["basis_series"] = BasisSeries.NATIVE
         values["basis_contract_type"] = "PERPETUAL"

@@ -178,6 +178,24 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
         request = reference_request_for_requirement(alpha_requirement, now_ns=NOW_NS)
         self.assertEqual(request.consumer_grade, Grade.ALPHA)
 
+    def test_execution_mark_index_request_is_one_complete_snapshot(self):
+        requirement = next(
+            item.requirement
+            for item in self.scope.references
+            if item.requirement.feed is FeedType.MARK_INDEX_PRICE
+        )
+        execution_requirement = replace(
+            requirement,
+            consumer_grade=ConsumerGrade.EXECUTION,
+        )
+        request = reference_request_for_requirement(
+            execution_requirement,
+            now_ns=NOW_NS,
+        )
+        self.assertEqual(request.consumer_grade, Grade.EXECUTION)
+        self.assertEqual((request.limit, request.page_size, request.max_pages), (1, 1, 1))
+        self.assertTrue(request.require_full_coverage)
+
     def test_reference_quality_uses_provider_observation_not_local_receive_time(self):
         product = next(
             item for item in self.scope.references
