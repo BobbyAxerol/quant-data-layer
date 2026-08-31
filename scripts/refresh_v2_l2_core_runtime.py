@@ -4,8 +4,9 @@
 This is deliberately narrower than a generic stable-runtime refresh.  It
 updates only the three mounted realtime-core JSON files and only admits the
 six already-declared perpetual BOOK mappings required to complete the
-five-liquid V2 demand scope.  Existing binding semantics stay byte-for-byte
-equivalent apart from their known catalog-revision metadata.
+five-liquid V2 demand scope. Existing binding semantics must remain
+byte-for-byte equivalent; the current catalog revision is deliberately
+materialized for every retained binding so raw/core lineage remains valid.
 """
 
 from __future__ import annotations
@@ -121,6 +122,16 @@ def _validate_and_render(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if active.get("authority") != expected.get("authority"):
         raise ValueError(f"{file_name} changes authority")
+    active_core = active.get("core")
+    expected_core = expected.get("core")
+    if not isinstance(active_core, Mapping) or not isinstance(expected_core, Mapping):
+        raise ValueError(f"{file_name} lacks core configuration")
+    active_core_fields = dict(active_core)
+    expected_core_fields = dict(expected_core)
+    active_core_fields.pop("bindings", None)
+    expected_core_fields.pop("bindings", None)
+    if active_core_fields != expected_core_fields:
+        raise ValueError(f"{file_name} changes non-binding core configuration")
     active_bindings = _bindings(active, field=f"active {file_name}")
     expected_bindings = _bindings(expected, field=f"expected {file_name}")
     active_by_id = {str(item["source_id"]): item for item in active_bindings}
@@ -135,11 +146,15 @@ def _validate_and_render(
             raise ValueError(f"{file_name} has semantic drift for {source_id}")
 
     added_ids = expected_by_id.keys() - active_by_id.keys()
-    if added_ids != DECLARED_ADDITIVE_BOOK_SOURCE_IDS:
+    if added_ids and added_ids != DECLARED_ADDITIVE_BOOK_SOURCE_IDS:
         raise ValueError(
             f"{file_name} additive BOOK scope differs from the approved declaration: "
             f"{sorted(added_ids)}"
         )
+    if not DECLARED_ADDITIVE_BOOK_SOURCE_IDS.issubset(expected_by_id):
+        raise ValueError(f"{file_name} generated BOOK scope is incomplete")
+    if not DECLARED_ADDITIVE_BOOK_SOURCE_IDS.issubset(expected_by_id.keys() | active_by_id.keys()):
+        raise ValueError(f"{file_name} active/generated BOOK scope is incomplete")
     additions = [
         expected_by_id[str(item["source_id"])]
         for item in expected_bindings
@@ -156,15 +171,34 @@ def _validate_and_render(
         ):
             raise ValueError(f"{file_name} has an invalid declared L2 addition: {source_id}")
 
+    revision_updates = [
+        source_id
+        for source_id, current in active_by_id.items()
+        if current.get("instrument_catalog_revision")
+        != expected_by_id[source_id].get("instrument_catalog_revision")
+    ]
+    if not revision_updates:
+        raise ValueError(f"{file_name} has no catalog revision lineage update")
+
     result = copy.deepcopy(dict(active))
     core = result.get("core")
     if not isinstance(core, dict):
         raise ValueError(f"{file_name} lacks mutable core configuration")
-    core["bindings"] = [*copy.deepcopy(active_bindings), *copy.deepcopy(additions)]
+    # Use the generated binding set, rather than preserving stale active
+    # metadata, because Rust verifies raw.instrument_catalog_revision exactly.
+    core["bindings"] = copy.deepcopy(expected_bindings)
     return result, {
         "file": file_name,
         "before_binding_count": len(active_bindings),
         "after_binding_count": len(core["bindings"]),
+        "catalog_revision_updated_binding_count": len(revision_updates),
+        "before_catalog_revisions": sorted({
+            int(item["instrument_catalog_revision"]) for item in active_bindings
+        }),
+        "after_catalog_revisions": sorted({
+            int(item["instrument_catalog_revision"]) for item in expected_bindings
+        }),
+        "declared_book_source_ids": sorted(DECLARED_ADDITIVE_BOOK_SOURCE_IDS),
         "added_book_source_ids": sorted(added_ids),
         "added_book_symbols": sorted(str(item["native_symbol"]) for item in additions),
     }
@@ -249,7 +283,7 @@ def refresh(
         for name, (_path, active, expected, mode, change) in pending.items()
     }
     if not all(item["changed"] for item in files.values()):
-        raise ValueError("all three core files must require the declared additive mapping")
+        raise ValueError("all three core files must require the declared L2/revision convergence")
     result: dict[str, Any] = {
         "schema": "qdl.v2.l2-core-runtime-refresh.v1",
         "status": "APPLIED" if apply else "DRY_RUN",

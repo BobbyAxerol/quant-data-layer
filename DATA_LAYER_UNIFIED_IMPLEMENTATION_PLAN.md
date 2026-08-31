@@ -27176,3 +27176,89 @@ now authorized: apply this compiler to one new private state directory; roll
 `rust_core`, `rust_core_2`, `rust_core_3` serially on their existing immutable
 image and mounts; reapply the tested two-ingestor mapping; then observe real
 L2 and one C2. No other role or state is in scope.
+
+
+**149-route L2 core-mapping runtime observation (`FAIL-CLOSED / RECOVERY
+APPROVAL REQUIRED`, 2026-08-31).** The approved compiler atomically updated
+only `core.json`, `core-002.json`, and `core-003.json` in
+`/home/bobby/.local/state/qdl-v2/l2-core-mapping-r16-20260831T145412Z` from
+`176 -> 182` mappings, preserving the authority and adding exactly the six
+declared Binance USD-M/OKX Swap SOL, DOGE and BNB perpetual BOOK source IDs.
+All three existing Rust cores were serially recreated on their unchanged
+`cfb686...49951f` image, with `running=true`, restart count `0` and no OOM;
+each reports `bindings=182`. The already-tested native-ingestor compiler then
+updated only `ingestor-binance-usdm.json` and `ingestor-okx-swap.json` from
+`16 -> 19` bindings and both existing ingestors were serially recreated on the
+same image without restart/OOM. They each report five TRADE, five QUOTE and
+nine BOOK bindings; the OKX ingestor records authentic nine-book snapshot
+renewals. The rollback copies for all five JSON files are retained under the
+named private state directory.
+
+The first disposable, no-order 149-route C2 advanced past the former
+SOL/DOGE/BNB BOOK availability failure, then stopped fail-closed at
+`BINANCE.USDM.PERPETUAL.BTC-USDT / TRADE`: its latest durable event still has
+the pre-roll `source_session_id`, generation `71` and config revision `14`,
+while both query replicas can read current `LIVE` Binance liveness records at
+generation `75`, revision `16`. Therefore the fault is a real stale
+core/projector lineage handoff, not missing session state, a relaxed SLA, or a
+synthetic pass. C2 was not retried.
+
+During read-only Kafka group diagnostics, invoking an extra JVM CLI inside the
+memory-bounded `kafka1` broker caused that broker process to be OOM-killed
+(`exit=137`). `kafka2` and `kafka3` remain healthy; no Kafka command reset an
+offset, changed a topic, flushed Redis, deleted SQLite, touched V1, Trading
+System, alpha or the order path. Starting the existing `kafka1` container is
+outside this packet's approved role set, so recovery is deliberately awaiting
+explicit owner approval rather than being performed implicitly. Until it is
+running and the durable lineage is diagnosed/repaired, the packet and C2 stay
+open and no V2 release claim advances.
+
+
+**149-route L2 core-mapping lineage diagnosis (`PASS / NARROW SOURCE REPAIR
+AUTHORIZED`, 2026-08-31).** After owner-approved restart of the existing
+`kafka1` container, all three brokers again report healthy without an offset,
+topic, Redis, SQLite, V1, Trading System, alpha or order-path mutation. A
+bounded static-assignment Kafka read using the mounted Rust-core identity
+proved fresh authenticated Binance BTC TRADE raw records are flowing at
+config revision `16`, catalog revision `8`, and the current generation. The
+former core JSON compiler intentionally tolerated catalog-revision metadata
+differences while preserving the older `instrument_catalog_revision=7` on its
+176 retained bindings. Rust correctly checks that raw and binding catalog
+revisions are identical, so it quarantines the otherwise valid current raw
+records before canonical publication. This explains the old durable session
+lineage exactly; it is not a session-liveness outage, provider failure,
+missing L2 mapping or SLA issue.
+
+The approved repair is limited to the existing core-runtime compiler and its
+tests: generated catalog revision metadata must replace stale values on every
+retained binding while all binding identity/contract fields remain byte-for-
+byte semantically unchanged, followed by the already-authorized atomic core
+config reapply and serial rolling recreate of only `rust_core`, `rust_core_2`,
+and `rust_core_3`. The two ingestors remain at their correctly materialized
+revision-16 configurations and are not recreated again. Tests must prove the
+raw/core revision equality for a retained BTC TRADE and new SOL/DOGE/BNB BOOK
+mapping, reject any non-metadata drift, and preserve exact rollback material.
+After core convergence, verify fresh canonical lineage and run one C2 only.
+
+
+**149-route L2 core-mapping lineage source exit (`PASS / CORE ROLL AUTHORIZED`,
+2026-08-31).** The existing bounded compiler now replaces stale
+`instrument_catalog_revision` metadata with the generated catalog value on all
+retained bindings, rather than treating that permitted comparison difference as
+a value to preserve. It continues to reject authority drift, non-binding core
+configuration drift, all binding semantic drift other than that one metadata
+field, missing declared BOOK mappings, unexpected additive mappings and an
+already-converged/non-changing core set. The current post-L2 state is covered:
+it permits exactly `182 -> 182` convergence with no new BOOK addition while
+requiring all six declared L2 source IDs to remain present.
+
+The immutable, non-root, network-disabled regression matrix passed **12/12**
+in **8.601s** across both core and native-ingestor refresh compilers; isolated
+Python compilation to `/tmp` and `git diff --check` passed. A read-only live
+dry-run against the active runtime confirms each core has `182` bindings, its
+176 retained mappings advance catalog revision `7 -> 8`, the six declared
+L2 mappings remain present, authority SHA-256 stays
+`1cd55d7...981fb1078`, and no data-plane mutation is made. The next
+authorized operation is an atomic apply to a new private rollback directory
+and serial recreation of only the three existing Rust core replicas. The two
+ingestors already have revision-16/19-binding configs and remain untouched.

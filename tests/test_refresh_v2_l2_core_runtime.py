@@ -80,6 +80,9 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
                 item = result["files"][file_name]
                 self.assertEqual(item["before_binding_count"], 176)
                 self.assertEqual(item["after_binding_count"], 182)
+                self.assertEqual(item["catalog_revision_updated_binding_count"], 176)
+                self.assertEqual(item["before_catalog_revisions"], [7])
+                self.assertEqual(item["after_catalog_revisions"], [8])
                 self.assertEqual(set(item["added_book_source_ids"]), DECLARED_ADDITIVE_BOOK_SOURCE_IDS)
             self.assertEqual({name: (runtime / name).read_bytes() for name in CORE_FILES}, before)
 
@@ -108,8 +111,62 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
                 active_by_id = {item["source_id"]: item for item in active}
                 updated_by_id = {item["source_id"]: item for item in updated}
                 self.assertTrue(set(active_by_id).issubset(updated_by_id))
-                self.assertTrue(all(updated_by_id[key] == value for key, value in active_by_id.items()))
+                self.assertTrue(all(
+                    {
+                        field: value
+                        for field, value in updated_by_id[key].items()
+                        if field != "instrument_catalog_revision"
+                    }
+                    == {
+                        field: value
+                        for field, value in active_by_id[key].items()
+                        if field != "instrument_catalog_revision"
+                    }
+                    for key in active_by_id
+                ))
+                self.assertTrue(all(
+                    updated_by_id[key]["instrument_catalog_revision"] == 8
+                    for key in active_by_id
+                ))
                 self.assertEqual(set(updated_by_id) - set(active_by_id), DECLARED_ADDITIVE_BOOK_SOURCE_IDS)
+
+    def test_dry_run_converges_stale_metadata_after_l2_was_already_added(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            runtime = self._runtime(root)
+            catalog = StableSourceCatalog.load(CATALOG)
+            acquisition = StableAcquisitionPlan.load(ACQUISITION, catalog=catalog)
+            generated = root / "generated"
+            write_stable_runtime_bundle(
+                generated,
+                catalog=catalog,
+                acquisition=acquisition,
+                authority=self._authority(),
+            )
+            for file_name in CORE_FILES:
+                path = runtime / file_name
+                active = json.loads(path.read_text(encoding="utf-8"))
+                expected = json.loads((generated / file_name).read_text(encoding="utf-8"))
+                existing_ids = {item["source_id"] for item in active["core"]["bindings"]}
+                active["core"]["bindings"].extend(
+                    item for item in expected["core"]["bindings"]
+                    if item["source_id"] in DECLARED_ADDITIVE_BOOK_SOURCE_IDS
+                    and item["source_id"] not in existing_ids
+                )
+                path.write_text(json.dumps(active, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            result = refresh(
+                runtime_dir=runtime,
+                output_dir=None,
+                apply=False,
+                state_root=root / "state",
+            )
+            for file_name in CORE_FILES:
+                item = result["files"][file_name]
+                self.assertEqual(item["before_binding_count"], 182)
+                self.assertEqual(item["after_binding_count"], 182)
+                self.assertEqual(item["catalog_revision_updated_binding_count"], 176)
+                self.assertEqual(item["added_book_source_ids"], [])
+                self.assertEqual(set(item["declared_book_source_ids"]), DECLARED_ADDITIVE_BOOK_SOURCE_IDS)
 
     def test_rejects_existing_semantic_drift(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -120,6 +177,22 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
             payload["core"]["bindings"][0]["native_symbol"] = "unexpected"
             path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "semantic drift"):
+                refresh(
+                    runtime_dir=runtime,
+                    output_dir=None,
+                    apply=False,
+                    state_root=root / "state",
+                )
+
+    def test_rejects_nonbinding_core_drift(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            runtime = self._runtime(root)
+            path = runtime / "core.json"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["core"]["dedup_capacity"] = 42
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "non-binding core configuration"):
                 refresh(
                     runtime_dir=runtime,
                     output_dir=None,
