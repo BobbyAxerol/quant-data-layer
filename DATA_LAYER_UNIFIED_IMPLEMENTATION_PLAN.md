@@ -25808,3 +25808,122 @@ was OOM-killed or restarting. This exits the lossless-core capacity repair.
 The only remaining Phase-12.2 work is the independent Trading System
 provider-neutral split mark/index projection fix, one replacement
 market-data image, then the already-scoped 300-second no-order acceptance.
+
+#### 24.3.13 Five-Liquid Read-Only Latency And Binding Verification (`PASS / COMPLETE`, 2026-08-31)
+
+**Goal.** Re-verify the active V2 price/bar surface with real data for the
+complete five-liquid set, not a BTC/ETH proxy: Binance USD-M `BTCUSDT`,
+`ETHUSDT`, `SOLUSDT`, `DOGEUSDT`, `BNBUSDT` and OKX Swap
+`BTC-USDT-SWAP`, `ETH-USDT-SWAP`, `SOL-USDT-SWAP`, `DOGE-USDT-SWAP`,
+`BNB-USDT-SWAP`. Measure both query replicas for durable `TRADE`, `QUOTE`
+and final `BAR 1m`, plus the governed batch final-BAR path. Record endpoint
+round-trip, provider/durable freshness, session liveness, gap/completeness,
+replica identity and final-bar availability without retaining market payloads.
+
+**Scope and invariants.** The active Trading System binding already contains
+exactly `42` V2-primary products: five symbols x two venues x
+`TRADE`/`QUOTE`/`BAR 1m` (`30`) plus BTC/ETH `MARK_INDEX_PRICE`,
+`BOOK_SNAPSHOT` and `BOOK_DELTA` (`12`). This verification does not expand L2
+to SOL/DOGE/BNB and does not change source demand, manifest, image, runtime,
+Kafka, Redis, SQLite, V1, Trading System, alpha, database, signal, sizing or
+order state. It uses one disposable `--rm`, read-only, non-root client with
+the existing Trading System paper mTLS/JWT identity and a memory-only cursor.
+
+**Exit gate.** Both query replicas must return exact venue/native identity,
+finite positive market values where applicable, `complete=true`, no open gap,
+and an execution-eligible or explicitly quiet-but-session-live status under
+the requirement policy. The probe aggregates latency only from successful
+typed reads and separately reports every fail-closed result; it does not
+relax an SLA or synthesize a provider event. A missing route or mismatch is an
+in-scope defect to fix before declaring the five-liquid product ready.
+
+**Rollback/cleanup.** The probe has no stateful mutation and exits with the
+temporary container removed. It does not require rollback; any failed gate
+leaves the existing V1 rollback and active V2 runtime unchanged.
+
+**Real five-liquid result (`PASS`, 2026-08-31).** A disposable, non-root
+(`1001:1001`), read-only mTLS/JWT client ran against both active V2 query
+replicas. It mounted only the sealed Trading System paper binding and emitted
+aggregate metrics; it had no Docker socket, provider credential, persistent
+cursor, payload retention, order capability or writable host mount. The final
+attempt passed every contract gate: no runtime mutation, no order action, no
+open gap, no identity cross-mix and no partial result.
+
+- **Manifest/binding:** the sealed binding has `42` routes and is a valid
+  subset of the `43`-requirement entitlement manifest: `30` five-liquid
+  Binance USD-M/OKX Swap `TRADE`/`QUOTE`/final `BAR 1m` routes and `12`
+  BTC/ETH typed routes. The one entitlement not bound by this crypto packet is
+  DNSE; it is not a crypto route omission. This proves `SOL`, `DOGE` and `BNB`
+  are active on both venues for the same price/bar surface as BTC/ETH, not
+  merely catalog candidates.
+- **Durable price/bar reads:** each bucket below contains `30` successful
+  reads (`5` symbols x `3` samples x `2` replicas), with finite positive
+  values, exact native identity, `complete=true` and `gap_open=false`.
+  Request round-trip `p50/p95/p99` was Binance `TRADE`
+  `7.52/22.03/40.52ms`, `QUOTE` `8.83/38.84/45.03ms`, `BAR 1m`
+  `13.73/55.64/64.61ms`; OKX Swap `TRADE` `6.70/29.02/31.65ms`, `QUOTE`
+  `6.65/31.26/41.43ms`, `BAR 1m` `534.35/1182.97/1196.38ms`.
+  The higher OKX BAR call cost is warmup/query work, not the hot execution
+  stream: BAR warmup is for bootstrap/repair, never per-tick order pricing.
+- **Warmup/batch:** `warmup:batch` returned exactly `10 x 100 = 1,000` final
+  1m bars with no gap in `952.09ms` from query replica 1 and `813.88ms` from
+  replica 2. This validates bounded initial warmup; alpha runtimes must retain
+  their FIFO buffer and append closed bars rather than polling full history on
+  every cycle.
+- **Final-bar handoff:** at the next real 1m close, all `20` observations
+  (`10` native routes x `2` query replicas) materialized as final/revised
+  bars within the `15s` deadline: close-to-query `p50=2.151s`,
+  `p95=3.376s`, `p99=4.196s`, `max=4.400s`. The active bar edge has no legacy
+  10-second grace: the running `binance_bar_edge` was read-only verified at
+  settlement/retry start `0.10s`, bounded retry `1.0s`, `32` concurrent
+  requests and warmup `1,000` rows. It backs off only when the provider has
+  not yet confirmed the exact closed bar. The residual 2-4s is real
+  provider-finality plus durable publication, not an intentional sleep.
+- **Hot stream:** sequential `warmup_then_stream` verified all ten TRADE
+  routes without consuming the existing consumer's entire quota. Nine routes
+  delivered a durable event with handoff `p50=294.66ms`, `p95=908.86ms`,
+  `p99=994.62ms` and event durable-age `p50=342.57ms`, `p95=406.12ms`,
+  `p99=407.23ms`; one route was correctly classified `QUIET` with a live,
+  complete, gap-free provider session. A quiet instrument is not a disconnect;
+  current-price authority remains governed by that route's freshness policy.
+- **Execution reference/L2 scope:** BTC/ETH `MARK_INDEX_PRICE` succeeded on
+  both replicas using the real typed provider snapshot endpoint in
+  `177.59ms` and `187.81ms`; it has complete provider lineage but is
+  deliberately non-durable and non-replayable. OKX returns independently
+  lineaged mark and index observations, while Binance returns both fields in
+  one observation; the invariant is both fields for the exact instrument, not
+  equal observation counts. BTC/ETH L2 `BOOK_DELTA` remained live, verified
+  and gap-free (query p50 Binance `137.30ms`, OKX `180.71ms`); `BOOK_SNAPSHOT`
+  is bootstrap/resync state only, then clients must apply deltas. L2 and
+  mark/index have **not** been enabled for SOL/DOGE/BNB in this bounded
+  consumer manifest, so no broader microstructure claim is made.
+
+**Endpoint/use rule confirmed by this evidence.** Use V2 `warmup`/
+`warmup:batch` only at startup, bounded repair or explicit history refresh;
+use final `BAR` for candle-close signal calculation; use durable V2
+`warmup_then_stream` `TRADE`/`QUOTE` for live market context; use
+`BOOK_SNAPSHOT` once for book bootstrap/resync followed by ordered
+`BOOK_DELTA` for L2 limit/post-only/impact-sensitive pricing; use
+`reference:batch` mark/index only as a provider-authentic trigger/risk
+reference. A market order does not wait for a quote refresh after a final-bar
+signal. No alpha or Trading System consumer may direct-connect a venue.
+
+**Probe corrections and cleanup.** Two early disposable attempts failed
+closed because the probe, not the service, incorrectly required binding and
+entitlement cardinalities to be equal and incorrectly required one
+mark/index observation on OKX. The corrected probe accepts only
+`binding subset of entitlement` and validates exact mark+index fields with
+lineage. A third harness correction classifies a four-second no-event stream
+as `QUIET` only after typed status proves its session live/complete/gap-free;
+it never upgrades stale data to execution-eligible. The final pass is the
+only acceptance evidence above. All probe containers exited with `--rm`; the
+temporary `/tmp` probe and Python cache were removed after recording this
+entry. No test image or BuildKit cache was created.
+
+**Decision.** The five-liquid V2 **price/bar plane is runtime-attested and
+ready for the existing sealed paper binding**, with V1 retained as its
+versioned rollback route. This does not close all Phase 12.2 work: the
+independent Trading System provider-neutral mark/index projection repair, one
+replacement market-data image and its already-scoped 300-second no-order
+acceptance remain the final integration gate before claiming the whole
+Trading System execution-context path release-ready.
