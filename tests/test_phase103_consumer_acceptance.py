@@ -92,11 +92,23 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 "binance-usdm-solusdt-bar-15m",
             },
         )
-        self.assertEqual(len(scope.excluded), 1)
-        excluded = scope.excluded[0]
+        self.assertEqual(len(scope.excluded), 66)
+        excluded = next(
+            item for item in scope.excluded
+            if item.reason == "VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE"
+        )
         self.assertEqual(excluded.consumer_id, "trading-system.paper.stable")
         self.assertEqual(excluded.reason, "VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE")
         self.assertEqual(excluded.feed.value, "TRADE")
+        later_phase = [
+            item for item in scope.excluded
+            if item.reason == "LATER_PHASE_PRODUCT"
+        ]
+        self.assertEqual(len(later_phase), 65)
+        self.assertEqual(
+            {item.consumer_id for item in later_phase},
+            {"trading-system.paper.stable", "alpha.binance.paper.stable"},
+        )
 
     def test_scope_digest_is_deterministic_and_evidence_contains_no_market_payload(self):
         first = self.scope()

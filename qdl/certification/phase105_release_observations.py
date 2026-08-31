@@ -35,6 +35,13 @@ _BUNDLE_FIELDS = frozenset({
     "acceptance_sha256",
     "observations",
 })
+_DURABLE_NO_CURSOR_HANDOFFS = frozenset({
+    "SIGNED_CURSOR_REOPENED_NO_NEW_EVENT",
+    "LIVE_EVENT_AFTER_REOPEN_NO_CURSOR",
+    "LIVE_OBSERVED_NO_NEW_CURSOR",
+    "QUIET_OBSERVED_NO_CURSOR",
+    "MIXED_LIVE_QUIET_NO_NEW_CURSOR",
+})
 
 
 def expected_release_delivery(
@@ -93,6 +100,23 @@ def _quality(value: object, field: str) -> dict[str, int | bool]:
         ),
         "gap_open": gap_open,
     }
+
+
+def _durable_no_cursor_lag(raw: Mapping[str, object], *, index: int) -> int:
+    """Accept a C2-proven live durable handoff with no new cursor event."""
+    handoff = raw.get("stream_handoff")
+    sessions = raw.get("stream_no_event_sessions")
+    if handoff not in _DURABLE_NO_CURSOR_HANDOFFS:
+        raise ValueError("Phase 10.5 B3 durable no-cursor handoff is unproven")
+    if (
+        not isinstance(sessions, list)
+        or not sessions
+        or any(not isinstance(item, str) or not item for item in sessions)
+    ):
+        raise ValueError(
+            f"Phase 10.5 B3 product[{index}] durable no-cursor sessions are invalid"
+        )
+    return 0
 
 
 def compact_view_quality(view: object, *, observed_at_ns: int | None = None) -> dict[str, int | bool]:
@@ -181,15 +205,18 @@ def build_release_observation_bundle(
         if delivery in {"PROVIDER_PASS_THROUGH", "ON_DEMAND"} and acknowledged is None and resumed is None:
             consumer_lag = 0
         elif delivery == "DURABLE":
-            acknowledged_offset = _require_non_negative_int(
-                acknowledged, f"product[{index}].acknowledged_offset"
-            )
-            resumed_offset = _require_non_negative_int(
-                resumed, f"product[{index}].resumed_offset"
-            )
-            if resumed_offset <= acknowledged_offset:
-                raise ValueError("Phase 10.5 B3 stream resume did not advance")
-            consumer_lag = resumed_offset - acknowledged_offset
+            if acknowledged is None and resumed is None:
+                consumer_lag = _durable_no_cursor_lag(raw, index=index)
+            else:
+                acknowledged_offset = _require_non_negative_int(
+                    acknowledged, f"product[{index}].acknowledged_offset"
+                )
+                resumed_offset = _require_non_negative_int(
+                    resumed, f"product[{index}].resumed_offset"
+                )
+                if resumed_offset <= acknowledged_offset:
+                    raise ValueError("Phase 10.5 B3 stream resume did not advance")
+                consumer_lag = resumed_offset - acknowledged_offset
         else:
             raise ValueError("Phase 10.5 B3 product delivery/resume evidence is invalid")
         measured[identity] = (primary, secondary, consumer_lag)

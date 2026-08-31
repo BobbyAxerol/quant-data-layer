@@ -26735,3 +26735,101 @@ SQLite, V1, Trading System, alpha, signal, sizing or order path changed.
 The next allowed action is to commit this source slice, build one immutable
 C2-client image from that commit, then run one replacement 300-second C2
 acceptance with the already-approved projector runtime unchanged.
+
+**Replacement C2 packet (`PREPARED / EXECUTING`, 2026-08-31).** Source slice
+`2c590d5` was committed as `fix(data): retry live trade snapshot in C2` and
+built once as the disposable client image `qdl-v2-python:2.0.0-2c590d5`,
+digest `sha256:61e23fab22da1af10e0a7f5ff79a2963296043d3fb22750abcad97e9e3981b40`.
+Its OCI revision/version labels exactly match the commit/tag and it passed the
+full affected `78/78` Phase 10.3/10.5 matrix from the immutable image with no
+network and no source mount. The one replacement C2 uses the same existing
+`executor_network`, sealed runtime/TLS state read-only, three paper identities,
+two V2 query/stream replicas, V1 cached fallback only where already permitted,
+15-second per-product timeout and a 300-second global bound. It has no Docker
+socket, provider credential or execution credential; it may only read V1/V2.
+No role is recreated for this C2. Disposable container/cursor state will be
+removed after the terminal result; compact evidence, the active projector image
+and the explicit projector rollback image are retained until release closure.
+
+**Replacement C2 bootstrap preflight (`NO DATA REQUEST / CORRECTED`,
+2026-08-31).** The first disposable invocation exited before identity load or
+any V1/V2 request because the newly-created evidence namespace omitted the two
+already-sealed, non-secret V1 provenance artifacts required by the unchanged
+bootstrap (`provenance.json` and `v1-runtime-binding.json`). It made no provider
+connection, durable write, order, signal, sizing or route mutation. The only
+correction is to copy those exact compact artifacts from the immediately prior
+C2 namespace and retry the same image, network, read-only mounts and command.
+
+**Replacement C2 recovery result (`PASS / RELEASE-CERTIFICATION PREPARED`,
+2026-08-31).** The corrected disposable C2 client completed the bounded
+real-data, no-order acceptance against the recovered projector set. Receipt:
+`/home/bobby/.local/state/qdl-v2/projector-overlap-7c29542-20260831T105939Z/c2-20260831T113823Z-2c590d5/acceptance.json`,
+SHA-256 `c5fc87f833fff6b2d29c76c0eb0d168eff2d657858e2f693361a3cfdf41c5039`.
+It covered exactly `60` route requirements across the three sealed paper
+identities, including `50` durable routes; elapsed `228.497s`; `order_actions=0`,
+`provider_connections=0`, `blocked_v1_requests=0`, and temporary cursor state
+was removed. The ten declared Binance V1-fallback drills completed
+`V2_PRIMARY -> V1_FALLBACK -> V2_PRIMARY`; all BLOCKED routes remained blocked.
+The three recovered projectors remained on
+`qdl-v2-python:2.0.0-7c29542` / `sha256:36ed90b9a18e1c3bbd8cfc6169543f3a3ce1ce79f76f798e7777125cba9c63ed`,
+with zero restarts and no OOM. This creates no order, signal, sizing,
+provider-direct, Kafka, Redis, SQLite, V1, Trading System or alpha mutation.
+
+**Stable-release certification action (`EXECUTING / REVIEW-ONLY`, 2026-08-31).**
+The next bounded action derives compact observations and fallback evidence from
+the passing receipt, records a fresh runtime-handoff record only after inspecting
+the live reader/Rust image digests and `RUST_PRIMARY` authority record, then
+runs `scripts/phase105_certify_stable_release.py` in a network-disabled,
+read-only disposable image. It cannot recreate a role, alter a route, publish a
+tag, connect to a provider, or mutate Kafka/Redis/SQLite. A `PASS` certificate
+will be reported separately from any later GitHub publication; the active
+projector candidate and explicitly named rollback image remain retained until
+that closure and scoped cleanup are recorded.
+
+**Observation-builder cursor semantics (`SOURCE-ONLY REPAIR / EXECUTING`,
+2026-08-31).** The release-routing digest in the passing C2 receipt exactly
+matches the current plan (`5de95c59...075f4565`). The first observation build
+instead failed closed because it treated every `DURABLE` product as a required
+cursor replay. C2 correctly reports five real TRADE handoffs with no new durable
+cursor after reconnect (`LIVE_EVENT_AFTER_REOPEN_NO_CURSOR` or
+`LIVE_OBSERVED_NO_NEW_CURSOR`), backed by explicit two-session evidence. The
+narrow repair will retain strict increasing offsets for ordinary durable
+replays, accept only known C2 live/no-cursor handoff modes with both offsets
+absent and non-empty session evidence, and record lag `0` for that bounded
+case. Unknown modes, partial offsets, or missing sessions remain fail-closed.
+It does not alter runtime, provider behavior, consumer routing, delivery class,
+Kafka, Redis, SQLite, V1, Rust, Trading System, alpha, signal, sizing or order
+paths. Focused source tests plus the affected certificate matrix must pass from
+one immutable disposable client image before the same C2 receipt is re-derived.
+
+**Phase-10.3 compatibility-test drift (`SOURCE-ONLY REPAIR / EXECUTING`,
+2026-08-31).** The broader receipt/certificate matrix also exposed a pre-existing
+test boundary: `build_consumer_acceptance_scope` hard-failed when current stable
+paper manifests contained later `crypto_liquid_v2` reference requirements. The
+Phase-10.3 helper governs only `crypto_primary_v2` TRADE/QUOTE/BAR products, so
+those later reference requirements must be explicitly recorded as
+`LATER_PHASE_PRODUCT`, not treated as an unapproved Phase-10.3 policy. The
+narrow correction preserves hard failure for an unknown policy on a
+Phase-10.3 feed, preserves the explicit VN exclusion, and does not make a
+reference requirement eligible for the old C2 route. This is source/test-only;
+no runtime, route, provider, data-plane, V1, Rust, Trading System, alpha,
+signal, sizing or order state changes.
+
+**Source-repair exit (`PASS / COMMIT PENDING`, 2026-08-31).**
+`phase105_release_observations` now accepts a durable no-cursor handoff only
+when both offsets are absent, C2 has emitted one of its known live/no-cursor
+handoff modes, and non-empty no-event session evidence is present; normal
+durable replay remains strictly increasing. Regressions cover a valid
+live-after-reopen case plus unknown mode and missing-session rejection. The
+Phase-10.3 scope now excludes rather than fails `65` declared later-phase
+L2/reference requirements while retaining the one explicit VN exclusion and
+the original `45` crypto-primary acceptance products. In a disposable,
+non-root, read-only, network-disabled `qdl-v2-python:2.0.0-2c590d5` container,
+the complete affected suite passed **72/72** in `20.960s`:
+`test_phase105_release_observations`, `test_phase105_release_certification`,
+`test_phase105_handoff`, `test_phase103_consumer_acceptance`,
+`test_phase103_consumer_receipt_harness`, and
+`test_phase105_consumer_acceptance`. No runtime or data-plane resource was
+mounted writable or mutated. The next permitted action is one coherent source
+commit, then one immutable disposable certificate-client image build and
+review-only re-derivation from the already passing C2 receipt.

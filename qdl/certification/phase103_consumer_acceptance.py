@@ -211,10 +211,16 @@ def _product_for_requirement(
             interval=requirement.interval,
             reason="VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE",
         )
+    if requirement.feed not in PHASE103_FEEDS:
+        return ExcludedRequirement(
+            consumer_id=manifest.consumer_id,
+            instrument_uid=requirement.instrument_uid,
+            feed=requirement.feed,
+            interval=requirement.interval,
+            reason="LATER_PHASE_PRODUCT",
+        )
     if requirement.source_policy_id != "crypto_primary_v2":
         raise ValueError("crypto consumer requirement has an unapproved source policy")
-    if requirement.feed not in PHASE103_FEEDS:
-        raise ValueError("consumer requirement belongs to a later Phase 10 product")
     try:
         binding: StableSourceBinding = catalog.binding_for(requirement)
     except KeyError:

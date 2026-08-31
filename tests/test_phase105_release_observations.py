@@ -175,6 +175,68 @@ class Phase105ReleaseObservationTests(unittest.TestCase):
                 now_ms=self.captured_at_ms + MAX_OBSERVATION_AGE_MS + 1,
             )
 
+    def test_bundle_accepts_proven_live_durable_handoff_without_cursor(self) -> None:
+        acceptance = self.acceptance()
+        products = acceptance["products"]
+        self.assertIsInstance(products, list)
+        trade_index = next(
+            index for index, product in enumerate(products)
+            if product["delivery"] == "DURABLE" and product["feed"] == "TRADE"
+        )
+        product = products[trade_index]
+        products[trade_index] = dict(
+            product,
+            acknowledged_offset=None,
+            resumed_offset=None,
+            stream_handoff="LIVE_EVENT_AFTER_REOPEN_NO_CURSOR",
+            stream_no_event_sessions=["QUIET_NON_EXECUTABLE", "EVENT_AFTER_REOPEN"],
+        )
+
+        bundle = build_release_observation_bundle(self.plan, acceptance)
+        values = parse_release_observation_bundle(
+            self.plan, bundle, now_ms=self.captured_at_ms
+        )
+        instrument_uid = product["instrument_uid"]
+        requirement = ":".join((
+            instrument_uid,
+            product["feed"],
+            product["interval"] or "",
+            product["source_policy_id"],
+        ))
+        observation = next(
+            item for item in values
+            if item.consumer_id == product["consumer_id"]
+            and item.requirement_key == requirement
+        )
+        self.assertEqual(observation.consumer_lag, 0)
+
+        invalid = self.acceptance()
+        invalid_products = invalid["products"]
+        self.assertIsInstance(invalid_products, list)
+        invalid_product = invalid_products[trade_index]
+        invalid_products[trade_index] = dict(
+            invalid_product,
+            acknowledged_offset=None,
+            resumed_offset=None,
+            stream_handoff="UNPROVEN_NO_CURSOR",
+            stream_no_event_sessions=["QUIET_NON_EXECUTABLE", "EVENT_AFTER_REOPEN"],
+        )
+        with self.assertRaisesRegex(ValueError, "no-cursor handoff"):
+            build_release_observation_bundle(self.plan, invalid)
+
+        missing_sessions = self.acceptance()
+        missing_session_products = missing_sessions["products"]
+        self.assertIsInstance(missing_session_products, list)
+        missing_product = missing_session_products[trade_index]
+        missing_session_products[trade_index] = dict(
+            missing_product,
+            acknowledged_offset=None,
+            resumed_offset=None,
+            stream_handoff="LIVE_OBSERVED_NO_NEW_CURSOR",
+        )
+        with self.assertRaisesRegex(ValueError, "no-cursor sessions"):
+            build_release_observation_bundle(self.plan, missing_sessions)
+
     def test_compact_view_quality_rejects_missing_or_future_receive_time(self) -> None:
         view = SimpleNamespace(
             received_at_ns=999_000_000,
