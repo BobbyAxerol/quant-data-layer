@@ -27613,3 +27613,210 @@ slice. The next approved operation is exactly one immutable Python reader
 image from this committed source, then serially recreate only `query_v2_1`
 and `query_v2_2`, retain their current image for rollback, and run one fresh
 149-route C2 observation.
+
+**149-route C2 native-BASIS query runtime packet (`PREPARED / APPROVED`,
+2026-08-31).** Commit `84afc53d6f5a4750880a918c7b0fab04d46e17c4` was built
+once as `qdl-v2-python:2.0.0-v2-reader-r17-84afc53`, image
+`sha256:7b5c848d2add9e0e36d88bfb837c93448140b7ade3a87d9e94e4902b2bf3f18e`.
+The exact image passed the immutable focused matrix **84/84** in `4.415s`.
+The payload-free packet and image-only Compose override are under
+`/home/bobby/.local/state/qdl-v2/query-coalesced-84afc53-20260831T165328Z/`.
+
+Only `query_v2_1`, then `query_v2_2`, may be recreated with `--no-deps` on
+that new image. Their current image
+`sha256:947cf8a7c81315b1446d78271dbd99d498d46fb2e9b471da734d55ceeef8145a`
+and the unchanged runtime mount are the direct rollback coordinate. Compose
+validation passed and renders the candidate image only for those two target
+roles; no generic compose apply is permitted, because inactive services retain
+their already-running image/config through this two-target packet. V1, Kafka
+topology/offsets, Redis, SQLite, Rust core, ingestors, bar edge, projectors,
+streams, Trading System, alpha and the order path remain excluded. Following
+query readiness, exactly one 149-route C2 no-order observation is authorized.
+
+**149-route C2 native-BASIS query runtime handoff (`PASS / C2 RUNNING`,
+2026-08-31).** The packet serially recreated only `query_v2_1` and
+`query_v2_2` with `--no-deps` on
+`sha256:7b5c848d2add9e0e36d88bfb837c93448140b7ade3a87d9e94e4902b2bf3f18e`.
+Both replicas returned TLS `/health/ready` HTTP `200`, with restart count `0`
+and `OOMKilled=false`. Their bounded post-roll error scan found no
+error/traceback/fatal/exception record. The old
+`sha256:947cf8a7c81315b1446d78271dbd99d498d46fb2e9b471da734d55ceeef8145a`
+reader image remains present and is the direct two-role rollback coordinate.
+
+No excluded role was targeted: V1, Kafka topology/offsets, Redis, SQLite,
+Rust core, ingestors, bar edge, projectors, streams, Trading System, alpha and
+order paths were not recreated or reconfigured. One fresh, auto-removed,
+four-identity 149-route no-order C2 is now running from the existing tested
+client image; it may read V2 and manifest-permitted cached V1 fallback only,
+with no provider-direct client capability and no durable-store write.
+
+**149-route C2 launcher preflight (`NO DATA REQUEST / CORRECTED`,
+2026-08-31).** The first disposable launcher exited `127` before it copied
+identity material or opened V1/V2 endpoints because container-level
+`--cap-drop ALL` removed `CAP_SETGID` required by the bootstrap's deliberate
+`setpriv` transition to UID/GID `10001`. The auto-removed container left no
+acceptance output, no runtime mutation and no provider/data-plane action. The
+same scoped evidence namespace is retained only with its payload-free inputs.
+
+The corrected invocation does not grant the C2 client capabilities: the
+container bootstrap begins with Docker's default capability set solely to
+perform the UID/GID transition, and the existing `setpriv` boundary then clears
+groups, inherited/ambient capabilities and enables `NoNewPrivs` before
+`run-c2.sh` starts. This matches the previously certified C2 bootstrap
+contract. The next operation is the same single bounded C2 invocation, not a
+new acceptance attempt or runtime rollout.
+
+**149-route C2 launcher preflight follow-up (`NO DATA REQUEST / CORRECTED`,
+2026-08-31).** The corrected capability boundary still exited `127` before
+any identity copy or endpoint request because the immutable client image
+declares `USER qdl` (UID `10001`), so the bootstrap itself never had privilege
+to perform its documented one-way `setpriv` transition. The fix is only the
+launcher user for the bootstrap process: start `bootstrap-c2.sh` as `0:0`,
+then retain its existing mandatory transition to `10001:10001` before
+`run-c2.sh`. The client remains read-only, `NoNewPrivs`, capability-free and
+without Docker socket/provider/order credentials. The auto-removed preflight
+container again left no output besides the original scoped input evidence and
+made no V1/V2 request or runtime/data-plane mutation.
+
+**149-route C2 authority-mount preflight (`NO DATA REQUEST / CORRECTED`,
+2026-08-31).** With `--user 0:0` bootstrap, the client correctly reached UID
+`10001`, `CapEff=0` and `NoNewPrivs=1`, then failed before an endpoint request
+because the disposable launcher omitted the existing read-only runtime mount
+that contains `/runtime/authority.json`. The zero-byte acceptance file and
+traceback prove no C2 product was sampled; both rolled query replicas remained
+restart-free and non-OOM on their new image. The only invocation correction is
+to mount the already-running runtime directory read-only at `/runtime`, exactly
+as the query roles do. It does not copy or alter authority, identity, TLS,
+Kafka, Redis, SQLite or any service state. The same bounded C2 observation is
+restarted once with that mount; no additional acceptance scope is created.
+
+**149-route C2 native-BASIS boundary diagnosis (`FAIL-CLOSED / DIAGNOSIS
+CONTINUES`, 2026-08-31).** The actual bounded C2 client reached V2,
+passed its launcher security boundary, and then failed only while validating
+the five isolated Binance USD-M native-BASIS products. The coalesced-lease
+repair is active: a one-replica payload-free diagnostic still returned the
+same typed `SOURCE_UNAVAILABLE / PROVIDER_RETRY_EXHAUSTED` shape, so replica
+coalescing is not the remaining cause.
+
+Bounded, read-only raw-provider probes from the already-running `query_v2_1`
+establish that the C2 request itself is correct: exact native daily BASIS
+`start=D-2d`, `end=D-1ms`, `limit=2` and `limit=3` each returned the same two
+closed period-start rows. A deliberately shortened one-day window returned
+one row, as expected. Therefore no boundary/SLA/coverage contract is changed
+on the basis of this evidence; the remaining defect lies between the raw
+provider wrapper and the governed adapter/query path.
+
+The next bounded diagnostic constructs the exact `ReferenceRequest` inside a
+read-only disposable process with Rust admission disabled, then compares the
+adapter's pagination/parser result to the same request through one V2 query
+replica. It emits only result type/count/coverage/error classification. No
+provider retry policy, Rust admission, SLA, manifest, service, durable store,
+V1, Trading System, alpha or order path is changed until that comparison
+identifies a reproducible shared defect. Any later source repair remains
+restricted to that defect and requires deterministic regression plus the
+focused immutable non-root matrix, syntax and diff checks before a new
+two-query-reader roll/C2 observation is considered. The current `84afc53`
+reader image and source revision remain the direct rollback coordinate.
+
+**149-route C2 native-BASIS admission runtime repair (`APPROVED / EXECUTING`,
+2026-08-31).** The bounded comparison now has a definitive result: raw Binance
+and the exact Python adapter without admission both returned two complete daily
+rows, while the governed adapter failed before its vendor call. From
+`query_v2_1`, Docker DNS resolves `rust_core` but TCP `8300` returns
+`ECONNREFUSED`; the serving authority container reports the non-secret setting
+`QDL_PROVIDER_ADMISSION_ENABLED=false`. Query replicas correctly carry the
+private admission URL, but their intended Rust authority listener was never
+enabled after the reader handoff.
+
+The approved repair is runtime-only and deliberately smaller than a source or
+topology change: validate the existing Phase-10.5 C2 Compose overlay, then
+recreate only service `rust_core` with its current immutable Rust image and
+`QDL_PROVIDER_ADMISSION_ENABLED=true`. `rust_core_2`, `rust_core_3`, both
+ingestors, bar edge, all projectors, query/stream readers, V1, Kafka topology
+and offsets, Redis, SQLite, Trading System, alpha and order paths are excluded.
+The service's pre-recreate state/image and the base disabled setting are the
+rollback coordinate; rollback is one targeted recreate of `rust_core` with
+the same runtime/volume mounts and admission disabled. Required exit is DNS
+and TCP listener evidence, one authenticated governed BTC native-BASIS read
+that completes its lease, `rust_core` restart/OOM/error scan, then one new
+full 149-route C2 no-order receipt. No retry/SLA/manifest policy is relaxed.
+
+**149-route C2 native-BASIS admission runtime repair (`PASS / REPLACEMENT C2
+READY`, 2026-08-31).** The sealed Compose configuration validated before the
+targeted apply. Only `qdl_v2_stable_candidate-rust_core-1` was recreated with
+its unchanged immutable image
+`sha256:cfb686cf23fce8bea8c9c29c31630571bb6aad1b3a137f6dae1d28644649951f`.
+It is `running`, restart count `0`, `OOMKilled=false`; its private startup log
+records Rust admission authority and the expected policy SHA. Its non-secret
+configuration now reports admission enabled on `0.0.0.0:8300`.
+
+The exact authenticated governed BTC native-BASIS request then returned two
+observations with complete left/right coverage and no truncation; the scoped
+lease completed normally. This demonstrates the defect was the disabled
+private listener, not the provider, request window, parser, retry policy or
+coalescing semantics. `rust_core_2`, `rust_core_3`, ingestors, bar edge,
+projectors, query/stream, V1, Kafka, Redis, SQLite, Trading System, alpha and
+order paths were not recreated or reconfigured. The only remaining in-scope
+operation is one fresh four-identity, 149-route, 300-second C2 no-order
+receipt in a new payload-free namespace; the V1 runtime binding is re-used
+only as the frozen fallback attestation.
+
+**149-route C2 strict live-delivery freshness repair (`APPROVED / EXECUTING`,
+2026-08-31).** The replacement C2 reached the governed native-BASIS products
+successfully, then failed closed only on `BINANCE.USDM.PERPETUAL.ETH-USDT /
+BOOK_DELTA`: the SDK rejected the first delivered frame as older than its
+declared `2,000ms` event-recency SLA. This is a bounded shared delivery defect,
+not an SLA, provider, instrument, L2-sequence or manifest defect. The durable
+gateway applies its requirement predicate at enqueue time, but its live queue
+did not re-evaluate a queued record immediately before delivery. A frame can
+therefore become stale while waiting in a bounded subscriber queue.
+
+The approved source-only repair is to re-evaluate the existing subscription
+predicate after dequeue and before emitting a live record. A record that has
+become ineligible is terminally advanced in the server-side signed cursor and
+not delivered; the same subscription waits for the next eligible frame. This
+preserves physical-offset filtering semantics, avoids a stale L2 delta being
+applied, retains the exact `2,000ms` SLA, does not manufacture data, and does
+not change provider, manifest, authority, retry or fallback policy. Regression
+must cover a record fresh at enqueue but stale at dequeue, a later fresh record
+with monotonic signed cursor, identity filtering, and an unchanged strict
+client rejection for deliberately stale direct stream frames. Required source
+exit: focused gateway/gRPC/SDK/C2 tests, immutable no-network test execution,
+syntax and diff checks. Only after that exit may a single query/stream reader
+image be rebuilt and the existing bounded 149-route C2 be retried; runtime,
+Kafka, Redis, SQLite, V1, Rust, ingestors, projectors, Trading System, alpha
+and order paths remain unchanged until that separate packet is applied.
+
+**149-route C2 strict live-delivery freshness source exit (`PASS / STREAM ROLL
+READY`, 2026-08-31).** `StreamSubscription.next_live()` now re-evaluates its
+already-declared predicate after dequeue. If a queued frame has crossed its
+strict freshness boundary, the gateway advances the signed cursor over that
+filtered physical record, decrements its bounded in-flight accounting, and
+waits for the next eligible frame. It never exposes the stale frame to the
+client. This is provider-neutral and applies equally to Binance, OKX and VN;
+it changes neither the `2,000ms` BOOK_DELTA requirement nor any identity,
+sequence, gap, fallback or provider policy.
+
+The new deterministic regression starts with a fresh QUOTE, advances the
+injected clock until it is stale in the subscriber queue, then enqueues a later
+fresh record. It proves only offset `2` is delivered and the signed cursor
+advances through both physical records. Existing strict initial/live filtering
+and direct SDK stale-event rejection continue to pass. In a non-root,
+read-only, network-disabled container using the existing immutable Python
+image with source mounted read-only, the focused matrix passed **117/117** in
+`5.106s`: provider admission/reference, C2 receipt/acceptance, five-liquid
+handoff, full stream SDK and stream projection suites. The full stream SDK
+module separately passed **24/24** in `0.668s`. Syntax compilation to tmpfs
+and `git diff --check` passed. A shell invocation that selected the base system
+Python was discarded as invalid test setup because it lacked the image's
+declared gRPC dependency; no source or runtime result was inferred from it.
+
+The next approved packet is intentionally only one immutable Python image and
+a serial rolling recreate of `stream_v2_active`, then `stream_v2_passive`.
+Their current `sha256:947cf8a7c81315b1446d78271dbd99d498d46fb2e9b471da734d55ceeef8145a`
+image and unchanged runtime/TLS mounts are the direct rollback coordinate.
+Query replicas, Rust, ingestors, bar edge, projectors, V1, Kafka topology and
+offsets, Redis, SQLite, Trading System, alpha and order paths remain excluded.
+After both stream replicas are ready and error-free, one replacement
+four-identity, 149-route C2 no-order receipt is permitted in a fresh
+payload-free namespace.

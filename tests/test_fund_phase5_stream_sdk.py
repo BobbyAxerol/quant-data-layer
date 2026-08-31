@@ -511,6 +511,58 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await subscription.close()
 
+    async def test_strict_stream_rechecks_freshness_after_queue_wait(self):
+        clock = {"now_ns": 10_000_000_000}
+        partition = f"{self.record.instrument_uid}/quote/BINANCE_DIRECT"
+        token = self.handoff.issue(
+            consumer_id=self.consumer_id,
+            snapshot_id="quote-snapshot-queue-wait",
+            snapshot_watermark=Cursor(QUOTE_STREAM, partition, 0),
+            ttl_seconds=3600,
+        ).token
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, token),
+            clock_ns=lambda: clock["now_ns"],
+        )
+        requirement = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.QUOTE,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            max_freshness_ms=100,
+        )
+        subscription = await self.gateway.open(
+            consumer_id=self.consumer_id,
+            stream=QUOTE_STREAM,
+            partition_key=partition,
+            token=token,
+            accepts=lambda stored: service._matches_requirement(stored, requirement),
+        )
+        try:
+            await self.gateway.publish(durable_quote(
+                self.record, 1, source_event_time_ns=clock["now_ns"] - 1,
+            ))
+            # The first frame was admitted while fresh but becomes stale before
+            # this subscriber can dequeue it. The cursor must advance over it.
+            clock["now_ns"] += 1_000_000_000
+            await self.gateway.publish(durable_quote(
+                self.record, 2, source_event_time_ns=clock["now_ns"] - 1,
+            ))
+
+            live = await asyncio.wait_for(subscription.next_live(), timeout=0.5)
+            self.assertEqual(live.stored.cursor.offset, 2)
+            self.assertEqual(
+                self.handoff.resolve_scope(
+                    token=subscription.token, consumer_id=self.consumer_id,
+                ).watermark_offset,
+                2,
+            )
+            subscription.mark_delivered()
+        finally:
+            await subscription.close()
+
     async def test_stream_freshness_uses_bar_close_and_preserves_observe(self):
         now_ns = 10_000_000_000
         service = GrpcMarketDataService(

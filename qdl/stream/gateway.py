@@ -93,11 +93,20 @@ class StreamSubscription:
             raise SlowConsumer("bounded outbound buffer exhausted; replay is required")
         if self.closed:
             raise StopAsyncIteration
-        stored = await self.queue.get()
-        if self.overflowed:
-            raise SlowConsumer("bounded outbound buffer exhausted; replay is required")
-        self._in_flight += 1
-        return await self.record(stored)
+        while True:
+            stored = await self.queue.get()
+            if self.overflowed:
+                raise SlowConsumer("bounded outbound buffer exhausted; replay is required")
+            self._in_flight += 1
+            record = await self.record(stored)
+            # A strict predicate can depend on time. A record that was fresh
+            # when queued may age out while this bounded subscriber waits.
+            # Advance its signed cursor as a filtered physical record, then
+            # wait for the next eligible record instead of leaking stale data.
+            if not self._accepts(stored):
+                self.mark_delivered()
+                continue
+            return record
 
     def mark_delivered(self) -> None:
         if self._in_flight > 0:
