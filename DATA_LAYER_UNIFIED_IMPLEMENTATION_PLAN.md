@@ -28013,7 +28013,8 @@ GitHub CI rerun on the pushed repair branch, and a documented merge sequence
 `fix/rust-contract-ci -> dev -> main`. No branch or worktree cleanup occurs
 until the merged state and every remaining local-only commit are classified.
 
-**Release promotion CI repair (`SOURCE PASS / PUSH PENDING`, 2026-08-31).**
+**Release promotion CI repair (`SOURCE PASS / PUSHED / GITHUB CI PENDING`,
+2026-08-31).**
 The exact Rust 1.82 CI command reproduced the failure: `rustfmt` required three
 deterministic formatting changes in `qdl-venue-core`, then strict Clippy exposed
 pre-existing `too_many_arguments`/`type_complexity` findings in the L2 adapter,
@@ -28031,6 +28032,10 @@ tests passed; one Redis integration case remains explicitly ignored without
 `QDL_TEST_REDIS_URL`. The existing immutable V2 Python image also passed the
 generated-contract regression `7/7` with network disabled, read-only source,
 and UID/GID `10001`. No container, image, provider, durable store, runtime
-configuration, or consumer changed during these source tests. Pending only:
-commit/push this isolated repair and let GitHub rerun complete CI; then merge
-the repair into `dev` before opening `dev -> main`.
+configuration, or consumer changed during these source tests. Commit
+`27bbf18` was pushed to `origin/fix/rust-contract-ci`; the repository workflow
+intentionally runs only for PRs to `dev`/`main` or direct `dev` pushes, so no
+check run is expected until the repair PR is opened. The host has no GitHub API
+token, therefore it did not create a PR or mutate `dev`. Pending only: GitHub
+reruns complete CI on `fix/rust-contract-ci -> dev`, then that repair merges
+into `dev` before opening `dev -> main`.
