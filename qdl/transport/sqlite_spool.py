@@ -614,6 +614,75 @@ class SQLiteDurableSpool:
             )
         return int(result.lastrowid)
 
+    def quarantine_once(
+        self,
+        *,
+        event: DurableEvent,
+        reason_code: str,
+        reason_message: str,
+        retry_count: int,
+    ) -> int:
+        """Persist one bounded forensic record for one immutable poison event.
+
+        This differs from :meth:`quarantine`: callers use it when replaying the
+        exact same durable record is expected and must not consume a new
+        quarantine slot.  The immediate transaction also makes the decision
+        stable across projector replicas sharing one SQLite cache.
+        """
+
+        if not reason_code.strip() or retry_count < 0:
+            raise ValueError("valid quarantine reason and retry_count are required")
+        digest = hashlib.sha256(event.payload).hexdigest()
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute(
+                    """
+                    SELECT quarantine_id FROM quarantine
+                    WHERE stream = ? AND partition_key = ? AND event_id = ?
+                      AND payload_sha256 = ? AND reason_code = ?
+                    """,
+                    (
+                        event.stream,
+                        event.partition_key,
+                        event.event_id,
+                        digest,
+                        reason_code,
+                    ),
+                ).fetchone()
+                if existing is not None:
+                    self._connection.execute("COMMIT")
+                    return int(existing["quarantine_id"])
+                count = self._connection.execute(
+                    "SELECT COUNT(*) FROM quarantine"
+                ).fetchone()[0]
+                if int(count) >= self.config.max_quarantine_records:
+                    raise BackpressureRequired("bridge quarantine bound exhausted")
+                result = self._connection.execute(
+                    """
+                    INSERT INTO quarantine(
+                        stream, partition_key, event_id, payload_sha256, reason_code,
+                        reason_message, retry_count, quarantined_at_ns
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.stream,
+                        event.partition_key,
+                        event.event_id,
+                        digest,
+                        reason_code,
+                        reason_message,
+                        retry_count,
+                        self._clock_ns(),
+                    ),
+                )
+                self._connection.execute("COMMIT")
+                return int(result.lastrowid)
+            except BaseException:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+
     def quarantine_records(self, *, limit: int = 100) -> list[dict[str, int | str]]:
         if limit <= 0 or limit > 1000:
             raise ValueError("quarantine limit must be between 1 and 1000")

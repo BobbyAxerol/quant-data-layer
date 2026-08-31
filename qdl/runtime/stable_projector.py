@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Awaitable, Callable, Protocol
 
+from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.projection.stable import StableCompatibilityProjector, StableProjectionTarget
 from qdl.provider.v1 import raw_provider_pb2
@@ -90,6 +91,7 @@ class _ReadyCanonical:
     existing: StoredEvent | None = None
     semantic_duplicate: bool = False
     project_latest: bool = True
+    terminal_reason: str | None = None
 
 
 class StableProjectorEngine:
@@ -254,7 +256,11 @@ class StableProjectorEngine:
             ready = await self._ready_batch()
             if not ready:
                 return
-            fresh = tuple(item for item in ready if not item.semantic_duplicate)
+            fresh = tuple(
+                item
+                for item in ready
+                if not item.semantic_duplicate and item.terminal_reason is None
+            )
             fresh_stored = (
                 await self.sink.publish_many([item.event for item in fresh])
                 if fresh
@@ -263,15 +269,23 @@ class StableProjectorEngine:
             stored_iterator = iter(fresh_stored)
             resolved: list[tuple[_ReadyCanonical, StoredEvent]] = []
             for item in ready:
-                stored = item.existing if item.semantic_duplicate else next(stored_iterator)
+                stored = (
+                    item.existing
+                    if item.semantic_duplicate or item.terminal_reason is not None
+                    else next(stored_iterator)
+                )
                 if stored is None:
-                    raise RuntimeError("stable semantic duplicate has no cache record")
+                    raise RuntimeError("stable retained canonical record has no cache record")
                 resolved.append((item, stored))
 
             projected = tuple(
                 (item, stored)
                 for item, stored in resolved
-                if item.project_latest and not item.semantic_duplicate
+                if (
+                    item.project_latest
+                    and not item.semantic_duplicate
+                    and item.terminal_reason is None
+                )
             )
             projections = [
                 self.projector.build(stored, item.raw_envelope)
@@ -285,6 +299,18 @@ class StableProjectorEngine:
             if len(applied) != len(projected):
                 raise RuntimeError(
                     "stable projection target returned an invalid result count"
+                )
+            terminalized = tuple(
+                item for item in ready if item.terminal_reason is not None
+            )
+            if terminalized:
+                await asyncio.to_thread(
+                    self._quarantine_terminal_recovery_overlaps, terminalized
+                )
+                logger.warning(
+                    "terminalized stale BAR recovery overlaps count=%s reason=%s",
+                    len(terminalized),
+                    terminalized[0].terminal_reason,
                 )
             applied_by_event = {
                 item.record.event_id: was_applied
@@ -436,6 +462,102 @@ class StableProjectorEngine:
             )
         return True
 
+    @staticmethod
+    def _recovery_binding_identity(
+        envelope: market_data_pb2.EventEnvelope,
+    ) -> tuple:
+        """Identity that must not change across a stale recovery overlap."""
+
+        return (
+            envelope.schema_name,
+            int(envelope.schema_major),
+            int(envelope.schema_minor),
+            envelope.instrument_uid,
+            envelope.instrument_id,
+            int(envelope.instrument_revision),
+            envelope.venue,
+            envelope.market,
+            envelope.product_type,
+            envelope.native_symbol,
+            envelope.provider,
+            envelope.source_id,
+            int(envelope.source_role),
+            envelope.source_sequence,
+            int(envelope.source_event_time_ns),
+        )
+
+    @classmethod
+    def _is_terminal_recovery_backfill_overlap(
+        cls,
+        existing: StoredEvent,
+        record: KafkaProjectorRecord,
+        candidate: market_data_pb2.EventEnvelope,
+    ) -> bool:
+        """Recognize exactly one historical replay defect and nothing broader.
+
+        A captured final BAR is already durable.  A later recovery REST row may
+        display settled OHLCV under the same revision-zero source sequence.  It
+        is forensic evidence, not a revision: retain the native BAR and record
+        the stale candidate before checkpointing it.  Any non-identical domain
+        shape deliberately returns ``False`` so generic collision fencing wins.
+        """
+
+        if existing.event.payload == record.payload:
+            return False
+        existing_envelope = market_data_pb2.EventEnvelope.FromString(
+            existing.event.payload
+        )
+        if (
+            existing.cursor.partition_key != record.key
+            or bytes(existing_envelope.event_id) != record.event_id
+            or existing_envelope.WhichOneof("payload") != "bar"
+            or candidate.WhichOneof("payload") != "bar"
+            or len(bytes(existing_envelope.raw_capture_id)) not in {16, 32}
+            or len(bytes(candidate.raw_capture_id)) not in {16, 32}
+            or len(bytes(existing_envelope.raw_payload_hash)) != 32
+            or len(bytes(candidate.raw_payload_hash)) != 32
+        ):
+            return False
+        cls._verified_payload_hash(existing_envelope)
+        cls._verified_payload_hash(candidate)
+        existing_bar = existing_envelope.bar
+        candidate_bar = candidate.bar
+        if (
+            cls._recovery_binding_identity(existing_envelope)
+            != cls._recovery_binding_identity(candidate)
+            or not existing_envelope.source_sequence
+            or existing_bar.interval != candidate_bar.interval
+            or int(existing_bar.open_time_ns) != int(candidate_bar.open_time_ns)
+            or int(existing_bar.close_time_ns) != int(candidate_bar.close_time_ns)
+            or not existing_bar.is_final
+            or not candidate_bar.is_final
+            or int(existing_bar.revision) != 0
+            or int(candidate_bar.revision) != 0
+            or existing_bar.lifecycle != market_data_pb2.BAR_LIFECYCLE_FINAL
+            or candidate_bar.lifecycle != market_data_pb2.BAR_LIFECYCLE_FINAL
+            or existing_bar.HasField("supersedes_event_id")
+            or candidate_bar.HasField("supersedes_event_id")
+            or existing_bar.origin != common_pb2.BAR_ORIGIN_VENUE_NATIVE
+            or candidate_bar.origin != common_pb2.BAR_ORIGIN_BACKFILLED
+        ):
+            return False
+        return True
+
+    def _quarantine_terminal_recovery_overlaps(
+        self, items: tuple[_ReadyCanonical, ...]
+    ) -> None:
+        for item in items:
+            if item.terminal_reason != "RECOVERY_BACKFILL_OVERLAP_CONFLICT":
+                raise RuntimeError("unknown stable projector terminal reason")
+            self.spool.quarantine_once(
+                event=item.event,
+                reason_code=item.terminal_reason,
+                reason_message=(
+                    "retained native final BAR wins over stale recovery backfill"
+                ),
+                retry_count=0,
+            )
+
     def _latest_bar_close_ns(self, partition_key: str) -> int | None:
         rows = self.spool.read_tail(
             stream=self.catalog.canonical_stream,
@@ -469,16 +591,28 @@ class StableProjectorEngine:
             stream=self.catalog.canonical_stream,
             event_ids=tuple(record.event_id for _p, record, _e, _c in candidates),
         )
-        semantic_duplicates = {
-            record.event_id: existing
-            for _partition, record, envelope, _capture_id in candidates
-            if (existing := existing_by_id.get(record.event_id)) is not None
-            and self._semantic_duplicate(existing, record, envelope)
-        }
+        semantic_duplicates = {}
+        terminal_recovery_overlaps = {}
+        for _partition, record, envelope, _capture_id in candidates:
+            existing = existing_by_id.get(record.event_id)
+            if existing is None:
+                continue
+            try:
+                is_duplicate = self._semantic_duplicate(existing, record, envelope)
+            except EventIdCollision:
+                if self._is_terminal_recovery_backfill_overlap(
+                    existing, record, envelope
+                ):
+                    terminal_recovery_overlaps[record.event_id] = existing
+                    continue
+                raise
+            if is_duplicate:
+                semantic_duplicates[record.event_id] = existing
         fallback_ids = tuple(
             capture_id
             for _partition, record, _envelope, capture_id in candidates
             if record.event_id not in semantic_duplicates
+            and record.event_id not in terminal_recovery_overlaps
             and record.raw_provider_envelope is None
         )
         raw_by_id = await asyncio.to_thread(self._find_raw_many, fallback_ids)
@@ -507,6 +641,28 @@ class StableProjectorEngine:
                     existing=existing,
                     semantic_duplicate=True,
                     project_latest=False,
+                ))
+                continue
+
+            retained = terminal_recovery_overlaps.get(record.event_id)
+            if retained is not None:
+                ready.append(_ReadyCanonical(
+                    partition=partition,
+                    record=record,
+                    envelope=envelope,
+                    raw_envelope=b"",
+                    raw_stream="recovery-backfill-overlap",
+                    raw_event_id=capture_id,
+                    event=DurableEvent(
+                        stream=self.catalog.canonical_stream,
+                        partition_key=record.key,
+                        event_id=record.event_id,
+                        payload=record.payload,
+                        accepted_at_ns=record.accepted_at_ns,
+                    ),
+                    existing=retained,
+                    project_latest=False,
+                    terminal_reason="RECOVERY_BACKFILL_OVERLAP_CONFLICT",
                 ))
                 continue
 

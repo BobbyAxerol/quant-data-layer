@@ -1195,6 +1195,74 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             max_pending_records=10, max_pending_bytes=1024 * 1024,
         )
 
+    def _native_backfill_overlap(self):
+        binding, raw, event = _stable_pair(
+            self.catalog,
+            "binance_usdm_rest_bar.json",
+            "binance-usdm-btcusdt-bar-1m",
+        )
+        raw_topic, canonical_topic, raw_record, original_record = _broker_records(
+            binding, raw, event
+        )
+        native = type(event)()
+        native.CopyFrom(event)
+        native.bar.origin = common_pb2.BAR_ORIGIN_VENUE_NATIVE
+        native.canonical_payload_hash = hashlib.sha256(
+            native.bar.SerializeToString(deterministic=True)
+        ).digest()
+        native_record = KafkaProjectorRecord(
+            topic=canonical_topic,
+            partition=0,
+            offset=0,
+            key=binding.partition_key,
+            event_id=bytes(native.event_id),
+            payload=native.SerializeToString(deterministic=True),
+            accepted_at_ns=original_record.accepted_at_ns,
+        )
+        backfill = type(native)()
+        backfill.CopyFrom(native)
+        backfill.bar.origin = common_pb2.BAR_ORIGIN_BACKFILLED
+        backfill.bar.close.mantissa += 1
+        backfill.bar.close.source_text = str(
+            CanonicalDecimal(
+                backfill.bar.close.mantissa,
+                backfill.bar.close.scale,
+                backfill.bar.close.source_text,
+            ).as_decimal()
+        )
+        backfill.canonical_payload_hash = hashlib.sha256(
+            backfill.bar.SerializeToString(deterministic=True)
+        ).digest()
+        return (
+            binding,
+            raw_topic,
+            canonical_topic,
+            raw_record,
+            native,
+            native_record,
+            backfill,
+            original_record.accepted_at_ns,
+        )
+
+    @staticmethod
+    def _canonical_record(
+        *,
+        topic: str,
+        key: str,
+        envelope: market_data_pb2.EventEnvelope,
+        offset: int,
+        accepted_at_ns: int,
+    ) -> KafkaProjectorRecord:
+        return KafkaProjectorRecord(
+            topic=topic,
+            partition=0,
+            offset=offset,
+            key=key,
+            event_id=bytes(envelope.event_id),
+            payload=envelope.SerializeToString(deterministic=True),
+            accepted_at_ns=accepted_at_ns,
+        )
+
     async def test_supervisor_recreates_poisoned_generation_with_bounded_backoff(self):
         stopped = [False]
         sleeps = []
@@ -1627,6 +1695,166 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 0))
         self.assertEqual(engine.stats.canonical_committed, 1)
+
+    async def test_native_backfill_recovery_overlap_is_terminalized_once_before_checkpoint(self):
+        (
+            binding,
+            raw_topic,
+            canonical_topic,
+            raw_record,
+            native,
+            native_record,
+            backfill,
+            accepted_at_ns,
+        ) = self._native_backfill_overlap()
+        quarantine_counts_at_checkpoint = []
+        spool = self.spool
+
+        class AuditingBroker(_Broker):
+            def checkpoint(self, record):
+                if record.topic == canonical_topic and record.offset == 1:
+                    quarantine_counts_at_checkpoint.append(
+                        len(spool.quarantine_records())
+                    )
+                super().checkpoint(record)
+
+        broker = AuditingBroker()
+        target = InMemoryStableProjectionTarget()
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        await engine.accept_many((raw_record, native_record))
+        latest_before = dict(target.latest)
+        publications_before = list(target.publications)
+        candidate_record = self._canonical_record(
+            topic=canonical_topic,
+            key=binding.partition_key,
+            envelope=backfill,
+            offset=1,
+            accepted_at_ns=accepted_at_ns + 1,
+        )
+
+        await engine.accept(candidate_record)
+
+        self.assertEqual(quarantine_counts_at_checkpoint, [1])
+        self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 1))
+        self.assertEqual(target.latest, latest_before)
+        self.assertEqual(target.publications, publications_before)
+        retained = self.spool.find_event(
+            stream=self.catalog.canonical_stream,
+            event_id=bytes(native.event_id),
+        )
+        self.assertIsNotNone(retained)
+        retained_envelope = market_data_pb2.EventEnvelope.FromString(
+            retained.event.payload
+        )
+        self.assertEqual(
+            retained_envelope.bar.origin, common_pb2.BAR_ORIGIN_VENUE_NATIVE
+        )
+        quarantine = self.spool.quarantine_records()
+        self.assertEqual(len(quarantine), 1)
+        self.assertEqual(
+            quarantine[0]["reason_code"], "RECOVERY_BACKFILL_OVERLAP_CONFLICT"
+        )
+
+        replay_broker = _Broker()
+        replay_target = InMemoryStableProjectionTarget()
+        replay = self.engine(
+            replay_broker, replay_target, raw_topic, canonical_topic
+        )
+        await replay.accept(candidate_record)
+        self.assertEqual(replay_broker.checkpoints, [(canonical_topic, 0, 1)])
+        self.assertEqual(replay_target.publications, [])
+        self.assertEqual(len(self.spool.quarantine_records()), 1)
+
+    async def test_native_backfill_recovery_overlap_rejects_every_nonmatching_boundary(self):
+        (
+            binding,
+            raw_topic,
+            canonical_topic,
+            raw_record,
+            _native,
+            native_record,
+            backfill,
+            accepted_at_ns,
+        ) = self._native_backfill_overlap()
+        initial = self.engine(
+            _Broker(), InMemoryStableProjectionTarget(), raw_topic, canonical_topic
+        )
+        await initial.accept_many((raw_record, native_record))
+
+        def hashed_copy():
+            candidate = type(backfill)()
+            candidate.CopyFrom(backfill)
+            return candidate
+
+        def rehash(candidate):
+            candidate.canonical_payload_hash = hashlib.sha256(
+                candidate.bar.SerializeToString(deterministic=True)
+            ).digest()
+
+        cases = []
+        native_to_native = hashed_copy()
+        native_to_native.bar.origin = common_pb2.BAR_ORIGIN_VENUE_NATIVE
+        rehash(native_to_native)
+        cases.append((
+            "native_to_native", native_to_native, binding.partition_key, RuntimeError
+        ))
+
+        reconciled = hashed_copy()
+        reconciled.bar.origin = common_pb2.BAR_ORIGIN_RECONCILED
+        rehash(reconciled)
+        cases.append(("reconciled", reconciled, binding.partition_key, RuntimeError))
+
+        revised = hashed_copy()
+        revised.bar.revision = 1
+        rehash(revised)
+        cases.append(("revised", revised, binding.partition_key, RuntimeError))
+
+        superseded = hashed_copy()
+        superseded.bar.supersedes_event_id = b"r" * 16
+        rehash(superseded)
+        cases.append(("supersedes", superseded, binding.partition_key, RuntimeError))
+
+        changed_sequence = hashed_copy()
+        changed_sequence.source_sequence = "unexpected-recovery-sequence"
+        cases.append((
+            "source_sequence", changed_sequence, binding.partition_key, RuntimeError
+        ))
+
+        missing_lineage = hashed_copy()
+        missing_lineage.ClearField("raw_capture_id")
+        cases.append(("missing_lineage", missing_lineage, binding.partition_key, ValueError))
+
+        invalid_hash = hashed_copy()
+        invalid_hash.bar.close.mantissa += 1
+        invalid_hash.bar.close.source_text = str(
+            CanonicalDecimal(
+                invalid_hash.bar.close.mantissa,
+                invalid_hash.bar.close.scale,
+                invalid_hash.bar.close.source_text,
+            ).as_decimal()
+        )
+        cases.append(("invalid_hash", invalid_hash, binding.partition_key, RuntimeError))
+
+        cross_binding = hashed_copy()
+        cases.append(("cross_binding", cross_binding, "wrong-binding", ValueError))
+
+        for name, candidate, key, expected_error in cases:
+            with self.subTest(name=name):
+                broker = _Broker()
+                engine = self.engine(
+                    broker, InMemoryStableProjectionTarget(), raw_topic, canonical_topic
+                )
+                record = self._canonical_record(
+                    topic=canonical_topic,
+                    key=key,
+                    envelope=candidate,
+                    offset=1,
+                    accepted_at_ns=accepted_at_ns + 1,
+                )
+                with self.assertRaises(expected_error):
+                    await engine.accept(record)
+                self.assertEqual(broker.checkpoints, [])
+                self.assertEqual(self.spool.quarantine_records(), [])
 
     async def test_late_historical_bar_repairs_cache_without_latest_regression(self):
         binding = next(

@@ -26502,3 +26502,95 @@ No projector, reader, Rust core, ingestor, V1, Kafka topology/offset, Redis,
 SQLite deletion, Trading System, alpha or order path may be changed by this
 action. Once projector lag reaches zero without collision, run C2,
 Reference/L2 and representative paper-alpha acceptance.
+
+**Overlap-recovery packet sealed (`APPROVED / EXECUTING`, 2026-08-31).** The
+source repair is commit `7c8db1660d78fd75f8efca6cc323f21865eaed3a`; its
+immutable image is `qdl-v2-python:2.0.0-7c8db16` / image digest
+`sha256:b87b03fbde11a913e9e057b17886e7d7a2d457f2f1b12b4dab4c687f3ec21ea8`.
+The non-secret packet is
+`/home/bobby/.local/state/qdl-v2/bar-edge-overlap-7c8db16-20260831T103653Z/packet.json`
+(SHA-256 `b45d8bc7f9ec186fab55b9b72dea4915078086975e8ab728030262e4ef0ba214`)
+with service-only override SHA-256
+`d820321d775c4585ff083b1806e276b2c8eb0ebd0c5f028e9d68dd6e6097bb1f`.
+`docker compose config --quiet` passed against the exact active protected env
+and C2/bound/cache-generation overlays.  The successor uses the new isolated
+checkpoint `/var/lib/qdl-stable/runtime/phase105c-overlap-7c8db16.json`; it
+does not alter any prior checkpoint.  The only runtime mutation now permitted
+is `up -d --no-deps --force-recreate binance_bar_edge`.  Rollback remains a
+one-role stop/recreate to the observed predecessor image
+`sha256:56fb7a9ea57afdf58c4cb077d519bc74acd49fb00fae073c23eab7408dac0468`
+and its preserved checkpoint; the pre-rebuild coordinate is retained for
+audit, not invoked by this packet.
+
+**Residual canonical recovery backlog (`IN PROGRESS / SOURCE-ONLY REMEDIATION`,
+2026-08-31).** The repaired edge completed the ten-binding bootstrap without
+emitting a new collision, but canonical projector offsets were already parked
+behind immutable records emitted by the pre-repair bootstrap.  A disposable,
+read-only, non-committing mTLS Kafka probe started from the real
+`stable-projector-v1` offsets and inspected 512 records.  It found 324
+conflicts, all with the one exact shape: same BAR event identity and `1m`
+binding, existing durable `VENUE_NATIVE` final/revision `0`, candidate
+`BACKFILLED` final/revision `0`, with changed OHLCV semantics.  No other
+collision class appeared in that bounded sample.  The probe did not join the
+projector group, commit offsets, write Kafka/Redis/SQLite, or touch V1,
+Trading System, alpha, signal, sizing or orders.
+
+The narrow source remedy must terminalize only that exact stale recovery
+overlap after validating complete binding identity, source sequence, finality,
+origin pair, revision and absence of a supersession link.  It records one
+idempotent bounded SQLite quarantine evidence record per candidate before the
+Kafka checkpoint, retains the existing native canonical BAR, makes no latest
+projection, and logs an aggregate count.  It must not relax generic event-ID
+collision semantics: differing feeds, identities, revisions, `RECONCILED`
+records, native-to-native changes, or any other payload mismatch remain
+fail-closed.  Source tests must prove both terminalization/replay idempotency
+and each rejection boundary.  Applying this correction later requires a
+separate, exact rolling packet for only the V2 projector replicas; no Kafka
+offset reset, cache deletion or topic mutation is permitted.
+
+**Projector overlap terminalization (`APPROVED / SOURCE IMPLEMENTATION`,
+2026-08-31).** This is the last source repair required to recover the queued
+real BARs and certify C2.  It is intentionally not a generic collision policy:
+the projector may terminalize a candidate only after it validates both
+canonical hashes, exact catalog partition/binding identity, equal source
+sequence, BAR `interval/open/close`, `is_final=true`, `revision=0`, no
+`supersedes_event_id`, and the one directional origin pair
+`VENUE_NATIVE -> BACKFILLED`.  The pre-existing native event remains the sole
+canonical/latest projection.  The rejected historical candidate receives one
+bounded, idempotent SQLite evidence record with reason
+`RECOVERY_BACKFILL_OVERLAP_CONFLICT`, then and only then may its Kafka record
+be checkpointed.  It publishes no canonical/cache/Redis replacement and does
+not touch a raw topic.  Native-to-native, backfill-to-backfill, reconciled,
+revised, incomplete, invalid-hash, cross-binding or missing-lineage records
+remain hard failures.  Tests must cover allowed terminalization, restart
+idempotency, no fanout/latest mutation, every listed rejection boundary and
+the existing regression suite.  Source-only rollback is the preceding commit
+`7c8db166`; runtime rollback, if later approved, is a recreate of only the
+three V2 projector replicas on their current image/runtime coordinates.  V1,
+Kafka offsets/topology, Redis flush, SQLite deletion, Rust, ingestors,
+readers, Trading System, alpha and the order path are excluded.
+
+**Projector source evidence (`PASS / IMMUTABLE IMAGE PENDING`, 2026-08-31).**
+The shared stable projector now classifies the exact retained-native versus
+stale-backfill BAR shape before raw-lineage fanout.  It calls the new
+transactional `SQLiteDurableSpool.quarantine_once` before checkpoint, so a
+crash/replay or another projector replica reuses the same evidence slot; it
+does not replace the retained native event, publish the candidate, update
+latest state, or make a generic event-ID collision permissible.  The focused
+isolated non-root, network-disabled source matrix passed **36/36** in
+`5.380s`: stable projector recovery/order/backpressure/duplicate regressions
+plus durable-spool transaction, capacity, cache identity and cross-replica
+tests.  New cases prove audit-before-checkpoint, restart idempotency,
+native-to-native/reconciled/revised/superseded/source-sequence/invalid-hash
+rejection, catalog missing-lineage/cross-binding rejection, and idempotent
+quarantine replay through a second SQLite connection.  The disposable
+container mounted source read-only and used only tmpfs; it did not access
+providers, Kafka, Redis, runtime state, V1, Trading System, alpha or order
+paths.
+
+The wider C2/final-BAR/handoff matrix was not falsely counted: the historical
+recovery image lacks `redis`/`yaml`, while the legacy full image lacks the V2
+protobuf runtime.  The next test gate is one fresh immutable Python image from
+this committed source; that image must run the full affected matrix before a
+separately approved three-projector rolling repair.  No runtime action is
+authorized by this source evidence alone.
