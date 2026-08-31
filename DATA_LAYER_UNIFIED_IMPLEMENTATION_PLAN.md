@@ -27262,3 +27262,94 @@ L2 mappings remain present, authority SHA-256 stays
 authorized operation is an atomic apply to a new private rollback directory
 and serial recreation of only the three existing Rust core replicas. The two
 ingestors already have revision-16/19-binding configs and remain untouched.
+
+**149-route L2 core-lineage runtime convergence (`PASS / FINAL C2 READY`,
+2026-08-31).** The approved compiler applied atomically to only
+`core.json`, `core-002.json`, and `core-003.json` under
+`/home/bobby/.local/state/qdl-v2/l2-core-lineage-r16-20260831T154351Z`.
+It retained all `182` bindings and converged the retained catalog metadata to
+revision `8`; the three payload-free rollback files retain the exact prior
+bytes. Only `rust_core`, `rust_core_2`, and `rust_core_3` were serially
+recreated on their unchanged immutable `cfb686...49951f` image. Each is
+running with `restart=0`, `OOMKilled=false`, `authority=RUST_PRIMARY` and
+`bindings=182`. The two native ingestors were not recreated: their existing
+revision-16, nineteen-binding configurations remain active.
+
+After convergence, bounded read-only canonical inspection shows current
+Binance USD-M BTC TRADE and OKX Swap BTC TRADE records at config revision `16`
+and their live current source generations. This proves the former
+raw/core-catalog mismatch is repaired through the Rust core and projector
+lineage, rather than bypassed by a relaxed freshness/session policy. Recent
+projector errors around the earlier `kafka1` restart ceased before this gate;
+the three replicas remain running. No V1 role, Kafka topology/offset, Redis,
+SQLite, projector configuration, query/stream role, Trading System, alpha,
+signal, sizing or order path was changed. The remaining approved step is one
+fresh four-identity, 149-route, 300-second no-order C2 receipt. Its disposable
+client may read only V2 and manifest-permitted V1 cached fallback; it has no
+provider-direct, order, Docker-socket or durable-store write capability.
+
+**149-route C2 attestation preflight (`NO DATA REQUEST / CORRECTED`,
+2026-08-31).** The first disposable launcher reached its security preflight as
+UID `10001` with no effective capabilities and `NoNewPrivs=1`, then exited
+before it opened any V1/V2 route because an ad-hoc host-side V1 binding used a
+raw file SHA-256 where the frozen contract requires its canonical JSON digest.
+The empty receipt, bounded traceback and exit code are retained under
+`c2-20260831T154926Z`; there was no provider connection, order action, Kafka,
+Redis, SQLite or runtime role mutation. This does not consume the approved
+real C2 observation. The correction uses the existing
+`scripts/phase105_bind_running_v1_fallback.py` binder, which validates the
+running `data_layer_service` image and emits both the required canonical
+provenance digest and the hashed container identity. A fresh private evidence
+namespace will then run exactly one 300-second client; no service is recreated.
+
+**149-route C2 real-data result (`FAIL-CLOSED / FINAL-BAR LINEAGE REPAIR`,
+2026-08-31).** The corrected client passed bootstrap, identity and V1 rollback
+attestation, then reached V2 and stopped at
+`trading-system.paper.stable / OKX.SWAP.PERPETUAL.SOL-USDT / BAR / 1m` because
+the query correctly returned `DATA_STALE`. It had no order capability and
+emitted no receipt; no direct provider connection, signal, sizing, Kafka,
+Redis, SQLite or service mutation occurred. This is a real product failure,
+not a retry candidate.
+
+Bounded inspection proves the shared `binance_bar_edge` is successfully ACKing
+all ten real five-liquid one-minute BAR routes every close, including OKX SOL,
+DOGE and BNB. Its sealed Phase-12 projection, however, still emits catalog
+revision `7` and acquisition revision `14`, while the current Rust core has
+the same source IDs at catalog revision `8`. Rust correctly rejects that stale
+raw lineage before it reaches canonical cache. The repair scope is one shared
+bar-edge projection compiler and its tests: when an already-declared final OKX
+BAR is `RUST_NATIVE` in the broad acquisition plan, the narrow Phase-12 Python
+REST recovery projection retains the exact source identity but deliberately
+projects it as `PYTHON_REST`; it must reject every other native mode/venue.
+After immutable source tests pass, materialize a fresh ten-route catalog-8
+projection and roll only `binance_bar_edge` with a new namespaced checkpoint.
+V1, Kafka topology/offsets, Redis, SQLite, Rust cores/ingestors/projectors,
+query/stream, Trading System, alpha and order paths remain excluded. The fresh
+edge's authentic bootstrap and continuous final BAR ACKs are the prerequisite
+for one replacement 149-route C2 receipt.
+
+**Phase-12 final-BAR projection source exit (`PASS / BAR-EDGE ROLL READY`,
+2026-08-31).** `scripts/phase12_materialize_bound_bar_edge.py` now permits a
+sealed OKX Swap final-BAR binding declared as `RUST_NATIVE` in the broad
+acquisition plan to be projected only into the existing Python REST
+recovery/finality edge. The projection preserves venue, market, instrument,
+source ID, interval, provider kind and finality semantics; it changes only the
+edge-local acquisition mode and clears WebSocket endpoints. Any non-OKX,
+non-final or non-BAR native acquisition still fails closed. This keeps the
+shared native plane authoritative while retaining the previously certified
+single REST final-bar owner; it does not create a second data product or a
+per-symbol role.
+
+The immutable, network-disabled, read-only, UID `10001` focused matrix passed
+**15/15** in `12.685s` across Phase-12 projection, five-liquid native-bar
+materialization and BAR-edge behavior. Source syntax compilation and
+`git diff --check` passed. A read-only execution of the compiler with the
+sealed `trading-system.paper.stable` binding rendered exactly ten 1m BAR
+bindings (five Binance USD-M and five OKX Swap), catalog SHA-256
+`79c6b5d7...e7582f0f`, zero provider requests, zero order actions and zero
+runtime mutations. No image rebuild is required: the serving bar-edge already
+implements this declared `PYTHON_REST` projection format. The next bounded
+runtime operation is to materialize a new projection directory, point only
+`binance_bar_edge` at it with a fresh namespaced checkpoint, and serially
+recreate only that role; rollback is its current three-file projection and
+checkpoint environment override.

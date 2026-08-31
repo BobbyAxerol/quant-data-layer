@@ -116,6 +116,34 @@ class BoundBarEdgeProjectionTests(unittest.TestCase):
             {item["binding_id"] for item in result.acquisition["bindings"]},
             set(result.summary["binding_ids"]),
         )
+        selected = {
+            item["binding_id"]: item for item in result.acquisition["bindings"]
+        }
+        self.assertEqual(
+            selected["okx-swap-eth-usdt-swap-bar-1m"]["mode"],
+            "PYTHON_REST",
+        )
+        self.assertIsNone(
+            selected["okx-swap-eth-usdt-swap-bar-1m"]["websocket_url"]
+        )
+        self.assertIsNone(
+            selected["okx-swap-eth-usdt-swap-bar-1m"]["business_websocket_url"]
+        )
+
+    def test_rejects_native_acquisition_outside_declared_okx_final_bar_recovery(self) -> None:
+        catalog, acquisition = _documents()
+        binding = _binding_for_source_ids("binance-usdm-btcusdt-bar-1m")
+        invalid = deepcopy(acquisition)
+        for item in invalid["bindings"]:
+            if item["binding_id"] == "binance-usdm-btcusdt-bar-1m":
+                item["mode"] = "RUST_NATIVE"
+                break
+        with self.assertRaisesRegex(ValueError, "only permits"):
+            projection.build_bound_bar_projection(
+                binding=binding,
+                catalog_document=catalog,
+                acquisition_document=invalid,
+            )
 
     def test_rejects_missing_or_non_final_catalog_mapping(self) -> None:
         catalog, acquisition = _documents()

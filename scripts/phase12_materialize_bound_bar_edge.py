@@ -134,6 +134,45 @@ def _validate_projection(
             raise ValueError("generated BAR projection coverage differs")
 
 
+def _project_acquisition_for_python_bar_edge(
+    *,
+    source: object,
+    acquisition: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Keep the bounded recovery edge as the explicit final-BAR owner.
+
+    The broad acquisition plan may describe an OKX final BAR as ``RUST_NATIVE``
+    for the shared native plane.  The existing bounded Python edge is still the
+    certified recovery/finality owner for its sealed consumer projection.  It
+    must therefore project only that exact OKX final-BAR lane to REST rather
+    than silently accepting arbitrary native feeds or venues.
+    """
+
+    result = deepcopy(dict(acquisition))
+    mode = str(result.get("mode", ""))
+    if mode == "PYTHON_REST":
+        return result
+
+    identity = getattr(getattr(source, "instrument", None), "identity", None)
+    if (
+        mode == "RUST_NATIVE"
+        and getattr(source, "feed", None).value == "BAR"
+        and bool(getattr(source, "require_final_bar", False))
+        and getattr(identity, "venue", None) == "OKX"
+        and getattr(identity, "market", None) == "SWAP"
+        and str(result.get("provider_kind")) == "okx_bar"
+        and str(result.get("native_channel", "")).startswith("candle")
+    ):
+        result["mode"] = "PYTHON_REST"
+        result["websocket_url"] = None
+        result["business_websocket_url"] = None
+        return result
+
+    raise ValueError(
+        "bound Python BAR edge only permits PYTHON_REST or declared OKX final BAR recovery"
+    )
+
+
 def build_bound_bar_projection(
     *,
     binding: ConsumerRouteBinding,
@@ -149,6 +188,7 @@ def build_bound_bar_projection(
 
     full_catalog = StableSourceCatalog.from_mapping(catalog_document)
     full_catalog_ids = {item.binding_id for item in full_catalog.bindings}
+    source_by_binding_id = {item.binding_id: item for item in full_catalog.bindings}
     source_rows = catalog_document.get("bindings")
     acquisition_rows = acquisition_document.get("bindings")
     instruments = catalog_document.get("instruments")
@@ -208,10 +248,12 @@ def build_bound_bar_projection(
 
     selected_source = [deepcopy(source_raw_by_id[item]) for item in sorted(selected)]
     selected_acquisition = [
-        deepcopy(acquisition_raw_by_id[item]) for item in sorted(selected)
+        _project_acquisition_for_python_bar_edge(
+            source=source_by_binding_id[item],
+            acquisition=acquisition_raw_by_id[item],
+        )
+        for item in sorted(selected)
     ]
-    if any(str(item.get("mode")) != "PYTHON_REST" for item in selected_acquisition):
-        raise ValueError("stable BAR edge accepts only Python REST BAR acquisitions")
 
     selected_uids = {str(item.get("instrument_uid")) for item in selected_source}
     selected_instruments = [
