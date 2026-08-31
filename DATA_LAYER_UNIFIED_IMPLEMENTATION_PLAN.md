@@ -26626,3 +26626,22 @@ recovery evidence, zero projector restart/OOM, the ten five-liquid BAR
 durable horizons including DOGE `1000/1000`, then one C2 no-order run.  This
 is deliberately the smallest remaining runtime blast radius; source release
 is not yet claimed until it passes.
+
+**Projector-recovery packet preflight (`PREPARED / OPERATOR APPROVAL REQUIRED`,
+2026-08-31).** The exact non-secret packet is
+`/home/bobby/.local/state/qdl-v2/projector-overlap-7c29542-20260831T105939Z/packet.json`.
+It binds source commit `7c29542`, candidate image
+`qdl-v2-python:2.0.0-7c29542` / `sha256:36ed90b9a18e1c3bbd8cfc6169543f3a3ce1ce79f76f798e7777125cba9c63ed`,
+and a service-only override for exactly `projector_v2`, `projector_v2_2`, and
+`projector_v2_3`.  Packet/override SHA-256 values are respectively
+`ea83ca1d2c939d02939fbc1b2e74666c1496931027a60645af3d4b796afb83b1` and
+`46766b47b0f3b8b233ca033975442fbc69db9eeabe93d272e1b17ba9f083d7fe`.
+It preserves their observed
+`stable-projector-v1` group, current runtime directory, state/TLS volumes,
+Kafka offsets/topology and all excluded roles.  Normal canonical/cache/Redis
+projection writes plus the bounded, idempotent stale-backfill terminal evidence
+are the only intended mutations.  The exact rollback is a rolling recreate of
+only the same three roles to observed image
+`sha256:2684b52e15d2a2caab361f5f1c632d9040b23617cf2f6deaf9b8371da58417ee`
+with unchanged mounts.  Compose validation and a separate explicit runtime
+approval remain required; no projector has been recreated by this preflight.
