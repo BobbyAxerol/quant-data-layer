@@ -27353,3 +27353,164 @@ runtime operation is to materialize a new projection directory, point only
 `binance_bar_edge` at it with a fresh namespaced checkpoint, and serially
 recreate only that role; rollback is its current three-file projection and
 checkpoint environment override.
+
+**Phase-12 final-BAR lineage runtime packet (`APPROVED / EXECUTING`,
+2026-08-31).** The owner authorized completion without a further approval
+round. This packet materializes exactly the sealed ten-route 1m BAR projection
+into a new private runtime directory
+`phase12-bar-edge-r16-20260831T155800Z`, with catalog revision `8` and the
+current broad acquisition revision. It then recreates only the existing
+`binance_bar_edge` service with a fresh namespaced checkpoint and the private
+environment override. Its authentic bounded bootstrap may write normal
+provider-confirmed final BARs to the existing V2 Kafka/canonical/projector/cache
+plane; it may not write synthetic rows.
+
+The packet excludes V1, Kafka topology and offsets, Redis flushes, SQLite
+deletion, Rust cores, ingestors, projectors, query/stream roles, Trading
+System, alpha, signals, sizing and every order path. Rollback is exact: restore
+the prior three-file Phase-12 projection/checkpoint environment and recreate
+only `binance_bar_edge`; no durable store rollback is needed. Exit requires
+the fresh edge to bootstrap all five Binance USD-M and five OKX Swap 1m routes,
+ACK three consecutive close cycles without restart/OOM, and then one fresh
+four-identity, 149-route, 300-second C2 no-order receipt. The disposable C2
+client remains read-only except for its namespaced evidence, has no provider
+direct-connect or order capability, and auto-removes after observation.
+
+**149-route replacement C2 real-data result (`FAIL-CLOSED / OKX QUOTE
+LINEAGE DIAGNOSTIC`, 2026-08-31).** After the local launcher permission repair,
+the one real disposable client passed its UID `10001`, no-effective-capability
+and `NoNewPrivs=1` preflight and reached V2 query. It stopped at the first
+actual product failure:
+`trading-system.paper.stable / OKX.SWAP.PERPETUAL.DOGE-USDT / QUOTE`. The
+strict snapshot was stale and the bounded quiet-quote retry correctly refused
+to proceed because typed provider session state was not `LIVE`. The receipt is
+zero-byte and no order, provider-direct, signal, sizing, V1 recreation or
+durable-store mutation occurred; the edge itself remains `running`,
+`restart=0`, `OOMKilled=false`.
+
+This is not a reason to relax the quote SLA or retry for luck. The remaining
+in-scope diagnostic reads typed state (`state`, event recency, provider session,
+gap, watermark and completeness) for the five OKX symbols from both V2 query
+replicas, then traces only the corresponding shared OKX ingestor/Rust-core
+lineage. If a projection/source defect is confirmed, repair that shared path,
+test quiet-connected versus disconnected behavior, and run one replacement C2;
+otherwise the release remains honestly blocked at this exact product.
+
+**149-route replacement C2 launcher preflight (`NO DATA REQUEST / CORRECTED`,
+2026-08-31).** The first disposable client in the fresh namespace exited with
+code `2` before `run-c2.sh`, receipt creation, identity use or any V1/V2
+request. The isolated network-disabled staging diagnostic passed every mounted
+identity/provenance read and `setpriv` transition. The exact fault was local
+file mode: the new `run-c2.sh` had mistakenly been copied as mode `0700`, while
+the bootstrap correctly drops to UID `10001` before reading it. The governed
+reference launcher uses mode `0755` for that non-secret script.
+
+The correction changes only that evidence script's mode to `0755`; private
+keys remain copied only to C2 tmpfs and all evidence artifacts remain mode
+`0600`. It does not consume the single real C2 observation or mutate any
+provider/runtime/data plane. The next invocation reuses the same sealed image,
+network, mounts, V1 binding and evidence namespace for one actual bounded
+149-route no-order observation.
+
+**Phase-12 final-BAR runtime composition correction (`IN PROGRESS / SAME
+PACKET`, 2026-08-31).** The first edge recreate exited before bootstrap and
+before any provider/Kafka/cache write because the compose invocation inherited
+the general rollout Python image `b482...588a09` (revision `4f7bed0`). That
+older immutable image rejects the already-governed `0.10s` prompt final-bar
+poll setting with its obsolete `1..10s` validation. This is a compose-image
+selection defect, not a provider, data or Rust-lineage failure.
+
+The bounded correction pins only `binance_bar_edge` in the existing private
+override to its previously running immutable `b87b03...c21ea8`
+(`qdl-v2-python:2.0.0-7c8db16`) image. That exact image implements the current
+`0.01..2s` initial-poll contract and had been serving this edge immediately
+before the recreate. No image is built, no source is changed, and no other
+role sees this image selection. The edge will be recreated once more only
+after compose expansion proves the one-service pin and the revision-8 runtime
+paths; rollback retains the same proven edge image with the prior Phase-12
+projection paths. The failed container had `restart=0`, `OOM=false`, and left
+no bootstrap data-plane effects.
+
+**Phase-12 final-BAR lineage runtime result (`PASS / REPLACEMENT C2 READY`,
+2026-08-31).** The revision-8 projection was materialized atomically at
+`runtime/phase12-bar-edge-r16-20260831T155800Z`: ten sealed 1m routes,
+catalog SHA-256 `79c6b5d7...e7582f0f`, acquisition SHA-256
+`dbaa444d...752810d`, and zero compiler provider/order actions. After the
+composition correction, only `binance_bar_edge` was recreated on its proven
+immutable `b87b03...c21ea8` image. It bootstrapped all ten routes from real
+providers, preserving `981` durable rows and publishing `19` missing rows per
+route (`190` total normal final-BAR writes).
+
+Three complete close cycles then ACKed all five Binance USD-M and all five OKX
+Swap routes: `16:04`, `16:05`, and `16:06 UTC`; OKX batching varied, but each
+minute covered exactly five unique bindings. ACKs arrived about `0.28..2.79s`
+after the minute boundary. The edge remained `running`, `restart=0`,
+`OOMKilled=false`, with no bounded error/reject/traceback record. This proves
+the revision-8 BAR lineage reaches the shared edge and warrants exactly one
+replacement 149-route C2 observation. A fresh evidence namespace will use the
+governed V1 binder to attest the unchanged current V1 container, then run one
+auto-removed, no-order client for at most `300s`; it does not recreate another
+service or change any authority/route.
+
+**OKX quote typed-status diagnostic (`PASS / REPLACEMENT C2 JUSTIFIED`,
+2026-08-31).** A disposable read-only SDK diagnostic, using the same governed
+Trading System paper identity and no provider-direct capability, read
+`feed_status` from both V2 query replicas for Binance-independent OKX Swap
+BTC, ETH, SOL, DOGE and BNB `QUOTE` products. All ten replica/product results
+are `state=LIVE`, `event_recency_state=LIVE`, `provider_session_state=LIVE`,
+`complete=true`, `gap_open=false` and `execution_eligible=true`; observed
+freshness was `286..923ms` and session liveness `134..158ms`. The corresponding
+shared OKX ingestor remains running and its L2 renewal cadence is the declared
+30 seconds; all three Rust cores continue progressing without a new lineage
+or rejection record.
+
+The prior C2 failure therefore has no current shared catalog/core/session
+defect to patch and no policy is relaxed. Its strict snapshot correctly fenced
+a non-live event/session at that moment. The status matrix proves recovery at
+both replicas, so one fresh full 300-second C2 is a post-recovery continuity
+observation rather than a random retry. It retains the same V1 rollback
+attestation, immutable client image and no-order boundary; no runtime role is
+recreated for it.
+
+**149-route C2 quote-retry race repair (`APPROVED / EXECUTING`, 2026-08-31).**
+Read-only inspection of the two failed disposable C2 traces and the live
+two-replica typed-status matrix identifies a narrow acceptance-harness race:
+the strict `QUOTE` snapshot can return `DATA_STALE` at time `t0`, then a real
+quote reaches the canonical projection before `feed_status` is read at `t1`.
+The status is then correctly `LIVE/LIVE`, complete, gap-free and execution
+eligible, but `_quiet_quote_is_retryable` only admitted the older
+`STALE/STALE` quiet-session shape. C2 therefore emitted the misleading
+`requires a live provider session` error despite a healthy live session.
+
+The approved source repair is limited to `scripts/phase103_consumer_receipt_acceptance.py`
+and its harness regression: a retry is admitted only when the identity,
+policy, provider-session liveness, completeness and no-gap invariants remain
+valid, with either (a) quiet connected quote `STALE/STALE`, non-executable or
+(b) the fresh-race `LIVE/LIVE`, execution-eligible state. This **does not**
+relax the strict snapshot freshness SLA, accept a stale payload, alter a
+provider, change routing, or make a disconnected/unknown/gapped/incomplete
+status retryable; the next snapshot still has to pass the existing strict
+contract before C2 proceeds. Unit exit covers quiet-connected, fresh-race,
+disconnected and deadline paths. Rollback is a source revert; no runtime role
+or durable state changes during this slice. After a single immutable disposable
+C2 client build, one replacement four-identity, 149-route, 300-second
+no-order observation is permitted under the existing approved packet.
+
+**149-route C2 quote-retry source exit (`PASS / IMMUTABLE CLIENT BUILD
+AUTHORIZED`, 2026-08-31).** The repair centralizes the identity, policy,
+provider-session, completeness and gap checks, then explicitly admits only
+the two valid retry observations: quiet connected `STALE/STALE` BBO and a
+fresh `LIVE/LIVE`, execution-eligible quote that arrived after the failed
+snapshot. The latter triggers another strict snapshot rather than being used
+as market data itself. The network-disabled, read-only regression matrix
+passed `51/51` in `4.255s`:
+`tests.test_phase103_consumer_receipt_harness`,
+`tests.test_phase103_consumer_acceptance`, and
+`tests.test_phase115c_five_liquid_handoff`. It includes the exact
+stale-snapshot-to-fresh-status race, retained quiet-session path,
+disconnected rejection and deadline failure. `git diff --check` also passed.
+No runtime, provider, durable-store, route, authority, V1, Trading System,
+alpha or order-path change occurred in this source slice. The only remaining
+operation is one immutable disposable C2 client build from this reviewed
+commit, then one bounded real 149-route no-order C2; that image is test-only
+and will be removed after evidence is recorded.

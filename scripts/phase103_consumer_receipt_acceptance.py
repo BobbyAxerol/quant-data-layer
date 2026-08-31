@@ -490,12 +490,12 @@ async def _query_product_with_quality(
     )
 
 
-def _quiet_quote_is_retryable(
+def _quote_status_has_live_provider(
     product: AcceptanceProduct,
     requirement,
     status,
 ) -> bool:
-    """Allow only quiet, connected BBO observation to wait for a fresh quote."""
+    """Validate the common identity and provider-session invariants for a quote retry."""
     quality = status.quality
     return (
         product.feed.value == "QUOTE"
@@ -503,14 +503,41 @@ def _quiet_quote_is_retryable(
         and status.instrument_uid == requirement.instrument_uid
         and status.feed is requirement.feed
         and quality.policy_id == requirement.source_policy_id
-        and quality.state == "STALE"
-        and quality.event_recency_state == "STALE"
         and quality.provider_session_state == "LIVE"
         and quality.provider_session_liveness_ms is not None
         and quality.provider_session_liveness_ms <= requirement.max_session_liveness_ms
         and quality.complete
         and not quality.gap_open
+    )
+
+
+def _quiet_quote_is_retryable(
+    product: AcceptanceProduct,
+    requirement,
+    status,
+) -> bool:
+    """Allow a quiet, connected BBO session to wait for a fresh quote."""
+    quality = status.quality
+    return (
+        _quote_status_has_live_provider(product, requirement, status)
+        and quality.state == "STALE"
+        and quality.event_recency_state == "STALE"
         and not quality.execution_eligible
+    )
+
+
+def _fresh_quote_status_is_retryable(
+    product: AcceptanceProduct,
+    requirement,
+    status,
+) -> bool:
+    """Handle a quote that became fresh between a stale snapshot and status read."""
+    quality = status.quality
+    return (
+        _quote_status_has_live_provider(product, requirement, status)
+        and quality.state == "LIVE"
+        and quality.event_recency_state == "LIVE"
+        and quality.execution_eligible
     )
 
 
@@ -540,7 +567,9 @@ async def _wait_for_live_snapshot_retry(
             "DATA_STALE", f"C2 live {product.feed.value} status did not return before its deadline"
         ) from timeout
     if product.feed.value == "QUOTE":
-        retryable = _quiet_quote_is_retryable(product, requirement, status)
+        retryable = _quiet_quote_is_retryable(
+            product, requirement, status
+        ) or _fresh_quote_status_is_retryable(product, requirement, status)
     else:
         retryable = (
             _quiet_trade_status_is_observable(product, requirement, status)

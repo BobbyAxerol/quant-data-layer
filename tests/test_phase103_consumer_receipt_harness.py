@@ -962,22 +962,28 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
     def _status(
         requirement: DataRequirement,
         *,
+        state: str = "STALE",
+        event_recency_state: str = "STALE",
+        freshness_ms: int | None = None,
         provider_session_state: str = "LIVE",
         provider_session_liveness_ms: int | None = 10,
+        gap_open: bool = False,
+        complete: bool = True,
+        execution_eligible: bool = False,
     ) -> FeedStatusResponse:
         return FeedStatusResponse.model_validate({
             "schema": "qdl.feed-status.v2",
             "instrument_uid": requirement.instrument_uid,
             "feed": requirement.feed.value,
             "quality": {
-                "state": "STALE",
-                "freshness_ms": 2_001,
-                "event_recency_state": "STALE",
+                "state": state,
+                "freshness_ms": 2_001 if freshness_ms is None else freshness_ms,
+                "event_recency_state": event_recency_state,
                 "provider_session_state": provider_session_state,
                 "provider_session_liveness_ms": provider_session_liveness_ms,
-                "gap_open": False,
-                "complete": True,
-                "execution_eligible": False,
+                "gap_open": gap_open,
+                "complete": complete,
+                "execution_eligible": execution_eligible,
                 "policy_id": requirement.source_policy_id,
                 "flags": [],
             },
@@ -1030,6 +1036,30 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
         client = self._Client(
             (DataLayerError("DATA_STALE", "stale BBO"), "fresh-snapshot"),
             self._status(requirement),
+        )
+
+        result = await _strict_snapshot_for_c2(
+            client,
+            product=self._product(),
+            requirement=requirement,
+            timeout_seconds=0.25,
+        )
+
+        self.assertEqual(result, "fresh-snapshot")
+        self.assertEqual(client.snapshot_calls, 2)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_fresh_quote_status_after_a_stale_snapshot_retries_under_the_same_sla(self):
+        requirement = self._requirement()
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "stale BBO"), "fresh-snapshot"),
+            self._status(
+                requirement,
+                state="LIVE",
+                event_recency_state="LIVE",
+                freshness_ms=1,
+                execution_eligible=True,
+            ),
         )
 
         result = await _strict_snapshot_for_c2(
