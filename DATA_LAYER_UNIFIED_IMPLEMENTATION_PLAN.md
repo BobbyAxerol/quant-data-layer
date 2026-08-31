@@ -26594,3 +26594,35 @@ protobuf runtime.  The next test gate is one fresh immutable Python image from
 this committed source; that image must run the full affected matrix before a
 separately approved three-projector rolling repair.  No runtime action is
 authorized by this source evidence alone.
+
+**Immutable recovery image and full source gate (`PASS`, 2026-08-31).** The
+committed repair `7c29542` was built once as
+`qdl-v2-python:2.0.0-7c29542`, digest
+`sha256:36ed90b9a18e1c3bbd8cfc6169543f3a3ce1ce79f76f798e7777125cba9c63ed`.
+Its production `/opt/venv/bin/python` has the complete declared dependency
+set; a login shell's system-Python `PATH` was explicitly not used for the
+certificate.  In a disposable non-root, read-only, network-disabled container
+with only tmpfs `/tmp`, the affected full matrix passed **134/134** in
+`25.236s` with one expected Redis integration skip: durable transport,
+projector recovery, BAR history/cache-generation overlap, fast final-BAR
+scheduling, C2 manifest/policy, V1 fallback and signed handoff boundaries.
+No runtime volume, provider, Kafka, Redis, V1, Trading System, alpha, signal,
+sizing or order path was mounted or mutated.  The image is retained only as
+the candidate for the next explicitly bounded projector repair and its
+rollback coordinate remains the three currently observed projector images
+`sha256:2684b52e15d2a2caab361f5f1c632d9040b23617cf2f6deaf9b8371da58417ee`.
+
+**Next decision boundary (`PENDING EXACT PROJECTOR PACKET`, 2026-08-31).** A
+runtime application is needed because 324 pre-repair canonical records remain
+ahead of the shared projector group and currently block the 474 missing DOGE
+durable BARs.  The packet must recreate **only** `projector_v2`,
+`projector_v2_2` and `projector_v2_3` onto the image above with their current
+sealed runtime/TLS/cache mounts and consumer group.  It must not reset Kafka
+offsets, delete SQLite/cache data, flush Redis, alter V1/Rust/ingestors/readers,
+or touch Trading System, alpha or orders.  Rollback is one rolling recreate of
+only those same roles to the recorded `2684b52…` image and unchanged mounts.
+Acceptance after catch-up: no new generic collision, exact one-per-candidate
+recovery evidence, zero projector restart/OOM, the ten five-liquid BAR
+durable horizons including DOGE `1000/1000`, then one C2 no-order run.  This
+is deliberately the smallest remaining runtime blast radius; source release
+is not yet claimed until it passes.
