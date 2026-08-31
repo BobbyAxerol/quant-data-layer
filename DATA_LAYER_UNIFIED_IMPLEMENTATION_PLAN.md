@@ -27964,3 +27964,33 @@ or active container was deleted; volumes remain `110.9GB` with only
 `2.11GB` reclaimable. This terminalizes the preceding C2 packet entries: the
 stream freshness and C2 scheduler repairs are closed with no remaining
 in-scope technical debt.
+
+**149-route L2 handoff completion audit (`PASS / CLOSED`, 2026-08-31).** A
+post-acceptance, read-only audit verifies the serving configuration rather than
+relying on the C2 receipt alone. The two native ingestor configs declare all
+`30` direct products for Binance USD-M and OKX Swap: five liquid perpetual
+symbols (`BTC`, `ETH`, `SOL`, `DOGE`, `BNB`) times `TRADE`, `QUOTE`, and
+`BOOK`; the ten BOOK products use the declared L2 contract. Each active Rust
+core config (`core.json`, `core-002.json`, `core-003.json`) has `182` bindings
+at authority revision `1`, with `0` missing source IDs and `0` identity
+mismatches against those ingestor declarations. The five handoff roles
+(`rust_core`, `rust_core_2`, `rust_core_3`, `ingestor_binance_usdm`,
+`ingestor_okx_swap`) are running on unchanged immutable Rust image
+`sha256:cfb686...49951f`, each with restart count `0` and `OOMKilled=false`;
+bounded error scans are empty.
+
+The final real receipt is
+`/home/bobby/.local/state/qdl-v2/stream-freshness-82c35db-20260831T172712Z/c2-20260831T1800Z-r19-final/acceptance.json`
+(SHA-256 `6ca035f2...f8a6988d7`): `PASS_V2_DATA_PLANE_ONLY`, `149/149`
+products, `74` durable products, `238.753s`, zero provider-direct connections,
+zero order actions, no test provenance, signed-cursor cleanup, and the
+declared V1 fallback drill (`12` allowed fallbacks observed; `137` blocked
+routes made `0` V1 requests). The source gate was `60/60` deterministic tests
+in an immutable non-root, network-disabled client environment. Disposable
+client images and only unused BuildKit cache were removed as recorded above;
+no V1 role, Kafka topology/offset, Redis, SQLite, Trading System, alpha,
+broker, signal, sizing, or order path was changed by this handoff.
+
+This closes the approved bounded L2 mapping and 149-route C2 handoff. It is
+real-provider-backed V2 *data-plane* evidence, not a claim of broker/order
+execution authority, which is outside this packet's declared scope.
