@@ -27916,3 +27916,51 @@ fallback, durable cursor/reconnect, stream filtering and strict freshness
 coverage. No runtime service or data state was modified by that test. The next
 operation is exactly one disposable C2-client image from this source followed
 by one fresh 149-route receipt; no serving image is rebuilt.
+
+**149-route C2 bounded-scheduler client packet (`PREPARED / EXECUTING`,
+2026-08-31).** Commit `6d7cf0c452169429e2aafc13f9f0116a4a3a43c6` was built
+once as disposable client `qdl-v2-c2-client:2.0.0-c2-r19-6d7cf0c`, immutable
+image `sha256:0e5a065bceea92be14ea1ac8b9f24c8ce9fc1bd075fe68f0f7143fcebc91b90b`.
+Its OCI revision/version labels match the commit/tag; its packaged
+network-disabled, read-only regression matrix passed **60/60** in `9.343s`.
+The client is not a serving image and no V2 role is recreated for this step.
+
+The fresh C2 invocation keeps the prior payload-free mounts, exact four
+identities, 149-route scope, 300-second ceiling, V1 fallback drill and no-order
+contract. It restores requested observation concurrency `8`; source-enforced
+reference concurrency remains capped at `4`. The client auto-removes after
+exit. On any failure, the only rollback is to discard this client/evidence;
+all V1/V2 runtime roles and state remain untouched.
+
+**149-route C2 bounded-scheduler acceptance (`PASS / CLOSED`, 2026-08-31).**
+The fresh r19 disposable client completed the full four-identity no-order
+acceptance in `238.753s` with receipt
+`/home/bobby/.local/state/qdl-v2/stream-freshness-82c35db-20260831T172712Z/c2-20260831T1800Z-r19-final/acceptance.json`:
+`PASS_V2_DATA_PLANE_ONLY`, `149/149` products, `74` durable products, and the
+exact consumer split `4` monitoring, `60` Trading System paper, `50` Binance
+paper alpha and `35` OKX paper alpha. It recorded `provider_connections=0`,
+`order_actions=0`, `cursor_directory_removed=true`, no secrets and no test
+provenance. The local routing drill observed exactly `12` declared V1 fallback
+routes; `137` blocked routes made `0` V1 requests. Therefore C2 proves the
+sealed V2 query/stream data plane, signed-cursor/reconnect paths and allowed
+fallback behavior without a direct venue connection, alpha signal mutation,
+sizing mutation or order action.
+
+Post-receipt bounded runtime inspection found both r18 stream replicas
+`running`, restart count `0`, `OOMKilled=false`, on immutable image
+`sha256:6859cfb0359e94816986e4e9b7a4a9f6486dd9fce6ac607b04e275086efbd42b`.
+Both query replicas and all three Rust cores were likewise running,
+restart-free and non-OOM; bounded error scans were empty. No serving role,
+Kafka topology/offset, Redis, SQLite, V1, Trading System, alpha or order path
+was recreated or modified by C2.
+
+**C2 artifact hygiene (`PASS / CLEAN`, 2026-08-31).** With no C2 container
+remaining, the four unreferenced disposable C2-client images (including the
+r19 evidence image) were removed exactly by tag. Docker image storage changed
+from `65.95GB` to `64.58GB` (about `1.37GB` reclaimed). An unused-only
+BuildKit cleanup then reduced cache from `18.79GB` to `4.145GB` (about
+`14.64GB` reclaimed). No volume, network, source, runtime state, serving image
+or active container was deleted; volumes remain `110.9GB` with only
+`2.11GB` reclaimable. This terminalizes the preceding C2 packet entries: the
+stream freshness and C2 scheduler repairs are closed with no remaining
+in-scope technical debt.
