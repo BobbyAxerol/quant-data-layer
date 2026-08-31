@@ -13,6 +13,7 @@ import yaml
 import qdl_sdk
 from qdl.consumer.stable import StableConsumerMigrationPlan
 from qdl.runtime.provider_history import pass_through_eligible
+from qdl.reference.runtime import reference_requirement_eligible
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.security import RedisMinuteQuota
 from qdl.transport.kafka_projector import (
@@ -73,7 +74,10 @@ class StableConsumerMigrationContractTests(unittest.TestCase):
                         self.assertIsNotNone(self.catalog.binding_for(requirement))
                     except (KeyError, ValueError):
                         self.assertTrue(
-                            pass_through_eligible(self.catalog, requirement),
+                            pass_through_eligible(self.catalog, requirement)
+                            or reference_requirement_eligible(
+                                self.catalog.instrument_for(requirement.instrument_uid), requirement
+                            ),
                             f"unservable requirement: {requirement}",
                         )
 

@@ -18,6 +18,29 @@ from qdl.query import CoverageStatus
 from qdl.runtime.stable_catalog import StableSourceCatalog
 
 
+def _reference_requirement_eligible(
+    catalog: StableSourceCatalog,
+    requirement: object,
+) -> bool:
+    """Admit only declared alpha/research reference reads without a spool binding.
+
+    The shared predicate retains the execution boundary: only the separately
+    typed mark/index reference product may be execution-grade. All other
+    reference metrics remain fresh-snapshot alpha/research reads.
+    """
+
+    from qdl.reference.runtime import reference_requirement_eligible
+
+    try:
+        instrument = catalog.instrument_for(requirement.instrument_uid)  # type: ignore[attr-defined]
+    except (AttributeError, KeyError):
+        return False
+    return (
+        getattr(requirement, "source_policy_id", None) == "crypto_liquid_v2"
+        and reference_requirement_eligible(instrument, requirement)  # type: ignore[arg-type]
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class StableConsumerMigration:
     consumer_id: str
@@ -131,7 +154,10 @@ class StableConsumerMigrationPlan:
                 try:
                     catalog.binding_for(requirement)
                 except (KeyError, ValueError):
-                    if not pass_through_eligible(catalog, requirement):
+                    if not (
+                        pass_through_eligible(catalog, requirement)
+                        or _reference_requirement_eligible(catalog, requirement)
+                    ):
                         raise
             consumers.append(StableConsumerMigration(
                 consumer_id=str(item["consumer_id"]),
@@ -187,7 +213,10 @@ def _validate_manifest_servability(
         try:
             catalog.binding_for(requirement)
         except (KeyError, ValueError):
-            if not pass_through_eligible(catalog, requirement):
+            if not (
+                pass_through_eligible(catalog, requirement)
+                or _reference_requirement_eligible(catalog, requirement)
+            ):
                 raise
 
 

@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 12
+revision: 14
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
@@ -53,8 +53,8 @@ consumers:
     reason: V1_OKX_TRADE_EQUIVALENCE_UNPROVEN
 - consumer_id: alpha.binance.paper.stable
   manifest: /app/consumers/stable/alpha-binance-paper.yaml
-  manifest_revision: 6
-  manifest_sha256: 141956a2565165b0645fa77b43d73aa34bd3764e2bf0a40feb167232161dde99
+  manifest_revision: 8
+  manifest_sha256: cebf10e4aa62596badb0ce661d49320bafaa8664f3547aea25665f32494ae2b5
   demand_revision: 6
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
@@ -117,10 +117,150 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_PASS_THROUGH_PARITY_UNCERTIFIED
+  - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:BASIS:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:CONTRACT_METADATA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:LONG_SHORT_RATIO:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:OPEN_INTEREST:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TAKER_FLOW:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:BASIS:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:CONTRACT_METADATA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:LONG_SHORT_RATIO:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:OPEN_INTEREST:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:TAKER_FLOW:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:BASIS:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:CONTRACT_METADATA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:LONG_SHORT_RATIO:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:OPEN_INTEREST:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:TAKER_FLOW:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:BASIS:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:CONTRACT_METADATA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:LONG_SHORT_RATIO:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:OPEN_INTEREST:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:TAKER_FLOW:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:BASIS:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:CONTRACT_METADATA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:LONG_SHORT_RATIO:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:OPEN_INTEREST:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:TAKER_FLOW:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
 - consumer_id: alpha.okx.paper.stable
   manifest: /app/consumers/stable/alpha-okx-paper.yaml
-  manifest_revision: 6
-  manifest_sha256: ac553e96a6f73b8e4c757ea9991c454c2a55beaa0006e886613023692ce9625c
+  manifest_revision: 7
+  manifest_sha256: 049f38ca4c0445111a75b22f4f9d52455b374842d69c5f5af719c62d79f38f46
   demand_revision: 6
   products:
   - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:TRADE::crypto_primary_v2
@@ -183,6 +323,86 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_PASS_THROUGH_PARITY_UNCERTIFIED
+  - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:CONTRACT_METADATA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:OPEN_INTEREST::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:CONTRACT_METADATA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:OPEN_INTEREST::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:CONTRACT_METADATA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:OPEN_INTEREST::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:CONTRACT_METADATA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:OPEN_INTEREST::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:CONTRACT_METADATA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:OPEN_INTEREST::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
 - consumer_id: alpha.vn.paper.stable
   manifest: /app/consumers/stable/alpha-vn-paper.yaml
   manifest_revision: 1

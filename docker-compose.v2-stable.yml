@@ -82,6 +82,10 @@ x-stable-env: &stable-env
   QDL_STABLE_MAX_STREAMS: "1000"
   QDL_STABLE_MAX_BUFFER_EVENTS: "2000"
   QDL_STABLE_MAX_REPLAY_EVENTS: "5000"
+  # Reference data is an on-demand query capability. Enabling it constructs
+  # bounded adapters only; it creates no subscription, poller or execution
+  # authority until a declared alpha/research request arrives.
+  QDL_STABLE_REFERENCE_DATA_ENABLED: "${QDL_STABLE_REFERENCE_DATA_ENABLED:-true}"
   QDL_STABLE_LEASE_SHARD_ID: stable-stream-v2
   QDL_STABLE_LEASE_TTL_SECONDS: "15"
   QDL_STABLE_LEASE_RENEW_SECONDS: "5"

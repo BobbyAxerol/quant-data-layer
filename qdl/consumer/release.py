@@ -36,15 +36,15 @@ def _pass_through_eligible(catalog: StableSourceCatalog, requirement: object) ->
     return pass_through_eligible(catalog, requirement)  # type: ignore[arg-type]
 
 
-def _execution_reference_eligible(
+def _reference_requirement_eligible(
     catalog: StableSourceCatalog,
     requirement: object,
 ) -> bool:
-    """Permit only the typed execution mark/index reference product.
+    """Permit declared on-demand reference reads without a spool binding.
 
-    Reference snapshots are not BAR pass-through and do not acquire a durable
-    market-data binding.  They remain strictly limited to the catalog's
-    provider-authentic `crypto_liquid_v2` policy.
+    Alpha/research products stay fresh provider snapshots.  The shared
+    predicate allows execution only for the narrow typed mark/index exception,
+    never by virtue of a release route alone.
     """
 
     from qdl.reference.runtime import reference_requirement_eligible
@@ -446,7 +446,7 @@ class StableReleaseRoutePlan:
             binding = catalog.binding_for(requirement)
         except (KeyError, ValueError):
             if not (
-                _execution_reference_eligible(catalog, requirement)
+                _reference_requirement_eligible(catalog, requirement)
                 or _pass_through_eligible(catalog, requirement)
             ):
                 raise ValueError("stable release product has no V2 source")

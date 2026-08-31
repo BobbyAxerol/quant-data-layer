@@ -5,7 +5,7 @@
 # A later sealed runtime packet must bind a named consumer identity to these
 # requirements before they can become V2-primary.
 schema: qdl.v2.universal-demand.v1
-revision: 1
+revision: 2
 requirements:
   # Five liquid perpetuals, explicitly separated by provider venue/market.
   # Reference history is REST/batch input, not an execution-grade price feed.
@@ -23,14 +23,15 @@ requirements:
     source_policy_id: crypto_liquid_v2
     interval: null
     warmup_limit: 0
-    max_freshness_ms: 28800000
+    # Binance's settled funding history may appear after the 8h boundary.
+    max_freshness_ms: 32400000
     priority: 50
     ttl_seconds: 180
     require_final_bars: false
     require_live: false
     execution_grade: false
     depth_levels: 0
-    configuration_revision: 1
+    configuration_revision: 2
   - <<: *binance_reference
     feed: OPEN_INTEREST
     interval: 1d

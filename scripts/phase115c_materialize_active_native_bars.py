@@ -239,7 +239,18 @@ def _merge_acquisition_bindings(
     for item in generated:
         target_id = remap[str(item["binding_id"])]
         current = existing_by_id.get(target_id)
-        chosen = deepcopy(current if current is not None else item)
+        # Acquisition policy is not cursor identity. Preserve every existing
+        # policy by default, but refresh the one venue-wide final-BAR policy
+        # whose real-provider admission changed. This keeps source IDs and all
+        # unrelated active lanes stable while making a sealed manifest reflect
+        # the catalog's admitted OKX native final-BAR path.
+        refresh_okx_bar_policy = (
+            target_id.startswith("okx-swap-")
+            and
+            str(item.get("runtime")) == "OKX"
+            and str(item.get("provider_kind")) == "okx_bar"
+        )
+        chosen = deepcopy(item if refresh_okx_bar_policy or current is None else current)
         chosen["binding_id"] = target_id
         result[target_id] = chosen
     for binding_id in source_binding_ids:
@@ -315,14 +326,22 @@ def build_documents(
         generated=list(generated_source["bindings"]),
     )
 
-    acquisition_result = deepcopy(dict(acquisition))
-    acquisition_result["revision"] = current_acquisition.revision + revision_increment
-    acquisition_result["bindings"] = _merge_acquisition_bindings(
+    merged_acquisition = _merge_acquisition_bindings(
         existing=list(acquisition["bindings"]),
         generated=list(generated_acquisition["bindings"]),
         source_binding_ids={str(item["binding_id"]) for item in source_result["bindings"]},
         remap=remap,
     )
+    acquisition_policy_changed = {
+        str(item["binding_id"]): item for item in merged_acquisition
+    } != {
+        str(item["binding_id"]): item for item in acquisition["bindings"]
+    }
+    acquisition_result = deepcopy(dict(acquisition))
+    acquisition_result["revision"] = current_acquisition.revision + int(
+        bool(revision_increment or acquisition_policy_changed)
+    )
+    acquisition_result["bindings"] = merged_acquisition
 
     next_catalog = _load_temporary(
         source_result, "next-catalog.yaml", StableSourceCatalog.load
@@ -358,6 +377,7 @@ def build_documents(
         "demand_revision": int(expanded_demand["revision"]),
         "catalog_revision": next_catalog.catalog_revision,
         "acquisition_revision": int(acquisition_result["revision"]),
+        "acquisition_policy_changed": acquisition_policy_changed,
         "promotion_scope_revision": int(promotion_result["revision"]),
         "bar_binding_counts": {
             "binance_usdm": sum(

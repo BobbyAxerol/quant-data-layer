@@ -26106,3 +26106,144 @@ name the existing V2 roles to roll, observe the new routes and retain the prior
 bundle as rollback. It must not broaden reference products such as funding,
 OI, long-short, taker flow, basis or metadata into execution authority without
 a separately declared consumer semantic/freshness contract.
+
+#### 24.3.15 Native Final-BAR Fast Path And On-Demand Reference Readiness (`COMPLETE / SOURCE-TEST ONLY`, 2026-08-31)
+
+**Goal.** Remove avoidable local REST polling latency from the signal-bar path
+without weakening finality: the existing shared Rust core must accept native
+Binance USD-M kline frames only when `k.x=true` and native OKX Swap candle
+frames only when `confirm=1`.  The BAR is a final signal-state append, never an
+execution price.  REST history remains the bounded startup/reconnect/gap repair
+source; execution and risk continue to use the separately admitted
+quote/mark/L2 context.
+
+**Approved source scope.** Change only the provider-neutral production catalog,
+universal realtime projection and their tests so an admitted crypto BAR can use
+the existing shared `RUST_NATIVE` acquisition lane (`binance_usdm_bar` /
+`okx_bar`) rather than a symbol-specific process or a Python fast-path.  The
+existing Rust canonicalizer, idempotent event identity, final-bar filtering,
+watermark and reconnect semantics remain authority.  Keep the shared Python
+BAR edge for bounded real-history bootstrap and formal recovery; no new topic,
+container, per-symbol worker, direct alpha-to-venue connection or changed V1
+endpoint is allowed.
+
+**Performance/finality decision gate.** Run a disposable real-provider
+measurement for all ten five-liquid native 1m routes.  It must compare exactly
+the same final bar identity/OHLCV/interval from native WS and provider final
+REST (`x=true` / `confirm=1`), prove no provisional value, duplicate or
+cross-venue identity, and show a material native first-final improvement over
+the currently measured provider-final REST route.  Two consecutive closes per
+route are the bounded real-provider gate; deterministic tests cover malformed,
+duplicate, out-of-order, reconnect and missed-bar recovery behavior.  Only if
+these gates pass may the compiled manifest advertise `RUST_NATIVE` BAR as the
+official acquisition mode.  Otherwise the compiled manifest stays
+`PYTHON_REST`; no guessed timing change is allowed.
+
+**Reference readiness scope.** Make the existing V2
+`POST /v2/market-data/reference:batch` path a documented, tested on-demand
+alpha/research capability.  It must keep catalog identity, bounded batch,
+provider-lane budget/retry, decimal/unit/coverage/lineage and typed
+`UNAVAILABLE` behavior.  A named alpha/research manifest may request funding,
+OI, supported long-short/taker metrics, mark/index, metadata and basis through
+the SDK when its exact instrument/product/freshness/purpose is declared.  This
+does **not** create an always-on reference subscription, does **not** make those
+products execution/risk authority, and does **not** fabricate unavailable OKX
+metrics.  `MARK_INDEX_PRICE` remains the only execution-grade reference
+exception.
+
+**Evidence invariant.** Reference products are `ON_DEMAND` provider reads, not
+Kafka-backed durable streams.  The release certificate must classify them
+separately from `DURABLE` and `PROVIDER_PASS_THROUGH`: a reference acceptance
+records its typed provider result and freshness but has no acknowledged or
+resumed stream offset.  A certificate that labels an on-demand reference read
+as durable is invalid even if all payload values happen to be correct.
+
+**Tests and rollback.** Run source-only catalog/universal projection,
+Rust final-BAR golden, reference SDK/API/admission and provider-boundary tests;
+then run bounded real-provider native WS/REST equality and reference batches.
+All probes are disposable, retain only aggregate timing/typed status and do
+not write Kafka/Redis/SQLite/runtime state.  No runtime bundle is rendered or
+role restarted in this section.  The future runtime packet rolls existing
+roles with the sealed manifest only after this decision gate; rollback is the
+prior sealed `PYTHON_REST` manifest, with V1 unchanged.
+
+**Implementation and source decision (`PASS`, 2026-08-31).** The catalog and
+universal projection now admit an already-certified native final-BAR lane only
+where the real provider proved it.  The shared OKX Swap business candle lane is
+`RUST_NATIVE`; it multiplexes all currently demanded intervals/symbols through
+the existing core, filters `confirm=1`, and retains REST strictly for bounded
+bootstrap/reconnect/gap repair.  The compiled acquisition revision is `16`:
+all `70` active Binance USD-M BAR bindings remain `PYTHON_REST` because the
+host-native public WS probes received no provider frames after handshake, and
+all `70` active OKX Swap BAR bindings are `RUST_NATIVE`.  This is an explicit
+provider-evidence decision, not a venue hard-code or a new worker/container.
+
+The disposable real-provider OKX probe observed two final closed `1m` candles
+for each of `BTC/ETH/SOL/DOGE/BNB` (`10/10` frames): exact canonical
+identity/OHLCV/finality agreement against the provider final REST read, no
+duplicate/provisional/cross-venue record, native p50 `2317.2ms` versus REST p50
+`2510.6ms`, and native p95 `2914.5ms` versus REST p95 `3175.5ms`.  Binance
+therefore retains the now-fast shared REST final path rather than claiming a
+native path without real provider bytes.
+
+**On-demand reference product (`PASS / source-ready`).** A deterministic
+compiler materializes the exact five-liquid provider capabilities into the
+named alpha paper manifests: Binance USD-M has `35` requirements (`7 x 5`:
+funding, daily OI, long/short, taker flow, native/continuous basis, mark/index
+and metadata) and OKX Swap has `20` (`4 x 5`: funding, current OI, mark/index
+and metadata).  The alpha-binance manifest is revision `8`, alpha-okx remains
+revision `7`, stable release routing is revision `14`, and primary routing is
+revision `3`.  Every new route is `V2_PRIMARY` with `BLOCKED` fallback and
+reason `V1_REFERENCE_EQUIVALENCE_UNPROVEN`; it cannot silently substitute a V1
+or cross-venue value.  `QDL_STABLE_REFERENCE_DATA_ENABLED=true` constructs only
+bounded query adapters on the next normal query/stream role rollout; it adds no
+poller, socket, topic, worker or execution authority.
+
+The real-provider, read-only alpha batch smoke requested exactly all `55`
+declared requirements in `12` bounded batches and passed `55/55` in `8.676s`:
+Binance each returned five successful BASIS, metadata, funding, long/short,
+mark/index, OI and taker results; OKX each returned five successful metadata,
+funding, mark/index and OI results.  It retained only aggregate status and a
+semantic digest (`b2568aec...9003768f`), with no rate-limit/5xx/deferred result,
+and no Kafka/Redis/SQLite/runtime write.  The first truthful probe found that
+Binance's newest settled funding records were about `30,560,963ms` old
+at the provider boundary (roughly `8h29m`), beyond an invalid exact-8h bound.
+The canonical reference template and inactive demand declaration now use a
+bounded `9h` Binance funding freshness (`8h` cadence plus at most `1h`
+publication grace); OKX remains `8h`.  Values older than that still block.
+
+**Certificate semantics correction (`PASS`).** Release evidence now derives a
+requirement's delivery type from the canonical catalog: `DURABLE` requires
+advancing stream offsets, `PROVIDER_PASS_THROUGH` has no offset, and an eligible
+reference requirement is strictly `ON_DEMAND` with no offset.  A reference
+receipt mislabeled as durable is rejected.  This preserves the distinction
+between an alpha/research provider read and a replayable canonical event; only
+the independently declared fresh `MARK_INDEX_PRICE` exception can be used by
+execution/risk.  The release validator now names this as a generic declared
+reference eligibility predicate rather than an execution-only helper, so the
+source code cannot imply a broader execution grant than the contract permits.
+
+**Verification.** The isolated, non-root, read-only, network-disabled Python
+matrix passed `96` cases across catalog/projection, final-bar, manifest
+idempotency, V2 release/certificate, on-demand reference, consumer routing and
+acceptance contracts.  The two logged provider failures are asserted
+final-BAR recovery-path fixtures.  The focused Rust
+`qdl-realtime-core::final_only_okx_bar_filters_provisional_and_publishes_confirmed`
+golden passed offline with `CARGO_BUILD_JOBS=1` and reduced debug info under a
+`1GiB` disposable cap after the parallel build exceeded that cap.  The compiler
+dry-run is idempotent: no changed files, `35/20` reference counts and revisions
+`8/7/14/3` above.
+
+**Runtime/rollback boundary and cleanup.** This slice did not render a sealed
+runtime bundle, recreate any role, switch a consumer, touch V1, Kafka offsets,
+Redis, SQLite, Trading System, alpha or an order path.  A later explicit
+runtime packet may roll only the existing V2 query/stream roles with these
+sealed revisions and retains the prior bundle with Binance `PYTHON_REST` BAR
+policy as rollback.  The exited native-bar probe and the hung unnamed
+read-only probe were removed; all other test containers used `--rm`, temporary
+Rust targets were tmpfs, and no image/cache artifact was retained.  Closure
+inventory found `109` images (`18` active), `57.84GB` total image storage and
+`10.67GB` BuildKit cache (`6.228GB` reclaimable); none was created by this
+slice.  The existing `44.12GB` reclaimable image set/cache is shared with
+running/rollback services and was deliberately not broadly pruned without a
+separate retention/rollback approval.

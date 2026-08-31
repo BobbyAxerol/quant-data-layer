@@ -216,11 +216,11 @@ class UniversalRealtimePlanTests(unittest.TestCase):
         self.assertEqual(len(plan.deferred_requirement_ids), 1)
         self.assertEqual(len(plan.unsupported_requirement_ids), 1)
         self.assertEqual(plan.topology.service_role_count, 4)
-        self.assertEqual(len(plan.topology.subscriptions), 8)
-        self.assertEqual(plan.topology.connection_count, 8)
+        self.assertEqual(len(plan.topology.subscriptions), 9)
+        self.assertEqual(plan.topology.connection_count, 9)
         self.assertEqual(
             {item.feed.value.upper() for item in plan.topology.subscriptions},
-            {"TRADE", "BBO"},
+            {"TRADE", "BBO", "BAR"},
         )
         self.assertEqual(
             set(plan.final_bar_runtime_roles),
@@ -335,7 +335,7 @@ class UniversalRealtimePlanTests(unittest.TestCase):
             self.assertEqual(set(runtime["ingestors"]), {
                 "binance-spot", "binance-usdm", "okx-spot", "okx-swap",
             })
-            self.assertEqual(sum(len(item["bindings"]) for item in runtime["ingestors"].values()), 8)
+        self.assertEqual(sum(len(item["bindings"]) for item in runtime["ingestors"].values()), 9)
 
     def test_provider_projection_covers_every_admitted_binding_without_symbol_fallback(self):
         _inventory, _admission, _convergence, plan = self._plan()
@@ -347,10 +347,16 @@ class UniversalRealtimePlanTests(unittest.TestCase):
         )
         native = [item for item in bindings if item.mode == "RUST_NATIVE"]
         bars = [item for item in bindings if item.mode == "PYTHON_REST"]
-        self.assertEqual(len(native), 8)
-        self.assertEqual(len(bars), plan.final_bar_binding_count)
-        self.assertTrue(all(item.feed.value in {"TRADE", "QUOTE"} for item in native))
+        self.assertEqual(len(native), 9)
+        self.assertEqual(len(bars), plan.final_bar_binding_count - 1)
+        self.assertTrue(all(item.feed.value in {"TRADE", "QUOTE", "BAR"} for item in native))
         self.assertTrue(all(item.feed.value == "BAR" and item.require_final_bar for item in bars))
+        okx_native_bar = next(
+            item for item in native
+            if item.feed is FeedType.BAR and item.venue == "OKX" and item.market == "SWAP"
+        )
+        self.assertEqual(okx_native_bar.native_channel, "candle1H")
+        self.assertEqual(okx_native_bar.business_websocket_url, "wss://ws.okx.com:8443/ws/v5/business")
         dated = next(item for item in bars if item.product_type == "FUTURE")
         self.assertEqual(dated.native_symbol, "BTCUSDT_270326")
         self.assertIsNone(dated.websocket_url)

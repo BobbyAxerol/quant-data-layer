@@ -5,7 +5,7 @@ metadata:
   owner: data-platform
   subject: spiffe://qdl/paper/reference-l2-stable
   environment: paper
-  revision: 3
+  revision: 4
 spec:
   sdk_major: 2
   rollback_contract: V2
@@ -188,7 +188,9 @@ spec:
     source_policy_id: crypto_liquid_v2
     interval: null
     warmup_limit: 0
-    max_freshness_ms: 28800000
+    # Binance settles every 8h but may publish the settled record after the
+    # boundary; retain a bounded 1h provider-publication grace.
+    max_freshness_ms: 32400000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -435,7 +437,7 @@ spec:
     source_policy_id: crypto_liquid_v2
     interval: null
     warmup_limit: 0
-    max_freshness_ms: 28800000
+    max_freshness_ms: 32400000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -526,7 +528,7 @@ spec:
     source_policy_id: crypto_liquid_v2
     interval: null
     warmup_limit: 0
-    max_freshness_ms: 28800000
+    max_freshness_ms: 32400000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -721,7 +723,7 @@ spec:
     source_policy_id: crypto_liquid_v2
     interval: null
     warmup_limit: 0
-    max_freshness_ms: 28800000
+    max_freshness_ms: 32400000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -838,7 +840,7 @@ spec:
     source_policy_id: crypto_liquid_v2
     interval: null
     warmup_limit: 0
-    max_freshness_ms: 28800000
+    max_freshness_ms: 32400000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK

@@ -14,7 +14,14 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from qdl.consumer import ReleaseRouteObservation, StableReleaseRoutePlan
+from qdl.consumer import (
+    ReleaseRouteObservation,
+    StableReleaseRoutePlan,
+    requirement_key,
+)
+from qdl.reference.runtime import reference_requirement_eligible
+from qdl.runtime.provider_history import pass_through_eligible
+from qdl.runtime.stable_catalog import StableSourceCatalog
 
 
 OBSERVATION_BUNDLE_SCHEMA = "qdl.phase105.release-observations.v1"
@@ -28,6 +35,28 @@ _BUNDLE_FIELDS = frozenset({
     "acceptance_sha256",
     "observations",
 })
+
+
+def expected_release_delivery(
+    catalog: StableSourceCatalog,
+    requirement: object,
+) -> str:
+    """Return the only release-evidence delivery class for one requirement.
+
+    Reference batches are bounded provider reads.  They are deliberately not
+    represented as durable stream/replay evidence just because they are routed
+    through a V2-primary release manifest.
+    """
+
+    try:
+        instrument = catalog.instrument_for(requirement.instrument_uid)  # type: ignore[attr-defined]
+    except (AttributeError, KeyError) as error:
+        raise ValueError("Phase 10.5 B3 requirement has no catalog instrument") from error
+    if reference_requirement_eligible(instrument, requirement):  # type: ignore[arg-type]
+        return "ON_DEMAND"
+    if pass_through_eligible(catalog, requirement):  # type: ignore[arg-type]
+        return "PROVIDER_PASS_THROUGH"
+    return "DURABLE"
 
 
 def _canonical_sha256(value: object) -> str:
@@ -115,6 +144,12 @@ def build_release_observation_bundle(
         for consumer_id, product in plan.products()
         if product.route == "V2_PRIMARY"
     }
+    requirements = {
+        (consumer.consumer_id, requirement_key(requirement)): requirement
+        for consumer in plan.consumers
+        for requirement in consumer.manifest.requirements
+    }
+    catalog = StableSourceCatalog.load(plan.source_catalog.path)
     measured: dict[tuple[str, str], tuple[dict[str, int | bool], dict[str, int | bool], int]] = {}
     for index, raw in enumerate(raw_products):
         if not isinstance(raw, Mapping):
@@ -128,8 +163,8 @@ def build_release_observation_bundle(
             consumer_id, instrument_uid, feed, policy,
         )) or interval is not None and not isinstance(interval, str):
             raise ValueError(f"Phase 10.5 B3 product[{index}] identity is invalid")
-        requirement_key = ":".join((instrument_uid, feed, interval or "", policy))
-        identity = (consumer_id, requirement_key)
+        route_key = ":".join((instrument_uid, feed, interval or "", policy))
+        identity = (consumer_id, route_key)
         if identity not in expected_v2 or identity in measured:
             raise ValueError("Phase 10.5 B3 products differ from frozen V2 routes")
         quality = raw.get("release_quality")
@@ -140,7 +175,10 @@ def build_release_observation_bundle(
         acknowledged = raw.get("acknowledged_offset")
         resumed = raw.get("resumed_offset")
         delivery = raw.get("delivery")
-        if delivery == "PROVIDER_PASS_THROUGH" and acknowledged is None and resumed is None:
+        expected_delivery = expected_release_delivery(catalog, requirements[identity])
+        if delivery != expected_delivery:
+            raise ValueError("Phase 10.5 B3 product delivery differs from its declared data plane")
+        if delivery in {"PROVIDER_PASS_THROUGH", "ON_DEMAND"} and acknowledged is None and resumed is None:
             consumer_lag = 0
         elif delivery == "DURABLE":
             acknowledged_offset = _require_non_negative_int(

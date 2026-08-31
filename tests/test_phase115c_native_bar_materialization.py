@@ -207,7 +207,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         self.assertEqual(materialized_l2, current_l2)
         self.assertEqual(len(materialized_l2), 36)
 
-    def test_every_active_bar_is_rest_owned_with_exact_venue_channel(self) -> None:
+    def test_every_active_bar_uses_only_the_admitted_venue_acquisition_lane(self) -> None:
         source_by_id = {item.binding_id: item for item in self.loaded_catalog.bindings}
         for item in self.loaded_acquisition.bindings:
             source = source_by_id[item.binding_id]
@@ -216,13 +216,58 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
                 ("BINANCE", "USDM"), ("OKX", "SWAP"),
             }:
                 continue
-            self.assertEqual(item.mode, "PYTHON_REST")
             if family == ("BINANCE", "USDM"):
                 self.assertEqual(item.provider_kind, "binance_usdm_rest_bar")
+                self.assertEqual(item.mode, "PYTHON_REST")
                 self.assertEqual(item.native_channel, f"rest-klines/{source.interval}")
             else:
                 self.assertEqual(item.provider_kind, "okx_bar")
+                self.assertEqual(item.mode, "RUST_NATIVE")
                 self.assertEqual(item.native_channel, f"candle{self.tool.okx_candle_channel(source.interval)[6:]}")
+                self.assertEqual(item.websocket_url, "wss://ws.okx.com:8443/ws/v5/public")
+                self.assertEqual(item.business_websocket_url, "wss://ws.okx.com:8443/ws/v5/business")
+
+    def test_okx_native_bar_policy_refresh_is_revisioned_and_idempotent(self) -> None:
+        before_acquisition = deepcopy(self.current_acquisition)
+        before_acquisition["revision"] -= 1
+        for item in before_acquisition["bindings"]:
+            if (
+                item["binding_id"].startswith("okx-swap-")
+                and item["runtime"] == "OKX"
+                and item["provider_kind"] == "okx_bar"
+            ):
+                item["mode"] = "PYTHON_REST"
+                item["websocket_url"] = None
+                item["business_websocket_url"] = None
+        demand, catalog, acquisition, scope, summary = self.tool.build_documents(
+            demand=self.current_demand,
+            source_catalog=self.current_catalog,
+            acquisition=before_acquisition,
+            promotion_scope=self.current_scope,
+            binance_usdm_capture=ROOT / "config/v2/captures/binance-usdm-exchangeinfo.filtered.json",
+            binance_spot_capture=ROOT / "config/v2/captures/binance-spot-exchangeinfo.filtered.json",
+            okx_swap_capture=ROOT / "config/v2/captures/okx-instruments-swap.filtered.json",
+            okx_spot_capture=ROOT / "config/v2/captures/okx-instruments-spot.filtered.json",
+        )
+        self.assertEqual(demand, self.current_demand)
+        self.assertEqual(catalog, self.current_catalog)
+        self.assertEqual(acquisition, self.current_acquisition)
+        self.assertEqual(scope, self.current_scope)
+        self.assertTrue(summary["acquisition_policy_changed"])
+        self.assertEqual(summary["acquisition_revision"], self.current_acquisition["revision"])
+
+        _, _, rerun_acquisition, _, rerun_summary = self.tool.build_documents(
+            demand=demand,
+            source_catalog=catalog,
+            acquisition=acquisition,
+            promotion_scope=scope,
+            binance_usdm_capture=ROOT / "config/v2/captures/binance-usdm-exchangeinfo.filtered.json",
+            binance_spot_capture=ROOT / "config/v2/captures/binance-spot-exchangeinfo.filtered.json",
+            okx_swap_capture=ROOT / "config/v2/captures/okx-instruments-swap.filtered.json",
+            okx_spot_capture=ROOT / "config/v2/captures/okx-instruments-spot.filtered.json",
+        )
+        self.assertEqual(rerun_acquisition, acquisition)
+        self.assertFalse(rerun_summary["acquisition_policy_changed"])
 
     def test_existing_cursor_identities_and_disabled_spot_are_preserved(self) -> None:
         old = {

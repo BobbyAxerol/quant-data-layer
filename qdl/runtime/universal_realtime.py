@@ -58,10 +58,12 @@ _GRADE_RANK = {
 class UniversalRealtimePlan:
     """One dark catalog/acquisition projection for all admitted realtime demand.
 
-    ``topology`` contains native TRADE/BBO/BOOK subscriptions. Final BAR is
-    owned by the shared REST close-confirmation edge and is accounted for
-    separately. Snapshot/delta book aliases coalesce into one physical
-    provider subscription; reference remains bounded on-demand REST data.
+    ``topology`` contains admitted native TRADE/BBO/BOOK subscriptions and,
+    where a provider has passed final-bar admission, native final BAR
+    subscriptions. A shared REST edge still owns historical bootstrap and
+    recovery for every BAR, while it is the recurring final source only for
+    ``PYTHON_REST`` BAR bindings. Snapshot/delta book aliases coalesce into one
+    physical provider subscription; reference remains bounded on-demand data.
     """
 
     schema: str
@@ -103,8 +105,6 @@ class UniversalRealtimePlan:
             raise ValueError("universal realtime final BAR roles differ from demand")
         if len(self.final_bar_runtime_roles) != len(set(self.final_bar_runtime_roles)):
             raise ValueError("universal realtime final BAR roles must be unique")
-        if any(item.feed is IngestionFeedType.BAR for item in self.topology.subscriptions):
-            raise ValueError("final BAR must not consume native websocket topology capacity")
         if self.topology.demand_revision != self.demand.revision:
             raise ValueError("universal realtime topology revision differs from demand")
         if self.topology.service_role_count > 4:
@@ -142,8 +142,9 @@ class ProviderRealtimeBinding:
     """One authentic provider-edge binding from a universal realtime plan.
 
     This is intentionally data, not a worker specification. A shared Rust
-    role multiplexes every ``RUST_NATIVE`` row for its venue/market; the one
-    shared Python final-bar edge polls every ``PYTHON_REST`` row. The typed
+    role multiplexes every ``RUST_NATIVE`` row for its venue/market; the shared
+    Python final-bar edge polls only recurring ``PYTHON_REST`` BAR rows and
+    handles bounded history recovery for every BAR. The typed
     projection is also the only input accepted by the bounded provider
     admission harness, preventing tests from silently falling back to
     reference symbols.
@@ -192,14 +193,14 @@ class ProviderRealtimeBinding:
         if self.stale_after_ms <= 0 or min(self.catalog_revision, self.demand_revision) < 1:
             raise ValueError("provider realtime binding revisions/freshness are invalid")
         if self.feed is FeedType.BAR:
-            if (
-                self.mode != "PYTHON_REST"
-                or not self.require_final_bar
-                or self.websocket_url is not None
-                or self.business_websocket_url is not None
-                or self.interval is None
-            ):
-                raise ValueError("final BAR must use the shared REST close-confirmation edge")
+            if not self.require_final_bar or self.interval is None or self.l2 is not None:
+                raise ValueError("final BAR binding is missing finality, interval or carries L2")
+            if self.mode == "PYTHON_REST":
+                if self.websocket_url is not None or self.business_websocket_url is not None:
+                    raise ValueError("REST final BAR cannot carry a websocket endpoint")
+                return
+            if self.mode != "RUST_NATIVE" or not self.websocket_url:
+                raise ValueError("native final BAR requires an admitted websocket lane")
             return
         if self.feed not in {FeedType.TRADE, FeedType.QUOTE, FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}:
             raise ValueError("provider realtime binding feed is unsupported")
@@ -430,6 +431,9 @@ def build_universal_realtime_plan(
             "active_demand_inventory_sha256": inventory.manifest_sha256,
         },
     )
+    acquisition_by_id = {
+        str(item["binding_id"]): item for item in bundle.acquisition_plan["bindings"]
+    }
     binding_owners: dict[str, tuple[str, ...]] = {}
     subscriptions = []
     final_bar_binding_ids: list[str] = []
@@ -448,6 +452,15 @@ def build_universal_realtime_plan(
         if item.feed is FeedType.BAR:
             final_bar_binding_ids.append(binding_id)
             final_bar_runtime_roles.add((item.venue, item.market))
+            try:
+                acquisition = acquisition_by_id[binding_id]
+            except KeyError as error:
+                raise InventoryError("final BAR demand has no acquisition binding") from error
+            mode = str(acquisition["mode"])
+            if mode == "RUST_NATIVE":
+                subscriptions.append(_subscription_from_demand(item))
+            elif mode != "PYTHON_REST":
+                raise InventoryError("final BAR acquisition mode is unsupported")
         else:
             subscriptions.append(_subscription_from_demand(item))
     subscriptions = sorted(set(subscriptions), key=lambda item: item.key)

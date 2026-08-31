@@ -13,6 +13,26 @@ Other services should connect to `data_layer` using this rule:
 
 The `data_layer` is the system-of-record gateway for market-data distribution inside this stack.
 
+### V2 On-Demand Reference Data
+
+`POST /v2/market-data/reference:batch` is available to a V2 alpha/research
+identity only when its signed manifest declares the exact
+`instrument_uid/feed/interval/freshness` requirement. It performs bounded
+provider reads with typed provenance, units, coverage and `UNAVAILABLE`; it is
+not a background subscription and does not add a WebSocket connection.
+
+The ready five-liquid paper manifests expose:
+
+- Binance USD-M: funding, daily OI, long/short ratio, taker flow, native or
+  continuous daily basis, mark/index and contract metadata.
+- OKX Swap: funding, current OI, mark/index and contract metadata. Unsupported
+  provider metrics remain typed `UNAVAILABLE`; no Binance value is substituted.
+
+Use these products for alpha/research features and diagnostics. They are never
+execution or risk authority except a separately declared fresh
+`MARK_INDEX_PRICE` read. A new alpha must add its own manifest requirement
+before calling a reference metric; it must not reuse another alpha's identity.
+
 ## 1. Connection Architecture
 
 Production services should **never** connect directly to external exchanges (Binance, DNSE, etc.) if they are running within the `bobby_network`. Instead, they must use the `data_layer` as a unified gateway.

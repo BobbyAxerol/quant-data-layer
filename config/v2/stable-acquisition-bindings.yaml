@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-acquisition-bindings.v1
-revision: 15
+revision: 16
 topics:
   raw: md.raw.realtime.v2
   canonical: md.canonical.v2
@@ -1070,117 +1070,117 @@ bindings:
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
   enabled: false
 - binding_id: okx-swap-bnb-usdt-swap-bar-12h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle12Hutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-15m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle15m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-1d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-1h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-1m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-1w
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1Wutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-2d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle2Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-2h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle2H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-30m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle30m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-3d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle3Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-3m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle3m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-4h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle4H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-5m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle5m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-bar-6h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle6Hutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-bnb-usdt-swap-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1224,109 +1224,109 @@ bindings:
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-12h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle12Hutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-15m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle15m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-1d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-1h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-1w
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1Wutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-2d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle2Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-2h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle2H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-30m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle30m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-3d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle3Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-3m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle3m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-4h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle4H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-5m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle5m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-bar-6h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle6Hutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btc-usdt-swap-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1354,13 +1354,13 @@ bindings:
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
 - binding_id: okx-swap-btcusdt-bar-1m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-btcusdt-quote
   mode: RUST_NATIVE
   runtime: OKX
@@ -1378,117 +1378,117 @@ bindings:
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-12h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle12Hutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-15m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle15m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-1d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-1h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-1m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-1w
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1Wutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-2d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle2Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-2h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle2H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-30m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle30m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-3d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle3Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-3m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle3m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-4h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle4H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-5m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle5m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-bar-6h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle6Hutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-doge-usdt-swap-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1532,117 +1532,117 @@ bindings:
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-12h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle12Hutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-15m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle15m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-1d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-1h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-1m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-1w
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1Wutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-2d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle2Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-2h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle2H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-30m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle30m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-3d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle3Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-3m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle3m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-4h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle4H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-5m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle5m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-bar-6h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle6Hutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-eth-usdt-swap-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1686,117 +1686,117 @@ bindings:
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-12h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle12Hutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-15m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle15m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-1d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-1h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-1m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-1w
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle1Wutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-2d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle2Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-2h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle2H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-30m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle30m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-3d
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle3Dutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-3m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle3m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-4h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle4H
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-5m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle5m
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-bar-6h
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bar
   native_channel: candle6Hutc
   sequence_policy: NONE
-  websocket_url: null
-  business_websocket_url: null
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
 - binding_id: okx-swap-sol-usdt-swap-book_delta
   mode: RUST_NATIVE
   runtime: OKX

@@ -644,14 +644,22 @@ class ProductionCatalogBuilder:
                 mode, kind, channel, sequence = "RUST_NATIVE", "okx_bbo", "bbo-tbt", "NONE"
             elif item.feed in _BOOK_FEEDS:
                 mode, kind, channel, sequence = "RUST_NATIVE", "okx_book", "books", "CONTIGUOUS"
+            elif item.feed is FeedType.BAR and item.market == "SWAP":
+                # A bounded real-provider gate proved the shared OKX business
+                # candle lane emits ``confirm=1`` final rows with canonical
+                # OHLCV parity and lower first-final latency than REST. The
+                # Rust core remains the only canonical/replay authority; the
+                # shared Python edge still owns startup, reconnect and gap
+                # repair through provider history. This is one multiplexed
+                # venue lane, never a symbol-specific worker.
+                mode, kind, channel, sequence = (
+                    "RUST_NATIVE", "okx_bar",
+                    okx_candle_channel(item.interval or "1m"), "NONE",
+                )
             else:
-                # Final BAR ownership stays at the bounded provider REST edge for
-                # every crypto venue. The Python edge publishes the same raw
-                # envelope and the Rust core remains the sole canonical/replay
-                # authority. This gives missed WebSocket finals one explicit,
-                # contiguous history-recovery path instead of a second writer.
-                # The provider-native candle identity still follows the demand
-                # interval exactly.
+                # Only OKX Swap passed the native final-bar provider gate.
+                # Other OKX markets retain the shared REST final lane until
+                # they carry equivalent real-provider evidence.
                 mode, kind, channel, sequence = (
                     "PYTHON_REST", "okx_bar",
                     okx_candle_channel(item.interval or "1m"), "NONE",

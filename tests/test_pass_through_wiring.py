@@ -104,6 +104,15 @@ class PassThroughWiringTests(unittest.TestCase):
         # typed ReferenceDataRequirement still permits only one MARK snapshot.
         self.assertTrue(execution.allowed)
 
+    def test_stable_compose_enables_only_on_demand_reference_adapters(self):
+        compose = yaml.safe_load(
+            (ROOT / "docker-compose.v2-stable.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            compose["x-stable-env"]["QDL_STABLE_REFERENCE_DATA_ENABLED"],
+            "${QDL_STABLE_REFERENCE_DATA_ENABLED:-true}",
+        )
+
     def test_an_unbound_instrument_is_unresolvable_while_disabled(self):
         registry = self.catalog.instrument_registry()
         with self.assertRaises(KeyError):
