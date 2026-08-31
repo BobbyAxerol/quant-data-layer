@@ -346,6 +346,57 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
             self.assertNotIn("FLUSHDB", flattened)
             self.assertNotIn("canonical-cache.sqlite3", flattened)
 
+    def test_catchup_gets_full_timeout_after_projectors_start(self):
+        env = Path("/tmp/stable.env")
+        cache_sizes = iter(("0\n", "2\n"))
+        observed = {}
+
+        def fake_compose(_env, *arguments, **_kwargs):
+            if arguments[:4] == ("ps", "--services", "--status", "running"):
+                return subprocess.CompletedProcess([], 0, "", "")
+            if arguments[:3] == ("exec", "-T", "stable_redis") and arguments[-1] == "DBSIZE":
+                return subprocess.CompletedProcess([], 0, next(cache_sizes), "")
+            return subprocess.CompletedProcess([], 0, "", "")
+
+        def capture_http(_url, deadline, **_kwargs):
+            observed.setdefault("http", []).append(deadline)
+
+        def capture_lag(_env, deadline):
+            observed["lag"] = deadline
+            return {"lag": 0, "partitions": 6}
+
+        def capture_projector(_env, deadline):
+            observed["projector"] = deadline
+
+        with (
+            patch("scripts.rebuild_v2_stable_projection_cache._validate_project"),
+            patch(
+                "scripts.rebuild_v2_stable_projection_cache._assert_projector_catalog_matches_source",
+                return_value={},
+            ),
+            patch("scripts.rebuild_v2_stable_projection_cache._compose", fake_compose),
+            patch(
+                "scripts.rebuild_v2_stable_projection_cache._reset_projector_to_bounded_window",
+                return_value={},
+            ),
+            patch(
+                "scripts.rebuild_v2_stable_projection_cache._stable_client_ssl_context",
+                return_value=None,
+            ),
+            patch("scripts.rebuild_v2_stable_projection_cache._start_services"),
+            patch("scripts.rebuild_v2_stable_projection_cache._wait_http", capture_http),
+            patch("scripts.rebuild_v2_stable_projection_cache._wait_bounded_lag", capture_lag),
+            patch("scripts.rebuild_v2_stable_projection_cache._wait_projector_ready", capture_projector),
+            patch("scripts.rebuild_v2_stable_projection_cache.time.monotonic", side_effect=(100.0, 140.0)),
+        ):
+            result = execute_rebuild(env, timeout_seconds=30)
+
+        self.assertTrue(result["apply"])
+        self.assertEqual(observed["http"][:2], [130.0, 130.0])
+        self.assertEqual(observed["lag"], 170.0)
+        self.assertEqual(observed["projector"], 170.0)
+        self.assertEqual(observed["http"][2:], [170.0, 170.0])
+
 
 if __name__ == "__main__":
     unittest.main()

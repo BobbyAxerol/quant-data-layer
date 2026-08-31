@@ -25669,3 +25669,68 @@ it requires a fresh explicit approval for the seven V2 cache-user stops,
 three V2 SQLite cache-file removals, `stable_redis` DB-only flush and bounded
 `stable-projector-v1` reset. V1, Trading System, alpha and every order path
 remain untouched.
+
+**Explicit runtime authorization (2026-08-31).** The owner approved exactly
+the seven V2 cache-user stop/restart set (`projector_v2` x3, `query_v2` x2,
+`stream_v2` x2), removal of only the three V2 canonical-cache SQLite files,
+`FLUSHDB` only against `stable_redis`, and reset only of
+`stable-projector-v1` on `md.canonical.v2` for the bounded fifteen-minute
+replay. The authorization explicitly excludes V1, Trading System, alpha,
+database and order paths. Rollback on runbook failure is to leave V1 untouched
+and stop/recreate only the named V2 cache users with their retained images and
+runtime mounts.
+
+**Scoped rebuild execution and continuation (`IN PROGRESS`, 2026-08-31).**
+The approved runbook executed its exact stop, three-file cache removal,
+`stable_redis` DB-only flush and bounded `stable-projector-v1` reset. It
+started the two stream and three projector replicas, then timed out after its
+configured `600s` before observing the required three consecutive bounded-lag
+samples; its final sample was `10,504` across six partitions. It did not start
+the two query replicas, recreate Trading System, or touch V1, Kafka topology,
+any unrelated offset, alpha, database or order path. Read-only post-timeout
+inspection proves all three projectors are running without OOM/restart, and
+the same group is now at `93` total lag across all six partitions. The timeout
+therefore did not prove projection corruption; it exposed that the bounded
+replay needed slightly longer than the operational timeout to drain.
+
+**Approved continuation.** Do not rerun destructive cleanup or reset offsets.
+Start only `query_v2_1` and `query_v2_2`, require their TLS readiness, require
+three fresh group samples at or below the existing `250` record bound, and
+require a non-empty `stable_redis` projection cache. Any failure stops only
+the seven named V2 cache users. This continuation remains inside the owner's
+explicit packet and preserves V1, Trading System, alpha, database and order
+paths.
+
+**Recovery receipt (`PASS / V2 CACHE REBUILT`, 2026-08-31).** The first
+runbook invocation completed the approved destructive portion and started the
+stream/projector order correctly, but its single wall-clock deadline expired
+before it saw the three bounded-lag samples. It left query stopped, as designed
+for a failed runbook. Read-only follow-up showed the same projector group had
+subsequently drained to `93/6` records. The approved non-destructive
+continuation started only the two query roles. Eight three-second lag samples
+then included four consecutive bounded totals (`142`, `115`, `87`, `163`) at
+or below the existing `250` threshold; transient commit spikes were observed
+but drained (`773`, `424`, `257`) rather than growing. All three projector
+replicas remain running with `oom=false` and `restart=0`, `stable_redis` has
+`167` keys, and both query replicas returned TLS `/health/ready` `200`. No V1,
+Trading System, alpha, database or order action occurred.
+
+**Runbook correctness follow-up (in scope).** The replay gate must receive
+its configured observation budget after the projectors are started, rather
+than share an already-consumed setup/cleanup deadline. Add a focused test and
+make that deadline boundary explicit before closure; this changes only the
+operator recovery script and prevents a healthy, still-catching-up recovery
+from falsely stopping query replicas.
+
+**Runbook correction (`PASS / SOURCE ONLY`, 2026-08-31).**
+`rebuild_v2_stable_projection_cache.py` now uses one bounded startup deadline
+for stream liveness and a fresh bounded catch-up deadline immediately after
+the projector replicas start. It preserves the exact fifteen-minute replay,
+six-partition/`250`-record gate, cache-file scope and V1 exclusion; it merely
+prevents setup time from silently consuming projector observation time. The
+new deterministic regression proves a `30s` requested budget yields a
+catch-up deadline after projector start rather than the original startup
+deadline. The immutable, network-disabled QDL test container passed all
+`16/16` stable-rebuild tests; host `py_compile` and `git diff --check` also
+passed. No role, cache, Kafka, Redis, V1, Trading System, alpha or order path
+was touched by this source-test slice.

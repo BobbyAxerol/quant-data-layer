@@ -392,7 +392,9 @@ def _wait_bounded_lag(env_file: Path, deadline: float) -> dict[str, int]:
 def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, object]:
     _validate_project(env_file)
     catalog_preflight = _assert_projector_catalog_matches_source(env_file)
-    deadline = time.monotonic() + timeout_seconds
+    # Stream startup and canonical catch-up are separate bounded operations.
+    # A replay must receive its full observation budget after projectors join.
+    startup_deadline = time.monotonic() + timeout_seconds
     _compose(env_file, "stop", *STOP_SERVICES)
 
     running = set(
@@ -440,28 +442,29 @@ def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, obje
     _start_services(env_file, *STREAM_SERVICES)
     _wait_http(
         "https://localhost:18210/health/live",
-        deadline,
+        startup_deadline,
         ssl_context=ssl_context,
     )
     _wait_http(
         "https://localhost:18211/health/live",
-        deadline,
+        startup_deadline,
         ssl_context=ssl_context,
     )
 
     _start_services(env_file, *PROJECTOR_SERVICES)
-    lag = _wait_bounded_lag(env_file, deadline)
-    _wait_projector_ready(env_file, deadline)
+    catchup_deadline = time.monotonic() + timeout_seconds
+    lag = _wait_bounded_lag(env_file, catchup_deadline)
+    _wait_projector_ready(env_file, catchup_deadline)
 
     _start_services(env_file, *QUERY_SERVICES)
     _wait_http(
         "https://localhost:18201/health/ready",
-        deadline,
+        catchup_deadline,
         ssl_context=ssl_context,
     )
     _wait_http(
         "https://localhost:18202/health/ready",
-        deadline,
+        catchup_deadline,
         ssl_context=ssl_context,
     )
 
