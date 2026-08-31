@@ -514,7 +514,7 @@ def _quiet_quote_is_retryable(
     )
 
 
-async def _wait_for_quiet_quote_retry(
+async def _wait_for_live_snapshot_retry(
     client: AsyncDataLayerClient,
     *,
     product: AcceptanceProduct,
@@ -523,27 +523,39 @@ async def _wait_for_quiet_quote_retry(
     deadline: float,
     retry_delay_seconds: float = _QUIET_QUOTE_RETRY_SECONDS,
 ) -> None:
-    if product.feed.value != "QUOTE" or error.code != "DATA_STALE":
+    if error.code != "DATA_STALE":
+        raise error
+    if product.feed.value not in {"QUOTE", "TRADE"}:
         raise error
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise ContinuityError(
-            "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+            "DATA_STALE",
+            f"C2 strict {product.feed.value} did not obtain fresh data before its deadline",
         ) from error
     try:
         status = await asyncio.wait_for(client.feed_status(requirement), timeout=remaining)
     except TimeoutError as timeout:
         raise ContinuityError(
-            "DATA_STALE", "C2 quiet QUOTE status did not return before its deadline"
+            "DATA_STALE", f"C2 live {product.feed.value} status did not return before its deadline"
         ) from timeout
-    if not _quiet_quote_is_retryable(product, requirement, status):
+    if product.feed.value == "QUOTE":
+        retryable = _quiet_quote_is_retryable(product, requirement, status)
+    else:
+        retryable = (
+            _quiet_trade_status_is_observable(product, requirement, status)
+            or _fresh_trade_status_is_observable(product, requirement, status)
+        )
+    if not retryable:
         raise ContinuityError(
-            "DATA_STALE", "C2 quiet QUOTE retry requires a live provider session"
+            "DATA_STALE",
+            f"C2 strict {product.feed.value} retry requires a live provider session",
         ) from error
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise ContinuityError(
-            "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+            "DATA_STALE",
+            f"C2 strict {product.feed.value} did not obtain fresh data before its deadline",
         ) from error
     await asyncio.sleep(min(retry_delay_seconds, remaining))
 
@@ -560,12 +572,13 @@ async def _strict_snapshot_for_c2(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise ContinuityError(
-                "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+                "DATA_STALE",
+                f"C2 strict {product.feed.value} did not obtain fresh data before its deadline",
             )
         try:
             return await asyncio.wait_for(client.snapshot(requirement), timeout=remaining)
         except DataLayerError as error:
-            await _wait_for_quiet_quote_retry(
+            await _wait_for_live_snapshot_retry(
                 client,
                 product=product,
                 requirement=requirement,
@@ -575,7 +588,8 @@ async def _strict_snapshot_for_c2(
             continue
         except TimeoutError as timeout:
             raise ContinuityError(
-                "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+                "DATA_STALE",
+                f"C2 strict {product.feed.value} did not obtain fresh data before its deadline",
             ) from timeout
 
 
@@ -593,7 +607,8 @@ async def _strict_warmup_then_stream_for_c2(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise ContinuityError(
-                "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+                "DATA_STALE",
+                f"C2 strict {product.feed.value} did not obtain fresh data before its deadline",
             )
         context = client.warmup_then_stream(
             requirement,
@@ -602,7 +617,7 @@ async def _strict_warmup_then_stream_for_c2(
         try:
             session = await asyncio.wait_for(context.__aenter__(), timeout=remaining)
         except DataLayerError as error:
-            await _wait_for_quiet_quote_retry(
+            await _wait_for_live_snapshot_retry(
                 client,
                 product=product,
                 requirement=requirement,
@@ -612,7 +627,8 @@ async def _strict_warmup_then_stream_for_c2(
             continue
         except TimeoutError as timeout:
             raise ContinuityError(
-                "DATA_STALE", "C2 strict QUOTE did not obtain fresh data before its deadline"
+                "DATA_STALE",
+                f"C2 strict {product.feed.value} did not obtain fresh data before its deadline",
             ) from timeout
         try:
             yield session

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -1077,6 +1078,76 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client.snapshot_calls, 1)
         self.assertEqual(client.status_calls, 1)
+
+    async def test_quiet_connected_trade_retries_but_still_requires_a_fresh_snapshot(self):
+        requirement = DataRequirement(
+            instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=3_000,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.TRADE, delivery=DeliveryClass.DURABLE)
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "quiet trade"), "fresh-trade-snapshot"),
+            Phase103QuietTradeStreamTests._status(requirement),
+        )
+
+        result = await _strict_snapshot_for_c2(
+            client,
+            product=product,
+            requirement=requirement,
+            timeout_seconds=0.25,
+        )
+
+        self.assertEqual(result, "fresh-trade-snapshot")
+        self.assertEqual(client.snapshot_calls, 2)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_quiet_trade_disconnected_or_blocked_policy_fails_closed(self):
+        live_requirement = DataRequirement(
+            instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=3_000,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.TRADE, delivery=DeliveryClass.DURABLE)
+        disconnected = self._Client(
+            (DataLayerError("DATA_STALE", "quiet trade"),),
+            Phase103QuietTradeStreamTests._status(
+                live_requirement, provider_session_state="DISCONNECTED"
+            ),
+        )
+        with self.assertRaisesRegex(ContinuityError, "live provider session"):
+            await _strict_snapshot_for_c2(
+                disconnected,
+                product=product,
+                requirement=live_requirement,
+                timeout_seconds=0.25,
+            )
+
+        blocked_requirement = replace(
+            live_requirement,
+            event_recency_policy=StalePolicy.BLOCK,
+        )
+        blocked = self._Client(
+            (DataLayerError("DATA_STALE", "quiet trade"),),
+            Phase103QuietTradeStreamTests._status(blocked_requirement),
+        )
+        with self.assertRaisesRegex(ContinuityError, "live provider session"):
+            await _strict_snapshot_for_c2(
+                blocked,
+                product=product,
+                requirement=blocked_requirement,
+                timeout_seconds=0.25,
+            )
 
     async def test_quiet_connected_quote_stream_handoff_retries_before_yielding(self):
         requirement = self._requirement()

@@ -26645,3 +26645,93 @@ only the same three roles to observed image
 `sha256:2684b52e15d2a2caab361f5f1c632d9040b23617cf2f6deaf9b8371da58417ee`
 with unchanged mounts.  Compose validation and a separate explicit runtime
 approval remain required; no projector has been recreated by this preflight.
+
+**Projector-recovery runtime approval (`APPROVED / EXECUTING`, 2026-08-31).**
+The operator approved exactly the three sealed projector roles above onto the
+candidate image, with their current `stable-projector-v1` group, runtime/TLS/
+state mounts and the recorded rollback image.  Kafka offsets/topology, Redis
+flush, SQLite deletion, V1, Rust, ingestors, query/stream readers, Trading
+System, alpha and all order paths remain excluded.  Recreate is sequential;
+each role must remain free of OOM/restart and generic collision before the next
+role begins.  After bounded catch-up, the only permitted follow-up is one fresh
+300-second no-order C2 plus scoped disposable-client cleanup.
+
+**C2 recovery acceptance preflight (`READY / EXECUTING`, 2026-08-31).** The
+recovered projector group reached a bounded total Kafka lag of `87` across all
+six canonical partitions; all three replicas are running on `7c29542` with
+`OOMKilled=false`, restart count `0`, no generic collision, and ten BAR cache
+partitions at or above the required `1000` rows (Binance DOGE `1004`, OKX DOGE
+`1034`).  The current serving V1 fallback image was re-bound successfully to
+its existing immutable provenance.  One new payload-free C2 namespace is
+`/home/bobby/.local/state/qdl-v2/projector-overlap-7c29542-20260831T105939Z/c2-20260831T111919Z/`;
+its non-secret packet names only the existing executor-network query/stream
+endpoints, V1 cached-read route, three sealed paper identities, a 300-second
+limit and no-order invariants.  The disposable client has no Docker socket,
+provider credential or execution credential.  It will be auto-removed and its
+temporary cursor state deleted; only compact receipt/security evidence is
+retained.
+
+**C2 launcher preflight correction (`NO DATA REQUEST / RETRY AUTHORIZED`,
+2026-08-31).** The first disposable client auto-removed with exit `1` before
+opening any V1/V2 endpoint because its isolated launcher omitted the already
+sealed read-only `/runtime` bind and therefore could not read
+`/runtime/authority.json`.  Its empty receipt, stderr SHA-256
+`6992adc8f296d2d2750a669a398fa1c923af2ba80dcd522c4e39357255d32bc9`, no
+container residue and no endpoint/order/provider action are retained only as
+compact preflight evidence.  This is not a C2 attempt.  The sole correction is
+to mount the existing runtime directory read-only in one replacement
+disposable client; images, roles, network topology, identities, V1/V2 runtime
+state and the C2 scope remain unchanged.
+
+**C2 recovery acceptance result (`FAIL-CLOSED / TYPED STATUS DIAGNOSTIC`,
+2026-08-31).** The corrected disposable client mounted the sealed runtime
+read-only, reached the real V2 query data plane, and made no order, signal,
+sizing, Kafka, Redis, SQLite, provider-direct or route mutation. It stopped
+at `trading-system.paper.stable / OKX.SWAP.PERPETUAL.DOGE-USDT / TRADE` because
+the public snapshot correctly returned `DATA_STALE` (`required data exceeds
+its freshness policy`); no acceptance receipt was emitted. The governed
+requirement is intentionally `event_recency_policy=OBSERVE` with a `45,000ms`
+provider-session-liveness bound, so this result must not be repaired by
+loosening the `3,000ms` trade freshness SLA. Before any source change, the
+next bounded action is a read-only typed-status comparison from both existing
+V2 query replicas for the exact requirement, to distinguish a quiet but LIVE
+session from a real projector/provider lineage or completeness failure. The
+three approved projectors remain healthy on `7c29542`; V1, Kafka topology and
+offsets, Redis, SQLite, Rust, ingestors, readers, Trading System, alpha and
+the order path remain excluded.
+
+**C2 strict-TRADE source repair (`IN PROGRESS / SOURCE-ONLY`, 2026-08-31).**
+The two-replica typed probe subsequently observed the exact DOGE route as
+`LIVE`, complete, gap-free and snapshot-acceptable on both readers (trade age
+about `2.07s`, session liveness below `1s`). This rules out a projector,
+provider-lineage or cross-replica defect. The remaining defect is confined to
+the C2 harness: its initial query applies the strict snapshot path to a
+`TRADE` requirement even when the governed policy explicitly permits a quiet,
+connected trade session for stream observation. The narrow repair will retry a
+`DATA_STALE` TRADE snapshot only inside the existing `15s` C2 deadline and only
+after typed status proves the exact route is LIVE, complete, gap-free and
+within its session-liveness bound. It will still require a fresh snapshot for
+the query/release-quality evidence; it will not accept stale trade payloads,
+change the `3,000ms` SLA, change the manifest, or relax execution eligibility.
+Disconnected, gapped, wrong-policy and deadline-exhausted cases remain
+fail-closed. Unit regressions will cover fresh-after-retry, quiet/disconnected
+and blocked-policy behavior before one replacement C2 run.
+
+**C2 strict-TRADE source exit (`PASS / IMMUTABLE CLIENT IMAGE PENDING`,
+2026-08-31).** The harness now has one shared live-snapshot retry path for
+QUOTE and TRADE. For TRADE it activates only for the manifest's `OBSERVE`
+policy and only when the exact typed status is either fresh/executable or
+quiet/non-executable with a LIVE provider session, complete coverage and no
+gap. It retries no longer than the existing C2 deadline and still returns only
+a fresh snapshot to the query/release-quality stage. Unit tests add the
+fresh-after-quiet-retry case and reject disconnected and `BLOCK` policy cases;
+the existing quiet stream tests continue to prove that no stale event becomes
+execution eligible. In the immutable candidate dependency environment with
+network disabled, read-only source mount and UID `10001`, the focused
+quiet-trade/five-liquid matrix passed `33/33` in `1.410s`; the full affected
+Phase 10.3/10.5 matrix passed `78/78`. `git diff --check` and no-write Python
+syntax compilation passed. No runtime service, provider, Kafka, Redis,
+SQLite, V1, Trading System, alpha, signal, sizing or order path changed.
+The next allowed action is to commit this source slice, build one immutable
+C2-client image from that commit, then run one replacement 300-second C2
+acceptance with the already-approved projector runtime unchanged.
