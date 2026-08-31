@@ -32,6 +32,14 @@ from qdl.certification.phase105_consumer_acceptance import (
     PHASE105_PAPER_CONSUMER_IDS,
     build_release_consumer_acceptance_scope,
 )
+from qdl.certification.reference_l2_acceptance import (
+    ReferenceAcceptanceProduct,
+    acceptance_transport_timeout_seconds,
+    reference_acceptance_batches,
+    reference_evidence,
+    reference_quality,
+    reference_request_for_requirement,
+)
 from qdl.certification.phase105_fallback import (
     PHASE105_PAPER_CONSUMER_ORDER,
     blocked_fallback_identities,
@@ -49,6 +57,9 @@ from scripts.phase103_consumer_receipt_acceptance import (
     _client,
     _identity,
     _query_product,
+)
+from scripts.phasec36_reference_l2_consumer_acceptance import (
+    _reference_batch_until_terminal,
 )
 
 
@@ -168,6 +179,133 @@ def _route_summary(release: StableReleaseRoutePlan, products: tuple[AcceptancePr
         else:
             raise ValueError("Phase 10.5 V2 product has an invalid fallback route")
     return summary
+
+
+def _reference_product(
+    product: AcceptanceProduct,
+    *,
+    now_ns: int,
+) -> ReferenceAcceptanceProduct:
+    """Build one on-demand request retaining the real consumer identity/grade."""
+
+    if product.delivery is not DeliveryClass.ON_DEMAND:
+        raise ValueError("Phase 10.5 reference product lost ON_DEMAND delivery")
+    return ReferenceAcceptanceProduct(
+        consumer_id=product.consumer_id,
+        consumer_subject=product.consumer_subject,
+        manifest_revision=product.manifest_revision,
+        manifest_sha256=product.manifest_sha256,
+        instrument_uid=product.instrument_uid,
+        instrument_id=product.instrument_id,
+        venue=product.venue,
+        market=product.market,
+        native_symbol=product.native_symbol,
+        requirement=product.requirement,
+        sdk_requirement=reference_request_for_requirement(
+            product.requirement, now_ns=now_ns
+        ),
+    )
+
+
+async def _certify_references(
+    products: tuple[AcceptanceProduct, ...],
+    *,
+    identity,
+    primary_url: str,
+    secondary_url: str,
+    grpc_target: str,
+    state_dir: Path,
+    timeout_seconds: float,
+    deadline_monotonic: float,
+    semaphore: asyncio.Semaphore,
+) -> list[dict[str, object]]:
+    """Read declared provider data through both V2 replicas, never V1/direct.
+
+    Reference results are explicitly on-demand.  They carry no stream cursor;
+    their evidence instead proves catalog identity, provider lineage, units,
+    full coverage and provider-observation freshness for the exact consumer
+    grade/identity that declares the requirement.
+    """
+
+    reference_products = tuple(
+        _reference_product(item, now_ns=time.time_ns()) for item in products
+    )
+    if not reference_products:
+        return []
+    transport_timeout_seconds = acceptance_transport_timeout_seconds(timeout_seconds)
+
+    async def read_replica(client, *, label: str):
+        values: dict[tuple[str, str, str, str, str], tuple[str, float, int, int, dict[str, int | bool]]] = {}
+        try:
+            for batch in reference_acceptance_batches(reference_products):
+                async with semaphore:
+                    started = time.perf_counter()
+                    response, attempts, deferred_ms = await _reference_batch_until_terminal(
+                        client,
+                        batch,
+                        deadline_monotonic=deadline_monotonic,
+                    )
+                    latency_ms = (time.perf_counter() - started) * 1_000
+                observed_at_ns = time.time_ns()
+                hashes = tuple(
+                    reference_evidence(item, result, observed_at_ns=observed_at_ns)
+                    for item, result in zip(batch, response.results, strict=True)
+                )
+                for item, result, content_hash in zip(batch, response.results, hashes, strict=True):
+                    if item.identity in values:
+                        raise AssertionError("Phase 10.5 reference batch duplicated a product")
+                    values[item.identity] = (
+                        content_hash,
+                        latency_ms,
+                        attempts,
+                        deferred_ms,
+                        reference_quality(item, result, observed_at_ns=observed_at_ns),
+                    )
+        finally:
+            await client.close()
+        if len(values) != len(reference_products):
+            raise AssertionError(f"Phase 10.5 {label} reference batch lost a product")
+        return values
+
+    primary = _client(
+        identity,
+        base_url=primary_url,
+        grpc_target=grpc_target,
+        cursor_path=state_dir / "reference-primary.json",
+        timeout_seconds=transport_timeout_seconds,
+    )
+    secondary = _client(
+        identity,
+        base_url=secondary_url,
+        grpc_target=grpc_target,
+        cursor_path=state_dir / "reference-secondary.json",
+        timeout_seconds=transport_timeout_seconds,
+    )
+    primary_values, secondary_values = await asyncio.gather(
+        read_replica(primary, label="primary"),
+        read_replica(secondary, label="secondary"),
+    )
+    return [
+        {
+            **product.evidence(),
+            "primary_content_sha256": primary_values[product.identity][0],
+            "secondary_content_sha256": secondary_values[product.identity][0],
+            "primary_latency_ms": round(primary_values[product.identity][1], 3),
+            "secondary_latency_ms": round(secondary_values[product.identity][1], 3),
+            "primary_provider_attempts": primary_values[product.identity][2],
+            "secondary_provider_attempts": secondary_values[product.identity][2],
+            "primary_provider_deferred_ms": primary_values[product.identity][3],
+            "secondary_provider_deferred_ms": secondary_values[product.identity][3],
+            "acknowledged_offset": None,
+            "resumed_offset": None,
+            "stream_handoff": "NOT_APPLICABLE",
+            "release_quality": {
+                "primary": primary_values[product.identity][4],
+                "secondary": secondary_values[product.identity][4],
+            },
+        }
+        for product in reference_products
+    ]
 
 
 def _v1_base_url(value: str) -> str:
@@ -387,10 +525,34 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         )
         if not consumer_products:
             raise ValueError(f"Phase 10.5 consumer has no V2 products: {consumer_id}")
+        stream_products = tuple(
+            item for item in consumer_products
+            if item.delivery is not DeliveryClass.ON_DEMAND
+        )
+        reference_products = tuple(
+            item for item in consumer_products
+            if item.delivery is DeliveryClass.ON_DEMAND
+        )
         product_tasks = tuple(
             asyncio.create_task(certify(product)) for product in consumer_products
+            if product.delivery is not DeliveryClass.ON_DEMAND
         )
-        ordered = await _gather_or_cancel(product_tasks)
+        reference_task = asyncio.create_task(_certify_references(
+            reference_products,
+            identity=identities[consumer_id],
+            primary_url=args.primary_url,
+            secondary_url=args.secondary_url,
+            grpc_target=grpc_target,
+            state_dir=temporary / consumer_id.replace(".", "-") / "references",
+            timeout_seconds=args.timeout_seconds,
+            deadline_monotonic=started + args.observation_seconds,
+            semaphore=semaphore,
+        ))
+        task_results = await _gather_or_cancel((*product_tasks, reference_task))
+        ordered = tuple(task_results[:len(product_tasks)])
+        reference_results = task_results[-1]
+        if len(ordered) != len(stream_products) or len(reference_results) != len(reference_products):
+            raise AssertionError("Phase 10.5 consumer result cardinality differs from scope")
         fallback_details: list[dict[str, object]] = []
         for probe in (item for item in probes if item.consumer_id == consumer_id):
             product = products_by_identity[probe.identity]
@@ -405,7 +567,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 state_dir=temporary / consumer_id.replace(".", "-"),
                 timeout_seconds=args.timeout_seconds,
             ))
-        return list(ordered), fallback_details
+        return [*ordered, *reference_results], fallback_details
 
     async def certify_ordered() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         groups = await _run_consumer_groups(

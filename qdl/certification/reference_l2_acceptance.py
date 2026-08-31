@@ -89,7 +89,7 @@ class ReferenceAcceptanceProduct:
             "feed": self.requirement.feed.value,
             "interval": self.requirement.interval,
             "source_policy_id": self.requirement.source_policy_id,
-            "delivery": DeliveryClass.PROVIDER_PASS_THROUGH.value,
+            "delivery": DeliveryClass.ON_DEMAND.value,
         }
 
 
@@ -191,7 +191,17 @@ def acceptance_transport_timeout_seconds(provider_deadline_seconds: float) -> fl
     )
 
 
-def _reference_request(requirement: DataRequirement, *, now_ns: int) -> ReferenceRequirement:
+def reference_request_for_requirement(
+    requirement: DataRequirement,
+    *,
+    now_ns: int,
+) -> ReferenceRequirement:
+    """Map a governed V2 requirement to one bounded on-demand request.
+
+    The caller's grade is preserved.  This is essential for a release
+    acceptance: a successful RESEARCH request must not stand in for an ALPHA
+    or EXECUTION entitlement check.
+    """
     try:
         product = ReferenceProduct(requirement.feed.value)
     except ValueError as error:
@@ -199,7 +209,7 @@ def _reference_request(requirement: DataRequirement, *, now_ns: int) -> Referenc
     values: dict[str, object] = {
         "instrument_uid": requirement.instrument_uid,
         "product": product,
-        "consumer_grade": Grade.RESEARCH,
+        "consumer_grade": Grade(requirement.consumer_grade.value),
         "source_policy_id": requirement.source_policy_id,
         "max_freshness_ms": requirement.max_freshness_ms,
         "require_full_coverage": requirement.require_full_coverage,
@@ -230,6 +240,11 @@ def _reference_request(requirement: DataRequirement, *, now_ns: int) -> Referenc
         values["basis_series"] = BasisSeries.NATIVE
         values["basis_contract_type"] = "PERPETUAL"
     return ReferenceRequirement(**values)
+
+
+# Kept private as a compatibility alias for the original Reference/L2 scope.
+def _reference_request(requirement: DataRequirement, *, now_ns: int) -> ReferenceRequirement:
+    return reference_request_for_requirement(requirement, now_ns=now_ns)
 
 
 def _scope_from_manifest(
@@ -280,7 +295,9 @@ def _scope_from_manifest(
                 market=identity.market,
                 native_symbol=instrument.native_symbol,
                 requirement=requirement,
-                sdk_requirement=_reference_request(requirement, now_ns=now_ns),
+                sdk_requirement=reference_request_for_requirement(
+                    requirement, now_ns=now_ns
+                ),
             ))
             continue
         if requirement.recovery is not RecoveryPolicy.SNAPSHOT_AND_REPLAY:
@@ -356,8 +373,7 @@ def reference_evidence(
     data = item.data
     if data.instrument_uid != product.instrument_uid or data.product.value != request.product.value:
         raise ValueError("reference payload identity differs from demand")
-    if observed_at_ns - data.received_at_ns > (request.max_freshness_ms or 86_400_000) * 1_000_000:
-        raise ValueError("reference response exceeds its governed freshness bound")
+    reference_quality(product, item, observed_at_ns=observed_at_ns)
     coverage = data.coverage
     if request.require_full_coverage and (
         not coverage.complete_left or not coverage.complete_right or coverage.truncated
@@ -399,6 +415,40 @@ def reference_evidence(
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def reference_quality(
+    product,
+    item,
+    *,
+    observed_at_ns: int,
+) -> dict[str, int | bool]:
+    """Return current quality for an on-demand provider result.
+
+    Reference freshness is the newest provider observation, not merely the
+    local time at which the query service received a response.  This prevents
+    a freshly fetched but stale funding/OI/history row from being certified.
+    """
+
+    request = product.sdk_requirement
+    data = item.data
+    if data is None or not data.observations:
+        raise ValueError("reference response has no observations")
+    newest_observed_ns = max(item.observed_at_ns for item in data.observations)
+    received_at_ns = data.received_at_ns
+    if newest_observed_ns <= 0 or received_at_ns <= 0:
+        raise ValueError("reference response has invalid observation timing")
+    if newest_observed_ns > observed_at_ns or received_at_ns > observed_at_ns:
+        raise ValueError("reference response timing is in the future")
+    source_age_ms = (observed_at_ns - newest_observed_ns) // _MILLISECOND_NS
+    receive_age_ms = (observed_at_ns - received_at_ns) // _MILLISECOND_NS
+    if source_age_ms > (request.max_freshness_ms or 86_400_000):
+        raise ValueError("reference response exceeds its governed freshness bound")
+    return {
+        "source_age_ms": int(source_age_ms),
+        "receive_age_ms": int(receive_age_ms),
+        "gap_open": False,
+    }
 
 
 def validate_reference_batch(

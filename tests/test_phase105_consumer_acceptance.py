@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections import Counter
 import unittest
 from pathlib import Path
 
-import yaml
-
+from qdl.certification.phase103_consumer_acceptance import DeliveryClass
 from qdl.certification.phase105_consumer_acceptance import (
     PHASE105_PAPER_CONSUMER_IDS,
     build_release_consumer_acceptance_scope,
@@ -37,12 +37,6 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             ROOT / "config/v2/stable-acquisition-bindings.yaml",
             catalog=cls.catalog,
         )
-        cls.five_liquid_demand = yaml.safe_load(
-            (ROOT / "config/v2/phase115c-paper-consumer-demand.yaml").read_text(
-                encoding="utf-8"
-            )
-        )
-
     def test_scope_is_exactly_release_v2_primary_for_all_paper_classes(self):
         scope = build_release_consumer_acceptance_scope(
             self.release,
@@ -59,21 +53,22 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             for consumer in self.release.consumers
             if consumer.consumer_id in PHASE105_PAPER_CONSUMER_IDS
             for product in consumer.products
-            if (
-                product.route == "V2_PRIMARY"
-                and next(
-                    requirement
-                    for requirement in consumer.manifest.requirements
-                    if requirement_key(requirement) == product.requirement_key
-                ).feed in {FeedType.TRADE, FeedType.QUOTE, FeedType.BAR}
-            )
+            if product.route == "V2_PRIMARY"
         }
         actual = {
             (item.consumer_id, requirement_key(item.requirement))
             for item in scope.products
         }
         self.assertEqual(actual, expected)
-        self.assertTrue(scope.products)
+        self.assertEqual(len(scope.products), 149)
+        self.assertEqual(
+            Counter(product.delivery for product in scope.products),
+            {
+                DeliveryClass.DURABLE: 74,
+                DeliveryClass.PROVIDER_PASS_THROUGH: 10,
+                DeliveryClass.ON_DEMAND: 65,
+            },
+        )
 
     def test_v1_primary_vn_requirements_are_explicitly_excluded(self):
         scope = build_release_consumer_acceptance_scope(
@@ -89,7 +84,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             },
         )
 
-    def test_five_liquid_selection_is_exactly_the_sixty_trade_quote_bar_routes(self):
+    def test_five_liquid_selection_is_exactly_the_full_v2_release_scope(self):
         scope = build_release_consumer_acceptance_scope(
             self.release,
             catalog=self.catalog,
@@ -97,46 +92,24 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             consumer_ids=FIVE_LIQUID_CONSUMER_IDS,
         )
         expected = {
-            (
-                consumer["consumer_id"],
-                requirement["venue"],
-                requirement["market"],
-                requirement["product_type"],
-                requirement["native_symbol"],
-                requirement["feed"],
-                requirement["interval"],
-                requirement["source_policy_id"],
-            )
-            for consumer in self.five_liquid_demand["consumers"]
-            for requirement in consumer["requirements"]
-            if requirement["feed"] in {"TRADE", "QUOTE", "BAR"}
+            (consumer.consumer_id, product.requirement_key)
+            for consumer in self.release.consumers
+            if consumer.consumer_id in FIVE_LIQUID_CONSUMER_IDS
+            for product in consumer.products
+            if product.route == "V2_PRIMARY"
         }
         actual = {
-            (
-                product.consumer_id,
-                product.venue,
-                product.market,
-                self.catalog.instrument_for(product.instrument_uid).identity.product_type,
-                product.native_symbol,
-                product.feed.value,
-                product.interval,
-                product.source_policy_id,
-            )
+            (product.consumer_id, requirement_key(product.requirement))
             for product in scope.products
         }
-        self.assertEqual(len(scope.products), 60)
+        self.assertEqual(len(scope.products), 145)
         self.assertEqual(actual, expected)
         self.assertEqual(
+            Counter(product.delivery for product in scope.products),
             {
-                consumer_id: sum(
-                    product.consumer_id == consumer_id for product in scope.products
-                )
-                for consumer_id in FIVE_LIQUID_CONSUMER_IDS
-            },
-            {
-                "trading-system.paper.stable": 30,
-                "alpha.binance.paper.stable": 15,
-                "alpha.okx.paper.stable": 15,
+                DeliveryClass.DURABLE: 70,
+                DeliveryClass.PROVIDER_PASS_THROUGH: 10,
+                DeliveryClass.ON_DEMAND: 65,
             },
         )
         self.assertEqual(

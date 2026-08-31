@@ -26833,3 +26833,99 @@ the complete affected suite passed **72/72** in `20.960s`:
 mounted writable or mutated. The next permitted action is one coherent source
 commit, then one immutable disposable certificate-client image build and
 review-only re-derivation from the already passing C2 receipt.
+
+**Fresh C2/certificate packet (`APPROVED / EXECUTING`, 2026-08-31).** The
+source slice is committed as `e6b2beccc60313e802b0fa59b78eca156a42d787`
+(`fix(data): certify live durable handoffs`). One immutable, non-running
+certificate client was built from exactly that tree:
+`qdl-v2-python:2.0.0-e6b2bec` /
+`sha256:ed7d97f974ae3bbd9493d66b95ffb1d61fe33144c158f5b394bed9def1b46eed`;
+OCI revision/version labels match the commit/tag. The same affected matrix
+passed **72/72** from that image with no source mount, network, writable root
+or runtime mutation. Because the release-observation contract rejects a
+receipt older than five minutes, one fresh disposable C2 is required before
+certificate derivation. It reuses the exact existing `executor_network`,
+read-only runtime/TLS state, three sealed paper identities, V2 query/stream
+endpoints and declared V1 cached-read fallback policy; it is bounded by the
+existing `300`-second observation limit with `0` provider-direct connection,
+order action, route mutation, durable-store mutation or persistent cursor
+state. No service is recreated. Immediately after a `PASS`, the immutable
+client derives compact observations, runtime-handoff, fallback and certificate
+evidence in a network-disabled, read-only process.
+
+**Fresh C2 launcher preflight (`NO DATA REQUEST / CORRECTING`, 2026-08-31).**
+The first disposable container exited `2` before its dropped-privilege client
+started because the copied non-secret `run-c2.sh` retained host-only mode
+`0700`; the root bootstrap deliberately drops to UID `10001`, which then could
+not read `/run-c2.sh`. It made no V1/V2 endpoint, provider, Kafka, Redis,
+SQLite, route, signal, sizing or order request; Docker auto-removed it. The
+sole correction is mode `0755` on that static launcher (it contains only fixed
+paths and flags, no credentials). The image, evidence inputs, runtime mounts,
+identity material and requested C2 scope are unchanged; one real C2 remains
+authorized after this deterministic preflight correction.
+
+**Fresh C2 result (`PASS / CERTIFICATE DERIVATION EXECUTING`, 2026-08-31).**
+The single real C2 client completed and auto-removed. Its compact receipt is
+`/home/bobby/.local/state/qdl-v2/projector-overlap-7c29542-20260831T105939Z/c2-20260831T115805Z-e6b2bec/acceptance.json`,
+file SHA-256 `26efb38c2d00fdc2cfd988161444174fa9e47fa4b48158592f118694aa906183`.
+It reports `PASS_V2_DATA_PLANE_ONLY` for exactly `60` requirements (`50`
+durable) in `189.088s`, with `provider_connections=0`, `order_actions=0`,
+`blocked_v1_requests=0`, and `cursor_directory_removed=true`. All ten
+permitted Binance fallback drills completed `V2_PRIMARY -> V1_FALLBACK ->
+V2_PRIMARY`; the other fifty blocked routes remained V2-only. The isolated
+client had no effective/inheritable capabilities, `NoNewPrivs=1`, no Docker
+socket and no persistent state. Its stderr is empty. This remains read-only
+consumer evidence: it did not recreate any runtime role or mutate provider,
+Kafka, Redis, SQLite, V1, Trading System, alpha, signal, sizing or order
+state. The next action is to derive and validate compact release evidence from
+this fresh receipt before its five-minute observation age expires.
+
+**C2 release-scope completeness correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-08-31).** The fresh receipt above truthfully certifies the historical
+three-identity `TRADE`/`QUOTE`/`BAR` subset only: `60` routes. The sealed
+release plan has `149` V2-primary routes across all four existing paper
+identities: `64` price/bar routes (including Monitoring), `20` durable L2
+snapshot/delta routes, and `65` on-demand reference/mark routes. A release
+certificate must not infer the latter `89` from the former `60`, nor label an
+on-demand provider result as durable replay evidence. The approved source
+repair extends the existing C2 harness and its manifest scope only: it will
+use the already trusted four identities, existing V2 query/stream endpoints,
+existing `reference:batch` path and existing L2 stream path to read every
+declared route. It will retain the current delivery semantics: `DURABLE` gets
+query plus signed cursor/reconnect evidence, `PROVIDER_PASS_THROUGH` has no
+invented cursor, and `ON_DEMAND` reference data gets bounded batch,
+identity/decimal/unit/coverage/lineage/freshness evidence with no cursor.
+It must preserve exact V1 fallback drills only for routes that declare `V1`;
+`BLOCKED` routes stay blocked. Tests must cover full route completeness,
+delivery classification, missing/zero/reference freshness behavior and no
+cross-consumer or cross-venue mix. This does not recreate, reconfigure or add
+any runtime role, container, topic, Redis key, SQLite file, V1 route, Trading
+System, alpha, signal, sizing or order path. After source tests and one
+immutable client build, the existing approved C2 boundary permits exactly one
+new 300-second no-order acceptance against the unchanged projector/query/stream
+runtime; cleanup retains only compact evidence plus active and named rollback
+images until the certificate reaches a terminal result.
+
+**C2 release-scope source exit (`PASS / IMMUTABLE CLIENT BUILD PENDING`,
+2026-08-31).** The receipt compiler now materializes the exact frozen
+four-identity release scope rather than filtering it to price/bar: `149`
+V2-primary products, comprising `74` durable products, `10` explicit
+provider-pass-through BAR products and `65` bounded `ON_DEMAND`
+reference/mark products. The C2 harness keeps the existing SDK query/stream
+path for durable/book products and uses the existing V2 `reference:batch` path
+for on-demand products; it preserves the manifest consumer grade, validates
+identity, decimal/unit, complete coverage, provider lineage and newest provider
+observation freshness, and records no invented cursor for either on-demand or
+pass-through data. V1 drills remain limited to declared V1 routes; all
+`BLOCKED` routes remain blocked. The source-only, immutable,
+network-disabled/read-only non-root matrix passed **93/93** in `25.648s`:
+`test_phase103_consumer_acceptance`, `test_phase105_consumer_acceptance`,
+`test_phase105_identity_acceptance`, `test_reference_l2_consumer_acceptance`,
+`test_phase105_release_observations`, `test_phase105_release_certification`,
+`test_phase105_handoff`, and `test_phase103_consumer_receipt_harness`.
+`git diff --check` and AST syntax checks passed. No runtime service, provider,
+Kafka, Redis, SQLite, V1, Rust core, ingestor, projector configuration,
+query/stream role, Trading System, alpha, signal, sizing or order path changed.
+The next allowed action is one coherent source commit, one disposable immutable
+C2-client build from that commit, then exactly one four-identity 300-second
+no-order C2 acceptance against the already-approved recovered projector set.

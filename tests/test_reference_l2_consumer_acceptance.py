@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,9 +20,11 @@ from qdl.certification.reference_l2_acceptance import (
     build_reference_l2_acceptance_scope,
     reference_acceptance_batches,
     reference_evidence,
+    reference_quality,
+    reference_request_for_requirement,
 )
 from qdl.certification.phase103_consumer_acceptance import _validate_payload
-from qdl.query import FeedType
+from qdl.query import ConsumerGrade, FeedType
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl_sdk import Grade
@@ -60,6 +63,10 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
             for item in self.scope.references
         ))
         self.assertTrue(all(item.delivery.value == "DURABLE" for item in self.scope.books))
+        self.assertTrue(all(
+            item.evidence()["delivery"] == "ON_DEMAND"
+            for item in self.scope.references
+        ))
 
     def test_reference_request_preserves_manifest_identity_and_required_selectors(self):
         for item in self.scope.references:
@@ -157,6 +164,69 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
         self.assertEqual(len(reference_evidence(product, item, observed_at_ns=NOW_NS)), 64)
         field.unit = ""
         with self.assertRaisesRegex(ValueError, "unit"):
+            reference_evidence(product, item, observed_at_ns=NOW_NS)
+
+    def test_reference_request_preserves_declared_consumer_grade(self):
+        product = next(
+            item for item in self.scope.references
+            if item.requirement.feed is FeedType.FUNDING_RATE
+        )
+        alpha_requirement = replace(
+            product.requirement,
+            consumer_grade=ConsumerGrade.ALPHA,
+        )
+        request = reference_request_for_requirement(alpha_requirement, now_ns=NOW_NS)
+        self.assertEqual(request.consumer_grade, Grade.ALPHA)
+
+    def test_reference_quality_uses_provider_observation_not_local_receive_time(self):
+        product = next(
+            item for item in self.scope.references
+            if item.requirement.feed is FeedType.FUNDING_RATE
+        )
+        freshness_ms = product.sdk_requirement.max_freshness_ms
+        self.assertIsNotNone(freshness_ms)
+        field = SimpleNamespace(
+            name="funding_rate",
+            unit="DIMENSIONLESS_RATE",
+            value=SimpleNamespace(source_text="0", coefficient="0", scale=0),
+        )
+        observation = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            observed_at_ns=NOW_NS - int(freshness_ms) * _MILLISECOND_NS,
+            fields=[field],
+        )
+        data = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            received_at_ns=NOW_NS,
+            coverage=SimpleNamespace(
+                complete_left=True,
+                complete_right=True,
+                truncated=False,
+                terminal_reason="TEST",
+            ),
+            lineage=[SimpleNamespace(
+                provider="TEST",
+                provider_endpoint="TEST",
+                capability_name="test",
+                source_role="REFERENCE",
+            )],
+            observations=[observation],
+        )
+        item = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            status="OK",
+            problem=None,
+            data=data,
+        )
+        self.assertEqual(
+            reference_quality(product, item, observed_at_ns=NOW_NS)["source_age_ms"],
+            freshness_ms,
+        )
+        observation.observed_at_ns -= _MILLISECOND_NS
+        with self.assertRaisesRegex(ValueError, "governed freshness"):
             reference_evidence(product, item, observed_at_ns=NOW_NS)
 
     def test_three_day_manifest_freshness_is_a_valid_public_reference_contract(self):

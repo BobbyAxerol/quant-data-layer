@@ -24,6 +24,18 @@ from qdl.runtime.stable_deployment import StableAcquisitionPlan
 
 CRYPTO_VENUES = frozenset({"BINANCE", "OKX"})
 PHASE103_FEEDS = frozenset({FeedType.TRADE, FeedType.QUOTE, FeedType.BAR})
+PHASE105_FEEDS = frozenset({
+    *PHASE103_FEEDS,
+    FeedType.BOOK_SNAPSHOT,
+    FeedType.BOOK_DELTA,
+    FeedType.FUNDING_RATE,
+    FeedType.OPEN_INTEREST,
+    FeedType.LONG_SHORT_RATIO,
+    FeedType.TAKER_FLOW,
+    FeedType.MARK_INDEX_PRICE,
+    FeedType.CONTRACT_METADATA,
+    FeedType.BASIS,
+})
 PHASE103_CONSUMER_IDS = frozenset(
     {
         "trading-system.paper.stable",
@@ -42,6 +54,7 @@ class DeliveryClass(StrEnum):
 
     DURABLE = "DURABLE"
     PROVIDER_PASS_THROUGH = "PROVIDER_PASS_THROUGH"
+    ON_DEMAND = "ON_DEMAND"
 
 
 def _allows_provider_snapshot(requirement: DataRequirement) -> bool:
@@ -140,8 +153,13 @@ class ConsumerAcceptanceScope:
             raise ValueError("consumer acceptance products must be non-empty and unique")
         if any(item.venue not in CRYPTO_VENUES for item in self.products):
             raise ValueError("consumer acceptance scope contains a non-crypto venue")
-        if any(item.feed not in PHASE103_FEEDS for item in self.products):
-            raise ValueError("consumer acceptance scope contains a later-phase feed")
+        allowed_feeds = (
+            PHASE103_FEEDS
+            if self.schema == "qdl.phase103.consumer-acceptance-scope.v1"
+            else PHASE105_FEEDS
+        )
+        if any(item.feed not in allowed_feeds for item in self.products):
+            raise ValueError("consumer acceptance scope contains an unsupported feed")
         by_consumer: dict[str, list[AcceptanceProduct]] = {}
         for item in self.products:
             by_consumer.setdefault(item.consumer_id, []).append(item)
@@ -178,6 +196,10 @@ class ConsumerAcceptanceScope:
                 item.delivery is DeliveryClass.PROVIDER_PASS_THROUGH
                 for item in self.products
             ),
+            "on_demand_product_count": sum(
+                item.delivery is DeliveryClass.ON_DEMAND
+                for item in self.products
+            ),
             "products": [item.evidence() for item in self.products],
             "excluded": [item.evidence() for item in self.excluded],
         }
@@ -200,6 +222,7 @@ def _product_for_requirement(
     *,
     catalog: StableSourceCatalog,
     acquisition_by_id: dict[str, object],
+    phase105: bool,
 ) -> AcceptanceProduct | ExcludedRequirement:
     instrument = catalog.instrument_for(requirement.instrument_uid)
     identity = instrument.identity
@@ -211,7 +234,8 @@ def _product_for_requirement(
             interval=requirement.interval,
             reason="VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE",
         )
-    if requirement.feed not in PHASE103_FEEDS:
+    allowed_feeds = PHASE105_FEEDS if phase105 else PHASE103_FEEDS
+    if requirement.feed not in allowed_feeds:
         return ExcludedRequirement(
             consumer_id=manifest.consumer_id,
             instrument_uid=requirement.instrument_uid,
@@ -219,8 +243,38 @@ def _product_for_requirement(
             interval=requirement.interval,
             reason="LATER_PHASE_PRODUCT",
         )
-    if requirement.source_policy_id != "crypto_primary_v2":
+    allowed_policies = (
+        {"crypto_primary_v2", "crypto_liquid_v2"}
+        if phase105
+        else {"crypto_primary_v2"}
+    )
+    if requirement.source_policy_id not in allowed_policies:
         raise ValueError("crypto consumer requirement has an unapproved source policy")
+    if phase105:
+        # Reference products are bounded provider reads, not Kafka/replay data.
+        # Check this before catalog binding lookup because MARK_INDEX_PRICE can
+        # have both a query capability and a realtime cache binding.
+        from qdl.reference.runtime import reference_requirement_eligible
+
+        if reference_requirement_eligible(instrument, requirement):
+            return AcceptanceProduct(
+                consumer_id=manifest.consumer_id,
+                consumer_subject=manifest.subject,
+                manifest_revision=manifest.manifest_revision,
+                manifest_sha256=manifest.manifest_sha256,
+                instrument_uid=requirement.instrument_uid,
+                instrument_id=instrument.instrument_id,
+                venue=identity.venue,
+                market=identity.market,
+                native_symbol=instrument.native_symbol,
+                provider=identity.venue,
+                feed=requirement.feed,
+                interval=requirement.interval,
+                source_policy_id=requirement.source_policy_id,
+                delivery=DeliveryClass.ON_DEMAND,
+                binding_id=None,
+                requirement=requirement,
+            )
     try:
         binding: StableSourceBinding = catalog.binding_for(requirement)
     except KeyError:
@@ -315,6 +369,7 @@ def build_manifest_acceptance_scope(
                 requirement,
                 catalog=catalog,
                 acquisition_by_id=acquisition_by_id,
+                phase105=(schema == "qdl.phase105.consumer-acceptance-scope.v1"),
             )
             if isinstance(item, ExcludedRequirement):
                 excluded.append(item)
