@@ -429,6 +429,17 @@ class BinanceUsdmReferenceAdapter:
                 f"reason={decision.defer_reason.value if decision.defer_reason else 'UNKNOWN'}",
                 retry_after_ms=decision.retry_after_ms,
             )
+        if decision.coalesced:
+            # A coalesced grant belongs to another query replica.  Rust owns
+            # this lease; issuing a second vendor call here would defeat its
+            # max-inflight contract.  Return one bounded defer so the query
+            # executor re-admits after the authoritative lease window.
+            raise ReferenceProviderExhausted(
+                "Binance native basis coalesced by Rust admission",
+                retry_after_ms=self._coalesced_native_basis_retry_after_ms(
+                    decision.lease_expires_at_ns
+                ),
+            )
         try:
             result = await self._retry_transient_native_basis_envelope(fetch_once)
         except ReferenceProviderRateLimited as error:
@@ -450,6 +461,20 @@ class BinanceUsdmReferenceAdapter:
             raise
         await self._complete_native_basis_admission(admission_request)
         return result
+
+    def _coalesced_native_basis_retry_after_ms(
+        self, lease_expires_at_ns: int | None
+    ) -> int:
+        """Convert the Rust-owned coalesced lease into one bounded retry wait."""
+
+        if lease_expires_at_ns is None:
+            # The wire contract rejects this shape, but remain vendor-silent if
+            # an in-process implementation violates it.
+            return 1
+        remaining_ns = lease_expires_at_ns - self._clock_ns()
+        if remaining_ns <= 0:
+            return 1
+        return max(1, (remaining_ns + 999_999) // 1_000_000)
 
     async def _complete_native_basis_admission(
         self, request: AdmissionRequest

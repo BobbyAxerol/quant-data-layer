@@ -27552,3 +27552,64 @@ The prior `2ae448f` C2 image is now test-only superseded; one replacement
 immutable client will be built from the next committed source, used for one
 149-route C2 receipt, then both disposable client tags will be removed during
 the recorded scoped cleanup.
+
+**149-route C2 native-BASIS coalesced-lease repair (`APPROVED / EXECUTING`,
+2026-08-31).** The latest real C2 advanced through final BAR, quote and L2
+checks, then correctly failed closed on the five Binance USD-M native-BASIS
+requirements. Read-only diagnosis isolates one shared boundary defect: Rust
+provider admission returns `GRANTED, coalesced=true` for the same active
+lease, but the Python Binance adapter currently treats every grant as lease
+ownership and invokes the vendor endpoint from both query replicas. That
+violates the Rust lane's `max_inflight=1` semantics and explains the fragile
+HTTP-200 non-list envelopes seen only during dual-replica C2.
+
+The approved correction is restricted to the Python Binance reference adapter
+and deterministic admission regressions. On a coalesced Rust grant, Python
+must not call Binance and must not complete the owner lease; it returns a
+bounded retry hint derived from the authoritative lease expiry. The existing
+bounded query retry then re-admits after that lease window. An expired
+coalesced decision also remains vendor-silent and returns a minimal bounded
+retry hint. A non-coalesced grant retains the existing one-fetch/one-complete
+behavior. Rust policy/schema/core, V1, Kafka topology/offsets, Redis, SQLite,
+ingestors, projectors, bar edge, stream roles, Trading System, alpha and order
+paths are excluded from this source slice.
+
+**Exit / rollback / next operation.** Exit requires focused deterministic
+coverage for owned, deferred, coalesced and expired-coalesced decisions;
+provider-call and completion counts; retry-hint precision; plus Python syntax
+and `git diff --check`, all in the existing immutable non-root test image.
+Rollback is a source revert. Only after that source exit may one immutable
+Python query image be built and only `query_v2_1` then `query_v2_2` be rolled
+serially with their exact current image retained as rollback; the replacement
+149-route, four-identity, no-order C2 remains bounded to 300 seconds and must
+pass without provider-direct client access or order/signal/sizing mutation.
+
+**149-route C2 native-BASIS coalesced-lease source exit (`PASS / QUERY ROLL
+READY`, 2026-08-31).** The Binance adapter now honors Rust `coalesced=true`:
+it performs zero vendor calls and zero lease completions for the non-owner,
+and returns an exact millisecond wait calculated from Rust's lease expiry. An
+already expired coalesced lease is also vendor-silent and returns only the
+minimal one-millisecond bounded retry; the owner and ordinary deferred paths
+remain unchanged. The existing `BoundedWarmupExecutor` is therefore still the
+only retry owner and will re-admit before any later vendor call.
+
+The immutable, non-root, read-only, network-disabled focused matrix passed
+**84/84** in `4.367s`:
+`tests.test_phasec36_admission_binding`,
+`tests.test_phase104_reference_batch`,
+`tests.test_phase103_consumer_receipt_harness`,
+`tests.test_phase103_consumer_acceptance`, and
+`tests.test_phase115c_five_liquid_handoff`. The bounded retry-policy methods
+also passed **2/2** in `0.054s`. Python compilation and `git diff --check`
+passed. An exploratory broad Phase-10 module was not used as this slice's
+exit gate: it ran `75/76` and exposed its existing `Phase 10.1` planner
+rejecting a `BOOK_SNAPSHOT` feed in a read-only admission fixture. This patch
+does not touch that planner or conceal the mismatch; it is unrelated to the
+native-BASIS coalesced lease correction and had no runtime effect.
+
+No provider request, image build, service, Kafka, Redis, SQLite, V1, Rust
+core, Trading System, alpha or order-path mutation occurred in this source
+slice. The next approved operation is exactly one immutable Python reader
+image from this committed source, then serially recreate only `query_v2_1`
+and `query_v2_2`, retain their current image for rollback, and run one fresh
+149-route C2 observation.

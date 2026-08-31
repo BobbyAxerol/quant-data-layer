@@ -91,6 +91,8 @@ def _decision(
     request: AdmissionRequest,
     *,
     disposition: AdmissionDisposition = AdmissionDisposition.GRANTED,
+    coalesced: bool = False,
+    lease_expires_at_ns: int = 1_900_000_000_000_000_000,
 ) -> AdmissionDecision:
     if disposition is AdmissionDisposition.GRANTED:
         return AdmissionDecision(
@@ -99,8 +101,8 @@ def _decision(
             disposition=disposition,
             defer_reason=None,
             retry_after_ms=None,
-            lease_expires_at_ns=1_900_000_000_000_000_000,
-            coalesced=False,
+            lease_expires_at_ns=lease_expires_at_ns,
+            coalesced=coalesced,
         )
     return AdmissionDecision(
         lane=request.lane,
@@ -114,15 +116,28 @@ def _decision(
 
 
 class _RecordingAdmission:
-    def __init__(self, *, disposition: AdmissionDisposition = AdmissionDisposition.GRANTED):
+    def __init__(
+        self,
+        *,
+        disposition: AdmissionDisposition = AdmissionDisposition.GRANTED,
+        coalesced: bool = False,
+        lease_expires_at_ns: int = 1_900_000_000_000_000_000,
+    ):
         self.disposition = disposition
+        self.coalesced = coalesced
+        self.lease_expires_at_ns = lease_expires_at_ns
         self.admits: list[AdmissionRequest] = []
         self.completions: list[tuple[ProviderLane, str]] = []
         self.rate_limits: list[tuple[ProviderLane, str | None, int | None, int | None, int | None]] = []
 
     async def admit(self, request: AdmissionRequest) -> AdmissionDecision:
         self.admits.append(request)
-        return _decision(request, disposition=self.disposition)
+        return _decision(
+            request,
+            disposition=self.disposition,
+            coalesced=self.coalesced,
+            lease_expires_at_ns=self.lease_expires_at_ns,
+        )
 
     async def complete(self, lane: ProviderLane, request_id: str) -> bool:
         self.completions.append((lane, request_id))
@@ -298,6 +313,56 @@ class GovernedNativeBasisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ReferenceStatus.ERROR)
         self.assertEqual(result.error_code, "PROVIDER_RETRY_EXHAUSTED")
         self.assertEqual(result.retry_after_ms, 60_000)
+        self.assertEqual(calls, [])
+        self.assertEqual(admission.completions, [])
+
+    async def test_coalesced_rust_lease_defers_without_vendor_call_or_completion(self):
+        now_ns = 1_000_000_000
+        admission = _RecordingAdmission(
+            coalesced=True,
+            lease_expires_at_ns=now_ns + 250_000_000,
+        )
+        calls = []
+
+        def basis(*_args, **_kwargs):
+            calls.append("called")
+            raise AssertionError("coalesced Rust admission must not call Binance")
+
+        result = await ReferenceBatch({("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
+            basis_fetcher=basis,
+            max_attempts=1,
+            clock_ns=lambda: now_ns,
+            native_basis_admission=admission,
+        )}).fetch_one(_basis_request())
+
+        self.assertEqual(result.status, ReferenceStatus.ERROR)
+        self.assertEqual(result.error_code, "PROVIDER_RETRY_EXHAUSTED")
+        self.assertEqual(result.retry_after_ms, 250)
+        self.assertEqual(calls, [])
+        self.assertEqual(admission.completions, [])
+
+    async def test_expired_coalesced_lease_stays_vendor_silent_with_minimal_retry(self):
+        now_ns = 1_000_000_000
+        admission = _RecordingAdmission(
+            coalesced=True,
+            lease_expires_at_ns=now_ns - 1,
+        )
+        calls = []
+
+        def basis(*_args, **_kwargs):
+            calls.append("called")
+            raise AssertionError("expired coalesced admission must not call Binance")
+
+        result = await ReferenceBatch({("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
+            basis_fetcher=basis,
+            max_attempts=1,
+            clock_ns=lambda: now_ns,
+            native_basis_admission=admission,
+        )}).fetch_one(_basis_request())
+
+        self.assertEqual(result.status, ReferenceStatus.ERROR)
+        self.assertEqual(result.error_code, "PROVIDER_RETRY_EXHAUSTED")
+        self.assertEqual(result.retry_after_ms, 1)
         self.assertEqual(calls, [])
         self.assertEqual(admission.completions, [])
 
