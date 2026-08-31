@@ -26959,3 +26959,82 @@ request, so it does not consume the approved real C2 observation attempt. The
 next action is one commit, one replacement immutable client build, then one
 full four-identity C2 acceptance bounded to 300 seconds against unchanged
 runtime.
+
+**Full-scope C2 L2 materialization correction (`SOURCE-ONLY / IN PROGRESS`,
+2026-08-31).** The replacement full-scope C2 reached real V2 query before
+failing closed on `trading-system.paper.stable / OKX.SWAP.PERPETUAL.
+DOGE-USDT / BOOK_SNAPSHOT` with `required data is not available`. This is not
+a reader, projector, Rust-normalization, provider-lineage, or C2 policy
+relaxation: read-only inspection of the two live native-ingestor configs at
+`session-liveness-43cdbe3-20260829T162719Z/runtime` found revision `14` with
+only `16` physical bindings each: `5` TRADE, `5` QUOTE and `6` BOOK. Their
+BOOK set contains BTC/ETH perpetual plus the existing BTC/ETH dated contracts,
+but omits the already-declared SOL/DOGE/BNB perpetual books. The committed
+catalog/acquisition compiler instead renders exactly `19` native realtime
+bindings per lane: `5` TRADE, `5` QUOTE and `9` BOOK, adding only those three
+perpetual books. The general runtime-refresh dry-run also renders `70` OKX BAR
+items, but those are deliberately excluded here: the existing
+`binance_bar_edge` is the certified owner of all Binance and OKX final-BAR
+history/bootstrap/polling, so moving them into the OKX native ingestor would
+duplicate an already-authoritative BAR plane.
+
+The bounded repair is a reusable config compiler for only
+`ingestor-binance-usdm.json` and `ingestor-okx-swap.json`. It must preserve
+the validated authority bytes and every non-binding field, retain identical
+TRADE/QUOTE physical subscriptions, permit only additive BOOK physical
+subscriptions declared by the current provider-neutral catalog, and never add
+BAR, a service, a worker, a topic, a volume, a symbol-specific container, or a
+new fallback. Source tests must prove exact five-liquid L2 coverage,
+venue-isolation, idempotence, rejection of a TRADE/QUOTE/non-binding drift,
+atomic rollback material, and no mutation in dry-run. A disposable
+network-disabled compiler dry-run has already proven the intended render:
+Binance `6 -> 9` BOOK bindings and OKX `6 -> 9`, with no checkpoint inspected
+or runtime file written. After source exit and a coherent commit, the separate
+runtime packet will require explicit approval to stage a new private runtime
+directory, atomically replace only those two bind-mounted JSON files, rolling
+recreate only `ingestor_binance_usdm` and `ingestor_okx_swap`, observe their
+real L2 snapshots, then run one fresh full-scope C2. It preserves projectors,
+bar edge, Rust core, query/stream, Kafka topics/offsets, Redis, SQLite, V1,
+Trading System, alpha and the order path. Rollback restores only the two
+captured config files and recreates only those two ingestors.
+
+**Full-scope C2 L2 materialization source exit (`PASS / RUNTIME PACKET
+REQUIRES APPROVAL`, 2026-08-31).** Added
+`scripts/refresh_v2_native_ingestor_runtime.py`: a dry-run-by-default,
+provider-neutral compiler that loads the current catalog/acquisition plan,
+preserves the existing validated authority bytes, and renders only the two
+existing shared native-ingestor lanes. It rejects any non-binding drift,
+TRADE/QUOTE membership or contract change, BOOK removal, duplicate physical
+subscription, unknown feed, or accidental BAR inclusion; the only admissible
+transition is catalog-revision metadata plus additive coalesced BOOK inputs.
+`--apply` requires an exact confirmation token, a new private QDL state output
+directory, captures both original JSON files before atomic replacement, fsyncs
+the replacement, and restores both files on a partial failure. It does not
+modify a Compose environment, authority, image selector, checkpoint, identity
+or secret.
+
+The new deterministic suite plus the five-liquid BAR/L2 contract suites passed
+**21/21** in **13.253s** in an immutable, non-root, read-only,
+network-disabled `qdl-v2-python:2.0.0-7c29542` container. `py_compile` and
+`git diff --check` passed. A second real-runtime dry-run used the same
+container with only the active two JSON files mounted read-only and proved the
+exact application diff: Binance and OKX each change `16 -> 19` physical
+realtime bindings, retain all existing TRADE/QUOTE and BTC/ETH dated/perpetual
+books, add exactly their SOL/DOGE/BNB perpetual BOOK subscriptions, move only
+the config/catalog revision `14 -> 16`, preserve authority SHA-256
+`1cd55d7...981fb1078`, and report `production_mutations=0`. No runtime role,
+Kafka, Redis, SQLite, V1, Rust, query/stream, Trading System, alpha or order
+path was changed.
+
+The source slice is committed with message `fix(data): materialize shared
+native L2 bindings`. The disposable `/tmp/qdl-runtime-dryrun.eJB2xA`
+namespace used for the preliminary renderer was removed immediately after the
+read-only evidence was captured; no image, cache, volume, network, runtime
+state or evidence record was pruned. The next action is not an implicit retry:
+it is one explicit runtime approval for a named private
+rollback directory and exactly two rolling recreates, `ingestor_binance_usdm`
+then `ingestor_okx_swap`, using their current Rust image and mounts. It permits
+normal authentic L2 raw/canonical/cache writes for the three newly declared
+books only. It excludes all other roles and state. After both report live,
+fresh snapshot state, run one fresh **149-route** four-identity C2 no-order
+acceptance; no release claim is valid before that receipt passes.
