@@ -1,5 +1,5 @@
 schema: qdl.v2.authority-promotion-scope.v1
-revision: 6
+revision: 7
 binding_ids:
 - binance-usdm-bnbusdt-bar-12h
 - binance-usdm-bnbusdt-bar-15m
@@ -15,6 +15,8 @@ binding_ids:
 - binance-usdm-bnbusdt-bar-5m
 - binance-usdm-bnbusdt-bar-6h
 - binance-usdm-bnbusdt-bar-8h
+- binance-usdm-bnbusdt-book_delta
+- binance-usdm-bnbusdt-book_snapshot
 - binance-usdm-bnbusdt-quote
 - binance-usdm-bnbusdt-trade
 - binance-usdm-btcusdt-260925-book_delta
@@ -53,6 +55,8 @@ binding_ids:
 - binance-usdm-dogeusdt-bar-5m
 - binance-usdm-dogeusdt-bar-6h
 - binance-usdm-dogeusdt-bar-8h
+- binance-usdm-dogeusdt-book_delta
+- binance-usdm-dogeusdt-book_snapshot
 - binance-usdm-dogeusdt-quote
 - binance-usdm-dogeusdt-trade
 - binance-usdm-ethusdt-260925-book_delta
@@ -91,6 +95,8 @@ binding_ids:
 - binance-usdm-solusdt-bar-5m
 - binance-usdm-solusdt-bar-6h
 - binance-usdm-solusdt-bar-8h
+- binance-usdm-solusdt-book_delta
+- binance-usdm-solusdt-book_snapshot
 - binance-usdm-solusdt-quote
 - binance-usdm-solusdt-trade
 - okx-futures-btc-usd-261225-book_delta
@@ -115,6 +121,8 @@ binding_ids:
 - okx-swap-bnb-usdt-swap-bar-4h
 - okx-swap-bnb-usdt-swap-bar-5m
 - okx-swap-bnb-usdt-swap-bar-6h
+- okx-swap-bnb-usdt-swap-book_delta
+- okx-swap-bnb-usdt-swap-book_snapshot
 - okx-swap-bnb-usdt-swap-quote
 - okx-swap-bnb-usdt-swap-trade
 - okx-swap-btc-usdt-swap-bar-12h
@@ -149,6 +157,8 @@ binding_ids:
 - okx-swap-doge-usdt-swap-bar-4h
 - okx-swap-doge-usdt-swap-bar-5m
 - okx-swap-doge-usdt-swap-bar-6h
+- okx-swap-doge-usdt-swap-book_delta
+- okx-swap-doge-usdt-swap-book_snapshot
 - okx-swap-doge-usdt-swap-quote
 - okx-swap-doge-usdt-swap-trade
 - okx-swap-eth-usdt-swap-bar-12h
@@ -183,5 +193,7 @@ binding_ids:
 - okx-swap-sol-usdt-swap-bar-4h
 - okx-swap-sol-usdt-swap-bar-5m
 - okx-swap-sol-usdt-swap-bar-6h
+- okx-swap-sol-usdt-swap-book_delta
+- okx-swap-sol-usdt-swap-book_snapshot
 - okx-swap-sol-usdt-swap-quote
 - okx-swap-sol-usdt-swap-trade

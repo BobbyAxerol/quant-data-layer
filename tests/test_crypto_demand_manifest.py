@@ -102,8 +102,8 @@ class CommittedDemandManifestTests(unittest.TestCase):
         catalog = self._catalog_crypto_keys()
         self.assertTrue(demand <= catalog)
 
-        # Dated BTC/ETH contracts are pre-registered for the shared Rust L2
-        # core, but only the four perpetuals are active Phase-2 demand.  A
+        # Dated contracts are pre-registered for the shared Rust L2 core, but
+        # only the ten five-liquid perpetuals are active execution demand. A
         # new dormant capability must still be an L2 book on a dated leg; no
         # price/bar product may silently fall outside the active inventory.
         dormant = catalog - demand
@@ -128,7 +128,25 @@ class CommittedDemandManifestTests(unittest.TestCase):
             item for item in self.manifest.demands
             if item.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}
         ]
-        self.assertEqual(len(books), 8)
+        self.assertEqual(len(books), 20)
+        self.assertEqual(
+            {
+                (item.venue, item.market, item.native_symbol)
+                for item in books
+            },
+            {
+                ("BINANCE", "USDM", "BTCUSDT"),
+                ("BINANCE", "USDM", "ETHUSDT"),
+                ("BINANCE", "USDM", "SOLUSDT"),
+                ("BINANCE", "USDM", "DOGEUSDT"),
+                ("BINANCE", "USDM", "BNBUSDT"),
+                ("OKX", "SWAP", "BTC-USDT-SWAP"),
+                ("OKX", "SWAP", "ETH-USDT-SWAP"),
+                ("OKX", "SWAP", "SOL-USDT-SWAP"),
+                ("OKX", "SWAP", "DOGE-USDT-SWAP"),
+                ("OKX", "SWAP", "BNB-USDT-SWAP"),
+            },
+        )
         self.assertTrue(all(item.depth_per_side == 100 for item in books))
         self.assertTrue(all(item.require_live for item in books))
         self.assertEqual(

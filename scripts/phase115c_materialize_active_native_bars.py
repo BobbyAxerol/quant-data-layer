@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Materialize every native BAR interval for active Binance/OKX V2 demand.
+"""Materialize active native BAR and execution-L2 demand for Binance/OKX.
 
-This is the bounded Phase 11.5-C3.5 catalog compiler.  It expands only the
-already-active Binance USD-M and OKX Swap BAR requirements, regenerates their
-stable source/acquisition records from committed authentic metadata captures,
-and preserves non-crypto V1/V2 records byte-for-byte at the mapping level.
+This is the bounded Phase 11.5-C3.5 catalog compiler. It expands only the
+already-active Binance USD-M and OKX Swap BAR requirements, materializes their
+explicit execution-L2 requirements, regenerates stable source/acquisition
+records from committed authentic metadata captures, and preserves non-crypto
+V1/V2 records byte-for-byte at the mapping level.
 It never talks to a provider or a runtime; the default is dry-run.
 """
 
@@ -72,6 +73,14 @@ def _atomic_write(path: Path, value: Mapping[str, Any]) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _write_if_bytes_differ(path: Path, value: Mapping[str, Any]) -> bool:
+    """Keep release hashes bound to the exact canonical artifact bytes."""
+    if path.read_bytes() == _yaml_bytes(value):
+        return False
+    _atomic_write(path, value)
+    return True
 
 
 def _requirement_key(value: Mapping[str, Any]) -> tuple[str, str, str, str, str, str | None]:
@@ -258,7 +267,6 @@ def build_documents(
     okx_spot_capture: Path,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     expanded_demand, additions = expand_demand(demand)
-    revision_increment = 1 if additions else 0
     current_catalog = _load_temporary(
         source_catalog, "catalog.yaml", StableSourceCatalog.load
     )
@@ -267,7 +275,24 @@ def build_documents(
         "acquisition.yaml",
         lambda path: StableAcquisitionPlan.load(path, catalog=current_catalog),
     )
-    bundle = _crypto_generated_bundle(
+    provisional_bundle = _crypto_generated_bundle(
+        demand=expanded_demand,
+        current_catalog=current_catalog,
+        revision_increment=0,
+        binance_usdm_capture=binance_usdm_capture,
+        binance_spot_capture=binance_spot_capture,
+        okx_swap_capture=okx_swap_capture,
+        okx_spot_capture=okx_spot_capture,
+    )
+
+    existing_requirement_keys = {
+        _source_requirement_key(item) for item in source_catalog["bindings"]
+    }
+    generated_requirement_keys = {
+        _source_requirement_key(item) for item in provisional_bundle.source_catalog["bindings"]
+    }
+    revision_increment = int(bool(additions or (generated_requirement_keys - existing_requirement_keys)))
+    bundle = provisional_bundle if revision_increment == 0 else _crypto_generated_bundle(
         demand=expanded_demand,
         current_catalog=current_catalog,
         revision_increment=revision_increment,
@@ -276,7 +301,6 @@ def build_documents(
         okx_swap_capture=okx_swap_capture,
         okx_spot_capture=okx_spot_capture,
     )
-
     generated_source = bundle.source_catalog
     generated_acquisition = bundle.acquisition_plan
     current_instrument_ids = {str(item["instrument_id"]) for item in source_catalog["instruments"]}
@@ -310,14 +334,14 @@ def build_documents(
     )
 
     promotion_result = deepcopy(dict(promotion_scope))
-    active_price_ids = {
+    active_authority_ids = {
         item.binding_id
         for item in next_catalog.bindings
-        if item.feed.value in {"BAR", "TRADE", "QUOTE"}
+        if item.feed.value in {"BAR", "TRADE", "QUOTE", "BOOK_SNAPSHOT", "BOOK_DELTA"}
         and (item.instrument.identity.venue, item.instrument.identity.market) in ACTIVE_BAR_FAMILIES
     }
     next_scope_ids = sorted(
-        set(str(item) for item in promotion_scope["binding_ids"]) | active_price_ids
+        set(str(item) for item in promotion_scope["binding_ids"]) | active_authority_ids
     )
     if additions or next_scope_ids != list(promotion_scope["binding_ids"]):
         promotion_result["revision"] = int(promotion_scope["revision"]) + 1
@@ -432,8 +456,7 @@ def main(argv: list[str] | None = None) -> int:
             (args.promotion_scope, scope),
             (args.release_routing, route),
         ):
-            if _load_yaml(path) != value:
-                _atomic_write(path, value)
+            if _write_if_bytes_differ(path, value):
                 changed_files.append(str(path))
     print(json.dumps({
         **summary,

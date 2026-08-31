@@ -5,7 +5,7 @@ metadata:
   owner: trading-platform
   subject: spiffe://qdl/paper/trading-system-stable
   environment: paper
-  revision: 6
+  revision: 7
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -426,7 +426,7 @@ spec:
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
-  # Typed execution context is intentionally bounded to the two certified
+  # Typed execution context is intentionally bounded to the five-liquid
   # perpetuals on each crypto venue. Mark/index is an official one-row
   # snapshot; L2 snapshot/delta remain distinct canonical feeds.
   - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
@@ -562,6 +562,222 @@ spec:
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
   - instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+    feed: BOOK_DELTA
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: MARK_INDEX_PRICE
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BOOK_SNAPSHOT
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BOOK_DELTA
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: MARK_INDEX_PRICE
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BOOK_SNAPSHOT
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BOOK_DELTA
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: MARK_INDEX_PRICE
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BOOK_SNAPSHOT
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BOOK_DELTA
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de
+    feed: MARK_INDEX_PRICE
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de
+    feed: BOOK_SNAPSHOT
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de
+    feed: BOOK_DELTA
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7
+    feed: MARK_INDEX_PRICE
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7
+    feed: BOOK_SNAPSHOT
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7
+    feed: BOOK_DELTA
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3
+    feed: MARK_INDEX_PRICE
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3
+    feed: BOOK_SNAPSHOT
+    consumer_grade: EXECUTION
+    source_policy_id: crypto_liquid_v2
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3
     feed: BOOK_DELTA
     consumer_grade: EXECUTION
     source_policy_id: crypto_liquid_v2

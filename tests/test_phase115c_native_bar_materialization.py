@@ -5,7 +5,10 @@ from copy import deepcopy
 import importlib.util
 import json
 from pathlib import Path
+import tempfile
 import unittest
+
+import yaml
 
 from qdl.adapters.intervals import BINANCE_USDM_NATIVE_INTERVALS, OKX_NATIVE_INTERVALS
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -182,7 +185,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         self.assertEqual(self.acquisition, self.current_acquisition)
         self.assertEqual(self.scope, self.current_scope)
 
-    def test_five_liquid_price_plane_has_exact_trade_quote_counts_without_l2_growth(self) -> None:
+    def test_five_liquid_price_plane_has_exact_trade_quote_and_l2_counts(self) -> None:
         product_counts = Counter(
             (item.instrument.identity.venue, item.instrument.identity.market, item.feed.value)
             for item in self.loaded_catalog.bindings
@@ -202,6 +205,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             if item.feed.value.startswith("BOOK_")
         }
         self.assertEqual(materialized_l2, current_l2)
+        self.assertEqual(len(materialized_l2), 36)
 
     def test_every_active_bar_is_rest_owned_with_exact_venue_channel(self) -> None:
         source_by_id = {item.binding_id: item for item in self.loaded_catalog.bindings}
@@ -282,6 +286,15 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         self.assertEqual(catalog, self.catalog)
         self.assertEqual(acquisition, self.acquisition)
         self.assertEqual(scope, self.scope)
+
+    def test_canonical_writer_rewrites_equal_mapping_with_noncanonical_bytes(self) -> None:
+        payload = {"schema": "fixture", "revision": 1, "items": ["a", "b"]}
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "artifact.yaml"
+            path.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8")
+            self.assertTrue(self.tool._write_if_bytes_differ(path, payload))
+            self.assertEqual(path.read_bytes(), self.tool._yaml_bytes(payload))
+            self.assertFalse(self.tool._write_if_bytes_differ(path, payload))
 
     def test_release_route_rebinds_any_changed_artifact_once(self) -> None:
         stale_route = deepcopy(self.current_route)

@@ -286,7 +286,7 @@ class StableCatalogContractTests(unittest.TestCase):
         # The fixed non-crypto capability plane has 10 rows. Each of the five
         # liquid Binance USD-M and five OKX Swap instruments contributes TRADE,
         # QUOTE and every provider-native BAR interval. C3.6 adds the declared
-        # 12 physical L2 books as 24 snapshot/delta logical bindings.
+        # 18 physical L2 books as 36 snapshot/delta logical bindings.
         from qdl.adapters.intervals import (
             BINANCE_USDM_NATIVE_INTERVALS,
             OKX_NATIVE_INTERVALS,
@@ -300,7 +300,7 @@ class StableCatalogContractTests(unittest.TestCase):
             item for item in catalog.bindings
             if item.feed.value in {"BOOK_SNAPSHOT", "BOOK_DELTA"}
         ]
-        self.assertEqual(len(l2_bindings), 24)
+        self.assertEqual(len(l2_bindings), 36)
         self.assertEqual(len(catalog.bindings), baseline + len(l2_bindings))
         self.assertEqual(
             {(item.instrument.identity.venue, item.feed.value) for item in catalog.bindings},

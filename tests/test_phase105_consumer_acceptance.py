@@ -195,12 +195,37 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
                 FeedType.BOOK_DELTA,
             }
         ]
-        self.assertEqual(len(typed), 12)
+        self.assertEqual(len(typed), 30)
         self.assertTrue(all(route.route == "V2_PRIMARY" for route, _ in typed))
         self.assertTrue(all(route.fallback == "BLOCKED" for route, _ in typed))
         self.assertEqual(
             {requirement.source_policy_id for _, requirement in typed},
             {"crypto_liquid_v2"},
+        )
+        self.assertEqual(
+            {
+                (
+                    self.catalog.instrument_for(requirement.instrument_uid).identity.venue,
+                    self.catalog.instrument_for(requirement.instrument_uid).native_symbol,
+                )
+                for _, requirement in typed
+            },
+            {
+                ("BINANCE", "BTCUSDT"),
+                ("BINANCE", "ETHUSDT"),
+                ("BINANCE", "SOLUSDT"),
+                ("BINANCE", "DOGEUSDT"),
+                ("BINANCE", "BNBUSDT"),
+                ("OKX", "BTC-USDT-SWAP"),
+                ("OKX", "ETH-USDT-SWAP"),
+                ("OKX", "SOL-USDT-SWAP"),
+                ("OKX", "DOGE-USDT-SWAP"),
+                ("OKX", "BNB-USDT-SWAP"),
+            },
+        )
+        self.assertEqual(
+            {requirement.feed for _, requirement in typed},
+            {FeedType.MARK_INDEX_PRICE, FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA},
         )
         self.assertTrue(all(
             requirement.consumer_grade.value == "EXECUTION"

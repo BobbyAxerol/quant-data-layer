@@ -56,11 +56,11 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
 
     def test_exact_five_liquid_consumer_route_scope(self) -> None:
         requirements = self.requirements
-        self.assertEqual(len(requirements), 72)
+        self.assertEqual(len(requirements), 90)
         self.assertEqual(
             Counter(consumer_id for consumer_id, _ in requirements),
             {
-                "trading-system.paper.stable": 42,
+                "trading-system.paper.stable": 60,
                 "alpha.binance.paper.stable": 15,
                 "alpha.okx.paper.stable": 15,
             },
@@ -96,13 +96,23 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
             if consumer_id == "trading-system.paper.stable"
             and item["feed"] in {"MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELTA"}
         ]
-        self.assertEqual(len(typed), 12)
+        self.assertEqual(len(typed), 30)
         self.assertEqual(
             {(item["feed"], item["source_policy_id"]) for item in typed},
             {
                 ("MARK_INDEX_PRICE", "crypto_liquid_v2"),
                 ("BOOK_SNAPSHOT", "crypto_liquid_v2"),
                 ("BOOK_DELTA", "crypto_liquid_v2"),
+            },
+        )
+        self.assertEqual(
+            {
+                (item["venue"], item["native_symbol"])
+                for item in typed
+            },
+            {
+                *( ("BINANCE", symbol) for symbol in BINANCE_SYMBOLS ),
+                *( ("OKX", symbol) for symbol in OKX_SYMBOLS ),
             },
         )
 
@@ -128,7 +138,7 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
             item for item in manifest.demands
             if item.feed.value in {"BOOK_SNAPSHOT", "BOOK_DELTA"}
         ]
-        self.assertEqual(len(books), 8)
+        self.assertEqual(len(books), 20)
         self.assertEqual({item.depth_per_side for item in books}, {100})
         self.assertTrue(all(item.require_live for item in books))
         self.assertEqual(
@@ -141,8 +151,8 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
         )
 
     def test_admission_budget_is_exact_and_all_routes_are_provider_admitted(self) -> None:
-        self.assertEqual(self.demand["revision"], 3)
-        self.assertEqual(self.registry["revision"], 3)
+        self.assertEqual(self.demand["revision"], 4)
+        self.assertEqual(self.registry["revision"], 4)
         usage = Counter(
             (item["venue"], item["market"], item["feed"])
             for _, item in self.requirements
@@ -157,18 +167,18 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
                 ("BINANCE", "USDM", "BAR"): (15, 15),
                 ("BINANCE", "USDM", "QUOTE"): (5, 5),
                 ("BINANCE", "USDM", "TRADE"): (10, 10),
-                ("BINANCE", "USDM", "MARK_INDEX_PRICE"): (2, 2),
-                ("BINANCE", "USDM", "BOOK_SNAPSHOT"): (2, 2),
-                ("BINANCE", "USDM", "BOOK_DELTA"): (2, 2),
+                ("BINANCE", "USDM", "MARK_INDEX_PRICE"): (5, 5),
+                ("BINANCE", "USDM", "BOOK_SNAPSHOT"): (5, 5),
+                ("BINANCE", "USDM", "BOOK_DELTA"): (5, 5),
                 ("OKX", "SWAP", "BAR"): (15, 15),
                 ("OKX", "SWAP", "QUOTE"): (5, 5),
                 ("OKX", "SWAP", "TRADE"): (10, 10),
-                ("OKX", "SWAP", "MARK_INDEX_PRICE"): (2, 2),
-                ("OKX", "SWAP", "BOOK_SNAPSHOT"): (2, 2),
-                ("OKX", "SWAP", "BOOK_DELTA"): (2, 2),
+                ("OKX", "SWAP", "MARK_INDEX_PRICE"): (5, 5),
+                ("OKX", "SWAP", "BOOK_SNAPSHOT"): (5, 5),
+                ("OKX", "SWAP", "BOOK_DELTA"): (5, 5),
             },
         )
-        self.assertEqual(self.registry["admission"]["max_total_slices"], 72)
+        self.assertEqual(self.registry["admission"]["max_total_slices"], 90)
 
     def test_public_mark_index_contract_compiles_without_alias_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -202,15 +212,15 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
             item for item in inventory.requirements
             if item.feed is DemandFeed.MARK_INDEX_PRICE
         ]
-        self.assertEqual(len(inventory.requirements), 72)
-        self.assertEqual(len(marks), 4)
+        self.assertEqual(len(inventory.requirements), 90)
+        self.assertEqual(len(marks), 10)
         self.assertTrue(all(item.purpose.value == "EXECUTION" for item in marks))
         self.assertTrue(all(type(item).from_proto(item.to_proto()) == item for item in marks))
         books = [
             item for item in inventory.requirements
             if item.feed in {DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA}
         ]
-        self.assertEqual(len(books), 8)
+        self.assertEqual(len(books), 20)
         self.assertEqual({item.depth_levels for item in books}, {100})
         self.assertTrue(all(item.require_live for item in books))
         self.assertEqual(

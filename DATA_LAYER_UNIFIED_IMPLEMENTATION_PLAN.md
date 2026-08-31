@@ -25927,3 +25927,182 @@ independent Trading System provider-neutral mark/index projection repair, one
 replacement market-data image and its already-scoped 300-second no-order
 acceptance remain the final integration gate before claiming the whole
 Trading System execution-context path release-ready.
+
+#### 24.3.14 Five-Liquid Typed Context Expansion And Final-BAR Attribution (`COMPLETE_SOURCE_TEST / RUNTIME_PACKET_PENDING`, 2026-08-31)
+
+**Approved scope.** Extend the existing execution-grade typed context from
+BTC/ETH to the already active five-liquid Binance USD-M/OKX Swap set:
+`SOL`, `DOGE` and `BNB` receive `MARK_INDEX_PRICE`, `BOOK_SNAPSHOT` and
+`BOOK_DELTA`, with the same explicit `depth_per_side=100`, snapshot freshness
+and delta freshness/live requirements as BTC/ETH. This is an additive
+manifest/catalog admission change of exactly `18` requirements. It reuses the
+shared venue ingestors and Rust canonical/L2 core; it must not create a
+symbol-specific service, worker, topic, partition or direct alpha-to-venue
+path.
+
+**Reference-data clarification.** A V2 reference wrapper being implemented
+means the public contract, provider adapter, decimal/unit/lineage validation,
+pagination/retry and bounded `reference:batch` query path exist. It is *not*
+an execution product until a named consumer manifest declares its exact
+instrument/product/freshness/purpose and the sealed runtime bundle admits it.
+This prevents funding/OI/long-short/taker/basis/metadata from silently
+becoming an unreviewed risk or order input. `MARK_INDEX_PRICE` is the sole
+execution-grade reference product; other reference products remain declared
+alpha/research inputs unless a later approved consumer contract promotes
+them.
+
+**Final-BAR attribution gate.** Measure, at the same real 1m boundary, the
+first provider-confirmed final row from native Binance USD-M and OKX Swap REST
+against the first matching V2 durable final row from both query replicas for
+all ten five-liquid identities. The comparison must use the exact expected
+open/close boundary and OKX `confirm=1`; it must never compare V2 final data
+with an open provider candle. Record only aggregate latency/finality metrics,
+not payloads. If V2 adds material latency after a provider-final row exists,
+repair the shared bar-edge/canonical/projector path in a separately bounded
+slice. If the provider itself publishes finality later, retain the current
+minimal `100ms` first-poll and bounded retry rather than fabricating or
+accepting a mutable candle.
+
+**Invariants and tests.** Preserve exact venue/native identity, no
+cross-symbol book state, sequence/gap/resync semantics, decimal/unit fields,
+no synthetic provider data and no reference-to-execution downgrade. Run
+manifest/compiler/admission tests, V2 contract tests, Rust L2 golden tests,
+and a bounded real-provider read-only capture for the six new native books
+and six mark/index snapshots. The active packet grows from `42` to `60`
+Trading-System routes and the complete three-consumer source declaration from
+`72` to `90`; every budget must match that exact count.
+
+**Runtime boundary / rollback.** This slice changes no runtime. A later,
+separate approval must name the sealed bundle digest and the exact roles to
+roll for the 18 routes. Rollback is the prior sealed manifest/bundle, which
+removes only the new routes; V1, Kafka topology/offsets, Redis/SQLite,
+Trading System, alpha and order paths remain untouched in this source/test
+work.
+
+**Real final-BAR attribution (`PASS / READ-ONLY`, 2026-08-31).** One
+disposable non-root, read-only mTLS/JWT probe observed the next actual 1m
+close for all ten already-sealed five-liquid BAR routes. It required the exact
+native provider boundary (`close_time < observed` on Binance; `confirm=1` on
+OKX) and the exact V2 final/revised `open_time`; it retained no payload or
+cursor and removed itself on exit. All `10/10` direct and `10/10` V2 routes
+passed.
+
+- Direct-provider final availability was Binance `p50=508.7ms` and OKX
+  `p50=2,697.4ms`; request RTT medians were `89.0ms`. This confirms that the
+  observed multi-second OKX behaviour begins at provider confirmation, not in
+  an arbitrary local grace window.
+- V2 durable final availability was Binance `p50=658.5ms` and OKX
+  `p50=3,810.2ms`. V2-minus-direct was `p50=149.8ms`,
+  `p95=1,112.8ms`, `max=1,128.8ms`. The bounded additional tail is explained
+  by the existing exact-target retry cadence (`100ms -> 200ms -> 400ms ->
+  800ms -> 1s`) when an OKX confirmation appears immediately after a poll.
+  It is not the old ten-second settlement setting, which is absent from the
+  active runtime.
+- Some direct public requests transiently returned a provider HTTP error while
+  the probe was waiting, but every route became final before the `12s` bound;
+  no empty value, stale/open candle or fallback source was accepted. Future
+  cadence tuning must remain provider-rate-aware: simply polling every `100ms`
+  would increase rate-limit pressure and is rejected.
+
+**Latency decision.** Keep the source expansion independent from runtime
+timing. The correct narrow follow-up, if approved after the manifest test, is
+to replace the exponential final-bar retry tail with a centrally provider-rate
+bounded short post-close polling window, so an already-confirmed row cannot
+wait almost a full extra second. It must preserve exact finality and source
+rate budgets; no alpha should poll provider history per candle.
+
+**Source implementation slice (approved, 2026-08-31).** The expansion is
+end-to-end in committed source configuration, not a standalone demand YAML:
+
+1. Add the eighteen exact five-liquid typed execution requirements to the
+   bounded paper demand and raise the scoped admission budget from `72` to
+   `90` products.
+2. Add only the twelve missing `BOOK_*` requirements to the stable crypto
+   source demand. The existing `ProductionCatalogBuilder` will regenerate
+   their provider-neutral Rust acquisition/catalog records from the committed
+   Binance USD-M and OKX Swap metadata; `MARK_INDEX_PRICE` remains a fresh
+   execution reference projection and deliberately does not create an L2
+   source binding.
+3. Expand the `trading-system.paper.stable` consumer manifest and its frozen
+   V2 release route to the same five identities. Every new mark/book route is
+   `V2_PRIMARY` with `BLOCKED` fallback: V1 cannot silently substitute an
+   execution mark or verified L2 book.
+4. Update compiler/materialization regressions so the catalog/acquisition and
+   authority scope must grow together, preserve existing binding IDs, and
+   reject a BTC/ETH-only typed subset. Run source-only contract, Rust L2,
+   release-routing and bounded real-provider tests. No source test may
+   regenerate a runtime bundle, restart a role, make a provider subscription,
+   change a Kafka offset, or write a market/order record.
+
+**Decision boundary.** After this slice, the source release is ready to render
+one new sealed bundle and roll only the already-existing V2 roles in a later
+approved runtime packet. Until then the live bundle remains unchanged and the
+new routes are intentionally not advertised as active runtime authority.
+
+**Completed source/configuration (2026-08-31).** The paper demand and scoped
+source registry are now revision `4`: `90` declared requirements consisting of
+`60` Trading-System crypto routes and `15` routes for each representative
+Binance/OKX alpha consumer. The `18` additive Trading-System requirements are
+the exact `MARK_INDEX_PRICE`, `BOOK_SNAPSHOT` and `BOOK_DELTA` triplet for
+`SOL`, `DOGE` and `BNB` on both native venue identities. Each book logical
+product requires a live provider at depth `100` per side; snapshot freshness is
+`60s` and delta freshness is `2s`.
+
+The stable crypto source demand is revision `6`; it contains the twelve newly
+admitted book requirements. Materialization regenerated only the existing
+provider-neutral artifacts: source catalog revision `8`, acquisition revision
+`15` and authority scope revision `7`. The shared catalog now contains `36`
+logical `BOOK_*` bindings overall (`18` physical native books); the five-liquid
+execution slice itself contributes `20` logical book products. No symbol
+worker, topic, partition, image, service or runtime bundle was created. The
+frozen release route is revision `12`, with `98` total products and `61` under
+the Trading-System paper consumer; its newly admitted execution mark/book
+products are `V2_PRIMARY` with `BLOCKED` fallback.
+
+**Artifact-integrity correction.** Materialization previously decided whether
+to write a YAML artifact from its parsed mapping only. The writer now compares
+and rewrites canonical bytes, so the release-routing digest always binds the
+exact checked-in artifact bytes rather than an equal-but-differently-serialized
+mapping. A regression proves write, canonical-byte equality and idempotent
+second execution.
+
+**Verification (`PASS`, source-only unless stated).**
+
+- Isolated read-only contract/admission/materialization matrix: `21/21` pass.
+- Isolated release/fallback/catalog consistency matrix: `30/30` pass.
+- Isolated stable-edge, Rust-L2 conformance, V2 query/stream and reference-L2
+  matrix: `76/76` pass (`1` explicitly skipped); total `127` passing cases.
+  The matrix covers exact identity/venue isolation, decimal fields, manifest
+  budgets, final-bar materialization, V1 fallback policy, snapshot/delta
+  sequence/gap/resync and reference-data contracts.
+- Isolated active-demand/production-catalog/universal-release compatibility
+  matrix: `34/34` pass. It exposed one stale assertion for the prior
+  BTC/ETH-only `8` book products; the oracle is now exact for all ten native
+  five-liquid instruments and `20` logical snapshot/delta products. Combined
+  targeted evidence is `161` passing tests with the same one declared skip.
+- The source-only materialization compiler dry-run passed with
+  `changed_files=[]`; it reproduced catalog revision `8`, acquisition revision
+  `15`, promotion-scope revision `7`, `70` native BAR bindings per crypto
+  venue and `80` total price-plane bindings per crypto venue. This is the
+  idempotency proof for the sealed checked-in artifacts.
+- One bounded non-root, read-only real-provider smoke made `15` public REST
+  requests for the six new native instruments. It verified six positive
+  mark/index snapshots and six depth-`100` book snapshots across Binance USD-M
+  and OKX Swap: `PASS`, request RTT `p50=79.9ms`, `max=116.4ms`. It retained no
+  provider payload, cursor or runtime state.
+- The final-BAR attribution result above remains `10/10` provider-final and
+  `10/10` V2-durable matches. Current runtime uses `100ms` initial settlement
+  and bounded retry, not the historic ten-second grace.
+
+**Cleanup and runtime impact.** All verification containers were disposable
+`--rm`, source-mounted read-only and used a temporary filesystem. No image was
+built, no cache/image artifact was retained, and the temporary real-provider
+probe was removed. No runtime role, V1/V2 bundle, Kafka offset/topic, Redis,
+SQLite, Trading System, alpha or order path changed.
+
+**Remaining permitted action.** This is source-ready but not runtime-active for
+the eighteen additions. A later explicit packet must seal these exact revisions,
+name the existing V2 roles to roll, observe the new routes and retain the prior
+bundle as rollback. It must not broaden reference products such as funding,
+OI, long-short, taker flow, basis or metadata into execution authority without
+a separately declared consumer semantic/freshness contract.

@@ -3,13 +3,13 @@
 # universal-demand certification and it never carries L2 demand from another
 # alpha into this handoff packet.
 schema: qdl.v2.active-demand-source-registry.v1
-revision: 3
+revision: 4
 owner_registry:
   root: trading_system
   path: config/_config/portfolio_account_config_setup.yaml
 admission:
   max_subscriptions_per_connection: 20
-  max_total_slices: 72
+  max_total_slices: 90
   budgets:
     - venue: BINANCE
       market: USDM
@@ -26,15 +26,15 @@ admission:
     - venue: BINANCE
       market: USDM
       feed: MARK_INDEX_PRICE
-      max_slices: 2
+      max_slices: 5
     - venue: BINANCE
       market: USDM
       feed: BOOK_SNAPSHOT
-      max_slices: 2
+      max_slices: 5
     - venue: BINANCE
       market: USDM
       feed: BOOK_DELTA
-      max_slices: 2
+      max_slices: 5
     - venue: OKX
       market: SWAP
       feed: BAR
@@ -50,15 +50,15 @@ admission:
     - venue: OKX
       market: SWAP
       feed: MARK_INDEX_PRICE
-      max_slices: 2
+      max_slices: 5
     - venue: OKX
       market: SWAP
       feed: BOOK_SNAPSHOT
-      max_slices: 2
+      max_slices: 5
     - venue: OKX
       market: SWAP
       feed: BOOK_DELTA
-      max_slices: 2
+      max_slices: 5
 sources:
   - source_id: phase115c-paper-consumer-demand
     root: repository

@@ -1,14 +1,14 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 10
+revision: 12
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
-  sha256: c79bd3a89b8179a639d8557adb0b7fd937dd135201c4c84be465572bc643d291
-  revision: 7
+  sha256: c2fe0fe5326856ffb504fc4c2251ac77de9bc315e743248c543b394d8df18d3b
+  revision: 8
 crypto_demand:
   path: /app/config/v2/stable-crypto-demand.yaml
-  sha256: 03212aaf83ea850f2c19c63f753c05b811298ac5c99fff51aa6eceee1177a9e9
-  revision: 5
+  sha256: 44abc4a3965a0ae2e4532a282caa29d4b11f4aa25d392c292972f68195ecd64f
+  revision: 6
 capability_matrix:
   path: /app/config/v2/stable-capabilities.yaml
   sha256: 81347a88866a54ed99cfbf25979d8e5912c98084f97f8a997a608dc9e03af6bf
@@ -29,7 +29,7 @@ consumers:
   manifest: /app/consumers/stable/monitoring-multivenue.yaml
   manifest_revision: 2
   manifest_sha256: eaf828db40cac3b256fee087fa4cb7730fcb4894c9300ce4a319433aec4d88ea
-  demand_revision: 5
+  demand_revision: 6
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
@@ -55,7 +55,7 @@ consumers:
   manifest: /app/consumers/stable/alpha-binance-paper.yaml
   manifest_revision: 6
   manifest_sha256: 141956a2565165b0645fa77b43d73aa34bd3764e2bf0a40feb167232161dde99
-  demand_revision: 5
+  demand_revision: 6
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
@@ -121,7 +121,7 @@ consumers:
   manifest: /app/consumers/stable/alpha-okx-paper.yaml
   manifest_revision: 6
   manifest_sha256: ac553e96a6f73b8e4c757ea9991c454c2a55beaa0006e886613023692ce9625c
-  demand_revision: 5
+  demand_revision: 6
   products:
   - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:TRADE::crypto_primary_v2
     route: V2_PRIMARY
@@ -187,7 +187,7 @@ consumers:
   manifest: /app/consumers/stable/alpha-vn-paper.yaml
   manifest_revision: 1
   manifest_sha256: f2f03f87bfeb775d90099e0bdb38ee9b158ee1506dd333581ef54635e20d3e2a
-  demand_revision: 5
+  demand_revision: 6
   products:
   - requirement_key: d0ac3d4c-2374-5690-8af5-b970448f91d3:BAR:1m:vn_primary_v2
     route: V1_PRIMARY
@@ -199,9 +199,9 @@ consumers:
     reason: VN_REAL_PROVIDER_GATE_UNEXERCISED
 - consumer_id: trading-system.paper.stable
   manifest: /app/consumers/stable/trading-system-paper.yaml
-  manifest_revision: 6
-  manifest_sha256: 7408490678c5f200d2dd6cd2679ac1e656995a2de5eb683eaf809aa391490af9
-  demand_revision: 5
+  manifest_revision: 7
+  manifest_sha256: c38b5044c6aad18a88e759e4c770a03753720f1badbff200893c90e0ab5ae132
+  demand_revision: 6
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
@@ -296,6 +296,78 @@ consumers:
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
   - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:BOOK_DELTA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_MARK_INDEX_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:BOOK_SNAPSHOT::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:BOOK_DELTA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_MARK_INDEX_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:BOOK_SNAPSHOT::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:BOOK_DELTA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_MARK_INDEX_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:BOOK_SNAPSHOT::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:BOOK_DELTA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_MARK_INDEX_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:BOOK_SNAPSHOT::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:BOOK_DELTA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_MARK_INDEX_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:BOOK_SNAPSHOT::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:BOOK_DELTA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_MARK_INDEX_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:BOOK_SNAPSHOT::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:BOOK_DELTA::crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
