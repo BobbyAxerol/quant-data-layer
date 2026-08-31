@@ -159,7 +159,12 @@ def _stream_event_timeout_seconds(
     product: AcceptanceProduct,
     request_timeout_seconds: float,
 ) -> float:
-    """Wait through one final BAR close without exceeding its freshness SLA."""
+    """Wait through a product's declared bounded arrival window."""
+    max_freshness_ms = product.requirement.max_freshness_ms
+    if product.feed.value == "BOOK_SNAPSHOT":
+        if max_freshness_ms is None:
+            raise ValueError("BOOK_SNAPSHOT receipt product must declare a freshness SLA")
+        return max(request_timeout_seconds, max_freshness_ms / 1_000)
     if product.feed.value != "BAR":
         return request_timeout_seconds
     if product.interval is None:
@@ -167,7 +172,6 @@ def _stream_event_timeout_seconds(
     interval_seconds = canonical_interval_ms(product.interval) / 1_000
     settlement_seconds = min(15.0, max(5.0, interval_seconds / 4.0))
     wait_seconds = max(request_timeout_seconds, interval_seconds + settlement_seconds)
-    max_freshness_ms = product.requirement.max_freshness_ms
     if max_freshness_ms is not None:
         wait_seconds = min(wait_seconds, max_freshness_ms / 1_000)
     return wait_seconds

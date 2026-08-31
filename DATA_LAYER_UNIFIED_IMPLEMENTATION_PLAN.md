@@ -27514,3 +27514,41 @@ alpha or order-path change occurred in this source slice. The only remaining
 operation is one immutable disposable C2 client build from this reviewed
 commit, then one bounded real 149-route no-order C2; that image is test-only
 and will be removed after evidence is recorded.
+
+**149-route C2 BOOK_SNAPSHOT timing repair (`APPROVED / EXECUTING`,
+2026-08-31).** The replacement C2 client advanced past the repaired quote
+race and reached `trading-system.paper.stable / OKX.SWAP.PERPETUAL.DOGE-USDT /
+BOOK_SNAPSHOT`, where it timed out waiting only the generic request timeout of
+`15s`. Targeted live evidence rules out an absent L2 mapping: each current
+core configuration contains the DOGE `okx_book` binding, and the authentic
+OKX native ingestor continuously renews all nine declared book bindings every
+`30s` without an error, disconnect or rejection. A fresh snapshot can therefore
+legitimately land after C2's generic 15-second stream observation but within
+its sealed `max_freshness_ms=60000` product SLA.
+
+The in-scope source correction applies only to the disposable C2 harness:
+`BOOK_SNAPSHOT` waits up to its declared bounded freshness window (currently
+60 seconds) for one signed-stream snapshot, while `TRADE`, `QUOTE`,
+`BOOK_DELTA` and BAR behavior remain unchanged. It does not relax L2
+freshness, sequence/gap/checksum validation, use a synthetic snapshot, alter
+the Rust ingestor/core, or modify a consumer/runtime route. Regression proves
+the 1m BAR rule, generic TRADE rule and SLA-bounded BOOK_SNAPSHOT rule. Rollback
+is a source revert; the current first disposable C2 image is discarded and a
+single replacement immutable client image will run exactly one full 149-route,
+300-second no-order receipt.
+
+**149-route C2 BOOK_SNAPSHOT timing source exit (`PASS / REPLACEMENT CLIENT
+BUILD AUTHORIZED`, 2026-08-31).** `_stream_event_timeout_seconds` now reads
+the existing product contract: a `BOOK_SNAPSHOT` waits through its declared
+freshness bound, currently `60.0s`, while a generic `TRADE` still uses `15.0s`
+and final BAR keeps its interval/finality calculation. The same
+network-disabled, read-only C2 regression matrix passed `51/51` in `4.342s`;
+the deterministic timeout test covers 1m BAR (`75.0s`), 15m pass-through BAR
+(`915.0s`), TRADE (`15.0s`) and the new execution L2 snapshot (`60.0s`).
+`git diff --check` passed. This is a C2-client correctness repair only: no
+provider, Rust, core/ingestor, projector, query/stream role, V1, authority,
+Kafka, Redis, SQLite, Trading System, alpha or order-path mutation occurred.
+The prior `2ae448f` C2 image is now test-only superseded; one replacement
+immutable client will be built from the next committed source, used for one
+149-route C2 receipt, then both disposable client tags will be removed during
+the recorded scoped cleanup.

@@ -687,6 +687,11 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         self.assertEqual(_stream_event_timeout_seconds(alpha_bar, 15.0), 915.0)
         trade = self._product(feed="TRADE")
         self.assertEqual(_stream_event_timeout_seconds(trade, 15.0), 15.0)
+        book_snapshot = SimpleNamespace(
+            feed=SimpleNamespace(value="BOOK_SNAPSHOT"),
+            requirement=SimpleNamespace(max_freshness_ms=60_000),
+        )
+        self.assertEqual(_stream_event_timeout_seconds(book_snapshot, 15.0), 60.0)
 
     def test_cursor_continuity_and_evidence_redaction_are_strict(self):
         product = self._product(feed="TRADE")
