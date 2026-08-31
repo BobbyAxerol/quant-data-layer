@@ -35,3 +35,9 @@ manifests. The closure function locks and rechecks the exact `RUST_PRIMARY`
 authority row but never updates authority ownership, revision, lease or
 watermark. Expansion rows are write-disabled and cannot inherit parent
 certification.
+
+`0011_authority_candidate_rollover.sql` is additive. It records an immutable
+old/new candidate provenance snapshot and provides the only DB function allowed
+to roll a fenced `BLOCKED` authority row to a new candidate/image revision. It
+never resets Kafka or deletes C40 evidence; normal C3 revalidation/canary still
+controls future write authority.

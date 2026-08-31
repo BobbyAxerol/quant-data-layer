@@ -56,14 +56,17 @@ x-kafka: &kafka
 
 x-stable-env: &stable-env
   QDL_ENVIRONMENT: paper
-  QDL_CONFIG_REVISION: phase-b-stable-1
-  QDL_STABLE_AUTHORITY_MODE: RUST_SHADOW
-  QDL_STABLE_AUTHORITY_REVISION: "1"
+  QDL_CONFIG_REVISION: ${QDL_CONFIG_REVISION:-phase-b-stable-1}
+  QDL_STABLE_AUTHORITY_MODE: ${QDL_STABLE_AUTHORITY_MODE:?set QDL_STABLE_AUTHORITY_MODE}
+  QDL_STABLE_AUTHORITY_REVISION: ${QDL_STABLE_AUTHORITY_REVISION:?set QDL_STABLE_AUTHORITY_REVISION}
   QDL_STABLE_SCHEMA_DIGEST: ${QDL_STABLE_SCHEMA_DIGEST:?set QDL_STABLE_SCHEMA_DIGEST}
+  # Authority comes from the generated read-only record. These two values are
+  # only startup cross-checks and must match authority.json exactly.
+  QDL_STABLE_RUNTIME_DIR: /runtime
   QDL_STABLE_STATE_DIR: /var/lib/qdl-stable/runtime
   QDL_STABLE_DURABLE_STATE_DIR: /var/lib/qdl-stable/shared
   QDL_STABLE_SOURCE_BINDINGS: /app/config/v2/stable-source-bindings.yaml
-  QDL_STABLE_CONSUMER_MANIFESTS: /app/consumers/stable/monitoring-multivenue.yaml:/app/consumers/stable/alpha-binance-paper.yaml:/app/consumers/stable/alpha-okx-paper.yaml:/app/consumers/stable/alpha-vn-paper.yaml:/app/consumers/stable/trading-system-paper.yaml
+  QDL_STABLE_CONSUMER_MANIFESTS: /app/consumers/stable/monitoring-multivenue.yaml:/app/consumers/stable/alpha-binance-paper.yaml:/app/consumers/stable/alpha-okx-paper.yaml:/app/consumers/stable/alpha-vn-paper.yaml:/app/consumers/stable/trading-system-paper.yaml:/app/consumers/stable/reference-l2-stable.yaml
   QDL_STABLE_INTERNAL_INGEST_SECRET: ${QDL_STABLE_INTERNAL_INGEST_SECRET:?set QDL_STABLE_INTERNAL_INGEST_SECRET}
   QDL_STABLE_REDIS_URL: redis://stable_redis:6379/0
   QDL_STABLE_REDIS_PREFIX: qdl:stable:v2:paper:candidate
@@ -71,15 +74,23 @@ x-stable-env: &stable-env
   QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
   QDL_STABLE_CURSOR_TTL_SECONDS: "3600"
   QDL_STABLE_MAX_REQUEST_BYTES: "1048576"
+  # Reference batches may use a bounded provider deadline up to 60 seconds.
+  # Keep the stable query boundary above that while retaining concurrency caps.
+  QDL_STABLE_REQUEST_DEADLINE_SECONDS: "90"
   QDL_STABLE_MAX_CONCURRENT_REQUESTS: "200"
   QDL_STABLE_MAX_CONCURRENT_RPCS: "200"
   QDL_STABLE_MAX_STREAMS: "1000"
   QDL_STABLE_MAX_BUFFER_EVENTS: "2000"
   QDL_STABLE_MAX_REPLAY_EVENTS: "5000"
+  # Reference data is an on-demand query capability. Enabling it constructs
+  # bounded adapters only; it creates no subscription, poller or execution
+  # authority until a declared alpha/research request arrives.
+  QDL_STABLE_REFERENCE_DATA_ENABLED: "${QDL_STABLE_REFERENCE_DATA_ENABLED:-true}"
   QDL_STABLE_LEASE_SHARD_ID: stable-stream-v2
   QDL_STABLE_LEASE_TTL_SECONDS: "15"
   QDL_STABLE_LEASE_RENEW_SECONDS: "5"
   QDL_DATA_JWT_KEYS_JSON: ${QDL_STABLE_JWT_KEYS_JSON:?set QDL_STABLE_JWT_KEYS_JSON}
+  QDL_DATA_JWT_KEY_SUBJECTS_JSON: ${QDL_STABLE_JWT_KEY_SUBJECTS_JSON:?set QDL_STABLE_JWT_KEY_SUBJECTS_JSON}
   QDL_DATA_JWT_ISSUER: https://identity.qdl.stable.internal
   QDL_DATA_JWT_AUDIENCE: qdl-v2-stable
   QDL_DATA_JWT_ALGORITHMS: RS256
@@ -94,7 +105,10 @@ x-python: &python
   cap_drop: [ALL]
   networks: [stable_internal]
   tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=64m"]
-  volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
+  volumes:
+    - stable_state:/var/lib/qdl-stable
+    - stable_tls:/stable-certs:ro
+    - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
   environment: {<<: *stable-env}
   mem_limit: 512m
   cpus: 0.75
@@ -103,6 +117,7 @@ x-rust: &rust
   image: ${QDL_STABLE_RUST_IMAGE:?set immutable QDL_STABLE_RUST_IMAGE}
   user: "10001:10001"
   restart: "no"
+  stop_grace_period: 45s
   read_only: true
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
@@ -243,6 +258,9 @@ services:
       QDL_STABLE_CONSUMER_GROUP: stable-query-1
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
+      # Phase 10.3 permits explicit alpha BAR fresh-snapshot warmups only.
+      # It does not grant a replayable stream or execution authority.
+      QDL_STABLE_PASS_THROUGH_ENABLED: "true"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-1-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
@@ -264,6 +282,8 @@ services:
       QDL_STABLE_CONSUMER_GROUP: stable-query-2
       QDL_STABLE_HTTP_PORT: "8200"
       QDL_STABLE_GRPC_PORT: "8210"
+      # Keep both query replicas on the same declared history capability.
+      QDL_STABLE_PASS_THROUGH_ENABLED: "true"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-2-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
@@ -322,14 +342,88 @@ services:
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-1-audit.jsonl
       QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-1
-      QDL_STABLE_KAFKA_RAW_TOPICS: md.raw.stable.v1
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
       QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
       QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
-    volumes: [stable_state:/var/lib/qdl-stable, stable_tls:/stable-certs:ro]
+      # Bound r11 catch-up inside this role's existing 512 MiB cgroup. Kafka
+      # retains pressure once the projector pauses canonical consumption.
+      QDL_STABLE_MAX_PENDING_RECORDS: "2048"
+      QDL_STABLE_MAX_PENDING_BYTES: "33554432"
+    volumes:
+      - stable_state:/var/lib/qdl-stable
+      - stable_tls:/stable-certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
+      stable_state_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+      stable_redis: {condition: service_healthy}
+      stream_v2_active: {condition: service_started}
+      stream_v2_passive: {condition: service_started}
+
+  projector_v2_2:
+    <<: *python
+    command: [python, -m, app.entrypoints.projector_v2_stable]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-projector-2
+      QDL_STABLE_CONSUMER_GROUP: stable-projector-v1
+      QDL_STABLE_HTTP_PORT: "8230"
+      QDL_STABLE_GRPC_PORT: "8231"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-2-audit.jsonl
+      QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-2
+      QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
+      QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
+      QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
+      QDL_STABLE_MAX_PENDING_RECORDS: "2048"
+      QDL_STABLE_MAX_PENDING_BYTES: "33554432"
+    volumes:
+      - stable_state:/var/lib/qdl-stable
+      - stable_tls:/stable-certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
+      stable_state_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+      stable_redis: {condition: service_healthy}
+      stream_v2_active: {condition: service_started}
+      stream_v2_passive: {condition: service_started}
+
+  projector_v2_3:
+    <<: *python
+    command: [python, -m, app.entrypoints.projector_v2_stable]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-projector-3
+      QDL_STABLE_CONSUMER_GROUP: stable-projector-v1
+      QDL_STABLE_HTTP_PORT: "8230"
+      QDL_STABLE_GRPC_PORT: "8231"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-3-audit.jsonl
+      QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-3
+      QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
+      QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
+      QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
+      QDL_STABLE_MAX_PENDING_RECORDS: "2048"
+      QDL_STABLE_MAX_PENDING_BYTES: "33554432"
+    volumes:
+      - stable_state:/var/lib/qdl-stable
+      - stable_tls:/stable-certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
@@ -374,8 +468,18 @@ services:
     environment:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
-      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core-001
-      QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
+      QDL_KAFKA_CLIENT_ID: qdl-v2-realtime-core-001
+      QDL_KAFKA_GROUP_ID: qdl-v2-realtime-core-v2
+      # The private admission relay is inert unless the bounded Reference/L2
+      # override enables it. Rust owns every admission transition; Python only
+      # signs requests before calling this internal endpoint.
+      QDL_PROVIDER_ADMISSION_ENABLED: ${QDL_STABLE_PROVIDER_ADMISSION_ENABLED:-false}
+      QDL_PROVIDER_ADMISSION_LISTEN_ADDR: 0.0.0.0:8300
+      QDL_PROVIDER_ADMISSION_SECRET: ${QDL_STABLE_INTERNAL_INGEST_SECRET:?set QDL_STABLE_INTERNAL_INGEST_SECRET}
+      QDL_PROVIDER_ADMISSION_POLICY_PATH: /opt/qdl/config/v2/provider-admission-policy-v1.json
+      QDL_PROVIDER_ADMISSION_POLICY_SHA256: e4a4330d503e3dd163b6ff7391f5e034a80555a23679ba30bb23ea78ca8053ad
+      QDL_PROVIDER_ADMISSION_REDIS_PREFIX: qdl:stable:v2:provider-admission:v1
+      QDL_PROVIDER_ADMISSION_REDIS_URL: redis://stable_redis:6379/0
     volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core.json:/runtime/core.json:ro"]
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
@@ -390,8 +494,8 @@ services:
     environment:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
-      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core-002
-      QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
+      QDL_KAFKA_CLIENT_ID: qdl-v2-realtime-core-002
+      QDL_KAFKA_GROUP_ID: qdl-v2-realtime-core-v2
     volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core-002.json:/runtime/core-002.json:ro"]
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
@@ -406,8 +510,8 @@ services:
     environment:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
-      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-core-003
-      QDL_KAFKA_GROUP_ID: qdl-v2-stable-core-v1
+      QDL_KAFKA_CLIENT_ID: qdl-v2-realtime-core-003
+      QDL_KAFKA_GROUP_ID: qdl-v2-realtime-core-v2
     volumes: [stable_tls:/stable-certs:ro, "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/core-003.json:/runtime/core-003.json:ro"]
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
@@ -424,10 +528,15 @@ services:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
       QDL_KAFKA_CLIENT_ID: qdl-v2-production-core-001
-      QDL_KAFKA_GROUP_ID: qdl-v2-production-core-v1
+      # Keep ordinary stable-topology renders compatible before the optional
+      # authority profile is provisioned. qdl-production-core itself rejects
+      # an empty group/keyring before it can subscribe or commit an offset.
+      QDL_KAFKA_GROUP_ID: ${QDL_PHASE92_BOOTSTRAP_GROUP_ID:-}
+      QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON: ${QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON:-}
     volumes:
       - stable_tls:/stable-certs:ro
       - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-core-001.json:/runtime/production-core-001.json:ro"
+      - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-bootstrap.json:/runtime/production-bootstrap.json:ro"
     depends_on:
       authority_outbox_v2: {condition: service_healthy}
       stable_tls_init: {condition: service_completed_successfully}
@@ -444,10 +553,12 @@ services:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
       QDL_KAFKA_CLIENT_ID: qdl-v2-production-core-002
-      QDL_KAFKA_GROUP_ID: qdl-v2-production-core-v1
+      QDL_KAFKA_GROUP_ID: ${QDL_PHASE92_BOOTSTRAP_GROUP_ID:-}
+      QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON: ${QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON:-}
     volumes:
       - stable_tls:/stable-certs:ro
       - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-core-002.json:/runtime/production-core-002.json:ro"
+      - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-bootstrap.json:/runtime/production-bootstrap.json:ro"
     depends_on:
       authority_outbox_v2: {condition: service_healthy}
       stable_tls_init: {condition: service_completed_successfully}
@@ -464,10 +575,12 @@ services:
       <<: *rust-env
       QDL_KAFKA_CERT_ROOT: /stable-certs/core
       QDL_KAFKA_CLIENT_ID: qdl-v2-production-core-003
-      QDL_KAFKA_GROUP_ID: qdl-v2-production-core-v1
+      QDL_KAFKA_GROUP_ID: ${QDL_PHASE92_BOOTSTRAP_GROUP_ID:-}
+      QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON: ${QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON:-}
     volumes:
       - stable_tls:/stable-certs:ro
       - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-core-003.json:/runtime/production-core-003.json:ro"
+      - "${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}/production-bootstrap.json:/runtime/production-bootstrap.json:ro"
     depends_on:
       authority_outbox_v2: {condition: service_healthy}
       stable_tls_init: {condition: service_completed_successfully}
@@ -557,9 +670,17 @@ services:
       QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_KAFKA_CERT_ROOT: /stable-certs/producer
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-binance-bars
-      QDL_STABLE_BAR_WARMUP_ROWS: "500"
-      QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS: "10"
-      QDL_STABLE_BAR_STATE_PATH: /var/lib/qdl-stable/runtime/stable-crypto-bar-edge.json
+      # Must cover the greatest durable final-BAR warmup declared by the
+      # governed Trading System/alpha manifests.
+      QDL_STABLE_BAR_WARMUP_ROWS: "1000"
+      # A final row is provider-confirmed, not timer-confirmed. Start the
+      # first bounded read promptly after the close, then retry that exact
+      # target until it is durably ACKed.
+      QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS: "0.10"
+      QDL_STABLE_BAR_RETRY_INITIAL_SECONDS: "0.10"
+      QDL_STABLE_BAR_RETRY_MAX_SECONDS: "1.0"
+      QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS: "32"
+      QDL_STABLE_BAR_STATE_PATH: ${QDL_STABLE_BAR_STATE_PATH:-/var/lib/qdl-stable/runtime/stable-crypto-bar-edge.json}
     volumes:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro

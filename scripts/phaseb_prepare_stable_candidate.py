@@ -68,6 +68,20 @@ def copy_server_identity(source: Path, destination: Path, principal: str) -> Non
         item.chmod(0o440)
 
 
+def copy_jwt_identity(source: Path, destination: Path, principal: str) -> None:
+    destination.mkdir(parents=True, exist_ok=False)
+    for source_name, target_name in (
+        (f"{principal}.key", "private.key"),
+        (f"{principal}.public.pem", "public.pem"),
+    ):
+        origin = source / source_name
+        if not origin.is_file():
+            raise FileNotFoundError(f"stable JWT source is unavailable: {origin}")
+        shutil.copyfile(origin, destination / target_name)
+    for item in destination.iterdir():
+        item.chmod(0o440)
+
+
 def prepare_candidate(
     *,
     rust_image: str,
@@ -114,6 +128,7 @@ def prepare_candidate(
         catalog=catalog,
         acquisition=acquisition,
         authority=authority,
+        promotion_scope=promotion_scope,
     )
     bundle_digests.update(write_production_core_bundle(
         runtime_dir,
@@ -128,43 +143,100 @@ def prepare_candidate(
         ("core", "phase8-core"),
         ("projector", "phase8-consumer"),
         ("authority-dispatcher", "stable-authority-dispatcher"),
+        ("monitoring", "stable-monitoring"),
         ("trading-system", "stable-trading-system"),
+        ("alpha-binance", "stable-alpha-binance"),
+        ("alpha-okx", "stable-alpha-okx"),
+        ("reference-l2", "stable-reference-l2"),
     ):
         copy_client_identity(cert_dir, identities_dir / role, principal)
     copy_server_identity(cert_dir, identities_dir / "query", "stable-query")
     copy_server_identity(cert_dir, identities_dir / "stream", "stable-stream")
-    jwt_identity_dir = identities_dir / "trading-system-jwt"
-    jwt_identity_dir.mkdir(parents=True, exist_ok=False)
-    for source_name, target_name in (
-        ("stable-trading-system-jwt.key", "private.key"),
-        ("stable-trading-system-jwt.public.pem", "public.pem"),
-    ):
-        origin = cert_dir / source_name
-        if not origin.is_file():
-            raise FileNotFoundError(f"stable JWT source is unavailable: {origin}")
-        shutil.copyfile(origin, jwt_identity_dir / target_name)
-    for item in jwt_identity_dir.iterdir():
-        item.chmod(0o440)
+    copy_jwt_identity(
+        cert_dir,
+        identities_dir / "trading-system-jwt",
+        "stable-trading-system-jwt",
+    )
+    copy_jwt_identity(
+        cert_dir,
+        identities_dir / "alpha-binance-jwt",
+        "stable-alpha-binance-jwt",
+    )
+    copy_jwt_identity(
+        cert_dir,
+        identities_dir / "monitoring-jwt",
+        "stable-monitoring-jwt",
+    )
+    copy_jwt_identity(
+        cert_dir,
+        identities_dir / "alpha-okx-jwt",
+        "stable-alpha-okx-jwt",
+    )
+    copy_jwt_identity(
+        cert_dir,
+        identities_dir / "reference-l2-jwt",
+        "stable-reference-l2-jwt",
+    )
 
     schema_digest = hashlib.sha256(
         (ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto").read_bytes()
     ).hexdigest()
     ingest_secret = secrets.token_urlsafe(48)
     cursor_secret = secrets.token_urlsafe(48)
+    phase92_bootstrap_secret = secrets.token_hex(32)
     control_db_password = secrets.token_urlsafe(32)
     dispatcher_db_password = secrets.token_urlsafe(32)
-    jwt_public_key = (jwt_identity_dir / "public.pem").read_text(encoding="utf-8")
+    trading_system_jwt_public_key = (
+        identities_dir / "trading-system-jwt/public.pem"
+    ).read_text(encoding="utf-8")
+    alpha_binance_jwt_public_key = (
+        identities_dir / "alpha-binance-jwt/public.pem"
+    ).read_text(encoding="utf-8")
+    monitoring_jwt_public_key = (
+        identities_dir / "monitoring-jwt/public.pem"
+    ).read_text(encoding="utf-8")
+    alpha_okx_jwt_public_key = (
+        identities_dir / "alpha-okx-jwt/public.pem"
+    ).read_text(encoding="utf-8")
+    reference_l2_jwt_public_key = (
+        identities_dir / "reference-l2-jwt/public.pem"
+    ).read_text(encoding="utf-8")
     compose_cert_dir = (host_cert_dir or cert_dir).resolve()
     compose_output_dir = (host_output_dir or output_dir).resolve()
     values = {
+        # Compose carries these only as read-only cross-checks against the
+        # generated authority.json mounted by every V2 runtime role.
+        "QDL_STABLE_AUTHORITY_MODE": str(authority["mode"]),
+        "QDL_STABLE_AUTHORITY_REVISION": str(authority["revision"]),
         "QDL_STABLE_SCHEMA_DIGEST": schema_digest,
         "QDL_STABLE_CONSUMER_NETWORK": consumer_network,
         "QDL_STABLE_INTERNAL_INGEST_SECRET": ingest_secret,
         "QDL_STABLE_CURSOR_KEYS_JSON": json.dumps(
             {"stable-k1": cursor_secret}, separators=(",", ":")
         ),
+        "QDL_PHASE92_BOOTSTRAP_CURSOR_KEYS_JSON": json.dumps(
+            {"phase92-k1": phase92_bootstrap_secret}, separators=(",", ":")
+        ),
+        "QDL_PHASE92_BOOTSTRAP_CURSOR_ACTIVE_KEY_ID": "phase92-k1",
+        "QDL_PHASE92_BOOTSTRAP_GROUP_ID": "qdl-v2-production-core-r1-canary-0001",
         "QDL_STABLE_JWT_KEYS_JSON": json.dumps(
-            {"stable-trading-system-rs256-v1": jwt_public_key},
+            {
+                "stable-trading-system-rs256-v1": trading_system_jwt_public_key,
+                "stable-alpha-binance-rs256-v1": alpha_binance_jwt_public_key,
+                "stable-monitoring-rs256-v1": monitoring_jwt_public_key,
+                "stable-alpha-okx-rs256-v1": alpha_okx_jwt_public_key,
+                "stable-reference-l2-rs256-v1": reference_l2_jwt_public_key,
+            },
+            separators=(",", ":"),
+        ),
+        "QDL_STABLE_JWT_KEY_SUBJECTS_JSON": json.dumps(
+            {
+                "stable-trading-system-rs256-v1": "spiffe://qdl/paper/trading-system-stable",
+                "stable-alpha-binance-rs256-v1": "spiffe://qdl/paper/alpha-binance-stable",
+                "stable-monitoring-rs256-v1": "spiffe://qdl/paper/monitoring-multivenue-stable",
+                "stable-alpha-okx-rs256-v1": "spiffe://qdl/paper/alpha-okx-stable",
+                "stable-reference-l2-rs256-v1": "spiffe://qdl/paper/reference-l2-stable",
+            },
             separators=(",", ":"),
         ),
         "QDL_STABLE_PYTHON_IMAGE": python_digest,
@@ -187,6 +259,30 @@ def prepare_candidate(
         ),
         "QDL_STABLE_TRADING_SYSTEM_JWT_PRIVATE_KEY": str(
             compose_output_dir / "identities/trading-system-jwt/private.key"
+        ),
+        "QDL_STABLE_ALPHA_BINANCE_CERT_DIR": str(
+            compose_output_dir / "identities/alpha-binance"
+        ),
+        "QDL_STABLE_ALPHA_BINANCE_JWT_PRIVATE_KEY": str(
+            compose_output_dir / "identities/alpha-binance-jwt/private.key"
+        ),
+        "QDL_STABLE_MONITORING_CERT_DIR": str(
+            compose_output_dir / "identities/monitoring"
+        ),
+        "QDL_STABLE_MONITORING_JWT_PRIVATE_KEY": str(
+            compose_output_dir / "identities/monitoring-jwt/private.key"
+        ),
+        "QDL_STABLE_ALPHA_OKX_CERT_DIR": str(
+            compose_output_dir / "identities/alpha-okx"
+        ),
+        "QDL_STABLE_ALPHA_OKX_JWT_PRIVATE_KEY": str(
+            compose_output_dir / "identities/alpha-okx-jwt/private.key"
+        ),
+        "QDL_STABLE_REFERENCE_L2_CERT_DIR": str(
+            compose_output_dir / "identities/reference-l2"
+        ),
+        "QDL_STABLE_REFERENCE_L2_JWT_PRIVATE_KEY": str(
+            compose_output_dir / "identities/reference-l2-jwt/private.key"
         ),
         "QDL_STABLE_CONTROL_DB_PASSWORD": control_db_password,
         "QDL_STABLE_DISPATCHER_DB_PASSWORD": dispatcher_db_password,
@@ -212,7 +308,7 @@ def prepare_candidate(
     manifest = {
         "schema": "qdl.v2.stable-candidate-bundle.v1",
         "contract_version": "2.0.0",
-        "authority": "RUST_SHADOW",
+        "authority": authority["mode"],
         "cutover_authorized": False,
         "rust_image_id": rust_digest,
         "python_image_id": python_digest,
@@ -223,9 +319,9 @@ def prepare_candidate(
         "authority_promotion_scope_digest": promotion_scope.digest(),
         "authority_promotion_binding_count": len(promotion_scope.binding_ids),
         "consumer_network": consumer_network,
-        "consumer_count": 5,
+        "consumer_count": 6,
         "workload_mtls": True,
-        "workload_identity_count": 4,
+        "workload_identity_count": 7,
         "secret_values_recorded": False,
     }
     manifest_path = output_dir / "candidate-manifest.json"

@@ -1,6 +1,35 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Fixed-duration candle channels accepted by the provider-neutral V2
+/// contract. Calendar months deliberately remain absent: they do not have a
+/// stable millisecond duration and must not be coerced into a fixed bar.
+const CANDLE_INTERVALS: [(&str, &str, i64); 14] = [
+    ("candle1m", "1m", 60_000),
+    ("candle3m", "3m", 180_000),
+    ("candle5m", "5m", 300_000),
+    ("candle15m", "15m", 900_000),
+    ("candle30m", "30m", 1_800_000),
+    ("candle1H", "1h", 3_600_000),
+    ("candle2H", "2h", 7_200_000),
+    ("candle4H", "4h", 14_400_000),
+    ("candle6Hutc", "6h", 21_600_000),
+    ("candle12Hutc", "12h", 43_200_000),
+    ("candle1Dutc", "1d", 86_400_000),
+    ("candle2Dutc", "2d", 172_800_000),
+    ("candle3Dutc", "3d", 259_200_000),
+    ("candle1Wutc", "1w", 604_800_000),
+];
+
+pub fn candle_interval(channel: &str) -> Result<(&'static str, i64), String> {
+    CANDLE_INTERVALS
+        .iter()
+        .find_map(|(native, interval, duration_ms)| {
+            (*native == channel).then_some((*interval, *duration_ms))
+        })
+        .ok_or_else(|| format!("unsupported stable OKX candle channel: {channel}"))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OkxService {
     Public,
@@ -18,7 +47,8 @@ impl OkxSubscription {
     pub fn service(&self) -> Result<OkxService, String> {
         match self.channel.as_str() {
             "trades" | "bbo-tbt" | "books" => Ok(OkxService::Public),
-            "candle1m" | "trades-all" => Ok(OkxService::Business),
+            "trades-all" => Ok(OkxService::Business),
+            value if candle_interval(value).is_ok() => Ok(OkxService::Business),
             _ => Err(format!("unsupported stable OKX channel: {}", self.channel)),
         }
     }
@@ -27,7 +57,7 @@ impl OkxSubscription {
         match self.channel.as_str() {
             "trades" | "trades-all" => Ok("okx_trade"),
             "bbo-tbt" => Ok("okx_bbo"),
-            "candle1m" => Ok("okx_bar"),
+            value if candle_interval(value).is_ok() => Ok("okx_bar"),
             "books" => Ok("okx_book"),
             _ => Err(format!("unsupported stable OKX channel: {}", self.channel)),
         }
@@ -42,13 +72,28 @@ impl OkxSubscription {
 }
 
 #[derive(Serialize)]
-struct SubscribeCommand<'a> {
+struct ControlCommand<'a> {
     id: &'a str,
     op: &'static str,
     args: &'a [OkxSubscription],
 }
 
 pub fn subscription_command(id: &str, subscriptions: &[OkxSubscription]) -> Result<String, String> {
+    control_command(id, "subscribe", subscriptions)
+}
+
+pub fn unsubscription_command(
+    id: &str,
+    subscriptions: &[OkxSubscription],
+) -> Result<String, String> {
+    control_command(id, "unsubscribe", subscriptions)
+}
+
+fn control_command(
+    id: &str,
+    op: &'static str,
+    subscriptions: &[OkxSubscription],
+) -> Result<String, String> {
     if id.trim().is_empty() || id.len() > 32 || subscriptions.is_empty() {
         return Err("OKX subscription id/list is invalid".into());
     }
@@ -61,9 +106,9 @@ pub fn subscription_command(id: &str, subscriptions: &[OkxSubscription]) -> Resu
         }
         service = Some(current);
     }
-    serde_json::to_string(&SubscribeCommand {
+    serde_json::to_string(&ControlCommand {
         id,
-        op: "subscribe",
+        op,
         args: subscriptions,
     })
     .map_err(|error| error.to_string())
@@ -167,7 +212,7 @@ pub fn expand_data_frame(payload: &Value) -> Result<Vec<NativeFrame>, String> {
                 })
             })
             .collect(),
-        "bbo-tbt" | "candle1m" | "books" => {
+        value if matches!(value, "bbo-tbt" | "books") || candle_interval(value).is_ok() => {
             if rows.len() != 1 {
                 return Err("OKX BBO/BAR/BOOK frame requires one data row".into());
             }
@@ -216,8 +261,8 @@ impl ControlRequestBudget {
 #[cfg(test)]
 mod tests {
     use super::{
-        expand_data_frame, parse_subscription_ack, subscription_command, ControlRequestBudget,
-        OkxService, OkxSubscription,
+        candle_interval, expand_data_frame, parse_subscription_ack, subscription_command,
+        unsubscription_command, ControlRequestBudget, OkxService, OkxSubscription,
     };
     use serde_json::json;
 
@@ -266,6 +311,39 @@ mod tests {
             &mut pending
         )
         .is_err());
+        assert!(!parse_subscription_ack(
+            &json!({"arg":{"channel":"trades","instId":"BTC-USDT-SWAP"},"data":[{
+                "instId":"BTC-USDT-SWAP","tradeId":"1"
+            }]}),
+            "7",
+            &mut pending,
+        )
+        .unwrap());
+        assert_eq!(pending.len(), 1);
+
+        let unsubscribe = unsubscription_command("9", &[subscription("trades")]).unwrap();
+        assert!(unsubscribe.contains(r#""op":"unsubscribe""#));
+    }
+
+    #[test]
+    fn every_fixed_duration_candle_channel_has_exact_canonical_identity() {
+        for (channel, interval, duration_ms) in [
+            ("candle1m", "1m", 60_000),
+            ("candle15m", "15m", 900_000),
+            ("candle1H", "1h", 3_600_000),
+            ("candle6Hutc", "6h", 21_600_000),
+            ("candle1Dutc", "1d", 86_400_000),
+            ("candle1Wutc", "1w", 604_800_000),
+        ] {
+            assert_eq!(candle_interval(channel).unwrap(), (interval, duration_ms));
+            assert_eq!(
+                subscription(channel).service().unwrap(),
+                OkxService::Business
+            );
+            assert_eq!(subscription(channel).provider_kind().unwrap(), "okx_bar");
+        }
+        assert!(candle_interval("candle1M").is_err());
+        assert!(subscription("candle45m").service().is_err());
     }
 
     #[test]
@@ -284,7 +362,7 @@ mod tests {
         for (channel, kind, row) in [
             ("bbo-tbt", "okx_bbo", json!({"seqId":1,"bids":[],"asks":[]})),
             (
-                "candle1m",
+                "candle15m",
                 "okx_bar",
                 json!(["1", "1", "1", "1", "1", "1", "1", "1", "0"]),
             ),

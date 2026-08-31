@@ -339,6 +339,40 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
                     retry_count=3,
                 )
 
+    def test_idempotent_quarantine_replay_preserves_the_single_evidence_slot(self):
+        config = SpoolConfig(
+            path=self.path,
+            max_records=10,
+            max_payload_bytes=1024,
+            max_event_bytes=512,
+            max_storage_bytes=10 * 1024 * 1024,
+            max_quarantine_records=1,
+            min_free_disk_bytes=0,
+        )
+        with SQLiteDurableSpool(config, clock_ns=self.clock) as spool:
+            first = spool.quarantine_once(
+                event=event(1),
+                reason_code="RECOVERY_BACKFILL_OVERLAP_CONFLICT",
+                reason_message="retained native final BAR wins",
+                retry_count=0,
+            )
+            with SQLiteDurableSpool(config, clock_ns=self.clock) as replica:
+                replay = replica.quarantine_once(
+                    event=event(1),
+                    reason_code="RECOVERY_BACKFILL_OVERLAP_CONFLICT",
+                    reason_message="retained native final BAR wins",
+                    retry_count=0,
+                )
+            self.assertEqual(first, replay)
+            self.assertEqual(len(spool.quarantine_records()), 1)
+            with self.assertRaises(BackpressureRequired):
+                spool.quarantine_once(
+                    event=event(2),
+                    reason_code="RECOVERY_BACKFILL_OVERLAP_CONFLICT",
+                    reason_message="second distinct overlap",
+                    retry_count=0,
+                )
+
 
 class DurablePublisherTests(unittest.TestCase):
     def test_transient_failure_marks_degraded_then_recovers_after_commit(self):

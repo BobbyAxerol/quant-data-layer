@@ -95,6 +95,7 @@ class _TokenPayload:
     issued_at_ns: int
     expires_at_ns: int
     key_id: str
+    generation_id: str | None = None
 
 
 class SignedHandoffCursorCodec:
@@ -105,6 +106,7 @@ class SignedHandoffCursorCodec:
         secrets: Mapping[str, bytes] | SigningKeyProvider,
         *,
         active_key_id: str | None = None,
+        generation_id: str | None = None,
         clock_ns=time.time_ns,
     ):
         if isinstance(secrets, SigningKeyProvider):
@@ -118,14 +120,29 @@ class SignedHandoffCursorCodec:
                 SigningKeySet(active_key_id, dict(secrets))
             )
         self._key_provider.load()
+        if generation_id is not None:
+            generation_id = generation_id.strip()
+            if not generation_id or len(generation_id) > 128:
+                raise ValueError("cursor generation_id must contain 1..128 characters")
+        self._generation_id = generation_id
         self._clock_ns = clock_ns
 
     def encode(self, payload: _TokenPayload) -> str:
         key_set = self._key_provider.load()
         if payload.key_id != key_set.active_key_id:
             raise ValueError("new handoff cursor must use the active signing key")
+        if payload.generation_id != self._generation_id:
+            raise ValueError("handoff cursor generation does not match the codec")
+        fields = dict(payload.__dict__)
+        if self._generation_id is None:
+            fields.pop("generation_id")
+        schema = (
+            "qdl.handoff-cursor.v2"
+            if self._generation_id is not None
+            else "qdl.handoff-cursor.v1"
+        )
         body = json.dumps(
-            {"schema": "qdl.handoff-cursor.v1", **payload.__dict__},
+            {"schema": schema, **fields},
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -162,21 +179,33 @@ class SignedHandoffCursorCodec:
         expected_signature = hmac.new(secret, body, hashlib.sha256).digest()
         if not hmac.compare_digest(supplied_signature, expected_signature):
             raise ValueError("handoff cursor signature mismatch")
-        if raw.get("schema") != "qdl.handoff-cursor.v1":
+        schema = raw.get("schema")
+        if schema not in {"qdl.handoff-cursor.v1", "qdl.handoff-cursor.v2"}:
+            raise ValueError("unsupported handoff cursor schema")
+        if self._generation_id is None and schema != "qdl.handoff-cursor.v1":
             raise ValueError("unsupported handoff cursor schema")
         payload = _TokenPayload(**{
-            key: raw[key]
+            key: raw.get(key) if key == "generation_id" else raw[key]
             for key in _TokenPayload.__dataclass_fields__
         })
         if payload.consumer_id != consumer_id:
             raise ValueError("handoff cursor consumer scope mismatch")
         if self._clock_ns() >= payload.expires_at_ns:
             raise CursorExpired("signed handoff cursor expired")
+        if self._generation_id is not None and (
+            schema != "qdl.handoff-cursor.v2"
+            or payload.generation_id != self._generation_id
+        ):
+            raise CursorExpired("signed handoff cursor belongs to a previous cache generation")
         return payload
 
     @property
     def active_key_id(self) -> str:
         return self._key_provider.load().active_key_id
+
+    @property
+    def generation_id(self) -> str | None:
+        return self._generation_id
 
     @staticmethod
     def _b64(value: bytes) -> str:
@@ -239,6 +268,7 @@ class GapFreeHandoff:
             issued_at_ns=now_ns,
             expires_at_ns=now_ns + ttl_seconds * 1_000_000_000,
             key_id=self._codec.active_key_id,
+            generation_id=self._codec.generation_id,
         )
         return HandoffGrant(**{
             key: getattr(payload, key)

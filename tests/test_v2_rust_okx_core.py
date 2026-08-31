@@ -80,6 +80,7 @@ class V2StableCapabilityMatrixTest(unittest.TestCase):
             (ROOT / "config/v2/stable-capabilities.yaml").read_text()
         )
         self.assertEqual(matrix["public_contract_version"], "2.0.0")
+        self.assertEqual(matrix["revision"], 5)
         self.assertEqual(matrix["runtime_authority"], "RUST_SHADOW")
         self.assertFalse(matrix["authority_eligible"])
         expected = {"TRADE", "BBO", "BAR"}
@@ -100,6 +101,24 @@ class V2StableCapabilityMatrixTest(unittest.TestCase):
         )
         for key in (("BINANCE", "USDM"), ("BINANCE", "SPOT"), ("OKX", "SWAP"), ("OKX", "SPOT")):
             self.assertEqual(set(rows[key]["feeds"]), expected)
+            self.assertEqual(
+                set(rows[key]["feed_adapters"]), expected,
+                f"{key} must declare every active feed class",
+            )
+        for key in (("BINANCE", "USDM"), ("BINANCE", "SPOT")):
+            self.assertTrue(rows[key]["feed_adapters"]["TRADE"].startswith("qdl-rust-"))
+            self.assertTrue(rows[key]["feed_adapters"]["BBO"].startswith("qdl-rust-"))
+            self.assertEqual(
+                rows[key]["feed_adapters"]["BAR"],
+                "qdl-python-binance-rest-bar-edge@2.0.0",
+            )
+        for key in (("OKX", "SWAP"), ("OKX", "SPOT")):
+            self.assertTrue(
+                all(
+                    value.startswith("qdl-rust-")
+                    for value in rows[key]["feed_adapters"].values()
+                )
+            )
         for key in (("HNX", "VN_DERIVATIVES"), ("HOSE", "EQUITIES")):
             self.assertEqual(set(rows[key]["feeds"]), {"TRADE", "BAR"})
         self.assertTrue(matrix["equal_source_contract"])

@@ -1,0 +1,375 @@
+# Versioned, inactive demand for the V2 reference and L2 product planes.
+#
+# This document is compiled into the active-demand inventory only. It creates
+# no provider request, socket, consumer identity, route, service or container.
+# A later sealed runtime packet must bind a named consumer identity to these
+# requirements before they can become V2-primary.
+schema: qdl.v2.universal-demand.v1
+revision: 2
+requirements:
+  # Five liquid perpetuals, explicitly separated by provider venue/market.
+  # Reference history is REST/batch input, not an execution-grade price feed.
+  - &binance_reference
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe: &binance_usdm_liquid_perpetuals
+      selector_id: qdl-reference-binance-usdm-liquid-perpetuals
+      kind: EXPLICIT
+      venue: BINANCE
+      market: USDM
+      product_type: PERPETUAL
+      native_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, DOGEUSDT, BNBUSDT]
+    feed: FUNDING_RATE
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    # Binance's settled funding history may appear after the 8h boundary.
+    max_freshness_ms: 32400000
+    priority: 50
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: false
+    execution_grade: false
+    depth_levels: 0
+    configuration_revision: 2
+  - <<: *binance_reference
+    feed: OPEN_INTEREST
+    interval: 1d
+    max_freshness_ms: 86400000
+  - <<: *binance_reference
+    feed: LONG_SHORT_RATIO
+    interval: 1d
+    max_freshness_ms: 259200000
+  - <<: *binance_reference
+    feed: TAKER_FLOW
+    interval: 1d
+    max_freshness_ms: 259200000
+  - <<: *binance_reference
+    feed: MARK_PRICE
+    max_freshness_ms: 60000
+  - <<: *binance_reference
+    feed: INDEX_PRICE
+    max_freshness_ms: 60000
+  - <<: *binance_reference
+    feed: CONTRACT_METADATA
+    max_freshness_ms: 86400000
+  - <<: *binance_reference
+    feed: BASIS
+    interval: 1d
+    max_freshness_ms: 259200000
+    basis_contract_type: PERPETUAL
+    basis_series: NATIVE
+
+  - &okx_reference
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe: &okx_swap_liquid_perpetuals
+      selector_id: qdl-reference-okx-swap-liquid-perpetuals
+      kind: EXPLICIT
+      venue: OKX
+      market: SWAP
+      product_type: PERPETUAL
+      native_symbols: [BTC-USDT-SWAP, ETH-USDT-SWAP, SOL-USDT-SWAP, DOGE-USDT-SWAP, BNB-USDT-SWAP]
+    feed: FUNDING_RATE
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 28800000
+    priority: 50
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: false
+    execution_grade: false
+    depth_levels: 0
+    configuration_revision: 1
+  - <<: *okx_reference
+    feed: OPEN_INTEREST
+    # OKX public OI is a current snapshot. Do not claim a synthetic 1d
+    # history window; a future durable OI series is a separate product.
+    interval: null
+    max_freshness_ms: 86400000
+  - <<: *okx_reference
+    feed: MARK_PRICE
+    max_freshness_ms: 60000
+  - <<: *okx_reference
+    feed: INDEX_PRICE
+    max_freshness_ms: 60000
+  - <<: *okx_reference
+    feed: CONTRACT_METADATA
+    max_freshness_ms: 86400000
+
+  # No OKX `*-USDT-SWAP` BASIS is declared here. The provider's dated BTC/ETH
+  # contracts are `*-USD-YYMMDD`, so treating their spread as a USDT-swap
+  # basis would silently cross quote/settlement units. A future derived-basis
+  # product must declare an exact same-family perpetual/future input pair and
+  # formula lineage before it can become an active V2 demand.
+
+  # Perpetual L2 uses native identifiers. Dated contracts are resolved only
+  # from live instrument metadata below; no date-formatted symbol is authored.
+  - &binance_perpetual_book
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe: &binance_l2_perpetuals
+      selector_id: qdl-l2-binance-usdm-perpetuals
+      kind: EXPLICIT
+      venue: BINANCE
+      market: USDM
+      product_type: PERPETUAL
+      native_symbols: [BTCUSDT, ETHUSDT]
+    feed: BOOK_SNAPSHOT
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    priority: 40
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: true
+    execution_grade: false
+    depth_levels: 100
+    configuration_revision: 1
+  - <<: *binance_perpetual_book
+    feed: BOOK_DELTA
+
+  - &okx_perpetual_book
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe: &okx_l2_perpetuals
+      selector_id: qdl-l2-okx-swap-perpetuals
+      kind: EXPLICIT
+      venue: OKX
+      market: SWAP
+      product_type: PERPETUAL
+      native_symbols: [BTC-USDT-SWAP, ETH-USDT-SWAP]
+    feed: BOOK_SNAPSHOT
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    priority: 40
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: true
+    execution_grade: false
+    depth_levels: 100
+    configuration_revision: 1
+  - <<: *okx_perpetual_book
+    feed: BOOK_DELTA
+
+  - &binance_btc_current_quarter_book
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe:
+      selector_id: qdl-l2-binance-usdm-btc-current-quarter
+      kind: CONTINUOUS
+      venue: BINANCE
+      market: USDM
+      product_type: FUTURE
+      continuous_family: BTC-USDT
+      continuous_roll_policy: CURRENT_QUARTER
+      continuous_minimum_days_to_expiry: 0
+    feed: BOOK_SNAPSHOT
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    priority: 40
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: true
+    execution_grade: false
+    depth_levels: 100
+    configuration_revision: 1
+  - <<: *binance_btc_current_quarter_book
+    feed: BOOK_DELTA
+
+  - &binance_btc_next_quarter_book
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe:
+      selector_id: qdl-l2-binance-usdm-btc-next-quarter
+      kind: CONTINUOUS
+      venue: BINANCE
+      market: USDM
+      product_type: FUTURE
+      continuous_family: BTC-USDT
+      continuous_roll_policy: NEXT_QUARTER
+      continuous_minimum_days_to_expiry: 0
+    feed: BOOK_SNAPSHOT
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    priority: 40
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: true
+    execution_grade: false
+    depth_levels: 100
+    configuration_revision: 1
+  - <<: *binance_btc_next_quarter_book
+    feed: BOOK_DELTA
+
+  - &binance_eth_current_quarter_book
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe:
+      selector_id: qdl-l2-binance-usdm-eth-current-quarter
+      kind: CONTINUOUS
+      venue: BINANCE
+      market: USDM
+      product_type: FUTURE
+      continuous_family: ETH-USDT
+      continuous_roll_policy: CURRENT_QUARTER
+      continuous_minimum_days_to_expiry: 0
+    feed: BOOK_SNAPSHOT
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    priority: 40
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: true
+    execution_grade: false
+    depth_levels: 100
+    configuration_revision: 1
+  - <<: *binance_eth_current_quarter_book
+    feed: BOOK_DELTA
+
+  - &binance_eth_next_quarter_book
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe:
+      selector_id: qdl-l2-binance-usdm-eth-next-quarter
+      kind: CONTINUOUS
+      venue: BINANCE
+      market: USDM
+      product_type: FUTURE
+      continuous_family: ETH-USDT
+      continuous_roll_policy: NEXT_QUARTER
+      continuous_minimum_days_to_expiry: 0
+    feed: BOOK_SNAPSHOT
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    priority: 40
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: true
+    execution_grade: false
+    depth_levels: 100
+    configuration_revision: 1
+  - <<: *binance_eth_next_quarter_book
+    feed: BOOK_DELTA
+
+  # OKX futures aliases are provider metadata (`quarter` / `next_quarter`).
+  # BTC-USD and ETH-USD are explicit provider families, not inferred symbols.
+  - &okx_btc_current_quarter_book
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe:
+      selector_id: qdl-l2-okx-futures-btc-current-quarter
+      kind: CONTINUOUS
+      venue: OKX
+      market: FUTURES
+      product_type: FUTURE
+      continuous_family: BTC-USD
+      continuous_roll_policy: CURRENT_QUARTER
+      continuous_minimum_days_to_expiry: 0
+    feed: BOOK_SNAPSHOT
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    priority: 40
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: true
+    execution_grade: false
+    depth_levels: 100
+    configuration_revision: 1
+  - <<: *okx_btc_current_quarter_book
+    feed: BOOK_DELTA
+
+  - &okx_btc_next_quarter_book
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe:
+      selector_id: qdl-l2-okx-futures-btc-next-quarter
+      kind: CONTINUOUS
+      venue: OKX
+      market: FUTURES
+      product_type: FUTURE
+      continuous_family: BTC-USD
+      continuous_roll_policy: NEXT_QUARTER
+      continuous_minimum_days_to_expiry: 0
+    feed: BOOK_SNAPSHOT
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    priority: 40
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: true
+    execution_grade: false
+    depth_levels: 100
+    configuration_revision: 1
+  - <<: *okx_btc_next_quarter_book
+    feed: BOOK_DELTA
+
+  - &okx_eth_current_quarter_book
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe:
+      selector_id: qdl-l2-okx-futures-eth-current-quarter
+      kind: CONTINUOUS
+      venue: OKX
+      market: FUTURES
+      product_type: FUTURE
+      continuous_family: ETH-USD
+      continuous_roll_policy: CURRENT_QUARTER
+      continuous_minimum_days_to_expiry: 0
+    feed: BOOK_SNAPSHOT
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    priority: 40
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: true
+    execution_grade: false
+    depth_levels: 100
+    configuration_revision: 1
+  - <<: *okx_eth_current_quarter_book
+    feed: BOOK_DELTA
+
+  - &okx_eth_next_quarter_book
+    consumer_id: qdl.crypto.reference-l2.stable
+    purpose: RESEARCH
+    universe:
+      selector_id: qdl-l2-okx-futures-eth-next-quarter
+      kind: CONTINUOUS
+      venue: OKX
+      market: FUTURES
+      product_type: FUTURE
+      continuous_family: ETH-USD
+      continuous_roll_policy: NEXT_QUARTER
+      continuous_minimum_days_to_expiry: 0
+    feed: BOOK_SNAPSHOT
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    priority: 40
+    ttl_seconds: 180
+    require_final_bars: false
+    require_live: true
+    execution_grade: false
+    depth_levels: 100
+    configuration_revision: 1
+  - <<: *okx_eth_next_quarter_book
+    feed: BOOK_DELTA

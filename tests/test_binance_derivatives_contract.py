@@ -13,10 +13,11 @@ from app.sdk.client import DataLayerClient
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, text=""):
+    def __init__(self, status_code=200, payload=None, text="", headers=None):
         self.status_code = status_code
         self._payload = payload if payload is not None else []
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -69,6 +70,147 @@ class TestBinanceDerivativesContract(unittest.TestCase):
 
         self.assertEqual(calls["count"], 2)
         self.assertEqual(payload["data"]["openInterest"], "10")
+
+    def test_http_success_transient_error_envelope_retries_before_returning_data(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return FakeResponse(payload={"code": -1007, "msg": "timeout"})
+            return FakeResponse(payload={"symbol": "BTCUSDT", "openInterest": "10", "time": 1})
+
+        payload = derivatives.fetch_open_interest(
+            "BTCUSDT",
+            http_get=fake_get,
+            max_attempts=2,
+            backoff_seconds=0,
+        )
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(payload["data"]["openInterest"], "10")
+        self.assertEqual(payload["attempts"][0]["provider_code"], -1007)
+
+    def test_rate_limit_envelope_stops_hot_retry_and_preserves_retry_after(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            return FakeResponse(
+                payload={"code": -1003, "msg": "rate limited"},
+                headers={"Retry-After": "120"},
+            )
+
+        with self.assertRaises(BinanceProviderError) as ctx:
+            derivatives.fetch_open_interest(
+                "BTCUSDT",
+                http_get=fake_get,
+                max_attempts=4,
+                backoff_seconds=0,
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(ctx.exception.retry_after_ms, 120_000)
+        self.assertEqual(ctx.exception.attempts[0]["provider_code"], -1003)
+
+    def test_ip_ban_stops_hot_retry_and_preserves_retry_after(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            return FakeResponse(
+                status_code=418,
+                text="banned",
+                headers={"Retry-After": "60"},
+            )
+
+        with self.assertRaises(BinanceProviderError) as ctx:
+            derivatives.fetch_open_interest(
+                "BTCUSDT",
+                http_get=fake_get,
+                max_attempts=4,
+                backoff_seconds=0,
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(ctx.exception.retry_after_ms, 60_000)
+
+    def test_http_rate_limit_stops_hot_retry_and_preserves_retry_after(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            return FakeResponse(
+                status_code=429,
+                text="rate limited",
+                headers={"Retry-After": "30"},
+            )
+
+        with self.assertRaises(BinanceProviderError) as ctx:
+            derivatives.fetch_open_interest(
+                "BTCUSDT",
+                http_get=fake_get,
+                max_attempts=4,
+                backoff_seconds=0,
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(ctx.exception.retry_after_ms, 30_000)
+        self.assertEqual(ctx.exception.attempts[0]["status_code"], 429)
+
+    def test_rate_limit_without_header_uses_bounded_local_retry_hint(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            return FakeResponse(status_code=418, text="banned")
+
+        with self.assertRaises(BinanceProviderError) as ctx:
+            derivatives.fetch_open_interest(
+                "BTCUSDT",
+                http_get=fake_get,
+                max_attempts=4,
+                backoff_seconds=0,
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(ctx.exception.retry_after_ms, 60_000)
+        self.assertEqual(ctx.exception.attempts[0]["retry_after_ms"], 60_000)
+
+    def test_http_success_permanent_error_envelope_fails_closed(self):
+        calls = {"count": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["count"] += 1
+            return FakeResponse(payload={"code": -1121, "msg": "invalid symbol"})
+
+        with self.assertRaises(BinanceProviderError) as ctx:
+            derivatives.fetch_open_interest(
+                "BTCUSDT",
+                http_get=fake_get,
+                max_attempts=3,
+                backoff_seconds=0,
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(ctx.exception.attempts, [{
+            "attempt": 1,
+            "status_code": 200,
+            "provider_code": -1121,
+        }])
+
+    def test_mark_index_snapshot_uses_official_premium_index_endpoint(self):
+        def fake_get(url, params=None, headers=None, timeout=None):
+            self.assertTrue(url.endswith("/fapi/v1/premiumIndex"))
+            self.assertEqual(params["symbol"], "BTCUSDT")
+            return FakeResponse(payload={"symbol": "BTCUSDT", "markPrice": "1", "indexPrice": "0.9", "time": 1})
+
+        payload = derivatives.fetch_mark_index_price(
+            "btcusdt", http_get=fake_get, max_attempts=1
+        )
+
+        self.assertEqual(payload["endpoint"], "mark_index_price")
+        self.assertEqual(payload["data"]["markPrice"], "1")
 
     def test_non_retryable_status_raises_provider_error(self):
         def fake_get(url, params=None, headers=None, timeout=None):
@@ -197,6 +339,47 @@ class TestBinanceDerivativesContract(unittest.TestCase):
         self.assertIn("active_contract", frame)
         self.assertTrue(set(frame["active_contract"]).issubset({"BTCUSDT_260327", "BTCUSDT_260626"}))
         self.assertIn("BTCUSDT_260327", meta["candidate_contracts"])
+
+    def test_continuous_basis_memory_only_mode_never_has_a_cache_path(self):
+        builder = basis_continuous.ContinuousBasisBuilder(
+            cache_dir="/tmp/qdl-test-vision-cache",
+            persist_cache=False,
+        )
+        self.assertIsNone(builder.cache_dir)
+        self.assertIsNone(builder._cache_path("monthly", "BTCUSDT", "1d", "2026-01"))
+
+    def test_continuous_basis_rest_tail_only_fills_missing_vision_rows(self):
+        builder = basis_continuous.ContinuousBasisBuilder(persist_cache=False)
+        index = pd.date_range("2026-08-20", periods=2, freq="1D", tz="UTC")
+        vision = pd.DataFrame(
+            {
+                "symbol": "BTCUSDT_260925",
+                "open": (100.0, 101.0),
+                "high": (101.0, 102.0),
+                "low": (99.0, 100.0),
+                "close": (100.0, 101.0),
+                "volume": (10.0, 11.0),
+            },
+            index=index,
+        )
+        direct_rows = [
+            [int(index[1].timestamp() * 1000), "999", "1000", "998", "999", "99"],
+            [int((index[1] + pd.Timedelta(days=1)).timestamp() * 1000), "102", "103", "101", "102", "12"],
+        ]
+        with patch("app.providers.binance.basis_continuous.fetch_klines", return_value={"data": direct_rows}) as fetch:
+            merged, restored = builder._fill_vision_tail_from_direct_rest(
+                "BTCUSDT_260925",
+                "1d",
+                vision,
+                index[0].to_pydatetime(),
+                (index[1] + pd.Timedelta(days=1)).to_pydatetime(),
+            )
+
+        self.assertEqual(restored, 1)
+        self.assertEqual(len(merged), 3)
+        self.assertEqual(merged.loc[index[1], "close"], 101.0)
+        self.assertEqual(merged.iloc[-1]["close"], 102.0)
+        self.assertEqual(fetch.call_args.kwargs["limit"], 1_500)
 
     def test_route_continuous_basis_bundle_delegates_to_provider(self):
         with patch("app.api.routes_binance_derivatives.basis_continuous.fetch_continuous_basis_bundle") as fetch:

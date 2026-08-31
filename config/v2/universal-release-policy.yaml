@@ -1,0 +1,57 @@
+# Phase 11.5 source policy.  This is not a runtime switch: a generated release
+# artifact binds this policy to one fresh admitted active-demand inventory.
+schema: qdl.v2.universal-release-policy.v1
+revision: 4
+contract_version: 2.0.0
+capability_matrix:
+  path: config/v2/stable-capabilities.yaml
+  sha256: 81347a88866a54ed99cfbf25979d8e5912c98084f97f8a997a608dc9e03af6bf
+  revision: 5
+v1_rollback:
+  release_tag: v1.2.4
+  source_commit: 2b0dcf74454c9f87c352d3c47389955aeb955804
+  image_reference: qdl-v1-fallback:v1.2.4-2b0dcf7
+  manifest_revision: v1.2.4-2b0dcf7
+resource_budget:
+  max_consumer_lag: 10000
+  max_cpu_millicores: 750
+  max_rss_bytes: 805306368
+allowed_non_admitted_states: [MISSING_INSTRUMENT]
+consumer_classes:
+  - class_id: MONITORING
+    consumer_prefixes: [monitoring.]
+  - class_id: TRADING_SYSTEM
+    consumer_prefixes: [trading-system.]
+  - class_id: REFERENCE_L2
+    consumer_prefixes: [qdl.crypto.reference-l2.]
+  - class_id: BASIS_ARB
+    consumer_prefixes: [basis_arb_binance_]
+  - class_id: GRID_REACTIVE_BRACKET
+    consumer_prefixes: [dynamic_grid_, gridcombine, gridlongonly]
+  - class_id: PORTFOLIO_MULTI_SYMBOL
+    consumer_prefixes: [deep_momentum_, regressionportfolioA001_, rsiboundportfolioA001_]
+  - class_id: SINGLE_SYMBOL_ALPHA
+    consumer_prefixes:
+      - alpha.binance.paper.
+      - alpha.okx.paper.
+      - adaptive_hma_cpp_
+      - bb_salping_
+      - combine_weight_sl_tp_
+      - delta_rsi_
+      - fib_sl_tp_strength_
+      - pmax_confluene_
+      - qqe_ssl_wae_risk_
+      - scalp_psar_
+      - scalping_purely_
+      - signalcombine
+      - sl_tp_map_ma_
+      - vol_breakout_sl_tp_
+# V1 is a rollback only where the older public route has the same native
+# provider event semantics.  Every other V2 degraded read blocks explicitly.
+fallback_rules:
+  - rule_id: binance-usdm-perpetual-trade-v1-v12
+    venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    feed: TRADE
+    interval: null

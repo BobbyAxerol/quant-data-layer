@@ -1,17 +1,20 @@
 #![forbid(unsafe_code)]
 
+use std::collections::HashSet;
 use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message;
-use qdl_contracts::qdl::provider::v1::RawProviderEnvelope;
+use qdl_contracts::qdl::provider::v1::{QuarantineReason, RawProviderEnvelope};
 use qdl_core::backoff::BackoffPolicy;
 use qdl_core::transport::RetryClass;
 use qdl_kafka::{
-    KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError, TransactionalKafkaBridge,
-    TransactionalKafkaOutput, TransactionalShadowTopics,
+    shutdown_signal, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
+    TransactionalKafkaBridge, TransactionalKafkaOutput, TransactionalShadowTopics,
 };
-use qdl_realtime_core::{RealtimeCore, RealtimeCoreConfig};
+use qdl_realtime_core::{
+    provider_admission_server::ProviderAdmissionServer, CoreError, RealtimeCore, RealtimeCoreConfig,
+};
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use serde::Deserialize;
 use serde_json::json;
@@ -28,14 +31,18 @@ struct RuntimeConfig {
     batch_wait_ms: u64,
     max_events: u64,
     metrics_every_batches: u64,
+    #[serde(default)]
+    strict_subscription_scope: bool,
 }
 
 impl RuntimeConfig {
     fn validate(&self) -> Result<(), String> {
         self.core.validate().map_err(|error| error.to_string())?;
         self.authority.validate()?;
-        if self.authority.mode != AuthorityMode::RustShadow
-            || self.raw_topics.is_empty()
+        if !matches!(
+            self.authority.mode,
+            AuthorityMode::RustShadow | AuthorityMode::RustPrimary
+        ) || self.raw_topics.is_empty()
             || self.raw_topics.iter().any(|topic| topic.trim().is_empty())
             || self.shard_id.trim().is_empty()
             || self.transactional_id.trim().is_empty()
@@ -45,7 +52,9 @@ impl RuntimeConfig {
             || self.batch_wait_ms > 1_000
             || self.metrics_every_batches == 0
         {
-            return Err("realtime-core runtime config is invalid or not RUST_SHADOW".into());
+            return Err(
+                "realtime-core runtime config is invalid or not a shared Rust authority".into(),
+            );
         }
         Ok(())
     }
@@ -97,8 +106,68 @@ fn retryable_runtime_error(error: &RuntimeError) -> bool {
         .is_some_and(|value| should_retry_transport(value.retry_class()))
 }
 
+fn approved_subscription_scope(config: &RuntimeConfig) -> HashSet<String> {
+    config
+        .core
+        .bindings
+        .iter()
+        .map(|binding| binding.source_id.clone())
+        .collect()
+}
+
+fn is_approved_subscription(
+    raw: &RawProviderEnvelope,
+    approved_subscriptions: &HashSet<String>,
+) -> bool {
+    approved_subscriptions.contains(&raw.subscription_id)
+}
+
+fn strict_quarantine_reason(error: &CoreError) -> Option<(QuarantineReason, &'static str)> {
+    match error {
+        CoreError::UnknownBinding => Some((
+            QuarantineReason::FencingRejected,
+            "raw identity does not match declared strict scope",
+        )),
+        CoreError::ProvenanceRejected => Some((
+            QuarantineReason::FencingRejected,
+            "test provenance is forbidden in strict scope",
+        )),
+        CoreError::RawEnvelope(_) => Some((
+            QuarantineReason::Malformed,
+            "raw envelope validation failed in strict scope",
+        )),
+        CoreError::Decode(_) => Some((
+            QuarantineReason::SemanticInvalid,
+            "provider frame cannot be canonicalized in strict scope",
+        )),
+        CoreError::Configuration(_) => None,
+    }
+}
+
+fn output_targets(mode: AuthorityMode) -> Result<(SinkTarget, SinkTarget), String> {
+    match mode {
+        AuthorityMode::RustShadow => {
+            Ok((SinkTarget::ShadowCanonical, SinkTarget::ShadowQuarantine))
+        }
+        AuthorityMode::RustPrimary => {
+            Ok((SinkTarget::PrimaryCanonical, SinkTarget::PrimaryQuarantine))
+        }
+        AuthorityMode::RustCanary => Err("shared realtime core cannot run RUST_CANARY".into()),
+    }
+}
+
+fn authority_mode_name(mode: AuthorityMode) -> &'static str {
+    match mode {
+        AuthorityMode::RustShadow => "RUST_SHADOW",
+        AuthorityMode::RustCanary => "RUST_CANARY",
+        AuthorityMode::RustPrimary => "RUST_PRIMARY",
+    }
+}
+
 async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), RuntimeError> {
     let mut core = RealtimeCore::new(config.core.clone())?;
+    let approved_subscriptions = approved_subscription_scope(config);
+    let (canonical_target, quarantine_target) = output_targets(config.authority.mode)?;
     let bridge = TransactionalKafkaBridge::new(
         &kafka_config()?,
         TransactionalShadowTopics {
@@ -113,12 +182,13 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
         "{}",
         serde_json::to_string(&json!({
             "event": "qdl_realtime_core_started",
-            "authority": "RUST_SHADOW",
+            "authority": authority_mode_name(config.authority.mode),
             "generation": generation,
             "bindings": config.core.bindings.len(),
+            "approved_subscriptions": approved_subscriptions.len(),
             "batch_size": config.batch_size,
-            "production_public_writes": 0,
-            "production_legacy_writes": 0,
+            "public_writes": 0,
+            "legacy_writes": 0,
         }))?
     );
 
@@ -127,14 +197,18 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
     let mut quarantines = 0_u64;
     let mut duplicates = 0_u64;
     let mut filtered = 0_u64;
+    let mut ignored_out_of_scope = 0_u64;
+    let mut scope_quarantines = 0_u64;
     let mut batches = 0_u64;
-    'service: loop {
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
+    let stop_reason = 'service: loop {
         if config.max_events > 0 && processed >= config.max_events {
-            break;
+            break 'service "MAX_EVENTS";
         }
         let first = tokio::select! {
             result = bridge.next() => result?,
-            _ = tokio::signal::ctrl_c() => break 'service,
+            result = &mut shutdown => break 'service result?.as_str(),
         };
         let mut inputs = vec![first];
         while inputs.len() < config.batch_size
@@ -153,14 +227,48 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
         let mut outputs = vec![];
         for input in &inputs {
             let raw = RawProviderEnvelope::decode(input.record.payload.as_slice())?;
-            if raw.authority_revision != config.authority.revision {
-                return Err("raw authority revision does not match runtime authority".into());
-            }
-            let result = core.process_at_transport_offset(
-                raw.clone(),
-                normalized_at_ns,
-                input.cursor.offset,
-            )?;
+            let result = if !is_approved_subscription(&raw, &approved_subscriptions) {
+                if config.strict_subscription_scope {
+                    scope_quarantines = scope_quarantines.saturating_add(1);
+                    core.quarantine_raw(
+                        &raw,
+                        QuarantineReason::FencingRejected,
+                        "undeclared raw subscription in strict scope",
+                        normalized_at_ns,
+                    )
+                } else {
+                    ignored_out_of_scope = ignored_out_of_scope.saturating_add(1);
+                    continue;
+                }
+            } else if raw.authority_revision != config.authority.revision {
+                if config.strict_subscription_scope {
+                    scope_quarantines = scope_quarantines.saturating_add(1);
+                    core.quarantine_raw(
+                        &raw,
+                        QuarantineReason::FencingRejected,
+                        "raw authority revision does not match strict runtime authority",
+                        normalized_at_ns,
+                    )
+                } else {
+                    return Err("raw authority revision does not match runtime authority".into());
+                }
+            } else {
+                match core.process_at_transport_offset(
+                    raw.clone(),
+                    normalized_at_ns,
+                    input.cursor.offset,
+                ) {
+                    Ok(result) => result,
+                    Err(error) if config.strict_subscription_scope => {
+                        let Some((reason, summary)) = strict_quarantine_reason(&error) else {
+                            return Err(error.into());
+                        };
+                        scope_quarantines = scope_quarantines.saturating_add(1);
+                        core.quarantine_raw(&raw, reason, summary, normalized_at_ns)
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            };
             canonical += result.canonical.len() as u64;
             quarantines += result.quarantines.len() as u64;
             duplicates += result.duplicates as u64;
@@ -173,7 +281,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
                         authority_revision: raw.authority_revision,
                         shard_id: config.shard_id.clone(),
                         lease_epoch: raw.lease_epoch,
-                        target: SinkTarget::ShadowCanonical,
+                        target: canonical_target,
                     },
                     raw_provider_envelope: Some(input.record.payload.clone()),
                 });
@@ -186,7 +294,7 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
                         authority_revision: raw.authority_revision,
                         shard_id: config.shard_id.clone(),
                         lease_epoch: raw.lease_epoch,
-                        target: SinkTarget::ShadowQuarantine,
+                        target: quarantine_target,
                     },
                     raw_provider_envelope: None,
                 });
@@ -206,11 +314,14 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
                     "quarantines": quarantines,
                     "duplicates": duplicates,
                     "filtered": filtered,
+                    "ignored_out_of_scope": ignored_out_of_scope,
+                    "scope_quarantines": scope_quarantines,
                     "batches": batches,
                 }))?
             );
         }
-    }
+    };
+    bridge.unsubscribe();
     println!(
         "{}",
         serde_json::to_string(&json!({
@@ -221,7 +332,10 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
             "quarantines": quarantines,
             "duplicates": duplicates,
             "filtered": filtered,
+            "ignored_out_of_scope": ignored_out_of_scope,
+            "scope_quarantines": scope_quarantines,
             "batches": batches,
+            "reason": stop_reason,
         }))?
     );
     Ok(())
@@ -234,6 +348,10 @@ async fn main() -> Result<(), RuntimeError> {
         .ok_or("usage: qdl-realtime-core CONFIG.json")?;
     let config: RuntimeConfig = serde_json::from_slice(&tokio::fs::read(config_path).await?)?;
     config.validate()?;
+    // This listener is private to the existing stable-internal network and is
+    // absent unless the sealed C3.6 runtime binding enables it.  It survives
+    // Kafka generation retries so all query roles share one Rust coordinator.
+    let admission_server = ProviderAdmissionServer::start_from_environment().await?;
     let backoff = BackoffPolicy {
         initial_ms: 500,
         maximum_ms: 30_000,
@@ -243,10 +361,10 @@ async fn main() -> Result<(), RuntimeError> {
     .validate()?;
     let mut generation = 0_u64;
     let mut failures = 0_u32;
-    loop {
+    let result = loop {
         generation = generation.saturating_add(1);
         match run_generation(&config, generation).await {
-            Ok(()) => return Ok(()),
+            Ok(()) => break Ok(()),
             Err(error) if retryable_runtime_error(&error) => {
                 failures = failures.saturating_add(1);
                 eprintln!(
@@ -263,9 +381,13 @@ async fn main() -> Result<(), RuntimeError> {
                 ))
                 .await;
             }
-            Err(error) => return Err(error),
+            Err(error) => break Err(error),
         }
+    };
+    if let Some(server) = admission_server {
+        server.stop().await?;
     }
+    result
 }
 
 #[cfg(test)]
@@ -277,5 +399,56 @@ mod tests {
         assert!(should_retry_transport(RetryClass::Retryable));
         assert!(should_retry_transport(RetryClass::Capacity));
         assert!(!should_retry_transport(RetryClass::NonRetryable));
+    }
+
+    #[test]
+    fn shared_raw_scope_accepts_only_exact_subscription_ids() {
+        let approved_subscriptions = HashSet::from(["dnse-vn30f1m-trade-stable-001".to_owned()]);
+        let approved = RawProviderEnvelope {
+            subscription_id: "dnse-vn30f1m-trade-stable-001".into(),
+            ..Default::default()
+        };
+        let foreign = RawProviderEnvelope {
+            subscription_id: "binance-usdm-btcusdt-trade-stable-001".into(),
+            ..Default::default()
+        };
+
+        assert!(is_approved_subscription(&approved, &approved_subscriptions));
+        assert!(!is_approved_subscription(&foreign, &approved_subscriptions));
+    }
+
+    #[test]
+    fn strict_scope_errors_map_to_durable_quarantine_reasons() {
+        assert_eq!(
+            strict_quarantine_reason(&CoreError::UnknownBinding),
+            Some((
+                QuarantineReason::FencingRejected,
+                "raw identity does not match declared strict scope",
+            )),
+        );
+        assert_eq!(
+            strict_quarantine_reason(&CoreError::Decode("bad frame".into())),
+            Some((
+                QuarantineReason::SemanticInvalid,
+                "provider frame cannot be canonicalized in strict scope",
+            )),
+        );
+        assert_eq!(
+            strict_quarantine_reason(&CoreError::Configuration("bad config".into())),
+            None,
+        );
+    }
+
+    #[test]
+    fn shared_core_binds_private_outputs_to_authority_mode() {
+        assert_eq!(
+            output_targets(AuthorityMode::RustShadow).unwrap(),
+            (SinkTarget::ShadowCanonical, SinkTarget::ShadowQuarantine),
+        );
+        assert_eq!(
+            output_targets(AuthorityMode::RustPrimary).unwrap(),
+            (SinkTarget::PrimaryCanonical, SinkTarget::PrimaryQuarantine),
+        );
+        assert!(output_targets(AuthorityMode::RustCanary).is_err());
     }
 }

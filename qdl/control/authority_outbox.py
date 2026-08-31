@@ -328,15 +328,22 @@ class AsyncpgAuthorityOutboxRepository:
 
     async def claim(self, lock_owner: str, limit: int) -> list[ClaimedAuthorityEvent]:
         rows = await self._pool.fetch(
-            "SELECT event_id, payload FROM qdl_claim_authority_outbox($1, $2)",
+            "SELECT event_id, payload, attempts FROM qdl_claim_authority_outbox($1, $2)",
             lock_owner, limit,
         )
-        return [
-            ClaimedAuthorityEvent(
-                str(row["event_id"]), row["payload"], int(row["attempts"])
+        claimed = []
+        for row in rows:
+            payload = row["payload"]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if not isinstance(payload, Mapping):
+                raise ValueError("authority outbox payload must be a JSON object")
+            claimed.append(
+                ClaimedAuthorityEvent(
+                    str(row["event_id"]), payload, int(row["attempts"])
+                )
             )
-            for row in rows
-        ]
+        return claimed
 
     async def complete(self, event_id: str, lock_owner: str, ack: BrokerAck) -> None:
         await self._pool.execute(

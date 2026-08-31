@@ -15,12 +15,16 @@ from scripts.rebuild_v2_stable_projection_cache import (
     MAX_ACCEPTED_LAG,
     PROJECT_NAME,
     PROJECTOR_GROUP,
+    PROJECTOR_SERVICES,
     QUERY_SERVICES,
     MAX_REPLAY_BOOTSTRAP_RECORDS,
     REPLAY_LOOKBACK_SECONDS,
     STOP_SERVICES,
     STREAM_SERVICES,
+    _assert_projector_catalog_matches_source,
+    _compose_files,
     _env_value,
+    _parse_sha256sum,
     _reset_projector_to_bounded_window,
     _stable_client_ssl_context,
     _start_services,
@@ -58,7 +62,7 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         )
         self.assertEqual(
             plan["start_order"],
-            [list(STREAM_SERVICES), ["projector_v2"], list(QUERY_SERVICES)],
+            [list(STREAM_SERVICES), list(PROJECTOR_SERVICES), list(QUERY_SERVICES)],
         )
         self.assertFalse(plan["touches_v1"])
         self.assertFalse(plan["apply"])
@@ -99,6 +103,98 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         self.assertIn("docker-compose.v2-stable.yml", command[5])
         self.assertEqual(command[-1], "config")
         self.assertNotIn("docker-compose.yml", command[5])
+
+    def test_compose_override_is_explicit_pinned_and_never_silently_dropped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            override = root / "stable.override.yml"
+            override.write_text("services: {}\n")
+            env = root / "stable.env"
+            env.write_text(f"QDL_STABLE_COMPOSE_OVERRIDE={override}\n")
+            self.assertEqual(_compose_files(env), (
+                Path(__file__).parents[1] / "docker-compose.v2-stable.yml",
+                override,
+            ))
+            command = compose_command(env, "config")
+            self.assertEqual(command.count("-f"), 2)
+            self.assertIn(str(override), command)
+            env.write_text(
+                f"QDL_STABLE_COMPOSE_OVERRIDE={override}\n"
+                f"QDL_STABLE_COMPOSE_OVERRIDE={override}\n"
+            )
+            with self.assertRaisesRegex(ValueError, "at most one"):
+                compose_command(env, "config")
+            env.write_text("QDL_STABLE_COMPOSE_OVERRIDE=relative.yml\n")
+            with self.assertRaisesRegex(FileNotFoundError, "unavailable"):
+                compose_command(env, "config")
+
+    def test_projector_catalog_preflight_accepts_exact_immutable_image(self):
+        expected = __import__("hashlib").sha256(
+            (Path(__file__).parents[1] / "config/v2/stable-source-bindings.yaml").read_bytes()
+        ).hexdigest()
+        image = "sha256:" + "a" * 64
+        completed = [
+            subprocess.CompletedProcess(
+                [], 0, "container-1\ncontainer-2\ncontainer-3\n", ""
+            ),
+            subprocess.CompletedProcess([], 0, (image + "\n") * 3, ""),
+            subprocess.CompletedProcess([], 0, expected + "  /app/catalog.yaml\n", ""),
+        ]
+        with patch(
+            "scripts.rebuild_v2_stable_projection_cache._compose",
+            return_value=completed[0],
+        ), patch(
+            "scripts.rebuild_v2_stable_projection_cache._run",
+            side_effect=completed[1:],
+        ):
+            result = _assert_projector_catalog_matches_source(Path("/tmp/stable.env"))
+        self.assertEqual(result["image_catalog_sha256"], expected)
+        self.assertEqual(result["source_catalog_sha256"], expected)
+        self.assertEqual(result["image_id"], "sha256:" + "a" * 64)
+
+    def test_projector_catalog_preflight_rejects_incomplete_or_mixed_replicas(self):
+        image_a = "sha256:" + "a" * 64
+        image_b = "sha256:" + "b" * 64
+        cases = (
+            ("container-1\n", None, "identities are unavailable or incomplete"),
+            (
+                "container-1\ncontainer-2\ncontainer-3\n",
+                f"{image_a}\n{image_a}\n{image_b}\n",
+                "do not share one immutable",
+            ),
+        )
+        for containers, images, message in cases:
+            with self.subTest(message=message), patch(
+                "scripts.rebuild_v2_stable_projection_cache._compose",
+                return_value=subprocess.CompletedProcess([], 0, containers, ""),
+            ), patch(
+                "scripts.rebuild_v2_stable_projection_cache._run",
+                return_value=subprocess.CompletedProcess([], 0, images or "", ""),
+            ):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    _assert_projector_catalog_matches_source(Path("/tmp/stable.env"))
+
+    def test_projector_catalog_preflight_rejects_drift(self):
+        image = "sha256:" + "a" * 64
+        completed = [
+            subprocess.CompletedProcess(
+                [], 0, "container-1\ncontainer-2\ncontainer-3\n", ""
+            ),
+            subprocess.CompletedProcess([], 0, (image + "\n") * 3, ""),
+            subprocess.CompletedProcess([], 0, "b" * 64 + "  /app/catalog.yaml\n", ""),
+        ]
+        with patch(
+            "scripts.rebuild_v2_stable_projection_cache._compose",
+            return_value=completed[0],
+        ), patch(
+            "scripts.rebuild_v2_stable_projection_cache._run",
+            side_effect=completed[1:],
+        ):
+            with self.assertRaisesRegex(RuntimeError, "image catalog differs"):
+                _assert_projector_catalog_matches_source(Path("/tmp/stable.env"))
+        self.assertEqual(_parse_sha256sum("c" * 64 + "  value"), "c" * 64)
+        with self.assertRaisesRegex(RuntimeError, "lowercase SHA-256"):
+            _parse_sha256sum("NOT-A-DIGEST")
 
     def test_recovery_starts_roles_without_dependency_traversal(self):
         env = Path("/tmp/stable.env")
@@ -239,12 +335,67 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
                     "scripts.rebuild_v2_stable_projection_cache._compose",
                     fake_compose,
                 ),
+                patch(
+                    "scripts.rebuild_v2_stable_projection_cache._assert_projector_catalog_matches_source",
+                    return_value={},
+                ),
             ):
                 with self.assertRaisesRegex(RuntimeError, "still running"):
                     execute_rebuild(env, timeout_seconds=10)
             flattened = " ".join(" ".join(call) for call in calls)
             self.assertNotIn("FLUSHDB", flattened)
             self.assertNotIn("canonical-cache.sqlite3", flattened)
+
+    def test_catchup_gets_full_timeout_after_projectors_start(self):
+        env = Path("/tmp/stable.env")
+        cache_sizes = iter(("0\n", "2\n"))
+        observed = {}
+
+        def fake_compose(_env, *arguments, **_kwargs):
+            if arguments[:4] == ("ps", "--services", "--status", "running"):
+                return subprocess.CompletedProcess([], 0, "", "")
+            if arguments[:3] == ("exec", "-T", "stable_redis") and arguments[-1] == "DBSIZE":
+                return subprocess.CompletedProcess([], 0, next(cache_sizes), "")
+            return subprocess.CompletedProcess([], 0, "", "")
+
+        def capture_http(_url, deadline, **_kwargs):
+            observed.setdefault("http", []).append(deadline)
+
+        def capture_lag(_env, deadline):
+            observed["lag"] = deadline
+            return {"lag": 0, "partitions": 6}
+
+        def capture_projector(_env, deadline):
+            observed["projector"] = deadline
+
+        with (
+            patch("scripts.rebuild_v2_stable_projection_cache._validate_project"),
+            patch(
+                "scripts.rebuild_v2_stable_projection_cache._assert_projector_catalog_matches_source",
+                return_value={},
+            ),
+            patch("scripts.rebuild_v2_stable_projection_cache._compose", fake_compose),
+            patch(
+                "scripts.rebuild_v2_stable_projection_cache._reset_projector_to_bounded_window",
+                return_value={},
+            ),
+            patch(
+                "scripts.rebuild_v2_stable_projection_cache._stable_client_ssl_context",
+                return_value=None,
+            ),
+            patch("scripts.rebuild_v2_stable_projection_cache._start_services"),
+            patch("scripts.rebuild_v2_stable_projection_cache._wait_http", capture_http),
+            patch("scripts.rebuild_v2_stable_projection_cache._wait_bounded_lag", capture_lag),
+            patch("scripts.rebuild_v2_stable_projection_cache._wait_projector_ready", capture_projector),
+            patch("scripts.rebuild_v2_stable_projection_cache.time.monotonic", side_effect=(100.0, 140.0)),
+        ):
+            result = execute_rebuild(env, timeout_seconds=30)
+
+        self.assertTrue(result["apply"])
+        self.assertEqual(observed["http"][:2], [130.0, 130.0])
+        self.assertEqual(observed["lag"], 170.0)
+        self.assertEqual(observed["projector"], 170.0)
+        self.assertEqual(observed["http"][2:], [170.0, 170.0])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,377 @@
+"""Source-only checks for the bounded Reference/L2 V2 consumer receipt."""
+
+from __future__ import annotations
+
+import asyncio
+import time
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+from qdl.certification.reference_l2_acceptance import (
+    _DAY_NS,
+    _FUNDING_NS,
+    _FUNDING_SETTLEMENT_JITTER_NS,
+    _MILLISECOND_NS,
+    _history_bounds,
+    acceptance_transport_timeout_seconds,
+    REFERENCE_L2_CONSUMER_ID,
+    build_reference_l2_acceptance_scope,
+    reference_acceptance_batches,
+    reference_evidence,
+    reference_quality,
+    reference_request_for_requirement,
+)
+from qdl.certification.phase103_consumer_acceptance import _validate_payload
+from qdl.query import ConsumerGrade, FeedType
+from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from qdl_sdk import Grade
+from qdl_sdk.reference import ReferenceProduct, ReferenceRequirement
+from scripts.phasec36_reference_l2_consumer_acceptance import _reference_batch_until_terminal
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CATALOG = ROOT / "config/v2/stable-source-bindings.yaml"
+ACQUISITION = ROOT / "config/v2/stable-acquisition-bindings.yaml"
+MANIFEST = ROOT / "consumers/stable/reference-l2-stable.yaml"
+NOW_NS = 1_787_000_000_000_000_000
+
+
+class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.catalog = StableSourceCatalog.load(CATALOG)
+        self.acquisition = StableAcquisitionPlan.load(ACQUISITION, catalog=self.catalog)
+        self.scope = build_reference_l2_acceptance_scope(
+            MANIFEST,
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            now_ns=NOW_NS,
+        )
+
+    def test_scope_is_exact_v2_only_reference_and_book_product_set(self):
+        self.assertEqual(len(self.scope.references), 55)
+        self.assertEqual(len(self.scope.books), 24)
+        self.assertEqual(
+            {item.consumer_id for item in self.scope.references + self.scope.books},
+            {REFERENCE_L2_CONSUMER_ID},
+        )
+        self.assertFalse(any(
+            item.venue == "OKX" and item.market == "SWAP"
+            and item.requirement.feed.value == "BASIS"
+            for item in self.scope.references
+        ))
+        self.assertTrue(all(item.delivery.value == "DURABLE" for item in self.scope.books))
+        self.assertTrue(all(
+            item.evidence()["delivery"] == "ON_DEMAND"
+            for item in self.scope.references
+        ))
+
+    def test_reference_request_preserves_manifest_identity_and_required_selectors(self):
+        for item in self.scope.references:
+            request = item.sdk_requirement
+            self.assertEqual(request.instrument_uid, item.instrument_uid)
+            self.assertEqual(request.source_policy_id, "crypto_liquid_v2")
+            self.assertEqual(request.consumer_grade.value, "RESEARCH")
+            self.assertEqual(request.deadline_ms, 60_000)
+            if item.requirement.feed.value in {"LONG_SHORT_RATIO", "TAKER_FLOW", "BASIS"}:
+                self.assertEqual(request.interval, "1d")
+                self.assertIsNotNone(request.start_time_ns)
+                self.assertIsNotNone(request.end_time_ns)
+            if item.requirement.feed.value == "OPEN_INTEREST":
+                if item.venue == "BINANCE":
+                    self.assertEqual(request.interval, "1d")
+                    self.assertIsNotNone(request.start_time_ns)
+                    self.assertIsNotNone(request.end_time_ns)
+                else:
+                    self.assertEqual(item.venue, "OKX")
+                    self.assertIsNone(request.interval)
+                    self.assertIsNone(request.start_time_ns)
+                    self.assertIsNone(request.end_time_ns)
+            if item.requirement.feed.value == "LONG_SHORT_RATIO":
+                self.assertEqual(request.long_short_kind.value, "GLOBAL_ACCOUNT")
+            if item.requirement.feed.value == "BASIS":
+                self.assertEqual(request.basis_contract_type, "PERPETUAL")
+
+    def test_history_windows_stop_at_the_last_settled_provider_period(self):
+        daily_boundary = (NOW_NS // _DAY_NS) * _DAY_NS
+        funding_boundary = (NOW_NS // _FUNDING_NS) * _FUNDING_NS
+        self.assertEqual(
+            _history_bounds(FeedType.FUNDING_RATE, NOW_NS),
+            (funding_boundary - _FUNDING_NS, funding_boundary + _FUNDING_SETTLEMENT_JITTER_NS),
+        )
+        self.assertEqual(
+            _history_bounds(FeedType.TAKER_FLOW, NOW_NS),
+            (daily_boundary - 2 * _DAY_NS, daily_boundary - _DAY_NS - _MILLISECOND_NS),
+        )
+        self.assertEqual(
+            _history_bounds(FeedType.BASIS, NOW_NS),
+            (daily_boundary - 2 * _DAY_NS, daily_boundary - _MILLISECOND_NS),
+        )
+        self.assertEqual(
+            _history_bounds(FeedType.OPEN_INTEREST, NOW_NS),
+            (daily_boundary - _DAY_NS, daily_boundary),
+        )
+
+    def test_reference_acceptance_batches_preserve_every_product_and_isolate_basis(self):
+        batches = reference_acceptance_batches(self.scope.references)
+        flattened = tuple(item for batch in batches for item in batch)
+        self.assertEqual({item.identity for item in flattened}, {item.identity for item in self.scope.references})
+        self.assertEqual(len(flattened), len(self.scope.references))
+        self.assertTrue(all(1 <= len(batch) <= 12 for batch in batches))
+        isolated = [
+            batch for batch in batches
+            if batch[0].venue == "BINANCE" and batch[0].requirement.feed is FeedType.BASIS
+        ]
+        self.assertEqual(len(isolated), 5)
+        self.assertTrue(all(len(batch) == 1 for batch in isolated))
+
+    def test_acceptance_transport_timeout_keeps_provider_deadline_bounded(self):
+        self.assertEqual(acceptance_transport_timeout_seconds(60.0), 75.0)
+        self.assertEqual(acceptance_transport_timeout_seconds(5.0), 20.0)
+        with self.assertRaises(ValueError):
+            acceptance_transport_timeout_seconds(60.1)
+
+    def test_reference_evidence_accepts_zero_decimal_but_rejects_blank_unit(self):
+        product = next(item for item in self.scope.references if item.requirement.feed.value == "FUNDING_RATE")
+        field = SimpleNamespace(
+            name="funding_rate",
+            unit="DIMENSIONLESS_RATE",
+            value=SimpleNamespace(source_text="0", coefficient="0", scale=0),
+        )
+        observation = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            observed_at_ns=NOW_NS,
+            fields=[field],
+        )
+        data = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            received_at_ns=NOW_NS,
+            coverage=SimpleNamespace(complete_left=True, complete_right=True, truncated=False, terminal_reason="TEST"),
+            lineage=[SimpleNamespace(provider="TEST", provider_endpoint="TEST", capability_name="test", source_role="REFERENCE")],
+            observations=[observation],
+        )
+        item = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            status="OK",
+            problem=None,
+            data=data,
+        )
+        self.assertEqual(len(reference_evidence(product, item, observed_at_ns=NOW_NS)), 64)
+        field.unit = ""
+        with self.assertRaisesRegex(ValueError, "unit"):
+            reference_evidence(product, item, observed_at_ns=NOW_NS)
+
+    def test_reference_request_preserves_declared_consumer_grade(self):
+        product = next(
+            item for item in self.scope.references
+            if item.requirement.feed is FeedType.FUNDING_RATE
+        )
+        alpha_requirement = replace(
+            product.requirement,
+            consumer_grade=ConsumerGrade.ALPHA,
+        )
+        request = reference_request_for_requirement(alpha_requirement, now_ns=NOW_NS)
+        self.assertEqual(request.consumer_grade, Grade.ALPHA)
+
+    def test_execution_mark_index_request_is_one_complete_snapshot(self):
+        requirement = next(
+            item.requirement
+            for item in self.scope.references
+            if item.requirement.feed is FeedType.MARK_INDEX_PRICE
+        )
+        execution_requirement = replace(
+            requirement,
+            consumer_grade=ConsumerGrade.EXECUTION,
+        )
+        request = reference_request_for_requirement(
+            execution_requirement,
+            now_ns=NOW_NS,
+        )
+        self.assertEqual(request.consumer_grade, Grade.EXECUTION)
+        self.assertEqual((request.limit, request.page_size, request.max_pages), (1, 1, 1))
+        self.assertTrue(request.require_full_coverage)
+
+    def test_reference_quality_uses_provider_observation_not_local_receive_time(self):
+        product = next(
+            item for item in self.scope.references
+            if item.requirement.feed is FeedType.FUNDING_RATE
+        )
+        freshness_ms = product.sdk_requirement.max_freshness_ms
+        self.assertIsNotNone(freshness_ms)
+        field = SimpleNamespace(
+            name="funding_rate",
+            unit="DIMENSIONLESS_RATE",
+            value=SimpleNamespace(source_text="0", coefficient="0", scale=0),
+        )
+        observation = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            observed_at_ns=NOW_NS - int(freshness_ms) * _MILLISECOND_NS,
+            fields=[field],
+        )
+        data = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            received_at_ns=NOW_NS,
+            coverage=SimpleNamespace(
+                complete_left=True,
+                complete_right=True,
+                truncated=False,
+                terminal_reason="TEST",
+            ),
+            lineage=[SimpleNamespace(
+                provider="TEST",
+                provider_endpoint="TEST",
+                capability_name="test",
+                source_role="REFERENCE",
+            )],
+            observations=[observation],
+        )
+        item = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            status="OK",
+            problem=None,
+            data=data,
+        )
+        self.assertEqual(
+            reference_quality(product, item, observed_at_ns=NOW_NS)["source_age_ms"],
+            freshness_ms,
+        )
+        observation.observed_at_ns -= _MILLISECOND_NS
+        with self.assertRaisesRegex(ValueError, "governed freshness"):
+            reference_evidence(product, item, observed_at_ns=NOW_NS)
+
+    def test_three_day_manifest_freshness_is_a_valid_public_reference_contract(self):
+        request = ReferenceRequirement(
+            instrument_uid="fixture",
+            product=ReferenceProduct.LONG_SHORT_RATIO,
+            consumer_grade=Grade.RESEARCH,
+            source_policy_id="crypto_liquid_v2",
+            interval="1d",
+            start_time_ns=NOW_NS - 86_400_000_000_000,
+            end_time_ns=NOW_NS,
+            long_short_kind="GLOBAL_ACCOUNT",
+            max_freshness_ms=259_200_000,
+        )
+        self.assertEqual(request.max_freshness_ms, 259_200_000)
+
+    def test_book_validator_requires_verified_generation_and_allows_zero_delta_quantity(self):
+        level = SimpleNamespace(
+            price=SimpleNamespace(source_text="1", coefficient="1", scale=0),
+            quantity=SimpleNamespace(source_text="0", coefficient="0", scale=0),
+            quantity_unit=SimpleNamespace(value="CONTRACT"),
+        )
+        delta = SimpleNamespace(
+            native_sequence_start="1",
+            native_sequence_end="2",
+            snapshot_sequence="1",
+            sequence_verified=True,
+            book_generation=1,
+            updates=[level],
+        )
+        product = next(item for item in self.scope.books if item.feed.value == "BOOK_DELTA")
+        _validate_payload(product, SimpleNamespace(payload=delta))
+        delta.sequence_verified = False
+        with self.assertRaisesRegex(ValueError, "verified"):
+            _validate_payload(product, SimpleNamespace(payload=delta))
+
+    def test_native_basis_receipt_retries_one_typed_public_cooldown_only(self):
+        product = next(
+            item for item in self.scope.references
+            if item.venue == "BINANCE" and item.requirement.feed is FeedType.BASIS
+        )
+        cooldown = SimpleNamespace(
+            partial=True,
+            success_count=0,
+            error_count=1,
+            results=(SimpleNamespace(
+                status="SOURCE_UNAVAILABLE",
+                problem=SimpleNamespace(
+                    code="SOURCE_UNAVAILABLE",
+                    retryable=True,
+                    retry_after_ms=500,
+                ),
+                data=None,
+            ),),
+        )
+        terminal = SimpleNamespace(
+            partial=False,
+            success_count=1,
+            error_count=0,
+            results=(SimpleNamespace(status="OK", problem=None, data=object()),),
+        )
+
+        class Client:
+            def __init__(self):
+                self.calls = 0
+
+            async def reference_batch(self, requirements, *, require_all):
+                self.calls += 1
+                self.assert_requirements = tuple(requirements)
+                self.assert_require_all = require_all
+                return cooldown if self.calls == 1 else terminal
+
+        client = Client()
+        sleeps = []
+
+        async def sleep(seconds):
+            sleeps.append(seconds)
+
+        response, attempts, deferred_ms = asyncio.run(_reference_batch_until_terminal(
+            client,
+            (product,),
+            deadline_monotonic=2.0,
+            clock=lambda: 0.0,
+            sleep=sleep,
+        ))
+        self.assertIs(response, terminal)
+        self.assertEqual(client.calls, 2)
+        self.assertFalse(client.assert_require_all)
+        self.assertEqual(client.assert_requirements, (product.sdk_requirement,))
+        self.assertEqual(attempts, 2)
+        self.assertEqual(deferred_ms, 500)
+        self.assertEqual(sleeps, [0.5])
+
+    def test_native_basis_receipt_fails_closed_when_cooldown_does_not_fit(self):
+        product = next(
+            item for item in self.scope.references
+            if item.venue == "BINANCE" and item.requirement.feed is FeedType.BASIS
+        )
+        response = SimpleNamespace(
+            partial=True,
+            success_count=0,
+            error_count=1,
+            results=(SimpleNamespace(
+                status="SOURCE_UNAVAILABLE",
+                problem=SimpleNamespace(
+                    code="SOURCE_UNAVAILABLE",
+                    retryable=True,
+                    retry_after_ms=500,
+                ),
+                data=None,
+            ),),
+        )
+
+        class Client:
+            async def reference_batch(self, _requirements, *, require_all):
+                self.assert_require_all = require_all
+                return response
+
+        with self.assertRaisesRegex(AssertionError, "cooldown exceeds"):
+            asyncio.run(_reference_batch_until_terminal(
+                Client(),
+                (product,),
+                deadline_monotonic=0.6,
+                clock=lambda: 0.0,
+                sleep=lambda _seconds: self.fail("deadline rejection must not sleep"),
+            ))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -43,7 +43,9 @@ from qdl_sdk.models import (
     TradeIdentityKind,
     TradePayload,
     WarmupResponse,
+    WarmupSpecification,
 )
+from qdl_sdk.reference import ReferenceBatchRequest, ReferenceBatchResponse
 
 
 class RequirementModel(ClosedModel):
@@ -54,12 +56,15 @@ class RequirementModel(ClosedModel):
     interval: str | None = Field(default=None, max_length=20)
     warmup_limit: int = Field(default=0, ge=0, le=10_000)
     max_freshness_ms: int | None = Field(default=None, gt=0, le=86_400_000)
+    event_recency_policy: StalePolicy | None = None
+    max_session_liveness_ms: int | None = Field(default=None, gt=0, le=86_400_000)
     require_full_coverage: bool = True
     require_final_bars: bool = True
     stale_policy: StalePolicy = StalePolicy.BLOCK
     gap_policy: GapPolicy = GapPolicy.BLOCK
     recovery: RecoveryPolicy = RecoveryPolicy.SNAPSHOT_AND_REPLAY
     bar_revision_policy: BarRevisionPolicy = BarRevisionPolicy.LATEST
+    warmup: WarmupSpecification | None = None
 
 
 class BatchRequirementModel(ClosedModel):

@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import yaml
@@ -34,7 +35,15 @@ from qdl.domain.instrument import (
     ProductType,
 )
 from qdl.domain.decimal import CanonicalDecimal
-from qdl.query import ConsumerGrade, DataRequirement
+from qdl.query import (
+    AccessPurpose,
+    ConsumerGrade,
+    DataRequirement,
+    InstrumentQuery,
+    QueryServiceError,
+    StalePolicy,
+    V2QueryService,
+)
 from qdl.projection.stable import (
     InMemoryStableProjectionTarget,
     ProjectionCacheMismatch,
@@ -47,7 +56,11 @@ from qdl.projection.stable import (
 from qdl.raw.capture import bind_capture_context, capture_exact_frame
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
 from qdl.runtime.stable_catalog import StableSourceCatalog
-from qdl.runtime.stable import StableRuntimeConfig
+from qdl.runtime.stable import (
+    StableRuntimeConfig,
+    stable_grpc_server_credentials,
+    stable_uvicorn_tls,
+)
 from qdl.runtime.stable_ingest import StableHttpCanonicalSink, install_stable_canonical_ingest
 from qdl.runtime.stable_projector import (
     LocalStableCanonicalSink,
@@ -59,9 +72,11 @@ from qdl.runtime.stable_source import (
     StableConsumerCursorIssuer,
     StableSpoolQueryBackend,
 )
+from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import DurableStreamGateway
 from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
 from qdl.transport.kafka_projector import KafkaProjectorRecord
+from qdl.warmup import WarmupSpecification, WarmupTimeRange
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -220,8 +235,18 @@ def _broker_records(binding, raw, event, *, raw_offset=0, canonical_offset=0):
 
 def _append(spool, catalog, event):
     binding = catalog.binding_for_envelope(event)
+    return _append_unvalidated(spool, binding, event)
+
+
+def _append_unvalidated(spool, binding, event):
+    """Persist a controlled legacy-row fixture without catalog admission.
+
+    Production ingestion always resolves the envelope through the catalog. This
+    helper exists solely to model old retained rows whose lineage was valid at
+    the time they were written but has since been retired.
+    """
     durable = DurableEvent(
-        stream=catalog.canonical_stream,
+        stream=binding.canonical_stream,
         partition_key=binding.partition_key,
         event_id=bytes(event.event_id),
         payload=event.SerializeToString(deterministic=True),
@@ -246,14 +271,44 @@ def _requirement(binding, *, grade=ConsumerGrade.ALPHA, warmup=1):
 
 
 class StableCatalogContractTests(unittest.TestCase):
+    def test_catalog_from_mapping_matches_strict_file_loader_without_io(self):
+        payload = yaml.safe_load(CATALOG_PATH.read_text())
+        from_mapping = StableSourceCatalog.from_mapping(payload)
+        from_file = StableSourceCatalog.load(CATALOG_PATH)
+        self.assertEqual(from_mapping.instruments, from_file.instruments)
+        self.assertEqual(from_mapping.bindings, from_file.bindings)
+        payload["bindings"][0]["unknown"] = "not-allowed"
+        with self.assertRaisesRegex(ValueError, "incomplete or unknown"):
+            StableSourceCatalog.from_mapping(payload)
+
     def test_catalog_covers_equal_source_baseline_with_deterministic_identity(self):
         catalog = StableSourceCatalog.load(CATALOG_PATH)
-        self.assertEqual(len(catalog.bindings), 16)
+        # The fixed non-crypto capability plane has 10 rows. Each of the five
+        # liquid Binance USD-M and five OKX Swap instruments contributes TRADE,
+        # QUOTE and every provider-native BAR interval. C3.6 adds the declared
+        # 18 physical L2 books as 36 snapshot/delta logical bindings.
+        from qdl.adapters.intervals import (
+            BINANCE_USDM_NATIVE_INTERVALS,
+            OKX_NATIVE_INTERVALS,
+        )
+        baseline = (
+            10
+            + 5 * (2 + len(BINANCE_USDM_NATIVE_INTERVALS))
+            + 5 * (2 + len(OKX_NATIVE_INTERVALS))
+        )
+        l2_bindings = [
+            item for item in catalog.bindings
+            if item.feed.value in {"BOOK_SNAPSHOT", "BOOK_DELTA"}
+        ]
+        self.assertEqual(len(l2_bindings), 36)
+        self.assertEqual(len(catalog.bindings), baseline + len(l2_bindings))
         self.assertEqual(
             {(item.instrument.identity.venue, item.feed.value) for item in catalog.bindings},
             {
                 ("BINANCE", "TRADE"), ("BINANCE", "QUOTE"), ("BINANCE", "BAR"),
+                ("BINANCE", "BOOK_SNAPSHOT"), ("BINANCE", "BOOK_DELTA"),
                 ("OKX", "TRADE"), ("OKX", "QUOTE"), ("OKX", "BAR"),
+                ("OKX", "BOOK_SNAPSHOT"), ("OKX", "BOOK_DELTA"),
                 ("HNX", "TRADE"), ("HNX", "BAR"),
                 ("HOSE", "TRADE"), ("HOSE", "BAR"),
             },
@@ -282,6 +337,41 @@ class StableCatalogContractTests(unittest.TestCase):
         event.raw_capture_id = b""
         with self.assertRaisesRegex(ValueError, "provenance is incomplete"):
             catalog.binding_for_envelope(event)
+
+    def test_catalog_accepts_only_declared_historical_instrument_revision(self):
+        catalog = StableSourceCatalog.load(CATALOG_PATH)
+        binding = next(
+            item for item in catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-trade"
+        )
+        self.assertEqual(binding.instrument.metadata_revision, 2)
+        self.assertEqual(binding.historical_metadata_revisions, (1,))
+        current = _stable_event(
+            catalog, "binance_usdm_trade.json", binding.binding_id
+        )
+        self.assertIs(catalog.binding_for_envelope(current), binding)
+        historical = market_data_pb2.EventEnvelope()
+        historical.CopyFrom(current)
+        historical.instrument_revision = 1
+        self.assertIs(catalog.binding_for_envelope(historical), binding)
+        future = market_data_pb2.EventEnvelope()
+        future.CopyFrom(current)
+        future.instrument_revision = 3
+        with self.assertRaisesRegex(ValueError, "identity/lineage"):
+            catalog.binding_for_envelope(future)
+
+    def test_catalog_rejects_implicit_or_current_historical_revision(self):
+        payload = yaml.safe_load(CATALOG_PATH.read_text())
+        btc = next(
+            item for item in payload["instruments"]
+            if item["instrument_id"] == "BINANCE.USDM.PERPETUAL.BTC-USDT"
+        )
+        btc["historical_metadata_revisions"] = [2]
+        with self.assertRaisesRegex(ValueError, "historical instrument revisions"):
+            StableSourceCatalog.from_mapping(payload)
+        btc["historical_metadata_revisions"] = ["1"]
+        with self.assertRaisesRegex(ValueError, "historical instrument revisions"):
+            StableSourceCatalog.from_mapping(payload)
 
     def test_continuous_future_is_explicit_and_dated_future_still_requires_expiry(self):
         identity = InstrumentIdentity.create(
@@ -349,10 +439,278 @@ class StableQueryContractTests(unittest.TestCase):
                 item = backend.latest(_requirement(binding))
                 self.assertIsNotNone(item)
                 self.assertEqual(item.payload.get("quantity_unit") or item.payload.get("volume_unit"), unit)
+                self.assertEqual(item.observed_at_ns, observed)
+                self.assertEqual(item.received_at_ns, event.received_at_ns)
+                self.assertEqual(item.source.provider, event.provider)
+                self.assertEqual(item.source.source_id, event.source_id)
+                self.assertGreaterEqual(item.quality.freshness_ms, 0)
                 self.assertEqual(item.contract.contract_version, "2.0.0")
                 expected_state = "MARKET_CLOSED" if binding.instrument.identity.venue == "HNX" else "LIVE"
                 self.assertEqual(item.quality.state, expected_state)
                 self.assertEqual(item.quality.execution_eligible, expected_state == "LIVE")
+
+    def test_materialized_bar_history_data_as_of_is_the_closed_boundary(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        event = _stable_event(
+            self.catalog, "binance_usdm_rest_bar.json", binding.binding_id
+        )
+        _append(self.spool, self.catalog, event)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: event.bar.close_time_ns + 1_000_000,
+        )
+        history = backend.history(_requirement(binding))
+        self.assertIsNotNone(history)
+        self.assertEqual(history.data_as_of_ns, event.bar.close_time_ns)
+
+    def test_late_bar_backfill_keeps_market_order_and_fences_max_offset(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        newer = _stable_event(
+            self.catalog, "binance_usdm_rest_bar.json", binding.binding_id
+        )
+        newer.event_id = hashlib.sha256(b"phase103-newer-bar").digest()[:16]
+        newer.raw_capture_id = hashlib.sha256(b"phase103-newer-raw").digest()[:16]
+
+        older = market_data_pb2.EventEnvelope()
+        older.CopyFrom(newer)
+        interval_ns = 60_000_000_000
+        older.event_id = hashlib.sha256(b"phase103-older-bar").digest()[:16]
+        older.raw_capture_id = hashlib.sha256(b"phase103-older-raw").digest()[:16]
+        older.bar.open_time_ns -= interval_ns
+        older.bar.close_time_ns -= interval_ns
+        older.source_event_time_ns -= interval_ns
+        older.received_at_ns -= interval_ns
+        older.normalized_at_ns -= interval_ns
+        older.published_at_ns -= interval_ns
+        older.source_sequence = "phase103-late-history"
+        older.partition_sequence += 1
+        older.correlation_id = "phase103-late-history"
+
+        # A real provider history bootstrap may reach durable storage after a
+        # newer live BAR. Append order must fence replay, not reorder market time.
+        self.assertEqual(_append(self.spool, self.catalog, newer).cursor.offset, 1)
+        self.assertEqual(_append(self.spool, self.catalog, older).cursor.offset, 2)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: newer.bar.close_time_ns + 1_000_000,
+        )
+
+        history = backend.history(_requirement(binding, warmup=2))
+        self.assertIsNotNone(history)
+        self.assertEqual(
+            [item.payload["open_time_ns"] for item in history.items],
+            [older.bar.open_time_ns, newer.bar.open_time_ns],
+        )
+        self.assertEqual(history.watermark_offset, 2)
+        self.assertEqual(history.data_as_of_ns, newer.bar.close_time_ns)
+        self.assertEqual(
+            backend.latest(_requirement(binding)).payload["open_time_ns"],
+            newer.bar.open_time_ns,
+        )
+
+    def test_row_warmup_selects_current_market_tail_after_late_backfill(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        template = _stable_event(
+            self.catalog, "binance_usdm_rest_bar.json", binding.binding_id
+        )
+        minute_ns = 60 * 1_000_000_000
+
+        def event_at(index: int):
+            event = type(template)()
+            event.CopyFrom(template)
+            event.event_id = hashlib.sha256(
+                f"phase-b-market-tail-{index}".encode()
+            ).digest()[:16]
+            event.raw_capture_id = hashlib.sha256(
+                f"phase-b-market-tail-raw-{index}".encode()
+            ).digest()[:16]
+            event.bar.open_time_ns = template.bar.open_time_ns + index * minute_ns
+            event.bar.close_time_ns = template.bar.close_time_ns + index * minute_ns
+            event.source_event_time_ns = event.bar.close_time_ns
+            event.received_at_ns = event.bar.close_time_ns + 1
+            event.normalized_at_ns = event.received_at_ns + 1
+            event.published_at_ns = event.received_at_ns + 2
+            event.source_sequence = f"phase-b-market-tail-{index}"
+            event.partition_sequence = index + 1
+            event.correlation_id = f"phase-b-market-tail-{index}"
+            return event
+
+        # Live rows may arrive first. A later bounded provider repair is valid
+        # market history even though its durable logical offsets are newer.
+        for index in range(6, 11):
+            _append(self.spool, self.catalog, event_at(index))
+        for index in range(0, 6):
+            event = event_at(index)
+            if index < 2:
+                event.adapter_version = "binance-rest/2.0.0"
+                _append_unvalidated(self.spool, binding, event)
+            else:
+                _append(self.spool, self.catalog, event)
+        for index in range(11, 13):
+            _append(self.spool, self.catalog, event_at(index))
+
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="b" * 64,
+            clock_ns=lambda: event_at(12).bar.close_time_ns + 1,
+        )
+        requirement = _requirement(binding, warmup=5)
+        history = backend.history(requirement)
+        self.assertIsNotNone(history)
+        self.assertEqual(history.coverage.value, "FULL")
+        expected_opens = [event_at(index).bar.open_time_ns for index in range(8, 13)]
+        self.assertEqual(
+            [item.payload["open_time_ns"] for item in history.items], expected_opens
+        )
+        self.assertEqual(
+            [
+                market_data_pb2.EventEnvelope.FromString(item.event.payload).bar.open_time_ns
+                for item in backend.stored_events(requirement)
+            ],
+            expected_opens,
+        )
+        self.assertFalse(backend.latest(requirement).quality.gap_open)
+
+        with tempfile.TemporaryDirectory() as directory:
+            gap_spool = SQLiteDurableSpool(SpoolConfig(
+                path=Path(directory) / "market-tail-gap.sqlite3",
+                min_free_disk_bytes=0,
+            ))
+            try:
+                for index in (6, 7, 9, 10, 11):
+                    _append(gap_spool, self.catalog, event_at(index))
+                gapped = StableSpoolQueryBackend(
+                    gap_spool,
+                    self.catalog,
+                    schema_digest="c" * 64,
+                    clock_ns=lambda: event_at(11).bar.close_time_ns + 1,
+                ).history(requirement)
+                self.assertIsNotNone(gapped)
+                self.assertEqual(gapped.coverage.value, "PARTIAL")
+            finally:
+                gap_spool.close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            invalid_spool = SQLiteDurableSpool(SpoolConfig(
+                path=Path(directory) / "market-tail-lineage.sqlite3",
+                min_free_disk_bytes=0,
+            ))
+            try:
+                for index in range(8, 13):
+                    event = event_at(index)
+                    if index == 12:
+                        event.adapter_version = "binance-rest/2.0.0"
+                        _append_unvalidated(invalid_spool, binding, event)
+                    else:
+                        _append(invalid_spool, self.catalog, event)
+                invalid = StableSpoolQueryBackend(
+                    invalid_spool,
+                    self.catalog,
+                    schema_digest="d" * 64,
+                    clock_ns=lambda: event_at(12).bar.close_time_ns + 1,
+                )
+                with self.assertRaisesRegex(ValueError, "identity/lineage"):
+                    invalid.history(requirement)
+            finally:
+                invalid_spool.close()
+
+    def test_vn_time_range_accepts_lunch_break_but_rejects_missing_session_bar(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "dnse-vn30f1m-bar-1m"
+        )
+        start_ns = int(
+            datetime(2026, 8, 24, 4, 28, tzinfo=timezone.utc).timestamp()
+            * 1_000_000_000
+        )
+        afternoon_ns = int(
+            datetime(2026, 8, 24, 6, 0, tzinfo=timezone.utc).timestamp()
+            * 1_000_000_000
+        )
+        end_ns = afternoon_ns + 60_000_000_000
+
+        def event_at(open_ns, index):
+            event = market_data_pb2.EventEnvelope()
+            event.CopyFrom(_stable_event(
+                self.catalog, "dnse_derivative_bar.json", binding.binding_id
+            ))
+            event.event_id = hashlib.sha256(f"vn-session-{index}".encode()).digest()[:16]
+            event.raw_capture_id = hashlib.sha256(
+                f"vn-raw-{index}".encode()
+            ).digest()[:16]
+            event.bar.open_time_ns = open_ns
+            event.bar.close_time_ns = open_ns + 60_000_000_000 - 1_000_000
+            event.source_event_time_ns = event.bar.close_time_ns
+            event.received_at_ns = event.bar.close_time_ns + 1_000_000
+            event.normalized_at_ns = event.received_at_ns + 1
+            event.published_at_ns = event.received_at_ns + 2
+            event.source_sequence = str(index)
+            event.partition_sequence = index
+            event.correlation_id = f"vn-session-{index}"
+            return event
+
+        for index, open_ns in enumerate(
+            (start_ns, start_ns + 60_000_000_000, afternoon_ns), start=1
+        ):
+            _append(self.spool, self.catalog, event_at(open_ns, index))
+        requirement = DataRequirement(
+            instrument_uid=binding.instrument.instrument_uid,
+            feed=binding.feed,
+            interval=binding.interval,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id=binding.source_policy_id,
+            warmup=WarmupSpecification(
+                time_range=WarmupTimeRange(start_ns, end_ns)
+            ),
+        )
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: end_ns + 1_000_000,
+        )
+        complete = backend.history(requirement)
+        self.assertEqual(complete.coverage.value, "FULL")
+        self.assertEqual(len(complete.items), 3)
+        self.assertEqual(backend.open_gaps(), ())
+
+        with tempfile.TemporaryDirectory() as directory:
+            incomplete_spool = SQLiteDurableSpool(SpoolConfig(
+                path=Path(directory) / "incomplete.sqlite3",
+                min_free_disk_bytes=0,
+            ))
+            try:
+                _append(incomplete_spool, self.catalog, event_at(start_ns, 1))
+                _append(incomplete_spool, self.catalog, event_at(afternoon_ns, 3))
+                incomplete = StableSpoolQueryBackend(
+                    incomplete_spool,
+                    self.catalog,
+                    schema_digest="a" * 64,
+                    clock_ns=lambda: end_ns + 1_000_000,
+                )
+                result = incomplete.history(requirement)
+                self.assertEqual(result.coverage.value, "PARTIAL")
+                self.assertEqual(len(incomplete.open_gaps()), 1)
+            finally:
+                incomplete_spool.close()
 
     def test_query_reads_are_bounded_by_feed_and_requested_history(self):
         trade = next(
@@ -517,6 +875,175 @@ class StableQueryContractTests(unittest.TestCase):
             )
 
 
+class StableSessionLivenessQualityTests(unittest.TestCase):
+    """Deterministic quiet-feed evidence; no provider connection is opened."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.catalog = StableSourceCatalog.load(CATALOG_PATH)
+        self.spool = SQLiteDurableSpool(SpoolConfig(
+            path=Path(self.temp.name) / "stable.sqlite3",
+            max_records=100,
+            max_payload_bytes=2 * 1024 * 1024,
+            max_storage_bytes=8 * 1024 * 1024,
+            min_free_disk_bytes=0,
+        ))
+        self.binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-trade"
+        )
+        self.event = _stable_event(
+            self.catalog, "binance_usdm_trade.json", self.binding.binding_id
+        )
+        self.event.config_revision = 7
+        _append(self.spool, self.catalog, self.event)
+        self.now_ns = self.event.source_event_time_ns + 5_000_000_000
+        self.root = Path(self.temp.name) / "session-liveness"
+
+    def tearDown(self):
+        self.spool.close()
+        self.temp.cleanup()
+
+    def _requirement(self, *, policy=StalePolicy.OBSERVE):
+        return DataRequirement(
+            instrument_uid=self.binding.instrument.instrument_uid,
+            feed=self.binding.feed,
+            interval=self.binding.interval,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id=self.binding.source_policy_id,
+            max_freshness_ms=3_000,
+            event_recency_policy=policy,
+            max_session_liveness_ms=45_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+
+    def _write_session(
+        self,
+        *,
+        state="LIVE",
+        generation=None,
+        revision=7,
+        age_ms=1,
+    ):
+        directory = self.root / "binance-usdm"
+        directory.mkdir(parents=True, exist_ok=True)
+        transport_at_ns = self.now_ns - age_ms * 1_000_000
+        (directory / "trade-lane.json").write_text(
+            json.dumps({
+                "schema": "qdl.provider-session-liveness.v1",
+                "source_session_id": self.event.source_session_id,
+                "connection_generation": (
+                    self.event.connection_generation
+                    if generation is None
+                    else generation
+                ),
+                "state": state,
+                "last_transport_at_ns": transport_at_ns,
+                "updated_at_ns": transport_at_ns,
+                "config_revision": revision,
+            }),
+            encoding="utf-8",
+        )
+
+    def _backend(self):
+        return StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="e" * 64,
+            config_revision=7,
+            session_liveness_root=str(self.root),
+            clock_ns=lambda: self.now_ns,
+        )
+
+    def test_quiet_but_connected_trade_is_visible_and_non_executable(self):
+        self._write_session()
+        requirement = self._requirement()
+        backend = self._backend()
+        item = backend.latest(requirement)
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertEqual(item.quality.state, "LIVE")
+        self.assertGreater(item.quality.freshness_ms, 3_000)
+        self.assertEqual(item.quality.event_recency_state, "STALE")
+        self.assertEqual(item.quality.provider_session_state, "LIVE")
+        self.assertEqual(item.quality.provider_session_liveness_ms, 1)
+        self.assertFalse(item.quality.execution_eligible)
+        self.assertIn("LAST_EVENT_STALE", item.quality.flags)
+
+        service = V2QueryService(
+            instruments=InstrumentQuery(self.catalog.instrument_registry()),
+            backend=backend,
+            entitlements=self.catalog.entitlements(),
+            clock_ns=lambda: self.now_ns,
+        )
+        result = service.snapshot(
+            requirement,
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertFalse(result.item.quality.execution_eligible)
+
+    def test_disconnected_expired_and_reconnected_session_evidence_fail_closed(self):
+        requirement = self._requirement()
+        cases = (
+            ("DISCONNECTED", None, 7, 1, "DISCONNECTED"),
+            ("LIVE", None, 7, 45_001, "STALE"),
+            ("LIVE", None, 6, 1, "UNKNOWN"),
+            ("LIVE", 2, 7, 1, "UNKNOWN"),
+        )
+        for state, generation, revision, age_ms, expected in cases:
+            with self.subTest(
+                state=state,
+                generation=generation,
+                revision=revision,
+                age_ms=age_ms,
+            ):
+                self._write_session(
+                    state=state,
+                    generation=generation,
+                    revision=revision,
+                    age_ms=age_ms,
+                )
+                item = self._backend().latest(requirement)
+                self.assertIsNotNone(item)
+                assert item is not None
+                self.assertEqual(item.quality.state, "STALE")
+                self.assertEqual(item.quality.provider_session_state, expected)
+        self._write_session()
+        raw = self.root / "binance-usdm" / "trade-lane.json"
+        raw.write_text("{malformed", encoding="utf-8")
+        status = StableSessionLivenessReader(self.root).status(
+            venue="BINANCE",
+            market="USDM",
+            source_session_id=self.event.source_session_id,
+            connection_generation=self.event.connection_generation,
+            config_revision=7,
+            now_ns=self.now_ns,
+        )
+        self.assertEqual(status.state, "UNKNOWN")
+        self.assertEqual(status.flags, ("SOURCE_SESSION_MALFORMED",))
+
+    def test_block_policy_remains_strict_with_a_live_session(self):
+        self._write_session()
+        requirement = self._requirement(policy=StalePolicy.BLOCK)
+        backend = self._backend()
+        item = backend.latest(requirement)
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertEqual(item.quality.event_recency_state, "STALE")
+        self.assertEqual(item.quality.provider_session_state, "LIVE")
+        self.assertEqual(item.quality.state, "STALE")
+        service = V2QueryService(
+            instruments=InstrumentQuery(self.catalog.instrument_registry()),
+            backend=backend,
+            entitlements=self.catalog.entitlements(),
+            clock_ns=lambda: self.now_ns,
+        )
+        with self.assertRaises(QueryServiceError) as raised:
+            service.snapshot(requirement, purpose=AccessPurpose.INTERNAL_EXECUTION)
+        self.assertEqual(raised.exception.problem.code.value, "DATA_STALE")
+
+
 class StableCursorScopeValidatorTests(unittest.TestCase):
     def setUp(self):
         self.catalog = StableSourceCatalog.load(CATALOG_PATH)
@@ -566,6 +1093,77 @@ class StableCursorScopeValidatorTests(unittest.TestCase):
             )
 
 
+class StableProjectionAllowlistTests(unittest.TestCase):
+    namespace = "qdl:test:phaseb:stable:v2"
+
+    def target(self):
+        # _command is pure validation/serialization; avoid a Redis dependency.
+        target = object.__new__(RedisStableProjectionTarget)
+        target._namespace = self.namespace
+        target._cache_id = "ab" * 16
+        return target
+
+    def record(
+        self,
+        key: str,
+        *,
+        publications: tuple[tuple[str, bytes], ...] = (),
+    ) -> StableProjectionRecord:
+        return StableProjectionRecord(
+            partition_key="phase-b/allowlist/partition",
+            offset=1,
+            event_id_hex="cd" * 16,
+            shard_id="phase-b-allowlist",
+            lease_epoch=1,
+            items=(StableProjectionItem(key, b"payload"),),
+            publications=publications,
+        )
+
+    def test_every_catalog_legacy_bar_interval_is_admitted(self):
+        catalog = StableSourceCatalog.load(CATALOG_PATH)
+        bindings = tuple(
+            binding for binding in catalog.bindings
+            if binding.v1_compatibility == "BINANCE_BAR_GENERIC"
+        )
+        self.assertTrue(bindings)
+        self.assertEqual(
+            {binding.interval[-1] for binding in bindings if binding.interval},
+            {"m", "h", "d", "w"},
+        )
+        target = self.target()
+        for binding in bindings:
+            with self.subTest(binding=binding.binding_id):
+                current = f"kline:{binding.interval}:{binding.instrument.native_symbol}"
+                last = f"kline:last:{binding.interval}:{binding.instrument.native_symbol}"
+                target._command(self.record(current))
+                target._command(self.record(last))
+                target._command(self.record(
+                    current,
+                    publications=((
+                        f"stream:kline:{binding.interval}:{binding.instrument.native_symbol}",
+                        b"payload",
+                    ),),
+                ))
+
+    def test_undeclared_suffix_and_unscoped_key_or_channel_remain_rejected(self):
+        target = self.target()
+        for key in ("kline:1M:BTCUSDT", "kline:1w:BTCUSDT:extra", "foreign:key"):
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, "escapes its allowlist"):
+                    target._command(self.record(key))
+        for channel in (
+            "stream:kline:1M:BTCUSDT",
+            "stream:kline:1w:BTCUSDT:extra",
+            "foreign:channel",
+        ):
+            with self.subTest(channel=channel):
+                with self.assertRaisesRegex(ValueError, "escapes its allowlist"):
+                    target._command(self.record(
+                        "kline:1m:BTCUSDT",
+                        publications=((channel, b"payload"),),
+                    ))
+
+
 class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -595,6 +1193,74 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             sink=LocalStableCanonicalSink(self.gateway, self.spool),
             projector=StableCompatibilityProjector(self.catalog), target=target,
             max_pending_records=10, max_pending_bytes=1024 * 1024,
+        )
+
+    def _native_backfill_overlap(self):
+        binding, raw, event = _stable_pair(
+            self.catalog,
+            "binance_usdm_rest_bar.json",
+            "binance-usdm-btcusdt-bar-1m",
+        )
+        raw_topic, canonical_topic, raw_record, original_record = _broker_records(
+            binding, raw, event
+        )
+        native = type(event)()
+        native.CopyFrom(event)
+        native.bar.origin = common_pb2.BAR_ORIGIN_VENUE_NATIVE
+        native.canonical_payload_hash = hashlib.sha256(
+            native.bar.SerializeToString(deterministic=True)
+        ).digest()
+        native_record = KafkaProjectorRecord(
+            topic=canonical_topic,
+            partition=0,
+            offset=0,
+            key=binding.partition_key,
+            event_id=bytes(native.event_id),
+            payload=native.SerializeToString(deterministic=True),
+            accepted_at_ns=original_record.accepted_at_ns,
+        )
+        backfill = type(native)()
+        backfill.CopyFrom(native)
+        backfill.bar.origin = common_pb2.BAR_ORIGIN_BACKFILLED
+        backfill.bar.close.mantissa += 1
+        backfill.bar.close.source_text = str(
+            CanonicalDecimal(
+                backfill.bar.close.mantissa,
+                backfill.bar.close.scale,
+                backfill.bar.close.source_text,
+            ).as_decimal()
+        )
+        backfill.canonical_payload_hash = hashlib.sha256(
+            backfill.bar.SerializeToString(deterministic=True)
+        ).digest()
+        return (
+            binding,
+            raw_topic,
+            canonical_topic,
+            raw_record,
+            native,
+            native_record,
+            backfill,
+            original_record.accepted_at_ns,
+        )
+
+    @staticmethod
+    def _canonical_record(
+        *,
+        topic: str,
+        key: str,
+        envelope: market_data_pb2.EventEnvelope,
+        offset: int,
+        accepted_at_ns: int,
+    ) -> KafkaProjectorRecord:
+        return KafkaProjectorRecord(
+            topic=topic,
+            partition=0,
+            offset=offset,
+            key=key,
+            event_id=bytes(envelope.event_id),
+            payload=envelope.SerializeToString(deterministic=True),
+            accepted_at_ns=accepted_at_ns,
         )
 
     async def test_supervisor_recreates_poisoned_generation_with_bounded_backoff(self):
@@ -1030,6 +1696,166 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 0))
         self.assertEqual(engine.stats.canonical_committed, 1)
 
+    async def test_native_backfill_recovery_overlap_is_terminalized_once_before_checkpoint(self):
+        (
+            binding,
+            raw_topic,
+            canonical_topic,
+            raw_record,
+            native,
+            native_record,
+            backfill,
+            accepted_at_ns,
+        ) = self._native_backfill_overlap()
+        quarantine_counts_at_checkpoint = []
+        spool = self.spool
+
+        class AuditingBroker(_Broker):
+            def checkpoint(self, record):
+                if record.topic == canonical_topic and record.offset == 1:
+                    quarantine_counts_at_checkpoint.append(
+                        len(spool.quarantine_records())
+                    )
+                super().checkpoint(record)
+
+        broker = AuditingBroker()
+        target = InMemoryStableProjectionTarget()
+        engine = self.engine(broker, target, raw_topic, canonical_topic)
+        await engine.accept_many((raw_record, native_record))
+        latest_before = dict(target.latest)
+        publications_before = list(target.publications)
+        candidate_record = self._canonical_record(
+            topic=canonical_topic,
+            key=binding.partition_key,
+            envelope=backfill,
+            offset=1,
+            accepted_at_ns=accepted_at_ns + 1,
+        )
+
+        await engine.accept(candidate_record)
+
+        self.assertEqual(quarantine_counts_at_checkpoint, [1])
+        self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 1))
+        self.assertEqual(target.latest, latest_before)
+        self.assertEqual(target.publications, publications_before)
+        retained = self.spool.find_event(
+            stream=self.catalog.canonical_stream,
+            event_id=bytes(native.event_id),
+        )
+        self.assertIsNotNone(retained)
+        retained_envelope = market_data_pb2.EventEnvelope.FromString(
+            retained.event.payload
+        )
+        self.assertEqual(
+            retained_envelope.bar.origin, common_pb2.BAR_ORIGIN_VENUE_NATIVE
+        )
+        quarantine = self.spool.quarantine_records()
+        self.assertEqual(len(quarantine), 1)
+        self.assertEqual(
+            quarantine[0]["reason_code"], "RECOVERY_BACKFILL_OVERLAP_CONFLICT"
+        )
+
+        replay_broker = _Broker()
+        replay_target = InMemoryStableProjectionTarget()
+        replay = self.engine(
+            replay_broker, replay_target, raw_topic, canonical_topic
+        )
+        await replay.accept(candidate_record)
+        self.assertEqual(replay_broker.checkpoints, [(canonical_topic, 0, 1)])
+        self.assertEqual(replay_target.publications, [])
+        self.assertEqual(len(self.spool.quarantine_records()), 1)
+
+    async def test_native_backfill_recovery_overlap_rejects_every_nonmatching_boundary(self):
+        (
+            binding,
+            raw_topic,
+            canonical_topic,
+            raw_record,
+            _native,
+            native_record,
+            backfill,
+            accepted_at_ns,
+        ) = self._native_backfill_overlap()
+        initial = self.engine(
+            _Broker(), InMemoryStableProjectionTarget(), raw_topic, canonical_topic
+        )
+        await initial.accept_many((raw_record, native_record))
+
+        def hashed_copy():
+            candidate = type(backfill)()
+            candidate.CopyFrom(backfill)
+            return candidate
+
+        def rehash(candidate):
+            candidate.canonical_payload_hash = hashlib.sha256(
+                candidate.bar.SerializeToString(deterministic=True)
+            ).digest()
+
+        cases = []
+        native_to_native = hashed_copy()
+        native_to_native.bar.origin = common_pb2.BAR_ORIGIN_VENUE_NATIVE
+        rehash(native_to_native)
+        cases.append((
+            "native_to_native", native_to_native, binding.partition_key, RuntimeError
+        ))
+
+        reconciled = hashed_copy()
+        reconciled.bar.origin = common_pb2.BAR_ORIGIN_RECONCILED
+        rehash(reconciled)
+        cases.append(("reconciled", reconciled, binding.partition_key, RuntimeError))
+
+        revised = hashed_copy()
+        revised.bar.revision = 1
+        rehash(revised)
+        cases.append(("revised", revised, binding.partition_key, RuntimeError))
+
+        superseded = hashed_copy()
+        superseded.bar.supersedes_event_id = b"r" * 16
+        rehash(superseded)
+        cases.append(("supersedes", superseded, binding.partition_key, RuntimeError))
+
+        changed_sequence = hashed_copy()
+        changed_sequence.source_sequence = "unexpected-recovery-sequence"
+        cases.append((
+            "source_sequence", changed_sequence, binding.partition_key, RuntimeError
+        ))
+
+        missing_lineage = hashed_copy()
+        missing_lineage.ClearField("raw_capture_id")
+        cases.append(("missing_lineage", missing_lineage, binding.partition_key, ValueError))
+
+        invalid_hash = hashed_copy()
+        invalid_hash.bar.close.mantissa += 1
+        invalid_hash.bar.close.source_text = str(
+            CanonicalDecimal(
+                invalid_hash.bar.close.mantissa,
+                invalid_hash.bar.close.scale,
+                invalid_hash.bar.close.source_text,
+            ).as_decimal()
+        )
+        cases.append(("invalid_hash", invalid_hash, binding.partition_key, RuntimeError))
+
+        cross_binding = hashed_copy()
+        cases.append(("cross_binding", cross_binding, "wrong-binding", ValueError))
+
+        for name, candidate, key, expected_error in cases:
+            with self.subTest(name=name):
+                broker = _Broker()
+                engine = self.engine(
+                    broker, InMemoryStableProjectionTarget(), raw_topic, canonical_topic
+                )
+                record = self._canonical_record(
+                    topic=canonical_topic,
+                    key=key,
+                    envelope=candidate,
+                    offset=1,
+                    accepted_at_ns=accepted_at_ns + 1,
+                )
+                with self.assertRaises(expected_error):
+                    await engine.accept(record)
+                self.assertEqual(broker.checkpoints, [])
+                self.assertEqual(self.spool.quarantine_records(), [])
+
     async def test_late_historical_bar_repairs_cache_without_latest_regression(self):
         binding = next(
             item
@@ -1273,6 +2099,22 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             first = await sink.publish(durable)
             second = await sink.publish(durable)
             self.assertEqual(first.cursor, second.cursor)
+            historical_envelope = market_data_pb2.EventEnvelope()
+            historical_envelope.CopyFrom(event)
+            historical_envelope.instrument_revision = 1
+            historical_envelope.event_id = hashlib.sha256(
+                bytes(event.event_id) + b":declared-historical-revision"
+            ).digest()[:16]
+            historical = DurableEvent(
+                stream=self.catalog.canonical_stream,
+                partition_key=binding.partition_key,
+                event_id=bytes(historical_envelope.event_id),
+                payload=historical_envelope.SerializeToString(deterministic=True),
+                accepted_at_ns=canonical_record.accepted_at_ns,
+                headers=durable.headers,
+            )
+            historical_stored = await sink.publish(historical)
+            self.assertNotEqual(historical_stored.cursor, first.cursor)
             tampered = DurableEvent(
                 stream=durable.stream,
                 partition_key=durable.partition_key,
@@ -1287,7 +2129,8 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
             with self.assertRaisesRegex(
-                RuntimeError, "no active stable stream gateway"
+                RuntimeError,
+                "http_status=422 detail=Error parsing message with type",
             ):
                 await sink.publish(tampered)
             rejected = await client.post(
@@ -1295,6 +2138,106 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 headers={"X-QDL-Stable-Signature": "sha256=bad"},
             )
             self.assertEqual(rejected.status_code, 401)
+        finally:
+            await sink.close()
+            await client.aclose()
+
+    async def test_signed_http_sink_chunks_by_exact_request_bytes(self):
+        durable = tuple(
+            DurableEvent(
+                stream=self.catalog.canonical_stream,
+                partition_key="stable-byte-chunk-test",
+                event_id=bytes([index]) * 16,
+                payload=(f"canonical-{index}".encode() * 128),
+                accepted_at_ns=1,
+                headers={
+                    "raw_stream": "md.raw.byte-chunk-test",
+                    "raw_event_id": bytes([index + 10]).hex() * 16,
+                    "raw_provider_envelope": "a" * 2_000,
+                },
+            )
+            for index in range(1, 4)
+        )
+        stored = tuple(self.spool.append(event) for event in durable)
+        expected = {
+            base64.b64encode(event.payload).decode(): (event, append)
+            for event, append in zip(durable, stored, strict=True)
+        }
+        observed_bodies = []
+        observed_event_ids = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            observed_bodies.append(request.content)
+            payload = json.loads(request.content)
+            received = [expected[item["canonical"]] for item in payload["events"]]
+            observed_event_ids.extend(event.event_id for event, _ in received)
+            return httpx.Response(200, json={
+                "schema": "qdl.v2.stable-canonical-ingest-result.v1",
+                "results": [
+                    {
+                        "event_id": event.event_id.hex(),
+                        "offset": append.cursor.offset,
+                    }
+                    for event, append in received
+                ],
+            })
+
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://localhost"
+        )
+        sink = StableHttpCanonicalSink(
+            ("http://localhost",), b"s" * 32, self.spool,
+            max_request_bytes=5_000, client=client,
+        )
+        try:
+            result = await sink.publish_many(durable)
+            self.assertEqual(
+                tuple(item.cursor for item in result),
+                tuple(item.cursor for item in stored),
+            )
+            self.assertEqual(
+                tuple(item.event.event_id for item in result),
+                tuple(event.event_id for event in durable),
+            )
+            self.assertGreater(len(observed_bodies), 1)
+            self.assertTrue(all(len(body) <= 5_000 for body in observed_bodies))
+            self.assertEqual(
+                sum(len(json.loads(body)["events"]) for body in observed_bodies), 3
+            )
+            self.assertEqual(
+                observed_event_ids, [event.event_id for event in durable]
+            )
+            with self.assertRaisesRegex(
+                ValueError, "event exceeds request byte bound"
+            ):
+                await StableHttpCanonicalSink(
+                    ("http://localhost",), b"s" * 32, self.spool,
+                    max_request_bytes=256, client=client,
+                ).publish(durable[0])
+
+            async def reject(request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    413,
+                    json={"detail": "x" * 256},
+                    request=request,
+                )
+
+            rejected_client = httpx.AsyncClient(
+                transport=httpx.MockTransport(reject), base_url="http://localhost"
+            )
+            rejected_sink = StableHttpCanonicalSink(
+                ("http://localhost",), b"s" * 32, self.spool,
+                max_request_bytes=5_000, client=rejected_client,
+            )
+            try:
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "http_status=413 detail=<redacted>",
+                ):
+                    await rejected_sink.publish(durable[0])
+            finally:
+                await rejected_sink.close()
+                await rejected_client.aclose()
         finally:
             await sink.close()
             await client.aclose()
@@ -1321,11 +2264,28 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
     def environment(self, root):
         for name in ("ca.crt", "workload.crt", "workload.key"):
             (root / name).write_text("test", encoding="utf-8")
+        runtime = root / "runtime"
+        runtime.mkdir()
+        (runtime / "authority.json").write_text(json.dumps({
+            "schema": "qdl.authority-record.v1",
+            "slice_id": "qdl-v2-stable-multivenue-test",
+            "revision": 1,
+            "mode": "RUST_SHADOW",
+            "candidate_image_digest": "sha256:" + "a" * 64,
+            "capability_manifest_digest": "b" * 64,
+            "contract_digest": "c" * 64,
+            "partition_plan_digest": "d" * 64,
+            "public_write_allowed": False,
+            "legacy_write_allowed": False,
+            "approved_by": "stable-runtime-boundary-test",
+            "effective_at_ns": 1,
+        }), encoding="utf-8")
         return {
             "QDL_ENVIRONMENT": "paper",
             "QDL_CONFIG_REVISION": "phase-b-test-1",
             "QDL_STABLE_AUTHORITY_MODE": "RUST_SHADOW",
             "QDL_STABLE_AUTHORITY_REVISION": "1",
+            "QDL_STABLE_RUNTIME_DIR": str(runtime),
             "QDL_STABLE_SCHEMA_DIGEST": "e" * 64,
             "QDL_STABLE_STATE_DIR": str(root / "state"),
             "QDL_STABLE_DURABLE_STATE_DIR": str(root / "durable"),
@@ -1369,15 +2329,88 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             root = Path(temp)
             values = self.environment(root)
             config = StableRuntimeConfig.from_environment("query_v2", values)
+            self.assertEqual(config.request_deadline_seconds, 10.0)
+            self.assertEqual(
+                config.session_liveness_dir,
+                root / "state" / "session-liveness",
+            )
+            values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "90"
+            self.assertEqual(
+                StableRuntimeConfig.from_environment("query_v2", values).request_deadline_seconds,
+                90.0,
+            )
+            values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "121"
+            with self.assertRaisesRegex(ValueError, "request deadline"):
+                StableRuntimeConfig.from_environment("query_v2", values)
+            values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "90"
             manifest = config.public_manifest()
             self.assertEqual(manifest["contract_version"], "2.0.0")
             self.assertEqual(manifest["authority"], "RUST_SHADOW")
             self.assertFalse(manifest["writes_current_v1_redis"])
             with self.assertRaisesRegex(ValueError, "Kafka/stream dependencies"):
                 StableRuntimeConfig.from_environment("projector_v2", values)
-            values["QDL_STABLE_AUTHORITY_MODE"] = "PRIMARY"
-            with self.assertRaisesRegex(ValueError, "must remain RUST_SHADOW"):
+            values.update({
+                "QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS": "kafka1:9092",
+                "QDL_STABLE_KAFKA_CLIENT_ID": "canonical-only-projector",
+                "QDL_STABLE_KAFKA_CANONICAL_TOPIC": "md.canonical.v2",
+                "QDL_STABLE_KAFKA_CERT_ROOT": str(root),
+                "QDL_STABLE_STREAM_INGEST_URLS_JSON": '["https://stream_v2_active:8200"]',
+            })
+            projector = StableRuntimeConfig.from_environment("projector_v2", values)
+            self.assertEqual(projector.kafka_raw_topics, ())
+            values.update({
+                "QDL_STABLE_MAX_PENDING_RECORDS": "2048",
+                "QDL_STABLE_MAX_PENDING_BYTES": "33554432",
+            })
+            bounded_projector = StableRuntimeConfig.from_environment(
+                "projector_v2", values
+            )
+            self.assertEqual(bounded_projector.max_pending_records, 2048)
+            self.assertEqual(bounded_projector.max_pending_bytes, 33_554_432)
+            authority_path = Path(values["QDL_STABLE_RUNTIME_DIR"]) / "authority.json"
+            primary = json.loads(authority_path.read_text(encoding="utf-8"))
+            primary.update({"mode": "RUST_PRIMARY", "revision": 2})
+            authority_path.write_text(json.dumps(primary), encoding="utf-8")
+            values.update({
+                "QDL_STABLE_AUTHORITY_MODE": "RUST_PRIMARY",
+                "QDL_STABLE_AUTHORITY_REVISION": "2",
+            })
+            primary_config = StableRuntimeConfig.from_environment("query_v2", values)
+            self.assertEqual(primary_config.authority_mode, "RUST_PRIMARY")
+            self.assertEqual(primary_config.authority_revision, 2)
+            values["QDL_STABLE_AUTHORITY_MODE"] = "RUST_SHADOW"
+            with self.assertRaisesRegex(ValueError, "differs from generated record"):
                 StableRuntimeConfig.from_environment("query_v2", values)
+
+    def test_provider_admission_url_is_limited_to_private_rust_core(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            values = self.environment(root)
+            values["QDL_STABLE_PROVIDER_ADMISSION_URL"] = "http://rust_core:8300"
+            config = StableRuntimeConfig.from_environment("query_v2", values)
+            self.assertEqual(config.provider_admission_url, "http://rust_core:8300")
+            values["QDL_STABLE_PROVIDER_ADMISSION_URL"] = "http://provider.example:8300"
+            with self.assertRaisesRegex(ValueError, "private rust_core"):
+                StableRuntimeConfig.from_environment("query_v2", values)
+
+    def test_query_client_trust_may_be_additive_without_changing_server_trust(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            values = self.environment(root)
+            client_ca = root / "external-client-ca-bundle.crt"
+            client_ca.write_text("test", encoding="utf-8")
+            values["QDL_STABLE_TLS_CLIENT_CA_FILE"] = str(client_ca)
+            config = StableRuntimeConfig.from_environment("query_v2", values)
+            self.assertEqual(config.tls_ca_path, root / "ca.crt")
+            self.assertEqual(config.tls_client_authority_path, client_ca)
+            self.assertEqual(
+                stable_uvicorn_tls(config)["ssl_ca_certs"], str(client_ca)
+            )
+            with patch("qdl.runtime.stable.grpc.ssl_server_credentials") as factory:
+                stable_grpc_server_credentials(config)
+            self.assertEqual(
+                factory.call_args.kwargs["root_certificates"], client_ca.read_bytes()
+            )
 
 
 @unittest.skipUnless(os.getenv("QDL_PHASEB_REDIS_URL"), "isolated Redis is not configured")

@@ -8,6 +8,15 @@ pub mod qdl {
         }
     }
 
+    pub mod demand {
+        pub mod v1 {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../generated/rust/qdl/demand/v1/qdl.demand.v1.rs"
+            ));
+        }
+    }
+
     pub mod instrument {
         pub mod v1 {
             include!(concat!(
@@ -61,6 +70,11 @@ pub mod qdl {
 mod tests {
     use super::qdl::common::v1::{
         decimal_value, AggressorSide, DecimalValue, QuantityUnit, SourceRole,
+    };
+    use super::qdl::demand::v1::{
+        universe_selector, warmup_specification, DataRequirement as DemandRequirement,
+        DemandPurpose, ExplicitSymbols, FeedType as DemandFeedType, IntervalSourcePolicy,
+        UniverseSelector, WarmupSpecification,
     };
     use super::qdl::marketdata::v2::{event_envelope, EventEnvelope, Trade, TradeIdentityKind};
     use prost::Message;
@@ -133,5 +147,70 @@ mod tests {
         let decoded = EventEnvelope::decode(golden.as_slice()).expect("decode golden envelope");
         assert_eq!(decoded, expected);
         assert_eq!(decoded.source_sequence, "9876543210123456789");
+    }
+
+    fn expected_demand_requirement() -> DemandRequirement {
+        DemandRequirement {
+            consumer_id: "alpha.grid".into(),
+            purpose: DemandPurpose::Alpha as i32,
+            universe: Some(UniverseSelector {
+                selector_id: "binance-usdm-major".into(),
+                venue: "BINANCE".into(),
+                market: "USDM".into(),
+                product_type: "PERPETUAL".into(),
+                universe_ref: "".into(),
+                selector: Some(universe_selector::Selector::ExplicitSymbols(
+                    ExplicitSymbols {
+                        native_symbols: vec!["BTCUSDT".into(), "ETHUSDT".into()],
+                    },
+                )),
+                expected_universe_sha256: vec![],
+            }),
+            feed: DemandFeedType::Trade as i32,
+            interval: "".into(),
+            warmup_limit: 0,
+            max_freshness_ms: 15_000,
+            priority: 10,
+            ttl_seconds: 180,
+            require_final_bars: false,
+            require_live: true,
+            execution_grade: false,
+            source_policy_id: "crypto_primary_v2".into(),
+            depth_levels: 0,
+            configuration_revision: 7,
+            warmup: None,
+            basis_contract_type: String::new(),
+            basis_series: String::new(),
+        }
+    }
+
+    #[test]
+    fn python_and_rust_share_exact_universal_demand_bytes() {
+        let golden = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../contracts/golden/demand/universal-demand.bin"
+        ));
+        let expected = expected_demand_requirement();
+        assert_eq!(expected.encode_to_vec(), golden);
+        let decoded =
+            DemandRequirement::decode(golden.as_slice()).expect("decode universal demand golden");
+        assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn typed_warmup_requirement_roundtrips_in_rust() {
+        let mut expected = expected_demand_requirement();
+        expected.feed = DemandFeedType::Bar as i32;
+        expected.interval = "15m".into();
+        expected.warmup = Some(WarmupSpecification {
+            interval_source_policy: IntervalSourcePolicy::NativeOrExactResample as i32,
+            max_cache_age_ms: 60_000,
+            deadline_ms: 20_000,
+            horizon: Some(warmup_specification::Horizon::Rows(700)),
+        });
+        let encoded = expected.encode_to_vec();
+        let decoded =
+            DemandRequirement::decode(encoded.as_slice()).expect("decode typed warmup requirement");
+        assert_eq!(decoded, expected);
     }
 }

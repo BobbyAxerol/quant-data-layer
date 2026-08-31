@@ -7,6 +7,7 @@ from pathlib import Path
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
+    AuthorityPromotionScope,
     StableAcquisitionPlan,
     write_production_core_bundle,
 )
@@ -19,6 +20,7 @@ def main() -> int:
     parser.add_argument("--source-catalog", type=Path, required=True)
     parser.add_argument("--acquisition-plan", type=Path, required=True)
     parser.add_argument("--raw-authority", type=Path, required=True)
+    parser.add_argument("--promotion-scope", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--partition-plan-epoch", type=int, default=1)
     args = parser.parse_args()
@@ -27,11 +29,15 @@ def main() -> int:
     acquisition = StableAcquisitionPlan.load(
         args.acquisition_plan, catalog=catalog
     )
+    promotion_scope = AuthorityPromotionScope.load(
+        args.promotion_scope, catalog=catalog
+    )
     authority = json.loads(args.raw_authority.read_text(encoding="utf-8"))
     digests = write_production_core_bundle(
         args.output_dir,
         catalog=catalog,
         acquisition=acquisition,
+        promotion_scope=promotion_scope,
         raw_authority=authority,
         partition_plan_epoch=args.partition_plan_epoch,
     )
@@ -39,6 +45,9 @@ def main() -> int:
         "schema": "qdl.v2.production-core-build-result.v1",
         "status": "PASS",
         "output_dir": str(args.output_dir.resolve()),
+        "promotion_scope_revision": promotion_scope.revision,
+        "promotion_scope_digest": promotion_scope.digest(),
+        "promotion_binding_count": len(promotion_scope.binding_ids),
         "digests": digests,
     }, sort_keys=True))
     return 0

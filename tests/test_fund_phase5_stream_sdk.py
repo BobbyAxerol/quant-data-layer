@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import time
 import unittest
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import grpc
 
+from qdl.common.v1 import common_pb2
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
     AssetClass,
@@ -32,6 +34,7 @@ from qdl.query import (
     MemoryMarketDataBackend,
     QualityMetadata,
     SourceMetadata,
+    StalePolicy,
     V2QueryService,
 )
 from qdl.query.v2 import query_pb2
@@ -60,8 +63,8 @@ from qdl_sdk import (
     StalePolicy as SdkStalePolicy,
     StaticBearerCredential,
 )
-from qdl_sdk.cursor import FileCursorStore
-from qdl_sdk.errors import CursorExpiredError, DataLayerError, SlowConsumerError
+from qdl_sdk.cursor import CursorCheckpoint, FileCursorStore
+from qdl_sdk.errors import ContinuityError, CursorExpiredError, DataLayerError, SlowConsumerError
 from qdl_sdk.models import ControlEvent, StreamEvent
 from qdl_sdk.v1_facade import V1CompatibilityFacade
 from qdl.consumer import ConsumerManifestLoader
@@ -69,6 +72,8 @@ from tests.phase7_support import make_identity, make_token, manifest_mapping
 
 
 STREAM = "md.canonical.v2.bar"
+BOOK_STREAM = "md.canonical.v2.book_snapshot"
+QUOTE_STREAM = "md.canonical.v2.quote"
 
 
 def instrument() -> InstrumentRecord:
@@ -135,6 +140,106 @@ def durable(record: InstrumentRecord, index: int, *, revision: int = 0) -> Durab
         STREAM,
         f"{record.instrument_uid}/bar/BINANCE_DIRECT",
         index.to_bytes(16, "big"),
+        message.SerializeToString(),
+        1_000_000_000 + index,
+    )
+
+
+def durable_bar_at(
+    record: InstrumentRecord,
+    index: int,
+    *,
+    source_event_time_ns: int,
+    close_time_ns: int,
+) -> DurableEvent:
+    message = envelope(record, index)
+    message.source_event_time_ns = source_event_time_ns
+    message.received_at_ns = source_event_time_ns
+    message.bar.close_time_ns = close_time_ns
+    return DurableEvent(
+        STREAM,
+        f"{record.instrument_uid}/bar/BINANCE_DIRECT",
+        bytes(message.event_id),
+        message.SerializeToString(),
+        max(1, source_event_time_ns),
+    )
+
+
+def durable_quote(
+    record: InstrumentRecord,
+    index: int,
+    *,
+    source_event_time_ns: int,
+) -> DurableEvent:
+    message = envelope(record, index)
+    message.ClearField("bar")
+    message.schema_name = "qdl.marketdata.quote"
+    message.source_event_time_ns = source_event_time_ns
+    message.received_at_ns = source_event_time_ns
+    message.quote.CopyFrom(market_data_pb2.Quote())
+    return DurableEvent(
+        QUOTE_STREAM,
+        f"{record.instrument_uid}/quote/BINANCE_DIRECT",
+        bytes(message.event_id),
+        message.SerializeToString(),
+        max(1, source_event_time_ns),
+    )
+
+
+def book_envelope(
+    record: InstrumentRecord, index: int, *, snapshot: bool,
+) -> market_data_pb2.EventEnvelope:
+    result = market_data_pb2.EventEnvelope(
+        schema_name="qdl.marketdata.book",
+        schema_major=2,
+        event_id=index.to_bytes(16, "big"),
+        instrument_uid=record.instrument_uid,
+        instrument_id=record.instrument_id,
+        instrument_revision=1,
+        venue="BINANCE",
+        market="USDM",
+        product_type="PERPETUAL",
+        native_symbol="BTCUSDT",
+        provider="BINANCE_DIRECT",
+        source_id="BINANCE_DIRECT",
+        source_role=1,
+        lease_epoch=1,
+        source_event_time_ns=1_000_000_000 + index,
+        received_at_ns=1_000_000_100 + index,
+        normalized_at_ns=1_000_000_200 + index,
+        published_at_ns=1_000_000_300 + index,
+        source_sequence=str(index),
+        partition_sequence=index,
+        normalizer_version="phase5-test",
+        adapter_version="fixture-v1",
+        config_revision=1,
+    )
+    level = market_data_pb2.BookLevel(
+        side=common_pb2.BOOK_SIDE_BID,
+        price=common_pb2.DecimalValue(mantissa=100, scale=0, source_text="100"),
+        quantity=common_pb2.DecimalValue(mantissa=1, scale=0, source_text="1"),
+        quantity_unit=common_pb2.QUANTITY_UNIT_BASE_ASSET,
+    )
+    if snapshot:
+        result.book_snapshot.CopyFrom(market_data_pb2.OrderBookSnapshot(
+            native_sequence=str(index), levels=[level], depth=1,
+            book_generation=1, sequence_verified=True,
+        ))
+    else:
+        result.book_delta.CopyFrom(market_data_pb2.OrderBookDelta(
+            native_sequence_start=str(index), native_sequence_end=str(index),
+            snapshot_sequence="1", updates=[level], book_generation=1,
+            sequence_verified=True,
+        ))
+    return result
+
+
+def durable_book(record: InstrumentRecord, index: int, *, snapshot: bool) -> DurableEvent:
+    message = book_envelope(record, index, snapshot=snapshot)
+    return DurableEvent(
+        BOOK_STREAM,
+        f"{record.instrument_uid}/book_snapshot/BINANCE_DIRECT",
+        bytes(message.event_id),
         message.SerializeToString(),
         1_000_000_000 + index,
     )
@@ -343,6 +448,226 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         await self.gateway.publish(durable(self.record, 2))
         self.assertEqual((await restarted.next_live()).stored.cursor.offset, 2)
         await restarted.close()
+
+    async def test_strict_stream_skips_stale_initial_and_live_records(self):
+        now_ns = 10_000_000_000
+        partition = f"{self.record.instrument_uid}/quote/BINANCE_DIRECT"
+        token = self.handoff.issue(
+            consumer_id=self.consumer_id,
+            snapshot_id="quote-snapshot-0",
+            snapshot_watermark=Cursor(QUOTE_STREAM, partition, 0),
+            ttl_seconds=3600,
+        ).token
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, token),
+            clock_ns=lambda: now_ns,
+        )
+        requirement = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.QUOTE,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            max_freshness_ms=100,
+        )
+        await self.gateway.publish(durable_quote(
+            self.record, 1, source_event_time_ns=now_ns - 1_000_000_000,
+        ))
+        await self.gateway.publish(durable_quote(
+            self.record, 2, source_event_time_ns=now_ns - 1,
+        ))
+        subscription = await self.gateway.open(
+            consumer_id=self.consumer_id,
+            stream=QUOTE_STREAM,
+            partition_key=partition,
+            token=token,
+            accepts=lambda stored: service._matches_requirement(stored, requirement),
+        )
+        try:
+            delivered = []
+            for stored in subscription.initial:
+                matches = subscription.accepts(stored)
+                record = await subscription.record(stored)
+                if matches:
+                    delivered.append(record)
+            self.assertEqual([record.stored.cursor.offset for record in delivered], [2])
+            self.assertEqual(
+                self.handoff.resolve_scope(
+                    token=subscription.token, consumer_id=self.consumer_id,
+                ).watermark_offset,
+                2,
+            )
+
+            await self.gateway.publish(durable_quote(
+                self.record, 3, source_event_time_ns=now_ns - 1_000_000_000,
+            ))
+            await self.gateway.publish(durable_quote(
+                self.record, 4, source_event_time_ns=now_ns - 1,
+            ))
+            live = await asyncio.wait_for(subscription.next_live(), timeout=0.5)
+            self.assertEqual(live.stored.cursor.offset, 4)
+            subscription.mark_delivered()
+        finally:
+            await subscription.close()
+
+    async def test_strict_stream_rechecks_freshness_after_queue_wait(self):
+        clock = {"now_ns": 10_000_000_000}
+        partition = f"{self.record.instrument_uid}/quote/BINANCE_DIRECT"
+        token = self.handoff.issue(
+            consumer_id=self.consumer_id,
+            snapshot_id="quote-snapshot-queue-wait",
+            snapshot_watermark=Cursor(QUOTE_STREAM, partition, 0),
+            ttl_seconds=3600,
+        ).token
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, token),
+            clock_ns=lambda: clock["now_ns"],
+        )
+        requirement = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.QUOTE,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            max_freshness_ms=100,
+        )
+        subscription = await self.gateway.open(
+            consumer_id=self.consumer_id,
+            stream=QUOTE_STREAM,
+            partition_key=partition,
+            token=token,
+            accepts=lambda stored: service._matches_requirement(stored, requirement),
+        )
+        try:
+            await self.gateway.publish(durable_quote(
+                self.record, 1, source_event_time_ns=clock["now_ns"] - 1,
+            ))
+            # The first frame was admitted while fresh but becomes stale before
+            # this subscriber can dequeue it. The cursor must advance over it.
+            clock["now_ns"] += 1_000_000_000
+            await self.gateway.publish(durable_quote(
+                self.record, 2, source_event_time_ns=clock["now_ns"] - 1,
+            ))
+
+            live = await asyncio.wait_for(subscription.next_live(), timeout=0.5)
+            self.assertEqual(live.stored.cursor.offset, 2)
+            self.assertEqual(
+                self.handoff.resolve_scope(
+                    token=subscription.token, consumer_id=self.consumer_id,
+                ).watermark_offset,
+                2,
+            )
+            subscription.mark_delivered()
+        finally:
+            await subscription.close()
+
+    async def test_stream_freshness_uses_bar_close_and_preserves_observe(self):
+        now_ns = 10_000_000_000
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, self.token),
+            clock_ns=lambda: now_ns,
+        )
+        stored = await self.gateway.publish(durable_bar_at(
+            self.record,
+            1,
+            source_event_time_ns=now_ns - 1,
+            close_time_ns=now_ns - 1_000_000_000,
+        ))
+        assert stored is not None
+        strict = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.BAR,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            interval="1m",
+            max_freshness_ms=100,
+        )
+        observed = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.BAR,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            interval="1m",
+            max_freshness_ms=100,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=1_000,
+        )
+        wrong_interval = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.BAR,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            interval="5m",
+            max_freshness_ms=100,
+        )
+        self.assertFalse(service._matches_requirement(stored, strict))
+        self.assertTrue(service._matches_requirement(stored, observed))
+        self.assertFalse(service._matches_requirement(stored, wrong_interval))
+
+    async def test_grpc_filters_interleaved_book_feeds_before_buffering(self):
+        partition = f"{self.record.instrument_uid}/book_snapshot/BINANCE_DIRECT"
+        token = self.handoff.issue(
+            consumer_id=self.consumer_id,
+            snapshot_id="book-snapshot-0",
+            snapshot_watermark=Cursor(BOOK_STREAM, partition, 0),
+            ttl_seconds=3600,
+        ).token
+        manifest_payload = manifest_mapping(
+            consumer_id=self.consumer_id,
+            subject=self.subject,
+            instrument_uid=self.record.instrument_uid,
+            feed="BOOK_SNAPSHOT",
+            interval=None,
+            source_policy_id="alpha_binance_v1",
+        )
+        manifest_payload["spec"]["requirements"][0].update({
+            "require_final_bars": False,
+            "bar_revision_policy": "LATEST",
+        })
+        identity = make_identity(ConsumerManifestLoader.from_mapping(manifest_payload))
+        await self.gateway.publish(durable_book(self.record, 1, snapshot=False))
+        await self.gateway.publish(durable_book(self.record, 2, snapshot=True))
+        server = create_grpc_server(
+            GrpcMarketDataService(
+                gateway=self.gateway,
+                query_service=None,
+                snapshot_loader=SnapshotLoader(self.record, token),
+            ),
+            identity_service=identity,
+        )
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}", allow_insecure_loopback=True,
+            credential_provider=StaticBearerCredential(make_token(self.subject)),
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BOOK_SNAPSHOT, Grade.ALPHA,
+            "alpha_binance_v1", warmup_limit=1,
+        )
+        events = transport.subscribe(
+            requirement, consumer_id=self.consumer_id, cursor_token=token,
+            max_buffer_events=1,
+        ).__aiter__()
+        try:
+            self.assertEqual((await events.__anext__()).code, "REPLAYING")
+            first = await events.__anext__()
+            self.assertEqual(first.logical_offset, 2)
+            self.assertEqual(first.event.WhichOneof("payload"), "book_snapshot")
+            self.assertEqual((await events.__anext__()).code, "LIVE")
+            await self.gateway.publish(durable_book(self.record, 3, snapshot=False))
+            await self.gateway.publish(durable_book(self.record, 4, snapshot=True))
+            second = await events.__anext__()
+            self.assertEqual(second.logical_offset, 4)
+            self.assertEqual(second.event.WhichOneof("payload"), "book_snapshot")
+        finally:
+            await events.aclose()
+            await transport.close()
+            await server.stop(grace=0)
 
     async def test_slow_consumer_is_disconnected_without_durable_loss_or_peer_block(self):
         slow = await self.gateway.open(
@@ -587,6 +912,65 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             await transport.close()
             await server.stop(grace=0)
 
+    async def test_grpc_iterator_close_releases_server_subscription_capacity(self):
+        gateway = DurableStreamGateway(
+            handoff=self.handoff,
+            sink=self.spool,
+            max_subscribers=10,
+            max_buffer_events=2,
+        )
+        server = create_grpc_server(
+            GrpcMarketDataService(
+                gateway=gateway,
+                query_service=None,
+                snapshot_loader=SnapshotLoader(self.record, self.token),
+            ),
+            identity_service=self.identity,
+        )
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}",
+            allow_insecure_loopback=True,
+            credential_provider=self.credential,
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid,
+            Feed.BAR,
+            Grade.ALPHA,
+            "alpha_binance_v1",
+            interval="1m",
+            warmup_limit=1,
+        )
+        streams = []
+        replacement = None
+        try:
+            for _ in range(10):
+                stream = transport.subscribe(
+                    requirement,
+                    consumer_id="alpha-shadow",
+                    cursor_token=self.token,
+                    max_buffer_events=1,
+                ).__aiter__()
+                self.assertEqual((await stream.__anext__()).code, "REPLAYING")
+                streams.append(stream)
+            await streams[0].aclose()
+            await asyncio.sleep(0.05)
+            replacement = transport.subscribe(
+                requirement,
+                consumer_id="alpha-shadow",
+                cursor_token=self.token,
+                max_buffer_events=1,
+            ).__aiter__()
+            self.assertEqual((await replacement.__anext__()).code, "REPLAYING")
+        finally:
+            if replacement is not None:
+                await replacement.aclose()
+            for stream in streams:
+                await stream.aclose()
+            await transport.close()
+            await server.stop(grace=0)
+
     async def test_real_grpc_sdk_handoff_ack_restart_and_bar_revisions(self):
         registry = InstrumentRegistry()
         registry.register(self.record, [])
@@ -694,6 +1078,9 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         with self.assertRaisesRegex(ValueError, "backwards"):
             store.save("a", CursorCheckpoint("older", 6))
+        store.replace("a", CursorCheckpoint("new-snapshot", 2))
+        self.assertEqual(store.load("a"), CursorCheckpoint("new-snapshot", 2))
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
         class Legacy:
             def latest_trade(self, provider, symbol, **kwargs):
@@ -722,16 +1109,101 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         )
         key = client._cursor_key(requirement)
         from qdl_sdk.cursor import CursorCheckpoint
-        store.save(key, CursorCheckpoint("old-token", 2))
+        store.save(key, CursorCheckpoint("old-generation-token", 200))
 
         async with client.warmup_then_stream(requirement) as session:
             event = await session.__anext__()
             session.acknowledge(event)
         self.assertEqual(stream.tokens, ["fresh-token"])
+        self.assertEqual(store.load(key), CursorCheckpoint("token-6", 6))
+        with self.assertRaisesRegex(ValueError, "backwards"):
+            store.save(key, CursorCheckpoint("regression", 5))
         contracts = {item["contract"] for item in telemetry.snapshot()}
         self.assertEqual(
             contracts, {"/v2/market-data/warmup", "grpc:Subscribe"}
         )
+
+    async def test_filtered_durable_offsets_are_strictly_monotonic_not_contiguous(self):
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
+            interval="1m", warmup_limit=1,
+        )
+        stream = ScriptedStreamTransport((
+            (
+                StreamEvent(7, "token-7", envelope(self.record, 7)),
+                StreamEvent(12, "token-12", envelope(self.record, 12)),
+            ),
+        ))
+        store = MemoryCursorStore()
+        client = AsyncDataLayerClient(
+            query_transport=FakeQueryTransport("filtered-token", watermark=5),
+            stream_transport=stream,
+            consumer_id="alpha-shadow",
+            cursor_store=store,
+        )
+
+        async with client.warmup_then_stream(requirement) as session:
+            first = await session.__anext__()
+            second = await session.__anext__()
+            self.assertEqual((first.logical_offset, second.logical_offset), (7, 12))
+            session.acknowledge(first)
+            session.acknowledge(second)
+
+        self.assertEqual(
+            store.load(client._cursor_key(requirement)),
+            CursorCheckpoint("token-12", 12),
+        )
+
+    async def test_filtered_durable_offsets_still_reject_duplicates_or_rewinds(self):
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
+            interval="1m", warmup_limit=1,
+        )
+        stream = ScriptedStreamTransport((
+            (
+                StreamEvent(7, "token-7", envelope(self.record, 7)),
+                StreamEvent(7, "token-7-repeat", envelope(self.record, 7)),
+            ),
+        ))
+        client = AsyncDataLayerClient(
+            query_transport=FakeQueryTransport("filtered-token", watermark=5),
+            stream_transport=stream,
+            consumer_id="alpha-shadow",
+        )
+
+        async with client.warmup_then_stream(requirement) as session:
+            self.assertEqual((await session.__anext__()).logical_offset, 7)
+            with self.assertRaisesRegex(ContinuityError, "non-monotonic"):
+                await session.__anext__()
+
+    async def test_fresh_snapshot_reconnect_before_first_ack_keeps_new_generation(self):
+        store = MemoryCursorStore()
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
+            interval="1m", warmup_limit=1,
+        )
+        query = FakeQueryTransport("fresh-token", watermark=5)
+        stream = ScriptedStreamTransport((
+            (DataLayerError("DEPENDENCY_UNAVAILABLE", "retry", retryable=True),),
+            (StreamEvent(6, "token-6", envelope(self.record, 6)),),
+        ))
+        client = AsyncDataLayerClient(
+            query_transport=query, stream_transport=stream,
+            consumer_id="alpha-shadow", cursor_store=store,
+            max_reconnect_attempts=1,
+        )
+        key = client._cursor_key(requirement)
+        from qdl_sdk.cursor import CursorCheckpoint
+        store.save(key, CursorCheckpoint("old-generation-token", 200))
+
+        async with client.warmup_then_stream(requirement) as session:
+            reconnected = await session.__anext__()
+            self.assertEqual(reconnected.code, "RECONNECTED")
+            event = await session.__anext__()
+            session.acknowledge(event)
+
+        self.assertEqual(stream.tokens, ["fresh-token", "fresh-token"])
+        self.assertEqual(store.load(key), CursorCheckpoint("token-6", 6))
 
     async def test_cursor_expiration_rebuilds_snapshot_and_transient_error_reconnects(self):
         requirement = DataRequirement(
@@ -747,10 +1219,15 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             ),
             (StreamEvent(2, "token-2", envelope(self.record, 2)),),
         ))
+        store = MemoryCursorStore()
         client = AsyncDataLayerClient(
             query_transport=query, stream_transport=stream,
-            consumer_id="alpha-shadow", max_reconnect_attempts=2,
+            consumer_id="alpha-shadow", cursor_store=store,
+            max_reconnect_attempts=2,
         )
+        key = client._cursor_key(requirement)
+        from qdl_sdk.cursor import CursorCheckpoint
+        store.save(key, CursorCheckpoint("old-generation-token", 200))
         async with client.warmup_then_stream(requirement) as session:
             replaced = await session.__anext__()
             self.assertEqual(replaced.code, "SNAPSHOT_REPLACED")
@@ -769,6 +1246,7 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             [iterator.close_calls for iterator in stream.iterators],
             [1, 1, 1],
         )
+        self.assertEqual(store.load(key), CursorCheckpoint("token-1", 1))
         await session.aclose()
         self.assertEqual(
             [iterator.close_calls for iterator in stream.iterators],
@@ -793,8 +1271,13 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
                 "freshness_ms": 86_400_000,
                 "execution_eligible": False,
             }
+            latest = json.loads(json.dumps(payload["data"][0]))
+            latest["observed_at_ns"] += 60_000_000_000
+            latest["payload"]["open_time_ns"] += 60_000_000_000
+            latest["payload"]["close_time_ns"] += 60_000_000_000
             payload["count"] = 2
-            payload["data"] = [old, payload["data"][0]]
+            payload["data_as_of_ns"] = latest["payload"]["close_time_ns"]
+            payload["data"] = [old, latest]
             return payload
 
         query.warmup = historical_context
@@ -909,6 +1392,56 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
                 "alpha_binance_v1",
                 stale_policy="UNKNOWN",
             )
+
+    async def test_signed_legacy_cursor_maps_to_cursor_expired_after_generation_change(self):
+        generation_handoff = GapFreeHandoff(
+            self.spool,
+            SignedHandoffCursorCodec(
+                {"phase5": b"s" * 32},
+                active_key_id="phase5",
+                generation_id="cache-generation-new",
+            ),
+        )
+        generation_gateway = DurableStreamGateway(
+            handoff=generation_handoff,
+            sink=self.spool,
+            max_buffer_events=2,
+        )
+        service = GrpcMarketDataService(
+            gateway=generation_gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, self.token),
+        )
+        server = create_grpc_server(service, identity_service=self.identity)
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}",
+            allow_insecure_loopback=True,
+            credential_provider=self.credential,
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid,
+            Feed.BAR,
+            Grade.ALPHA,
+            "alpha_binance_v1",
+            interval="1m",
+            warmup_limit=1,
+        )
+        events = transport.subscribe(
+            requirement,
+            consumer_id="alpha-shadow",
+            cursor_token=self.token,
+            max_buffer_events=1,
+        ).__aiter__()
+        try:
+            with self.assertRaises(CursorExpiredError) as raised:
+                await events.__anext__()
+            self.assertEqual(raised.exception.code, "CURSOR_EXPIRED")
+            self.assertFalse(raised.exception.retryable)
+        finally:
+            await transport.close()
+            await server.stop(grace=0)
 
     async def test_signed_cursor_scope_mismatch_fails_closed_without_retry(self):
         service = GrpcMarketDataService(

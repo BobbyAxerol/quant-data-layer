@@ -3,6 +3,10 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Mapping
 
+from qdl.adapters.intervals import (
+    canonical_interval_ms,
+    okx_interval_from_channel,
+)
 from qdl.common.v1 import common_pb2
 from qdl.domain.event_id import deterministic_event_id
 from qdl.domain.quantity import quantity_unit_proto
@@ -169,6 +173,28 @@ def canonicalize_binance_usdm_bar(
     _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))
     return envelope
 
+def _okx_candle_frame_row(
+    raw: Mapping[str, Any], context: TradeContext
+) -> tuple[str, list[Any]]:
+    """Resolve an OKX candle frame to its canonical interval and native row.
+
+    The interval is read from the frame's own channel rather than assumed, so
+    the canonical event describes exactly what the provider sent. An
+    unsupported channel fails closed.
+    """
+    argument = raw.get("arg")
+    rows = raw.get("data")
+    if (
+        not isinstance(argument, Mapping)
+        or argument.get("instId") != context.native_symbol
+    ):
+        raise ValueError("OKX frame channel/instrument mismatch")
+    interval = okx_interval_from_channel(str(argument.get("channel") or ""))
+    if not isinstance(rows, list) or len(rows) != 1:
+        raise ValueError("OKX frame requires one data row")
+    return interval, rows[0]
+
+
 def _okx_frame_row(
     raw: Mapping[str, Any], context: TradeContext, *, channel: str
 ) -> tuple[Mapping[str, Any], list[Any]]:
@@ -228,9 +254,10 @@ def canonicalize_okx_bbo(
 def canonicalize_okx_bar(
     raw: Mapping[str, Any], context: TradeContext
 ) -> market_data_pb2.EventEnvelope:
-    _, row = _okx_frame_row(raw, context, channel="candle1m")
+    interval, row = _okx_candle_frame_row(raw, context)
+    interval_ms = canonical_interval_ms(interval)
     if not isinstance(row, list) or len(row) < 9:
-        raise ValueError("OKX candle1m requires the native nine-field row")
+        raise ValueError("OKX candle requires the native nine-field row")
     open_time_ms = int(row[0])
     confirm = str(row[8])
     if confirm not in {"0", "1"}:
@@ -249,9 +276,9 @@ def canonicalize_okx_bar(
     envelope.quality_flags.append(common_pb2.QUALITY_FLAG_FIELD_MISSING)
     unit = _quantity_unit(context)
     bar = market_data_pb2.Bar(
-        interval="1m",
+        interval=interval,
         open_time_ns=open_time_ms * 1_000_000,
-        close_time_ns=(open_time_ms + 60_000 - 1) * 1_000_000,
+        close_time_ns=(open_time_ms + interval_ms - 1) * 1_000_000,
         open=_decimal(row[1]),
         high=_decimal(row[2]),
         low=_decimal(row[3]),

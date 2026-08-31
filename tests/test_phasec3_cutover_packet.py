@@ -14,7 +14,9 @@ DIGEST = "a" * 64
 def packet(stage: str = "CANARY") -> dict:
     pairs = {
         "SHADOW_VALIDATE": ("RUST_SHADOW", "VALIDATING"),
+        "REVALIDATE": ("BLOCKED", "VALIDATING"),
         "CANARY": ("VALIDATING", "RUST_CANARY"),
+        "BLOCK_CANARY": ("RUST_CANARY", "BLOCKED"),
         "PRIMARY": ("RUST_CANARY", "RUST_PRIMARY"),
     }
     expected, new = pairs[stage]
@@ -105,6 +107,23 @@ class AuthorityCutoverPacketTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     AuthorityCutoverPacket.parse(value, now_ns=NOW)
+
+        block = packet("BLOCK_CANARY")
+        block["evidence"] = {
+            "provider_provenance": "UNKNOWN",
+            "semantic_mismatches": 1,
+            "open_gaps": 2,
+            "duplicate_external_effects": 0,
+            "consumer_errors": 3,
+        }
+        self.assertEqual(
+            AuthorityCutoverPacket.parse(block, now_ns=NOW).stage,
+            "BLOCK_CANARY",
+        )
+        self.assertEqual(
+            AuthorityCutoverPacket.parse(packet("REVALIDATE"), now_ns=NOW).stage,
+            "REVALIDATE",
+        )
 
     def test_primary_requires_handoff_and_exact_database_preconditions(self):
         parsed = AuthorityCutoverPacket.parse(packet("PRIMARY"), now_ns=NOW)

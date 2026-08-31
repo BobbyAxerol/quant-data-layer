@@ -14,6 +14,7 @@ COPY generated/rust ./generated/rust
 # Rust unit/parity tests compile against immutable provider and contract oracles.
 COPY contracts/golden ./contracts/golden
 COPY tests/fixtures/phase2 ./tests/fixtures/phase2
+COPY tests/fixtures/phase104 ./tests/fixtures/phase104
 COPY tests/fixtures/phase9 ./tests/fixtures/phase9
 RUN cargo build --release --locked \
     --bin qdl-kafka-smoke \
@@ -49,5 +50,6 @@ COPY --from=builder /src/target/release/qdl-realtime-core /usr/local/bin/qdl-rea
 COPY --from=builder /src/target/release/qdl-production-core /usr/local/bin/qdl-production-core
 COPY --from=builder /src/target/release/qdl-parity-replay /usr/local/bin/qdl-parity-replay
 COPY --from=builder /src/target/release/qdl-venue-core-certify /usr/local/bin/qdl-venue-core-certify
+COPY config/v2/provider-admission-policy-v1.json /opt/qdl/config/v2/provider-admission-policy-v1.json
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/qdl-kafka-smoke"]

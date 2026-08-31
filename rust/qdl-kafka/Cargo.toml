@@ -17,6 +17,8 @@ qdl-core.workspace = true
 qdl-realtime-core = { path = "../qdl-realtime-core", version = "=0.1.0" }
 qdl-venue-core = { path = "../qdl-venue-core", version = "=0.1.0" }
 rdkafka.workspace = true
+reqwest.workspace = true
+ring.workspace = true
 serde.workspace = true
 rustls.workspace = true
 serde_json.workspace = true

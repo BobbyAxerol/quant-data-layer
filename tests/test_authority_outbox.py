@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import unittest
 
 from qdl.control.authority_outbox import (
+    AsyncpgAuthorityOutboxRepository,
     AuthorityOutboxDispatcher,
     BrokerAck,
     ClaimedAuthorityEvent,
@@ -202,7 +204,44 @@ class _Publisher:
         return BrokerAck("qdl.authority.v1", 0, 12)
 
 
+class _AsyncpgPool:
+    def __init__(self, payload=None):
+        self.query = ""
+        self.arguments = ()
+        self.payload = outbox_payload() if payload is None else payload
+
+    async def fetch(self, query, *arguments):
+        self.query = query
+        self.arguments = arguments
+        return [{"event_id": EVENT_ID, "payload": self.payload, "attempts": 3}]
+
+
 class AuthorityOutboxDispatcherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_asyncpg_claim_projects_and_maps_attempts(self):
+        pool = _AsyncpgPool()
+        repository = AsyncpgAuthorityOutboxRepository(pool)
+        claimed = await repository.claim("dispatcher-1", 7)
+        self.assertIn("event_id, payload, attempts", pool.query)
+        self.assertEqual(pool.arguments, ("dispatcher-1", 7))
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(claimed[0].event_id, EVENT_ID)
+        self.assertEqual(claimed[0].attempts, 3)
+
+        text_pool = _AsyncpgPool(json.dumps(outbox_payload()))
+        text_claimed = await AsyncpgAuthorityOutboxRepository(text_pool).claim(
+            "dispatcher-2", 1
+        )
+        self.assertEqual(
+            text_claimed[0].payload["schema"],
+            "qdl.authority-outbox-event.v1",
+        )
+
+        invalid_pool = _AsyncpgPool("[]")
+        with self.assertRaisesRegex(ValueError, "JSON object"):
+            await AsyncpgAuthorityOutboxRepository(invalid_pool).claim(
+                "dispatcher-3", 1
+            )
+
     async def test_ack_completes_and_failure_is_retried_without_false_publish(self):
         repository = _Repository(outbox_payload())
         publisher = _Publisher()

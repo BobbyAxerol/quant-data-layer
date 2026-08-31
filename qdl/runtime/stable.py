@@ -31,6 +31,7 @@ from qdl.runtime.readiness import (
     MeasuredRuntimeReadiness,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_deployment import validate_shared_authority_record
 from qdl.runtime.stable_ingest import (
     StableHttpCanonicalSink,
     install_stable_canonical_ingest,
@@ -61,6 +62,56 @@ from qdl.transport.kafka_projector import (
 logger = logging.getLogger(__name__)
 
 
+def _env_flag(
+    env: Mapping[str, str], name: str, *, default: bool
+) -> bool:
+    """Read a boolean deployment flag, refusing anything ambiguous.
+
+    A misspelled value must not quietly select a default: a flag that governs
+    whether a data product is served has to fail loudly when its value is not
+    understood.
+    """
+    raw = env.get(name)
+    if raw is None or not raw.strip():
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean flag, got {raw!r}")
+
+
+def _load_runtime_authority(env: Mapping[str, str]) -> Mapping[str, object]:
+    """Load the generated authority record and reject env-only authority drift."""
+    runtime_dir = env.get("QDL_STABLE_RUNTIME_DIR", "").strip()
+    if not runtime_dir:
+        raise ValueError("QDL_STABLE_RUNTIME_DIR is required for authority validation")
+    path = Path(runtime_dir) / "authority.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("stable runtime authority record is unreadable") from error
+    if not isinstance(payload, dict):
+        raise ValueError("stable runtime authority record must be an object")
+    validate_shared_authority_record(payload)
+
+    configured_mode = env.get("QDL_STABLE_AUTHORITY_MODE")
+    if configured_mode is not None and configured_mode != payload["mode"]:
+        raise ValueError("stable runtime authority mode differs from generated record")
+    configured_revision = env.get("QDL_STABLE_AUTHORITY_REVISION")
+    if configured_revision is not None:
+        try:
+            revision = int(configured_revision)
+        except ValueError as error:
+            raise ValueError("stable runtime authority revision is invalid") from error
+        if revision != payload["revision"]:
+            raise ValueError(
+                "stable runtime authority revision differs from generated record"
+            )
+    return payload
+
+
 @dataclass(frozen=True, slots=True)
 class StableRuntimeConfig:
     role: str
@@ -88,6 +139,7 @@ class StableRuntimeConfig:
     http_port: int
     grpc_port: int
     max_request_bytes: int
+    request_deadline_seconds: float
     max_concurrent_requests: int
     max_concurrent_rpcs: int
     max_streams: int
@@ -104,12 +156,26 @@ class StableRuntimeConfig:
     stream_ingest_urls: tuple[str, ...] = ()
     max_pending_records: int = 10_000
     max_pending_bytes: int = 256 * 1024 * 1024
+    # Off unless a deployment turns it on. Declaring catalog metadata for an
+    # instrument must never open the pass-through product by itself.
+    pass_through_enabled: bool = False
+    # Reference data is a distinct provider-authentic alpha/research product.
+    # It remains dark until a reviewed stable-runtime config enables it.
+    reference_data_enabled: bool = False
+    # Opt-in only: this is the existing internal Rust core, never a public or
+    # arbitrary provider endpoint.  When absent, V2 preserves its previous
+    # reference adapter construction and does not attempt a coordinator call.
+    provider_admission_url: str | None = None
+    # Query/stream may trust an additive client-CA bundle while their own
+    # client-side trust remains pinned to the server CA. Keeping this optional
+    # preserves existing one-CA deployments.
+    tls_client_ca_path: Path | None = None
 
     def __post_init__(self) -> None:
         if self.role not in {"query_v2", "stream_v2", "projector_v2"}:
             raise ValueError("stable role is invalid")
-        if self.authority_mode != "RUST_SHADOW":
-            raise ValueError("Phase B stable runtime must remain RUST_SHADOW")
+        if self.authority_mode not in {"RUST_SHADOW", "RUST_PRIMARY"}:
+            raise ValueError("stable runtime authority mode is unsupported")
         if not all((
             self.instance_id, self.environment, self.config_revision,
             self.redis_url, self.redis_prefix, self.consumer_group,
@@ -127,19 +193,26 @@ class StableRuntimeConfig:
             raise ValueError("stable source binding catalog is unavailable")
         missing_tls = [
             path for path in (
-                self.tls_ca_path, self.tls_certificate_path, self.tls_private_key_path
+                self.tls_ca_path,
+                self.tls_certificate_path,
+                self.tls_private_key_path,
+                self.tls_client_authority_path,
             ) if not path.is_file()
         ]
         if missing_tls:
             raise ValueError("stable workload TLS files are unavailable")
         if len(self.internal_ingest_secret) < 32:
             raise ValueError("stable internal ingest secret must contain 256 bits")
+        if self.provider_admission_url not in {None, "http://rust_core:8300"}:
+            raise ValueError("stable provider admission URL must be private rust_core")
         if self.active_cursor_key_id not in self.cursor_keys or any(
             len(value) < 32 for value in self.cursor_keys.values()
         ):
             raise ValueError("stable active cursor key is unavailable or weak")
         if not 60 <= self.cursor_ttl_seconds <= 86_400:
             raise ValueError("stable cursor TTL must be 60..86400 seconds")
+        if not 1 <= self.request_deadline_seconds <= 120:
+            raise ValueError("stable request deadline must be 1..120 seconds")
         if min(
             self.http_port, self.grpc_port, self.max_request_bytes,
             self.max_concurrent_requests, self.max_concurrent_rpcs,
@@ -163,14 +236,23 @@ class StableRuntimeConfig:
             if not all((
                 self.kafka_bootstrap_servers, self.kafka_client_id,
                 self.kafka_canonical_topic, self.kafka_cert_root,
-            )) or not self.kafka_raw_topics or not self.stream_ingest_urls:
+            )) or not self.stream_ingest_urls:
                 raise ValueError("stable projector Kafka/stream dependencies are required")
+
+    @property
+    def session_liveness_dir(self) -> Path:
+        """Shared read-only query view of bounded ingestor session state."""
+
+        # QDL_STABLE_STATE_DIR is the mounted runtime root, not its parent.
+        # Native ingestors write ``<state_dir>/session-liveness/<lane>``.
+        return self.state_dir / "session-liveness"
 
     @classmethod
     def from_environment(
         cls, role: str, values: Mapping[str, str] | None = None
     ) -> "StableRuntimeConfig":
         env = os.environ if values is None else values
+        authority = _load_runtime_authority(env)
         cursor_raw = json.loads(env["QDL_STABLE_CURSOR_KEYS_JSON"])
         if not isinstance(cursor_raw, dict) or not cursor_raw:
             raise ValueError("QDL_STABLE_CURSOR_KEYS_JSON must be a non-empty object")
@@ -189,8 +271,8 @@ class StableRuntimeConfig:
             instance_id=instance_id,
             environment=env.get("QDL_ENVIRONMENT", "paper").lower(),
             config_revision=env["QDL_CONFIG_REVISION"],
-            authority_mode=env.get("QDL_STABLE_AUTHORITY_MODE", "RUST_SHADOW"),
-            authority_revision=int(env["QDL_STABLE_AUTHORITY_REVISION"]),
+            authority_mode=str(authority["mode"]),
+            authority_revision=int(authority["revision"]),
             schema_digest=env["QDL_STABLE_SCHEMA_DIGEST"],
             state_dir=state_dir,
             durable_state_dir=Path(env.get(
@@ -214,6 +296,9 @@ class StableRuntimeConfig:
             http_port=int(env.get("QDL_STABLE_HTTP_PORT", "18200")),
             grpc_port=int(env.get("QDL_STABLE_GRPC_PORT", "18210")),
             max_request_bytes=int(env.get("QDL_STABLE_MAX_REQUEST_BYTES", "1048576")),
+            request_deadline_seconds=float(
+                env.get("QDL_STABLE_REQUEST_DEADLINE_SECONDS", "10")
+            ),
             max_concurrent_requests=int(env.get("QDL_STABLE_MAX_CONCURRENT_REQUESTS", "200")),
             max_concurrent_rpcs=int(env.get("QDL_STABLE_MAX_CONCURRENT_RPCS", "200")),
             max_streams=int(env.get("QDL_STABLE_MAX_STREAMS", "1000")),
@@ -233,7 +318,22 @@ class StableRuntimeConfig:
             stream_ingest_urls=tuple(str(value) for value in urls_raw),
             max_pending_records=int(env.get("QDL_STABLE_MAX_PENDING_RECORDS", "10000")),
             max_pending_bytes=int(env.get("QDL_STABLE_MAX_PENDING_BYTES", "268435456")),
+            pass_through_enabled=_env_flag(
+                env, "QDL_STABLE_PASS_THROUGH_ENABLED", default=False
+            ),
+            reference_data_enabled=_env_flag(
+                env, "QDL_STABLE_REFERENCE_DATA_ENABLED", default=False
+            ),
+            provider_admission_url=env.get("QDL_STABLE_PROVIDER_ADMISSION_URL"),
+            tls_client_ca_path=Path(env.get(
+                "QDL_STABLE_TLS_CLIENT_CA_FILE", env["QDL_STABLE_TLS_CA_FILE"]
+            )),
         )
+
+    @property
+    def tls_client_authority_path(self) -> Path:
+        """CA bundle used only when this runtime authenticates mTLS clients."""
+        return self.tls_client_ca_path or self.tls_ca_path
 
     def public_manifest(self) -> dict[str, object]:
         return {
@@ -252,6 +352,7 @@ class StableRuntimeConfig:
             "compatibility_projection": "DEDICATED_REDIS_ONLY",
             "replay_authority": "KAFKA",
             "query_cache_authority": False,
+            "reference_data_enabled": self.reference_data_enabled,
             "transport_security": "MTLS_PLUS_JWT",
         }
 
@@ -277,7 +378,7 @@ def stable_uvicorn_tls(config: StableRuntimeConfig) -> dict[str, object]:
     return {
         "ssl_keyfile": str(config.tls_private_key_path),
         "ssl_certfile": str(config.tls_certificate_path),
-        "ssl_ca_certs": str(config.tls_ca_path),
+        "ssl_ca_certs": str(config.tls_client_authority_path),
         "ssl_cert_reqs": ssl.CERT_REQUIRED,
     }
 
@@ -287,7 +388,7 @@ def stable_grpc_server_credentials(
 ) -> grpc.ServerCredentials:
     return grpc.ssl_server_credentials(
         ((config.tls_private_key_path.read_bytes(), config.tls_certificate_path.read_bytes()),),
-        root_certificates=config.tls_ca_path.read_bytes(),
+        root_certificates=config.tls_client_authority_path.read_bytes(),
         require_client_auth=True,
     )
 
@@ -333,7 +434,9 @@ def build_stable_handoff(
     return GapFreeHandoff(
         spool,
         SignedHandoffCursorCodec(
-            config.cursor_keys, active_key_id=config.active_cursor_key_id
+            config.cursor_keys,
+            active_key_id=config.active_cursor_key_id,
+            generation_id=spool.cache_id,
         ),
         checkpoint_ttl_seconds=config.cursor_ttl_seconds,
     )
@@ -420,6 +523,11 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     service, _backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
+        pass_through_enabled=config.pass_through_enabled,
+        reference_data_enabled=config.reference_data_enabled,
+        provider_admission_url=config.provider_admission_url,
+        provider_admission_secret=config.internal_ingest_secret,
+        session_liveness_root=str(config.session_liveness_dir),
     )
     readiness = stable_readiness(
         config, manifests, spool, quota=identity.quota,
@@ -433,6 +541,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         cursor_issuer=issuer,
         request_bounds=RequestBounds(
             max_request_bytes=config.max_request_bytes,
+            request_deadline_seconds=config.request_deadline_seconds,
             max_concurrent_requests=config.max_concurrent_requests,
         ),
         contract_version="2.0.0", authority="INTERNAL_STABLE",
@@ -507,6 +616,11 @@ def create_stable_stream_runtime(
     query_service, backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
+        pass_through_enabled=config.pass_through_enabled,
+        reference_data_enabled=config.reference_data_enabled,
+        provider_admission_url=config.provider_admission_url,
+        provider_admission_secret=config.internal_ingest_secret,
+        session_liveness_root=str(config.session_liveness_dir),
     )
     grpc_service = GrpcMarketDataService(
         gateway=gateway, query_service=query_service,
@@ -598,6 +712,7 @@ async def serve_stable_projector() -> None:
     )
     sink = StableHttpCanonicalSink(
         config.stream_ingest_urls, config.internal_ingest_secret, spool,
+        max_request_bytes=config.max_request_bytes,
         ssl_context=stable_client_ssl_context(config),
     )
     projector = StableCompatibilityProjector(

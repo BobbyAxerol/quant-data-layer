@@ -24,7 +24,13 @@ def delivery_mode(
         if bar_lifecycle is BarLifecycle.IN_PROGRESS:
             return DeliveryMode.LIFECYCLE_COALESCE
         return DeliveryMode.LOSSLESS
-    if feed is FeedType.FUNDING_RATE:
+    if feed in {
+        FeedType.FUNDING_RATE,
+        FeedType.LONG_SHORT_RATIO,
+        FeedType.TAKER_FLOW,
+        FeedType.BASIS,
+        FeedType.CONTRACT_METADATA,
+    }:
         return DeliveryMode.LOSSLESS
     if feed in {
         FeedType.QUOTE,

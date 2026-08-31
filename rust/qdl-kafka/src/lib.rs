@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
+pub mod phase92_bootstrap;
 pub mod phase92_runtime;
 
 use std::fmt::{Display, Formatter};
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 
@@ -24,6 +26,62 @@ use rdkafka::util::Timeout;
 
 const EVENT_ID_HEADER: &str = "qdl-event-id";
 const RAW_ENVELOPE_HEADER: &str = "qdl-raw-provider-envelope";
+const COOPERATIVE_ASSIGNMENT_STRATEGY: &str = "cooperative-sticky";
+const CONSUMER_GROUP_PROTOCOL: &str = "classic";
+
+// Keep every consumer/producer instance bounded inside its cgroup. Durable Kafka
+// offsets provide backpressure/recovery; unbounded librdkafka local queues do not.
+const KAFKA_QUEUE_MAX_KBYTES: &str = "8192";
+const KAFKA_FETCH_MAX_BYTES: &str = "4194304";
+const KAFKA_MAX_PARTITION_FETCH_BYTES: &str = "1048576";
+const KAFKA_PRODUCER_QUEUE_MAX_MESSAGES: &str = "4096";
+
+fn configure_bounded_client_memory(config: &mut ClientConfig) {
+    config
+        .set("queued.max.messages.kbytes", KAFKA_QUEUE_MAX_KBYTES)
+        .set("fetch.max.bytes", KAFKA_FETCH_MAX_BYTES)
+        .set("max.partition.fetch.bytes", KAFKA_MAX_PARTITION_FETCH_BYTES)
+        .set("queue.buffering.max.kbytes", KAFKA_QUEUE_MAX_KBYTES)
+        .set(
+            "queue.buffering.max.messages",
+            KAFKA_PRODUCER_QUEUE_MAX_MESSAGES,
+        );
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShutdownSignal {
+    Interrupt,
+    Terminate,
+}
+
+impl ShutdownSignal {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Interrupt => "SIGINT",
+            Self::Terminate => "SIGTERM",
+        }
+    }
+}
+
+pub async fn shutdown_signal() -> io::Result<ShutdownSignal> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                result?;
+                Ok(ShutdownSignal::Interrupt)
+            }
+            _ = terminate.recv() => Ok(ShutdownSignal::Terminate),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
+        Ok(ShutdownSignal::Interrupt)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KafkaTlsConfig {
@@ -94,10 +152,37 @@ impl KafkaTransportConfig {
             .set("ssl.endpoint.identification.algorithm", "https")
             .set("socket.timeout.ms", &timeout_ms)
             .set("request.timeout.ms", &timeout_ms);
+        configure_bounded_client_memory(&mut config);
         if let Some(password) = &self.tls.key_password {
             config.set("ssl.key.password", password);
         }
         Ok(config)
+    }
+
+    pub(crate) fn configure_group_consumer(&self, config: &mut ClientConfig) {
+        self.configure_group_consumer_with_offset_reset(config, "earliest");
+    }
+
+    pub(crate) fn configure_group_consumer_fail_closed(&self, config: &mut ClientConfig) {
+        self.configure_group_consumer_with_offset_reset(config, "error");
+    }
+
+    fn configure_group_consumer_with_offset_reset(
+        &self,
+        config: &mut ClientConfig,
+        offset_reset: &str,
+    ) {
+        config
+            .set("group.id", &self.group_id)
+            .set("group.protocol", CONSUMER_GROUP_PROTOCOL)
+            .set(
+                "partition.assignment.strategy",
+                COOPERATIVE_ASSIGNMENT_STRATEGY,
+            )
+            .set("enable.auto.commit", "false")
+            .set("enable.auto.offset.store", "false")
+            .set("auto.offset.reset", offset_reset)
+            .set("isolation.level", "read_committed");
     }
 }
 
@@ -110,6 +195,7 @@ pub enum KafkaTransportError {
     InvalidOffset(i64),
     InvalidUtf8(&'static str),
     Fencing(String),
+    SnapshotTimeout(String),
 }
 
 impl KafkaTransportError {
@@ -126,7 +212,7 @@ impl KafkaTransportError {
             {
                 RetryClass::Capacity
             }
-            Self::Kafka(_) | Self::Delivery(_) => RetryClass::Retryable,
+            Self::Kafka(_) | Self::Delivery(_) | Self::SnapshotTimeout(_) => RetryClass::Retryable,
         }
     }
 }
@@ -141,6 +227,9 @@ impl Display for KafkaTransportError {
             Self::InvalidOffset(offset) => write!(formatter, "invalid Kafka offset: {offset}"),
             Self::InvalidUtf8(field) => write!(formatter, "Kafka {field} is not UTF-8"),
             Self::Fencing(message) => write!(formatter, "Kafka sink fencing rejected: {message}"),
+            Self::SnapshotTimeout(message) => {
+                write!(formatter, "Kafka compacted snapshot timed out: {message}")
+            }
         }
     }
 }
@@ -233,7 +322,11 @@ impl Phase9SinkTopics {
             SinkTarget::ShadowCanonical => stream == self.shadow_canonical,
             SinkTarget::ShadowQuarantine => stream == self.shadow_quarantine,
             SinkTarget::CanaryCanonical => stream == self.canary_canonical,
-            SinkTarget::PrimaryCanonical | SinkTarget::PublicV2 | SinkTarget::LegacyV1 => false,
+            SinkTarget::PrimaryRaw
+            | SinkTarget::PrimaryCanonical
+            | SinkTarget::PrimaryQuarantine
+            | SinkTarget::PublicV2
+            | SinkTarget::LegacyV1 => false,
         }
     }
 }
@@ -328,7 +421,9 @@ impl Phase92SinkTopics {
             SinkTarget::ShadowRaw
             | SinkTarget::ShadowCanonical
             | SinkTarget::ShadowQuarantine
-            | SinkTarget::CanaryCanonical => false,
+            | SinkTarget::CanaryCanonical
+            | SinkTarget::PrimaryRaw
+            | SinkTarget::PrimaryQuarantine => false,
         }
     }
 }
@@ -539,11 +634,13 @@ impl TransactionalShadowTopics {
 
     fn permits(&self, target: SinkTarget, stream: &str) -> bool {
         match target {
-            SinkTarget::ShadowCanonical => stream == self.canonical,
-            SinkTarget::ShadowQuarantine => stream == self.quarantine,
+            SinkTarget::ShadowCanonical | SinkTarget::PrimaryCanonical => stream == self.canonical,
+            SinkTarget::ShadowQuarantine | SinkTarget::PrimaryQuarantine => {
+                stream == self.quarantine
+            }
             SinkTarget::ShadowRaw
+            | SinkTarget::PrimaryRaw
             | SinkTarget::CanaryCanonical
-            | SinkTarget::PrimaryCanonical
             | SinkTarget::PublicV2
             | SinkTarget::LegacyV1 => false,
         }
@@ -581,6 +678,8 @@ fn transactional_output_headers(
 /// Kafka consume-transform-produce boundary. Output records and the next raw
 /// consumer offset commit atomically, so a process crash cannot acknowledge raw
 /// input without its canonical/quarantine result or duplicate committed output.
+/// The historic type name remains for source compatibility; the authority fence
+/// binds these private streams to either shadow or primary publication targets.
 pub struct TransactionalKafkaBridge {
     producer: FutureProducer,
     consumer: StreamConsumer,
@@ -602,12 +701,7 @@ impl TransactionalKafkaBridge {
             ));
         }
         let mut consumer_config = config.client_config()?;
-        consumer_config
-            .set("group.id", &config.group_id)
-            .set("enable.auto.commit", "false")
-            .set("enable.auto.offset.store", "false")
-            .set("auto.offset.reset", "earliest")
-            .set("isolation.level", "read_committed");
+        config.configure_group_consumer(&mut consumer_config);
         let consumer: StreamConsumer = consumer_config.create()?;
         let raw_topics: Vec<&str> = topics.raw_inputs.iter().map(String::as_str).collect();
         consumer.subscribe(&raw_topics)?;
@@ -648,6 +742,10 @@ impl TransactionalKafkaBridge {
             .await
             .apply(record)
             .map_err(KafkaTransportError::Fencing)
+    }
+
+    pub fn unsubscribe(&self) {
+        self.consumer.unsubscribe();
     }
 
     pub async fn next(&self) -> Result<TransactionalKafkaInput, KafkaTransportError> {
@@ -817,12 +915,7 @@ impl KafkaEventSource {
             ));
         }
         let mut client = config.client_config()?;
-        client
-            .set("group.id", &config.group_id)
-            .set("enable.auto.commit", "false")
-            .set("enable.auto.offset.store", "false")
-            .set("auto.offset.reset", "earliest")
-            .set("isolation.level", "read_committed");
+        config.configure_group_consumer(&mut client);
         let consumer: StreamConsumer = client.create()?;
         consumer.subscribe(topics)?;
         Ok(Self { consumer })
@@ -882,14 +975,75 @@ impl KafkaEventSource {
 #[cfg(test)]
 mod tests {
     use super::{
-        transactional_output_headers, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
-        Phase92SinkTopics, Phase9SinkTopics, TransactionalShadowTopics, EVENT_ID_HEADER,
+        configure_bounded_client_memory, transactional_output_headers, KafkaTlsConfig,
+        KafkaTransportConfig, KafkaTransportError, Phase92SinkTopics, Phase9SinkTopics,
+        ShutdownSignal, TransactionalShadowTopics, CONSUMER_GROUP_PROTOCOL,
+        COOPERATIVE_ASSIGNMENT_STRATEGY, EVENT_ID_HEADER, KAFKA_FETCH_MAX_BYTES,
+        KAFKA_MAX_PARTITION_FETCH_BYTES, KAFKA_PRODUCER_QUEUE_MAX_MESSAGES, KAFKA_QUEUE_MAX_KBYTES,
         RAW_ENVELOPE_HEADER,
     };
     use qdl_core::transport::RetryClass;
     use qdl_venue_core::authority::SinkTarget;
+    use rdkafka::config::ClientConfig;
     use rdkafka::message::Headers;
     use std::time::Duration;
+
+    #[test]
+    fn consumer_group_policy_is_cooperative_manual_and_dynamic() {
+        let config = KafkaTransportConfig {
+            bootstrap_servers: "kafka:9092".into(),
+            client_id: "qdl-core-001".into(),
+            group_id: "qdl-core-v1".into(),
+            request_timeout: Duration::from_secs(5),
+            tls: KafkaTlsConfig {
+                ca_location: "/not-read/ca".into(),
+                certificate_location: "/not-read/cert".into(),
+                key_location: "/not-read/key".into(),
+                key_password: None,
+            },
+        };
+        let mut client = ClientConfig::new();
+        config.configure_group_consumer(&mut client);
+        assert_eq!(client.get("group.id"), Some("qdl-core-v1"));
+        assert_eq!(
+            client.get("partition.assignment.strategy"),
+            Some(COOPERATIVE_ASSIGNMENT_STRATEGY)
+        );
+        assert_eq!(client.get("group.protocol"), Some(CONSUMER_GROUP_PROTOCOL));
+        assert_eq!(client.get("enable.auto.commit"), Some("false"));
+        assert_eq!(client.get("enable.auto.offset.store"), Some("false"));
+        assert_eq!(client.get("isolation.level"), Some("read_committed"));
+        assert_eq!(client.get("group.instance.id"), None);
+    }
+
+    #[test]
+    fn client_memory_policy_is_explicitly_bounded() {
+        let mut client = ClientConfig::new();
+        configure_bounded_client_memory(&mut client);
+        assert_eq!(
+            client.get("queued.max.messages.kbytes"),
+            Some(KAFKA_QUEUE_MAX_KBYTES)
+        );
+        assert_eq!(client.get("fetch.max.bytes"), Some(KAFKA_FETCH_MAX_BYTES));
+        assert_eq!(
+            client.get("max.partition.fetch.bytes"),
+            Some(KAFKA_MAX_PARTITION_FETCH_BYTES)
+        );
+        assert_eq!(
+            client.get("queue.buffering.max.kbytes"),
+            Some(KAFKA_QUEUE_MAX_KBYTES)
+        );
+        assert_eq!(
+            client.get("queue.buffering.max.messages"),
+            Some(KAFKA_PRODUCER_QUEUE_MAX_MESSAGES)
+        );
+    }
+
+    #[test]
+    fn shutdown_signal_labels_are_stable_for_structured_logs() {
+        assert_eq!(ShutdownSignal::Interrupt.as_str(), "SIGINT");
+        assert_eq!(ShutdownSignal::Terminate.as_str(), "SIGTERM");
+    }
 
     #[test]
     fn transactional_headers_preserve_private_raw_lineage() {
@@ -923,6 +1077,18 @@ mod tests {
         let error = config.validate().expect_err("missing TLS must fail");
         assert!(matches!(error, KafkaTransportError::Configuration(_)));
         assert_eq!(error.retry_class(), RetryClass::NonRetryable);
+    }
+
+    #[test]
+    fn compacted_snapshot_timeout_is_retryable_without_weakening_config_errors() {
+        let timeout = KafkaTransportError::SnapshotTimeout(
+            "captured high watermarks were not reached".into(),
+        );
+        assert_eq!(timeout.retry_class(), RetryClass::Retryable);
+        assert_eq!(
+            KafkaTransportError::Configuration("invalid topic".into()).retry_class(),
+            RetryClass::NonRetryable
+        );
     }
 
     #[test]
@@ -982,7 +1148,10 @@ mod tests {
         topics.validate().unwrap();
         assert!(topics.permits(SinkTarget::ShadowCanonical, &topics.canonical));
         assert!(topics.permits(SinkTarget::ShadowQuarantine, &topics.quarantine));
+        assert!(topics.permits(SinkTarget::PrimaryCanonical, &topics.canonical));
+        assert!(topics.permits(SinkTarget::PrimaryQuarantine, &topics.quarantine));
         assert!(!topics.permits(SinkTarget::PublicV2, &topics.canonical));
+        assert!(!topics.permits(SinkTarget::PrimaryRaw, &topics.canonical));
         let duplicate = TransactionalShadowTopics {
             raw_inputs: vec!["same".into()],
             canonical: "same".into(),

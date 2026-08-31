@@ -3109,6 +3109,26 @@ Mọi event vẫn chứa component/schema/normalizer version cần thiết để
 - Commit/checkpoint sau idempotent output boundary.
 - Support replay to shadow namespace/table.
 
+#### Rust consumer-group shutdown/rebalance policy
+
+- Long-running Rust consumers handle both `SIGINT` and Docker/Kubernetes
+  `SIGTERM`, finish the in-flight transactional batch, commit output and input
+  offset atomically, then unsubscribe before process exit.
+- Transactional Rust data-core consumers use only
+  `partition.assignment.strategy=cooperative-sticky` under the classic group
+  protocol. Eager and cooperative assignors are never mixed in one live group;
+  assignor migration is an all-members bounded packet with V1 rollback intact.
+- Core workers remain dynamic members for N-1 availability. Static membership is
+  not used for these workers because librdkafka intentionally retains a closed
+  static member assignment until session timeout, delaying deliberate N-1
+  redistribution.
+- Every Rust workload has a stop grace period greater than the maximum Kafka
+  transaction/request timeout. Forced kill, session-timeout recovery, duplicate
+  input redelivery and demanded-slice freshness are explicit rollout metrics.
+- Acceptance requires no visible duplicate/gap, zero quarantine or semantic
+  mismatch, bounded lag and no demanded-slice disconnect when one worker is
+  gracefully stopped and restored.
+
 #### Schema/config
 
 - Deploy reader support trước writer emission.
@@ -5109,6 +5129,16 @@ Production authorization is distinct from rehearsal. It requires:
 - accepted terminal/handoff records for the exact slice;
 - explicit operator, ticket, blast-radius and hold-window approval.
 
+The hold window governs canary publication and the instant at which an accepted
+handoff may be committed. It is not a renewable writer lease after that CAS.
+Once the handoff has been accepted and the durable authority record is
+`RUST_PRIMARY`, that owner remains authoritative across wall-clock hold expiry
+and process restart until a strictly newer CAS revision fences it as `BLOCKED`
+or `ROLLBACK_PENDING`. A formally restored `PYTHON_PRIMARY` follows the same
+revision-governed lifetime. Recovery still fails closed until every authorized
+durable target watermark is reconstructed; canary writers still stop at
+`hold_until`; and an expired handoff can never be accepted retroactively.
+
 The isolated harness uses authentic frozen provider frames and replicated
 test-only topics to model final/public/legacy projections. Those topic names can
 never equal production destinations. It tests `N-1/N/N+1`, off-by-one, gap,
@@ -5711,3 +5741,422 @@ reduced root filesystem use from 91 GiB to 47 GiB; BuildKit cache fell from
 occurred. Post-cleanup B16/B17 regression ran 49 cases: 48 passed and
 the separately proven real-Redis conditional case was the sole skip; compile
 and diff checks passed.
+
+### J.7 Phase 10.5 consumer cutover closure
+
+Phase 10.5 is governed by main-plan Section 21.8 and the operational detail in
+`docs/runbooks/phase105-consumer-cutover-stable-release.md`. It keeps the
+Phase 10.3 shared authority plan as topology input and adds one per-requirement
+release contract; it does not create a second core, topic or image topology.
+
+`10.5-A` freezes the release manifest, exact V1 source revision, capability and
+demand/catalog checksums, and bounded readiness schema with no runtime action.
+Its parser also proves each materialized V2 product remains in the declared
+crypto-demand universe; only provider-history pass-through is exempt because it
+does not claim durable acquisition.
+`10.5-B` is isolated no-order consumer acceptance; `10.5-C` is an explicitly
+approved rolling handoff packet; `10.5-D` is immutable release certification.
+No scope may use a mutable V1 tag as evidence, make a V1-incompatible BBO/OKX
+product silently fall back, or promote VN before its independent real-provider
+gate. Each scope stops after its declared evidence/rollback gate and records
+the result in the main journal.
+
+#### J.7.1 TRADE event recency versus provider-session liveness
+
+`freshness_ms` is and remains the age of the last canonical market event.  It
+is never a proxy for WebSocket health.  This distinction matters for an
+event-driven `TRADE` feed: a market may have no prints for longer than its
+event-age SLA while the authenticated provider session is still healthy.
+
+The additive V2 requirement contract therefore has two independent controls:
+
+- `event_recency_policy`, defaulting to the existing `stale_policy`, governs
+  the age of the actual market event.
+- `max_session_liveness_ms` is an optional, explicit upper bound for a
+  session heartbeat.  `OBSERVE` event recency requires this field; it is not a
+  route to loosen an execution price requirement.
+
+Existing Rust native ingestors write only a bounded control record per active
+connection under their existing shared stable-state volume.  The record is
+atomically write/rename/fsync persisted at a bounded cadence and carries
+schema, source session ID, connection generation, state, transport timestamp
+and config revision only.  Query/stream readers match all three identity
+coordinates.  Missing, malformed, duplicate, expired, disconnected,
+clock-skewed or revision-mismatched evidence is `UNKNOWN`/`STALE` and fails
+closed.  A reconnect therefore cannot bless an event emitted by an old
+connection generation.
+
+For a governed no-order paper `TRADE` requirement, `OBSERVE` permits a
+quiet-but-connected response with `state=LIVE`,
+`event_recency_state=STALE`, `provider_session_state=LIVE`,
+`LAST_EVENT_STALE`, and `execution_eligible=false`.  Any execution-grade
+caller, quote, book, bar, gap, source-authority or session-liveness failure
+remains blocking.  This is provider-neutral and applies identically to the
+existing Binance USD-M and OKX Swap native ingestors; it adds no service,
+topic, worker or per-symbol topology.
+
+Source exit requires contract/protobuf/OpenAPI/SDK parity, manifest exactness,
+atomic writer and reader failure-path tests, and a no-network Rust/Python
+regression.  The following C2 retry is a separately approved runtime packet:
+build immutable Python/Rust images from the reviewed source revision, seal the
+updated three paper manifests and release-routing revision, roll only
+`ingestor_binance_usdm`, `ingestor_okx_swap`, `query_v2_1`, `query_v2_2`,
+`stream_v2_active`, and `stream_v2_passive`, then observe one disposable
+300-second no-order C2 receipt.  It does not touch V1, Kafka topology or
+offsets, Redis, SQLite, projector, Trading System, alpha or order paths; the
+recorded V1 image/runtime revision is the rollback coordinate.
+
+**Source evidence (2026-08-29, `IMPLEMENTED / TESTED LOCALLY`):** Buf
+generate, format, lint and breaking passed against both frozen baselines.
+The isolated Python regression passed `157` tests with `1` existing
+infrastructure skip; it covers query, SDK, REST, gRPC/protobuf, stream,
+manifest, release and C2 validator paths.  The isolated Rust native-ingestor
+suite passed `12/12`, including atomic bounded writer and explicit disconnect
+state.  The deterministic paths prove quiet-but-connected observation,
+strict event-recency blocking, expired/disconnected/missing/malformed/duplicate
+session evidence, config-revision and reconnect-generation mismatch.  No
+runtime image, bundle, role, provider session, durable store or consumer was
+changed by this evidence.  This is not a C2 certificate; one separately
+approved runtime packet remains required.
+
+### J.8 Phase 11.5 consumer-scoped universal route binding
+
+The universal release manifest is a release-control artifact, not an
+environment-wide routing switch. Before an individual consumer may use its
+coverage, the Data Layer renders exactly one
+`qdl.v2.consumer-route-binding.v1` document for that consumer. The document is
+canonical JSON and carries the universal-manifest SHA-256, release revision,
+V1 rollback reference, independent V1 venues, and only the consumer's exact
+canonical route identities. It carries no credential, cursor, provider byte,
+or another consumer's demand.
+
+`alpha_sdk.data_layer_release_binding` is the portable parser shared by Trading
+System and alpha runtime. Enabling a binding requires both
+`DATA_LAYER_V2_ROUTE_MANIFEST_FILE` and
+`DATA_LAYER_V2_RELEASE_MANIFEST_SHA256`; a missing, stale, tampered,
+cross-consumer, duplicate, non-canonical, or semantically malformed binding
+fails before a route is selected. Existing static
+`trading-system.data-layer-v2-routes.v1/v2` files remain compatible when the
+new binding schema is absent.
+
+For an enabled binding, Binance/OKX are exact-identity allowlists. In
+`V2_PRIMARY`, an admitted requirement invokes V2 with its sealed source policy
+and freshness bound. An explicitly declared V1 compatibility rule may take the
+existing guarded fallback after V2 failure and returns to V2 on the next
+successful call. An unbound or `BLOCKED` Binance/OKX slice fails before V1 is
+called. `DUAL_READ` likewise may not use V1 as an oracle to hide a blocked
+slice. DNSE/VN remains an explicitly independent V1 venue until its own V2
+admission, never a hidden crypto fallback.
+
+The alpha runtime applies this same selection to latest trade/bar, single and
+batch warmup, and recognized Binance/OKX stream channels. A final-BAR binding
+does not deliver an open bar; it ACKs that non-actionable stream event internally
+so the durable cursor does not stall. The V2 stream intentionally fails closed
+on transport failure rather than silently replacing a cursor-bearing stream
+with Redis Pub/Sub; V1 fallback-return is exercised by snapshot/warmup calls
+and any stream transport switch requires the later explicit runtime handoff.
+Mixed V2 and independent-V1 channels in one alpha subscription are rejected.
+
+Exit evidence for this source-only stage is deterministic renderer output,
+cross-parser digest agreement, exact selection, allowed `V2 -> V1 -> V2`,
+terminal block, DNSE independent V1, final-BAR filtering/ACK, static-manifest
+compatibility and no-order test doubles. It does not build an image, generate a
+private mounted binding, alter a role, contact a provider, or change runtime
+authority. The following runtime packet must name one sealed binding digest,
+paper-only consumers/identities, immutable image(s), ports and consumer groups,
+300-second no-order observation, stop criteria, and an exact V1 rollback
+revision.
+
+### J.9 Phase 11.5-C rolling paper/no-order handoff
+
+This packet is one consumer handoff, not a topology rewrite. Its identities are
+`trading-system.paper.stable`, `alpha.binance.paper.stable` and
+`alpha.okx.paper.stable`. Only `market_data_service` persists and rolls; the
+two alpha workloads are disposable SDK probes with no strategy entrypoint,
+gateway/order credential or execution capability. Each uses a distinct V2
+cursor/audit group and read-only mTLS/JWT/binding mount.
+
+Before a binding is mounted, generate one fresh universal artifact from
+declared packet demand and render exactly one canonical binding per consumer.
+For this packet, the source registry contains only the three approved paper
+consumer identities and their declared Binance USD-M/OKX Swap BTC/ETH routes;
+it must not inherit unrelated broad alpha-compose or L2 demand. The
+packet records artifact SHA, binding SHAs, image SHAs, endpoints, V1 rollback
+digest and execution-count baseline. It does not commit a binding or replace a
+universal artifact with a static BTC/ETH route file.
+
+The existing V2 query/stream replicas are the only data endpoints and are not
+recreated. After a bounded rolling recreate of `market_data_service`, observe
+300 seconds of admitted final BAR/trade, warmup/batch, signed cursor
+replay/reconnect, freshness/gap/lag and bounded resource metrics. Exercise
+V2-to-V1-to-V2 only for the compatible Binance USD-M trade route in a
+disposable client; blocked Binance BAR and selected OKX paths must block.
+DNSE is excluded.
+
+The consumer wheel must be rebuilt from the same canonical SDK source/schema as
+the sealed V2 response before the roll. A typed client that rejects an added
+canonical field is an immediate stop-and-rollback condition; it is repaired by
+one shared SDK artifact, never by stripping server fields or adding a consumer
+specific parser exception.
+
+Rollback is narrow: remove probes and recreate only `market_data_service` with
+the attested V1 image/configuration. It never resets Kafka offsets, Redis,
+SQLite, PostgreSQL, provider state or unrelated services. A failed gate ends
+this packet; it does not create another rollout stage.
+
+**Runtime decision record (2026-08-27):** a sealed consumer binding is not by
+itself a server source binding. The real C probe reached V2 with valid mTLS and
+JWT, read Binance `BAR 1m`, then correctly exposed that the unchanged V2 query
+catalog had no durable `BAR 15m` binding. The query returned HTTP 500 and the
+packet rolled only `market_data_service` back to V1. The failure is not
+eligible for a client-side fallback or parser workaround: a future separately
+approved catalog alignment must first prove every declared final-BAR route is
+materialized server-side. Until that happens, this handoff remains blocked and
+V1 remains active.
+
+**C3.5 approved interval alignment:** materialize each fixed-duration native
+BAR interval only for instruments already active in the versioned stable
+demand, using the capability constants as the single source of interval truth.
+For this packet that is Binance USD-M BTCUSDT/ETHUSDT and OKX Swap
+BTC-USDT-SWAP/ETH-USDT-SWAP. Do not turn an exchange-wide symbol list or a
+disabled Spot profile into an implicit subscription. DNSE is tested against its
+real provider, but only its certified V2-native `1m` BAR may be catalogued;
+legacy derived intervals require a separate aggregation contract. The catalog,
+acquisition plan and runtime bundle must move together, with an immutable
+Python image plus a bounded reload of the existing Python roles and three Rust
+core configs; client permissions alone never substitute for source
+materialization. The shared BAR edge fetches only on each canonical interval's
+closed boundary and caps long-interval bootstrap to real provider history; it
+does not issue minute-by-minute REST calls for daily or weekly bars.
+
+**C3.5 recorded result (2026-08-27):** source materialization passed with 52
+new active Binance USD-M/OKX Swap BAR requirements and a 58-slice bounded
+real-provider warmup matrix (56 active crypto slices plus two disabled-Spot
+pass-through slices): zero source failures, retries, 429s or 5xxs. This proves
+provider contract and canonical warmup only; it is not a runtime reload or
+consumer cutover. The concurrent DNSE V1 provider check was stale after a
+websocket pong timeout and direct-provider timeout, so DNSE remains excluded
+and fails closed pending a separate in-session V1 repair/certification.
+
+### J.10 C3.6 broad-universe, reference and L2 source expansion
+
+This source-only extension turns already-tested V2 primitives into an
+admitted product surface before a later rolling handoff. It deliberately
+separates three scales of demand:
+
+1. A live top-350 universe per `BINANCE/USDM` and `OKX/SWAP` is a versioned
+   eligibility and bounded-history/warmup inventory. It is resolved from real
+   venue metadata plus documented 24-hour quote volume, stored outside source
+   control in an atomically replaced manifest, and emits a bounded audit of
+   entrants and removals. It is not a 700-symbol websocket subscription.
+2. The five liquid perpetuals (`BTC`, `ETH`, `SOL`, `DOGE`, `BNB`) are a
+   compact standard realtime/finality/reference demand set on each venue.
+   They use the normal active-demand compiler, catalog and source-policy path;
+   a later consumer lease determines whether any particular feed remains live.
+3. BTC/ETH perpetual plus exchange-discovered current/next quarterly legs are
+   the initial L2 microstructure set. Each leg requests both book snapshot and
+   delta at one declared depth. The shared Rust L2 core creates one physical
+   subscription per venue/market/instrument, never a worker or container per
+   alpha, symbol or order.
+
+Reference products remain read-only alpha/research inputs. Binance USD-M
+supports its documented funding/OI/long-short/taker/mark-index/metadata/native
+or continuous basis semantics. OKX exposes only the products it can prove for
+the exact `SWAP` or `FUTURES` contract; long-short/taker remain explicit typed
+unavailable where the provider has no equivalent. A derived basis must name
+its perpetual and dated inputs and formula lineage. Reference products do not
+become order-price authority merely because their endpoint is enabled.
+
+The source gate must use live providers but persist no raw bytes. It proves all
+700 universe memberships, bounded batch history in chunks, five-asset
+reference results, and L2 snapshot/delta replay for every declared BTC/ETH
+perpetual/quarterly leg. A provider outage, under-sized universe, malformed
+contract identity, unavailable mandatory metric, continuity failure, 429/5xx
+budget breach, or cross-symbol/venue mix fails the candidate. No runtime
+service, credential, authority, durable store or consumer route changes during
+this section; promotion needs a separate signed rolling packet with a V1
+rollback coordinate.
+
+**C3.6-A evidence (2026-08-27):** the resolver's deterministic suite passed
+five cases and the bounded real-provider dry-run resolved Binance USD-M
+`350/524` and OKX Swap `350/438` live eligible USDT instruments. The run
+issued only the four public discovery/ticker reads, persisted no provider
+payload and did not mutate any runtime state. Its next source slice must use
+these discovery rules rather than copying the legacy age-prioritized alpha
+symbol helper.
+
+**C3.6-B evidence (`IMPLEMENTED / TESTED / SOURCE-ONLY`, 2026-08-27):** the
+liquid five-perpetual policy is provider-neutral and keeps Binance USD-M and
+OKX Swap records separate. It adds additive demand `CONTRACT_METADATA`, exact
+OKX Futures reference capability, retained provider `alias` metadata and the
+shared V5 `books` capture edge for discovered BTC/ETH dated legs. No quarterly
+identifier is constructed. Rust now mirrors Python's interval-capable
+historical-reference validation and rejects reference feeds from realtime
+subscription planning. Network-disabled Python tests passed `48/48`, targeted
+Rust contract/domain tests passed `40/40`, and Buf format/lint/breaking gates
+passed against both baselines. No runtime route, service, durable store,
+provider request or container topology changed. C3.6-C alone may run bounded
+read-only provider evidence; it still cannot activate an endpoint, 700-symbol
+stream or consumer route.
+
+**C3.6-C certification scope (`APPROVED / READ-ONLY / RUNTIME UNCHANGED`,
+2026-08-27):** the verifier must prove the actual provider product, not a
+fixture: top-350 Binance USD-M and top-350 OKX Swap final `1m` warmups in
+bounded batches; all five liquid perpetual reference products according to
+their exact venue capability; and BTC/ETH perpetual plus provider-discovered
+dated L2 snapshot/delta replay. It must hold identity, finality, decimal/unit,
+typed-unavailable, lineage, sequence/gap and no-cross-mix invariants. The
+evidence is aggregate/digest-only and temporary; raw provider bytes are never
+retained. This validates one shared bounded product plane, not a 700-symbol
+permanent websocket topology or V2-primary authority. Runtime activation,
+lease creation and any consumer handoff remain a separately reviewed packet.
+Historical OI/long-short/taker evidence may be recorded only as an explicit
+typed partial with real observations and coverage when the documented provider
+does not cover both requested boundaries; it cannot be rounded up to full or
+zero-filled, and full-coverage consumers remain fail-closed.
+The verifier sends its 72 reference requests through the actual V2 service in
+regular provider-bounded batches of at most 12, with five Binance native-basis
+requests isolated to singleton batches. That exercises the existing
+token/circuit scheduler without treating a test-only mixed-product burst as a
+product capability, and keeps every item fail-closed on identity, typed
+availability or coverage failure.
+The certificate runs low-frequency reference and L2 product evidence before
+the independent top-350 final-BAR capacity sweep. This preserves every
+fail-closed product gate while preventing the intentionally broad history read
+from consuming shared provider IP quota immediately before native-basis proof.
+For Binance native basis only, an HTTP-success response whose `data` is not the
+documented history list is retried at most four times with
+`0.5s/1s/2s` bounded backoff inside the 20-second request ceiling. It is not
+accepted as data; malformed rows, cross-pair/contract values and
+decimal/timestamp errors remain immediate protocol failures.
+At the shared Binance USD-M provider edge, a top-level HTTP-success error
+envelope with a nonzero provider `code` is also typed as an error rather than
+accepted as data. Only the curated transient provider-code set consumes the
+existing retry budget; permanent codes fail immediately with sanitized
+code/status evidence. This keeps BAR, metadata and reference behavior
+consistent without widening concurrency or changing any runtime route.
+Binance `418`/`429` and `-1003` are rate-limit control responses, not a reason
+to retry immediately. The edge terminates that request, propagates an official
+`Retry-After` hint when present through the V2 reference/query result, and
+leaves scheduling the next attempt to the caller. It never sleeps a request
+worker for an unbounded provider ban or turns the response into an empty value.
+The fragile provider-native Binance basis lane is serialized only within one
+adapter process; all other reference products and venues retain their bounded
+concurrency. This prevents pressure-induced malformed envelopes without
+inventing a new worker or a per-symbol container.
+
+**C3.6-C protocol hardening evidence (2026-08-27):** the USD-M diff-depth
+contract includes `pu`, the final update ID of the previous stream event. The
+shared capture state machine must accept a snapshot bridge either when the
+snapshot boundary lies in one event's `U/u` range or when the event's `pu`
+equals the REST `lastUpdateId`; every later event still requires
+`pu == previous_u`. A resync is a full bootstrap: buffer at least one exact
+delta per admitted symbol before each new REST snapshot, then keep buffering
+while the snapshot is in flight. Any other sequence remains a typed gap and
+bounded resync. This is required for provider-discovered dated contracts and
+is not a Spot-rule relaxation. See the official
+[USD-M diff-depth contract](https://developers.binance.info/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/public).
+
+The Binance native-basis adapter remains one process-local serialized lane and
+starts calls at least `500ms` apart. For documented rate-limit responses
+`418`, `429` and `-1003`, it never hot-retries; an official `Retry-After` is
+propagated unchanged, while a missing header receives only a conservative
+local `60s` defer hint. This is a typed scheduling signal, not a synthetic
+datum or alternate-provider fallback. It leaves all non-native reference
+products, BAR, L2 and other venues concurrent.
+
+**C3.6-C.1 shared-admission implementation (`IMPLEMENTED / TESTED /
+SOURCE-ONLY`, 2026-08-27):** the process-local native-basis serialization is
+now backed by a reusable provider-neutral Rust admission state machine rather
+than a Python-side throttle. `qdl-core` owns lane policy, policy digest, token
+budget, bounded lease/coalescing, realtime reservation, cooldown and retry
+decision; the lane is exactly `(provider, market, endpoint_family)`, so it
+never creates a symbol/alpha/container budget. `qdl-realtime-core` owns only
+the namespaced Redis `GET` + exact-state Lua CAS coordination. Python is a
+strict vendor/API projection that must relay the Rust decision verbatim or
+fail closed. State serializes no provider payload and clamps a backward caller
+clock, preventing one worker from shortening an extant cooldown or lease.
+
+The C3.6-C.2 runtime packet must obtain its shared transition time from Redis
+`TIME`, rather than comparing process-local `Instant` epochs. It must name the
+policy SHA, prefix, existing roles and rollback route. C3.6-C.1 itself creates
+no runtime key, provider request, service or route. Its deterministic Rust,
+Python and Buf gates, plus one no-port isolated Redis CAS test, are recorded in
+the main implementation plan; the authentic certificate remains separately
+fail-closed until C3.6-C.2 is explicitly approved and passes.
+
+The aggregate C3.6-C provider certificate is still fail-closed until one run
+passes its five-native-reference, complete reference, L2 and 700 final-BAR
+planes in one bounded read-only execution. Current real evidence proves the
+six Binance BTC/ETH perpetual/current-quarter/next-quarter L2 bridges, but
+also records intermittent headerless `418` native-basis responses under shared
+public-IP pressure. No V2 route or consumer authority follows from partial
+evidence.
+
+### C4.19 Fast final-BAR scheduling rule
+
+Finality is a provider-confirmed property of a BAR row, not a fixed local
+settlement timer. For an enabled durable Binance/OKX REST BAR binding, the edge
+therefore schedules its first read at close plus a minimal scheduler offset
+(`100ms`), pins the exact expected open/close boundary, and retries that same
+target through a bounded shared retry policy until the provider exposes a valid
+final row. The retry interval may back off to protect provider quota, but it
+must never roll the request forward to a later candle or silently discard the
+missing one.
+
+The common edge performs provider reads concurrently only within its declared
+global budget, then restores deterministic binding order before Kafka publish.
+Kafka acknowledgement is still the sole condition for advancing the durable
+watermark. A stale/old provider response, a malformed row, a gap, a duplicate
+with changed semantics, or a missing acknowledgement remains fail-closed and
+is retried/reconciled through the existing path. This policy applies equally
+to every configured Binance USD-M and OKX Swap REST BAR binding; it does not
+replace a separately certified native WebSocket final-BAR lane.
+
+**C4.19 source evidence (2026-08-30):** the common Python vendor edge now
+starts at `T+100ms`, pins the intended final boundary, retries only that target
+at a bounded `100ms..1s` cadence, and fans out no more than 32 independent
+provider reads. Its outer sleep floor is `10ms`, so it does not reintroduce a
+hidden quarter-second delay; a catch-up failure is fenced/retried per binding
+instead of blocking independent due bindings. It reorders completed reads back
+to manifest order before Kafka publish. The isolated source gate passed
+`35/35` tests; no runtime role was recreated. This is a scheduler/transport
+improvement only: a provider row is still final only after adapter validation
+and its durable watermark still changes only after Kafka acknowledges every
+published envelope.
+
+## Execution-Grade Market Context Extension
+
+This guide governs Phase 12 in the main plan. The Rust core continues to own
+canonical identity, source ordering, finality, gap and L2 sequence state;
+Python remains the vendor/API projection. The execution context is a consumer
+contract over existing V2 products, not a parallel ingestion topology.
+
+- Closed BARs drive strategy calculation only.
+- QUOTE supplies side-aware execution estimation.
+- MARK_INDEX_PRICE supplies an explicit mark or index risk/trigger reference.
+- BOOK_SNAPSHOT/BOOK_DELTA is required only when the declared intent needs
+  verified microstructure; its generation, sequence and gap state are
+  mandatory then.
+- Public market data never replaces broker private order/algo lifecycle for
+  OCO/bracket state.
+
+The contract is identical for Binance USD-M and OKX Swap. Venue capability may
+choose an internal or native OCO implementation, but it must not alter the
+context schema or silently downgrade an L2-required request. Phase 12.1 is
+source/test only; Phase 12.2 is the only phase allowed to wire consumer
+projection or runtime routes.
+
+### Phase 12.1 Exit Record (2026-08-30)
+
+Phase 12.1 passed source-only certification: the canonical SDK golden matrix
+covered Binance USD-M and OKX Swap for TRADE, QUOTE, MARK_INDEX_PRICE,
+BOOK_SNAPSHOT and BOOK_DELTA; Risk domain policy and Alpha Runtime exact
+history contracts passed their isolated regression suites. The full current
+Binance/OKX BAR manifest (`142` slices) also passed deterministic warmup
+admission after replacing the obsolete `128`/six-slice test bound with the
+shared `10000` V2 bound. Non-positive or missing execution values fail closed,
+and STOP_LIMIT/TAKE_PROFIT_LIMIT were added to the conditional policy before
+closure. No provider, runtime role, manifest, data store or order path was
+mutated. See the main-plan evidence in section 24.2.1 for exact test modules,
+counts and cleanup.

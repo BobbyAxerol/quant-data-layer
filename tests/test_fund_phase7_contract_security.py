@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import time
 import unittest
+from types import SimpleNamespace
 
 import grpc
 from fastapi.testclient import TestClient
 
 from qdl.api_v2 import create_v2_app
 from qdl.api_v2.models import MarketDataView
-from qdl.consumer import ConsumerManifestLoader
+from qdl.consumer import ConsumerManifestLoader, ConsumerManifestRegistry
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
     AssetClass,
@@ -38,7 +39,13 @@ from qdl.query import (
     V2QueryService,
 )
 from qdl.query.v2 import query_pb2
-from qdl.security import DataPlaneAccessError, DataPlanePermission
+from qdl.security import (
+    DataPlaneAccessError,
+    DataPlaneIdentityService,
+    DataPlanePermission,
+    DataPlaneSecurityConfig,
+)
+from qdl.security.grpc import GrpcDataPlaneInterceptor
 from qdl.stream import GrpcMarketDataService, create_grpc_server
 from qdl.stream.grpc_service import requirement_from_proto
 from qdl_sdk import (
@@ -254,6 +261,25 @@ class Phase7RestAndContractTests(unittest.TestCase):
                 "notional": decimal,
             },
             "MARK_INDEX_PRICE": {"mark_price": decimal, "index_price": decimal},
+            "LONG_SHORT_RATIO": {
+                "population": "GLOBAL_ACCOUNT", "sampling_interval": "1h",
+                "long_value": decimal, "short_value": decimal,
+                "long_short_ratio": decimal, "value_unit": "RATIO",
+            },
+            "TAKER_FLOW": {
+                "sampling_interval": "1h", "buy_volume": decimal,
+                "sell_volume": decimal, "buy_sell_ratio": decimal,
+                "quantity_unit": "BASE_ASSET",
+            },
+            "BASIS": {
+                "kind": "PROVIDER_NATIVE", "sampling_interval": "1h",
+                "basis": decimal, "basis_unit": "PRICE",
+            },
+            "CONTRACT_METADATA": {
+                "contract_kind": "PERPETUAL", "settlement_asset": "USDT",
+                "contract_multiplier": decimal, "price_tick": decimal,
+                "quantity_step": decimal,
+            },
             "TICKER": {
                 "last_price": decimal, "volume_24h": decimal,
                 "volume_24h_unit": "BASE_ASSET",
@@ -288,7 +314,7 @@ class Phase7RestAndContractTests(unittest.TestCase):
                 result = MarketDataView.model_validate({
                     **base,
                     "feed": feed,
-                    "interval": "1m" if feed == "BAR" else None,
+                    "interval": "1m" if feed == "BAR" else "1h" if feed in {"LONG_SHORT_RATIO", "TAKER_FLOW", "BASIS"} else None,
                     "payload": {"feed": feed, **payload},
                 })
                 self.assertEqual(result.feed.value, feed)
@@ -340,6 +366,47 @@ class Phase7RestAndContractTests(unittest.TestCase):
         access.require_stream_buffer(access.manifest.quotas.max_buffer_events)
         with self.assertRaises(DataPlaneAccessError):
             access.require_stream_buffer(access.manifest.quotas.max_buffer_events + 1)
+
+    def test_signing_key_is_bound_to_its_registered_workload_subject(self):
+        other = make_manifest(
+            consumer_id="phase7.other",
+            subject="spiffe://qdl/paper/phase7-other",
+            instrument_uid=self.fixture.record.instrument_uid,
+        )
+        identity = DataPlaneIdentityService(
+            DataPlaneSecurityConfig(
+                environment="paper",
+                issuer="https://identity.qdl.test",
+                audience="qdl-v2-beta",
+                keys_by_id={TEST_KEY_ID: TEST_SECRET},
+                algorithms=("HS256",),
+                subjects_by_key_id={TEST_KEY_ID: self.fixture.subject},
+            ),
+            ConsumerManifestRegistry((self.fixture.manifest, other)),
+        )
+        self.assertEqual(
+            identity.authenticate(
+                make_token(self.fixture.subject),
+                consumer_id=self.fixture.consumer_id,
+            ).consumer_id,
+            self.fixture.consumer_id,
+        )
+        with self.assertRaisesRegex(DataPlaneAccessError, "signing key"):
+            identity.authenticate(
+                make_token(other.subject),
+                consumer_id=other.consumer_id,
+            )
+
+    def test_key_subject_bindings_must_cover_the_keyring_exactly(self):
+        with self.assertRaisesRegex(ValueError, "cover exactly"):
+            DataPlaneSecurityConfig(
+                environment="paper",
+                issuer="https://identity.qdl.test",
+                audience="qdl-v2-beta",
+                keys_by_id={TEST_KEY_ID: TEST_SECRET},
+                algorithms=("HS256",),
+                subjects_by_key_id={},
+            )
 
     def test_manifest_rejects_unknown_permission_at_registration(self):
         from tests.phase7_support import manifest_mapping
@@ -478,6 +545,27 @@ class Phase7RestAndContractTests(unittest.TestCase):
                 source_policy_id="alpha_binance_v1",
             ))
 
+    def test_sdk_requirement_preserves_event_recency_and_session_liveness(self):
+        sdk = SdkRequirement(
+            self.fixture.record.instrument_uid,
+            Feed.TRADE,
+            Grade.EXECUTION,
+            "alpha_binance_v1",
+            max_freshness_ms=3_000,
+            event_recency_policy=SdkStalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+            stale_policy=SdkStalePolicy.BLOCK,
+            gap_policy=SdkGapPolicy.BLOCK,
+            recovery=SdkRecoveryPolicy.SNAPSHOT_AND_REPLAY,
+            bar_revision_policy=SdkBarRevisionPolicy.LATEST,
+        )
+        message = sdk.to_proto()
+        self.assertEqual(message.event_recency_policy, query_pb2.STALE_POLICY_OBSERVE)
+        self.assertEqual(message.max_session_liveness_ms, 45_000)
+        decoded = requirement_from_proto(message)
+        self.assertEqual(decoded.event_recency_policy.value, "OBSERVE")
+        self.assertEqual(decoded.max_session_liveness_ms, 45_000)
+
 
 class Phase7GrpcIdentityTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -553,6 +641,49 @@ class Phase7GrpcIdentityTests(unittest.IsolatedAsyncioTestCase):
                 metadata=self.metadata(purpose="INTERNAL_EXECUTION"),
             )
         self.assertEqual(purpose.exception.code(), grpc.StatusCode.PERMISSION_DENIED)
+
+
+class GrpcStreamQuotaAccountingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unary_stream_authenticates_once_for_many_responses(self):
+        class Access:
+            def require_purpose(self, _purpose):
+                return None
+
+        class Identity:
+            def __init__(self):
+                self.calls = 0
+
+            def authenticate(self, *_args, **_kwargs):
+                self.calls += 1
+                return Access()
+
+        class Context:
+            async def abort(self, *_args):
+                raise AssertionError("valid stream metadata must not abort")
+
+        async def behavior(_request, _context):
+            for index in range(100):
+                yield index
+
+        identity = Identity()
+        interceptor = GrpcDataPlaneInterceptor(identity)
+        handler = grpc.unary_stream_rpc_method_handler(behavior)
+
+        async def continuation(_details):
+            return handler
+
+        details = SimpleNamespace(invocation_metadata=(
+            ("authorization", "Bearer token"),
+            ("x-qdl-consumer-id", "consumer"),
+            ("x-qdl-purpose", "INTERNAL_EXECUTION"),
+        ))
+        wrapped = await interceptor.intercept_service(continuation, details)
+        values = [
+            value
+            async for value in wrapped.unary_stream(None, Context())
+        ]
+        self.assertEqual(values, list(range(100)))
+        self.assertEqual(identity.calls, 1)
 
 
 if __name__ == "__main__":

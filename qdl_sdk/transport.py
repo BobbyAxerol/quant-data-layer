@@ -11,6 +11,7 @@ from qdl.query.v2 import query_pb2
 from qdl_sdk.credentials import CredentialProvider
 from qdl_sdk.errors import CursorExpiredError, DataLayerError, SlowConsumerError
 from qdl_sdk.models import ControlEvent, DataRequirement, Grade, StreamEvent
+from qdl_sdk.reference import ReferenceRequirement
 from qdl_sdk.tls import WorkloadTlsConfig
 
 
@@ -47,12 +48,84 @@ class RestQueryTransport:
         )
         return self._decode(response)
 
+    async def warmup_batch(
+        self,
+        requirements: Sequence[DataRequirement],
+        *,
+        consumer_id: str,
+        require_all: bool,
+    ) -> dict:
+        values = tuple(requirements)
+        if not values:
+            raise ValueError("warmup batch cannot be empty")
+        grades = {item.consumer_grade for item in values}
+        if len(grades) != 1:
+            raise ValueError("one warmup batch cannot mix consumer grades")
+        headers = await self._identity_headers(next(iter(grades)), consumer_id)
+        response = await self._client.post(
+            "/v2/market-data/warmup:batch",
+            json={
+                "consumer_id": consumer_id,
+                "require_all": require_all,
+                "requirements": [item.to_mapping() for item in values],
+            },
+            headers=headers,
+        )
+        return self._decode(response)
+
+    async def reference_batch(
+        self,
+        requirements: Sequence[ReferenceRequirement],
+        *,
+        consumer_id: str,
+        require_all: bool,
+    ) -> dict:
+        values = tuple(requirements)
+        if not values:
+            raise ValueError("reference batch cannot be empty")
+        grades = {item.consumer_grade for item in values}
+        if len(grades) != 1:
+            raise ValueError("one reference batch cannot mix consumer grades")
+        headers = await self._identity_headers(next(iter(grades)), consumer_id)
+        response = await self._client.post(
+            "/v2/market-data/reference:batch",
+            json={
+                "consumer_id": consumer_id,
+                "require_all": require_all,
+                "requirements": [item.model_dump(mode="json") for item in values],
+            },
+            headers=headers,
+        )
+        return self._decode(response)
+
     async def snapshot(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
         headers = await self._headers(requirement, consumer_id)
         params = requirement.query_params()
         params.pop("limit", None)
         response = await self._client.get(
             f"/v2/market-data/{requirement.instrument_uid}/snapshot",
+            params=params,
+            headers=headers,
+        )
+        return self._decode(response)
+
+    async def feed_status(
+        self, requirement: DataRequirement, *, consumer_id: str
+    ) -> dict:
+        """Read governed quality without treating stale data as a snapshot."""
+        headers = await self._headers(requirement, consumer_id)
+        params = requirement.query_params()
+        for field in (
+            "limit",
+            "interval_source_policy",
+            "max_cache_age_ms",
+            "deadline_ms",
+            "start_time_ns",
+            "end_time_ns",
+        ):
+            params.pop(field, None)
+        response = await self._client.get(
+            f"/v2/feeds/{requirement.instrument_uid}/status",
             params=params,
             headers=headers,
         )
@@ -218,9 +291,11 @@ class GrpcStreamTransport:
             self._target_index = target_index
             self.target = self.targets[target_index]
             responses_seen = False
+            call = None
             try:
                 subscribe = self._subscribes[target_index]
-                async for response in subscribe(request, metadata=metadata):
+                call = subscribe(request, metadata=metadata)
+                async for response in call:
                     responses_seen = True
                     record = response.record
                     payload = record.WhichOneof("payload")
@@ -273,6 +348,9 @@ class GrpcStreamTransport:
                 raise DataLayerError(
                     "DEPENDENCY_UNAVAILABLE", detail, retryable=True
                 ) from error
+            finally:
+                if call is not None:
+                    call.cancel()
 
     async def close(self) -> None:
         for channel in self._channels:

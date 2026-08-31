@@ -144,6 +144,7 @@ class OkxOrderBook:
         self.state = BookState.SYNCING
         self.generation = 0
         self.sequence: int | None = None
+        self.snapshot_sequence: int | None = None
         self.bids: dict[str, str] = {}
         self.asks: dict[str, str] = {}
 
@@ -169,6 +170,7 @@ class OkxOrderBook:
         if action == "snapshot":
             self.bids.clear()
             self.asks.clear()
+            self.snapshot_sequence = sequence
         elif self.state is not BookState.LIVE or self.sequence != previous:
             self._invalidate(BookState.GAPPED)
             return False
@@ -199,6 +201,7 @@ class OkxOrderBook:
     def _invalidate(self, state: BookState) -> None:
         self.state = state
         self.sequence = None
+        self.snapshot_sequence = None
         self.bids.clear()
         self.asks.clear()
 

@@ -6,11 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hex.workspace = true
 prost.workspace = true
 qdl-contracts.workspace = true
 qdl-core.workspace = true
 qdl-provider-envelope = { path = "../qdl-provider-envelope", version = "=0.1.0" }
 qdl-venue-core = { path = "../qdl-venue-core", version = "=0.1.0" }
+redis.workspace = true
+ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tokio.workspace = true

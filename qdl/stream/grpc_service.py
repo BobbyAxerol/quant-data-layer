@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
 import grpc
 
 from qdl.marketdata.v2 import market_data_pb2
-from qdl.query import AccessPurpose, DataRequirement, QueryServiceError, V2QueryService
+from qdl.query import (
+    AccessPurpose,
+    DataRequirement,
+    QueryServiceError,
+    StalePolicy,
+    V2QueryService,
+)
 from qdl.query.v2 import query_pb2
 from qdl.replay import ReplayGapError
+from qdl.runtime.stable_catalog import canonical_payload_interval
 from qdl.security import (
     DataPlaneAccessError,
     DataPlaneIdentityService,
@@ -77,7 +86,7 @@ def requirement_from_proto(value: query_pb2.DataRequirement) -> DataRequirement:
             raise ValueError(f"{prefix.lower()} cannot be UNSPECIFIED")
         return name.removeprefix(prefix)
 
-    return DataRequirement.from_mapping({
+    mapping = {
         "instrument_uid": value.instrument_uid,
         "feed": enum_value(value.feed_type, query_pb2.FeedType, "FEED_TYPE_"),
         "interval": value.interval or None,
@@ -87,6 +96,16 @@ def requirement_from_proto(value: query_pb2.DataRequirement) -> DataRequirement:
         "source_policy_id": value.source_policy_id,
         "warmup_limit": value.warmup_limit,
         "max_freshness_ms": value.max_freshness_ms or None,
+        "event_recency_policy": (
+            None
+            if value.event_recency_policy == query_pb2.STALE_POLICY_UNSPECIFIED
+            else enum_value(
+                value.event_recency_policy,
+                query_pb2.StalePolicy,
+                "STALE_POLICY_",
+            )
+        ),
+        "max_session_liveness_ms": value.max_session_liveness_ms or None,
         "require_full_coverage": value.require_full_coverage,
         "require_final_bars": value.require_final_bars,
         "stale_policy": enum_value(
@@ -103,7 +122,34 @@ def requirement_from_proto(value: query_pb2.DataRequirement) -> DataRequirement:
             query_pb2.BarRevisionPolicy,
             "BAR_REVISION_POLICY_",
         ),
-    })
+    }
+    if value.HasField("warmup"):
+        horizon = value.warmup.WhichOneof("horizon")
+        if horizon is None:
+            raise ValueError("warmup horizon is required")
+        if (
+            value.warmup.interval_source_policy
+            == query_pb2.INTERVAL_SOURCE_POLICY_UNSPECIFIED
+        ):
+            raise ValueError("warmup interval source policy is required")
+        warmup = {
+            "rows": value.warmup.rows if horizon == "rows" else None,
+            "time_range": (
+                {
+                    "start_time_ns": value.warmup.time_range.start_time_ns,
+                    "end_time_ns": value.warmup.time_range.end_time_ns,
+                }
+                if horizon == "time_range"
+                else None
+            ),
+            "interval_source_policy": query_pb2.IntervalSourcePolicy.Name(
+                value.warmup.interval_source_policy
+            ).removeprefix("INTERVAL_SOURCE_POLICY_"),
+            "max_cache_age_ms": value.warmup.max_cache_age_ms,
+            "deadline_ms": value.warmup.deadline_ms,
+        }
+        mapping["warmup"] = warmup
+    return DataRequirement.from_mapping(mapping)
 
 
 class GrpcMarketDataService:
@@ -114,10 +160,12 @@ class GrpcMarketDataService:
         query_service: V2QueryService,
         snapshot_loader: SnapshotLoader,
         cursor_scope_validator: CursorScopeValidator | None = None,
+        clock_ns: Callable[[], int] = time.time_ns,
     ) -> None:
         self.gateway = gateway
         self.query_service = query_service
         self.snapshot_loader = snapshot_loader
+        self._clock_ns = clock_ns
         self.cursor_scope_validator = (
             cursor_scope_validator or FeedScopedCursorScopeValidator()
         )
@@ -129,6 +177,33 @@ class GrpcMarketDataService:
             logical_offset=stored.cursor.offset,
             resume_token=token,
             event=envelope,
+        )
+
+    def _matches_requirement(
+        self, stored: StoredEvent, requirement: DataRequirement,
+    ) -> bool:
+        """Keep product identity and strict freshness exact before delivery."""
+
+        envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+        if (
+            envelope.WhichOneof("payload") != requirement.feed.value.lower()
+            or canonical_payload_interval(envelope) != requirement.interval
+        ):
+            return False
+        if (
+            requirement.max_freshness_ms is None
+            or requirement.effective_event_recency_policy
+            not in {StalePolicy.BLOCK, StalePolicy.PAUSE}
+        ):
+            return True
+        observed_at_ns = (
+            int(envelope.bar.close_time_ns)
+            if requirement.feed.value == "BAR"
+            else int(envelope.source_event_time_ns)
+        )
+        return (
+            self._clock_ns() - observed_at_ns
+            <= requirement.max_freshness_ms * 1_000_000
         )
 
     async def subscribe(self, request: query_pb2.SubscribeRequest, context):
@@ -161,6 +236,7 @@ class GrpcMarketDataService:
                 max_buffer_events=buffer_events,
                 max_consumer_streams=request_access.access.manifest.quotas.max_streams,
                 replay_limit=self.gateway.max_replay_events,
+                accepts=lambda stored: self._matches_requirement(stored, requirement),
             )
             high = (await self.gateway.capture_watermark(
                 stream=stream, partition_key=partition_key
@@ -175,7 +251,10 @@ class GrpcMarketDataService:
                 ),
             ))
             for stored in subscription.initial:
+                matches = subscription.accepts(stored)
                 record = await subscription.record(stored)
+                if not matches:
+                    continue
                 yield query_pb2.SubscribeResponse(
                     record=self._event(record.stored, record.resume_token)
                 )
@@ -270,7 +349,7 @@ class GrpcMarketDataService:
             request_access.access.require_consumer(request.consumer_id)
             request_access.access.require_permission(
                 DataPlanePermission.HISTORY_READ
-                if requirement.warmup_limit > 0
+                if requirement.warmup_specification is not None
                 else DataPlanePermission.SNAPSHOT_READ
             )
             request_access.access.require_requirement(requirement)
@@ -309,6 +388,11 @@ class GrpcMarketDataService:
                 execution_eligible=status.execution_eligible,
                 policy_id=status.policy_id,
                 flags=status.flags,
+                event_recency_state=status.event_recency_state,
+                provider_session_state=status.provider_session_state,
+                provider_session_liveness_ms=(
+                    status.provider_session_liveness_ms or 0
+                ),
             )
         except QueryServiceError as error:
             await context.abort(

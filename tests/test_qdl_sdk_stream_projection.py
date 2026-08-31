@@ -1,25 +1,34 @@
 from __future__ import annotations
 
+from decimal import Decimal
 import unittest
 
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl_sdk import (
     DataRequirement,
+    EXECUTION_PRICE_VALIDATION_FEEDS,
     Feed,
     Grade,
+    StalePolicy,
     StreamEvent,
     market_data_view_from_stream,
 )
+from qdl_sdk.client import _validate_query_payload
 from qdl_sdk.errors import ContinuityError
 from qdl_sdk.models import MarketDataView
 
 NOW = 1_800_000_000_000_000_000
 DIGEST = "a" * 64
+METRIC_SERIES = {Feed.LONG_SHORT_RATIO, Feed.TAKER_FLOW, Feed.BASIS}
 
 
 def dec(value: int, scale: int = 2):
-    return common_pb2.DecimalValue(mantissa=value, scale=scale, source_text=str(value))
+    return common_pb2.DecimalValue(
+        mantissa=value,
+        scale=scale,
+        source_text=format(Decimal(value).scaleb(-scale), "f"),
+    )
 
 
 def payload_fixture(feed: Feed) -> dict:
@@ -64,6 +73,8 @@ def payload_fixture(feed: Feed) -> dict:
             "native_sequence": "1",
             "levels": [level()],
             "depth": 1,
+            "book_generation": 1,
+            "sequence_verified": True,
         },
         Feed.BOOK_DELTA: {
             **common,
@@ -72,16 +83,54 @@ def payload_fixture(feed: Feed) -> dict:
             "snapshot_sequence": "1",
             "updates": [level()],
             "reset": False,
+            "book_generation": 1,
+            "sequence_verified": True,
         },
         Feed.FUNDING_RATE: {**common, "rate": dv(), "funding_time_ns": NOW},
         Feed.OPEN_INTEREST: {**common, "quantity": dv(), "quantity_unit": "CONTRACT"},
         Feed.MARK_INDEX_PRICE: {**common, "mark_price": dv(), "index_price": dv()},
+        Feed.LONG_SHORT_RATIO: {
+            **common,
+            "population": "GLOBAL_ACCOUNT",
+            "sampling_interval": "1h",
+            "long_value": dv(),
+            "short_value": dv(),
+            "long_short_ratio": dv(),
+            "value_unit": "RATIO",
+        },
+        Feed.TAKER_FLOW: {
+            **common,
+            "sampling_interval": "1h",
+            "buy_volume": dv(),
+            "sell_volume": dv(),
+            "buy_sell_ratio": dv(),
+            "quantity_unit": "BASE_ASSET",
+        },
+        Feed.BASIS: {
+            **common,
+            "kind": "PROVIDER_NATIVE",
+            "sampling_interval": "1h",
+            "basis": dv(),
+            "basis_unit": "PRICE",
+        },
+        Feed.CONTRACT_METADATA: {
+            **common,
+            "contract_kind": "PERPETUAL",
+            "settlement_asset": "USDT",
+            "contract_multiplier": dv(1),
+            "price_tick": dv(1),
+            "quantity_step": dv(1),
+        },
         Feed.TICKER: {**common, "last_price": dv()},
     }[feed]
 
 
-def dv(value: int = 100) -> dict:
-    return {"coefficient": str(value), "scale": 2, "source_text": str(value)}
+def dv(value: int = 100, scale: int = 2) -> dict:
+    return {
+        "coefficient": str(value),
+        "scale": scale,
+        "source_text": format(Decimal(value).scaleb(-scale), "f"),
+    }
 
 
 def level() -> dict:
@@ -101,7 +150,7 @@ def template(feed: Feed) -> MarketDataView:
             "instrument_id": "BINANCE.USDM.PERPETUAL.BTC-USDT",
             "instrument_revision": 7,
             "feed": feed.value,
-            "interval": "1m" if feed is Feed.BAR else None,
+            "interval": "1m" if feed is Feed.BAR else "1h" if feed in METRIC_SERIES else None,
             "observed_at_ns": NOW,
             "revision": 0,
             "payload": payload_fixture(feed),
@@ -215,6 +264,8 @@ def envelope(feed: Feed) -> market_data_pb2.EventEnvelope:
                     )
                 ],
                 depth=1,
+                book_generation=1,
+                sequence_verified=True,
             )
         )
     elif feed is Feed.BOOK_DELTA:
@@ -232,6 +283,8 @@ def envelope(feed: Feed) -> market_data_pb2.EventEnvelope:
                         quantity_unit=common_pb2.QUANTITY_UNIT_BASE_ASSET,
                     )
                 ],
+                book_generation=1,
+                sequence_verified=True,
             )
         )
     elif feed is Feed.FUNDING_RATE:
@@ -248,6 +301,46 @@ def envelope(feed: Feed) -> market_data_pb2.EventEnvelope:
         result.mark_index_price.CopyFrom(
             market_data_pb2.MarkIndexPrice(mark_price=dec(100), index_price=dec(99))
         )
+    elif feed is Feed.LONG_SHORT_RATIO:
+        result.long_short_ratio.CopyFrom(
+            market_data_pb2.LongShortRatio(
+                population=market_data_pb2.LONG_SHORT_RATIO_POPULATION_GLOBAL_ACCOUNT,
+                sampling_interval="1h",
+                long_value=dec(6, 1),
+                short_value=dec(4, 1),
+                long_short_ratio=dec(15, 1),
+                value_unit=market_data_pb2.METRIC_UNIT_RATIO,
+            )
+        )
+    elif feed is Feed.TAKER_FLOW:
+        result.taker_flow.CopyFrom(
+            market_data_pb2.TakerFlow(
+                sampling_interval="1h",
+                buy_volume=dec(3),
+                sell_volume=dec(2),
+                buy_sell_ratio=dec(15, 1),
+                quantity_unit=common_pb2.QUANTITY_UNIT_BASE_ASSET,
+            )
+        )
+    elif feed is Feed.BASIS:
+        result.basis.CopyFrom(
+            market_data_pb2.Basis(
+                kind=market_data_pb2.BASIS_KIND_PROVIDER_NATIVE,
+                sampling_interval="1h",
+                basis=dec(12, 2),
+                basis_unit=market_data_pb2.METRIC_UNIT_PRICE,
+            )
+        )
+    elif feed is Feed.CONTRACT_METADATA:
+        result.contract_metadata.CopyFrom(
+            market_data_pb2.ContractMetadata(
+                contract_kind="PERPETUAL",
+                settlement_asset="USDT",
+                contract_multiplier=dec(1, 0),
+                price_tick=dec(1, 2),
+                quantity_step=dec(1, 3),
+            )
+        )
     elif feed is Feed.TICKER:
         result.ticker.CopyFrom(market_data_pb2.Ticker(last_price=dec(100)))
     return result
@@ -258,9 +351,13 @@ class SdkStreamProjectionTests(unittest.TestCase):
         return DataRequirement(
             instrument_uid="uid-1",
             feed=feed,
-            consumer_grade=Grade.EXECUTION,
+            consumer_grade=(
+                Grade.EXECUTION
+                if feed in EXECUTION_PRICE_VALIDATION_FEEDS
+                else Grade.ALPHA
+            ),
             source_policy_id="crypto_primary_v2",
-            interval="1m" if feed is Feed.BAR else None,
+            interval="1m" if feed is Feed.BAR else "1h" if feed in METRIC_SERIES else None,
             max_freshness_ms=1000,
         )
 
@@ -278,7 +375,10 @@ class SdkStreamProjectionTests(unittest.TestCase):
                 self.assertIs(result.feed, feed)
                 self.assertEqual(result.watermark_offset, 11)
                 self.assertEqual(result.cursor, "signed")
-                self.assertTrue(result.quality.execution_eligible)
+                self.assertEqual(
+                    result.quality.execution_eligible,
+                    feed in EXECUTION_PRICE_VALIDATION_FEEDS,
+                )
 
     def test_unspecified_feed_is_rejected_at_requirement_boundary(self):
         with self.assertRaisesRegex(ValueError, "UNSPECIFIED"):
@@ -308,6 +408,134 @@ class SdkStreamProjectionTests(unittest.TestCase):
                 now_ns=NOW + 2_000_000_000,
             )
         self.assertEqual(stale.exception.code, "DATA_STALE")
+
+    def test_quiet_connected_trade_is_observable_but_never_execution_eligible(self):
+        requirement = DataRequirement(
+            instrument_uid="uid-1",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=1_000,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+        )
+        value = envelope(Feed.TRADE)
+        # The trade is two seconds old, while the stream transport delivered
+        # this frame one millisecond ago. This is test-only provider evidence.
+        value.received_at_ns = NOW + 1_999_000_000
+        view = market_data_view_from_stream(
+            StreamEvent(11, "signed", value),
+            template=template(Feed.TRADE),
+            requirement=requirement,
+            now_ns=NOW + 2_000_000_000,
+        )
+        self.assertEqual(view.quality.state, "LIVE")
+        self.assertEqual(view.quality.event_recency_state, "STALE")
+        self.assertEqual(view.quality.provider_session_state, "LIVE")
+        self.assertEqual(view.quality.provider_session_liveness_ms, 1)
+        self.assertFalse(view.quality.execution_eligible)
+
+    def test_query_sdk_observes_quiet_trade_but_rejects_disconnected_session(self):
+        requirement = DataRequirement(
+            instrument_uid="uid-1",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=1_000,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+        )
+        data = template(Feed.TRADE).model_dump(mode="json")
+        data["quality"].update({
+            "freshness_ms": 2_000,
+            "event_recency_state": "STALE",
+            "provider_session_state": "LIVE",
+            "provider_session_liveness_ms": 1,
+            "execution_eligible": False,
+        })
+        accepted = _validate_query_payload(
+            requirement,
+            {"request_id": "quiet-trade", "data": data},
+            warmup=False,
+        )
+        self.assertFalse(accepted.data.quality.execution_eligible)
+
+        data["quality"].update({
+            "freshness_ms": 1,
+            "event_recency_state": "LIVE",
+            "provider_session_state": "DISCONNECTED",
+        })
+        with self.assertRaisesRegex(ContinuityError, "provider session"):
+            _validate_query_payload(
+                requirement,
+                {"request_id": "disconnected-trade", "data": data},
+                warmup=False,
+            )
+
+    def test_execution_book_requires_verified_generation(self):
+        unverified = envelope(Feed.BOOK_SNAPSHOT)
+        unverified.book_snapshot.sequence_verified = False
+        unverified.book_snapshot.book_generation = 0
+        with self.assertRaises(ContinuityError) as blocked:
+            market_data_view_from_stream(
+                StreamEvent(11, "signed", unverified),
+                template=template(Feed.BOOK_SNAPSHOT),
+                requirement=self.requirement(Feed.BOOK_SNAPSHOT),
+                now_ns=NOW + 100_000_000,
+            )
+        self.assertEqual(blocked.exception.code, "DATA_NOT_READY")
+
+        verified = envelope(Feed.BOOK_SNAPSHOT)
+        view = market_data_view_from_stream(
+            StreamEvent(12, "signed", verified),
+            template=template(Feed.BOOK_SNAPSHOT),
+            requirement=self.requirement(Feed.BOOK_SNAPSHOT),
+            now_ns=NOW + 100_000_000,
+        )
+        self.assertTrue(view.payload.sequence_verified)
+        self.assertEqual(view.payload.book_generation, 1)
+        self.assertTrue(view.quality.execution_eligible)
+
+    def test_execution_context_feed_contract_is_venue_neutral(self):
+        cases = (
+            ("BINANCE", "USDM", "BTCUSDT"),
+            ("OKX", "SWAP", "BTC-USDT-SWAP"),
+        )
+        feeds = (
+            Feed.TRADE,
+            Feed.QUOTE,
+            Feed.MARK_INDEX_PRICE,
+            Feed.BOOK_SNAPSHOT,
+            Feed.BOOK_DELTA,
+        )
+        for venue, market, symbol in cases:
+            for feed in feeds:
+                with self.subTest(venue=venue, feed=feed):
+                    source = template(feed)
+                    source = source.model_copy(
+                        update={
+                            "instrument_id": f"{venue}.{market}.PERPETUAL.{symbol}",
+                            "source": source.source.model_copy(update={"venue": venue}),
+                        }
+                    )
+                    event = envelope(feed)
+                    event.venue = venue
+                    event.market = market
+                    event.product_type = "PERPETUAL" if venue == "BINANCE" else "SWAP"
+                    event.native_symbol = symbol
+                    event.instrument_id = source.instrument_id
+                    view = market_data_view_from_stream(
+                        StreamEvent(11, "signed", event),
+                        template=source,
+                        requirement=self.requirement(feed),
+                        now_ns=NOW + 100_000_000,
+                    )
+                    self.assertEqual(view.source.venue, venue)
+                    self.assertEqual(view.instrument_id, source.instrument_id)
+                    self.assertTrue(view.source.authoritative)
+                    self.assertTrue(view.quality.complete)
+                    self.assertFalse(view.quality.gap_open)
+                    self.assertTrue(view.quality.execution_eligible)
 
     def test_gap_and_stale_alpha_events_obey_typed_policies(self):
         requirement = DataRequirement(

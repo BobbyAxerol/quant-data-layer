@@ -8,7 +8,13 @@ from typing import Any
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl_sdk.errors import ContinuityError
-from qdl_sdk.models import DataRequirement, Feed, MarketDataView, StreamEvent
+from qdl_sdk.models import (
+    DataRequirement,
+    EXECUTION_PRICE_VALIDATION_FEEDS,
+    Feed,
+    MarketDataView,
+    StreamEvent,
+)
 
 _GAP_FLAGS = {"SEQUENCE_GAP_BEFORE", "OUT_OF_ORDER", "RESYNC_REQUIRED"}
 
@@ -47,6 +53,10 @@ def _decimal(value) -> dict[str, str | int]:
 
 def _quantity_unit(value: int) -> str:
     return _enum_name(common_pb2.QuantityUnit, value, "QUANTITY_UNIT_")
+
+
+def _metric_unit(value: int) -> str:
+    return _enum_name(market_data_pb2.MetricUnit, value, "METRIC_UNIT_")
 
 
 def _book_level(value) -> dict[str, Any]:
@@ -152,6 +162,9 @@ def _payload(
                 "checksum": envelope.book_snapshot.checksum or None,
                 "levels": [_book_level(item) for item in envelope.book_snapshot.levels],
                 "depth": int(envelope.book_snapshot.depth),
+                "book_generation": int(envelope.book_snapshot.book_generation),
+                "sequence_verified": bool(envelope.book_snapshot.sequence_verified),
+                "truncated": bool(envelope.book_snapshot.truncated),
             },
         )
     if name == "book_delta":
@@ -167,6 +180,8 @@ def _payload(
                 "checksum": envelope.book_delta.checksum or None,
                 "updates": [_book_level(item) for item in envelope.book_delta.updates],
                 "reset": bool(envelope.book_delta.reset),
+                "book_generation": int(envelope.book_delta.book_generation),
+                "sequence_verified": bool(envelope.book_delta.sequence_verified),
             },
         )
     if name == "funding_rate":
@@ -199,6 +214,7 @@ def _payload(
                     else None
                 ),
                 "quantity_unit": _quantity_unit(envelope.open_interest.quantity_unit),
+                "sampling_interval": envelope.open_interest.sampling_interval or None,
             },
         )
     if name == "mark_index_price":
@@ -210,6 +226,93 @@ def _payload(
                 "feed": "MARK_INDEX_PRICE",
                 "mark_price": _decimal(envelope.mark_index_price.mark_price),
                 "index_price": _decimal(envelope.mark_index_price.index_price),
+            },
+        )
+    if name == "long_short_ratio":
+        interval = envelope.long_short_ratio.sampling_interval
+        return (
+            Feed.LONG_SHORT_RATIO,
+            interval,
+            0,
+            {
+                "feed": "LONG_SHORT_RATIO",
+                "population": _enum_name(
+                    market_data_pb2.LongShortRatioPopulation,
+                    envelope.long_short_ratio.population,
+                    "LONG_SHORT_RATIO_POPULATION_",
+                ),
+                "sampling_interval": interval,
+                "long_value": _decimal(envelope.long_short_ratio.long_value),
+                "short_value": _decimal(envelope.long_short_ratio.short_value),
+                "long_short_ratio": _decimal(envelope.long_short_ratio.long_short_ratio),
+                "value_unit": _metric_unit(envelope.long_short_ratio.value_unit),
+            },
+        )
+    if name == "taker_flow":
+        interval = envelope.taker_flow.sampling_interval
+        return (
+            Feed.TAKER_FLOW,
+            interval,
+            0,
+            {
+                "feed": "TAKER_FLOW",
+                "sampling_interval": interval,
+                "buy_volume": _decimal(envelope.taker_flow.buy_volume),
+                "sell_volume": _decimal(envelope.taker_flow.sell_volume),
+                "buy_sell_ratio": _decimal(envelope.taker_flow.buy_sell_ratio),
+                "quantity_unit": _quantity_unit(envelope.taker_flow.quantity_unit),
+            },
+        )
+    if name == "basis":
+        interval = envelope.basis.sampling_interval
+        return (
+            Feed.BASIS,
+            interval,
+            0,
+            {
+                "feed": "BASIS",
+                "kind": _enum_name(
+                    market_data_pb2.BasisKind,
+                    envelope.basis.kind,
+                    "BASIS_KIND_",
+                ),
+                "sampling_interval": interval,
+                "basis": _decimal(envelope.basis.basis),
+                "basis_unit": _metric_unit(envelope.basis.basis_unit),
+                "annualized_basis": (
+                    _decimal(envelope.basis.annualized_basis)
+                    if envelope.basis.HasField("annualized_basis")
+                    else None
+                ),
+                "reference_instrument_uid": envelope.basis.reference_instrument_uid,
+                "formula_id": envelope.basis.formula_id,
+                "input_instrument_uids": list(envelope.basis.input_instrument_uids),
+            },
+        )
+    if name == "contract_metadata":
+        return (
+            Feed.CONTRACT_METADATA,
+            None,
+            0,
+            {
+                "feed": "CONTRACT_METADATA",
+                "contract_kind": envelope.contract_metadata.contract_kind,
+                "settlement_asset": envelope.contract_metadata.settlement_asset,
+                "contract_multiplier": _decimal(envelope.contract_metadata.contract_multiplier),
+                "price_tick": _decimal(envelope.contract_metadata.price_tick),
+                "quantity_step": _decimal(envelope.contract_metadata.quantity_step),
+                "expiry_time_ns": (
+                    int(envelope.contract_metadata.expiry_time_ns)
+                    if envelope.contract_metadata.HasField("expiry_time_ns")
+                    else None
+                ),
+                "funding_interval_ns": (
+                    int(envelope.contract_metadata.funding_interval_ns)
+                    if envelope.contract_metadata.HasField("funding_interval_ns")
+                    else None
+                ),
+                "continuous": bool(envelope.contract_metadata.continuous),
+                "underlying_instrument_uid": envelope.contract_metadata.underlying_instrument_uid,
             },
         )
     if name == "ticker":
@@ -309,21 +412,54 @@ def market_data_view_from_stream(
         observed_for_freshness = int(envelope.bar.close_time_ns)
     else:
         observed_for_freshness = observed_at_ns
-    freshness_ms = max(
-        0, ((now_ns or time.time_ns()) - observed_for_freshness) // 1_000_000
-    )
-    stale = (
+    current_ns = time.time_ns() if now_ns is None else now_ns
+    freshness_ms = max(0, (current_ns - observed_for_freshness) // 1_000_000)
+    event_stale = (
         requirement.max_freshness_ms is not None
         and freshness_ms > requirement.max_freshness_ms
     )
-    state = "GAPPED" if gap_open else "STALE" if stale else "LIVE"
+    event_recency_state = "STALE" if event_stale else "LIVE"
+    # A received stream frame is contemporaneous transport evidence for this
+    # event. Quiet-session liveness is instead established by the query/status
+    # path's native-ingestor heartbeat record.
+    session_liveness_ms = max(0, (current_ns - int(envelope.received_at_ns)) // 1_000_000)
+    session_stale = (
+        requirement.max_session_liveness_ms is not None
+        and session_liveness_ms > requirement.max_session_liveness_ms
+    )
+    provider_session_state = "STALE" if session_stale else "LIVE"
+    book_unverified = feed in {Feed.BOOK_SNAPSHOT, Feed.BOOK_DELTA} and not (
+        bool(payload["sequence_verified"]) and int(payload["book_generation"]) >= 1
+    )
+    if book_unverified:
+        flags.append("BOOK_SEQUENCE_UNVERIFIED")
+    state = (
+        "GAPPED"
+        if gap_open
+        else "SYNCING"
+        if book_unverified
+        else "STALE"
+        if session_stale
+        or (
+            event_stale
+            and requirement.effective_event_recency_policy.value in {"BLOCK", "PAUSE"}
+        )
+        else "LIVE"
+    )
     if gap_open and requirement.gap_policy.value in {"BLOCK", "PAUSE"}:
         raise ContinuityError(
             "OPEN_SEQUENCE_GAP", "stream event violates the requested gap policy"
         )
-    if stale and requirement.stale_policy.value in {"BLOCK", "PAUSE"}:
+    if (
+        event_stale
+        and requirement.effective_event_recency_policy.value in {"BLOCK", "PAUSE"}
+    ):
         raise ContinuityError(
             "DATA_STALE", "stream event violates the requested freshness policy"
+        )
+    if session_stale:
+        raise ContinuityError(
+            "DATA_STALE", "stream event transport liveness exceeds its policy"
         )
 
     authoritative = (
@@ -336,7 +472,9 @@ def market_data_view_from_stream(
             "OPEN_SEQUENCE_GAP"
             if gap_open
             else "DATA_STALE"
-            if stale
+            if event_stale or session_stale
+            else "DATA_NOT_READY"
+            if book_unverified
             else "SOURCE_NON_AUTHORITATIVE"
         )
         raise ContinuityError(code, "stream event is not execution eligible")
@@ -355,6 +493,7 @@ def market_data_view_from_stream(
             "feed": feed.value,
             "interval": interval,
             "observed_at_ns": observed_at_ns,
+            "received_at_ns": max(1, int(envelope.received_at_ns)),
             "revision": revision,
             "payload": payload,
             "source": {
@@ -369,9 +508,17 @@ def market_data_view_from_stream(
             "quality": {
                 "state": state,
                 "freshness_ms": int(freshness_ms),
+                "event_recency_state": event_recency_state,
+                "provider_session_state": provider_session_state,
+                "provider_session_liveness_ms": int(session_liveness_ms),
                 "gap_open": gap_open,
-                "complete": not gap_open,
-                "execution_eligible": authoritative,
+                "complete": not gap_open and not book_unverified,
+                "execution_eligible": (
+                    authoritative
+                    and not event_stale
+                    and not session_stale
+                    and feed in EXECUTION_PRICE_VALIDATION_FEEDS
+                ),
                 "policy_id": requirement.source_policy_id,
                 "flags": flags,
             },

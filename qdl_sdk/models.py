@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Annotated, Any, Literal
 
@@ -18,7 +19,11 @@ from qdl.query.v2 import query_pb2
 
 try:
     # The service and SDK share enum identity when the public query package is present.
-    from qdl.query import BarLifecycle, FeedType
+    from qdl.query import (
+        BarLifecycle,
+        EXECUTION_PRICE_VALIDATION_FEEDS as _QUERY_EXECUTION_PRICE_VALIDATION_FEEDS,
+        FeedType,
+    )
 except ImportError:
     class FeedType(StrEnum):
         UNSPECIFIED = "UNSPECIFIED"
@@ -31,6 +36,10 @@ except ImportError:
         OPEN_INTEREST = "OPEN_INTEREST"
         MARK_INDEX_PRICE = "MARK_INDEX_PRICE"
         TICKER = "TICKER"
+        LONG_SHORT_RATIO = "LONG_SHORT_RATIO"
+        TAKER_FLOW = "TAKER_FLOW"
+        BASIS = "BASIS"
+        CONTRACT_METADATA = "CONTRACT_METADATA"
 
     class BarLifecycle(StrEnum):
         UNSPECIFIED = "UNSPECIFIED"
@@ -39,9 +48,37 @@ except ImportError:
         REVISED = "REVISED"
         CANCELLED = "CANCELLED"
 
+    _QUERY_EXECUTION_PRICE_VALIDATION_FEEDS = frozenset(
+        {
+            FeedType.TRADE,
+            FeedType.QUOTE,
+            FeedType.BAR,
+            FeedType.BOOK_SNAPSHOT,
+            FeedType.BOOK_DELTA,
+            FeedType.MARK_INDEX_PRICE,
+        }
+    )
+
 
 # Concise public SDK spelling; the frozen wire component remains FeedType.
 Feed = FeedType
+
+METRIC_INTERVAL_FEEDS = frozenset(
+    {
+        Feed.LONG_SHORT_RATIO,
+        Feed.TAKER_FLOW,
+        Feed.BASIS,
+    }
+)
+
+# See qdl.query.contracts: OI may be a point snapshot or a historical sampled
+# series.  The public SDK keeps that distinction rather than pretending every
+# OI observation has a cadence.
+OPTIONAL_INTERVAL_FEEDS = frozenset({Feed.OPEN_INTEREST})
+
+EXECUTION_PRICE_VALIDATION_FEEDS = frozenset(
+    Feed(feed.value) for feed in _QUERY_EXECUTION_PRICE_VALIDATION_FEEDS
+)
 
 
 class Grade(StrEnum):
@@ -74,8 +111,40 @@ class BarRevisionPolicy(StrEnum):
     EMIT_REVISIONS = "EMIT_REVISIONS"
 
 
+class IntervalSourcePolicy(StrEnum):
+    NATIVE_ONLY = "NATIVE_ONLY"
+    NATIVE_OR_EXACT_RESAMPLE = "NATIVE_OR_EXACT_RESAMPLE"
+
+
 class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class WarmupTimeRange(ClosedModel):
+    start_time_ns: int = Field(gt=0)
+    end_time_ns: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def increasing(self):
+        if self.end_time_ns <= self.start_time_ns:
+            raise ValueError("warmup time range must be increasing")
+        return self
+
+
+class WarmupSpecification(ClosedModel):
+    rows: int | None = Field(default=None, ge=1, le=10_000)
+    time_range: WarmupTimeRange | None = None
+    interval_source_policy: IntervalSourcePolicy = (
+        IntervalSourcePolicy.NATIVE_OR_EXACT_RESAMPLE
+    )
+    max_cache_age_ms: int = Field(default=60_000, ge=0, le=86_400_000)
+    deadline_ms: int = Field(default=20_000, ge=100, le=120_000)
+
+    @model_validator(mode="after")
+    def exactly_one_horizon(self):
+        if (self.rows is None) == (self.time_range is None):
+            raise ValueError("warmup requires exactly one rows or time_range horizon")
+        return self
 
 
 class ProblemDetails(ClosedModel):
@@ -96,6 +165,23 @@ class DecimalValue(ClosedModel):
     scale: int = Field(ge=-38, le=38)
     source_text: str = Field(min_length=1, max_length=128)
 
+    @model_validator(mode="after")
+    def source_text_matches_canonical_value(self):
+        try:
+            source = Decimal(self.source_text)
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError("decimal source_text is invalid") from error
+        if not source.is_finite():
+            raise ValueError("decimal source_text must be finite")
+        canonical = Decimal(self.coefficient).scaleb(-self.scale)
+        if canonical != source:
+            raise ValueError("decimal source_text does not match coefficient and scale")
+        return self
+
+
+def _decimal_value(value: DecimalValue) -> Decimal:
+    return Decimal(value.coefficient).scaleb(-value.scale)
+
 
 class TradeIdentityKind(StrEnum):
     NATIVE = "NATIVE"
@@ -107,6 +193,28 @@ class QuantityUnit(StrEnum):
     QUOTE_ASSET = "QUOTE_ASSET"
     CONTRACT = "CONTRACT"
     SHARE = "SHARE"
+
+
+class MetricUnit(StrEnum):
+    RATIO = "RATIO"
+    PRICE = "PRICE"
+    BASE_ASSET = "BASE_ASSET"
+    QUOTE_ASSET = "QUOTE_ASSET"
+    CONTRACT = "CONTRACT"
+    NOTIONAL = "NOTIONAL"
+    PERCENT = "PERCENT"
+    BASIS_POINTS = "BASIS_POINTS"
+
+
+class LongShortRatioPopulation(StrEnum):
+    GLOBAL_ACCOUNT = "GLOBAL_ACCOUNT"
+    TOP_ACCOUNT = "TOP_ACCOUNT"
+    TOP_POSITION = "TOP_POSITION"
+
+
+class BasisKind(StrEnum):
+    PROVIDER_NATIVE = "PROVIDER_NATIVE"
+    DERIVED = "DERIVED"
 
 
 class SourceView(ClosedModel):
@@ -124,6 +232,14 @@ class QualityView(ClosedModel):
         "HALTED", "MARKET_CLOSED",
     ]
     freshness_ms: int = Field(ge=0)
+    # ``freshness_ms`` is retained as the public last-event-age field.  The
+    # two fields below make quiet event-driven feeds distinguishable from an
+    # unhealthy provider session.
+    event_recency_state: Literal["LIVE", "STALE", "NOT_APPLICABLE"] = "LIVE"
+    provider_session_state: Literal[
+        "LIVE", "STALE", "DISCONNECTED", "UNKNOWN", "NOT_APPLICABLE"
+    ] = "NOT_APPLICABLE"
+    provider_session_liveness_ms: int | None = Field(default=None, ge=0)
     gap_open: bool
     complete: bool
     execution_eligible: bool
@@ -165,6 +281,20 @@ class QuotePayload(ClosedModel):
     level: int = Field(default=1, ge=1)
 
 
+class ResampleLineageView(ClosedModel):
+    base_interval: str = Field(min_length=1, max_length=20)
+    constituent_count: int = Field(ge=1)
+    first_watermark: int = Field(ge=0)
+    last_watermark: int = Field(ge=0)
+    constituent_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def increasing_watermark(self):
+        if self.last_watermark < self.first_watermark:
+            raise ValueError("resample watermark range must be increasing")
+        return self
+
+
 class BarPayload(ClosedModel):
     feed: Literal[Feed.BAR] = Feed.BAR
     interval: str = Field(min_length=1, max_length=20)
@@ -184,6 +314,7 @@ class BarPayload(ClosedModel):
     revision: int = Field(ge=0)
     origin: Literal["VENUE_NATIVE", "AGGREGATED", "BACKFILLED", "RECONCILED"]
     supersedes_event_id: str | None = None
+    resample_lineage: ResampleLineageView | None = None
 
     @model_validator(mode="after")
     def validate_lifecycle(self):
@@ -210,6 +341,15 @@ class BookSnapshotPayload(ClosedModel):
     checksum: str | None = Field(default=None, max_length=200)
     levels: list[BookLevel]
     depth: int = Field(ge=1)
+    book_generation: int = Field(default=0, ge=0)
+    sequence_verified: bool = False
+    truncated: bool = False
+
+    @model_validator(mode="after")
+    def verified_snapshot_has_generation(self):
+        if self.sequence_verified and self.book_generation < 1:
+            raise ValueError("verified book snapshot requires a positive book_generation")
+        return self
 
 
 class BookDeltaPayload(ClosedModel):
@@ -220,6 +360,14 @@ class BookDeltaPayload(ClosedModel):
     checksum: str | None = Field(default=None, max_length=200)
     updates: list[BookLevel]
     reset: bool = False
+    book_generation: int = Field(default=0, ge=0)
+    sequence_verified: bool = False
+
+    @model_validator(mode="after")
+    def verified_delta_has_generation(self):
+        if self.sequence_verified and self.book_generation < 1:
+            raise ValueError("verified book delta requires a positive book_generation")
+        return self
 
 
 class FundingRatePayload(ClosedModel):
@@ -234,12 +382,109 @@ class OpenInterestPayload(ClosedModel):
     quantity: DecimalValue
     quantity_unit: QuantityUnit
     notional: DecimalValue | None = None
+    sampling_interval: str | None = Field(default=None, min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def sampling_interval_is_not_blank(self):
+        if self.sampling_interval is not None and not self.sampling_interval.strip():
+            raise ValueError("open-interest sampling_interval cannot be blank")
+        return self
 
 
 class MarkIndexPricePayload(ClosedModel):
     feed: Literal[Feed.MARK_INDEX_PRICE] = Feed.MARK_INDEX_PRICE
     mark_price: DecimalValue
     index_price: DecimalValue
+
+
+class LongShortRatioPayload(ClosedModel):
+    feed: Literal[Feed.LONG_SHORT_RATIO] = Feed.LONG_SHORT_RATIO
+    population: LongShortRatioPopulation
+    sampling_interval: str = Field(min_length=1, max_length=20)
+    long_value: DecimalValue
+    short_value: DecimalValue
+    long_short_ratio: DecimalValue
+    value_unit: MetricUnit = MetricUnit.RATIO
+
+    @model_validator(mode="after")
+    def ratio_has_ratio_unit(self):
+        if not self.sampling_interval.strip():
+            raise ValueError("long/short ratio sampling_interval cannot be blank")
+        if self.value_unit is not MetricUnit.RATIO:
+            raise ValueError("long/short ratio value unit must be RATIO")
+        return self
+
+
+class TakerFlowPayload(ClosedModel):
+    feed: Literal[Feed.TAKER_FLOW] = Feed.TAKER_FLOW
+    sampling_interval: str = Field(min_length=1, max_length=20)
+    buy_volume: DecimalValue
+    sell_volume: DecimalValue
+    buy_sell_ratio: DecimalValue
+    quantity_unit: QuantityUnit
+
+    @model_validator(mode="after")
+    def sampling_interval_is_not_blank(self):
+        if not self.sampling_interval.strip():
+            raise ValueError("taker-flow sampling_interval cannot be blank")
+        return self
+
+
+class BasisPayload(ClosedModel):
+    feed: Literal[Feed.BASIS] = Feed.BASIS
+    kind: BasisKind
+    sampling_interval: str = Field(min_length=1, max_length=20)
+    basis: DecimalValue
+    basis_unit: MetricUnit
+    annualized_basis: DecimalValue | None = None
+    reference_instrument_uid: str = Field(default="", max_length=200)
+    formula_id: str = Field(default="", max_length=160)
+    input_instrument_uids: list[str] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def derived_basis_has_explicit_lineage(self):
+        if not self.sampling_interval.strip():
+            raise ValueError("basis sampling_interval cannot be blank")
+        if self.kind is BasisKind.DERIVED:
+            inputs = self.input_instrument_uids
+            if (
+                not self.formula_id.strip()
+                or len(inputs) < 2
+                or any(not value.strip() for value in inputs)
+                or len(set(inputs)) != len(inputs)
+            ):
+                raise ValueError("derived basis requires formula_id and at least two input instruments")
+        elif self.formula_id or self.input_instrument_uids:
+            raise ValueError("provider-native basis cannot claim a QDL formula or input list")
+        return self
+
+
+class ContractMetadataPayload(ClosedModel):
+    feed: Literal[Feed.CONTRACT_METADATA] = Feed.CONTRACT_METADATA
+    contract_kind: str = Field(min_length=1, max_length=40)
+    settlement_asset: str = Field(min_length=1, max_length=40)
+    contract_multiplier: DecimalValue
+    price_tick: DecimalValue
+    quantity_step: DecimalValue
+    expiry_time_ns: int | None = Field(default=None, gt=0)
+    funding_interval_ns: int | None = Field(default=None, gt=0)
+    continuous: bool = False
+    underlying_instrument_uid: str = Field(default="", max_length=200)
+
+    @model_validator(mode="after")
+    def tradable_rules_are_positive(self):
+        if not self.contract_kind.strip() or not self.settlement_asset.strip():
+            raise ValueError("contract metadata kind and settlement asset are required")
+        if any(
+            _decimal_value(value) <= 0
+            for value in (
+                self.contract_multiplier,
+                self.price_tick,
+                self.quantity_step,
+            )
+        ):
+            raise ValueError("contract metadata multiplier, tick and quantity step must be positive")
+        return self
 
 
 class TickerPayload(ClosedModel):
@@ -264,7 +509,9 @@ class TickerPayload(ClosedModel):
 
 MarketPayload = Annotated[
     TradePayload | QuotePayload | BarPayload | BookSnapshotPayload | BookDeltaPayload
-    | FundingRatePayload | OpenInterestPayload | MarkIndexPricePayload | TickerPayload,
+    | FundingRatePayload | OpenInterestPayload | MarkIndexPricePayload
+    | LongShortRatioPayload | TakerFlowPayload | BasisPayload
+    | ContractMetadataPayload | TickerPayload,
     Field(discriminator="feed"),
 ]
 
@@ -276,6 +523,7 @@ class MarketDataView(ClosedModel):
     feed: Feed
     interval: str | None
     observed_at_ns: int = Field(gt=0)
+    received_at_ns: int | None = Field(default=None, gt=0)
     revision: int = Field(ge=0)
     payload: MarketPayload
     source: SourceView
@@ -294,8 +542,14 @@ class MarketDataView(ClosedModel):
                 raise ValueError("bar envelope and payload interval must match")
             if self.payload.revision != self.revision:
                 raise ValueError("bar envelope and payload revision must match")
+        elif self.feed in METRIC_INTERVAL_FEEDS:
+            if not self.interval or self.payload.sampling_interval != self.interval:
+                raise ValueError("metric-series envelope and payload interval must match")
+        elif self.feed in OPTIONAL_INTERVAL_FEEDS:
+            if self.interval is not None and self.payload.sampling_interval != self.interval:
+                raise ValueError("open-interest envelope and payload interval must match")
         elif self.interval is not None:
-            raise ValueError("interval is valid only for bar market data")
+            raise ValueError("interval is valid only for bar or metric-series market data")
         return self
 
 
@@ -417,12 +671,15 @@ class DataRequirement:
     interval: str | None = None
     warmup_limit: int = 0
     max_freshness_ms: int | None = None
+    event_recency_policy: StalePolicy | None = None
+    max_session_liveness_ms: int | None = None
     require_full_coverage: bool = True
     require_final_bars: bool = True
     stale_policy: StalePolicy = StalePolicy.BLOCK
     gap_policy: GapPolicy = GapPolicy.BLOCK
     recovery: RecoveryPolicy = RecoveryPolicy.SNAPSHOT_AND_REPLAY
     bar_revision_policy: BarRevisionPolicy = BarRevisionPolicy.LATEST
+    warmup: WarmupSpecification | None = None
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.source_policy_id.strip():
@@ -442,27 +699,73 @@ class DataRequirement:
                 raise TypeError(f"{field} must use the typed SDK enum")
         if not 0 <= self.warmup_limit <= 10_000:
             raise ValueError("warmup_limit must be between 0 and 10000")
+        if self.warmup is not None and not isinstance(
+            self.warmup, WarmupSpecification
+        ):
+            raise TypeError("warmup must use WarmupSpecification")
+        if self.warmup is not None and self.warmup.rows is not None:
+            if self.warmup_limit not in {0, self.warmup.rows}:
+                raise ValueError("warmup_limit conflicts with warmup.rows")
+        if self.warmup is not None and self.warmup.time_range is not None:
+            if self.warmup_limit:
+                raise ValueError("time-range warmup cannot also declare warmup_limit")
         if self.max_freshness_ms is not None and self.max_freshness_ms <= 0:
             raise ValueError("max_freshness_ms must be positive")
+        if (
+            self.max_session_liveness_ms is not None
+            and self.max_session_liveness_ms <= 0
+        ):
+            raise ValueError("max_session_liveness_ms must be positive")
+        if self.event_recency_policy is not None and not isinstance(
+            self.event_recency_policy, StalePolicy
+        ):
+            raise TypeError("event_recency_policy must use the typed SDK enum")
+        if (
+            self.event_recency_policy is StalePolicy.OBSERVE
+            and self.max_session_liveness_ms is None
+        ):
+            raise ValueError(
+                "observed event recency requires an explicit provider session SLA"
+            )
         if self.feed is Feed.BAR and not self.interval:
             raise ValueError("bar requirement needs interval")
-        if self.feed is not Feed.BAR and self.interval is not None:
-            raise ValueError("interval is valid only for bar requirements")
+        if self.feed in METRIC_INTERVAL_FEEDS and not self.interval:
+            raise ValueError("metric-series requirement needs a sampling interval")
+        if (
+            self.feed is not Feed.BAR
+            and self.feed not in METRIC_INTERVAL_FEEDS
+            and self.interval is not None
+        ):
+            raise ValueError("interval is valid only for bar or metric-series requirements")
         if self.consumer_grade is Grade.EXECUTION and (
-            self.stale_policy is not StalePolicy.BLOCK
+            self.feed not in EXECUTION_PRICE_VALIDATION_FEEDS
+            or self.stale_policy is not StalePolicy.BLOCK
             or self.gap_policy is not GapPolicy.BLOCK
             or not self.require_full_coverage
         ):
-            raise ValueError("execution-grade requirement cannot relax fail-closed policy")
+            raise ValueError(
+                "execution-grade requirement needs an execution-price validation feed and fail-closed policy"
+            )
 
     def query_params(self) -> dict[str, str | int | bool]:
+        warmup = self.warmup
         values: dict[str, str | int | bool | None] = {
             "feed": self.feed.value,
             "consumer_grade": self.consumer_grade.value,
             "source_policy_id": self.source_policy_id,
             "interval": self.interval,
-            "limit": self.warmup_limit or None,
+            "limit": (
+                warmup.rows
+                if warmup is not None and warmup.rows is not None
+                else self.warmup_limit or None
+            ),
             "max_freshness_ms": self.max_freshness_ms,
+            "event_recency_policy": (
+                self.event_recency_policy.value
+                if self.event_recency_policy is not None
+                else None
+            ),
+            "max_session_liveness_ms": self.max_session_liveness_ms,
             "require_full_coverage": self.require_full_coverage,
             "require_final_bars": self.require_final_bars,
             "stale_policy": self.stale_policy.value,
@@ -470,15 +773,65 @@ class DataRequirement:
             "recovery": self.recovery.value,
             "bar_revision_policy": self.bar_revision_policy.value,
         }
+        if warmup is not None:
+            values.update({
+                "interval_source_policy": warmup.interval_source_policy.value,
+                "max_cache_age_ms": warmup.max_cache_age_ms,
+                "deadline_ms": warmup.deadline_ms,
+                "start_time_ns": (
+                    warmup.time_range.start_time_ns if warmup.time_range else None
+                ),
+                "end_time_ns": (
+                    warmup.time_range.end_time_ns if warmup.time_range else None
+                ),
+            })
         return {key: value for key, value in values.items() if value is not None}
 
+    @property
+    def warmup_specification(self) -> WarmupSpecification | None:
+        if self.warmup is not None:
+            return self.warmup
+        if self.warmup_limit:
+            return WarmupSpecification(rows=self.warmup_limit)
+        return None
+
+    def to_mapping(self) -> dict[str, object]:
+        return {
+            "instrument_uid": self.instrument_uid,
+            "feed": self.feed.value,
+            "consumer_grade": self.consumer_grade.value,
+            "source_policy_id": self.source_policy_id,
+            "interval": self.interval,
+            "warmup_limit": self.warmup_limit,
+            "max_freshness_ms": self.max_freshness_ms,
+            "event_recency_policy": (
+                self.event_recency_policy.value
+                if self.event_recency_policy is not None
+                else None
+            ),
+            "max_session_liveness_ms": self.max_session_liveness_ms,
+            "require_full_coverage": self.require_full_coverage,
+            "require_final_bars": self.require_final_bars,
+            "stale_policy": self.stale_policy.value,
+            "gap_policy": self.gap_policy.value,
+            "recovery": self.recovery.value,
+            "bar_revision_policy": self.bar_revision_policy.value,
+            "warmup": self.warmup.model_dump(mode="json") if self.warmup else None,
+        }
+
     def to_proto(self) -> query_pb2.DataRequirement:
-        return query_pb2.DataRequirement(
+        result = query_pb2.DataRequirement(
             instrument_uid=self.instrument_uid,
             interval=self.interval or "",
             source_policy_id=self.source_policy_id,
             warmup_limit=self.warmup_limit,
             max_freshness_ms=self.max_freshness_ms or 0,
+            event_recency_policy=(
+                getattr(query_pb2, f"STALE_POLICY_{self.event_recency_policy.value}")
+                if self.event_recency_policy is not None
+                else query_pb2.STALE_POLICY_UNSPECIFIED
+            ),
+            max_session_liveness_ms=self.max_session_liveness_ms or 0,
             require_full_coverage=self.require_full_coverage,
             require_final_bars=self.require_final_bars,
             feed_type=getattr(query_pb2, f"FEED_TYPE_{self.feed.value}"),
@@ -494,6 +847,29 @@ class DataRequirement:
                 query_pb2, f"BAR_REVISION_POLICY_{self.bar_revision_policy.value}"
             ),
         )
+        if self.warmup is not None:
+            proto = query_pb2.WarmupSpecification(
+                interval_source_policy=getattr(
+                    query_pb2,
+                    f"INTERVAL_SOURCE_POLICY_{self.warmup.interval_source_policy.value}",
+                ),
+                max_cache_age_ms=self.warmup.max_cache_age_ms,
+                deadline_ms=self.warmup.deadline_ms,
+            )
+            if self.warmup.rows is not None:
+                proto.rows = self.warmup.rows
+            else:
+                assert self.warmup.time_range is not None
+                proto.time_range.CopyFrom(query_pb2.WarmupTimeRange(
+                    start_time_ns=self.warmup.time_range.start_time_ns,
+                    end_time_ns=self.warmup.time_range.end_time_ns,
+                ))
+            result.warmup.CopyFrom(proto)
+        return result
+
+    @property
+    def effective_event_recency_policy(self) -> StalePolicy:
+        return self.event_recency_policy or self.stale_policy
 
 
 @dataclass(frozen=True)

@@ -92,6 +92,7 @@ class OkxOpenInterestSnapshot:
     inst_type: str
     open_interest_contracts: str
     open_interest_ccy: str | None
+    open_interest_usd: str | None
     observed_ts_ms: int
     source_id: str = "OKX_DIRECT"
     coverage: str = "SNAPSHOT_ONLY"
@@ -221,9 +222,13 @@ class OkxHistoricalClient:
             oi_ccy = str(row.get("oiCcy") or "").strip() or None
             if oi_ccy is not None:
                 Decimal(oi_ccy)
+            oi_usd = str(row.get("oiUsd") or "").strip() or None
+            if oi_usd is not None:
+                Decimal(oi_usd)
             result.append(OkxOpenInterestSnapshot(
                 inst_id=str(row["instId"]), inst_type=str(row.get("instType") or inst_type),
                 open_interest_contracts=oi, open_interest_ccy=oi_ccy,
+                open_interest_usd=oi_usd,
                 observed_ts_ms=int(row["ts"]),
             ))
         return tuple(sorted(result, key=lambda item: item.inst_id))

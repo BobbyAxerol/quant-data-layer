@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.providers.binance.rest import BinanceProviderError, fetch_klines
+from qdl.adapters.intervals import canonical_interval_ms, latest_closed_boundary_ms
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.capture import capture_exact_frame
 
@@ -30,10 +31,10 @@ class BinanceBarRawBinding:
     def __post_init__(self) -> None:
         if self.market not in {"USDM", "SPOT"}:
             raise ValueError("Binance bar market must be USDM or SPOT")
-        if self.product_type not in {"PERPETUAL", "SPOT"}:
+        if self.product_type not in {"PERPETUAL", "FUTURE", "SPOT"}:
             raise ValueError("Binance bar product type is invalid")
-        if self.market == "USDM" and self.product_type != "PERPETUAL":
-            raise ValueError("Binance USDM bar requires PERPETUAL product")
+        if self.market == "USDM" and self.product_type not in {"PERPETUAL", "FUTURE"}:
+            raise ValueError("Binance USDM bar requires PERPETUAL or FUTURE product")
         if self.market == "SPOT" and self.product_type != "SPOT":
             raise ValueError("Binance Spot bar requires SPOT product")
         strings = (
@@ -54,13 +55,12 @@ class BinanceBarRawBinding:
 
 
 def _interval_ms(interval: str) -> int:
-    units = {"m": 60_000, "h": 3_600_000, "d": 86_400_000}
-    if not interval or interval[-1] not in units:
-        raise ValueError("Binance history interval must have a fixed m/h/d duration")
-    count = int(interval[:-1])
-    if count <= 0:
-        raise ValueError("Binance history interval must be positive")
-    return count * units[interval[-1]]
+    # Duration arithmetic is shared; the venue guard stays local because
+    # Binance REST klines expose no sub-minute bar. Weekly is a real Binance
+    # interval and was rejected here until a live certification run hit it.
+    if not interval or interval[-1] not in {"m", "h", "d", "w"}:
+        raise ValueError("Binance history interval must have a fixed m/h/d/w duration")
+    return canonical_interval_ms(interval)
 
 
 def _fetch_rows(
@@ -180,9 +180,18 @@ def fetch_closed_bar_history_raw_envelopes(
         raise ValueError("Binance history limit must be between 1 and 1000")
     observed_ms = int(now_ms if now_ms is not None else time.time() * 1000)
     interval_ms = _interval_ms(binding.interval)
+    # Binance caps a kline response at 1000 rows.  Asking through wall-clock
+    # `now` can consume one slot with the still-open candle, yielding only 999
+    # usable closed rows.  The history API's cutoff is therefore the exclusive
+    # boundary of the current interval, not request observation time.
+    provider_end_ms = latest_closed_boundary_ms(
+        binding.interval,
+        observed_ms,
+        provider="BINANCE",
+    ) - 1
     rows = _fetch_rows(
         binding,
-        observed_ms=observed_ms,
+        observed_ms=provider_end_ms,
         limit=min(1000, limit + 2),
         attempts=attempts,
         fetcher=fetcher,

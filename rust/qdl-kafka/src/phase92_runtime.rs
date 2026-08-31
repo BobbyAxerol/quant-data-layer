@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::future::try_join_all;
 use qdl_core::transport::{AppendResult, Cursor, DurableRecord};
@@ -7,14 +8,19 @@ use qdl_venue_core::authority::{
     Phase92AuthorityControlEvent, Phase92AuthorityFence, Phase92AuthorityRecord,
     Phase92PublicationContext, SinkTarget,
 };
-use rdkafka::consumer::{BaseConsumer, Consumer, StreamConsumer};
+use rdkafka::client::ClientContext;
+use rdkafka::consumer::{
+    BaseConsumer, Consumer, ConsumerContext, RebalanceProtocol, StreamConsumer,
+};
 use rdkafka::message::{Header, Headers, Message, OwnedHeaders};
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
+use rdkafka::types::RDKafkaRespErr;
 use rdkafka::util::Timeout;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::phase92_bootstrap::{Phase92BootstrapAssignment, Phase92BootstrapPayload};
 use super::{
     transactional_output_headers, KafkaTransportConfig, KafkaTransportError,
     TransactionalKafkaInput, EVENT_ID_HEADER,
@@ -70,9 +76,11 @@ impl Phase92TransactionalTopics {
             }
             SinkTarget::PublicV2 => stream == self.public_v2,
             SinkTarget::LegacyV1 => stream == self.legacy_v1,
-            SinkTarget::ShadowRaw | SinkTarget::ShadowCanonical | SinkTarget::ShadowQuarantine => {
-                false
-            }
+            SinkTarget::ShadowRaw
+            | SinkTarget::ShadowCanonical
+            | SinkTarget::ShadowQuarantine
+            | SinkTarget::PrimaryRaw
+            | SinkTarget::PrimaryQuarantine => false,
         }
     }
 }
@@ -185,7 +193,9 @@ fn target_name(target: SinkTarget) -> &'static str {
         SinkTarget::ShadowCanonical => "SHADOW_CANONICAL",
         SinkTarget::ShadowQuarantine => "SHADOW_QUARANTINE",
         SinkTarget::CanaryCanonical => "CANARY_CANONICAL",
+        SinkTarget::PrimaryRaw => "PRIMARY_RAW",
         SinkTarget::PrimaryCanonical => "PRIMARY_CANONICAL",
+        SinkTarget::PrimaryQuarantine => "PRIMARY_QUARANTINE",
         SinkTarget::PublicV2 => "PUBLIC_V2",
         SinkTarget::LegacyV1 => "LEGACY_V1",
     }
@@ -204,6 +214,31 @@ pub struct CompactedKafkaRecord {
 
 pub struct KafkaCompactedSnapshotReader {
     config: KafkaTransportConfig,
+}
+
+fn retire_reached_snapshot_partitions(
+    remaining: &mut BTreeMap<(String, i32), i64>,
+    positions: &TopicPartitionList,
+) -> Result<(), KafkaTransportError> {
+    let completed = remaining
+        .iter()
+        .filter_map(|((topic, partition), terminal_offset)| {
+            let position = positions.find_partition(topic, *partition)?;
+            if let Err(error) = position.error() {
+                return Some(Err(KafkaTransportError::Kafka(error)));
+            }
+            match position.offset() {
+                Offset::Offset(next_offset) if next_offset > *terminal_offset => {
+                    Some(Ok((topic.clone(), *partition)))
+                }
+                _ => None,
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for identity in completed {
+        remaining.remove(&identity);
+    }
+    Ok(())
 }
 
 impl KafkaCompactedSnapshotReader {
@@ -258,9 +293,13 @@ impl KafkaCompactedSnapshotReader {
         let deadline = Instant::now() + self.config.request_timeout;
         let mut latest: HashMap<(String, String), CompactedKafkaRecord> = HashMap::new();
         while !remaining.is_empty() {
+            retire_reached_snapshot_partitions(&mut remaining, &consumer.position()?)?;
+            if remaining.is_empty() {
+                break;
+            }
             if Instant::now() >= deadline {
-                return Err(KafkaTransportError::Configuration(
-                    "compacted snapshot did not reach captured high watermarks".into(),
+                return Err(KafkaTransportError::SnapshotTimeout(
+                    "captured high watermarks were not reached before the deadline".into(),
                 ));
             }
             let Some(result) = consumer.poll(Duration::from_millis(100)) else {
@@ -329,12 +368,302 @@ pub struct Phase92CommitResult {
     pub checkpoints: Vec<AppendResult>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Phase92BootstrapStatus {
+    NotRequired,
+    Pending,
+    ResumeStored,
+    Seeded,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Phase92RebalanceAction {
+    PrepareAndAssign,
+    Revoke,
+    CooperativeEmptyNoop,
+}
+
+fn phase92_rebalance_action(
+    error: RDKafkaRespErr,
+    cooperative_protocol: bool,
+    assignment_len: usize,
+) -> Result<Phase92RebalanceAction, KafkaTransportError> {
+    match error {
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS => {
+            if assignment_len == 0 {
+                if cooperative_protocol {
+                    Ok(Phase92RebalanceAction::CooperativeEmptyNoop)
+                } else {
+                    Err(KafkaTransportError::Fencing(
+                        "Phase 9.2 bootstrap received an empty assignment outside cooperative rebalance"
+                            .into(),
+                    ))
+                }
+            } else {
+                Ok(Phase92RebalanceAction::PrepareAndAssign)
+            }
+        }
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS => Ok(Phase92RebalanceAction::Revoke),
+        _ => Err(KafkaTransportError::Fencing(
+            "Phase 9.2 Kafka consumer received an unexpected rebalance event".into(),
+        )),
+    }
+}
+
+struct Phase92BootstrapConsumerContext {
+    cursor: Option<Phase92BootstrapPayload>,
+    status: Mutex<Phase92BootstrapStatus>,
+    failure: Mutex<Option<String>>,
+    request_timeout: Duration,
+}
+
+impl Phase92BootstrapConsumerContext {
+    fn permissive(request_timeout: Duration) -> Self {
+        Self {
+            cursor: None,
+            status: Mutex::new(Phase92BootstrapStatus::NotRequired),
+            failure: Mutex::new(None),
+            request_timeout,
+        }
+    }
+
+    fn signed(cursor: Phase92BootstrapPayload, request_timeout: Duration) -> Self {
+        Self {
+            cursor: Some(cursor),
+            status: Mutex::new(Phase92BootstrapStatus::Pending),
+            failure: Mutex::new(None),
+            request_timeout,
+        }
+    }
+
+    fn status(&self) -> Phase92BootstrapStatus {
+        self.status
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or(Phase92BootstrapStatus::Failed)
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.failure
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_else(|_| Some("Phase 9.2 bootstrap failure state lock is poisoned".into()))
+    }
+
+    fn fail(&self, error: impl Into<String>) {
+        let message = error.into();
+        if let Ok(mut failure) = self.failure.lock() {
+            *failure = Some(message);
+        }
+        if let Ok(mut status) = self.status.lock() {
+            *status = Phase92BootstrapStatus::Failed;
+        }
+    }
+
+    fn set_status(&self, status: Phase92BootstrapStatus) {
+        if let Ok(mut current) = self.status.lock() {
+            *current = status;
+        } else {
+            self.fail("Phase 9.2 bootstrap status lock is poisoned");
+        }
+    }
+
+    fn prepare_assignment(
+        &self,
+        consumer: &BaseConsumer<Self>,
+        assignment: &mut TopicPartitionList,
+    ) -> Result<(), KafkaTransportError> {
+        let Some(cursor) = &self.cursor else {
+            return Ok(());
+        };
+        let assigned = assignment
+            .elements()
+            .iter()
+            .map(|item| (item.topic().to_owned(), item.partition()))
+            .collect::<Vec<_>>();
+        let committed = consumer.committed_offsets(
+            assignment.clone(),
+            Timeout::After(self.request_timeout.min(Duration::from_secs(2))),
+        )?;
+        let mut offsets = BTreeMap::new();
+        for item in committed.elements() {
+            let offset = match item.offset() {
+                Offset::Offset(value) if value >= 0 => Some(
+                    u64::try_from(value).map_err(|_| KafkaTransportError::InvalidOffset(value))?,
+                ),
+                Offset::Invalid => None,
+                value => {
+                    return Err(KafkaTransportError::Fencing(format!(
+                        "Phase 9.2 committed offset is not concrete for {}[{}]: {value:?}",
+                        item.topic(),
+                        item.partition(),
+                    )));
+                }
+            };
+            offsets.insert((item.topic().to_owned(), item.partition()), offset);
+        }
+        let now_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| {
+                KafkaTransportError::Configuration(format!(
+                    "Phase 9.2 bootstrap clock is before Unix epoch: {error}"
+                ))
+            })?
+            .as_nanos()
+            .try_into()
+            .map_err(|_| {
+                KafkaTransportError::Configuration(
+                    "Phase 9.2 bootstrap clock does not fit signed cursor range".into(),
+                )
+            })?;
+        match cursor.decide_assignment(&assigned, &offsets, now_ns)? {
+            Phase92BootstrapAssignment::ResumeStored => {
+                self.set_status(Phase92BootstrapStatus::ResumeStored);
+            }
+            Phase92BootstrapAssignment::SeedMissing(values) => {
+                for ((topic, partition), offset) in values {
+                    assignment.set_partition_offset(
+                        &topic,
+                        partition,
+                        Offset::Offset(
+                            i64::try_from(offset)
+                                .map_err(|_| KafkaTransportError::InvalidOffset(i64::MAX))?,
+                        ),
+                    )?;
+                }
+                self.set_status(Phase92BootstrapStatus::Seeded);
+            }
+        }
+        Ok(())
+    }
+
+    fn complete_assignment(
+        &self,
+        consumer: &BaseConsumer<Self>,
+        assignment: &TopicPartitionList,
+    ) -> Result<(), KafkaTransportError> {
+        match consumer.rebalance_protocol() {
+            RebalanceProtocol::Cooperative => consumer.incremental_assign(assignment)?,
+            RebalanceProtocol::Eager | RebalanceProtocol::None => consumer.assign(assignment)?,
+        }
+        Ok(())
+    }
+
+    fn complete_revocation(
+        &self,
+        consumer: &BaseConsumer<Self>,
+        assignment: &TopicPartitionList,
+    ) -> Result<(), KafkaTransportError> {
+        match consumer.rebalance_protocol() {
+            RebalanceProtocol::Cooperative => consumer.incremental_unassign(assignment)?,
+            RebalanceProtocol::Eager | RebalanceProtocol::None => consumer.unassign()?,
+        }
+        Ok(())
+    }
+}
+
+impl ClientContext for Phase92BootstrapConsumerContext {}
+
+impl ConsumerContext for Phase92BootstrapConsumerContext {
+    fn rebalance(
+        &self,
+        consumer: &BaseConsumer<Self>,
+        error: RDKafkaRespErr,
+        assignment: &mut TopicPartitionList,
+    ) {
+        let result = match phase92_rebalance_action(
+            error,
+            matches!(
+                consumer.rebalance_protocol(),
+                RebalanceProtocol::Cooperative
+            ),
+            assignment.elements().len(),
+        ) {
+            Ok(Phase92RebalanceAction::CooperativeEmptyNoop) => Ok(()),
+            Ok(Phase92RebalanceAction::PrepareAndAssign) => self
+                .prepare_assignment(consumer, assignment)
+                .and_then(|()| self.complete_assignment(consumer, assignment)),
+            Ok(Phase92RebalanceAction::Revoke) => self.complete_revocation(consumer, assignment),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            self.fail(error.to_string());
+        }
+    }
+}
+
+type Phase92StreamConsumer = StreamConsumer<Phase92BootstrapConsumerContext>;
+
 pub struct Phase92TransactionalKafkaBridge {
     producer: FutureProducer,
-    consumer: StreamConsumer,
+    consumer: Phase92StreamConsumer,
     fences: tokio::sync::Mutex<HashMap<String, Phase92AuthorityFence>>,
     topics: Phase92TransactionalTopics,
     request_timeout: Duration,
+}
+
+fn validate_commit_shape(
+    topics: &Phase92TransactionalTopics,
+    inputs: &[TransactionalKafkaInput],
+    outputs: &[Phase92TransactionalOutput],
+    progress: &[Phase92Progress],
+    now_ns: i64,
+) -> Result<(), KafkaTransportError> {
+    if inputs.is_empty() || now_ns <= 0 {
+        return Err(KafkaTransportError::Configuration(
+            "Phase 9.2 transaction requires input and time".into(),
+        ));
+    }
+    if progress.is_empty() && !outputs.is_empty() {
+        return Err(KafkaTransportError::Fencing(
+            "Phase 9.2 transaction cannot publish output without target progress".into(),
+        ));
+    }
+    if inputs
+        .iter()
+        .any(|input| !topics.raw_inputs.contains(&input.cursor.stream))
+    {
+        return Err(KafkaTransportError::Fencing(
+            "Phase 9.2 transaction input is outside raw topics".into(),
+        ));
+    }
+    let mut progress_identities = HashSet::new();
+    for item in progress {
+        let identity = (
+            item.publication.slice_id.clone(),
+            item.publication.shard_id.clone(),
+            item.publication.target,
+            item.publication.source_watermark,
+        );
+        if !progress_identities.insert(identity) {
+            return Err(KafkaTransportError::Fencing(
+                "Phase 9.2 transaction has duplicate target progress".into(),
+            ));
+        }
+        if item.source_event_id.is_empty()
+            || !inputs.iter().any(|input| {
+                input.cursor == item.source_cursor && input.record.event_id == item.source_event_id
+            })
+        {
+            return Err(KafkaTransportError::Fencing(
+                "Phase 9.2 progress has no exact matching raw input".into(),
+            ));
+        }
+    }
+    for output in outputs {
+        if !topics.permits_output(output.publication.target, &output.record.stream)
+            || !progress
+                .iter()
+                .any(|item| item.publication == output.publication)
+        {
+            return Err(KafkaTransportError::Fencing(
+                "Phase 9.2 output target/topic/progress binding failed".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl Phase92TransactionalKafkaBridge {
@@ -343,20 +672,42 @@ impl Phase92TransactionalKafkaBridge {
         topics: Phase92TransactionalTopics,
         transactional_id: &str,
     ) -> Result<Self, KafkaTransportError> {
+        Self::new_inner(config, topics, transactional_id, None)
+    }
+
+    pub fn new_with_signed_bootstrap(
+        config: &KafkaTransportConfig,
+        topics: Phase92TransactionalTopics,
+        transactional_id: &str,
+        bootstrap: Phase92BootstrapPayload,
+    ) -> Result<Self, KafkaTransportError> {
+        Self::new_inner(config, topics, transactional_id, Some(bootstrap))
+    }
+
+    fn new_inner(
+        config: &KafkaTransportConfig,
+        topics: Phase92TransactionalTopics,
+        transactional_id: &str,
+        bootstrap: Option<Phase92BootstrapPayload>,
+    ) -> Result<Self, KafkaTransportError> {
         topics.validate()?;
         if transactional_id.trim().is_empty() {
             return Err(KafkaTransportError::Configuration(
                 "Phase 9.2 transactional.id must not be empty".into(),
             ));
         }
+        let strict_bootstrap = bootstrap.is_some();
+        let context = bootstrap.map_or_else(
+            || Phase92BootstrapConsumerContext::permissive(config.request_timeout),
+            |cursor| Phase92BootstrapConsumerContext::signed(cursor, config.request_timeout),
+        );
         let mut consumer_config = config.client_config()?;
-        consumer_config
-            .set("group.id", &config.group_id)
-            .set("enable.auto.commit", "false")
-            .set("enable.auto.offset.store", "false")
-            .set("auto.offset.reset", "earliest")
-            .set("isolation.level", "read_committed");
-        let consumer: StreamConsumer = consumer_config.create()?;
+        if strict_bootstrap {
+            config.configure_group_consumer_fail_closed(&mut consumer_config);
+        } else {
+            config.configure_group_consumer(&mut consumer_config);
+        }
+        let consumer: Phase92StreamConsumer = consumer_config.create_with_context(context)?;
         let raw_topics: Vec<&str> = topics.raw_inputs.iter().map(String::as_str).collect();
         consumer.subscribe(&raw_topics)?;
 
@@ -385,6 +736,17 @@ impl Phase92TransactionalKafkaBridge {
             topics,
             request_timeout: config.request_timeout,
         })
+    }
+
+    pub fn bootstrap_status(&self) -> Phase92BootstrapStatus {
+        self.consumer.context().status()
+    }
+
+    fn bootstrap_failure(&self) -> Result<(), KafkaTransportError> {
+        if let Some(message) = self.consumer.context().failure() {
+            return Err(KafkaTransportError::Fencing(message));
+        }
+        Ok(())
     }
 
     pub async fn apply_authority_event(
@@ -441,8 +803,21 @@ impl Phase92TransactionalKafkaBridge {
             .map_err(KafkaTransportError::Fencing)
     }
 
+    pub fn unsubscribe(&self) {
+        self.consumer.unsubscribe();
+    }
+
     pub async fn next(&self) -> Result<TransactionalKafkaInput, KafkaTransportError> {
-        let message = self.consumer.recv().await?;
+        let message = loop {
+            self.bootstrap_failure()?;
+            match tokio::time::timeout(Duration::from_millis(250), self.consumer.recv()).await {
+                Ok(result) => {
+                    self.bootstrap_failure()?;
+                    break result?;
+                }
+                Err(_) => continue,
+            }
+        };
         let payload = message
             .payload()
             .ok_or(KafkaTransportError::MissingField("payload"))?
@@ -488,56 +863,7 @@ impl Phase92TransactionalKafkaBridge {
         progress: &[Phase92Progress],
         now_ns: i64,
     ) -> Result<Phase92CommitResult, KafkaTransportError> {
-        if inputs.is_empty() || progress.is_empty() || now_ns <= 0 {
-            return Err(KafkaTransportError::Configuration(
-                "Phase 9.2 transaction requires input, progress and time".into(),
-            ));
-        }
-        if inputs
-            .iter()
-            .any(|input| !self.topics.raw_inputs.contains(&input.cursor.stream))
-        {
-            return Err(KafkaTransportError::Fencing(
-                "Phase 9.2 transaction input is outside raw topics".into(),
-            ));
-        }
-        let mut progress_identities = HashSet::new();
-        for item in progress {
-            let identity = (
-                item.publication.slice_id.clone(),
-                item.publication.shard_id.clone(),
-                item.publication.target,
-                item.publication.source_watermark,
-            );
-            if !progress_identities.insert(identity) {
-                return Err(KafkaTransportError::Fencing(
-                    "Phase 9.2 transaction has duplicate target progress".into(),
-                ));
-            }
-            if item.source_event_id.is_empty()
-                || !inputs.iter().any(|input| {
-                    input.cursor == item.source_cursor
-                        && input.record.event_id == item.source_event_id
-                })
-            {
-                return Err(KafkaTransportError::Fencing(
-                    "Phase 9.2 progress has no exact matching raw input".into(),
-                ));
-            }
-        }
-        for output in outputs {
-            if !self
-                .topics
-                .permits_output(output.publication.target, &output.record.stream)
-                || !progress
-                    .iter()
-                    .any(|item| item.publication == output.publication)
-            {
-                return Err(KafkaTransportError::Fencing(
-                    "Phase 9.2 output target/topic/progress binding failed".into(),
-                ));
-            }
-        }
+        validate_commit_shape(&self.topics, inputs, outputs, progress, now_ns)?;
 
         let mut fences = self.fences.lock().await;
         let mut next_fences = fences.clone();
@@ -752,6 +1078,82 @@ mod tests {
     }
 
     #[test]
+    fn cooperative_empty_assignment_is_a_noop_but_other_empty_assignments_fence() {
+        assert_eq!(
+            phase92_rebalance_action(
+                RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS,
+                true,
+                0,
+            )
+            .unwrap(),
+            Phase92RebalanceAction::CooperativeEmptyNoop
+        );
+        assert!(phase92_rebalance_action(
+            RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS,
+            false,
+            0,
+        )
+        .is_err());
+        assert_eq!(
+            phase92_rebalance_action(
+                RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS,
+                true,
+                1,
+            )
+            .unwrap(),
+            Phase92RebalanceAction::PrepareAndAssign
+        );
+        assert_eq!(
+            phase92_rebalance_action(
+                RDKafkaRespErr::RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS,
+                true,
+                0,
+            )
+            .unwrap(),
+            Phase92RebalanceAction::Revoke
+        );
+        assert!(
+            phase92_rebalance_action(RDKafkaRespErr::RD_KAFKA_RESP_ERR__TIMED_OUT, true, 0,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn snapshot_completion_uses_next_position_across_compacted_offset_holes() {
+        let mut remaining = BTreeMap::from([
+            (("authority".into(), 0), 5),
+            (("checkpoints".into(), 1), 12),
+        ]);
+        let mut positions = TopicPartitionList::new();
+        positions
+            .add_partition_offset("authority", 0, Offset::Offset(6))
+            .unwrap();
+        positions
+            .add_partition_offset("checkpoints", 1, Offset::Offset(12))
+            .unwrap();
+
+        retire_reached_snapshot_partitions(&mut remaining, &positions).unwrap();
+        assert_eq!(remaining, BTreeMap::from([(("checkpoints".into(), 1), 12)]));
+
+        positions
+            .set_partition_offset("checkpoints", 1, Offset::Offset(13))
+            .unwrap();
+        retire_reached_snapshot_partitions(&mut remaining, &positions).unwrap();
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn unresolved_snapshot_positions_never_infer_completion() {
+        let mut remaining = BTreeMap::from([(("authority".into(), 0), 5)]);
+        let mut positions = TopicPartitionList::new();
+        positions
+            .add_partition_offset("authority", 0, Offset::Beginning)
+            .unwrap();
+        retire_reached_snapshot_partitions(&mut remaining, &positions).unwrap();
+        assert_eq!(remaining.len(), 1);
+    }
+
+    #[test]
     fn production_topics_are_unique_and_target_bound() {
         let values = topics();
         values.validate().unwrap();
@@ -763,6 +1165,82 @@ mod tests {
         let mut duplicate = values;
         duplicate.public_v2 = "canonical".into();
         assert!(duplicate.validate().is_err());
+    }
+
+    fn input(key: &str, offset: u64, event_id: u8) -> TransactionalKafkaInput {
+        TransactionalKafkaInput {
+            record: DurableRecord {
+                stream: "raw".into(),
+                partition_key: key.into(),
+                event_id: vec![event_id],
+                payload: vec![2],
+                accepted_at_ns: 1,
+            },
+            cursor: Cursor {
+                stream: "raw".into(),
+                transport_partition: 0,
+                partition_key: key.into(),
+                offset,
+            },
+        }
+    }
+
+    fn publication() -> Phase92PublicationContext {
+        Phase92PublicationContext {
+            slice_id: "production/binance/usdm/perpetual/trade/plan-1/btcusdt".into(),
+            owner_id: "rust-canary".into(),
+            authority_revision: 3,
+            shard_id: "core-1".into(),
+            lease_epoch: 2,
+            partition_plan_epoch: 1,
+            source_watermark: 8,
+            target: SinkTarget::CanaryCanonical,
+        }
+    }
+
+    #[test]
+    fn offset_only_transaction_shape_requires_input_and_forbids_outputs() {
+        let values = topics();
+        assert!(
+            validate_commit_shape(&values, &[input("outside-scope", 7, 1)], &[], &[], 1,).is_ok()
+        );
+        assert!(validate_commit_shape(&values, &[], &[], &[], 1).is_err());
+
+        let output = Phase92TransactionalOutput {
+            record: DurableRecord {
+                stream: "canary".into(),
+                partition_key: "bounded".into(),
+                event_id: vec![3],
+                payload: vec![4],
+                accepted_at_ns: 1,
+            },
+            publication: publication(),
+            raw_provider_envelope: None,
+        };
+        assert!(
+            validate_commit_shape(&values, &[input("outside-scope", 7, 1)], &[output], &[], 1,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn mixed_scope_shape_allows_progress_for_only_the_approved_input() {
+        let values = topics();
+        let approved = input("approved", 8, 2);
+        let progress = Phase92Progress {
+            publication: publication(),
+            decision: Phase92Decision::Filtered,
+            source_cursor: approved.cursor.clone(),
+            source_event_id: approved.record.event_id.clone(),
+        };
+        assert!(validate_commit_shape(
+            &values,
+            &[input("outside-scope", 7, 1), approved],
+            &[],
+            &[progress],
+            1,
+        )
+        .is_ok());
     }
 
     #[test]

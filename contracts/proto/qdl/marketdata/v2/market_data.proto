@@ -19,6 +19,36 @@ enum BarLifecycle {
   BAR_LIFECYCLE_CANCELLED = 4;
 }
 
+// The population behind a long/short ratio is material: global accounts, top
+// accounts and top positions are different provider products and must never be
+// collapsed into one unnamed ratio.
+enum LongShortRatioPopulation {
+  LONG_SHORT_RATIO_POPULATION_UNSPECIFIED = 0;
+  LONG_SHORT_RATIO_POPULATION_GLOBAL_ACCOUNT = 1;
+  LONG_SHORT_RATIO_POPULATION_TOP_ACCOUNT = 2;
+  LONG_SHORT_RATIO_POPULATION_TOP_POSITION = 3;
+}
+
+// A provider-native basis and a QDL-derived basis have different authority and
+// provenance rules. Consumers can only compare them after inspecting this kind.
+enum BasisKind {
+  BASIS_KIND_UNSPECIFIED = 0;
+  BASIS_KIND_PROVIDER_NATIVE = 1;
+  BASIS_KIND_DERIVED = 2;
+}
+
+enum MetricUnit {
+  METRIC_UNIT_UNSPECIFIED = 0;
+  METRIC_UNIT_RATIO = 1;
+  METRIC_UNIT_PRICE = 2;
+  METRIC_UNIT_BASE_ASSET = 3;
+  METRIC_UNIT_QUOTE_ASSET = 4;
+  METRIC_UNIT_CONTRACT = 5;
+  METRIC_UNIT_NOTIONAL = 6;
+  METRIC_UNIT_PERCENT = 7;
+  METRIC_UNIT_BASIS_POINTS = 8;
+}
+
 message Trade {
   string native_trade_id = 1;
   qdl.common.v1.DecimalValue price = 2;
@@ -73,6 +103,16 @@ message OrderBookSnapshot {
   string checksum = 2;
   repeated BookLevel levels = 3;
   uint32 depth = 4;
+  // Monotonic per `(provider profile, instrument, channel)` resync generation.
+  // A value of zero is legacy/unverified and cannot be execution-grade.
+  uint64 book_generation = 5;
+  // True only after the provider-specific snapshot/sequence admission rule has
+  // been proven. For a Binance REST bootstrap this stays false until a WS diff
+  // range bridges its `lastUpdateId`.
+  bool sequence_verified = 6;
+  // The readable projection contains the requested top-N depth rather than
+  // every provider level. Clients must not assume omitted levels are absent.
+  bool truncated = 7;
 }
 
 message OrderBookDelta {
@@ -82,6 +122,11 @@ message OrderBookDelta {
   string checksum = 4;
   repeated BookLevel updates = 5;
   bool reset = 6;
+  // Must match the snapshot generation used to reconstruct this delta chain.
+  uint64 book_generation = 7;
+  // The delta was admitted only after continuity with `snapshot_sequence` was
+  // proven; false is non-execution-grade legacy/bootstrap evidence.
+  bool sequence_verified = 8;
 }
 
 message FundingRate {
@@ -94,11 +139,55 @@ message OpenInterest {
   qdl.common.v1.DecimalValue quantity = 1;
   optional qdl.common.v1.DecimalValue notional = 2;
   qdl.common.v1.QuantityUnit quantity_unit = 3;
+  string sampling_interval = 4;
 }
 
 message MarkIndexPrice {
   qdl.common.v1.DecimalValue mark_price = 1;
   qdl.common.v1.DecimalValue index_price = 2;
+}
+
+message LongShortRatio {
+  LongShortRatioPopulation population = 1;
+  string sampling_interval = 2;
+  qdl.common.v1.DecimalValue long_value = 3;
+  qdl.common.v1.DecimalValue short_value = 4;
+  qdl.common.v1.DecimalValue long_short_ratio = 5;
+  MetricUnit value_unit = 6;
+}
+
+message TakerFlow {
+  string sampling_interval = 1;
+  qdl.common.v1.DecimalValue buy_volume = 2;
+  qdl.common.v1.DecimalValue sell_volume = 3;
+  qdl.common.v1.DecimalValue buy_sell_ratio = 4;
+  qdl.common.v1.QuantityUnit quantity_unit = 5;
+}
+
+message Basis {
+  BasisKind kind = 1;
+  string sampling_interval = 2;
+  qdl.common.v1.DecimalValue basis = 3;
+  MetricUnit basis_unit = 4;
+  optional qdl.common.v1.DecimalValue annualized_basis = 5;
+  string reference_instrument_uid = 6;
+  string formula_id = 7;
+  repeated string input_instrument_uids = 8;
+}
+
+// Versioned instrument metadata as an event. The envelope still identifies the
+// instrument revision; this payload gives consumers the exact tradable rules
+// observed at that revision without copying provider-specific JSON.
+message ContractMetadata {
+  string contract_kind = 1;
+  string settlement_asset = 2;
+  qdl.common.v1.DecimalValue contract_multiplier = 3;
+  qdl.common.v1.DecimalValue price_tick = 4;
+  qdl.common.v1.DecimalValue quantity_step = 5;
+  optional int64 expiry_time_ns = 6;
+  optional int64 funding_interval_ns = 7;
+  bool continuous = 8;
+  string underlying_instrument_uid = 9;
 }
 
 message Ticker {
@@ -159,5 +248,9 @@ message EventEnvelope {
     Ticker ticker = 48;
     qdl.quality.v1.FeedStateEvent feed_state = 49;
     qdl.quality.v1.DataQualityEvent quality_event = 50;
+    LongShortRatio long_short_ratio = 51;
+    TakerFlow taker_flow = 52;
+    Basis basis = 53;
+    ContractMetadata contract_metadata = 54;
   }
 }

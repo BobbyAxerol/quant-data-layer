@@ -172,7 +172,20 @@ async def run(output: Path, *, timeout_seconds: float) -> dict:
                     sequence=okx_sequence, received_at_ns=time.time_ns(),
                 )
                 feed = "book_snapshot" if frame.get("action") == "snapshot" else "book_delta"
-                commit(frame, feed, ctx, canonicalize_okx_book(frame, ctx))
+                commit(
+                    frame,
+                    feed,
+                    ctx,
+                    canonicalize_okx_book(
+                        frame,
+                        ctx,
+                        snapshot_sequence=(
+                            str(okx_book.snapshot_sequence)
+                            if frame.get("action") == "update"
+                            else None
+                        ),
+                    ),
+                )
             if counts["okx_trade"] > 0 and (
                 counts["okx_book_snapshot"] > 0 or counts["okx_book_delta"] > 0
             ):

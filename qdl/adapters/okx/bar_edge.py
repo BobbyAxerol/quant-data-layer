@@ -5,6 +5,12 @@ import json
 import time
 from dataclasses import dataclass
 
+from qdl.adapters.intervals import (
+    canonical_interval_ms,
+    latest_closed_boundary_ms,
+    okx_bar_size,
+    okx_candle_channel,
+)
 from qdl.adapters.okx.client import OkxRestClient
 from qdl.adapters.okx.history import OkxHistoricalClient
 from qdl.provider.v1 import raw_provider_pb2
@@ -36,8 +42,9 @@ class OkxBarRawBinding:
             raise ValueError("OKX SWAP bar requires PERPETUAL product")
         if self.market == "SPOT" and self.product_type != "SPOT":
             raise ValueError("OKX Spot bar requires SPOT product")
-        if self.interval != "1m":
-            raise ValueError("stable OKX history edge currently certifies 1m BAR only")
+        # Fails closed for any interval OKX does not expose as a fixed-duration
+        # bar; the canonical -> native mapping lives in qdl.adapters.intervals.
+        okx_bar_size(self.interval)
         if any(
             not value.strip()
             for value in (
@@ -70,35 +77,49 @@ async def fetch_closed_bar_history_raw_envelopes(
     if limit < 1 or limit > 10_000:
         raise ValueError("OKX history limit must be between 1 and 10000")
     observed_ms = int(now_ms if now_ms is not None else time.time() * 1000)
-    closed_boundary_ms = observed_ms // 60_000 * 60_000
-    start_ms = closed_boundary_ms - limit * 60_000
-    end_ms = closed_boundary_ms - 1
+    interval_ms = canonical_interval_ms(binding.interval)
+    # `now_ms` is an exclusive closed-bar boundary.  OKX history includes its
+    # end boundary, so passing it through would repeat the oldest bar on the
+    # next paged request. Keep the provider end just before that boundary;
+    # provider-native rows still decide the exact calendar anchor and are
+    # validated for continuity below.
+    end_ms = latest_closed_boundary_ms(
+        binding.interval,
+        observed_ms,
+        provider="OKX",
+    ) - 1
+    start_ms = end_ms - (limit + 2) * interval_ms
     client = history_client or OkxHistoricalClient(OkxRestClient())
     history = await client.candles(
         inst_id=binding.native_symbol,
-        bar=binding.interval,
+        bar=okx_bar_size(binding.interval),
         start_ms=start_ms,
         end_ms=end_ms,
         price_type="TRADE",
-        max_records=limit,
+        max_records=limit + 3,
         max_pages=max(2, (limit + 299) // 300 + 1),
     )
-    records = history.records
-    if (
-        history.coverage.status != "FULL"
-        or len(records) != limit
-        or history.coverage.observed_min_ts_ms != start_ms
-    ):
+    if history.coverage.status != "FULL":
         raise RuntimeError(
-            "OKX closed-bar history is incomplete "
-            f"requested={limit} observed={len(records)} coverage={history.coverage.status}"
+            f"OKX closed-bar history coverage is {history.coverage.status}, not FULL"
         )
+    confirmed = tuple(item for item in history.records if item.confirmed)
+    if len(confirmed) < limit:
+        raise RuntimeError(
+            "OKX closed-bar history is short: requested="
+            f"{limit} confirmed={len(confirmed)}"
+        )
+    records = tuple(sorted(confirmed, key=lambda item: item.open_ts_ms))[-limit:]
     opens = [item.open_ts_ms for item in records]
-    if any(current - previous != 60_000 for previous, current in zip(opens, opens[1:])):
+    if any(
+        current - previous != interval_ms
+        for previous, current in zip(opens, opens[1:])
+    ):
         raise RuntimeError("OKX closed-bar history contains a time gap")
     if any(not item.confirmed for item in records):
         raise RuntimeError("OKX history returned a provisional candle in the closed window")
 
+    channel = okx_candle_channel(binding.interval)
     received_at_ns = time.time_ns()
     envelopes = []
     for index, item in enumerate(records):
@@ -117,7 +138,7 @@ async def fetch_closed_bar_history_raw_envelopes(
             raise RuntimeError("OKX trade candle is missing a native volume field")
         raw = {
             "arg": {
-                "channel": "candle1m",
+                "channel": channel,
                 "instId": binding.native_symbol,
             },
             "data": [row],
@@ -131,7 +152,7 @@ async def fetch_closed_bar_history_raw_envelopes(
             market=binding.market,
             product_type=binding.product_type,
             native_symbol=binding.native_symbol,
-            native_channel="candle1m",
+            native_channel=channel,
             subscription_id=binding.subscription_id,
             source_session_id=binding.source_session_id,
             connection_generation=binding.connection_generation,

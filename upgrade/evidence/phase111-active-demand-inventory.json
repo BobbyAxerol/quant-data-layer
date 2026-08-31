@@ -1,0 +1,6031 @@
+{
+  "exclusions": [
+    {
+      "code": "OUTSIDE_PHASE11_BINANCE_OKX_SCOPE",
+      "detail": "service=combine_weight_sl_tp_0015m_paper_dnse venue=DNSE",
+      "owner_id": "combine_weight_sl_tp_0015m",
+      "relative_path": "alphas/combine_weight_sl_tp/docker-compose.yml",
+      "source_id": "alpha-compose"
+    },
+    {
+      "code": "OUTSIDE_PHASE11_BINANCE_OKX_SCOPE",
+      "detail": "service=delta_rsi_0011m_paper_dnse venue=DNSE",
+      "owner_id": "delta_rsi_0011m_dnse",
+      "relative_path": "alphas/delta_rsi/docker-compose.yml",
+      "source_id": "alpha-compose"
+    },
+    {
+      "code": "OUTSIDE_PHASE11_BINANCE_OKX_SCOPE",
+      "detail": "service=fib_sl_tp_strength_0015m_paper_dnse venue=DNSE",
+      "owner_id": "fib_sl_tp_strength_0015m",
+      "relative_path": "alphas/fib_sl_tp_strength/docker-compose.yml",
+      "source_id": "alpha-compose"
+    },
+    {
+      "code": "OUTSIDE_PHASE11_BINANCE_OKX_SCOPE",
+      "detail": "service=pmax_confluene_00115m_paper_dnse venue=DNSE",
+      "owner_id": "pmax_confluene_00115m_dnse",
+      "relative_path": "alphas/pmax_confluene/docker-compose.yml",
+      "source_id": "alpha-compose"
+    },
+    {
+      "code": "OUTSIDE_PHASE11_BINANCE_OKX_SCOPE",
+      "detail": "service=regression_1d_paper_dnse venue=DNSE",
+      "owner_id": "regressionportfolioA001_1d",
+      "relative_path": "alphas/regressionportfolioA001/docker-compose.yml",
+      "source_id": "alpha-compose"
+    },
+    {
+      "code": "OUTSIDE_PHASE11_BINANCE_OKX_SCOPE",
+      "detail": "service=rsibound_1d_paper_dnse venue=DNSE",
+      "owner_id": "rsiboundportfolioA001_1d",
+      "relative_path": "alphas/rsiboundportfolioA001/docker-compose.yml",
+      "source_id": "alpha-compose"
+    },
+    {
+      "code": "OUTSIDE_PHASE11_BINANCE_OKX_SCOPE",
+      "detail": "service=sl_tp_map_ma_00115m_paper_dnse venue=DNSE",
+      "owner_id": "sl_tp_map_ma_00115m_dnse",
+      "relative_path": "alphas/scalping_sl_tp/docker-compose.yml",
+      "source_id": "alpha-compose"
+    },
+    {
+      "code": "OUTSIDE_PHASE11_BINANCE_OKX_SCOPE",
+      "detail": "service=vn_ib_timing_0011m_paper_dnse venue=DNSE",
+      "owner_id": "vn_ib_timing_0011m_dnse",
+      "relative_path": "alphas/vn_ib_timing/docker-compose.yml",
+      "source_id": "alpha-compose"
+    },
+    {
+      "code": "NON_USDM_SYMBOL_IN_MIXED_DECLARATION",
+      "detail": "symbol=VN30F1M; compose=fib_sl_tp_strength_0015m_paper_binance; identity=explicit_contract; realtime_trade=true",
+      "owner_id": "fib_sl_tp_strength_0015m",
+      "relative_path": "declared-symbol-filter",
+      "source_id": "alpha-compose"
+    },
+    {
+      "code": "NON_USDM_SYMBOL_IN_MIXED_DECLARATION",
+      "detail": "symbol=VN30F1M; compose=fib_sl_tp_strength_0015m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+      "owner_id": "fib_sl_tp_strength_0015m",
+      "relative_path": "declared-symbol-filter",
+      "source_id": "alpha-compose"
+    }
+  ],
+  "input_sha256": "e9bd5c29e0a8b561cc67ab7383c58c82f64ddca7f53cc93a6c6d0954284265b9",
+  "manifest_sha256": "c331a1dac94d84a69c88f65667e43fea34f765168a15de12cac9a895d87452a2",
+  "requirement_count": 83,
+  "requirements": [
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "sl_tp_map_ma_0011h_binance",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "sl_tp_map_ma_0011h_binance:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 5000
+      },
+      "sources": [
+        {
+          "detail": "compose=sl_tp_map_ma_0011h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=sl_tp_map_ma_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SWAP",
+          "native_symbols": [
+            "BTC-USDT-SWAP"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:OKX:SWAP:PERPETUAL:BTC-USDT-SWAP:TRADE:point",
+          "universe_ref": null,
+          "venue": "OKX"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "BAR",
+        "interval": "1m",
+        "max_freshness_ms": 180000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SWAP",
+          "native_symbols": [
+            "BTC-USDT-SWAP"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:OKX:SWAP:PERPETUAL:BTC-USDT-SWAP:BAR:1m",
+          "universe_ref": null,
+          "venue": "OKX"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "regressionportfolioA001_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1d",
+        "max_freshness_ms": 180000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "1000000MOGUSDT",
+            "1000BONKUSDT",
+            "1000CHEEMSUSDT",
+            "1000FLOKIUSDT",
+            "1000LUNCUSDT",
+            "1000PEPEUSDT",
+            "1000SATSUSDT",
+            "1000SHIBUSDT",
+            "1000XECUSDT",
+            "1INCHUSDT",
+            "1MBABYDOGEUSDT",
+            "AAVEUSDT",
+            "ACEUSDT",
+            "ACHUSDT",
+            "ACTUSDT",
+            "ADAUSDT",
+            "AEROUSDT",
+            "AEVOUSDT",
+            "AIOTUSDT",
+            "AIXBTUSDT",
+            "AKTUSDT",
+            "ALCHUSDT",
+            "ALGOUSDT",
+            "ALICEUSDT",
+            "ALTUSDT",
+            "ANIMEUSDT",
+            "ANKRUSDT",
+            "APEUSDT",
+            "API3USDT",
+            "APTUSDT",
+            "ARBUSDT",
+            "ARCUSDT",
+            "ARKMUSDT",
+            "ARPAUSDT",
+            "ARUSDT",
+            "ASTRUSDT",
+            "ATAUSDT",
+            "ATHUSDT",
+            "ATOMUSDT",
+            "AUCTIONUSDT",
+            "AVAXUSDT",
+            "AXLUSDT",
+            "AXSUSDT",
+            "BABYUSDT",
+            "BANANAS31USDT",
+            "BANANAUSDT",
+            "BANKUSDT",
+            "BANUSDT",
+            "BATUSDT",
+            "BBUSDT",
+            "BCHUSDT",
+            "BERAUSDT",
+            "BICOUSDT",
+            "BIGTIMEUSDT",
+            "BIOUSDT",
+            "BLURUSDT",
+            "BNBUSDT",
+            "BNTUSDT",
+            "BOMEUSDT",
+            "BRETTUSDT",
+            "BROCCOLI714USDT",
+            "BRUSDT",
+            "BTCDOMUSDT",
+            "BTCUSDT",
+            "C98USDT",
+            "CAKEUSDT",
+            "CELOUSDT",
+            "CETUSUSDT",
+            "CFXUSDT",
+            "CGPTUSDT",
+            "CHILLGUYUSDT",
+            "CHRUSDT",
+            "CHZUSDT",
+            "CKBUSDT",
+            "COMPUSDT",
+            "COOKIEUSDT",
+            "COSUSDT",
+            "COTIUSDT",
+            "CRVUSDT",
+            "CTKUSDT",
+            "CTSIUSDT",
+            "CVCUSDT",
+            "CYBERUSDT",
+            "DASHUSDT",
+            "DEEPUSDT",
+            "DEXEUSDT",
+            "DODOXUSDT",
+            "DOGEUSDT",
+            "DOGSUSDT",
+            "DOLOUSDT",
+            "DOODUSDT",
+            "DOTUSDT",
+            "DRIFTUSDT",
+            "DUSDT",
+            "DUSKUSDT",
+            "DYDXUSDT",
+            "DYMUSDT",
+            "EDUUSDT",
+            "EGLDUSDT",
+            "EIGENUSDT",
+            "ENAUSDT",
+            "ENJUSDT",
+            "ENSUSDT",
+            "EPICUSDT",
+            "ETCUSDT",
+            "ETHFIUSDT",
+            "ETHUSDT",
+            "ETHWUSDT",
+            "FARTCOINUSDT",
+            "FETUSDT",
+            "FHEUSDT",
+            "FIDAUSDT",
+            "FILUSDT",
+            "FLOWUSDT",
+            "FORMUSDT",
+            "GALAUSDT",
+            "GLMUSDT",
+            "GMTUSDT",
+            "GOATUSDT",
+            "GPSUSDT",
+            "GRASSUSDT",
+            "GRIFFAINUSDT",
+            "GRTUSDT",
+            "GTCUSDT",
+            "GUNUSDT",
+            "GUSDT",
+            "HBARUSDT",
+            "HFTUSDT",
+            "HIGHUSDT",
+            "HIVEUSDT",
+            "HMSTRUSDT",
+            "HYPERUSDT",
+            "ICPUSDT",
+            "ICXUSDT",
+            "IDUSDT",
+            "ILVUSDT",
+            "IMXUSDT",
+            "INITUSDT",
+            "INJUSDT",
+            "IOSTUSDT",
+            "IOTAUSDT",
+            "IOUSDT",
+            "IPUSDT",
+            "JASMYUSDT",
+            "JELLYJELLYUSDT",
+            "JOEUSDT",
+            "JSTUSDT",
+            "JTOUSDT",
+            "JUPUSDT",
+            "KAIAUSDT",
+            "KAITOUSDT",
+            "KASUSDT",
+            "KAVAUSDT",
+            "KERNELUSDT",
+            "KMNOUSDT",
+            "KNCUSDT",
+            "KSMUSDT",
+            "LAYERUSDT",
+            "LDOUSDT",
+            "LINKUSDT",
+            "LPTUSDT",
+            "LQTYUSDT",
+            "LSKUSDT",
+            "LTCUSDT",
+            "LUMIAUSDT",
+            "LUNA2USDT",
+            "MAGICUSDT",
+            "MANAUSDT",
+            "MANTAUSDT",
+            "MASKUSDT",
+            "MBOXUSDT",
+            "MEMEUSDT",
+            "METISUSDT",
+            "MEUSDT",
+            "MEWUSDT",
+            "MINAUSDT",
+            "MLNUSDT",
+            "MOODENGUSDT",
+            "MORPHOUSDT",
+            "MOVEUSDT",
+            "MOVRUSDT",
+            "MUBARAKUSDT",
+            "NEARUSDT",
+            "NEIROUSDT",
+            "NEOUSDT",
+            "NFPUSDT",
+            "NILUSDT",
+            "NMRUSDT",
+            "NOTUSDT",
+            "NXPCUSDT",
+            "OGNUSDT",
+            "OGUSDT",
+            "ONDOUSDT",
+            "ONTUSDT",
+            "OPUSDT",
+            "ORCAUSDT",
+            "ORDIUSDT",
+            "PARTIUSDT",
+            "PAXGUSDT",
+            "PENDLEUSDT",
+            "PENGUUSDT",
+            "PEOPLEUSDT",
+            "PHAUSDT",
+            "PHBUSDT",
+            "PIPPINUSDT",
+            "PIXELUSDT",
+            "PLUMEUSDT",
+            "PNUTUSDT",
+            "POLUSDT",
+            "POLYXUSDT",
+            "POPCATUSDT",
+            "PORTALUSDT",
+            "POWRUSDT",
+            "PROMUSDT",
+            "PYTHUSDT",
+            "QNTUSDT",
+            "QTUMUSDT",
+            "RAREUSDT",
+            "RAYSOLUSDT",
+            "REDUSDT",
+            "RENDERUSDT",
+            "REZUSDT",
+            "RIFUSDT",
+            "RONINUSDT",
+            "ROSEUSDT",
+            "RSRUSDT",
+            "RUNEUSDT",
+            "RVNUSDT",
+            "SAFEUSDT",
+            "SAGAUSDT",
+            "SANDUSDT",
+            "SANTOSUSDT",
+            "SEIUSDT",
+            "SHELLUSDT",
+            "SIGNUSDT",
+            "SIRENUSDT",
+            "SKLUSDT",
+            "SKYAIUSDT",
+            "SNXUSDT",
+            "SOLUSDT",
+            "SOLVUSDT",
+            "SPXUSDT",
+            "STEEMUSDT",
+            "STGUSDT",
+            "STORJUSDT",
+            "STOUSDT",
+            "STRKUSDT",
+            "STXUSDT",
+            "SUIUSDT",
+            "SUNUSDT",
+            "SUPERUSDT",
+            "SUSDT",
+            "SUSHIUSDT",
+            "SWARMSUSDT",
+            "SXTUSDT",
+            "SYNUSDT",
+            "SYRUPUSDT",
+            "SYSUSDT",
+            "TAOUSDT",
+            "THETAUSDT",
+            "THEUSDT",
+            "TIAUSDT",
+            "TNSRUSDT",
+            "TONUSDT",
+            "TRBUSDT",
+            "TRUMPUSDT",
+            "TRXUSDT",
+            "TSTUSDT",
+            "TURBOUSDT",
+            "TUTUSDT",
+            "TWTUSDT",
+            "UNIUSDT",
+            "USDCUSDT",
+            "USTCUSDT",
+            "USUALUSDT",
+            "VETUSDT",
+            "VICUSDT",
+            "VIRTUALUSDT",
+            "VVVUSDT",
+            "WALUSDT",
+            "WCTUSDT",
+            "WIFUSDT",
+            "WLDUSDT",
+            "WUSDT",
+            "XAIUSDT",
+            "XLMUSDT",
+            "XMRUSDT",
+            "XRPUSDT",
+            "XTZUSDT",
+            "XVGUSDT",
+            "XVSUSDT",
+            "YFIUSDT",
+            "YGGUSDT",
+            "ZECUSDT",
+            "ZENUSDT",
+            "ZEREBROUSDT",
+            "ZETAUSDT",
+            "ZILUSDT",
+            "ZKUSDT",
+            "ZROUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "regressionportfolioA001_1d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 500
+      },
+      "sources": [
+        {
+          "detail": "compose=regression_1d_paper_binance; identity=legacy_auto_usdm_first; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/regressionportfolioA001/config/deployment.yaml",
+            "execution_alpha:alphas/regressionportfolioA001/docker-compose.yml",
+            "execution_alpha:alphas/regressionportfolioA001/symbols_300.json",
+            "execution_alpha:runtime/app/alpha_runtime/legacy/handler.py",
+            "repository:app/providers/binance/rest.py"
+          ]
+        },
+        {
+          "detail": "compose=regression_1d_sandbox_binance; identity=legacy_auto_usdm_first; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/regressionportfolioA001/config/deployment.yaml",
+            "execution_alpha:alphas/regressionportfolioA001/docker-compose.yml",
+            "execution_alpha:alphas/regressionportfolioA001/symbols_300.json",
+            "execution_alpha:runtime/app/alpha_runtime/legacy/handler.py",
+            "repository:app/providers/binance/rest.py"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "rsiboundportfolioA001_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "1000000MOGUSDT",
+            "1000BONKUSDT",
+            "1000CHEEMSUSDT",
+            "1000FLOKIUSDT",
+            "1000LUNCUSDT",
+            "1000PEPEUSDT",
+            "1000SATSUSDT",
+            "1000SHIBUSDT",
+            "1000XECUSDT",
+            "1INCHUSDT",
+            "1MBABYDOGEUSDT",
+            "AAVEUSDT",
+            "ACEUSDT",
+            "ACHUSDT",
+            "ACTUSDT",
+            "ADAUSDT",
+            "AEROUSDT",
+            "AEVOUSDT",
+            "AIOTUSDT",
+            "AIXBTUSDT",
+            "AKTUSDT",
+            "ALCHUSDT",
+            "ALGOUSDT",
+            "ALICEUSDT",
+            "ALTUSDT",
+            "ANIMEUSDT",
+            "ANKRUSDT",
+            "APEUSDT",
+            "API3USDT",
+            "APTUSDT",
+            "ARBUSDT",
+            "ARCUSDT",
+            "ARKMUSDT",
+            "ARPAUSDT",
+            "ARUSDT",
+            "ASTRUSDT",
+            "ATAUSDT",
+            "ATHUSDT",
+            "ATOMUSDT",
+            "AUCTIONUSDT",
+            "AVAXUSDT",
+            "AXLUSDT",
+            "AXSUSDT",
+            "BABYUSDT",
+            "BANANAS31USDT",
+            "BANANAUSDT",
+            "BANKUSDT",
+            "BANUSDT",
+            "BATUSDT",
+            "BBUSDT",
+            "BCHUSDT",
+            "BERAUSDT",
+            "BICOUSDT",
+            "BIGTIMEUSDT",
+            "BIOUSDT",
+            "BLURUSDT",
+            "BNBUSDT",
+            "BNTUSDT",
+            "BOMEUSDT",
+            "BRETTUSDT",
+            "BROCCOLI714USDT",
+            "BRUSDT",
+            "BTCDOMUSDT",
+            "BTCUSDT",
+            "C98USDT",
+            "CAKEUSDT",
+            "CELOUSDT",
+            "CETUSUSDT",
+            "CFXUSDT",
+            "CGPTUSDT",
+            "CHILLGUYUSDT",
+            "CHRUSDT",
+            "CHZUSDT",
+            "CKBUSDT",
+            "COMPUSDT",
+            "COOKIEUSDT",
+            "COSUSDT",
+            "COTIUSDT",
+            "CRVUSDT",
+            "CTKUSDT",
+            "CTSIUSDT",
+            "CVCUSDT",
+            "CYBERUSDT",
+            "DASHUSDT",
+            "DEEPUSDT",
+            "DEXEUSDT",
+            "DODOXUSDT",
+            "DOGEUSDT",
+            "DOGSUSDT",
+            "DOLOUSDT",
+            "DOODUSDT",
+            "DOTUSDT",
+            "DRIFTUSDT",
+            "DUSDT",
+            "DUSKUSDT",
+            "DYDXUSDT",
+            "DYMUSDT",
+            "EDUUSDT",
+            "EGLDUSDT",
+            "EIGENUSDT",
+            "ENAUSDT",
+            "ENJUSDT",
+            "ENSUSDT",
+            "EPICUSDT",
+            "ETCUSDT",
+            "ETHFIUSDT",
+            "ETHUSDT",
+            "ETHWUSDT",
+            "FARTCOINUSDT",
+            "FETUSDT",
+            "FHEUSDT",
+            "FIDAUSDT",
+            "FILUSDT",
+            "FLOWUSDT",
+            "FORMUSDT",
+            "GALAUSDT",
+            "GLMUSDT",
+            "GMTUSDT",
+            "GOATUSDT",
+            "GPSUSDT",
+            "GRASSUSDT",
+            "GRIFFAINUSDT",
+            "GRTUSDT",
+            "GTCUSDT",
+            "GUNUSDT",
+            "GUSDT",
+            "HBARUSDT",
+            "HFTUSDT",
+            "HIGHUSDT",
+            "HIVEUSDT",
+            "HMSTRUSDT",
+            "HYPERUSDT",
+            "ICPUSDT",
+            "ICXUSDT",
+            "IDUSDT",
+            "ILVUSDT",
+            "IMXUSDT",
+            "INITUSDT",
+            "INJUSDT",
+            "IOSTUSDT",
+            "IOTAUSDT",
+            "IOUSDT",
+            "IPUSDT",
+            "JASMYUSDT",
+            "JELLYJELLYUSDT",
+            "JOEUSDT",
+            "JSTUSDT",
+            "JTOUSDT",
+            "JUPUSDT",
+            "KAIAUSDT",
+            "KAITOUSDT",
+            "KASUSDT",
+            "KAVAUSDT",
+            "KERNELUSDT",
+            "KMNOUSDT",
+            "KNCUSDT",
+            "KSMUSDT",
+            "LAYERUSDT",
+            "LDOUSDT",
+            "LINKUSDT",
+            "LPTUSDT",
+            "LQTYUSDT",
+            "LSKUSDT",
+            "LTCUSDT",
+            "LUMIAUSDT",
+            "LUNA2USDT",
+            "MAGICUSDT",
+            "MANAUSDT",
+            "MANTAUSDT",
+            "MASKUSDT",
+            "MBOXUSDT",
+            "MEMEUSDT",
+            "METISUSDT",
+            "MEUSDT",
+            "MEWUSDT",
+            "MINAUSDT",
+            "MLNUSDT",
+            "MOODENGUSDT",
+            "MORPHOUSDT",
+            "MOVEUSDT",
+            "MOVRUSDT",
+            "MUBARAKUSDT",
+            "NEARUSDT",
+            "NEIROUSDT",
+            "NEOUSDT",
+            "NFPUSDT",
+            "NILUSDT",
+            "NMRUSDT",
+            "NOTUSDT",
+            "NXPCUSDT",
+            "OGNUSDT",
+            "OGUSDT",
+            "ONDOUSDT",
+            "ONTUSDT",
+            "OPUSDT",
+            "ORCAUSDT",
+            "ORDIUSDT",
+            "PARTIUSDT",
+            "PAXGUSDT",
+            "PENDLEUSDT",
+            "PENGUUSDT",
+            "PEOPLEUSDT",
+            "PHAUSDT",
+            "PHBUSDT",
+            "PIPPINUSDT",
+            "PIXELUSDT",
+            "PLUMEUSDT",
+            "PNUTUSDT",
+            "POLUSDT",
+            "POLYXUSDT",
+            "POPCATUSDT",
+            "PORTALUSDT",
+            "POWRUSDT",
+            "PROMUSDT",
+            "PYTHUSDT",
+            "QNTUSDT",
+            "QTUMUSDT",
+            "RAREUSDT",
+            "RAYSOLUSDT",
+            "REDUSDT",
+            "RENDERUSDT",
+            "REZUSDT",
+            "RIFUSDT",
+            "RONINUSDT",
+            "ROSEUSDT",
+            "RSRUSDT",
+            "RUNEUSDT",
+            "RVNUSDT",
+            "SAFEUSDT",
+            "SAGAUSDT",
+            "SANDUSDT",
+            "SANTOSUSDT",
+            "SEIUSDT",
+            "SHELLUSDT",
+            "SIGNUSDT",
+            "SIRENUSDT",
+            "SKLUSDT",
+            "SKYAIUSDT",
+            "SNXUSDT",
+            "SOLUSDT",
+            "SOLVUSDT",
+            "SPXUSDT",
+            "STEEMUSDT",
+            "STGUSDT",
+            "STORJUSDT",
+            "STOUSDT",
+            "STRKUSDT",
+            "STXUSDT",
+            "SUIUSDT",
+            "SUNUSDT",
+            "SUPERUSDT",
+            "SUSDT",
+            "SUSHIUSDT",
+            "SWARMSUSDT",
+            "SXTUSDT",
+            "SYNUSDT",
+            "SYRUPUSDT",
+            "SYSUSDT",
+            "TAOUSDT",
+            "THETAUSDT",
+            "THEUSDT",
+            "TIAUSDT",
+            "TNSRUSDT",
+            "TONUSDT",
+            "TRBUSDT",
+            "TRUMPUSDT",
+            "TRXUSDT",
+            "TSTUSDT",
+            "TURBOUSDT",
+            "TUTUSDT",
+            "TWTUSDT",
+            "UNIUSDT",
+            "USDCUSDT",
+            "USTCUSDT",
+            "USUALUSDT",
+            "VETUSDT",
+            "VICUSDT",
+            "VIRTUALUSDT",
+            "VVVUSDT",
+            "WALUSDT",
+            "WCTUSDT",
+            "WIFUSDT",
+            "WLDUSDT",
+            "WUSDT",
+            "XAIUSDT",
+            "XLMUSDT",
+            "XMRUSDT",
+            "XRPUSDT",
+            "XTZUSDT",
+            "XVGUSDT",
+            "XVSUSDT",
+            "YFIUSDT",
+            "YGGUSDT",
+            "ZECUSDT",
+            "ZENUSDT",
+            "ZEREBROUSDT",
+            "ZETAUSDT",
+            "ZILUSDT",
+            "ZKUSDT",
+            "ZROUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "rsiboundportfolioA001_1d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 500
+      },
+      "sources": [
+        {
+          "detail": "compose=rsibound_1d_paper_binance; identity=legacy_auto_usdm_first; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/rsiboundportfolioA001/config/deployment.yaml",
+            "execution_alpha:alphas/rsiboundportfolioA001/docker-compose.yml",
+            "execution_alpha:alphas/rsiboundportfolioA001/symbols_300.json",
+            "execution_alpha:runtime/app/alpha_runtime/legacy/handler.py",
+            "repository:app/providers/binance/rest.py"
+          ]
+        },
+        {
+          "detail": "compose=rsibound_1d_sandbox_binance; identity=legacy_auto_usdm_first; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/rsiboundportfolioA001/config/deployment.yaml",
+            "execution_alpha:alphas/rsiboundportfolioA001/docker-compose.yml",
+            "execution_alpha:alphas/rsiboundportfolioA001/symbols_300.json",
+            "execution_alpha:runtime/app/alpha_runtime/legacy/handler.py",
+            "repository:app/providers/binance/rest.py"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "gridlongonly001_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1d",
+        "max_freshness_ms": 259200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "gridlongonly001_1d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 350
+      },
+      "sources": [
+        {
+          "detail": "compose=gridlongonly001_1d_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=gridlongonly001_1d_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "qqe_ssl_wae_risk_0014h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "4h",
+        "max_freshness_ms": 43200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "DOGEUSDT",
+            "ETHUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "qqe_ssl_wae_risk_0014h:BINANCE:USDM:PERPETUAL:4h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 500
+      },
+      "sources": [
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0014h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0014h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "dynamic_grid_long_only_1h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "dynamic_grid_long_only_1h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 180
+      },
+      "sources": [
+        {
+          "detail": "compose=dynamic_grid_long_only_1h_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/dynamic_grid/config/deployment.yaml",
+            "execution_alpha:alphas/dynamic_grid/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=dynamic_grid_long_only_1h_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/dynamic_grid/config/deployment.yaml",
+            "execution_alpha:alphas/dynamic_grid/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "scalp_psar_0015m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "5m",
+        "max_freshness_ms": 900000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "scalp_psar_0015m:BINANCE:USDM:PERPETUAL:5m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 600
+      },
+      "sources": [
+        {
+          "detail": "compose=scalp_psar_0015m_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_PSAR/config.yaml",
+            "execution_alpha:alphas/scalping_PSAR/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=scalp_psar_0015m_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_PSAR/config.yaml",
+            "execution_alpha:alphas/scalping_PSAR/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "basis_arb_binance_1d",
+        "depth_levels": 100,
+        "execution_grade": false,
+        "feed": "BOOK_SNAPSHOT",
+        "interval": null,
+        "max_freshness_ms": 3600000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": false,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "basis_arb_binance_1d:perpetual:BTCUSDT",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 365
+      },
+      "sources": [
+        {
+          "detail": "compose=basis_arb_binance_1d_paper_binance; profile=basis_arb",
+          "source_kind": "BASIS_ARB_CONFIG_V1",
+          "source_refs": [
+            "execution_alpha:alphas/basis_arb_binance/config/deployment.paper.json",
+            "execution_alpha:alphas/basis_arb_binance/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "bb_salping_gggg_00215m_btc",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "15m",
+        "max_freshness_ms": 2700000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "bb_salping_gggg_00215m_btc:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 700
+      },
+      "sources": [
+        {
+          "detail": "compose=bb_salping_gggg_00215m_btc_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/bb_salping/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "combine_weight_sl_tp_0014h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "4h",
+        "max_freshness_ms": 43200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "combine_weight_sl_tp_0014h:BINANCE:USDM:PERPETUAL:4h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 300
+      },
+      "sources": [
+        {
+          "detail": "compose=combine_weight_sl_tp_0014h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/combine_weight_sl_tp/config/deployment.yaml",
+            "execution_alpha:alphas/combine_weight_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=combine_weight_sl_tp_0014h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/combine_weight_sl_tp/config/deployment.yaml",
+            "execution_alpha:alphas/combine_weight_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "gridcombine002_4h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "4h",
+        "max_freshness_ms": 43200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "gridcombine002_4h:BINANCE:USDM:PERPETUAL:4h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 350
+      },
+      "sources": [
+        {
+          "detail": "compose=gridcombine002_4h_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=gridcombine002_4h_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SPOT",
+          "native_symbols": [
+            "BTC-USDT"
+          ],
+          "product_type": "SPOT",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:OKX:SPOT:SPOT:BTC-USDT:TRADE:point",
+          "universe_ref": null,
+          "venue": "OKX"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "bb_salping_hyhy_0031h_eth",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "bb_salping_hyhy_0031h_eth:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 700
+      },
+      "sources": [
+        {
+          "detail": "compose=bb_salping_hyhy_0031h_eth_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/bb_salping/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "qqe_ssl_wae_risk_0015m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "qqe_ssl_wae_risk_0015m:BINANCE:USDM:PERPETUAL:5m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 500
+      },
+      "sources": [
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0015m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0015m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "sl_tp_map_ma_00115m_binance",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "15m",
+        "max_freshness_ms": 2700000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "sl_tp_map_ma_00115m_binance:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 5000
+      },
+      "sources": [
+        {
+          "detail": "compose=sl_tp_map_ma_00115m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=sl_tp_map_ma_00115m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "delta_rsi_00115m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "15m",
+        "max_freshness_ms": 2700000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "delta_rsi_00115m:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=delta_rsi_00115m_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/delta_rsi/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=delta_rsi_00115m_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/delta_rsi/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "basis_arb_binance_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1d",
+        "max_freshness_ms": 259200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": "BTC-USDT",
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": "CURRENT_QUARTER",
+          "expected_universe_sha256": null,
+          "kind": "CONTINUOUS",
+          "market": "USDM",
+          "native_symbols": [],
+          "product_type": "FUTURE",
+          "segment_id": null,
+          "selector_id": "basis_arb_binance_1d:continuous:BTC-USDT:CURRENT_QUARTER",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 365
+      },
+      "sources": [
+        {
+          "detail": "compose=basis_arb_binance_1d_paper_binance; profile=basis_arb",
+          "source_kind": "BASIS_ARB_CONFIG_V1",
+          "source_refs": [
+            "execution_alpha:alphas/basis_arb_binance/config/deployment.paper.json",
+            "execution_alpha:alphas/basis_arb_binance/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "gridlongonly001_4h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "gridlongonly001_4h:BINANCE:USDM:PERPETUAL:4h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 350
+      },
+      "sources": [
+        {
+          "detail": "compose=gridlongonly001_4h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=gridlongonly001_4h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "bb_salping_hrhr_00115m_eth",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "15m",
+        "max_freshness_ms": 2700000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "bb_salping_hrhr_00115m_eth:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 700
+      },
+      "sources": [
+        {
+          "detail": "compose=bb_salping_hrhr_00115m_eth_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/bb_salping/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "signalcombine00230m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "30m",
+        "max_freshness_ms": 5400000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "signalcombine00230m:BINANCE:USDM:PERPETUAL:30m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=signalcombine00230m_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/signal_combine/config/deployment.yaml",
+            "execution_alpha:alphas/signal_combine/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=signalcombine00230m_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/signal_combine/config/deployment.yaml",
+            "execution_alpha:alphas/signal_combine/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "gridcombine001_4h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "4h",
+        "max_freshness_ms": 43200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "gridcombine001_4h:BINANCE:USDM:PERPETUAL:4h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 350
+      },
+      "sources": [
+        {
+          "detail": "compose=gridcombine001_4h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=gridcombine001_4h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:BINANCE:USDM:PERPETUAL:ETHUSDT:TRADE:point",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "fib_sl_tp_strength_0015m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "5m",
+        "max_freshness_ms": 900000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "fib_sl_tp_strength_0015m:BINANCE:USDM:PERPETUAL:5m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=fib_sl_tp_strength_0015m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=fib_sl_tp_strength_0015m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SWAP",
+          "native_symbols": [
+            "ETH-USDT-SWAP"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:OKX:SWAP:PERPETUAL:ETH-USDT-SWAP:TRADE:point",
+          "universe_ref": null,
+          "venue": "OKX"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "gridcombine001_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "gridcombine001_1d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 350
+      },
+      "sources": [
+        {
+          "detail": "compose=gridcombine001_1d_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=gridcombine001_1d_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "fib_sl_tp_strength_00115m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "fib_sl_tp_strength_00115m:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=fib_sl_tp_strength_00115m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=fib_sl_tp_strength_00115m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SPOT",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "SPOT",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:BINANCE:SPOT:SPOT:BTCUSDT:TRADE:point",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "signalcombine0025m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "5m",
+        "max_freshness_ms": 900000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "BTCUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "signalcombine0025m:BINANCE:USDM:PERPETUAL:5m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=signalcombine0025m_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/signal_combine/config/deployment.yaml",
+            "execution_alpha:alphas/signal_combine/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=signalcombine0025m_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/signal_combine/config/deployment.yaml",
+            "execution_alpha:alphas/signal_combine/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "adaptive_hma_cpp_0011h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "BTCUSDT",
+            "DOGEUSDT",
+            "ETHUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "adaptive_hma_cpp_0011h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=adaptive_hma_cpp_0011h_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/adaptive_hma_cpp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=adaptive_hma_cpp_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/adaptive_hma_cpp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "basis_arb_binance_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1d",
+        "max_freshness_ms": 259200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "basis_arb_binance_1d:perpetual:BTCUSDT",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 365
+      },
+      "sources": [
+        {
+          "detail": "compose=basis_arb_binance_1d_paper_binance; profile=basis_arb",
+          "source_kind": "BASIS_ARB_CONFIG_V1",
+          "source_refs": [
+            "execution_alpha:alphas/basis_arb_binance/config/deployment.paper.json",
+            "execution_alpha:alphas/basis_arb_binance/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "fib_sl_tp_strength_00115m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "15m",
+        "max_freshness_ms": 2700000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "fib_sl_tp_strength_00115m:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=fib_sl_tp_strength_00115m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=fib_sl_tp_strength_00115m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "bb_salping_hhhh_0041h_sol",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "bb_salping_hhhh_0041h_sol:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 700
+      },
+      "sources": [
+        {
+          "detail": "compose=bb_salping_hhhh_0041h_sol_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/bb_salping/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "sl_tp_map_ma_0015m_binance",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "5m",
+        "max_freshness_ms": 900000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "sl_tp_map_ma_0015m_binance:BINANCE:USDM:PERPETUAL:5m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 5000
+      },
+      "sources": [
+        {
+          "detail": "compose=sl_tp_map_ma_0015m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=sl_tp_map_ma_0015m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "QUOTE",
+        "interval": null,
+        "max_freshness_ms": 5000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SWAP",
+          "native_symbols": [
+            "BTC-USDT-SWAP"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:OKX:SWAP:PERPETUAL:BTC-USDT-SWAP:QUOTE:point",
+          "universe_ref": null,
+          "venue": "OKX"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "dynamic_grid_long_short_1h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "dynamic_grid_long_short_1h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 180
+      },
+      "sources": [
+        {
+          "detail": "compose=dynamic_grid_long_short_1h_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/dynamic_grid/config/deployment.yaml",
+            "execution_alpha:alphas/dynamic_grid/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=dynamic_grid_long_short_1h_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/dynamic_grid/config/deployment.yaml",
+            "execution_alpha:alphas/dynamic_grid/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "gridlongonly001_4h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "4h",
+        "max_freshness_ms": 43200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "gridlongonly001_4h:BINANCE:USDM:PERPETUAL:4h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 350
+      },
+      "sources": [
+        {
+          "detail": "compose=gridlongonly001_4h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=gridlongonly001_4h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "gridcombine001_4h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "gridcombine001_4h:BINANCE:USDM:PERPETUAL:4h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 350
+      },
+      "sources": [
+        {
+          "detail": "compose=gridcombine001_4h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=gridcombine001_4h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "BAR",
+        "interval": "1m",
+        "max_freshness_ms": 180000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SPOT",
+          "native_symbols": [
+            "BTC-USDT"
+          ],
+          "product_type": "SPOT",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:OKX:SPOT:SPOT:BTC-USDT:BAR:1m",
+          "universe_ref": null,
+          "venue": "OKX"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "pmax_confluene_00115m_binance",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "15m",
+        "max_freshness_ms": 2700000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "pmax_confluene_00115m_binance:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=pmax_confluene_00115m_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/pmax_confluene/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=pmax_confluene_00115m_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/pmax_confluene/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "QUOTE",
+        "interval": null,
+        "max_freshness_ms": 5000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SPOT",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "SPOT",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:BINANCE:SPOT:SPOT:BTCUSDT:QUOTE:point",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "BAR",
+        "interval": "1m",
+        "max_freshness_ms": 180000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SWAP",
+          "native_symbols": [
+            "ETH-USDT-SWAP"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:OKX:SWAP:PERPETUAL:ETH-USDT-SWAP:BAR:1m",
+          "universe_ref": null,
+          "venue": "OKX"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "scalping_purely_0015m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "5m",
+        "max_freshness_ms": 900000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "scalping_purely_0015m:BINANCE:USDM:PERPETUAL:5m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=scalping_purely_0015m_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_purely/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=scalping_purely_0015m_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_purely/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "BAR",
+        "interval": "1m",
+        "max_freshness_ms": 180000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:BINANCE:USDM:PERPETUAL:BTCUSDT:BAR:1m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "vol_breakout_sl_tp_00115m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "vol_breakout_sl_tp_00115m:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=vol_breakout_sl_tp_00115m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/vol_breakout_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=vol_breakout_sl_tp_00115m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/vol_breakout_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "fib_sl_tp_strength_00130m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "30m",
+        "max_freshness_ms": 5400000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "BTCUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "fib_sl_tp_strength_00130m:BINANCE:USDM:PERPETUAL:30m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=fib_sl_tp_strength_00130m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=fib_sl_tp_strength_00130m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "sl_tp_map_ma_00115m_binance",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "sl_tp_map_ma_00115m_binance:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 5000
+      },
+      "sources": [
+        {
+          "detail": "compose=sl_tp_map_ma_00115m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=sl_tp_map_ma_00115m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "qqe_ssl_wae_risk_0011h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "DOGEUSDT",
+            "ETHUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "qqe_ssl_wae_risk_0011h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 500
+      },
+      "sources": [
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0011h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "QUOTE",
+        "interval": null,
+        "max_freshness_ms": 5000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:BINANCE:USDM:PERPETUAL:BTCUSDT:QUOTE:point",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "QUOTE",
+        "interval": null,
+        "max_freshness_ms": 5000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:BINANCE:USDM:PERPETUAL:ETHUSDT:QUOTE:point",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "gridcombine002_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1d",
+        "max_freshness_ms": 259200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "gridcombine002_1d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 350
+      },
+      "sources": [
+        {
+          "detail": "compose=gridcombine002_1d_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=gridcombine002_1d_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "vol_breakout_sl_tp_00115m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "15m",
+        "max_freshness_ms": 2700000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "vol_breakout_sl_tp_00115m:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=vol_breakout_sl_tp_00115m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/vol_breakout_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=vol_breakout_sl_tp_00115m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/vol_breakout_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "delta_rsi_0011h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "delta_rsi_0011h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=delta_rsi_0011h_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/delta_rsi/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=delta_rsi_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/delta_rsi/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "delta_rsi_0011d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1d",
+        "max_freshness_ms": 259200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "delta_rsi_0011d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=delta_rsi_0011d_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/delta_rsi/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=delta_rsi_0011d_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/delta_rsi/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "BAR",
+        "interval": "1m",
+        "max_freshness_ms": 180000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SPOT",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "SPOT",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:BINANCE:SPOT:SPOT:BTCUSDT:BAR:1m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "rsiboundportfolioA001_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1d",
+        "max_freshness_ms": 180000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "1000000MOGUSDT",
+            "1000BONKUSDT",
+            "1000CHEEMSUSDT",
+            "1000FLOKIUSDT",
+            "1000LUNCUSDT",
+            "1000PEPEUSDT",
+            "1000SATSUSDT",
+            "1000SHIBUSDT",
+            "1000XECUSDT",
+            "1INCHUSDT",
+            "1MBABYDOGEUSDT",
+            "AAVEUSDT",
+            "ACEUSDT",
+            "ACHUSDT",
+            "ACTUSDT",
+            "ADAUSDT",
+            "AEROUSDT",
+            "AEVOUSDT",
+            "AIOTUSDT",
+            "AIXBTUSDT",
+            "AKTUSDT",
+            "ALCHUSDT",
+            "ALGOUSDT",
+            "ALICEUSDT",
+            "ALTUSDT",
+            "ANIMEUSDT",
+            "ANKRUSDT",
+            "APEUSDT",
+            "API3USDT",
+            "APTUSDT",
+            "ARBUSDT",
+            "ARCUSDT",
+            "ARKMUSDT",
+            "ARPAUSDT",
+            "ARUSDT",
+            "ASTRUSDT",
+            "ATAUSDT",
+            "ATHUSDT",
+            "ATOMUSDT",
+            "AUCTIONUSDT",
+            "AVAXUSDT",
+            "AXLUSDT",
+            "AXSUSDT",
+            "BABYUSDT",
+            "BANANAS31USDT",
+            "BANANAUSDT",
+            "BANKUSDT",
+            "BANUSDT",
+            "BATUSDT",
+            "BBUSDT",
+            "BCHUSDT",
+            "BERAUSDT",
+            "BICOUSDT",
+            "BIGTIMEUSDT",
+            "BIOUSDT",
+            "BLURUSDT",
+            "BNBUSDT",
+            "BNTUSDT",
+            "BOMEUSDT",
+            "BRETTUSDT",
+            "BROCCOLI714USDT",
+            "BRUSDT",
+            "BTCDOMUSDT",
+            "BTCUSDT",
+            "C98USDT",
+            "CAKEUSDT",
+            "CELOUSDT",
+            "CETUSUSDT",
+            "CFXUSDT",
+            "CGPTUSDT",
+            "CHILLGUYUSDT",
+            "CHRUSDT",
+            "CHZUSDT",
+            "CKBUSDT",
+            "COMPUSDT",
+            "COOKIEUSDT",
+            "COSUSDT",
+            "COTIUSDT",
+            "CRVUSDT",
+            "CTKUSDT",
+            "CTSIUSDT",
+            "CVCUSDT",
+            "CYBERUSDT",
+            "DASHUSDT",
+            "DEEPUSDT",
+            "DEXEUSDT",
+            "DODOXUSDT",
+            "DOGEUSDT",
+            "DOGSUSDT",
+            "DOLOUSDT",
+            "DOODUSDT",
+            "DOTUSDT",
+            "DRIFTUSDT",
+            "DUSDT",
+            "DUSKUSDT",
+            "DYDXUSDT",
+            "DYMUSDT",
+            "EDUUSDT",
+            "EGLDUSDT",
+            "EIGENUSDT",
+            "ENAUSDT",
+            "ENJUSDT",
+            "ENSUSDT",
+            "EPICUSDT",
+            "ETCUSDT",
+            "ETHFIUSDT",
+            "ETHUSDT",
+            "ETHWUSDT",
+            "FARTCOINUSDT",
+            "FETUSDT",
+            "FHEUSDT",
+            "FIDAUSDT",
+            "FILUSDT",
+            "FLOWUSDT",
+            "FORMUSDT",
+            "GALAUSDT",
+            "GLMUSDT",
+            "GMTUSDT",
+            "GOATUSDT",
+            "GPSUSDT",
+            "GRASSUSDT",
+            "GRIFFAINUSDT",
+            "GRTUSDT",
+            "GTCUSDT",
+            "GUNUSDT",
+            "GUSDT",
+            "HBARUSDT",
+            "HFTUSDT",
+            "HIGHUSDT",
+            "HIVEUSDT",
+            "HMSTRUSDT",
+            "HYPERUSDT",
+            "ICPUSDT",
+            "ICXUSDT",
+            "IDUSDT",
+            "ILVUSDT",
+            "IMXUSDT",
+            "INITUSDT",
+            "INJUSDT",
+            "IOSTUSDT",
+            "IOTAUSDT",
+            "IOUSDT",
+            "IPUSDT",
+            "JASMYUSDT",
+            "JELLYJELLYUSDT",
+            "JOEUSDT",
+            "JSTUSDT",
+            "JTOUSDT",
+            "JUPUSDT",
+            "KAIAUSDT",
+            "KAITOUSDT",
+            "KASUSDT",
+            "KAVAUSDT",
+            "KERNELUSDT",
+            "KMNOUSDT",
+            "KNCUSDT",
+            "KSMUSDT",
+            "LAYERUSDT",
+            "LDOUSDT",
+            "LINKUSDT",
+            "LPTUSDT",
+            "LQTYUSDT",
+            "LSKUSDT",
+            "LTCUSDT",
+            "LUMIAUSDT",
+            "LUNA2USDT",
+            "MAGICUSDT",
+            "MANAUSDT",
+            "MANTAUSDT",
+            "MASKUSDT",
+            "MBOXUSDT",
+            "MEMEUSDT",
+            "METISUSDT",
+            "MEUSDT",
+            "MEWUSDT",
+            "MINAUSDT",
+            "MLNUSDT",
+            "MOODENGUSDT",
+            "MORPHOUSDT",
+            "MOVEUSDT",
+            "MOVRUSDT",
+            "MUBARAKUSDT",
+            "NEARUSDT",
+            "NEIROUSDT",
+            "NEOUSDT",
+            "NFPUSDT",
+            "NILUSDT",
+            "NMRUSDT",
+            "NOTUSDT",
+            "NXPCUSDT",
+            "OGNUSDT",
+            "OGUSDT",
+            "ONDOUSDT",
+            "ONTUSDT",
+            "OPUSDT",
+            "ORCAUSDT",
+            "ORDIUSDT",
+            "PARTIUSDT",
+            "PAXGUSDT",
+            "PENDLEUSDT",
+            "PENGUUSDT",
+            "PEOPLEUSDT",
+            "PHAUSDT",
+            "PHBUSDT",
+            "PIPPINUSDT",
+            "PIXELUSDT",
+            "PLUMEUSDT",
+            "PNUTUSDT",
+            "POLUSDT",
+            "POLYXUSDT",
+            "POPCATUSDT",
+            "PORTALUSDT",
+            "POWRUSDT",
+            "PROMUSDT",
+            "PYTHUSDT",
+            "QNTUSDT",
+            "QTUMUSDT",
+            "RAREUSDT",
+            "RAYSOLUSDT",
+            "REDUSDT",
+            "RENDERUSDT",
+            "REZUSDT",
+            "RIFUSDT",
+            "RONINUSDT",
+            "ROSEUSDT",
+            "RSRUSDT",
+            "RUNEUSDT",
+            "RVNUSDT",
+            "SAFEUSDT",
+            "SAGAUSDT",
+            "SANDUSDT",
+            "SANTOSUSDT",
+            "SEIUSDT",
+            "SHELLUSDT",
+            "SIGNUSDT",
+            "SIRENUSDT",
+            "SKLUSDT",
+            "SKYAIUSDT",
+            "SNXUSDT",
+            "SOLUSDT",
+            "SOLVUSDT",
+            "SPXUSDT",
+            "STEEMUSDT",
+            "STGUSDT",
+            "STORJUSDT",
+            "STOUSDT",
+            "STRKUSDT",
+            "STXUSDT",
+            "SUIUSDT",
+            "SUNUSDT",
+            "SUPERUSDT",
+            "SUSDT",
+            "SUSHIUSDT",
+            "SWARMSUSDT",
+            "SXTUSDT",
+            "SYNUSDT",
+            "SYRUPUSDT",
+            "SYSUSDT",
+            "TAOUSDT",
+            "THETAUSDT",
+            "THEUSDT",
+            "TIAUSDT",
+            "TNSRUSDT",
+            "TONUSDT",
+            "TRBUSDT",
+            "TRUMPUSDT",
+            "TRXUSDT",
+            "TSTUSDT",
+            "TURBOUSDT",
+            "TUTUSDT",
+            "TWTUSDT",
+            "UNIUSDT",
+            "USDCUSDT",
+            "USTCUSDT",
+            "USUALUSDT",
+            "VETUSDT",
+            "VICUSDT",
+            "VIRTUALUSDT",
+            "VVVUSDT",
+            "WALUSDT",
+            "WCTUSDT",
+            "WIFUSDT",
+            "WLDUSDT",
+            "WUSDT",
+            "XAIUSDT",
+            "XLMUSDT",
+            "XMRUSDT",
+            "XRPUSDT",
+            "XTZUSDT",
+            "XVGUSDT",
+            "XVSUSDT",
+            "YFIUSDT",
+            "YGGUSDT",
+            "ZECUSDT",
+            "ZENUSDT",
+            "ZEREBROUSDT",
+            "ZETAUSDT",
+            "ZILUSDT",
+            "ZKUSDT",
+            "ZROUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "rsiboundportfolioA001_1d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 500
+      },
+      "sources": [
+        {
+          "detail": "compose=rsibound_1d_paper_binance; identity=legacy_auto_usdm_first; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/rsiboundportfolioA001/config/deployment.yaml",
+            "execution_alpha:alphas/rsiboundportfolioA001/docker-compose.yml",
+            "execution_alpha:alphas/rsiboundportfolioA001/symbols_300.json",
+            "execution_alpha:runtime/app/alpha_runtime/legacy/handler.py",
+            "repository:app/providers/binance/rest.py"
+          ]
+        },
+        {
+          "detail": "compose=rsibound_1d_sandbox_binance; identity=legacy_auto_usdm_first; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/rsiboundportfolioA001/config/deployment.yaml",
+            "execution_alpha:alphas/rsiboundportfolioA001/docker-compose.yml",
+            "execution_alpha:alphas/rsiboundportfolioA001/symbols_300.json",
+            "execution_alpha:runtime/app/alpha_runtime/legacy/handler.py",
+            "repository:app/providers/binance/rest.py"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "fib_sl_tp_strength_0015m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "fib_sl_tp_strength_0015m:BINANCE:USDM:PERPETUAL:5m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=fib_sl_tp_strength_0015m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=fib_sl_tp_strength_0015m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:BINANCE:USDM:PERPETUAL:BTCUSDT:TRADE:point",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "basis_arb_binance_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "FUNDING_RATE",
+        "interval": null,
+        "max_freshness_ms": 86400000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "basis_arb_binance_1d:perpetual:BTCUSDT",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 365
+      },
+      "sources": [
+        {
+          "detail": "compose=basis_arb_binance_1d_paper_binance; profile=basis_arb",
+          "source_kind": "BASIS_ARB_CONFIG_V1",
+          "source_refs": [
+            "execution_alpha:alphas/basis_arb_binance/config/deployment.paper.json",
+            "execution_alpha:alphas/basis_arb_binance/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "qqe_ssl_wae_risk_0014h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "DOGEUSDT",
+            "ETHUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "qqe_ssl_wae_risk_0014h:BINANCE:USDM:PERPETUAL:4h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 500
+      },
+      "sources": [
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0014h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0014h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "sl_tp_map_ma_0015m_binance",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "sl_tp_map_ma_0015m_binance:BINANCE:USDM:PERPETUAL:5m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 5000
+      },
+      "sources": [
+        {
+          "detail": "compose=sl_tp_map_ma_0015m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=sl_tp_map_ma_0015m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "vol_breakout_sl_tp_0011h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "vol_breakout_sl_tp_0011h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=vol_breakout_sl_tp_0011h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/vol_breakout_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=vol_breakout_sl_tp_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/vol_breakout_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "sl_tp_map_ma_0011h_binance",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "sl_tp_map_ma_0011h_binance:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 5000
+      },
+      "sources": [
+        {
+          "detail": "compose=sl_tp_map_ma_0011h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=sl_tp_map_ma_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "QUOTE",
+        "interval": null,
+        "max_freshness_ms": 5000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SPOT",
+          "native_symbols": [
+            "BTC-USDT"
+          ],
+          "product_type": "SPOT",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:OKX:SPOT:SPOT:BTC-USDT:QUOTE:point",
+          "universe_ref": null,
+          "venue": "OKX"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "gridlongonly001_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "gridlongonly001_1d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 350
+      },
+      "sources": [
+        {
+          "detail": "compose=gridlongonly001_1d_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=gridlongonly001_1d_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "regressionportfolioA001_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "1000000MOGUSDT",
+            "1000BONKUSDT",
+            "1000CHEEMSUSDT",
+            "1000FLOKIUSDT",
+            "1000LUNCUSDT",
+            "1000PEPEUSDT",
+            "1000SATSUSDT",
+            "1000SHIBUSDT",
+            "1000XECUSDT",
+            "1INCHUSDT",
+            "1MBABYDOGEUSDT",
+            "AAVEUSDT",
+            "ACEUSDT",
+            "ACHUSDT",
+            "ACTUSDT",
+            "ADAUSDT",
+            "AEROUSDT",
+            "AEVOUSDT",
+            "AIOTUSDT",
+            "AIXBTUSDT",
+            "AKTUSDT",
+            "ALCHUSDT",
+            "ALGOUSDT",
+            "ALICEUSDT",
+            "ALTUSDT",
+            "ANIMEUSDT",
+            "ANKRUSDT",
+            "APEUSDT",
+            "API3USDT",
+            "APTUSDT",
+            "ARBUSDT",
+            "ARCUSDT",
+            "ARKMUSDT",
+            "ARPAUSDT",
+            "ARUSDT",
+            "ASTRUSDT",
+            "ATAUSDT",
+            "ATHUSDT",
+            "ATOMUSDT",
+            "AUCTIONUSDT",
+            "AVAXUSDT",
+            "AXLUSDT",
+            "AXSUSDT",
+            "BABYUSDT",
+            "BANANAS31USDT",
+            "BANANAUSDT",
+            "BANKUSDT",
+            "BANUSDT",
+            "BATUSDT",
+            "BBUSDT",
+            "BCHUSDT",
+            "BERAUSDT",
+            "BICOUSDT",
+            "BIGTIMEUSDT",
+            "BIOUSDT",
+            "BLURUSDT",
+            "BNBUSDT",
+            "BNTUSDT",
+            "BOMEUSDT",
+            "BRETTUSDT",
+            "BROCCOLI714USDT",
+            "BRUSDT",
+            "BTCDOMUSDT",
+            "BTCUSDT",
+            "C98USDT",
+            "CAKEUSDT",
+            "CELOUSDT",
+            "CETUSUSDT",
+            "CFXUSDT",
+            "CGPTUSDT",
+            "CHILLGUYUSDT",
+            "CHRUSDT",
+            "CHZUSDT",
+            "CKBUSDT",
+            "COMPUSDT",
+            "COOKIEUSDT",
+            "COSUSDT",
+            "COTIUSDT",
+            "CRVUSDT",
+            "CTKUSDT",
+            "CTSIUSDT",
+            "CVCUSDT",
+            "CYBERUSDT",
+            "DASHUSDT",
+            "DEEPUSDT",
+            "DEXEUSDT",
+            "DODOXUSDT",
+            "DOGEUSDT",
+            "DOGSUSDT",
+            "DOLOUSDT",
+            "DOODUSDT",
+            "DOTUSDT",
+            "DRIFTUSDT",
+            "DUSDT",
+            "DUSKUSDT",
+            "DYDXUSDT",
+            "DYMUSDT",
+            "EDUUSDT",
+            "EGLDUSDT",
+            "EIGENUSDT",
+            "ENAUSDT",
+            "ENJUSDT",
+            "ENSUSDT",
+            "EPICUSDT",
+            "ETCUSDT",
+            "ETHFIUSDT",
+            "ETHUSDT",
+            "ETHWUSDT",
+            "FARTCOINUSDT",
+            "FETUSDT",
+            "FHEUSDT",
+            "FIDAUSDT",
+            "FILUSDT",
+            "FLOWUSDT",
+            "FORMUSDT",
+            "GALAUSDT",
+            "GLMUSDT",
+            "GMTUSDT",
+            "GOATUSDT",
+            "GPSUSDT",
+            "GRASSUSDT",
+            "GRIFFAINUSDT",
+            "GRTUSDT",
+            "GTCUSDT",
+            "GUNUSDT",
+            "GUSDT",
+            "HBARUSDT",
+            "HFTUSDT",
+            "HIGHUSDT",
+            "HIVEUSDT",
+            "HMSTRUSDT",
+            "HYPERUSDT",
+            "ICPUSDT",
+            "ICXUSDT",
+            "IDUSDT",
+            "ILVUSDT",
+            "IMXUSDT",
+            "INITUSDT",
+            "INJUSDT",
+            "IOSTUSDT",
+            "IOTAUSDT",
+            "IOUSDT",
+            "IPUSDT",
+            "JASMYUSDT",
+            "JELLYJELLYUSDT",
+            "JOEUSDT",
+            "JSTUSDT",
+            "JTOUSDT",
+            "JUPUSDT",
+            "KAIAUSDT",
+            "KAITOUSDT",
+            "KASUSDT",
+            "KAVAUSDT",
+            "KERNELUSDT",
+            "KMNOUSDT",
+            "KNCUSDT",
+            "KSMUSDT",
+            "LAYERUSDT",
+            "LDOUSDT",
+            "LINKUSDT",
+            "LPTUSDT",
+            "LQTYUSDT",
+            "LSKUSDT",
+            "LTCUSDT",
+            "LUMIAUSDT",
+            "LUNA2USDT",
+            "MAGICUSDT",
+            "MANAUSDT",
+            "MANTAUSDT",
+            "MASKUSDT",
+            "MBOXUSDT",
+            "MEMEUSDT",
+            "METISUSDT",
+            "MEUSDT",
+            "MEWUSDT",
+            "MINAUSDT",
+            "MLNUSDT",
+            "MOODENGUSDT",
+            "MORPHOUSDT",
+            "MOVEUSDT",
+            "MOVRUSDT",
+            "MUBARAKUSDT",
+            "NEARUSDT",
+            "NEIROUSDT",
+            "NEOUSDT",
+            "NFPUSDT",
+            "NILUSDT",
+            "NMRUSDT",
+            "NOTUSDT",
+            "NXPCUSDT",
+            "OGNUSDT",
+            "OGUSDT",
+            "ONDOUSDT",
+            "ONTUSDT",
+            "OPUSDT",
+            "ORCAUSDT",
+            "ORDIUSDT",
+            "PARTIUSDT",
+            "PAXGUSDT",
+            "PENDLEUSDT",
+            "PENGUUSDT",
+            "PEOPLEUSDT",
+            "PHAUSDT",
+            "PHBUSDT",
+            "PIPPINUSDT",
+            "PIXELUSDT",
+            "PLUMEUSDT",
+            "PNUTUSDT",
+            "POLUSDT",
+            "POLYXUSDT",
+            "POPCATUSDT",
+            "PORTALUSDT",
+            "POWRUSDT",
+            "PROMUSDT",
+            "PYTHUSDT",
+            "QNTUSDT",
+            "QTUMUSDT",
+            "RAREUSDT",
+            "RAYSOLUSDT",
+            "REDUSDT",
+            "RENDERUSDT",
+            "REZUSDT",
+            "RIFUSDT",
+            "RONINUSDT",
+            "ROSEUSDT",
+            "RSRUSDT",
+            "RUNEUSDT",
+            "RVNUSDT",
+            "SAFEUSDT",
+            "SAGAUSDT",
+            "SANDUSDT",
+            "SANTOSUSDT",
+            "SEIUSDT",
+            "SHELLUSDT",
+            "SIGNUSDT",
+            "SIRENUSDT",
+            "SKLUSDT",
+            "SKYAIUSDT",
+            "SNXUSDT",
+            "SOLUSDT",
+            "SOLVUSDT",
+            "SPXUSDT",
+            "STEEMUSDT",
+            "STGUSDT",
+            "STORJUSDT",
+            "STOUSDT",
+            "STRKUSDT",
+            "STXUSDT",
+            "SUIUSDT",
+            "SUNUSDT",
+            "SUPERUSDT",
+            "SUSDT",
+            "SUSHIUSDT",
+            "SWARMSUSDT",
+            "SXTUSDT",
+            "SYNUSDT",
+            "SYRUPUSDT",
+            "SYSUSDT",
+            "TAOUSDT",
+            "THETAUSDT",
+            "THEUSDT",
+            "TIAUSDT",
+            "TNSRUSDT",
+            "TONUSDT",
+            "TRBUSDT",
+            "TRUMPUSDT",
+            "TRXUSDT",
+            "TSTUSDT",
+            "TURBOUSDT",
+            "TUTUSDT",
+            "TWTUSDT",
+            "UNIUSDT",
+            "USDCUSDT",
+            "USTCUSDT",
+            "USUALUSDT",
+            "VETUSDT",
+            "VICUSDT",
+            "VIRTUALUSDT",
+            "VVVUSDT",
+            "WALUSDT",
+            "WCTUSDT",
+            "WIFUSDT",
+            "WLDUSDT",
+            "WUSDT",
+            "XAIUSDT",
+            "XLMUSDT",
+            "XMRUSDT",
+            "XRPUSDT",
+            "XTZUSDT",
+            "XVGUSDT",
+            "XVSUSDT",
+            "YFIUSDT",
+            "YGGUSDT",
+            "ZECUSDT",
+            "ZENUSDT",
+            "ZEREBROUSDT",
+            "ZETAUSDT",
+            "ZILUSDT",
+            "ZKUSDT",
+            "ZROUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "regressionportfolioA001_1d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 500
+      },
+      "sources": [
+        {
+          "detail": "compose=regression_1d_paper_binance; identity=legacy_auto_usdm_first; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/regressionportfolioA001/config/deployment.yaml",
+            "execution_alpha:alphas/regressionportfolioA001/docker-compose.yml",
+            "execution_alpha:alphas/regressionportfolioA001/symbols_300.json",
+            "execution_alpha:runtime/app/alpha_runtime/legacy/handler.py",
+            "repository:app/providers/binance/rest.py"
+          ]
+        },
+        {
+          "detail": "compose=regression_1d_sandbox_binance; identity=legacy_auto_usdm_first; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/regressionportfolioA001/config/deployment.yaml",
+            "execution_alpha:alphas/regressionportfolioA001/docker-compose.yml",
+            "execution_alpha:alphas/regressionportfolioA001/symbols_300.json",
+            "execution_alpha:runtime/app/alpha_runtime/legacy/handler.py",
+            "repository:app/providers/binance/rest.py"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "basis_arb_binance_1d",
+        "depth_levels": 100,
+        "execution_grade": false,
+        "feed": "BOOK_SNAPSHOT",
+        "interval": null,
+        "max_freshness_ms": 3600000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": false,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": "BTC-USDT",
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": "CURRENT_QUARTER",
+          "expected_universe_sha256": null,
+          "kind": "CONTINUOUS",
+          "market": "USDM",
+          "native_symbols": [],
+          "product_type": "FUTURE",
+          "segment_id": null,
+          "selector_id": "basis_arb_binance_1d:continuous:BTC-USDT:CURRENT_QUARTER",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 365
+      },
+      "sources": [
+        {
+          "detail": "compose=basis_arb_binance_1d_paper_binance; profile=basis_arb",
+          "source_kind": "BASIS_ARB_CONFIG_V1",
+          "source_refs": [
+            "execution_alpha:alphas/basis_arb_binance/config/deployment.paper.json",
+            "execution_alpha:alphas/basis_arb_binance/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "adaptive_hma_cpp_00115m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "15m",
+        "max_freshness_ms": 2700000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "adaptive_hma_cpp_00115m:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=adaptive_hma_cpp_00115m_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/adaptive_hma_cpp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=adaptive_hma_cpp_00115m_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/adaptive_hma_cpp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "scalp_psar_00115m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "15m",
+        "max_freshness_ms": 2700000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "scalp_psar_00115m:BINANCE:USDM:PERPETUAL:15m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 600
+      },
+      "sources": [
+        {
+          "detail": "compose=scalp_psar_00115m_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_PSAR/config.yaml",
+            "execution_alpha:alphas/scalping_PSAR/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=scalp_psar_00115m_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_PSAR/config.yaml",
+            "execution_alpha:alphas/scalping_PSAR/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "fib_sl_tp_strength_00130m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "BTCUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "fib_sl_tp_strength_00130m:BINANCE:USDM:PERPETUAL:30m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=fib_sl_tp_strength_00130m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=fib_sl_tp_strength_00130m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/fib_sl_tp_strength/config/deployment.yaml",
+            "execution_alpha:alphas/fib_sl_tp_strength/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "qqe_ssl_wae_risk_0015m",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "5m",
+        "max_freshness_ms": 900000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "qqe_ssl_wae_risk_0015m:BINANCE:USDM:PERPETUAL:5m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 500
+      },
+      "sources": [
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0015m_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0015m_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "BAR",
+        "interval": "1m",
+        "max_freshness_ms": 180000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:BINANCE:USDM:PERPETUAL:ETHUSDT:BAR:1m",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "vol_breakout_sl_tp_0011h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "vol_breakout_sl_tp_0011h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 1000
+      },
+      "sources": [
+        {
+          "detail": "compose=vol_breakout_sl_tp_0011h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/vol_breakout_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=vol_breakout_sl_tp_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/vol_breakout_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "combine_weight_sl_tp_0011h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "combine_weight_sl_tp_0011h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 300
+      },
+      "sources": [
+        {
+          "detail": "compose=combine_weight_sl_tp_0011h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/combine_weight_sl_tp/config/deployment.yaml",
+            "execution_alpha:alphas/combine_weight_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=combine_weight_sl_tp_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/combine_weight_sl_tp/config/deployment.yaml",
+            "execution_alpha:alphas/combine_weight_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "gridcombine001_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1d",
+        "max_freshness_ms": 259200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BTCUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "gridcombine001_1d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 350
+      },
+      "sources": [
+        {
+          "detail": "compose=gridcombine001_1d_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=gridcombine001_1d_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/grid_long_only/config/deployment.yaml",
+            "execution_alpha:alphas/grid_long_only/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "deep_momentum_prod_yearly_monthly_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1d",
+        "max_freshness_ms": 259200000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "1000000MOGUSDT",
+            "1000BONKUSDT",
+            "1000CATUSDT",
+            "1000CHEEMSUSDT",
+            "1000FLOKIUSDT",
+            "1000LUNCUSDT",
+            "1000PEPEUSDT",
+            "1000RATSUSDT",
+            "1000SATSUSDT",
+            "1000SHIBUSDT",
+            "1000XECUSDT",
+            "1INCHUSDT",
+            "1MBABYDOGEUSDT",
+            "AAVEUSDT",
+            "ACEUSDT",
+            "ACHUSDT",
+            "ACTUSDT",
+            "ACXUSDT",
+            "ADAUSDT",
+            "AEROUSDT",
+            "AEVOUSDT",
+            "AGLDUSDT",
+            "AIXBTUSDT",
+            "AKTUSDT",
+            "ALCHUSDT",
+            "ALGOUSDT",
+            "ALICEUSDT",
+            "ALTUSDT",
+            "ANIMEUSDT",
+            "ANKRUSDT",
+            "APEUSDT",
+            "API3USDT",
+            "APTUSDT",
+            "ARBUSDT",
+            "ARCUSDT",
+            "ARKMUSDT",
+            "ARKUSDT",
+            "ARPAUSDT",
+            "ARUSDT",
+            "ASTRUSDT",
+            "ATHUSDT",
+            "ATOMUSDT",
+            "AUCTIONUSDT",
+            "AVAAIUSDT",
+            "AVAUSDT",
+            "AVAXUSDT",
+            "AXLUSDT",
+            "AXSUSDT",
+            "BANANAS31USDT",
+            "BANANAUSDT",
+            "BANDUSDT",
+            "BANUSDT",
+            "BATUSDT",
+            "BBUSDT",
+            "BCHUSDT",
+            "BEAMXUSDT",
+            "BELUSDT",
+            "BERAUSDT",
+            "BICOUSDT",
+            "BIGTIMEUSDT",
+            "BIOUSDT",
+            "BLURUSDT",
+            "BMTUSDT",
+            "BNBUSDT",
+            "BNTUSDT",
+            "BOMEUSDT",
+            "BRETTUSDT",
+            "BROCCOLI714USDT",
+            "BROCCOLIF3BUSDT",
+            "BRUSDT",
+            "BSVUSDT",
+            "BTCUSDT",
+            "C98USDT",
+            "CAKEUSDT",
+            "CATIUSDT",
+            "CELOUSDT",
+            "CELRUSDT",
+            "CETUSUSDT",
+            "CFXUSDT",
+            "CGPTUSDT",
+            "CHILLGUYUSDT",
+            "CHRUSDT",
+            "CHZUSDT",
+            "CKBUSDT",
+            "COMPUSDT",
+            "COOKIEUSDT",
+            "COTIUSDT",
+            "COWUSDT",
+            "CRVUSDT",
+            "CTSIUSDT",
+            "CYBERUSDT",
+            "DASHUSDT",
+            "DEXEUSDT",
+            "DIAUSDT",
+            "DODOXUSDT",
+            "DOGEUSDT",
+            "DOGSUSDT",
+            "DOTUSDT",
+            "DRIFTUSDT",
+            "DUSKUSDT",
+            "DYDXUSDT",
+            "DYMUSDT",
+            "EDUUSDT",
+            "EGLDUSDT",
+            "EIGENUSDT",
+            "ENAUSDT",
+            "ENJUSDT",
+            "ENSUSDT",
+            "EPICUSDT",
+            "ETCUSDT",
+            "ETHFIUSDT",
+            "ETHUSDT",
+            "ETHWUSDT",
+            "FARTCOINUSDT",
+            "FETUSDT",
+            "FIDAUSDT",
+            "FILUSDT",
+            "FLOWUSDT",
+            "FLUXUSDT",
+            "FORMUSDT",
+            "GALAUSDT",
+            "GASUSDT",
+            "GLMUSDT",
+            "GMTUSDT",
+            "GMXUSDT",
+            "GOATUSDT",
+            "GPSUSDT",
+            "GRASSUSDT",
+            "GRIFFAINUSDT",
+            "GRTUSDT",
+            "GTCUSDT",
+            "GUNUSDT",
+            "GUSDT",
+            "HBARUSDT",
+            "HEIUSDT",
+            "HFTUSDT",
+            "HIVEUSDT",
+            "HMSTRUSDT",
+            "HOTUSDT",
+            "ICPUSDT",
+            "ICXUSDT",
+            "IDUSDT",
+            "ILVUSDT",
+            "IMXUSDT",
+            "INJUSDT",
+            "IOSTUSDT",
+            "IOTAUSDT",
+            "IOTXUSDT",
+            "IOUSDT",
+            "IPUSDT",
+            "JASMYUSDT",
+            "JOEUSDT",
+            "JTOUSDT",
+            "JUPUSDT",
+            "KAIAUSDT",
+            "KAITOUSDT",
+            "KASUSDT",
+            "KAVAUSDT",
+            "KMNOUSDT",
+            "KNCUSDT",
+            "KOMAUSDT",
+            "KSMUSDT",
+            "LAYERUSDT",
+            "LDOUSDT",
+            "LINKUSDT",
+            "LISTAUSDT",
+            "LPTUSDT",
+            "LQTYUSDT",
+            "LSKUSDT",
+            "LTCUSDT",
+            "LUMIAUSDT",
+            "LUNA2USDT",
+            "MAGICUSDT",
+            "MANAUSDT",
+            "MANTAUSDT",
+            "MASKUSDT",
+            "MAVIAUSDT",
+            "MAVUSDT",
+            "MELANIAUSDT",
+            "MEMEUSDT",
+            "METISUSDT",
+            "MEUSDT",
+            "MEWUSDT",
+            "MINAUSDT",
+            "MOCAUSDT",
+            "MOODENGUSDT",
+            "MORPHOUSDT",
+            "MOVEUSDT",
+            "MOVRUSDT",
+            "MTLUSDT",
+            "MUBARAKUSDT",
+            "NEARUSDT",
+            "NEIROUSDT",
+            "NEOUSDT",
+            "NFPUSDT",
+            "NILUSDT",
+            "NMRUSDT",
+            "NOTUSDT",
+            "OGNUSDT",
+            "ONDOUSDT",
+            "ONEUSDT",
+            "ONGUSDT",
+            "ONTUSDT",
+            "OPUSDT",
+            "ORCAUSDT",
+            "ORDIUSDT",
+            "PARTIUSDT",
+            "PAXGUSDT",
+            "PENDLEUSDT",
+            "PENGUUSDT",
+            "PEOPLEUSDT",
+            "PHAUSDT",
+            "PIPPINUSDT",
+            "PIXELUSDT",
+            "PLUMEUSDT",
+            "PNUTUSDT",
+            "POLUSDT",
+            "POLYXUSDT",
+            "POPCATUSDT",
+            "PORTALUSDT",
+            "POWRUSDT",
+            "PROMUSDT",
+            "PYTHUSDT",
+            "QNTUSDT",
+            "QTUMUSDT",
+            "RAREUSDT",
+            "RAYSOLUSDT",
+            "REDUSDT",
+            "RENDERUSDT",
+            "REZUSDT",
+            "RIFUSDT",
+            "RLCUSDT",
+            "RONINUSDT",
+            "ROSEUSDT",
+            "RPLUSDT",
+            "RSRUSDT",
+            "RUNEUSDT",
+            "RVNUSDT",
+            "SAFEUSDT",
+            "SAGAUSDT",
+            "SANDUSDT",
+            "SANTOSUSDT",
+            "SCRTUSDT",
+            "SCRUSDT",
+            "SEIUSDT",
+            "SFPUSDT",
+            "SHELLUSDT",
+            "SKLUSDT",
+            "SNXUSDT",
+            "SOLUSDT",
+            "SOLVUSDT",
+            "SONICUSDT",
+            "SPELLUSDT",
+            "SPXUSDT",
+            "SSVUSDT",
+            "STEEMUSDT",
+            "STGUSDT",
+            "STORJUSDT",
+            "STRKUSDT",
+            "STXUSDT",
+            "SUIUSDT",
+            "SUNUSDT",
+            "SUPERUSDT",
+            "SUSDT",
+            "SUSHIUSDT",
+            "SWARMSUSDT",
+            "SYNUSDT",
+            "TAOUSDT",
+            "THETAUSDT",
+            "THEUSDT",
+            "TIAUSDT",
+            "TLMUSDT",
+            "TNSRUSDT",
+            "TRBUSDT",
+            "TRUMPUSDT",
+            "TRXUSDT",
+            "TSTUSDT",
+            "TURBOUSDT",
+            "TUSDT",
+            "TUTUSDT",
+            "TWTUSDT",
+            "UMAUSDT",
+            "UNIUSDT",
+            "USDCUSDT",
+            "USTCUSDT",
+            "USUALUSDT",
+            "VANAUSDT",
+            "VANRYUSDT",
+            "VELODROMEUSDT",
+            "VETUSDT",
+            "VICUSDT",
+            "VIRTUALUSDT",
+            "VTHOUSDT",
+            "VVVUSDT",
+            "WALUSDT",
+            "WAXPUSDT",
+            "WIFUSDT",
+            "WLDUSDT",
+            "WOOUSDT",
+            "WUSDT",
+            "XAIUSDT",
+            "XLMUSDT",
+            "XMRUSDT",
+            "XRPUSDT",
+            "XTZUSDT",
+            "XVGUSDT",
+            "XVSUSDT",
+            "YFIUSDT",
+            "YGGUSDT",
+            "ZECUSDT",
+            "ZENUSDT",
+            "ZEREBROUSDT",
+            "ZETAUSDT",
+            "ZILUSDT",
+            "ZKUSDT",
+            "ZROUSDT",
+            "ZRXUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "deep_momentum_prod_yearly_monthly_1d:BINANCE:USDM:PERPETUAL:1d",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 480
+      },
+      "sources": [
+        {
+          "detail": "compose=deep_momentum_prod_yearly_monthly_1d_paper_binance; profile=deep_momentum",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/deep_momentum/config/deployment.prod_yearly_monthly.paper.json",
+            "execution_alpha:alphas/deep_momentum/docker-compose.yml",
+            "execution_alpha:alphas/deep_momentum/research_snapshot/universe_symbols.json"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "qqe_ssl_wae_risk_0011h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "DOGEUSDT",
+            "ETHUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "qqe_ssl_wae_risk_0011h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 500
+      },
+      "sources": [
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0011h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=qqe_ssl_wae_risk_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+            "execution_alpha:alphas/qqe_ssl_wae_risk/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "combine_weight_sl_tp_0014h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "TRADE",
+        "interval": null,
+        "max_freshness_ms": 15000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "combine_weight_sl_tp_0014h:BINANCE:USDM:PERPETUAL:4h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 300
+      },
+      "sources": [
+        {
+          "detail": "compose=combine_weight_sl_tp_0014h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/combine_weight_sl_tp/config/deployment.yaml",
+            "execution_alpha:alphas/combine_weight_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=combine_weight_sl_tp_0014h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/combine_weight_sl_tp/config/deployment.yaml",
+            "execution_alpha:alphas/combine_weight_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "combine_weight_sl_tp_0011h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "ETHUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "combine_weight_sl_tp_0011h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 300
+      },
+      "sources": [
+        {
+          "detail": "compose=combine_weight_sl_tp_0011h_paper_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/combine_weight_sl_tp/config/deployment.yaml",
+            "execution_alpha:alphas/combine_weight_sl_tp/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=combine_weight_sl_tp_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=true",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/combine_weight_sl_tp/config/deployment.yaml",
+            "execution_alpha:alphas/combine_weight_sl_tp/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "basis_arb_binance_1d",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BASIS",
+        "interval": "1d",
+        "max_freshness_ms": 86400000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": "BTC-USDT",
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": "CURRENT_QUARTER",
+          "expected_universe_sha256": null,
+          "kind": "CONTINUOUS",
+          "market": "USDM",
+          "native_symbols": [],
+          "product_type": "FUTURE",
+          "segment_id": null,
+          "selector_id": "basis_arb_binance_1d:continuous:BTC-USDT:CURRENT_QUARTER",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 365
+      },
+      "sources": [
+        {
+          "detail": "compose=basis_arb_binance_1d_paper_binance; profile=basis_arb",
+          "source_kind": "BASIS_ARB_CONFIG_V1",
+          "source_refs": [
+            "execution_alpha:alphas/basis_arb_binance/config/deployment.paper.json",
+            "execution_alpha:alphas/basis_arb_binance/docker-compose.yml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "trading-system.paper.stable",
+        "depth_levels": 0,
+        "execution_grade": true,
+        "feed": "QUOTE",
+        "interval": null,
+        "max_freshness_ms": 5000,
+        "priority": 20,
+        "purpose": "EXECUTION",
+        "require_final_bars": false,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "SWAP",
+          "native_symbols": [
+            "ETH-USDT-SWAP"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "trading-system.paper.stable:OKX:SWAP:PERPETUAL:ETH-USDT-SWAP:QUOTE:point",
+          "universe_ref": null,
+          "venue": "OKX"
+        },
+        "warmup_limit": 0
+      },
+      "sources": [
+        {
+          "detail": "consumer_grade=EXECUTION",
+          "source_kind": "PRODUCTION_DEMAND_V1",
+          "source_refs": [
+            "repository:config/v2/stable-crypto-demand.yaml"
+          ]
+        }
+      ]
+    },
+    {
+      "requirement": {
+        "configuration_revision": 1,
+        "consumer_id": "scalp_psar_0011h",
+        "depth_levels": 0,
+        "execution_grade": false,
+        "feed": "BAR",
+        "interval": "1h",
+        "max_freshness_ms": 10800000,
+        "priority": 100,
+        "purpose": "ALPHA",
+        "require_final_bars": true,
+        "require_live": true,
+        "source_policy_id": "crypto_primary_v2",
+        "ttl_seconds": 180,
+        "universe": {
+          "continuous_family": null,
+          "continuous_minimum_days_to_expiry": 0,
+          "continuous_roll_policy": null,
+          "expected_universe_sha256": null,
+          "kind": "EXPLICIT",
+          "market": "USDM",
+          "native_symbols": [
+            "BNBUSDT",
+            "BTCUSDT",
+            "DOGEUSDT",
+            "ETHUSDT",
+            "SOLUSDT"
+          ],
+          "product_type": "PERPETUAL",
+          "segment_id": null,
+          "selector_id": "scalp_psar_0011h:BINANCE:USDM:PERPETUAL:1h",
+          "universe_ref": null,
+          "venue": "BINANCE"
+        },
+        "warmup_limit": 600
+      },
+      "sources": [
+        {
+          "detail": "compose=scalp_psar_0011h_paper_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_PSAR/config.yaml",
+            "execution_alpha:alphas/scalping_PSAR/docker-compose.yml"
+          ]
+        },
+        {
+          "detail": "compose=scalp_psar_0011h_sandbox_binance; identity=explicit_contract; realtime_trade=false",
+          "source_kind": "ALPHA_COMPOSE_V1",
+          "source_refs": [
+            "execution_alpha:alphas/scalping_PSAR/config.yaml",
+            "execution_alpha:alphas/scalping_PSAR/docker-compose.yml"
+          ]
+        }
+      ]
+    }
+  ],
+  "revision": 1,
+  "schema": "qdl.v2.active-demand-inventory.v1",
+  "source_documents": [
+    {
+      "byte_count": 2691,
+      "relative_path": "alphas/adaptive_hma_cpp/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "f3742254b55bfb37848e1808ef1eae81245a90bcc2816cf56a3e2d38bd1f0aab",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 3956,
+      "relative_path": "alphas/adaptive_hma_cpp/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "9c24d2b4de5a270b3d36051b9b6a2059c7caa201ae4adb8344e7894ab2ffde00",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 3415,
+      "relative_path": "alphas/basis_arb_binance/config/deployment.paper.json",
+      "root_id": "execution_alpha",
+      "sha256": "aa5268c6793711bae44e5c1288e4f673e856977213a28c975a203e93ae89c3aa",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 1892,
+      "relative_path": "alphas/basis_arb_binance/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "dab6d827a86f14c3e1fb4d24003646bb668f6380c98c21469cf1de8dbdac640e",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 2312,
+      "relative_path": "alphas/bb_salping/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "407ebc5d8455f37e2c5d65d2cc2850d709683bd25381e77d6ab9f6c3cd971525",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 3847,
+      "relative_path": "alphas/bb_salping/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "48c0d9cce08f12d2aec60459eb37f205b8f27a22fbe024b0d588bbef0786d6d6",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 2628,
+      "relative_path": "alphas/combine_weight_sl_tp/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "e3a5869eb246fda3e3505df974eb702190f9695a2f6479cdf124f25cd0041719",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 1970,
+      "relative_path": "alphas/combine_weight_sl_tp/config/deployment.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "71d733ba3c6a897a1bc90b856581bb125e736d4f10c8aa6428921c1e962bd205",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 8420,
+      "relative_path": "alphas/combine_weight_sl_tp/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "69ca817c594d1abb2001d88e0fb0fd342dcd438a6940cdae7b21c3aff02b324e",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 1904,
+      "relative_path": "alphas/deep_momentum/config/deployment.prod_yearly_monthly.paper.json",
+      "root_id": "execution_alpha",
+      "sha256": "1bfc696f6864077ea5c9e8b6926073095d3bcc73ded8523b859e607412cad9a1",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 4182,
+      "relative_path": "alphas/deep_momentum/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "75c99629edbc376afc2358f8d6f0adca90cfbaa77f90c75b53fb6e33808bef7f",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 4451,
+      "relative_path": "alphas/deep_momentum/research_snapshot/universe_symbols.json",
+      "root_id": "execution_alpha",
+      "sha256": "10e8d0365383673b7b49172b91f11622211f66aff292e262736191d7f1d135dc",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 6156,
+      "relative_path": "alphas/delta_rsi/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "b7970834c77a3c7c8ee5874d2388a8cc220ba2037fab06b79442f8981b98efac",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 1627,
+      "relative_path": "alphas/dynamic_grid/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "1a4c716bc6a3d9481478c7e28f7c74666c235e5725c177ff86889b50f9f71b62",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 1660,
+      "relative_path": "alphas/dynamic_grid/config/deployment.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "fa51f7a9f3b2d5d09db610bc9a69d0e71b6313f6f8515f6e104ed8ad9d64782e",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 4642,
+      "relative_path": "alphas/dynamic_grid/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "c2aadb58e4e12a7082df6fc80a1bfed389d454f2439cfb4557c01b8bb02d6cb2",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 3392,
+      "relative_path": "alphas/fib_sl_tp_strength/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "55cdf92f05eecf0ec33d0d5fb440bd7f0aedef08fb6c0caf1b0a9e610ce5fbc3",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 2145,
+      "relative_path": "alphas/fib_sl_tp_strength/config/deployment.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "c6175ec37888bf8f11e680a91d7ac769b9dd9c6143d4fd3dec94381ee0ef671c",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 7528,
+      "relative_path": "alphas/fib_sl_tp_strength/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "44302d15d8ccd658551a0e1ba4305cb0fa983431b4b6d11d36fc8db9d7381e04",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 2974,
+      "relative_path": "alphas/grid_long_only/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "4536bffe827c7586a58164a475323512b14d64f5ba8a7f59173f23afde8b35f2",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 2735,
+      "relative_path": "alphas/grid_long_only/config/deployment.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "c03c6984feabc1df737721474cd4950932e85fc02957f03b51b42dbc398864b7",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 9119,
+      "relative_path": "alphas/grid_long_only/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "f00e776882884e6dfc7305e3cb30d208aeb4a46e0962ec8fbb86ffd1c8a018f4",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 1741,
+      "relative_path": "alphas/pmax_confluene/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "6bf92e26a66c19bd8e78f61986281828e4e91bd8129885474808784229b044ae",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 4446,
+      "relative_path": "alphas/pmax_confluene/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "d26dc30706823b53eb7952ac999398ba755875e1bded79fa8b14f6c6e26dcdce",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 4567,
+      "relative_path": "alphas/qqe_ssl_wae_risk/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "0e473928fe7d5a1e89222833efb1d3d167fce2bec1eece559a73496fc7eb47c9",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 2229,
+      "relative_path": "alphas/qqe_ssl_wae_risk/config/deployment.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "cd9a8f79c3f185b15e52397d0ab7a50f5dd4afa1da9abec7cda61adce59bd952",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 4961,
+      "relative_path": "alphas/qqe_ssl_wae_risk/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "8995a24d36e012d857444057aabfbd1e00cc7c119ce62fa00089b29b6d0b4101",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 699,
+      "relative_path": "alphas/regressionportfolioA001/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "1f5d2e7405874065640d58d66854828c58a65dc62429d96600ed776adb525710",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 604,
+      "relative_path": "alphas/regressionportfolioA001/config/deployment.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "0e1537dee35662fc3688a3c9cf652d2520514faeff98ea7bea8b674cf51b120b",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 4794,
+      "relative_path": "alphas/regressionportfolioA001/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "86c5d9351a51d8a990ff3b63b7055202be89f2c834cb7d159fb986018cbc7b1d",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 3606,
+      "relative_path": "alphas/regressionportfolioA001/symbols_300.json",
+      "root_id": "execution_alpha",
+      "sha256": "722841c8924b01658bfba2fb4b92727e8029eb7ad6b9686dd4a2ea292a8e04ed",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 724,
+      "relative_path": "alphas/rsiboundportfolioA001/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "34de82fb906222471c12710eb8762d7aa2c078cb312f96e09f61d03eefcc472e",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 600,
+      "relative_path": "alphas/rsiboundportfolioA001/config/deployment.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "949e8c33de5f77c7f3e1482fe13e01b755998b0849cfe62fd4b7d9c318925fba",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 4758,
+      "relative_path": "alphas/rsiboundportfolioA001/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "897db83cc44ee97163eec6aa10a5aa771393b24f348188d4288c5f553c686ca5",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 3606,
+      "relative_path": "alphas/rsiboundportfolioA001/symbols_300.json",
+      "root_id": "execution_alpha",
+      "sha256": "722841c8924b01658bfba2fb4b92727e8029eb7ad6b9686dd4a2ea292a8e04ed",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 3272,
+      "relative_path": "alphas/scalping_PSAR/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "488af8a14ab8d5b47cb19cab96dd62f4aa846673d66a614c72b7ac822426415c",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 4770,
+      "relative_path": "alphas/scalping_PSAR/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "177b26b976e4adc8992e2b01b08dc9df5b0623532de4ccf99b67e8e7685ed1c0",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 928,
+      "relative_path": "alphas/scalping_purely/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "3defe26c7c54b091ccc94de55cb2dacff2552d6f26af726804f80b0acc01e30e",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 2800,
+      "relative_path": "alphas/scalping_purely/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "339dd083b210e7884df0dbf79af7636c465a5da29acc96e2b4a4bcf2c667818d",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 3041,
+      "relative_path": "alphas/scalping_sl_tp/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "257602ca43dfc6a773bd0cbc81ab9ef215607fbc93cfdd5bc917c8c85eba7dfe",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 6429,
+      "relative_path": "alphas/scalping_sl_tp/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "b01532a3d675be69e0b8c6ca072a123d26d7e82893ea53a22ce4a2c5fc997824",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 2212,
+      "relative_path": "alphas/signal_combine/config.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "435f410d5844c76e1ad3f5c4ea3403c33301f6d0ca6af65847c63dffd53e27b2",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 1487,
+      "relative_path": "alphas/signal_combine/config/deployment.yaml",
+      "root_id": "execution_alpha",
+      "sha256": "207c4bd76769d49715f063416eebfa331947d5f335abfc61b230f0fb19a83f80",
+      "source_id": "alpha-compose-dependency"
+    },
+    {
+      "byte_count": 3752,
+      "relative_path": "alphas/signal_combine/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "27a893390ea25ff13e3b731d0df203f3e81ff0f77e32715f609505ab8c123121",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 2273,
+      "relative_path": "alphas/vn_ib_timing/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "d01abb47989a888136596c15c2ed65a986b05076cadcdaeb7dd0b70866b3a4c6",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 4251,
+      "relative_path": "alphas/vol_breakout_sl_tp/docker-compose.yml",
+      "root_id": "execution_alpha",
+      "sha256": "cd4ae5a7a2f8434af02a52f4b32701f54695de70dc8777362d10af39c6f6958c",
+      "source_id": "alpha-compose"
+    },
+    {
+      "byte_count": 11010,
+      "relative_path": "runtime/app/alpha_runtime/legacy/handler.py",
+      "root_id": "execution_alpha",
+      "sha256": "388beb9ee1a506f92a3dc83d21deb0c55baf80bfc0a018f9359ffdf5b7dde98f",
+      "source_id": "legacy-alpha-runtime-market-semantics"
+    },
+    {
+      "byte_count": 2723,
+      "relative_path": "app/providers/binance/rest.py",
+      "root_id": "repository",
+      "sha256": "a25b4a1ac98ccefd7ca67f1909fc23d6ba3d26a2bafd3c713c96213430be1002",
+      "source_id": "legacy-binance-auto-market-semantics"
+    },
+    {
+      "byte_count": 3691,
+      "relative_path": "config/v2/stable-crypto-demand.yaml",
+      "root_id": "repository",
+      "sha256": "60d550e6d83d4cfd91701f7bac104f965114b5966f470cbe080a9490edf378c4",
+      "source_id": "current-v2-production-demand"
+    },
+    {
+      "byte_count": 137767,
+      "relative_path": "config/_config/portfolio_account_config_setup.yaml",
+      "root_id": "trading_system",
+      "sha256": "a91a5e913c43a601eeae460b62d9db8f11a07ec7c9e0d7ed701a6b31f9140817",
+      "source_id": "trading-alpha-owner-registry"
+    }
+  ],
+  "status": "PASS"
+}

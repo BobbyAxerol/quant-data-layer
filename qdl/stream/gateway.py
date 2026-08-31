@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Protocol
 
 from qdl.replay import GapFreeHandoff
 from qdl.transport import (
@@ -47,6 +47,7 @@ class StreamSubscription:
         initial: tuple[StoredEvent, ...],
         max_buffer_events: int,
         lease_epoch: int | None,
+        accepts: Callable[[StoredEvent], bool] | None,
     ) -> None:
         self._gateway = gateway
         self.subscription_id = subscription_id
@@ -55,12 +56,13 @@ class StreamSubscription:
         self.initial = initial
         self.queue: asyncio.Queue[StoredEvent] = asyncio.Queue(maxsize=max_buffer_events)
         self.lease_epoch = lease_epoch
+        self._accepts = accepts or (lambda _stored: True)
         self.overflowed = False
         self.closed = False
         self._in_flight = 0
 
     def push(self, stored: StoredEvent) -> None:
-        if self.closed or self.overflowed:
+        if self.closed or self.overflowed or not self._accepts(stored):
             return
         if self.queue.qsize() + self._in_flight >= self.queue.maxsize:
             self.overflowed = True
@@ -69,6 +71,11 @@ class StreamSubscription:
             self.queue.put_nowait(stored)
         except asyncio.QueueFull:
             self.overflowed = True
+
+    def accepts(self, stored: StoredEvent) -> bool:
+        """Return whether a physical-partition event belongs to this consumer."""
+
+        return self._accepts(stored)
 
     async def record(self, stored: StoredEvent) -> StreamRecord:
         self._gateway.assert_active(self.lease_epoch)
@@ -86,11 +93,20 @@ class StreamSubscription:
             raise SlowConsumer("bounded outbound buffer exhausted; replay is required")
         if self.closed:
             raise StopAsyncIteration
-        stored = await self.queue.get()
-        if self.overflowed:
-            raise SlowConsumer("bounded outbound buffer exhausted; replay is required")
-        self._in_flight += 1
-        return await self.record(stored)
+        while True:
+            stored = await self.queue.get()
+            if self.overflowed:
+                raise SlowConsumer("bounded outbound buffer exhausted; replay is required")
+            self._in_flight += 1
+            record = await self.record(stored)
+            # A strict predicate can depend on time. A record that was fresh
+            # when queued may age out while this bounded subscriber waits.
+            # Advance its signed cursor as a filtered physical record, then
+            # wait for the next eligible record instead of leaking stale data.
+            if not self._accepts(stored):
+                self.mark_delivered()
+                continue
+            return record
 
     def mark_delivered(self) -> None:
         if self._in_flight > 0:
@@ -146,6 +162,7 @@ class DurableStreamGateway:
         max_buffer_events: int | None = None,
         max_consumer_streams: int | None = None,
         replay_limit: int = 10_000,
+        accepts: Callable[[StoredEvent], bool] | None = None,
     ) -> StreamSubscription:
         lease_epoch = self.assert_active()
         if not 1 <= replay_limit <= self.max_replay_events:
@@ -156,6 +173,8 @@ class DurableStreamGateway:
         consumer_limit = max_consumer_streams or self.max_subscribers
         if not 1 <= consumer_limit <= self.max_subscribers:
             raise ValueError("requested consumer stream limit exceeds the server bound")
+        if accepts is not None and not callable(accepts):
+            raise ValueError("subscription event matcher must be callable")
         partition_lock = self._partition_lock(stream, partition_key)
         async with partition_lock:
             self.assert_active(lease_epoch)
@@ -202,6 +221,7 @@ class DurableStreamGateway:
                     initial=initial,
                     max_buffer_events=buffer_size,
                     lease_epoch=lease_epoch,
+                    accepts=accepts,
                 )
                 self._subscriptions[subscription_id] = (
                     stream, partition_key, subscription

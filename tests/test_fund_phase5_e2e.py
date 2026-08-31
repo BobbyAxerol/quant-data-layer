@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 import tempfile
 import time
@@ -194,8 +195,28 @@ class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
             )
             backend.put_latest(domain, item)
             if domain.warmup_limit:
+                interval_ns = 60_000_000_000
+                history = tuple(
+                    replace(
+                        item,
+                        observed_at_ns=now - (domain.warmup_limit - index - 1) * interval_ns,
+                        payload={
+                            **item.payload,
+                            "open_time_ns": now
+                            - (domain.warmup_limit - index) * interval_ns,
+                            "close_time_ns": now
+                            - (domain.warmup_limit - index - 1) * interval_ns,
+                        },
+                    )
+                    for index in range(domain.warmup_limit)
+                )
                 backend.put_history(domain, HistoryResult(
-                    (item,), CoverageStatus.FULL, "snapshot", token, 0, time.time_ns()
+                    history,
+                    CoverageStatus.FULL,
+                    "snapshot",
+                    token,
+                    0,
+                    time.time_ns(),
                 ))
             service = V2QueryService(
                 instruments=InstrumentQuery(instruments), backend=backend,

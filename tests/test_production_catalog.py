@@ -21,6 +21,19 @@ BINANCE = {
     "serverTime": 1000,
     "symbols": [
         {
+            "symbol": "BTCUSDT",
+            "status": "TRADING",
+            "contractType": "PERPETUAL",
+            "baseAsset": "BTC",
+            "quoteAsset": "USDT",
+            "marginAsset": "USDT",
+            "deliveryDate": 0,
+            "filters": [
+                {"filterType": "PRICE_FILTER", "tickSize": "0.10"},
+                {"filterType": "LOT_SIZE", "stepSize": "0.001"},
+            ],
+        },
+        {
             "symbol": "ETHUSDT",
             "status": "TRADING",
             "contractType": "PERPETUAL",
@@ -51,17 +64,37 @@ BINANCE = {
 OKX = [
     {
         "instType": "SWAP",
+        "instId": "BTC-USDT-SWAP",
+        "instFamily": "BTC-USDT",
+        "baseCcy": "BTC",
+        "quoteCcy": "USDT",
+        "settleCcy": "USDT",
+        "tickSz": "0.1",
+        "lotSz": "1",
+        "ctVal": "0.01",
+        "ctMult": "1",
+        "state": "live",
+    },
+    {
+        "instType": "SWAP",
         "instId": "ETH-USDT-SWAP",
         "instFamily": "ETH-USDT",
-        "baseCcy": "ETH",
-        "quoteCcy": "USDT",
+        "baseCcy": "",
+        "quoteCcy": "",
+        "ctValCcy": "ETH",
         "settleCcy": "USDT",
         "tickSz": "0.01",
         "lotSz": "1",
         "ctVal": "0.1",
         "ctMult": "1",
         "state": "live",
-    }
+    },
+    {
+        "instType": "SWAP",
+        "instId": "PREOPEN-USDT-SWAP",
+        "instFamily": "",
+        "state": "preopen",
+    },
 ]
 
 
@@ -76,6 +109,18 @@ class ProductionCatalogTests(unittest.TestCase):
                     "consumer_id": "trading-system.execution.v2",
                     "consumer_grade": "EXECUTION",
                     "requirements": [
+                        {
+                            "venue": "BINANCE", "market": "USDM",
+                            "product_type": "PERPETUAL", "native_symbol": "BTCUSDT",
+                            "feed": "TRADE", "interval": None,
+                            "source_policy_id": "crypto_primary_v2",
+                        },
+                        {
+                            "venue": "OKX", "market": "SWAP",
+                            "product_type": "PERPETUAL", "native_symbol": "BTC-USDT-SWAP",
+                            "feed": "BAR", "interval": "1m",
+                            "source_policy_id": "crypto_primary_v2",
+                        },
                         {
                             "venue": "BINANCE", "market": "USDM",
                             "product_type": "PERPETUAL", "native_symbol": "ETHUSDT",
@@ -144,20 +189,35 @@ class ProductionCatalogTests(unittest.TestCase):
             )
             self.assertEqual(first.source_catalog, second.source_catalog)
             self.assertEqual(first.acquisition_plan, second.acquisition_plan)
+            self.assertEqual(
+                first.acquisition_plan["topics"]["raw"],
+                "md.raw.realtime.v2",
+            )
             self.assertEqual(first.provenance["fabricated_metadata"], False)
-            self.assertEqual(first.provenance["instrument_count"], 2)
+            self.assertEqual(first.provenance["instrument_count"], 4)
             paths = first.write(root / "out")
             catalog = StableSourceCatalog.load(paths["source_catalog"])
-            self.assertEqual(len(catalog.bindings), 2)
+            self.assertEqual(len(catalog.bindings), 4)
             self.assertEqual(
                 {item.instrument.instrument_id for item in catalog.bindings},
                 {
+                    "BINANCE.USDM.PERPETUAL.BTC-USDT",
                     "BINANCE.USDM.PERPETUAL.ETH-USDT",
+                    "OKX.SWAP.PERPETUAL.BTC-USDT",
                     "OKX.SWAP.PERPETUAL.ETH-USDT",
                 },
             )
+            eth_okx = next(
+                item.instrument
+                for item in catalog.bindings
+                if item.instrument.instrument_id == "OKX.SWAP.PERPETUAL.ETH-USDT"
+            )
             self.assertEqual(
-                json.loads(Path(paths["provenance"]).read_text())["binding_count"], 2
+                (eth_okx.base_asset, eth_okx.quote_asset, eth_okx.settlement_asset),
+                ("ETH", "USDT", "USDT"),
+            )
+            self.assertEqual(
+                json.loads(Path(paths["provenance"]).read_text())["binding_count"], 4
             )
             acquisition = StableAcquisitionPlan.load(
                 paths["acquisition_plan"], catalog=catalog
@@ -187,7 +247,7 @@ class ProductionCatalogTests(unittest.TestCase):
                 promotion_scope=promotion_scope,
                 worker_index=1,
             )
-            self.assertEqual(len(runtime["slices"]), 2)
+            self.assertEqual(len(runtime["slices"]), 4)
             self.assertEqual(
                 {item["subscription_id"] for item in runtime["slices"]},
                 {item.source_id for item in catalog.bindings},
@@ -216,15 +276,101 @@ class ProductionCatalogTests(unittest.TestCase):
                     "requirements": [{
                         "venue": "OKX", "market": "SWAP", "product_type": "PERPETUAL",
                         "native_symbol": "ETH-USDT-SWAP", "feed": "BAR",
-                        "interval": "15m", "source_policy_id": "crypto_primary_v2",
+                        "interval": "45m", "source_policy_id": "crypto_primary_v2",
                     }],
                 }],
             }
             import yaml
             path = root / "bad-interval.yaml"
             path.write_text(yaml.safe_dump(payload))
-            with self.assertRaisesRegex(ValueError, "currently certified for 1m"):
+            with self.assertRaisesRegex(ValueError, "does not expose"):
                 ProductionDemandManifest.load_many([path])
+
+    def test_book_demand_requires_explicit_bounded_acquisition_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = {
+                "venue": "BINANCE", "market": "USDM",
+                "product_type": "PERPETUAL", "native_symbol": "BTCUSDT",
+                "feed": "BOOK_DELTA", "interval": None,
+                "source_policy_id": "crypto_liquid_v2",
+            }
+            payload = {
+                "schema": "qdl.v2.production-demand.v1",
+                "revision": 1,
+                "consumers": [{
+                    "consumer_id": "execution", "consumer_grade": "EXECUTION",
+                    "requirements": [base],
+                }],
+            }
+            import yaml
+            path = root / "book.yaml"
+            path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "fields are invalid"):
+                ProductionDemandManifest.load_many([path])
+
+            payload["consumers"][0]["requirements"][0] = {
+                **base,
+                "depth_per_side": 100,
+                "max_freshness_ms": 2_000,
+                "require_live": True,
+            }
+            path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+            demand = ProductionDemandManifest.load_many([path]).demands
+            self.assertEqual(len(demand), 1)
+            self.assertEqual(demand[0].depth_per_side, 100)
+
+    def test_catalog_accepts_all_certified_fixed_bar_intervals_and_scales_staleness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = {
+                "schema": "qdl.v2.production-demand.v1",
+                "revision": 6,
+                "consumers": [{
+                    "consumer_id": "alpha", "consumer_grade": "ALPHA",
+                    "requirements": [
+                        {
+                            "venue": "BINANCE", "market": "USDM",
+                            "product_type": "PERPETUAL", "native_symbol": "ETHUSDT",
+                            "feed": "BAR", "interval": "1d",
+                            "source_policy_id": "crypto_primary_v2",
+                        },
+                        {
+                            "venue": "OKX", "market": "SWAP",
+                            "product_type": "PERPETUAL", "native_symbol": "ETH-USDT-SWAP",
+                            "feed": "BAR", "interval": "15m",
+                            "source_policy_id": "crypto_primary_v2",
+                        },
+                    ],
+                }],
+            }
+            import yaml
+            path = root / "intervals.yaml"
+            path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+            demand = ProductionDemandManifest.load_many([path])
+            bundle = ProductionCatalogBuilder(
+                catalog_revision=1,
+                source_policy_revision=1,
+                authority_revision=1,
+            ).build(
+                demand=demand,
+                binance_usdm=parse_exchange_info(BINANCE, valid_from_ns=1),
+                okx_rows=OKX,
+            )
+            by_id = {item["binding_id"]: item for item in bundle.source_catalog["bindings"]}
+            self.assertEqual(
+                by_id["binance-usdm-ethusdt-bar-1d"]["quality"]["stale_after_ms"],
+                259_200_000,
+            )
+            self.assertEqual(
+                by_id["okx-swap-eth-usdt-swap-bar-15m"]["quality"]["stale_after_ms"],
+                2_700_000,
+            )
+            acquisition = {item["binding_id"]: item for item in bundle.acquisition_plan["bindings"]}
+            self.assertEqual(
+                acquisition["okx-swap-eth-usdt-swap-bar-15m"]["native_channel"],
+                "candle15m",
+            )
 
 
 if __name__ == "__main__":

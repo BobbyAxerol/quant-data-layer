@@ -6,13 +6,24 @@ import json
 import subprocess
 from pathlib import Path
 
+from qdl.runtime.stable_deployment import (
+    SHARED_REALTIME_CORE_GROUP_ID,
+    SHARED_REALTIME_CORE_ID_PREFIX,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "docker-compose.v2-stable.yml"
 BOOTSTRAP = "kafka1:9092,kafka2:9092,kafka3:9092"
 ADMIN_CONFIG = "/etc/kafka/secrets/admin.properties"
+V2_REALTIME_RAW_TOPIC = "md.raw.realtime.v2"
+LEGACY_RAW_TOPIC = "md.raw.stable.v1"
 TOPIC_POLICIES = {
-    "md.raw.stable.v1": "delete",
+    # The V2 Rust primary ingress is one shared multi-venue topic. It is
+    # intentionally separate from the retained legacy raw topic so an old
+    # broad-universe producer cannot starve or silently filter V2 demand.
+    V2_REALTIME_RAW_TOPIC: "delete",
+    LEGACY_RAW_TOPIC: "delete",
     "md.canonical.v2": "delete",
     "md.quarantine.stable.v1": "delete",
     "qdl.authority.v1": "compact",
@@ -22,6 +33,21 @@ TOPIC_POLICIES = {
     "md.projector.legacy.v1": "delete",
 }
 TOPICS = tuple(TOPIC_POLICIES)
+
+# Exact Kafka ACL namespaces used by bounded R1/R2 control-plane readers.
+# They deliberately do not overlap with the active generic-core group.
+CORE_GROUP_PREFIXES = (
+    "qdl-v2-production-core-v1-",
+    "qdl-v2-production-core-r1-",
+)
+READ_ONLY_AUDIT_GROUP_PREFIXES = (
+    "qdl-r1-reference-parity-",
+    "qdl-c40-handoff-",
+)
+READ_ONLY_AUDIT_EXTRA_TOPICS = (
+    "md.canary.canonical.v2",
+    "qdl.target-checkpoint.v1",
+)
 
 
 def compose(env_file: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -96,7 +122,7 @@ def bootstrap(env_file: Path) -> dict[str, object]:
         add_acl(env_file, "phase8-core", operations, ("--topic", topic))
     add_acl(
         env_file, "phase8-core", ("READ",),
-        ("--group", "qdl-v2-stable-core-v1"),
+        ("--group", SHARED_REALTIME_CORE_GROUP_ID),
     )
     for topic in ("qdl.authority.v1", "qdl.target-checkpoint.v1"):
         add_acl(
@@ -113,16 +139,30 @@ def bootstrap(env_file: Path) -> dict[str, object]:
             env_file, "phase8-core", ("WRITE", "DESCRIBE"),
             ("--topic", topic),
         )
-    add_acl(
-        env_file, "phase8-core", ("READ",),
-        (
-            "--group", "qdl-v2-production-core-v1-",
-            "--resource-pattern-type", "prefixed",
-        ),
-    )
+    for group_prefix in CORE_GROUP_PREFIXES:
+        add_acl(
+            env_file, "phase8-core", ("READ",),
+            (
+                "--group", group_prefix,
+                "--resource-pattern-type", "prefixed",
+            ),
+        )
+    for topic in READ_ONLY_AUDIT_EXTRA_TOPICS:
+        add_acl(
+            env_file, "phase8-consumer", ("READ", "DESCRIBE"),
+            ("--topic", topic),
+        )
+    for group_prefix in READ_ONLY_AUDIT_GROUP_PREFIXES:
+        add_acl(
+            env_file, "phase8-consumer", ("READ",),
+            (
+                "--group", group_prefix,
+                "--resource-pattern-type", "prefixed",
+            ),
+        )
     add_acl(env_file, "phase8-core", ("IdempotentWrite",), ("--cluster",))
     for transactional_prefix in (
-        "qdl-v2-stable-core-", "qdl-v2-production-core-"
+        SHARED_REALTIME_CORE_ID_PREFIX + "-", "qdl-v2-production-core-"
     ):
         add_acl(
             env_file, "phase8-core", ("WRITE", "DESCRIBE"),
@@ -151,7 +191,7 @@ def bootstrap(env_file: Path) -> dict[str, object]:
 
     described = kafka(
         env_file, "kafka-topics.sh", "--describe",
-        "--topic", "md.raw.stable.v1",
+        "--topic", V2_REALTIME_RAW_TOPIC,
     )
     if (
         "ReplicationFactor: 3" not in described
