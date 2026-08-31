@@ -25734,3 +25734,77 @@ deadline. The immutable, network-disabled QDL test container passed all
 `16/16` stable-rebuild tests; host `py_compile` and `git diff --check` also
 passed. No role, cache, Kafka, Redis, V1, Trading System, alpha or order path
 was touched by this source-test slice.
+
+#### 24.3.12 Lossless-Core Capacity Repair (`IN PROGRESS / IN-SCOPE`, 2026-08-31)
+
+**Observed runtime fact.** Read-only cgroup inspection found that the active
+three Rust-core replicas were running at the base `256 MiB` / `0.75 CPU`
+limits, even though the sealed Phase-12 environment already declares the
+existing three-role `512 MiB` capacity override. The preceding cache-user
+recovery Compose invocation intentionally loaded only the C2 reader overlay,
+so it did not apply the unrelated core-capacity overlay. The hot member
+`rust_core_2` reached `249.8 MiB / 256 MiB` (`97.58%`) and recorded material
+cgroup CPU throttling, while the other two members were not comparably
+throttled. Projected `TRADE`/`BOOK` records were therefore old before the
+projector committed them; this is lossless ingest capacity/backpressure, not a
+provider session outage, a stale-SLA relaxation case or a projector rewrite.
+
+**Approved narrow repair.** Keep the exact existing three-member consumer
+group, immutable Rust image, six Kafka partitions, batch semantics, runtime
+files, idempotent event IDs and authority record. Strengthen the existing
+bounded capacity override for only `rust_core`, `rust_core_2` and
+`rust_core_3` with one shared non-secret CPU control alongside the already
+declared `512 MiB` memory control. The target is `1.50` CPU / `512 MiB` per
+core: enough headroom for a hot partition, bounded below the host's eight
+cores and available memory, with no extra role, worker, topic, partition,
+symbol-specific path, provider policy or data-semantic change.
+
+**Runtime packet and rollback.** Validate the exact Compose render and its
+three-role scope first. Then rolling-recreate only those three core roles,
+one at a time, using the same Rust image and mounted runtime files. Do not
+reset offsets, flush Redis, remove SQLite, recreate ingestors/projectors/
+query/stream, touch V1, Trading System, alpha, database or any order path.
+The prior capacity is restored by rendering the same three roles with
+`0.75 CPU` / `256 MiB`; no image or data rollback is needed. Re-establish
+native L2 generations from the existing live snapshots/deltas and reject
+acceptance until every sealed identity is fresh, complete, gap-free and
+provider-session-live.
+
+**Exit proof.** Run the exact override regression and a network-disabled
+Compose render gate. After the bounded roll, collect real V2 typed-status
+samples for Binance USD-M and OKX Swap BTC/ETH `TRADE`, `QUOTE`,
+`BOOK_SNAPSHOT` and `BOOK_DELTA`; require no OOM/restart, no increasing
+canonical input age, no open gap/cross-symbol mix, and bounded CPU/RAM.
+Only then rebuild the one Trading System market-data image with the separate
+mark/index projection fix and retry the one 300-second no-order acceptance.
+
+**Source/preflight result (`PASS / RUNTIME UNCHANGED`, 2026-08-31).** The
+existing bounded override now carries
+`QDL_PHASE105C_RUST_CORE_CPU_LIMIT` exactly three times, alongside the
+existing memory selector, and its regression explicitly forbids a fourth core
+role. A disposable non-network QDL image ran
+`tests.test_phase105_handoff` plus `tests.test_phaseb_stable_deployment`:
+`39/39` passed. Compose rendered the current private Phase-12 environment and
+only the three intended roles resolved to `1.5 CPU` and `512 MiB`; `git diff
+--check` passed. No container, image, Kafka/Redis/SQLite state, provider,
+V1, Trading System, alpha, database or order path changed in this source gate.
+
+**Rolling capacity receipt (`PASS / V2 HOT FEEDS RECOVERED`, 2026-08-31).**
+Only `rust_core`, then `rust_core_2`, then `rust_core_3` were recreated with
+the same immutable Rust digest and the same read-only runtime files. All three
+now report `restart=0`, `OOMKilled=false`, `1.50 CPU` and `512 MiB`; neither
+Kafka offsets/topology, Redis, SQLite, ingestors, projectors, query/stream,
+V1, Trading System, alpha, database nor order path changed. The serial
+consumer-group handoff emitted two bounded `generation id is not valid`
+transaction retries while membership changed, then advanced normally; this is
+the expected transactional rebalance path, not a semantic provider failure.
+
+Three real-cache observations of the twelve sealed Binance/OKX BTC/ETH
+`TRADE`/`QUOTE`/`BOOK` partitions found all `12/12` present with maximum
+durable-commit ages `1,654.6 ms`, `863.4 ms` and `478.4 ms`; no open
+scope-quarantine and no cross-symbol source mapping appeared. The immediately
+post-roll resource sample was `20.7-33.7 MiB / 512 MiB` per core and no core
+was OOM-killed or restarting. This exits the lossless-core capacity repair.
+The only remaining Phase-12.2 work is the independent Trading System
+provider-neutral split mark/index projection fix, one replacement
+market-data image, then the already-scoped 300-second no-order acceptance.

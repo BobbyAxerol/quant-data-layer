@@ -478,6 +478,8 @@ class Phase105HandoffTests(unittest.TestCase):
         for name in ("rust_core", "rust_core_2", "rust_core_3"):
             self.assertIn(f"{name}:", v2)
         self.assertEqual(v2.count("QDL_PHASE105C_RUST_CORE_MEMORY_LIMIT"), 3)
+        self.assertEqual(v2.count("QDL_PHASE105C_RUST_CORE_CPU_LIMIT"), 3)
+        self.assertNotIn("rust_core_4", v2)
         self.assertIn("QDL_STABLE_TLS_CLIENT_CA_FILE", v2)
         c2 = (root / "docker-compose.phase105c-c2.override.yml").read_text(encoding="utf-8")
         self.assertIn("query_v2_1:", c2)
