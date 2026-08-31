@@ -115,6 +115,10 @@ class NativeIngestorRuntimeRefreshTests(unittest.TestCase):
             root = Path(raw)
             runtime = self._runtime(root)
             authority_before = (runtime / "authority.json").read_bytes()
+            before_modes = {
+                file_name: (runtime / file_name).stat().st_mode & 0o777
+                for file_name in TARGETS.values()
+            }
             result = refresh(
                 runtime_dir=runtime,
                 output_dir=root / "state" / "native-ingestor-refresh",
@@ -125,13 +129,17 @@ class NativeIngestorRuntimeRefreshTests(unittest.TestCase):
             self.assertEqual(result["status"], "APPLIED")
             self.assertEqual(result["production_mutations"], 2)
             self.assertEqual((runtime / "authority.json").read_bytes(), authority_before)
-            self.assertTrue(
-                (root / "state" / "native-ingestor-refresh" / "rollback" / "ingestor-binance-usdm.json").is_file()
-            )
-            self.assertTrue(
-                (root / "state" / "native-ingestor-refresh" / "rollback" / "ingestor-okx-swap.json").is_file()
-            )
             for file_name in TARGETS.values():
+                backup = root / "state" / "native-ingestor-refresh" / "rollback" / file_name
+                self.assertTrue(backup.is_file())
+                self.assertEqual(
+                    backup.stat().st_mode & 0o777,
+                    before_modes[file_name],
+                )
+                self.assertEqual(
+                    result["files"][file_name]["before_mode"],
+                    oct(before_modes[file_name]),
+                )
                 payload = json.loads((runtime / file_name).read_text(encoding="utf-8"))
                 self.assertEqual(len(payload["bindings"]), 19)
                 self.assertFalse(any(item["feed"] == "BAR" for item in payload["bindings"]))

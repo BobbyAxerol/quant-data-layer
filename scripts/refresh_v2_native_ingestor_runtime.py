@@ -261,10 +261,11 @@ def refresh(
         name: {
             "before_sha256": _sha256(active),
             "after_sha256": _sha256(expected),
+            "before_mode": oct(mode),
             "changed": active != expected,
             **change,
         }
-        for name, (_path, active, expected, _mode, change) in pending.items()
+        for name, (_path, active, expected, mode, change) in pending.items()
     }
     result: dict[str, Any] = {
         "schema": "qdl.v2.native-ingestor-runtime-refresh.v1",
@@ -287,10 +288,10 @@ def refresh(
     output_dir.mkdir(parents=True, mode=0o700)
     rollback_dir.mkdir(mode=0o700)
     try:
-        for file_name, (_path, active, _expected, _mode, _change) in pending.items():
+        for file_name, (_path, active, _expected, mode, _change) in pending.items():
             backup = rollback_dir / file_name
             backup.write_bytes(active)
-            backup.chmod(0o640)
+            backup.chmod(mode)
 
         applied: list[str] = []
         try:

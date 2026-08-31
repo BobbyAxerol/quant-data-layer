@@ -27038,3 +27038,93 @@ normal authentic L2 raw/canonical/cache writes for the three newly declared
 books only. It excludes all other roles and state. After both report live,
 fresh snapshot state, run one fresh **149-route** four-identity C2 no-order
 acceptance; no release claim is valid before that receipt passes.
+
+**Full-scope C2 L2 materialization runtime packet (`APPROVED / EXECUTING`,
+2026-08-31).** Owner approval authorizes exactly this bounded operation:
+apply the committed native-ingestor compiler with rollback/evidence root
+`/home/bobby/.local/state/qdl-v2/native-ingestor-l2-r16-20260831T143217Z`,
+then serially recreate only Compose services `ingestor_binance_usdm` and
+`ingestor_okx_swap` under the existing project `qdl_v2_stable_candidate`.
+Both current targets are `running`, restart count `0`, image
+`sha256:cfb686cf23fce8bea8c9c29c31630571bb6aad1b3a137f6dae1d28644649951f`,
+using the existing `rollout.env`, runtime/TLS/state mounts and authority. The
+rollback captures their two exact pre-apply JSON files and restores/recreates
+only those roles. The allowed data-plane effect is normal authentic L2
+subscription/raw/canonical/projector/cache traffic for the three newly
+declared BOOK symbols per venue. No image build, authority change, BAR change,
+Kafka topology/offset change, Redis flush, SQLite deletion, V1, projector,
+bar-edge, Rust core, query/stream, Trading System, alpha, broker or order-path
+operation is permitted. After the two roles converge, run one fresh bounded
+four-identity, **149-route**, no-order C2 observation for at most `300`
+seconds; only a passing result can advance release certification. Disposable
+client state is removed after the terminal result; retained evidence is
+payload-free and the named rollback directory remains until release closure.
+
+
+**Full-scope C2 L2 materialization runtime observation (`FAIL-CLOSED / ROLLBACK
+IN PROGRESS`, 2026-08-31).** The approved compiler applied only the two
+native-ingestor runtime JSON files and captured their exact rollback copies in
+`/home/bobby/.local/state/qdl-v2/native-ingestor-l2-r16-20260831T143217Z/rollback`.
+Both roles were serially recreated with the already-approved Rust image
+`sha256:cfb686cf23fce8bea8c9c29c31630571bb6aad1b3a137f6dae1d28644649951f`,
+reported restart count `0`, and exposed exactly `19` native bindings: five
+TRADE, five QUOTE, and nine BOOK per venue. The authentic OKX ingestor logged
+successive nine-book snapshot renewals. A fresh V1 rollback binding was
+attested against the running fallback container; its evidence contains only
+image/provenance/container digests.
+
+The new bounded four-identity C2 client failed before its 300-second
+observation window with a typed, fail-closed result:
+`trading-system.paper.stable / OKX.SWAP.PERPETUAL.DOGE-USDT / BOOK_SNAPSHOT /
+required data is not available`. Its temporary container had no effective
+capabilities and `NoNewPrivs=1`; it made no order, signal, sizing, provider
+direct-connect, Kafka-offset, Redis, SQLite, V1, Trading System or alpha
+mutation. Investigation proves this is not a provider or native-ingestor
+failure: the active `core.json`, `core-002.json`, and `core-003.json` retain
+only the prior twelve BTC/ETH BOOK normalization mappings, while the two
+ingestors now publish eighteen physical books. The unadmitted SOL/DOGE/BNB
+raw books therefore cannot become canonical V2 products. The approved packet
+did not authorize modifying or recreating any Rust core role, so no core
+runtime/configuration was changed. To return immediately to the previously
+certified state, restore only the two captured ingestor JSON files and
+serially recreate only those same two ingestors. A later, separate packet
+must atomically materialize matching core mappings and roll the three existing
+Rust core replicas before a new 149-route C2 can be meaningful.
+
+
+**Rollback-helper corrective slice (`IN PROGRESS / SOURCE-ONLY`, 2026-08-31).**
+The failed C2 exposed a defect in the newly added native-ingestor compiler:
+its rollback payload preserved JSON bytes but rewrote the backup mode to
+`0640`, losing the target's original readable mode. The immediate runtime
+rollback has restored the two exact JSON digests and their required `0644`
+mode, then serially recreated only the two approved roles. Before this packet
+is closed, source must preserve and receipt the original mode for each backup,
+and a deterministic test must prove a future external rollback can restore
+both content and container-readable permissions. This source-only correction
+cannot alter any runtime role, image, authority, Kafka, Redis, SQLite, V1,
+Trading System, alpha or order path.
+
+
+**Rollback-helper corrective slice (`PASS / PACKET CLOSED FAIL-CLOSED`,
+2026-08-31).** The two approved ingestor JSON files are restored to their
+recorded pre-apply SHA-256 values (`3eb61db5...53ad3e6a` Binance and
+`2b85dd11...fb066fd3` OKX) and their container-readable original mode `0644`.
+Only `ingestor_binance_usdm` and then `ingestor_okx_swap` were recreated; both
+are running on the approved `cfb686...49951f` Rust image with restart count
+`0`, `OOMKilled=false`, and their prior 16 binding configurations. The failed
+C2 client used `--rm`; no test container remains. Its compact failure evidence,
+V1 attestation and rollback receipt remain under the named private evidence
+directory; disposable runner scripts and empty receipt placeholder are removed.
+
+The compiler now preserves each target's original mode in its rollback copy
+and adds `before_mode` to the payload-free receipt. The targeted immutable,
+non-root, network-disabled regression suite passed **5/5** in **4.204s**; it
+proves authority preservation, idempotence, drift rejection, new-state output
+validation, and exact original-mode backup behavior. `git diff --check` and
+Python compilation passed before committing this source/doc slice.
+The 149-route C2 remains unpassed and no V2 release claim advances. The next
+valid work is a separate, cohesive runtime packet that materializes the same
+three perpetual BOOK mappings in `core.json`, `core-002.json`, and
+`core-003.json`, rolls precisely those three existing Rust core replicas, then
+applies the already-tested two-ingestor mappings and reruns C2. It is not
+authorized by this packet.
