@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import signal
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 _STATE_SCHEMA_V2 = "qdl.stable-bar-edge-state.v2"
 _STATE_SCHEMA_V3 = "qdl.stable-bar-edge-state.v3"
+_STATE_SCHEMA_V4 = "qdl.stable-bar-edge-state.v4"
 _MAX_CONNECTION_GENERATION = (1 << 64) - 1
 # A durable BAR binding is not a promise that every venue has unlimited
 # history.  Three years keeps the default bootstrap useful for daily/weekly
@@ -47,6 +49,25 @@ _MAX_CONNECTION_GENERATION = (1 << 64) - 1
 # reports real coverage rather than inventing missing rows.
 _BOOTSTRAP_HISTORY_LOOKBACK_DAYS = 1_095
 _BOOTSTRAP_HISTORY_LOOKBACK_MS = _BOOTSTRAP_HISTORY_LOOKBACK_DAYS * 86_400_000
+
+
+def _canonical_cache_id(path: str | Path) -> str:
+    """Read the durable cache generation without initializing or mutating it."""
+    database = Path(path).expanduser().resolve()
+    try:
+        connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+        try:
+            row = connection.execute(
+                "SELECT cache_id FROM cache_identity WHERE singleton = 1"
+            ).fetchone()
+        finally:
+            connection.close()
+    except (OSError, sqlite3.Error) as error:
+        raise RuntimeError("stable BAR canonical cache identity is unavailable") from error
+    value = str(row[0]) if row is not None else ""
+    if len(value) != 32 or any(character not in "0123456789abcdef" for character in value):
+        raise RuntimeError("stable BAR canonical cache identity is invalid")
+    return value
 
 
 def _bar_interval_ms(interval: str) -> int:
@@ -111,6 +132,7 @@ class StableBinanceBarEdge:
         final_retry_max_seconds: float = 1.0,
         max_concurrent_requests: int = 32,
         state_path: str | Path | None = None,
+        canonical_cache_id: str | None = None,
         clock=time.time,
         generation_clock_ns=time.time_ns,
     ) -> None:
@@ -135,6 +157,16 @@ class StableBinanceBarEdge:
         self.final_retry_max_seconds = final_retry_max_seconds
         self.max_concurrent_requests = max_concurrent_requests
         self.state_path = Path(state_path) if state_path is not None else None
+        self.canonical_cache_id = (
+            str(canonical_cache_id).strip().lower()
+            if canonical_cache_id is not None
+            else None
+        )
+        if self.canonical_cache_id is not None and (
+            len(self.canonical_cache_id) != 32
+            or any(character not in "0123456789abcdef" for character in self.canonical_cache_id)
+        ):
+            raise ValueError("stable BAR canonical cache identity is invalid")
         self.clock = clock
         self.generation_clock_ns = generation_clock_ns
         authority_revision = int(authority.get("revision", 0))
@@ -226,7 +258,7 @@ class StableBinanceBarEdge:
         ))
 
     def _state_identity_payload(self, *, schema: str) -> dict:
-        return {
+        payload = {
             "schema": schema,
             "slice_id": str(self.authority.get("slice_id", "")),
             "authority_revision": int(self.authority["revision"]),
@@ -235,12 +267,18 @@ class StableBinanceBarEdge:
             "warmup_rows": self.warmup_rows,
             "binding_ids": list(self._binding_ids),
         }
+        if schema == _STATE_SCHEMA_V4:
+            if self.canonical_cache_id is None:
+                raise RuntimeError("stable BAR V4 checkpoint requires canonical cache identity")
+            payload["canonical_cache_id"] = self.canonical_cache_id
+        return payload
 
     def _state_payload(self) -> dict:
         if not 1 <= self.connection_generation <= _MAX_CONNECTION_GENERATION:
             raise RuntimeError("stable BAR connection generation is invalid")
+        schema = _STATE_SCHEMA_V4 if self.canonical_cache_id is not None else _STATE_SCHEMA_V3
         return {
-            **self._state_identity_payload(schema=_STATE_SCHEMA_V3),
+            **self._state_identity_payload(schema=schema),
             "connection_generation": self.connection_generation,
             "last_open_ms": {
                 key: self._last_open_ms[key] for key in sorted(self._last_open_ms)
@@ -271,10 +309,12 @@ class StableBinanceBarEdge:
         if not isinstance(payload, dict):
             raise RuntimeError("stable BAR checkpoint fields are invalid")
         schema = payload.get("schema")
+        cache_continuity_confirmed = True
         if schema == _STATE_SCHEMA_V2:
             expected = self._state_identity_payload(schema=_STATE_SCHEMA_V2)
             expected_fields = set(expected) | {"last_open_ms"}
             previous_generation = 0
+            cache_continuity_confirmed = self.canonical_cache_id is None
         elif schema == _STATE_SCHEMA_V3:
             expected = self._state_identity_payload(schema=_STATE_SCHEMA_V3)
             expected_fields = set(expected) | {"connection_generation", "last_open_ms"}
@@ -285,6 +325,22 @@ class StableBinanceBarEdge:
                 or not 1 <= previous_generation <= _MAX_CONNECTION_GENERATION
             ):
                 raise RuntimeError("stable BAR checkpoint generation is invalid")
+            cache_continuity_confirmed = self.canonical_cache_id is None
+        elif schema == _STATE_SCHEMA_V4:
+            if self.canonical_cache_id is None:
+                raise RuntimeError("stable BAR checkpoint requires canonical cache identity")
+            expected = self._state_identity_payload(schema=_STATE_SCHEMA_V4)
+            expected_fields = set(expected) | {"connection_generation", "last_open_ms"}
+            previous_generation = payload.get("connection_generation")
+            if (
+                isinstance(previous_generation, bool)
+                or not isinstance(previous_generation, int)
+                or not 1 <= previous_generation <= _MAX_CONNECTION_GENERATION
+            ):
+                raise RuntimeError("stable BAR checkpoint generation is invalid")
+            cache_continuity_confirmed = (
+                payload.get("canonical_cache_id") == self.canonical_cache_id
+            )
         else:
             raise RuntimeError("stable BAR checkpoint fields are invalid")
         if set(payload) != expected_fields:
@@ -316,8 +372,15 @@ class StableBinanceBarEdge:
             ):
                 raise RuntimeError("stable BAR checkpoint watermark is invalid")
             restored[binding_id] = value
-        self._last_open_ms = restored
         self.connection_generation = previous_generation
+        if not cache_continuity_confirmed:
+            self._last_open_ms = {}
+            self._history_bootstrapped = False
+            logger.warning(
+                "stable BAR checkpoint cache generation changed; bounded bootstrap required"
+            )
+            return
+        self._last_open_ms = restored
         self._history_bootstrapped = set(restored) == set(self._binding_ids)
         logger.info(
             "stable BAR checkpoint restored bindings=%s complete=%s generation=%s",
@@ -919,6 +982,20 @@ def build_from_environment() -> StableBinanceBarEdge:
                 )
                 / "stable-crypto-bar-edge.json"
             ),
+        ),
+        canonical_cache_id=_canonical_cache_id(
+            os.environ.get(
+                "QDL_STABLE_CANONICAL_CACHE_PATH",
+                str(
+                    Path(
+                        os.environ.get(
+                            "QDL_STABLE_DURABLE_STATE_DIR",
+                            "/var/lib/qdl-stable/shared",
+                        )
+                    )
+                    / "canonical-cache.sqlite3"
+                ),
+            )
         ),
     )
 

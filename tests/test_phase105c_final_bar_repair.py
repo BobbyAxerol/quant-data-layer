@@ -88,7 +88,7 @@ class Phase105CFinalBarRepairTests(unittest.TestCase):
         )
         return packet, output, authority_bytes
 
-    def test_prepare_preserves_authority_and_moves_okx_final_bar_to_rest(self):
+    def test_prepare_preserves_authority_and_binds_declared_final_bar_owners(self):
         with tempfile.TemporaryDirectory() as raw:
             packet, output, authority_bytes = self._prepare(Path(raw))
             catalog, acquisition = self._acquisition()
@@ -107,9 +107,43 @@ class Phase105CFinalBarRepairTests(unittest.TestCase):
                 packet["final_bar"]["previous_checkpoint_path"],
                 packet["final_bar"]["new_checkpoint_path"],
             )
-            okx = json.loads((output / "runtime" / "ingestor-okx-swap.json").read_text())
-            self.assertEqual(okx["config_revision"], acquisition.revision)
-            self.assertFalse(any(item["feed"] == "BAR" for item in okx["bindings"]))
+            acquisition_by_id = {
+                item.binding_id: item for item in acquisition.bindings
+            }
+            expected_native_final_sources = {
+                item.source_id
+                for item in catalog.bindings
+                if item.binding_id in final_bar_binding_ids(catalog, acquisition)
+                and acquisition_by_id[item.binding_id].mode == "RUST_NATIVE"
+            }
+            observed_native_final_sources = set()
+            for path in (output / "runtime").glob("ingestor-*.json"):
+                native = json.loads(path.read_text())
+                self.assertEqual(native["config_revision"], acquisition.revision)
+                observed_native_final_sources.update(
+                    item["subscription_id"]
+                    for item in native["bindings"]
+                    if item["feed"] == "BAR"
+                )
+            self.assertEqual(
+                observed_native_final_sources,
+                expected_native_final_sources,
+            )
+            self.assertEqual(
+                packet["final_bar"]["native_final_bar_sources"],
+                sorted(expected_native_final_sources),
+            )
+            self.assertEqual(
+                packet["final_bar"]["owners"],
+                {
+                    mode: sum(
+                        1
+                        for binding_id in final_bar_binding_ids(catalog, acquisition)
+                        if acquisition_by_id[binding_id].mode == mode
+                    )
+                    for mode in ("PYTHON_REST", "RUST_NATIVE")
+                },
+            )
             core = json.loads((output / "runtime" / "core.json").read_text())["core"]
             final_sources = {
                 item["source_id"]

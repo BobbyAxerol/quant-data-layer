@@ -1,11 +1,11 @@
 """Deterministic packet preparation for Phase 10.5-C final-BAR alignment.
 
 The original C1 repair moved the initial Binance/OKX final BAR set from the
-native ingestor to the bounded Python REST edge.  The catalog is now
-versioned and may contain more provider-native intervals, so this packet
-derives that complete active BAR set from the catalog rather than pinning a
-historical revision or four binding IDs.  It never changes the Rust authority
-record already mounted by the running core.
+native ingestor to the bounded Python REST edge.  The catalog now supports
+provider-native final BARs, so this packet derives the complete active BAR
+set and validates exactly one declared owner per binding rather than pinning a
+historical Python-only assumption.  It never changes the Rust authority record
+already mounted by the running core.
 
 This module is deliberately source-only.  It writes a non-secret packet and
 runtime bundle, but never starts containers or talks to a provider, Kafka,
@@ -165,7 +165,7 @@ def final_bar_binding_ids(
     catalog: StableSourceCatalog,
     acquisition: StableAcquisitionPlan,
 ) -> frozenset[str]:
-    """Return every active provider-native crypto BAR owned by the REST edge.
+    """Return every active final crypto BAR with a declared execution owner.
 
     The catalog, rather than a prior repair revision, is the source of truth.
     This keeps a new native interval from silently bypassing final-bar closure
@@ -176,7 +176,7 @@ def final_bar_binding_ids(
         item.binding_id
         for item in acquisition.bindings
         if item.enabled
-        and item.mode == "PYTHON_REST"
+        and item.mode in {"PYTHON_REST", "RUST_NATIVE"}
         and source_by_id[item.binding_id].feed.value == "BAR"
         and (
             source_by_id[item.binding_id].instrument.identity.venue,
@@ -203,9 +203,9 @@ def _load_final_bar_acquisition() -> tuple[
     final_bindings = final_bar_binding_ids(catalog, acquisition)
     for binding_id in sorted(final_bindings):
         item = by_id[binding_id]
-        if not item.enabled or item.mode != "PYTHON_REST":
+        if not item.enabled or item.mode not in {"PYTHON_REST", "RUST_NATIVE"}:
             raise ValueError(
-                "Phase 10.5-C1 final BAR is not owned by the Python REST edge: "
+                "Phase 10.5-C1 final BAR has no supported declared owner: "
                 + binding_id
             )
     return catalog, acquisition, final_bindings
@@ -222,17 +222,38 @@ def _validate_generated_bundle(
     if authority_path.read_bytes() != authority_bytes:
         raise ValueError("Phase 10.5-C1 changed the active authority bytes")
 
-    native_okx_path = runtime_dir / "ingestor-okx-swap.json"
-    try:
-        native_okx = json.loads(native_okx_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError("Phase 10.5-C1 generated OKX ingestor config is unreadable") from error
-    if (
-        native_okx.get("authority") != authority
-        or native_okx.get("config_revision") != acquisition.revision
-        or any(item.get("feed") == "BAR" for item in native_okx.get("bindings", ()))
-    ):
-        raise ValueError("Phase 10.5-C1 native OKX ingestor still owns a final BAR")
+    catalog = StableSourceCatalog.load(ROOT / "config/v2/stable-source-bindings.yaml")
+    source_by_id = {item.binding_id: item for item in catalog.bindings}
+    final_bindings = final_bar_binding_ids(catalog, acquisition)
+    acquisition_by_id = {item.binding_id: item for item in acquisition.bindings}
+    expected_native_final_sources = {
+        source_by_id[binding_id].source_id
+        for binding_id in final_bindings
+        if acquisition_by_id[binding_id].mode == "RUST_NATIVE"
+    }
+    observed_native_final_sources: set[str] = set()
+    native_paths = tuple(sorted(runtime_dir.glob("ingestor-*.json")))
+    if not native_paths:
+        raise ValueError("Phase 10.5-C1 generated native ingestor config is missing")
+    for native_path in native_paths:
+        try:
+            native = json.loads(native_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError(
+                "Phase 10.5-C1 generated native ingestor config is unreadable"
+            ) from error
+        if (
+            native.get("authority") != authority
+            or native.get("config_revision") != acquisition.revision
+        ):
+            raise ValueError("Phase 10.5-C1 generated native ingestor differs from authority")
+        observed_native_final_sources.update(
+            str(item.get("subscription_id", ""))
+            for item in native.get("bindings", ())
+            if item.get("feed") == "BAR"
+        )
+    if observed_native_final_sources != expected_native_final_sources:
+        raise ValueError("Phase 10.5-C1 native final BAR ownership differs from acquisition")
 
     for name in ("core.json", "core-002.json", "core-003.json"):
         try:
@@ -309,6 +330,21 @@ def prepare_final_bar_repair(
 
     authority, authority_bytes = _load_active_authority(active_runtime_dir)
     catalog, acquisition, final_bindings = _load_final_bar_acquisition()
+    acquisition_by_id = {item.binding_id: item for item in acquisition.bindings}
+    source_by_id = {item.binding_id: item for item in catalog.bindings}
+    final_bar_owner_counts = {
+        mode: sum(
+            1
+            for binding_id in final_bindings
+            if acquisition_by_id[binding_id].mode == mode
+        )
+        for mode in ("PYTHON_REST", "RUST_NATIVE")
+    }
+    native_final_bar_sources = sorted(
+        source_by_id[binding_id].source_id
+        for binding_id in final_bindings
+        if acquisition_by_id[binding_id].mode == "RUST_NATIVE"
+    )
     checkpoint_path = _new_checkpoint_path(
         authority_bytes=authority_bytes,
         python_image_digest=python_image_digest,
@@ -379,8 +415,8 @@ def prepare_final_bar_repair(
             },
             "final_bar": {
                 "binding_ids": sorted(final_bindings),
-                "owner": "PYTHON_REST",
-                "native_okx_bar_bindings": 0,
+                "owners": final_bar_owner_counts,
+                "native_final_bar_sources": native_final_bar_sources,
                 "warmup_rows_max": WARMUP_ROWS,
                 "previous_checkpoint_path": previous_bar_state_path,
                 "new_checkpoint_path": checkpoint_path,

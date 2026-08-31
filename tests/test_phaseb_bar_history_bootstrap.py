@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 import json
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -31,7 +32,10 @@ from qdl.adapters.intervals import (
 )
 from qdl.canonical.market import canonicalize_okx_bar
 from qdl.canonical.trade import TradeContext
-from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
+from qdl.runtime.stable_bar_edge import (
+    StableBinanceBarEdge,
+    _canonical_cache_id,
+)
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
     StableAcquisitionPlan,
@@ -395,7 +399,9 @@ class StableBarBootstrapTests(unittest.TestCase):
             new_callable=AsyncMock,
             return_value=(Envelope("OKX", 60_000), Envelope("OKX", 120_000)),
         ):
-            expected_bindings = len(edge.bindings) + len(edge.okx_bindings)
+            expected_bindings = (
+                len(edge.history_bindings) + len(edge.history_okx_bindings)
+            )
             self.assertEqual(edge.bootstrap_history(), expected_bindings * 2)
             self.assertEqual(edge.bootstrap_history(), 0)
         self.assertEqual([len(item) for item in publisher.batches], [2] * expected_bindings)
@@ -467,7 +473,7 @@ class StableBarBootstrapTests(unittest.TestCase):
                     generation_clock_ns=lambda: 2,
                 )
 
-    def test_production_final_okx_bars_are_polled_after_history_bootstrap(self):
+    def test_production_final_bars_bootstrap_all_and_poll_explicit_rest_only(self):
         class Envelope:
             def __init__(self, venue: str, open_time: int):
                 payload = (
@@ -515,9 +521,20 @@ class StableBarBootstrapTests(unittest.TestCase):
                 ).feed.value == "BAR"
             },
         )
+        expected_poll_ids = {
+            item.binding_id
+            for item in self.acquisition.bindings
+            if item.enabled
+            and item.mode == "PYTHON_REST"
+            and item.runtime in {"BINANCE", "OKX"}
+            and next(
+                source for source in self.catalog.bindings
+                if source.binding_id == item.binding_id
+            ).feed.value == "BAR"
+        }
         self.assertTrue(any(value.startswith("okx-swap-") for value in history_ids))
-        self.assertTrue(any(value.startswith("okx-swap-") for value in poll_ids))
-        self.assertEqual(history_ids, poll_ids)
+        self.assertEqual(poll_ids, expected_poll_ids)
+        self.assertTrue(poll_ids <= history_ids)
         with patch(
             "qdl.runtime.stable_bar_edge.fetch_binance_history",
             return_value=(Envelope("BINANCE", 60_000), Envelope("BINANCE", 120_000)),
@@ -620,7 +637,9 @@ class StableBarBootstrapTests(unittest.TestCase):
                 "qdl.runtime.stable_bar_edge.fetch_okx_history",
                 side_effect=okx_history,
             ):
-                expected_bindings = len(first.bindings) + len(first.okx_bindings)
+                expected_bindings = (
+                    len(first.history_bindings) + len(first.history_okx_bindings)
+                )
                 self.assertEqual(first.bootstrap_history(), expected_bindings * 2)
 
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
@@ -668,7 +687,69 @@ class StableBarBootstrapTests(unittest.TestCase):
             ):
                 self.assertEqual(restarted.bootstrap_history(), 0)
 
-    def test_legacy_v2_checkpoint_migrates_to_a_fresh_durable_generation(self):
+    def test_changed_canonical_cache_generation_forces_bounded_rebootstrap(self):
+        """A checkpoint cannot certify history after its SQLite cache was rebuilt."""
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-bar-cache-generation-") as directory:
+            state_path = Path(directory) / "bar-edge.json"
+            original_cache_id = "a" * 32
+            rebuilt_cache_id = "b" * 32
+            seed = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=self._NoopPublisher(),
+                warmup_rows=2,
+                canonical_cache_id=original_cache_id,
+                generation_clock_ns=lambda: 100,
+            )
+            payload = seed._state_identity_payload(
+                schema="qdl.stable-bar-edge-state.v4"
+            )
+            payload["connection_generation"] = 100
+            payload["last_open_ms"] = {
+                source.binding_id: provider_bar_calendar_anchor_ms(
+                    source.interval or "", provider=acquisition.runtime
+                ) + 100 * canonical_interval_ms(source.interval or "")
+                for source, acquisition in (
+                    seed.history_bindings + seed.history_okx_bindings
+                )
+            }
+            state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            matching = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=self._NoopPublisher(),
+                warmup_rows=2,
+                state_path=state_path,
+                canonical_cache_id=original_cache_id,
+                generation_clock_ns=lambda: 200,
+            )
+            self.assertTrue(matching._history_bootstrapped)
+            self.assertEqual(
+                set(matching._last_open_ms), set(matching._binding_ids)
+            )
+
+            rebuilt = StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=self._NoopPublisher(),
+                warmup_rows=2,
+                state_path=state_path,
+                canonical_cache_id=rebuilt_cache_id,
+                generation_clock_ns=lambda: 300,
+            )
+            self.assertFalse(rebuilt._history_bootstrapped)
+            self.assertEqual(rebuilt._last_open_ms, {})
+            self.assertEqual(rebuilt.connection_generation, 300)
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v4")
+            self.assertEqual(persisted["canonical_cache_id"], rebuilt_cache_id)
+            self.assertEqual(persisted["last_open_ms"], {})
+
+    def test_legacy_v2_checkpoint_rebases_to_fresh_durable_generation(self):
         class Publisher:
             def publish_many(self, values):
                 return tuple(range(len(tuple(values))))
@@ -696,13 +777,51 @@ class StableBarBootstrapTests(unittest.TestCase):
                 publisher=Publisher(),
                 warmup_rows=2,
                 state_path=state_path,
+                canonical_cache_id="c" * 32,
                 generation_clock_ns=lambda: 777,
             )
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v3")
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v4")
+            self.assertEqual(persisted["canonical_cache_id"], "c" * 32)
             self.assertEqual(persisted["connection_generation"], 777)
+            self.assertEqual(persisted["last_open_ms"], {})
             self.assertEqual(migrated.connection_generation, 777)
+            self.assertFalse(migrated._history_bootstrapped)
             self.assertTrue(migrated.okx_session_id.endswith("-g777"))
+
+    def test_invalid_canonical_cache_identity_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-bar-cache-id-") as directory:
+            database = Path(directory) / "canonical-cache.sqlite3"
+            connection = sqlite3.connect(database)
+            try:
+                connection.execute(
+                    "CREATE TABLE cache_identity (singleton INTEGER PRIMARY KEY, cache_id TEXT NOT NULL)"
+                )
+                connection.execute(
+                    "INSERT INTO cache_identity (singleton, cache_id) VALUES (1, 'not-a-cache-id')"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            with self.assertRaisesRegex(RuntimeError, "identity is invalid"):
+                _canonical_cache_id(database)
+
+    def test_canonical_cache_identity_reads_valid_generation(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-bar-cache-id-") as directory:
+            database = Path(directory) / "canonical-cache.sqlite3"
+            connection = sqlite3.connect(database)
+            try:
+                connection.execute(
+                    "CREATE TABLE cache_identity (singleton INTEGER PRIMARY KEY, cache_id TEXT NOT NULL)"
+                )
+                connection.execute(
+                    "INSERT INTO cache_identity (singleton, cache_id) VALUES (1, ?)",
+                    ("d" * 32,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            self.assertEqual(_canonical_cache_id(database), "d" * 32)
 
     def test_exhausted_connection_generation_fails_closed_before_provider_access(self):
         class Publisher:
