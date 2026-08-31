@@ -26405,3 +26405,100 @@ stop/recreate this one role with image
 the unchanged current runtime mount and its preserved V3 state path.  After
 the cache catches up, run one fresh C2 no-order acceptance, then the declared
 reference/L2 acceptance and representative V2 paper-alpha observation.
+
+**Runtime approval (`APPROVED / EXECUTING`, 2026-08-31).** The owner approved
+the exact one-role repair above: build one immutable Python image from source
+commit `424aab4`, seal a new V4 checkpoint path and rolling-recreate only
+`binance_bar_edge`; permit its bounded authentic ten-binding historical
+bootstrap and the resulting normal Kafka/canonical/cache writes. The prior
+image/state coordinate remains the one-role rollback. The approval does not
+extend to V1, Kafka topology or offsets, Redis flush, SQLite deletion, Rust,
+ingestors, projectors, readers, Trading System, alpha configuration, signals,
+sizing or the order path. C2, reference/L2 and representative paper-alpha
+acceptance are authorized only after this repair reaches the declared durable
+horizon.
+
+**Bootstrap-overlap collision repair (`APPROVED / IN PROGRESS`, 2026-08-31).**
+The approved cache-generation packet completed its authentic ten-binding
+bootstrap, then the unchanged projector correctly fail-closed on existing
+final BAR identities whose immutable OHLCV differed from the provider's later
+REST history. Read-only Kafka/SQLite evidence found the same issue across
+Binance BTC, ETH, DOGE and BNB; the cache retained captured `VENUE_NATIVE`
+finals while the rebootstrap carried later `BACKFILLED` values under the same
+revision-zero event ID. This is an overlap-recovery defect, not a DOGE mapping
+failure and not a condition that may be bypassed by deleting cache, weakening
+event-ID checks, or silently overwriting a durable BAR.
+
+The bounded repair is restricted to the shared BAR edge. During a
+cache-generation rebootstrap it will read the current canonical cache
+read-only for the exact binding/window, preserve any already-durable final BAR
+open times, and publish only missing provider rows. It will persist the
+highest covered open time only after the union of existing durable rows and
+Kafka-ACKed new rows covers the complete bounded provider window. Existing
+captured bars remain authoritative for recovery; provider corrections are not
+silently relabelled as revisions by a bootstrap path. A future deliberate
+reconciliation product may create explicit `REVISED` events with a causal
+`supersedes_event_id`, but that is outside this release and is not required to
+repair cache recovery. The edge must fail closed if cache identity changes,
+the partition does not resolve to the exact binding, the durable coverage is
+not complete, or Kafka fails to acknowledge every missing row.
+
+Exit tests: no-cache full publish, exact-overlap idempotence, changed-overlap
+preservation, partial-overlap fill, cache-identity change, invalid cache
+partition/lineage, missing Kafka ACK and restart checkpoint behavior. The
+runtime rollout remains one role only (`binance_bar_edge`), using a new
+immutable image and V4 checkpoint path; projector retries are not a valid
+acceptance result. V1, Kafka topology/offsets, Redis, SQLite deletion, Rust,
+ingestors, projectors, readers, Trading System, alpha and order paths remain
+out of scope until a separately named runtime packet is needed.
+
+**Collision diagnosis and source exit (`PASS / BAR EDGE HALTED`, 2026-08-31).**
+The approved edge was stopped after the real bootstrap so it could not add more
+raw backlog while the unchanged projectors correctly retried the collision.
+No cache, Kafka offset, Redis, V1, projector, reader, Trading System, alpha or
+order mutation was made by that halt. A bounded read-only Kafka/SQLite probe
+at the projector's committed offsets found the exact issue: existing captured
+Binance final bars and later REST bootstrap rows shared the same revision-zero
+event IDs/source sequence but differed in close, volume and trade count. The
+captured record was `VENUE_NATIVE`; the later provider-history row was
+`BACKFILLED`. This was observed for BTC, ETH, DOGE and BNB and proves a
+shared recovery-overlap fault, not a per-symbol or DOGE-only problem.
+
+The shared edge now receives the canonical SQLite path as well as its sealed
+cache ID. For each bounded provider history window it reads only its exact
+canonical binding partition, accepts only final/revised BARs with matching
+instrument/source/interval, publishes only missing open times, verifies the
+union equals the provider window, rechecks the cache generation, and then
+persists the highest covered watermark. It refuses unreadable cache payloads,
+wrong partition lineage, changing cache generation, duplicate provider opens
+and incomplete Kafka acknowledgements. Thus cache recovery is idempotent even
+when the provider's later historical display differs from a captured realtime
+final; it never silently overwrites, changes an event ID or fabricates a
+revision.
+
+**Tests actually run (`PASS`).** A disposable non-root Docker container with
+network disabled, source mounted read-only and bounded tmpfs ran the complete
+affected matrix in `13.559s`: **68/68 passed** across
+`test_phaseb_bar_history_bootstrap`, `test_phase115c_bar_edge_schedule`,
+`test_phase105c_final_bar_repair`, `test_c419_fast_final_bar_delivery`,
+`test_phase105_consumer_acceptance`, `test_phase105_fallback_acceptance` and
+`test_phase105_handoff`. New cases prove partial overlap fills only missing
+rows, exact overlap emits no Kafka publish, complete cache binding identity
+lineage fails before publish, short Kafka ACKs do not advance watermarks, and
+a generation change fails both before and after an ACK without persisting a
+watermark. Test containers were removed automatically. This is source evidence
+only; C2 and release remain blocked until the repaired edge has restored the
+real durable horizon and the projector backlog is healthy.
+
+**Next runtime action (`APPROVED / PENDING IMAGE SEAL`, 2026-08-31).** Build
+one immutable Python image from this repair and recreate only the already
+approved `binance_bar_edge` with a **new** V4 checkpoint path and the existing
+runtime mount.  The prior V4 checkpoint has already recorded the failed
+bootstrap's watermarks, so reusing it would correctly skip recovery but leave
+the durable horizon incomplete.  The new path forces one bounded authentic
+provider-history pass; the overlap filter publishes only missing BAR opens.
+The prior halted edge image/state remains the stop-only rollback coordinate.
+No projector, reader, Rust core, ingestor, V1, Kafka topology/offset, Redis,
+SQLite deletion, Trading System, alpha or order path may be changed by this
+action. Once projector lag reaches zero without collision, run C2,
+Reference/L2 and representative paper-alpha acceptance.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -12,6 +13,7 @@ from pathlib import Path
 import yaml
 from unittest.mock import AsyncMock, patch
 
+from qdl.common.v1 import common_pb2
 from qdl.adapters.binance.bar_edge import (
     BinanceBarRawBinding,
     fetch_closed_bar_history_raw_envelopes as fetch_binance_history,
@@ -32,6 +34,7 @@ from qdl.adapters.intervals import (
 )
 from qdl.canonical.market import canonicalize_okx_bar
 from qdl.canonical.trade import TradeContext
+from qdl.marketdata.v2 import market_data_pb2
 from qdl.runtime.stable_bar_edge import (
     StableBinanceBarEdge,
     _canonical_cache_id,
@@ -41,6 +44,7 @@ from qdl.runtime.stable_deployment import (
     StableAcquisitionPlan,
     stable_authority_record,
 )
+from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -362,6 +366,280 @@ class StableBarBootstrapTests(unittest.TestCase):
     class _NoopPublisher:
         def publish_many(self, values):
             return tuple(range(len(tuple(values))))
+
+    @staticmethod
+    def _cached_final_bar(
+        spool: SQLiteDurableSpool,
+        source,
+        *,
+        open_ms: int,
+        source_id: str | None = None,
+        venue: str | None = None,
+    ) -> None:
+        identity = source.instrument.identity
+        event = market_data_pb2.EventEnvelope(
+            schema_name="qdl.marketdata.bar",
+            schema_major=2,
+            event_id=hashlib.sha256(
+                f"cached-bar:{source.binding_id}:{open_ms}:{source_id or source.source_id}".encode()
+            ).digest()[:16],
+            instrument_uid=source.instrument.instrument_uid,
+            instrument_id=source.instrument.instrument_id,
+            instrument_revision=source.instrument.metadata_revision,
+            venue=venue or identity.venue,
+            market=identity.market,
+            product_type=identity.product_type.value,
+            native_symbol=source.instrument.native_symbol,
+            provider=source.provider,
+            source_id=source_id or source.source_id,
+            source_role=getattr(common_pb2, f"SOURCE_ROLE_{source.source_role}"),
+        )
+        event.bar.interval = source.interval or ""
+        event.bar.open_time_ns = open_ms * 1_000_000
+        event.bar.close_time_ns = (open_ms + canonical_interval_ms(source.interval or "")) * 1_000_000 - 1
+        event.bar.is_final = True
+        event.bar.lifecycle = market_data_pb2.BAR_LIFECYCLE_FINAL
+        spool.append(DurableEvent(
+            stream=source.canonical_stream,
+            partition_key=source.partition_key,
+            event_id=bytes(event.event_id),
+            payload=event.SerializeToString(deterministic=True),
+            accepted_at_ns=max(1, event.bar.close_time_ns),
+        ))
+
+    def _cached_edge(self, directory: str, publisher):
+        cache_path = Path(directory) / "canonical-cache.sqlite3"
+        spool = SQLiteDurableSpool(SpoolConfig(
+            path=cache_path,
+            max_records=100,
+            max_payload_bytes=1_000_000,
+            max_event_bytes=64_000,
+            max_storage_bytes=2_000_000,
+            min_free_disk_bytes=0,
+        ))
+        edge = StableBinanceBarEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=self.authority,
+            publisher=publisher,
+            warmup_rows=2,
+            canonical_cache_id=_canonical_cache_id(cache_path),
+            canonical_cache_path=cache_path,
+            clock=lambda: 180.0,
+        )
+        return spool, edge
+
+    def test_cache_overlap_keeps_durable_final_and_publishes_only_missing_history(self):
+        class Envelope:
+            def __init__(self, open_ms: int):
+                self.raw_frame_bytes = json.dumps({"row": _binance_row(open_ms)}).encode()
+
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return tuple(range(len(batch)))
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-overlap-") as directory:
+            publisher = Publisher()
+            spool, edge = self._cached_edge(directory, publisher)
+            try:
+                source, acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(spool, source, open_ms=120_000)
+                published = edge._publish_history(
+                    source,
+                    acquisition,
+                    (Envelope(60_000), Envelope(120_000)),
+                    expected_rows=2,
+                )
+                self.assertEqual(published, 1)
+                self.assertEqual(len(publisher.batches), 1)
+                self.assertEqual(
+                    [json.loads(item.raw_frame_bytes)["row"][0] for item in publisher.batches[0]],
+                    [60_000],
+                )
+                self.assertEqual(edge._last_open_ms[source.binding_id], 120_000)
+            finally:
+                spool.close()
+
+    def test_cache_exact_overlap_is_idempotent_without_a_new_kafka_publish(self):
+        class Envelope:
+            def __init__(self, open_ms: int):
+                self.raw_frame_bytes = json.dumps({"row": _binance_row(open_ms)}).encode()
+
+        class Publisher:
+            def publish_many(self, _values):
+                raise AssertionError("covered durable BARs must not be republished")
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-overlap-") as directory:
+            spool, edge = self._cached_edge(directory, Publisher())
+            try:
+                source, acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(spool, source, open_ms=60_000)
+                self._cached_final_bar(spool, source, open_ms=120_000)
+                self.assertEqual(
+                    edge._publish_history(
+                        source,
+                        acquisition,
+                        (Envelope(60_000), Envelope(120_000)),
+                        expected_rows=2,
+                    ),
+                    0,
+                )
+                self.assertEqual(edge._last_open_ms[source.binding_id], 120_000)
+            finally:
+                spool.close()
+
+    def test_cache_binding_mismatch_fails_closed_before_publish(self):
+        class Envelope:
+            raw_frame_bytes = json.dumps({"row": _binance_row(60_000)}).encode()
+
+        class Publisher:
+            def publish_many(self, _values):
+                raise AssertionError("invalid durable partition must not publish")
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-overlap-") as directory:
+            spool, edge = self._cached_edge(directory, Publisher())
+            try:
+                source, acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(
+                    spool, source, open_ms=60_000, source_id="wrong-source"
+                )
+                with self.assertRaisesRegex(RuntimeError, "partition differs"):
+                    edge._publish_history(
+                        source, acquisition, (Envelope(),), expected_rows=1
+                    )
+            finally:
+                spool.close()
+
+    def test_cache_identity_mismatch_fails_closed_before_publish(self):
+        class Envelope:
+            raw_frame_bytes = json.dumps({"row": _binance_row(60_000)}).encode()
+
+        class Publisher:
+            def publish_many(self, _values):
+                raise AssertionError("invalid durable identity must not publish")
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-overlap-") as directory:
+            spool, edge = self._cached_edge(directory, Publisher())
+            try:
+                source, acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(
+                    spool, source, open_ms=60_000, venue="WRONG_VENUE"
+                )
+                with self.assertRaisesRegex(RuntimeError, "partition differs"):
+                    edge._publish_history(
+                        source, acquisition, (Envelope(),), expected_rows=1
+                    )
+            finally:
+                spool.close()
+
+    def test_cache_generation_change_fails_closed_before_bootstrap_publish(self):
+        class Envelope:
+            raw_frame_bytes = json.dumps({"row": _binance_row(60_000)}).encode()
+
+        class Publisher:
+            def publish_many(self, _values):
+                raise AssertionError("changed cache generation must not publish")
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-overlap-") as directory:
+            spool, edge = self._cached_edge(directory, Publisher())
+            try:
+                source, acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                with patch(
+                    "qdl.runtime.stable_bar_edge._canonical_cache_id",
+                    side_effect=(edge.canonical_cache_id, "e" * 32),
+                ), self.assertRaisesRegex(RuntimeError, "generation changed"):
+                    edge._publish_history(
+                        source, acquisition, (Envelope(),), expected_rows=1
+                    )
+            finally:
+                spool.close()
+
+    def test_cache_generation_change_after_ack_does_not_advance_watermark(self):
+        class Envelope:
+            raw_frame_bytes = json.dumps({"row": _binance_row(60_000)}).encode()
+
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return tuple(range(len(batch)))
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-overlap-") as directory:
+            publisher = Publisher()
+            spool, edge = self._cached_edge(directory, publisher)
+            try:
+                source, acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                with patch(
+                    "qdl.runtime.stable_bar_edge._canonical_cache_id",
+                    side_effect=(
+                        edge.canonical_cache_id,
+                        edge.canonical_cache_id,
+                        "e" * 32,
+                    ),
+                ), self.assertRaisesRegex(RuntimeError, "generation changed"):
+                    edge._publish_history(
+                        source, acquisition, (Envelope(),), expected_rows=1
+                    )
+                self.assertEqual(len(publisher.batches), 1)
+                self.assertEqual(edge._last_open_ms, {})
+            finally:
+                spool.close()
+
+    def test_cache_short_kafka_ack_does_not_advance_watermark(self):
+        class Envelope:
+            raw_frame_bytes = json.dumps({"row": _binance_row(60_000)}).encode()
+
+        class Publisher:
+            def publish_many(self, _values):
+                return ()
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-overlap-") as directory:
+            spool, edge = self._cached_edge(directory, Publisher())
+            try:
+                source, acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                with self.assertRaisesRegex(RuntimeError, "every Kafka ACK"):
+                    edge._publish_history(
+                        source, acquisition, (Envelope(),), expected_rows=1
+                    )
+                self.assertEqual(edge._last_open_ms, {})
+            finally:
+                spool.close()
 
     def test_bootstrap_publishes_multi_symbol_real_provider_batches_once(self):
         class Envelope:

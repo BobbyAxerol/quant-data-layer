@@ -26,6 +26,8 @@ from qdl.adapters.okx.bar_edge import (
     fetch_closed_bar_history_raw_envelopes as fetch_okx_history,
     fetch_latest_closed_bar_raw_envelope as fetch_okx_latest,
 )
+from qdl.common.v1 import common_pb2
+from qdl.marketdata.v2 import market_data_pb2
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.runtime.stable_deployment import (
     StableAcquisitionBinding,
@@ -133,6 +135,7 @@ class StableBinanceBarEdge:
         max_concurrent_requests: int = 32,
         state_path: str | Path | None = None,
         canonical_cache_id: str | None = None,
+        canonical_cache_path: str | Path | None = None,
         clock=time.time,
         generation_clock_ns=time.time_ns,
     ) -> None:
@@ -162,11 +165,18 @@ class StableBinanceBarEdge:
             if canonical_cache_id is not None
             else None
         )
+        self.canonical_cache_path = (
+            Path(canonical_cache_path).expanduser().resolve()
+            if canonical_cache_path is not None
+            else None
+        )
         if self.canonical_cache_id is not None and (
             len(self.canonical_cache_id) != 32
             or any(character not in "0123456789abcdef" for character in self.canonical_cache_id)
         ):
             raise ValueError("stable BAR canonical cache identity is invalid")
+        if self.canonical_cache_path is not None and self.canonical_cache_id is None:
+            raise ValueError("stable BAR canonical cache path requires its identity")
         self.clock = clock
         self.generation_clock_ns = generation_clock_ns
         authority_revision = int(authority.get("revision", 0))
@@ -487,30 +497,123 @@ class StableBinanceBarEdge:
                 f"stable BAR bootstrap coverage mismatch binding={source.binding_id} "
                 f"expected={expected_rows} actual={len(values)}"
             )
-        acknowledgements = self.publisher.publish_many(values)
-        if len(acknowledgements) != len(values):
-            raise RuntimeError("stable BAR bootstrap did not receive every Kafka ACK")
-        payloads = [json.loads(item.raw_frame_bytes) for item in values]
-        opens = [
-            int(
-                payload["row"][0]
-                if acquisition.runtime == "BINANCE"
-                else payload["data"][0][0]
+        opens = tuple(self._open_time_ms(acquisition, item) for item in values)
+        expected_opens = frozenset(opens)
+        if len(expected_opens) != expected_rows:
+            raise RuntimeError(
+                f"stable BAR bootstrap contains duplicate opens binding={source.binding_id}"
             )
-            for payload in payloads
-        ]
-        self._last_open_ms[source.binding_id] = max(opens)
+        existing_opens = self._durable_final_bar_opens(source, expected_opens)
+        missing = tuple(
+            item for item, open_ms in zip(values, opens, strict=True)
+            if open_ms not in existing_opens
+        )
+        acknowledgements = self.publisher.publish_many(missing) if missing else ()
+        if len(acknowledgements) != len(missing):
+            raise RuntimeError("stable BAR bootstrap did not receive every Kafka ACK")
+        published_opens = {
+            self._open_time_ms(acquisition, item) for item in missing
+        }
+        if existing_opens | published_opens != expected_opens:
+            raise RuntimeError(
+                f"stable BAR bootstrap did not cover every durable open binding={source.binding_id}"
+            )
+        self._assert_canonical_cache_identity()
+        self._last_open_ms[source.binding_id] = max(expected_opens)
         self._persist_state()
         logger.info(
-            "stable real-provider BAR bootstrap ACK binding=%s venue=%s rows=%s "
-            "first_open_ms=%s last_open_ms=%s",
+            "stable real-provider BAR bootstrap ACK binding=%s venue=%s expected_rows=%s "
+            "published_rows=%s existing_durable_rows=%s first_open_ms=%s last_open_ms=%s",
             source.binding_id,
             acquisition.runtime,
             len(values),
-            min(opens),
-            max(opens),
+            len(missing),
+            len(existing_opens),
+            min(expected_opens),
+            max(expected_opens),
         )
         return len(acknowledgements)
+
+    def _assert_canonical_cache_identity(self) -> None:
+        """Refuse to certify a bootstrap if its durable generation changed."""
+        if self.canonical_cache_path is None:
+            return
+        assert self.canonical_cache_id is not None
+        if _canonical_cache_id(self.canonical_cache_path) != self.canonical_cache_id:
+            raise RuntimeError("stable BAR canonical cache generation changed during bootstrap")
+
+    def _durable_final_bar_opens(
+        self,
+        source: StableSourceBinding,
+        expected_opens: frozenset[int],
+    ) -> frozenset[int]:
+        """Read only already-durable final BAR coverage for one exact binding.
+
+        A cache rebuild may replay a recent real-time window before the BAR
+        edge replenishes older history. Re-publishing that overlap from a later
+        REST snapshot would use the same revision-zero event identity while a
+        venue may have revised its displayed OHLCV. Recovery must retain the
+        captured durable event and fill only missing opens; reconciliation is a
+        distinct, explicitly revisioned product.
+        """
+        if not expected_opens or self.canonical_cache_path is None:
+            return frozenset()
+        self._assert_canonical_cache_identity()
+        try:
+            connection = sqlite3.connect(
+                f"{self.canonical_cache_path.as_uri()}?mode=ro", uri=True
+            )
+            try:
+                rows = connection.execute(
+                    """
+                    SELECT payload FROM events
+                    WHERE stream = ? AND partition_key = ?
+                    ORDER BY logical_offset DESC
+                    LIMIT 10000
+                    """,
+                    (source.canonical_stream, source.partition_key),
+                ).fetchall()
+            finally:
+                connection.close()
+        except (OSError, sqlite3.Error) as error:
+            raise RuntimeError("stable BAR durable coverage is unavailable") from error
+
+        covered: set[int] = set()
+        final_lifecycles = {
+            market_data_pb2.BAR_LIFECYCLE_FINAL,
+            market_data_pb2.BAR_LIFECYCLE_REVISED,
+        }
+        expected_role = getattr(common_pb2, f"SOURCE_ROLE_{source.source_role}")
+        for (payload,) in rows:
+            try:
+                envelope = market_data_pb2.EventEnvelope.FromString(payload)
+            except Exception as error:
+                raise RuntimeError("stable BAR durable payload is unreadable") from error
+            if envelope.WhichOneof("payload") != "bar":
+                raise RuntimeError("stable BAR durable partition contains a non-BAR payload")
+            if (
+                envelope.instrument_uid != source.instrument.instrument_uid
+                or envelope.instrument_id != source.instrument.instrument_id
+                or not source.accepts_instrument_revision(envelope.instrument_revision)
+                or envelope.venue != source.instrument.identity.venue
+                or envelope.market != source.instrument.identity.market
+                or envelope.product_type != source.instrument.identity.product_type.value
+                or envelope.native_symbol != source.instrument.native_symbol
+                or envelope.provider != source.provider
+                or envelope.source_id != source.source_id
+                or envelope.source_role != expected_role
+                or envelope.bar.interval != source.interval
+            ):
+                raise RuntimeError("stable BAR durable partition differs from its binding")
+            open_ms = int(envelope.bar.open_time_ns) // 1_000_000
+            if (
+                open_ms in expected_opens
+                and envelope.bar.is_final
+                and envelope.bar.lifecycle in final_lifecycles
+            ):
+                covered.add(open_ms)
+        self._assert_canonical_cache_identity()
+        return frozenset(covered)
 
     def _bootstrap_rows_for(self, source: StableSourceBinding) -> int:
         """Return the real-history bound for one fixed-duration BAR.
@@ -950,6 +1053,18 @@ def build_from_environment() -> StableBinanceBarEdge:
         certificate_path=cert_root / "client.crt",
         key_path=cert_root / "client.key",
     ))
+    canonical_cache_path = Path(os.environ.get(
+        "QDL_STABLE_CANONICAL_CACHE_PATH",
+        str(
+            Path(
+                os.environ.get(
+                    "QDL_STABLE_DURABLE_STATE_DIR",
+                    "/var/lib/qdl-stable/shared",
+                )
+            )
+            / "canonical-cache.sqlite3"
+        ),
+    ))
     return StableBinanceBarEdge(
         catalog=catalog,
         acquisition=acquisition,
@@ -983,20 +1098,8 @@ def build_from_environment() -> StableBinanceBarEdge:
                 / "stable-crypto-bar-edge.json"
             ),
         ),
-        canonical_cache_id=_canonical_cache_id(
-            os.environ.get(
-                "QDL_STABLE_CANONICAL_CACHE_PATH",
-                str(
-                    Path(
-                        os.environ.get(
-                            "QDL_STABLE_DURABLE_STATE_DIR",
-                            "/var/lib/qdl-stable/shared",
-                        )
-                    )
-                    / "canonical-cache.sqlite3"
-                ),
-            )
-        ),
+        canonical_cache_id=_canonical_cache_id(canonical_cache_path),
+        canonical_cache_path=canonical_cache_path,
     )
 
 
