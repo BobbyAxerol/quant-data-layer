@@ -362,6 +362,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertEqual(
             delivery_by_feed,
             {
+                "BAR": "LOSSLESS",
                 "TRADE": "LOSSLESS",
                 "QUOTE": "LATEST_STATE",
                 "BOOK": "LOSSLESS",
@@ -376,14 +377,22 @@ class StableDeploymentContractTests(unittest.TestCase):
             and sources[item.binding_id].feed.value == "BAR"
             and sources[item.binding_id].require_final_bar
         }
-        self.assertEqual(
-            {
-                item.binding_id
-                for item in self.acquisition.bindings
-                if item.mode == "PYTHON_REST"
-            },
-            final_crypto_bars,
-        )
+        final_bar_modes = {
+            item.mode
+            for item in self.acquisition.bindings
+            if item.binding_id in final_crypto_bars
+        }
+        self.assertEqual(final_bar_modes, {"PYTHON_REST", "RUST_NATIVE"})
+        self.assertTrue(all(
+            item.mode == "PYTHON_REST"
+            for item in self.acquisition.bindings
+            if item.binding_id in final_crypto_bars and item.runtime == "BINANCE"
+        ))
+        self.assertTrue(all(
+            item.mode == "RUST_NATIVE"
+            for item in self.acquisition.bindings
+            if item.binding_id in final_crypto_bars and item.runtime == "OKX"
+        ))
         okx_bbo = {
             item.binding_id: item.sequence_policy
             for item in self.acquisition.bindings
@@ -412,9 +421,9 @@ class StableDeploymentContractTests(unittest.TestCase):
             bindings=tuple(
                 replace(
                     item,
-                    mode="RUST_NATIVE",
-                    websocket_url="wss://ws.okx.com:8443/ws/v5/public",
-                    business_websocket_url="wss://ws.okx.com:8443/ws/v5/business",
+                    mode="PYTHON_REST",
+                    websocket_url=None,
+                    business_websocket_url=None,
                 )
                 if item.binding_id in {
                     "okx-swap-btcusdt-bar-1m",
@@ -443,7 +452,7 @@ class StableDeploymentContractTests(unittest.TestCase):
                 catalog=self.catalog, authority=self.authority
             ).values()
         )
-        self.assertEqual(previous_native_count, current_native_count + 2)
+        self.assertEqual(current_native_count, previous_native_count + 2)
 
     def test_core_bundle_uses_stable_identity_lineage_and_never_enables_public_writes(self):
         core = self.acquisition.core_config(
@@ -574,7 +583,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             )
             self.assertEqual(
                 {item["feed"] for item in okx["bindings"]},
-                {"TRADE", "QUOTE", "BOOK"},
+                {"BAR", "TRADE", "QUOTE", "BOOK"},
             )
             expected_okx_native = sum(
                 1

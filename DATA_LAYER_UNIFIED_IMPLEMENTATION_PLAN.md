@@ -28106,3 +28106,72 @@ or order path was touched. The coherent source-only repair was committed and
 pushed as `fix/release-ci-closure`; the remaining external action is to open
 and merge its review PR into `dev`, which will rerun the same required GitHub
 gates before the existing `dev -> main` release PR is reconsidered.
+
+**Release CI unit-gate follow-up (`IN PROGRESS / SOURCE-ONLY`, 2026-09-01).**
+GitHub run `33464130039` confirms `contract-tests` and `sdk-python310` pass,
+but the shared `unit-tests` job exits `1` at its first `Run unit tests` step;
+all later job steps are skipped. This follow-up is limited to reproducing that
+exact isolated Compose command, correcting the demonstrated cause, and
+rerunning the same gate. It retains the prior exclusions: no serving runtime,
+V1/V2 routing, provider call, Kafka, Redis, SQLite, Trading System, alpha,
+order path, secret, durable state, or broad cleanup. Rollback is to leave the
+unmerged branch unused. The GitHub raw log requires an authenticated viewer,
+so local reproduction must emit its bounded failing tail before any source
+change is made.
+
+- **Bounded diagnosis before repair:** the isolated discovery equivalent ran
+  `1236` tests and failed only `7` assertions/errors. The failures are all
+  stale verification fixtures after the approved universal BAR/L2 expansion:
+  one Phase-5 BAR fixture stamped its streamed event at epoch time and was
+  correctly filtered as stale; Phase-10 baseline admission accidentally read
+  the newer universal acquisition manifest; the universal read-only provider
+  verifier rejected declared `BOOK_SNAPSHOT`/`BOOK_DELTA`; and three stable
+  deployment assertions still omitted lossless BAR/native ownership. The
+  repair keeps the old Phase-10 verifier explicitly scoped to its recorded
+  twelve-binding baseline, teaches the universal verifier the real provider
+  L2 snapshot edge, and updates fixtures to assert current contract truth.
+  No runtime/provider request is part of this source-only correction.
+
+**Release CI unit-gate follow-up (`LOCAL PASS / READY TO PUSH`,
+2026-09-01).** The source repair is complete and remains entirely outside the
+serving path:
+
+- Phase-5 E2E BAR fixtures now use one coherent current timestamp, so the
+  strict stream freshness filter proves live delivery rather than accepting an
+  epoch-stamped synthetic BAR.
+- `phase10_realtime_provider_admission.py` is now explicit about its immutable
+  12-binding historical baseline. Later universal/L2 demand is covered by the
+  dedicated Phase 11 verifiers instead of accidentally widening a recorded
+  Phase-10 certificate.
+- The universal read-only provider verifier now accepts the declared
+  `BOOK_SNAPSHOT` and `BOOK_DELTA` contracts, reads the venue-owned depth
+  snapshot edge for both, validates update/price/quantity structure, and keeps
+  delta continuity authority in the Rust WebSocket core. The demand regression
+  covers the approved BTC/ETH/SOL/DOGE/BNB Binance USD-M and OKX Swap set.
+- Stable deployment expectations now assert actual ownership: Binance final
+  BAR uses its bounded REST recovery edge, OKX final BAR is Rust-native, and
+  shared native ingress materializes lossless `BAR`, `TRADE`, `QUOTE` and
+  coalesced `BOOK` products.
+
+**Exact test evidence:** targeted affected modules passed after the repair,
+then the exact isolated Compose equivalent of the GitHub unit gate completed
+`python -m unittest discover -s tests`: **`1249` passed, `0` failures/errors,
+`6` skipped, `231.596s`, `OOMKilled=false`**. The Compose project is named
+`qdl_release_ci_retry`, has no host ports or volumes, and only used its
+disposable Redis/Data Layer/test-runner containers. `git diff --check` passed.
+The remaining delivery step is to commit and push this source-only repair for
+the existing release PR. No serving container,
+V1/V2 route, provider, Kafka, Redis, SQLite, Trading System, alpha, order path
+or durable state changed.
+
+**CI closure artifact hygiene (`PASS / CLEAN`, 2026-09-01).** The exact
+`qdl_release_ci_retry` namespace was removed with `down --remove-orphans`:
+one exited test runner, one disposable Data Layer container, one disposable
+Redis container and its two project networks. No volume flag was used. A
+repository-wide image-reference check then found zero containers using
+`data-layer:v0.1.0`; only that test image was removed. Docker image storage
+changed from `65.27GB` before cleanup to `64.60GB` after, reclaiming about
+`0.67GB`; no broad prune, volume, source, runtime state, serving image or
+rollback image was removed. The eight exact `/tmp/qdl_release_ci_retry*`
+config/log artifacts were also removed after their bounded result was recorded
+above. The branch is ready for normal diff/stage/commit/push review.
