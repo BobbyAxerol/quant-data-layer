@@ -45,11 +45,17 @@ if [[ "${container_started}" != "true" ]]; then
 fi
 
 ready=false
+consecutive_ready=0
 for _ in $(seq 1 240); do
   if docker exec "${container}" psql -U postgres -d postgres -Atc "SELECT 1" \
       2>/dev/null | grep -qx "1"; then
-    ready=true
-    break
+    consecutive_ready=$((consecutive_ready + 1))
+    if [[ "${consecutive_ready}" -ge 8 ]]; then
+      ready=true
+      break
+    fi
+  else
+    consecutive_ready=0
   fi
   sleep 0.25
 done

@@ -1,0 +1,16 @@
+{
+  "accepted_handoffs": 2,
+  "audit_records": 4,
+  "checkpoint_delete_rejected": true,
+  "direct_primary_bypass_rejected": true,
+  "final_test_state": "PYTHON_PRIMARY:7:python-rollback:3:120",
+  "handoff_mutation_rejected": true,
+  "idempotent_migration": true,
+  "production_mutations": 0,
+  "python_to_rust_handoff_passed": true,
+  "rust_to_python_rollback_passed": true,
+  "schema": "qdl.phase92.authority-migration.v1",
+  "stale_cas_rejected": true,
+  "status": "PASS",
+  "terminal_checkpoints": 2
+}

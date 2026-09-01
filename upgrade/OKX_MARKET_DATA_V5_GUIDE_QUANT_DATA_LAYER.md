@@ -3,9 +3,9 @@
 > **Trạng thái:** Implementation specification / agent guide
 > **Mục tiêu hệ thống:** [`BobbyAxerol/quant-data-layer`](https://github.com/BobbyAxerol/quant-data-layer)
 > **Nguồn chuẩn:** [OKX API v5](https://www.okx.com/docs-v5/en/) và [OKX API changelog](https://www.okx.com/docs-v5/log_en/)
-> **Ngày đối chiếu:** 2026-08-13
+> **Ngày đối chiếu:** 2026-08-19
 > **Phạm vi:** Market Data, Public Data, Status, WebSocket JSON, order-book state, lịch sử, normalization, Redis/REST contract, khả năng mở rộng SBE
-> **Ngôn ngữ triển khai ưu tiên:** Python async; Rust/SBE là phase tối ưu riêng, không làm thay đổi contract phía consumer.
+> **Ngôn ngữ triển khai ưu tiên:** Rust cho realtime JSON core; Python cho REST/gRPC/SDK/history/control/compatibility edge. SBE vẫn là capability riêng và không làm thay đổi contract consumer.
 > **Program tracker:** [`DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md)
 > **Kiến trúc nền:** [`quant-data-layer-fund-grade-upgrade-architecture.md`](quant-data-layer-fund-grade-upgrade-architecture.md)
 
@@ -32,6 +32,16 @@
 </details>
 
 ## 0. Cách đọc tài liệu này
+
+### 0.0 Quyết định V2 stable ngày 2026-08-19
+
+OKX không còn là nguồn reference/fallback mặc định. Baseline stable yêu cầu OKX
+SPOT/SWAP và Binance Spot/USD-M ngang hàng cho `TRADE`, `BBO` và `BAR`. Rust
+sở hữu WebSocket transport, native decode, canonicalization, ordering/dedup/gap,
+backpressure và durable publication. Python chỉ giữ outer API/SDK/history/control
+và compatibility projection. Public/business OKX sockets phải tách riêng;
+`trades-all`, VIP/SBE và L2 sâu vẫn capability-gated. Consumer contract V2
+không đổi khi authority nội bộ chuyển sang Rust.
 
 Tài liệu này là **đặc tả triển khai**, không chỉ là danh sách endpoint. Agent triển khai phải tuân theo các từ khóa chuẩn sau:
 

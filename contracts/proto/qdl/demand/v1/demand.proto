@@ -1,0 +1,180 @@
+syntax = "proto3";
+
+package qdl.demand.v1;
+
+// Universal, provider-neutral consumer demand contract. This package is
+// control-plane input; qdl.query.v2 remains the resolved query/read contract.
+
+enum DemandPurpose {
+  DEMAND_PURPOSE_UNSPECIFIED = 0;
+  DEMAND_PURPOSE_EXECUTION = 1;
+  DEMAND_PURPOSE_ALPHA = 2;
+  DEMAND_PURPOSE_RESEARCH = 3;
+  DEMAND_PURPOSE_OBSERVABILITY = 4;
+}
+
+enum FeedType {
+  FEED_TYPE_UNSPECIFIED = 0;
+  FEED_TYPE_TRADE = 1;
+  FEED_TYPE_QUOTE = 2;
+  FEED_TYPE_BAR = 3;
+  FEED_TYPE_BOOK_SNAPSHOT = 4;
+  FEED_TYPE_BOOK_DELTA = 5;
+  FEED_TYPE_FUNDING_RATE = 6;
+  FEED_TYPE_OPEN_INTEREST = 7;
+  FEED_TYPE_LONG_SHORT_RATIO = 8;
+  FEED_TYPE_TAKER_FLOW = 9;
+  FEED_TYPE_BASIS = 10;
+  FEED_TYPE_MARK_PRICE = 11;
+  FEED_TYPE_INDEX_PRICE = 12;
+  // Additive only: preserves all pre-existing enum values and lets the
+  // demand plane declare catalog-bound metadata without overloading a price.
+  FEED_TYPE_CONTRACT_METADATA = 13;
+  // One execution-grade reference snapshot carries both mark and index. The
+  // legacy MARK_PRICE and INDEX_PRICE aliases remain valid for research
+  // manifests; this product is the public V2 identity.
+  FEED_TYPE_MARK_INDEX_PRICE = 14;
+}
+
+enum DemandState {
+  DEMAND_STATE_UNSPECIFIED = 0;
+  DEMAND_STATE_REQUESTED = 1;
+  DEMAND_STATE_CONNECTING = 2;
+  DEMAND_STATE_WARMING = 3;
+  DEMAND_STATE_LIVE = 4;
+  DEMAND_STATE_DEGRADED = 5;
+  DEMAND_STATE_MARKET_CLOSED = 6;
+  DEMAND_STATE_UNSUPPORTED = 7;
+  DEMAND_STATE_EXPIRED = 8;
+}
+
+enum CapabilityAvailability {
+  CAPABILITY_AVAILABILITY_UNSPECIFIED = 0;
+  CAPABILITY_AVAILABILITY_AVAILABLE = 1;
+  CAPABILITY_AVAILABILITY_UNAVAILABLE = 2;
+  CAPABILITY_AVAILABILITY_TIER_GATED = 3;
+  CAPABILITY_AVAILABILITY_REGION_GATED = 4;
+  CAPABILITY_AVAILABILITY_UNVERIFIED = 5;
+}
+
+enum IntervalSourcePolicy {
+  INTERVAL_SOURCE_POLICY_UNSPECIFIED = 0;
+  INTERVAL_SOURCE_POLICY_NATIVE_ONLY = 1;
+  INTERVAL_SOURCE_POLICY_NATIVE_OR_EXACT_RESAMPLE = 2;
+}
+
+message WarmupTimeRange {
+  int64 start_time_ns = 1;
+  int64 end_time_ns = 2;
+}
+
+message WarmupSpecification {
+  oneof horizon {
+    uint32 rows = 1;
+    WarmupTimeRange time_range = 2;
+  }
+  IntervalSourcePolicy interval_source_policy = 3;
+  uint32 max_cache_age_ms = 4;
+  uint32 deadline_ms = 5;
+}
+
+message ExplicitSymbols {
+  repeated string native_symbols = 1;
+}
+
+message ContinuousContractRule {
+  string family = 1;
+  string roll_policy = 2;
+  uint32 minimum_days_to_expiry = 3;
+}
+
+message UniverseSelector {
+  string selector_id = 1;
+  string venue = 2;
+  string market = 3;
+  string product_type = 4;
+  string universe_ref = 5;
+  oneof selector {
+    ExplicitSymbols explicit_symbols = 10;
+    string segment_id = 12;
+    ContinuousContractRule continuous_contract = 13;
+  }
+  bytes expected_universe_sha256 = 20;
+}
+
+message DataRequirement {
+  string consumer_id = 1;
+  DemandPurpose purpose = 2;
+  UniverseSelector universe = 3;
+  FeedType feed = 4;
+  string interval = 5;
+  uint32 warmup_limit = 6;
+  uint64 max_freshness_ms = 7;
+  uint32 priority = 8;
+  uint32 ttl_seconds = 9;
+  bool require_final_bars = 10;
+  bool require_live = 11;
+  bool execution_grade = 12;
+  string source_policy_id = 13;
+  uint32 depth_levels = 14;
+  uint64 configuration_revision = 15;
+  WarmupSpecification warmup = 16;
+  // BASIS is always anchored to the perpetual pair.  These optional selector
+  // fields preserve the requested delivery leg/series without pretending that
+  // a dated future identity itself is the basis source.
+  string basis_contract_type = 17;
+  string basis_series = 18;
+}
+
+message FeedCapability {
+  string capability_id = 1;
+  string venue = 2;
+  string market = 3;
+  string product_type = 4;
+  FeedType feed = 5;
+  CapabilityAvailability availability = 6;
+  bool rest_history = 7;
+  bool live = 8;
+  bool snapshot = 9;
+  bool delta = 10;
+  bool sequence = 11;
+  bool checksum = 12;
+  bool resubscribe = 13;
+  bool resnapshot_on_gap = 14;
+  repeated string native_intervals = 15;
+  string constraint = 16;
+}
+
+message ResolvedRequirement {
+  string requirement_id = 1;
+  DataRequirement requirement = 2;
+  string instrument_uid = 3;
+  string instrument_id = 4;
+  string native_symbol = 5;
+  string binding_id = 6;
+  FeedCapability capability = 7;
+  DemandState state = 8;
+  bool provisioned = 9;
+  uint64 catalog_revision = 10;
+  uint64 demand_revision = 11;
+  repeated string consumer_ids = 12;
+  uint32 effective_priority = 13;
+}
+
+message DemandLease {
+  string lease_id = 1;
+  string owner_id = 2;
+  string requirement_id = 3;
+  uint64 demand_revision = 4;
+  int64 renewed_at_ns = 5;
+  int64 expires_at_ns = 6;
+  DemandState state = 7;
+}
+
+message DemandTransition {
+  string requirement_id = 1;
+  DemandState previous = 2;
+  DemandState current = 3;
+  string reason = 4;
+  int64 changed_at_ns = 5;
+}

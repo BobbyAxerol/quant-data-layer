@@ -5,14 +5,26 @@ RUN apt-get update \
        clang cmake libclang-dev libcurl4-openssl-dev libssl-dev libzstd-dev \
        make pkg-config zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
+RUN rustup component add rustfmt clippy
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+COPY deny.toml ./deny.toml
 COPY rust ./rust
 COPY generated/rust ./generated/rust
+# Rust unit/parity tests compile against immutable provider and contract oracles.
+COPY contracts/golden ./contracts/golden
+COPY tests/fixtures/phase2 ./tests/fixtures/phase2
+COPY tests/fixtures/phase104 ./tests/fixtures/phase104
+COPY tests/fixtures/phase9 ./tests/fixtures/phase9
 RUN cargo build --release --locked \
     --bin qdl-kafka-smoke \
     --bin qdl-authority-rehearsal \
+    --bin qdl-phase91-canary-rehearsal \
+    --bin qdl-phase92-primary-rehearsal \
     --bin qdl-binance-shadow \
+    --bin qdl-native-raw-ingestor \
+    --bin qdl-realtime-core \
+    --bin qdl-production-core \
     --bin qdl-parity-replay \
     --bin qdl-venue-core-certify
 
@@ -30,8 +42,14 @@ RUN apt-get update \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin qdl
 COPY --from=builder /src/target/release/qdl-kafka-smoke /usr/local/bin/qdl-kafka-smoke
 COPY --from=builder /src/target/release/qdl-authority-rehearsal /usr/local/bin/qdl-authority-rehearsal
+COPY --from=builder /src/target/release/qdl-phase91-canary-rehearsal /usr/local/bin/qdl-phase91-canary-rehearsal
+COPY --from=builder /src/target/release/qdl-phase92-primary-rehearsal /usr/local/bin/qdl-phase92-primary-rehearsal
 COPY --from=builder /src/target/release/qdl-binance-shadow /usr/local/bin/qdl-binance-shadow
+COPY --from=builder /src/target/release/qdl-native-raw-ingestor /usr/local/bin/qdl-native-raw-ingestor
+COPY --from=builder /src/target/release/qdl-realtime-core /usr/local/bin/qdl-realtime-core
+COPY --from=builder /src/target/release/qdl-production-core /usr/local/bin/qdl-production-core
 COPY --from=builder /src/target/release/qdl-parity-replay /usr/local/bin/qdl-parity-replay
 COPY --from=builder /src/target/release/qdl-venue-core-certify /usr/local/bin/qdl-venue-core-certify
+COPY config/v2/provider-admission-policy-v1.json /opt/qdl/config/v2/provider-admission-policy-v1.json
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/qdl-kafka-smoke"]

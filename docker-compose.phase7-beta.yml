@@ -42,6 +42,7 @@ x-beta-common: &beta-common
     QDL_DATA_JWT_ISSUER: ${QDL_BETA_JWT_ISSUER:-https://identity.qdl.beta.invalid}
     QDL_DATA_JWT_AUDIENCE: ${QDL_BETA_JWT_AUDIENCE:-qdl-v2-beta}
     QDL_DATA_JWT_KEYS_JSON: ${QDL_BETA_JWT_KEYS_JSON:?set an isolated beta workload verification keyring JSON}
+    QDL_DATA_JWT_KEY_SUBJECTS_JSON: ${QDL_BETA_JWT_KEY_SUBJECTS_JSON:?set an isolated beta workload key-to-subject binding JSON}
     QDL_DATA_JWT_ALGORITHMS: ${QDL_BETA_JWT_ALGORITHMS:-HS256}
     QDL_DATA_JWT_MAX_LIFETIME_SECONDS: ${QDL_BETA_JWT_MAX_LIFETIME_SECONDS:-900}
 

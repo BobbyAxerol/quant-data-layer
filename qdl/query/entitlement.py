@@ -55,6 +55,18 @@ class EntitlementPolicy:
             raise ValueError("duplicate source entitlement revision")
         self._grants = grants
 
+    def with_grants(self, grants: tuple[EntitlementGrant, ...]) -> "EntitlementPolicy":
+        """Return one policy with additive, independently named grants.
+
+        Runtime assembly must not reach into the private grant collection or
+        mutate a policy already shared by a V1-compatible query path.  The
+        constructor keeps the duplicate `(source_id, license_revision)` guard
+        intact, so a provider capability cannot silently override an existing
+        entitlement revision.
+        """
+
+        return EntitlementPolicy(self._grants + tuple(grants))
+
     def authorize(
         self,
         *,

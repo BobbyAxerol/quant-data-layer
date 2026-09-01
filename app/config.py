@@ -8,6 +8,10 @@ DNSE_API_KEY = os.getenv("DNSE_API_KEY", "")
 DNSE_API_SECRET_KEY = os.getenv("DNSE_API_SECRET_KEY", "")
 DNSE_REST_BASE = os.getenv("DNSE_REST_BASE", "https://openapi.dnse.com.vn")
 DNSE_WS_BASE = os.getenv("DNSE_WS_BASE", "wss://ws-openapi.dnse.com.vn")
+DNSE_API_VERSION = os.getenv("DNSE_API_VERSION", "2026-07-23")
+DNSE_REST_USE_ENV_PROXY = os.getenv(
+    "DNSE_REST_USE_ENV_PROXY", "false"
+).lower() in {"1", "true", "yes", "on"}
 
 # ── vnstock ─────────────────────────────────────
 VNSTOCK_API_KEY = os.getenv("VNSTOCK_API_KEY", "")
@@ -39,6 +43,17 @@ BINANCE_SYMBOLS_FILE = os.getenv(
 BINANCE_SPOT_SYMBOLS_FILE = os.getenv("BINANCE_SPOT_SYMBOLS_FILE", "/app/symbols_spot.json")
 STREAM_STALE_SECONDS = float(os.getenv("STREAM_STALE_SECONDS", "180"))
 STREAM_STRICT_FEED_HEALTH = os.getenv("STREAM_STRICT_FEED_HEALTH", "false").lower() in {"1", "true", "yes", "on"}
+BINANCE_WS_FIRST_FRAME_TIMEOUT_SECONDS = float(
+    os.getenv("BINANCE_WS_FIRST_FRAME_TIMEOUT_SECONDS", "15")
+)
+BINANCE_WS_IDLE_TIMEOUT_SECONDS = float(os.getenv("BINANCE_WS_IDLE_TIMEOUT_SECONDS", "90"))
+BINANCE_WS_QUEUE_PUT_TIMEOUT_SECONDS = float(
+    os.getenv("BINANCE_WS_QUEUE_PUT_TIMEOUT_SECONDS", "2")
+)
+BINANCE_KLINE_RECOVERY_ENABLED = os.getenv("BINANCE_KLINE_RECOVERY_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+BINANCE_KLINE_RECOVERY_POLL_SECONDS = float(os.getenv("BINANCE_KLINE_RECOVERY_POLL_SECONDS", "2"))
+BINANCE_KLINE_RECOVERY_SETTLE_SECONDS = float(os.getenv("BINANCE_KLINE_RECOVERY_SETTLE_SECONDS", "1"))
+BINANCE_KLINE_RECOVERY_CONCURRENCY = int(os.getenv("BINANCE_KLINE_RECOVERY_CONCURRENCY", "4"))
 
 # ── Provider fallback ───────────────────────────
 OKX_FALLBACK_ENABLED = os.getenv("OKX_FALLBACK_ENABLED", "true").lower() in {"1", "true", "yes", "on"}

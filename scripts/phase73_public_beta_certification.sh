@@ -32,10 +32,22 @@ export QDL_BETA_STREAM_A_GRPC_PORT="${STREAM_A_GRPC_PORT}"
 export QDL_BETA_STREAM_B_GRPC_PORT="${STREAM_B_GRPC_PORT}"
 
 temporary="$(mktemp -d)"
-chown 10001:10001 "${temporary}"
+runner_evidence="${temporary}/runner"
+mkdir -m 0700 "${runner_evidence}"
+OPERATOR_UID="$(id -u)"
+OPERATOR_GID="$(id -g)"
+set_evidence_owner() {
+  local uid="$1" gid="$2"
+  docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER \
+    --security-opt no-new-privileges:true --entrypoint sh \
+    -v "${runner_evidence}:/evidence" "${QDL_BETA_INIT_IMAGE}" \
+    -c "chown ${uid}:${gid} /evidence && chmod 0755 /evidence"
+}
+set_evidence_owner 10001 10001
 cleanup() {
   docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" \
     --profile phase7-beta down -v --remove-orphans >/dev/null 2>&1 || true
+  set_evidence_owner "${OPERATOR_UID}" "${OPERATOR_GID}" >/dev/null 2>&1 || true
   rm -rf "${temporary}"
 }
 trap cleanup EXIT
@@ -123,7 +135,7 @@ docker run --rm --network host --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 256 --memory 512m --cpus 1 \
   --user 10001:10001 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=32m,uid=10001,gid=10001 \
   -v "${durable_volume}:/var/lib/qdl-beta-durable" \
-  -v "${temporary}:/evidence" \
+  -v "${runner_evidence}:/evidence" \
   "${QDL_BETA_IMAGE}" python /app/scripts/phase73_beta_certification.py \
     --source-bindings /app/config/phase7/canary-sources.yaml \
     --monitoring-manifest /app/consumers/beta/phase7-monitoring-binance.yaml \
@@ -184,6 +196,6 @@ python3 "${ROOT_DIR}/scripts/phase73_runtime_evidence.py" \
   --keys-after "${keys_after}" --containers-after "${containers_after}" \
   --networks-after "${networks_after}" --volumes-after "${volumes_after}"
 python3 "${ROOT_DIR}/scripts/phase73_finalize_evidence.py" \
-  --core "${temporary}/core.json" --stats "${temporary}/stats.jsonl" \
+  --core "${runner_evidence}/core.json" --stats "${temporary}/stats.jsonl" \
   --runtime "${temporary}/runtime.json" --output "${CAPACITY_OUTPUT}" \
   --security-output "${SECURITY_OUTPUT}"

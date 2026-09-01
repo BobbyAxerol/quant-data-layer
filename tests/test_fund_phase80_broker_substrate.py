@@ -70,12 +70,23 @@ class Phase80BrokerSubstrateTest(unittest.TestCase):
             self.assertEqual(service["environment"]["KAFKA_MIN_INSYNC_REPLICAS"], 2)
             self.assertEqual(service["environment"]["KAFKA_SSL_CLIENT_AUTH"], "required")
             self.assertEqual(service["mem_limit"], "512m")
+            self.assertIn("/dev/tcp/127.0.0.1/9092", service["healthcheck"]["test"][1])
+            self.assertNotIn("kafka-broker-api-versions", service["healthcheck"]["test"][1])
             self.assertIn(f"{name}_data", volumes)
 
         redis_service = services["phase8_redis"]
         self.assertTrue(redis_service["read_only"])
         self.assertEqual(redis_service["mem_limit"], "64m")
         self.assertIn("noeviction", redis_service["command"])
+
+    def test_admin_cli_isolated_from_broker_memory_cgroups(self) -> None:
+        admin = self.compose["services"]["phase8_admin"]
+        self.assertEqual(admin["profiles"], ["phase8-admin"])
+        self.assertEqual(admin["entrypoint"], ["/bin/true"])
+        self.assertEqual(admin["mem_limit"], "512m")
+        harness = (ROOT / "scripts/phase80_broker_certification.py").read_text()
+        self.assertIn('"phase8_admin"', harness)
+        self.assertNotIn('"exec",\n        "-T",\n        "kafka1"', harness)
 
     def test_observability_contract_covers_failure_and_recovery(self) -> None:
         metrics = set(self.topology["observability"]["metrics"])

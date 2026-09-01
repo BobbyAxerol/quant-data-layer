@@ -15,6 +15,10 @@ enum FeedType {
   FEED_TYPE_OPEN_INTEREST = 7;
   FEED_TYPE_MARK_INDEX_PRICE = 8;
   FEED_TYPE_TICKER = 9;
+  FEED_TYPE_LONG_SHORT_RATIO = 10;
+  FEED_TYPE_TAKER_FLOW = 11;
+  FEED_TYPE_BASIS = 12;
+  FEED_TYPE_CONTRACT_METADATA = 13;
 }
 
 enum ConsumerGrade {
@@ -52,6 +56,27 @@ enum BarRevisionPolicy {
   BAR_REVISION_POLICY_EMIT_REVISIONS = 3;
 }
 
+enum IntervalSourcePolicy {
+  INTERVAL_SOURCE_POLICY_UNSPECIFIED = 0;
+  INTERVAL_SOURCE_POLICY_NATIVE_ONLY = 1;
+  INTERVAL_SOURCE_POLICY_NATIVE_OR_EXACT_RESAMPLE = 2;
+}
+
+message WarmupTimeRange {
+  int64 start_time_ns = 1;
+  int64 end_time_ns = 2;
+}
+
+message WarmupSpecification {
+  oneof horizon {
+    uint32 rows = 1;
+    WarmupTimeRange time_range = 2;
+  }
+  IntervalSourcePolicy interval_source_policy = 3;
+  uint32 max_cache_age_ms = 4;
+  uint32 deadline_ms = 5;
+}
+
 message DataRequirement {
   string instrument_uid = 1;
   string feed = 2 [deprecated = true];
@@ -72,6 +97,11 @@ message DataRequirement {
   GapPolicy gap_policy_type = 23;
   RecoveryPolicy recovery_policy = 24;
   BarRevisionPolicy revision_policy = 25;
+  WarmupSpecification warmup = 26;
+  // Retains the last-market-event SLA independently from provider transport
+  // liveness.  An unset policy preserves stale_policy behavior.
+  StalePolicy event_recency_policy = 27;
+  uint64 max_session_liveness_ms = 28;
 }
 
 message SubscribeRequest {
@@ -152,6 +182,9 @@ message GetFeedStatusResponse {
   bool execution_eligible = 5;
   string policy_id = 6;
   repeated string flags = 7;
+  string event_recency_state = 8;
+  string provider_session_state = 9;
+  uint64 provider_session_liveness_ms = 10;
 }
 
 service MarketDataStreamService {

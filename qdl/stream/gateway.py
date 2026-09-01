@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Protocol
 
 from qdl.replay import GapFreeHandoff
-from qdl.transport import CursorExpired, DurableEvent, EventSink, StoredEvent
+from qdl.transport import (
+    BatchEventSink,
+    CursorExpired,
+    DurableEvent,
+    EventSink,
+    StoredEvent,
+)
 
 
 class SlowConsumer(RuntimeError):
@@ -40,6 +47,7 @@ class StreamSubscription:
         initial: tuple[StoredEvent, ...],
         max_buffer_events: int,
         lease_epoch: int | None,
+        accepts: Callable[[StoredEvent], bool] | None,
     ) -> None:
         self._gateway = gateway
         self.subscription_id = subscription_id
@@ -48,12 +56,13 @@ class StreamSubscription:
         self.initial = initial
         self.queue: asyncio.Queue[StoredEvent] = asyncio.Queue(maxsize=max_buffer_events)
         self.lease_epoch = lease_epoch
+        self._accepts = accepts or (lambda _stored: True)
         self.overflowed = False
         self.closed = False
         self._in_flight = 0
 
     def push(self, stored: StoredEvent) -> None:
-        if self.closed or self.overflowed:
+        if self.closed or self.overflowed or not self._accepts(stored):
             return
         if self.queue.qsize() + self._in_flight >= self.queue.maxsize:
             self.overflowed = True
@@ -62,6 +71,11 @@ class StreamSubscription:
             self.queue.put_nowait(stored)
         except asyncio.QueueFull:
             self.overflowed = True
+
+    def accepts(self, stored: StoredEvent) -> bool:
+        """Return whether a physical-partition event belongs to this consumer."""
+
+        return self._accepts(stored)
 
     async def record(self, stored: StoredEvent) -> StreamRecord:
         self._gateway.assert_active(self.lease_epoch)
@@ -79,11 +93,20 @@ class StreamSubscription:
             raise SlowConsumer("bounded outbound buffer exhausted; replay is required")
         if self.closed:
             raise StopAsyncIteration
-        stored = await self.queue.get()
-        if self.overflowed:
-            raise SlowConsumer("bounded outbound buffer exhausted; replay is required")
-        self._in_flight += 1
-        return await self.record(stored)
+        while True:
+            stored = await self.queue.get()
+            if self.overflowed:
+                raise SlowConsumer("bounded outbound buffer exhausted; replay is required")
+            self._in_flight += 1
+            record = await self.record(stored)
+            # A strict predicate can depend on time. A record that was fresh
+            # when queued may age out while this bounded subscriber waits.
+            # Advance its signed cursor as a filtered physical record, then
+            # wait for the next eligible record instead of leaking stale data.
+            if not self._accepts(stored):
+                self.mark_delivered()
+                continue
+            return record
 
     def mark_delivered(self) -> None:
         if self._in_flight > 0:
@@ -139,6 +162,7 @@ class DurableStreamGateway:
         max_buffer_events: int | None = None,
         max_consumer_streams: int | None = None,
         replay_limit: int = 10_000,
+        accepts: Callable[[StoredEvent], bool] | None = None,
     ) -> StreamSubscription:
         lease_epoch = self.assert_active()
         if not 1 <= replay_limit <= self.max_replay_events:
@@ -149,6 +173,8 @@ class DurableStreamGateway:
         consumer_limit = max_consumer_streams or self.max_subscribers
         if not 1 <= consumer_limit <= self.max_subscribers:
             raise ValueError("requested consumer stream limit exceeds the server bound")
+        if accepts is not None and not callable(accepts):
+            raise ValueError("subscription event matcher must be callable")
         partition_lock = self._partition_lock(stream, partition_key)
         async with partition_lock:
             self.assert_active(lease_epoch)
@@ -195,6 +221,7 @@ class DurableStreamGateway:
                     initial=initial,
                     max_buffer_events=buffer_size,
                     lease_epoch=lease_epoch,
+                    accepts=accepts,
                 )
                 self._subscriptions[subscription_id] = (
                     stream, partition_key, subscription
@@ -204,21 +231,51 @@ class DurableStreamGateway:
     async def publish(self, event: DurableEvent) -> StoredEvent | None:
         """Commit before delivery; duplicate durable events are not re-delivered."""
 
+        return (await self.publish_many((event,)))[0]
+
+    async def publish_many(
+        self, events: tuple[DurableEvent, ...] | list[DurableEvent]
+    ) -> tuple[StoredEvent | None, ...]:
+        """Durably append one bounded batch before ordered live fan-out."""
+
+        values = tuple(events)
+        if not values:
+            return ()
         lease_epoch = self.assert_active()
-        partition_lock = self._partition_lock(event.stream, event.partition_key)
-        async with partition_lock:
+        partitions = sorted({(event.stream, event.partition_key) for event in values})
+        async with AsyncExitStack() as stack:
+            for stream, partition_key in partitions:
+                await stack.enter_async_context(self._partition_lock(stream, partition_key))
             self.assert_active(lease_epoch)
-            result = await asyncio.to_thread(self._sink.append, event)
+            if isinstance(self._sink, BatchEventSink):
+                results = await asyncio.to_thread(self._sink.append_many, list(values))
+            else:
+                results = [
+                    await asyncio.to_thread(self._sink.append, event) for event in values
+                ]
             self.assert_active(lease_epoch)
-            if result.duplicate:
-                return None
-            stored = StoredEvent(event, result.cursor, result.committed_at_ns, result.payload_sha256)
+            if len(results) != len(values):
+                raise RuntimeError("durable batch sink returned an invalid result count")
+            stored_values = tuple(
+                None
+                if result.duplicate
+                else StoredEvent(
+                    event,
+                    result.cursor,
+                    result.committed_at_ns,
+                    result.payload_sha256,
+                )
+                for event, result in zip(values, results, strict=True)
+            )
             async with self._subscriptions_lock:
                 subscriptions = tuple(self._subscriptions.values())
-            for stream, partition_key, subscription in subscriptions:
-                if stream == event.stream and partition_key == event.partition_key:
-                    subscription.push(stored)
-            return stored
+            for event, stored in zip(values, stored_values, strict=True):
+                if stored is None:
+                    continue
+                for stream, partition_key, subscription in subscriptions:
+                    if stream == event.stream and partition_key == event.partition_key:
+                        subscription.push(stored)
+            return stored_values
 
     async def close(self, subscription_id: int) -> None:
         async with self._subscriptions_lock:

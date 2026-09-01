@@ -1,0 +1,236 @@
+schema: qdl.production-prerequisite-policy.v1
+revision: 1
+environment: production
+gates:
+- id: replicated_durable_transport
+  minimum_scope: PRODUCTION
+  max_age_seconds: 86400
+  required_details:
+  - replication_factor
+  - min_isr
+  - acks_all
+  - idempotent_producer
+  - broker_failover
+  - restore_test_id
+  - broker_count
+  - failure_domain_count
+  - unclean_leader_election
+  - restore_verified
+  candidate_bound: false
+  assertions:
+    acks_all: true
+    idempotent_producer: true
+    broker_failover: true
+    restore_verified: true
+    unclean_leader_election: false
+  minimums:
+    broker_count: 3
+    replication_factor: 3
+    min_isr: 2
+    failure_domain_count: 2
+  maximums: {}
+  candidate_field_matches: {}
+- id: production_observability
+  minimum_scope: PRODUCTION
+  max_age_seconds: 86400
+  required_details:
+  - collector_backend
+  - dashboard_revision
+  - alert_route_id
+  - page_ack_id
+  - backend_persistent
+  - collector_ha
+  - alert_acknowledged
+  - retention_days
+  candidate_bound: false
+  assertions:
+    backend_persistent: true
+    collector_ha: true
+    alert_acknowledged: true
+  minimums:
+    retention_days: 30
+  maximums: {}
+  candidate_field_matches: {}
+- id: workload_identity_rbac_network
+  minimum_scope: PRODUCTION
+  max_age_seconds: 86400
+  required_details:
+  - identity_provider
+  - rbac_revision
+  - network_policy_revision
+  - short_lived_credentials
+  - rbac_enforced
+  - network_default_deny
+  candidate_bound: false
+  assertions:
+    short_lived_credentials: true
+    rbac_enforced: true
+    network_default_deny: true
+  minimums: {}
+  maximums: {}
+  candidate_field_matches: {}
+- id: external_secret_rotation
+  minimum_scope: PRODUCTION
+  max_age_seconds: 86400
+  required_details:
+  - secret_backend
+  - rotation_event_id
+  - retired_key_id
+  - rotation_passed
+  - retired_key_rejected
+  candidate_bound: false
+  assertions:
+    rotation_passed: true
+    retired_key_rejected: true
+  minimums: {}
+  maximums: {}
+  candidate_field_matches: {}
+- id: signed_artifact_admission
+  minimum_scope: PRODUCTION
+  max_age_seconds: 86400
+  required_details:
+  - registry
+  - signature_identity
+  - admission_policy_revision
+  - image_digest
+  - candidate_digest
+  - signature_verified
+  - unsigned_rejected
+  candidate_bound: true
+  assertions:
+    signature_verified: true
+    unsigned_rejected: true
+  minimums: {}
+  maximums: {}
+  candidate_field_matches:
+    image_digest: artifact_image_digest
+    signature_identity: signature_identity
+- id: postgres_pitr
+  minimum_scope: PRODUCTION
+  max_age_seconds: 604800
+  required_details:
+  - backup_id
+  - restore_id
+  - rpo_seconds
+  - rto_seconds
+  - restore_verified
+  - checksum_equal
+  candidate_bound: false
+  assertions:
+    restore_verified: true
+    checksum_equal: true
+  minimums: {}
+  maximums:
+    rpo_seconds: 300
+    rto_seconds: 3600
+  candidate_field_matches: {}
+- id: object_store_restore
+  minimum_scope: PRODUCTION
+  max_age_seconds: 604800
+  required_details:
+  - snapshot_id
+  - restore_id
+  - manifest_digest
+  - restore_verified
+  - checksum_equal
+  candidate_bound: false
+  assertions:
+    restore_verified: true
+    checksum_equal: true
+  minimums: {}
+  maximums: {}
+  candidate_field_matches: {}
+- id: independent_failure_domain_dr
+  minimum_scope: INDEPENDENT_FAILURE_DOMAIN
+  max_age_seconds: 2592000
+  required_details:
+  - source_domain
+  - target_domain
+  - exercise_id
+  - rpo_seconds
+  - rto_seconds
+  - failover_verified
+  - duplicate_external_publications
+  - failure_domain_count
+  candidate_bound: false
+  assertions:
+    failover_verified: true
+    duplicate_external_publications: 0
+  minimums:
+    failure_domain_count: 2
+  maximums:
+    rpo_seconds: 300
+    rto_seconds: 3600
+  candidate_field_matches: {}
+- id: redis_projector_rebuild
+  minimum_scope: PRODUCTION
+  max_age_seconds: 604800
+  required_details:
+  - canonical_watermark
+  - rebuild_checksum
+  - source_log_cluster
+  - checksum_equal
+  - zero_production_mutation
+  - replay_lag_events
+  candidate_bound: false
+  assertions:
+    checksum_equal: true
+    zero_production_mutation: true
+  minimums: {}
+  maximums:
+    replay_lag_events: 0
+  candidate_field_matches: {}
+- id: consumer_registration_rollback
+  minimum_scope: PRODUCTION
+  max_age_seconds: 604800
+  required_details:
+  - consumers_digest
+  - owners_approved
+  - rollback_rehearsal_id
+  - candidate_digest
+  - rollback_rehearsed
+  - unregistered_critical_consumers
+  candidate_bound: true
+  assertions:
+    owners_approved: true
+    rollback_rehearsed: true
+  minimums: {}
+  maximums:
+    unregistered_critical_consumers: 0
+  candidate_field_matches: {}
+- id: persistent_authority_sink_fencing
+  minimum_scope: PRODUCTION
+  max_age_seconds: 86400
+  required_details:
+  - authority_store
+  - transition_audit_id
+  - zombie_writer_rejected
+  - candidate_digest
+  - sink_side_fencing
+  - audit_immutable
+  candidate_bound: true
+  assertions:
+    zombie_writer_rejected: true
+    sink_side_fencing: true
+    audit_immutable: true
+  minimums: {}
+  maximums: {}
+  candidate_field_matches: {}
+- id: exact_slice_approval
+  minimum_scope: PRODUCTION
+  max_age_seconds: 86400
+  required_details:
+  - approved_by
+  - change_ticket
+  - hold_until_ns
+  - blast_radius
+  - candidate_digest
+  - approved
+  - approver_count
+  candidate_bound: true
+  assertions:
+    approved: true
+  minimums:
+    approver_count: 1
+  maximums: {}
+  candidate_field_matches: {}

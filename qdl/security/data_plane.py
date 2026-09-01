@@ -42,23 +42,39 @@ class DataPlaneSecurityConfig:
     keys_by_id: Mapping[str, str | bytes]
     algorithms: tuple[str, ...]
     max_token_lifetime_seconds: int = 900
+    subjects_by_key_id: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
         if not all((self.environment.strip(), self.issuer.strip(), self.audience.strip())):
             raise ValueError("data-plane environment, issuer and audience are required")
         if not self.keys_by_id or not self.algorithms:
             raise ValueError("data-plane JWT keys and algorithms are required")
+        if self.subjects_by_key_id is not None:
+            if set(self.subjects_by_key_id) != set(self.keys_by_id):
+                raise ValueError(
+                    "data-plane JWT key-subject bindings must cover exactly the keyring"
+                )
+            if any(
+                not isinstance(subject, str) or not subject.strip()
+                for subject in self.subjects_by_key_id.values()
+            ):
+                raise ValueError("data-plane JWT key-subject bindings are invalid")
 
     @classmethod
     def from_environment(cls) -> "DataPlaneSecurityConfig":
         try:
             keys = json.loads(os.environ["QDL_DATA_JWT_KEYS_JSON"])
+            key_subjects = json.loads(os.environ["QDL_DATA_JWT_KEY_SUBJECTS_JSON"])
             issuer = os.environ["QDL_DATA_JWT_ISSUER"]
             audience = os.environ["QDL_DATA_JWT_AUDIENCE"]
         except (KeyError, json.JSONDecodeError) as error:
             raise RuntimeError("data-plane identity configuration is incomplete") from error
         if not isinstance(keys, dict) or not keys:
             raise RuntimeError("QDL_DATA_JWT_KEYS_JSON must be a non-empty object")
+        if not isinstance(key_subjects, dict) or not key_subjects:
+            raise RuntimeError(
+                "QDL_DATA_JWT_KEY_SUBJECTS_JSON must be a non-empty object"
+            )
         algorithms = tuple(
             value.strip()
             for value in os.environ.get("QDL_DATA_JWT_ALGORITHMS", "RS256,ES256").split(",")
@@ -73,6 +89,9 @@ class DataPlaneSecurityConfig:
             max_token_lifetime_seconds=int(
                 os.environ.get("QDL_DATA_JWT_MAX_LIFETIME_SECONDS", "900")
             ),
+            subjects_by_key_id={
+                str(key): str(value) for key, value in key_subjects.items()
+            },
         )
 
 
@@ -120,8 +139,10 @@ class RedisMinuteQuota:
 
     def __init__(self, redis: Redis, *, prefix: str) -> None:
         normalized = prefix.strip(": ")
-        if not normalized.startswith("qdl:beta:v2:"):
-            raise ValueError("shared quota requires a dedicated beta Redis prefix")
+        if not normalized.startswith(("qdl:beta:v2:", "qdl:stable:v2:")):
+            raise ValueError(
+                "shared quota requires a dedicated beta or stable Redis prefix"
+            )
         self.redis = redis
         self.prefix = normalized
 
@@ -224,7 +245,31 @@ class DataPlaneAccess:
                 "PERMISSION_DENIED",
                 "data requirement is outside the registered consumer manifest",
             )
-        if requirement.warmup_limit > self.manifest.quotas.max_warmup_rows:
+        warmup = requirement.warmup_specification
+        requested_rows = requirement.warmup_limit
+        if warmup is not None and warmup.rows is not None:
+            requested_rows = warmup.rows
+        elif warmup is not None and warmup.time_range is not None:
+            if not requirement.interval:
+                raise DataPlaneAccessError(
+                    "QUOTA_EXCEEDED",
+                    "time-range warmup requires an interval",
+                    status_code=429,
+                )
+            from qdl.adapters.intervals import canonical_interval_ms
+
+            duration_ns = (
+                warmup.time_range.end_time_ns - warmup.time_range.start_time_ns
+            )
+            interval_ns = canonical_interval_ms(requirement.interval) * 1_000_000
+            if duration_ns % interval_ns:
+                raise DataPlaneAccessError(
+                    "QUOTA_EXCEEDED",
+                    "time-range warmup is not aligned to the interval",
+                    status_code=429,
+                )
+            requested_rows = duration_ns // interval_ns
+        if requested_rows > self.manifest.quotas.max_warmup_rows:
             raise DataPlaneAccessError(
                 "QUOTA_EXCEEDED",
                 "warmup limit exceeds the registered consumer quota",
@@ -298,6 +343,14 @@ class DataPlaneIdentityService:
             raise DataPlaneAccessError(
                 "UNAUTHENTICATED", str(error), status_code=401
             ) from error
+        if self.config.subjects_by_key_id is not None:
+            expected_subject = self.config.subjects_by_key_id.get(principal.key_id or "")
+            if expected_subject != principal.subject:
+                raise DataPlaneAccessError(
+                    "UNAUTHENTICATED",
+                    "workload token signing key is not bound to the manifest subject",
+                    status_code=401,
+                )
         access = DataPlaneAccess(principal, manifest)
         if principal.consumer_manifest_revision != manifest.manifest_revision:
             raise DataPlaneAccessError(

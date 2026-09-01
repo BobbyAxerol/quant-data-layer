@@ -176,7 +176,13 @@ class PaperAlphaCanary:
             raise ValueError("paper canary run bounds are invalid")
         requirement = sdk_requirement(self.manifest)
         state = DeterministicPaperSignalState(
-            max_bars=max(2, requirement.warmup_limit)
+            max_bars=max(
+                2,
+                requirement.warmup_specification.rows
+                if requirement.warmup_specification
+                and requirement.warmup_specification.rows
+                else 1,
+            )
         )
         applied = 0
         checkpointed = 0

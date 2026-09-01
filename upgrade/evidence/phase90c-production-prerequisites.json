@@ -1,0 +1,171 @@
+{
+  "authority_state": "RUST_SHADOW",
+  "blocked": 12,
+  "bundle_id": "558042db-a766-5a55-b5b3-4b508d649df9",
+  "candidate_digest": "72eb1500e19a7e738373c85442c6fc42331cebd15aba86a8b746f62c2fedc037",
+  "decision": "NO_GO_EXTERNAL",
+  "gates": [
+    {
+      "evidence_id": "phase8-local-kafka-failover",
+      "gate_id": "replicated_durable_transport",
+      "observed_scope": "LOCAL_REHEARSAL",
+      "passed": false,
+      "reason": "INSUFFICIENT_SCOPE",
+      "required_scope": "PRODUCTION"
+    },
+    {
+      "evidence_id": "phase8-local-otel-debug",
+      "gate_id": "production_observability",
+      "observed_scope": "LOCAL_REHEARSAL",
+      "passed": false,
+      "reason": "INSUFFICIENT_SCOPE",
+      "required_scope": "PRODUCTION"
+    },
+    {
+      "evidence_id": "phase8-local-kafka-mtls",
+      "gate_id": "workload_identity_rbac_network",
+      "observed_scope": "LOCAL_REHEARSAL",
+      "passed": false,
+      "reason": "INSUFFICIENT_SCOPE",
+      "required_scope": "PRODUCTION"
+    },
+    {
+      "evidence_id": null,
+      "gate_id": "external_secret_rotation",
+      "observed_scope": null,
+      "passed": false,
+      "reason": "MISSING_EVIDENCE",
+      "required_scope": "PRODUCTION"
+    },
+    {
+      "evidence_id": "phase8-signature-rehearsal-no-admission",
+      "gate_id": "signed_artifact_admission",
+      "observed_scope": "LOCAL_REHEARSAL",
+      "passed": false,
+      "reason": "EVIDENCE_BLOCKED",
+      "required_scope": "PRODUCTION"
+    },
+    {
+      "evidence_id": null,
+      "gate_id": "postgres_pitr",
+      "observed_scope": null,
+      "passed": false,
+      "reason": "MISSING_EVIDENCE",
+      "required_scope": "PRODUCTION"
+    },
+    {
+      "evidence_id": null,
+      "gate_id": "object_store_restore",
+      "observed_scope": null,
+      "passed": false,
+      "reason": "MISSING_EVIDENCE",
+      "required_scope": "PRODUCTION"
+    },
+    {
+      "evidence_id": null,
+      "gate_id": "independent_failure_domain_dr",
+      "observed_scope": null,
+      "passed": false,
+      "reason": "MISSING_EVIDENCE",
+      "required_scope": "INDEPENDENT_FAILURE_DOMAIN"
+    },
+    {
+      "evidence_id": "phase8-local-projection-rebuild",
+      "gate_id": "redis_projector_rebuild",
+      "observed_scope": "LOCAL_REHEARSAL",
+      "passed": false,
+      "reason": "INSUFFICIENT_SCOPE",
+      "required_scope": "PRODUCTION"
+    },
+    {
+      "evidence_id": "phase90b-partial-consumer-beta",
+      "gate_id": "consumer_registration_rollback",
+      "observed_scope": "LOCAL_REHEARSAL",
+      "passed": false,
+      "reason": "EVIDENCE_BLOCKED",
+      "required_scope": "PRODUCTION"
+    },
+    {
+      "evidence_id": "phase8-local-authority-rehearsal",
+      "gate_id": "persistent_authority_sink_fencing",
+      "observed_scope": "LOCAL_REHEARSAL",
+      "passed": false,
+      "reason": "INSUFFICIENT_SCOPE",
+      "required_scope": "PRODUCTION"
+    },
+    {
+      "evidence_id": null,
+      "gate_id": "exact_slice_approval",
+      "observed_scope": null,
+      "passed": false,
+      "reason": "MISSING_EVIDENCE",
+      "required_scope": "PRODUCTION"
+    }
+  ],
+  "inventory_sha256": "9447bc6775d359f5f38d521441373b93bcb95492f0cd5edf434fceb82fec160a",
+  "issued_at_ns": 1787065065239561211,
+  "passed": 0,
+  "policy_revision": 1,
+  "production_mutations": 0,
+  "schema": "qdl.production-prerequisite-decision.v1",
+  "slice_id": "production/binance/usdm/perpetual/trade/plan-1/btcusdt",
+  "v1_after": {
+    "id": "0e0eb56c78ba9d6b816cde3461bc79425ceea8095a71518a608a87294388035f",
+    "image": "data-layer:v0.1.0",
+    "mounts": [
+      [
+        "/home/bobby/data_layer",
+        "/app",
+        true
+      ],
+      [
+        "/home/bobby/data_layer/data",
+        "/app/data",
+        true
+      ],
+      [
+        "/home/bobby/data_layer/logs",
+        "/app/logs",
+        true
+      ]
+    ],
+    "networks": [
+      "bobby_network",
+      "executor_network"
+    ],
+    "present": true,
+    "restart_count": 0,
+    "started_at": "2026-08-16T11:09:12.471324413Z"
+  },
+  "v1_before": {
+    "id": "0e0eb56c78ba9d6b816cde3461bc79425ceea8095a71518a608a87294388035f",
+    "image": "data-layer:v0.1.0",
+    "mounts": [
+      [
+        "/home/bobby/data_layer",
+        "/app",
+        true
+      ],
+      [
+        "/home/bobby/data_layer/data",
+        "/app/data",
+        true
+      ],
+      [
+        "/home/bobby/data_layer/logs",
+        "/app/logs",
+        true
+      ]
+    ],
+    "networks": [
+      "bobby_network",
+      "executor_network"
+    ],
+    "present": true,
+    "restart_count": 0,
+    "started_at": "2026-08-16T11:09:12.471324413Z"
+  },
+  "v1_health_after": 200,
+  "v1_health_before": 200,
+  "v1_unchanged": true
+}

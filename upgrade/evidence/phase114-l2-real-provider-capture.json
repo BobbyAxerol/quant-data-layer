@@ -1,0 +1,50 @@
+{
+  "admission_sha256": "e96c334e43d7de04a5db5c8519db9e016165580981d2f6992ea495f22fb11f97",
+  "binance_usdm": [
+    {
+      "bridge_end": 11399658831256,
+      "bridge_start": 11399658823860,
+      "final_sequence": 11399658845607,
+      "frame_count": 3,
+      "frame_sha256": "b1c6c7bfd82ec64d49327b7ee347cc3f8a7e2b4a99fb83eb9b3249c37052ef9a",
+      "snapshot_sequence": 11399658829885,
+      "symbol": "BTCUSDT"
+    },
+    {
+      "bridge_end": 11399658834438,
+      "bridge_start": 11399658830481,
+      "final_sequence": 11399658848371,
+      "frame_count": 2,
+      "frame_sha256": "08f35a2a7456e6a5d78d5fd3250196480c01ae7c200178e527aafccd23832668",
+      "snapshot_sequence": 11399658830481,
+      "symbol": "BTCUSDT_260925"
+    }
+  ],
+  "elapsed_ms": 4899,
+  "limits": {
+    "max_frames_per_symbol": 64,
+    "timeout_seconds": 30.0
+  },
+  "okx_swap": {
+    "final_sequence": 336521642751,
+    "frame_count": 2,
+    "frame_sha256": "70cb8d168b3d8975261a00e02e3c7ab572a6e6c3bc350e6a479fb2b49ede4d45",
+    "reset_count": 0,
+    "snapshot_sequence": 336521642532,
+    "symbol": "BTC-USDT-SWAP",
+    "update_count": 1
+  },
+  "production_writes": 0,
+  "provenance": [
+    "REAL_BINANCE_USDM_PUBLIC_WS_REST",
+    "REAL_OKX_V5_PUBLIC_WS"
+  ],
+  "raw_provider_bytes_persisted": 0,
+  "resource": {
+    "max_rss_kib": 50952
+  },
+  "runtime_mutations": 0,
+  "schema": "qdl.phase114.l2-real-provider-capture.v1",
+  "started_at_ns": 1787795025370764727,
+  "status": "PASS"
+}

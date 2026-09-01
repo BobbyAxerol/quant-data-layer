@@ -24,7 +24,7 @@ from qdl.ingestion.contracts import ConnectionShard, FeedType
 
 BINANCE_USDM_EXCHANGE_INFO = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 BINANCE_USDM_KLINES = "https://fapi.binance.com/fapi/v1/klines"
-BINANCE_USDM_WS_BASE = "wss://fstream.binance.com/stream?streams="
+BINANCE_USDM_WS_BASE = "wss://fstream.binance.com/public/stream?streams="
 
 
 async def _receive_until_stop(socket: Any, stop: asyncio.Event, timeout: float) -> Any | None:
@@ -72,11 +72,21 @@ def parse_exchange_info(payload: Mapping[str, Any], *, valid_from_ns: int) -> Bi
         if not native_symbol:
             raise ValueError("Binance exchangeInfo contains an empty symbol")
         product_type = ProductType.PERPETUAL if contract_type == "PERPETUAL" else ProductType.FUTURE
+        base_asset = str(item.get("baseAsset") or "").upper()
+        quote_asset = str(item.get("quoteAsset") or "").upper()
+        if not base_asset or not quote_asset:
+            raise ValueError("Binance exchangeInfo is missing base/quote asset identity")
+        canonical_symbol = f"{base_asset}-{quote_asset}"
+        if product_type is ProductType.FUTURE:
+            _, separator, contract_code = native_symbol.rpartition("_")
+            if not separator or not contract_code.isdigit():
+                raise ValueError("Binance dated future symbol has no contract code")
+            canonical_symbol = f"{canonical_symbol}-{contract_code}"
         identity = InstrumentIdentity.create(
             venue="BINANCE",
             market="USDM",
             product_type=product_type,
-            canonical_symbol=native_symbol,
+            canonical_symbol=canonical_symbol,
         )
         expiry_ms = int(item.get("deliveryDate") or 0)
         record = InstrumentRecord(
@@ -84,8 +94,8 @@ def parse_exchange_info(payload: Mapping[str, Any], *, valid_from_ns: int) -> Bi
             metadata_revision=1,
             asset_class=AssetClass.DERIVATIVE,
             native_symbol=native_symbol,
-            base_asset=str(item.get("baseAsset") or "").upper(),
-            quote_asset=str(item.get("quoteAsset") or "").upper(),
+            base_asset=base_asset,
+            quote_asset=quote_asset,
             settlement_asset=str(item.get("marginAsset") or "").upper(),
             price_tick=CanonicalDecimal.from_text(_filter_value(item, "PRICE_FILTER", "tickSize")),
             quantity_step=CanonicalDecimal.from_text(_filter_value(item, "LOT_SIZE", "stepSize")),

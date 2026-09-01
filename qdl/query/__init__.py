@@ -18,8 +18,11 @@ from qdl.query.contracts import (
     ConsumerGrade,
     CoverageStatus,
     DataRequirement,
+    EXECUTION_PRICE_VALIDATION_FEEDS,
     FeedType,
     GapPolicy,
+    METRIC_INTERVAL_FEEDS,
+    OPTIONAL_INTERVAL_FEEDS,
     QueryProblem,
     RecoveryPolicy,
     StalePolicy,
@@ -33,6 +36,11 @@ from qdl.query.entitlement import (
     EntitlementPolicy,
 )
 from qdl.query.lifecycle import BarLifecycle, DeliveryMode, delivery_mode
+from qdl.query.reference import (
+    ReferenceBatchRequirement,
+    ReferenceDataRequirement,
+    feed_for_reference_product,
+)
 from qdl.query.results import (
     ContractMetadata,
     GapRecord,
@@ -43,6 +51,7 @@ from qdl.query.results import (
     MarketDataQueryBackend,
     MemoryMarketDataBackend,
     QualityMetadata,
+    QueryBackendError,
     SourceMetadata,
 )
 from qdl.query.service import (
@@ -50,10 +59,17 @@ from qdl.query.service import (
     BatchQueryResult,
     QueryResult,
     QueryServiceError,
+    ReferenceBatchItemResult,
+    ReferenceBatchQueryResult,
     ReadinessItemResult,
     ReadinessResult,
     V2QueryService,
     WarmupResult,
+)
+from qdl.warmup.contracts import (
+    IntervalSourcePolicy,
+    WarmupSpecification,
+    WarmupTimeRange,
 )
 
 __all__ = [
@@ -69,15 +85,21 @@ __all__ = [
     "DataProduct",
     "DataRequirement",
     "DeliveryMode",
+    "EXECUTION_PRICE_VALIDATION_FEEDS",
     "EntitlementGrant",
     "EntitlementPolicy",
     "FeedType",
     "GapPolicy",
+    "METRIC_INTERVAL_FEEDS",
+    "OPTIONAL_INTERVAL_FEEDS",
     "QueryProblem",
+    "ReferenceBatchRequirement",
+    "ReferenceDataRequirement",
     "RecoveryPolicy",
     "StalePolicy",
     "delivery_mode",
     "evaluate_requirement",
+    "feed_for_reference_product",
     "HistoryResult",
     "GapRecord",
     "InstrumentPage",
@@ -86,13 +108,19 @@ __all__ = [
     "MarketDataQueryBackend",
     "MemoryMarketDataBackend",
     "QualityMetadata",
+    "QueryBackendError",
     "SourceMetadata",
     "BatchItemResult",
     "BatchQueryResult",
     "QueryResult",
     "QueryServiceError",
+    "ReferenceBatchItemResult",
+    "ReferenceBatchQueryResult",
     "ReadinessItemResult",
     "ReadinessResult",
     "V2QueryService",
     "WarmupResult",
+    "IntervalSourcePolicy",
+    "WarmupSpecification",
+    "WarmupTimeRange",
 ]

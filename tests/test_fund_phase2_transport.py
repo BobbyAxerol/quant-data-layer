@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 from qdl.transport import (
     BackpressureRequired,
@@ -76,8 +78,26 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             consumer_ttl_seconds=10,
             replay_retention_seconds=10,
             maintenance_interval_seconds=1,
+            max_partition_records=overrides.get("max_partition_records", 0),
         )
         return SQLiteDurableSpool(config, clock_ns=self.clock)
+
+    def test_concurrent_replicas_share_one_initialized_spool(self):
+        config = SpoolConfig(path=self.path, min_free_disk_bytes=0)
+        barrier = Barrier(8)
+
+        def open_replica() -> SQLiteDurableSpool:
+            barrier.wait()
+            return SQLiteDurableSpool(config)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            replicas = list(executor.map(lambda _: open_replica(), range(8)))
+        try:
+            self.assertEqual(len({replica.cache_id for replica in replicas}), 1)
+            self.assertTrue(all(replica.integrity_check() for replica in replicas))
+        finally:
+            for replica in replicas:
+                replica.close()
 
     def test_commit_restart_replay_and_idempotent_retry(self):
         with self.spool() as spool:
@@ -94,6 +114,65 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             )
             self.assertEqual([row.event.payload for row in rows], [b"event-1"])
             self.assertEqual(rows[0].payload_sha256, first.payload_sha256)
+
+    def test_cache_identity_survives_restart_and_changes_after_atomic_rebuild(self):
+        with self.spool() as spool:
+            first_cache_id = spool.cache_id
+            spool.append(event(1))
+        with self.spool() as recovered:
+            self.assertEqual(recovered.cache_id, first_cache_id)
+        self.path.unlink()
+        with self.spool() as rebuilt:
+            self.assertNotEqual(rebuilt.cache_id, first_cache_id)
+            self.assertEqual(rebuilt.stats().records, 0)
+
+    def test_tail_returns_newest_window_without_changing_replay_order(self):
+        with self.spool(max_records=10) as spool:
+            spool.append_many([event(index) for index in range(1, 6)])
+            replay = spool.read(
+                stream=event(1).stream,
+                partition_key=event(1).partition_key,
+                limit=2,
+            )
+            latest = spool.read_tail(
+                stream=event(1).stream,
+                partition_key=event(1).partition_key,
+                limit=2,
+            )
+            self.assertEqual([row.cursor.offset for row in replay], [1, 2])
+            self.assertEqual([row.cursor.offset for row in latest], [4, 5])
+            self.assertEqual(
+                [row.event.payload for row in latest], [b"event-4", b"event-5"]
+            )
+
+    def test_partition_window_is_bounded_and_old_cursor_expires(self):
+        with self.spool(max_records=10, max_partition_records=3) as spool:
+            spool.append_many([event(index) for index in range(1, 6)])
+            self.assertEqual(spool.stats().records, 3)
+            self.assertEqual(
+                set(spool.find_events(
+                    stream=event(1).stream,
+                    event_ids=[event(index).event_id for index in range(1, 6)],
+                )),
+                {event(index).event_id for index in range(3, 6)},
+            )
+            self.assertIsNone(
+                spool.find_event(stream=event(1).stream, event_id=event(1).event_id)
+            )
+            with self.assertRaises(CursorExpired):
+                spool.read(
+                    stream=event(1).stream,
+                    partition_key=event(1).partition_key,
+                    after=Cursor(event(1).stream, event(1).partition_key, 1),
+                )
+            retained = spool.read(
+                stream=event(1).stream,
+                partition_key=event(1).partition_key,
+                after=Cursor(event(1).stream, event(1).partition_key, 2),
+            )
+            self.assertEqual(
+                [row.cursor.offset for row in retained], [3, 4, 5]
+            )
 
     def test_event_id_collision_fails_closed_without_partial_row(self):
         with self.spool() as spool:
@@ -258,6 +337,40 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
                     reason_code="PARSER_INVALID",
                     reason_message="second poison record",
                     retry_count=3,
+                )
+
+    def test_idempotent_quarantine_replay_preserves_the_single_evidence_slot(self):
+        config = SpoolConfig(
+            path=self.path,
+            max_records=10,
+            max_payload_bytes=1024,
+            max_event_bytes=512,
+            max_storage_bytes=10 * 1024 * 1024,
+            max_quarantine_records=1,
+            min_free_disk_bytes=0,
+        )
+        with SQLiteDurableSpool(config, clock_ns=self.clock) as spool:
+            first = spool.quarantine_once(
+                event=event(1),
+                reason_code="RECOVERY_BACKFILL_OVERLAP_CONFLICT",
+                reason_message="retained native final BAR wins",
+                retry_count=0,
+            )
+            with SQLiteDurableSpool(config, clock_ns=self.clock) as replica:
+                replay = replica.quarantine_once(
+                    event=event(1),
+                    reason_code="RECOVERY_BACKFILL_OVERLAP_CONFLICT",
+                    reason_message="retained native final BAR wins",
+                    retry_count=0,
+                )
+            self.assertEqual(first, replay)
+            self.assertEqual(len(spool.quarantine_records()), 1)
+            with self.assertRaises(BackpressureRequired):
+                spool.quarantine_once(
+                    event=event(2),
+                    reason_code="RECOVERY_BACKFILL_OVERLAP_CONFLICT",
+                    reason_message="second distinct overlap",
+                    retry_count=0,
                 )
 
 

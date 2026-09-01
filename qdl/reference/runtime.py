@@ -1,0 +1,140 @@
+"""Provider-neutral assembly for the bounded V2 reference-data capability.
+
+The query service receives only a ``ReferenceBatch`` and a source-id resolver.
+This module is the one place that maps declared venue/market capability edges
+to those runtime dependencies.  Constructing it opens no socket and performs
+no provider call; deployment must opt in through the stable-runtime feature
+gate before the public endpoint becomes usable.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from qdl.adapters.binance.reference import BinanceUsdmReferenceAdapter
+from qdl.admission import ProviderAdmissionRuntime
+from qdl.adapters.okx.reference import OkxSwapReferenceAdapter
+from qdl.adapters.okx.client import OkxRestClient
+from qdl.domain.instrument import InstrumentRecord
+from qdl.query.contracts import ConsumerGrade, DataRequirement, FeedType, RecoveryPolicy
+from qdl.query.entitlement import (
+    AccessPurpose,
+    DataProduct,
+    EntitlementGrant,
+)
+from qdl.reference.batch import ReferenceBatch
+
+
+_REFERENCE_SOURCES: dict[tuple[str, str], str] = {
+    ("BINANCE", "USDM"): "qdl-reference-binance-usdm-v1",
+    ("OKX", "SWAP"): "qdl-reference-okx-swap-v1",
+    ("OKX", "FUTURES"): "qdl-reference-okx-futures-v1",
+}
+_REFERENCE_LICENSE_REVISION = "qdl-reference-provider-v1"
+_REFERENCE_FEEDS = frozenset(
+    {
+        FeedType.FUNDING_RATE,
+        FeedType.OPEN_INTEREST,
+        FeedType.LONG_SHORT_RATIO,
+        FeedType.TAKER_FLOW,
+        FeedType.MARK_INDEX_PRICE,
+        FeedType.CONTRACT_METADATA,
+        FeedType.BASIS,
+    }
+)
+
+
+def reference_requirement_eligible(
+    instrument: InstrumentRecord,
+    requirement: DataRequirement,
+) -> bool:
+    """Return whether an unbound V2 requirement can use reference batch data.
+
+    This is an admission predicate only. It neither opens a provider connection
+    nor promises that every venue supports every reference metric; an adapter
+    reports unavailable products as typed provider results. The predicate keeps
+    unbound metadata from accidentally authorising replay or an unrelated
+    instrument/feed. Its only execution-grade exception is the official
+    one-row `MARK_INDEX_PRICE` snapshot used by typed risk validation.
+    """
+
+    return (
+        instrument.instrument_uid == requirement.instrument_uid
+        and requirement.feed in _REFERENCE_FEEDS
+        and (
+            requirement.consumer_grade
+            in {ConsumerGrade.ALPHA, ConsumerGrade.RESEARCH}
+            or (
+                requirement.consumer_grade is ConsumerGrade.EXECUTION
+                and requirement.feed is FeedType.MARK_INDEX_PRICE
+            )
+        )
+        and requirement.recovery is RecoveryPolicy.FRESH_SNAPSHOT
+        and not requirement.require_final_bars
+        and (
+            instrument.identity.venue,
+            instrument.identity.market,
+        )
+        in _REFERENCE_SOURCES
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceRuntime:
+    """The default read-only reference provider graph for one V2 query role."""
+
+    batch: ReferenceBatch
+
+    def source_id_for(self, record: InstrumentRecord) -> str:
+        key = (record.identity.venue, record.identity.market)
+        try:
+            return _REFERENCE_SOURCES[key]
+        except KeyError as error:
+            raise ValueError(
+                "reference data has no approved provider edge for "
+                f"{record.identity.venue}/{record.identity.market}"
+            ) from error
+
+    def entitlement_grants(self) -> tuple[EntitlementGrant, ...]:
+        """Grant only official mark/index snapshots to execution callers."""
+
+        return tuple(
+            EntitlementGrant(
+                source_id=source_id,
+                license_revision=_REFERENCE_LICENSE_REVISION,
+                purposes=frozenset({
+                    AccessPurpose.INTERNAL_ALPHA,
+                    AccessPurpose.INTERNAL_RESEARCH,
+                    AccessPurpose.INTERNAL_EXECUTION,
+                }),
+                products=frozenset({
+                    DataProduct.CANONICAL_HISTORY,
+                    DataProduct.CANONICAL_SNAPSHOT,
+                }),
+                valid_from_ns=0,
+            )
+            for source_id in sorted(_REFERENCE_SOURCES.values())
+        )
+
+
+def build_default_reference_runtime(
+    *,
+    native_basis_admission: ProviderAdmissionRuntime | None = None,
+) -> ReferenceRuntime:
+    """Build supported public-provider adapters without making provider I/O.
+
+    Adding a venue later is one registry entry plus an adapter and capability
+    tests.  Query/SDK callers remain tied to canonical instrument identity and
+    never need a venue branch.
+    """
+
+    okx = OkxSwapReferenceAdapter(OkxRestClient())
+    return ReferenceRuntime(
+        ReferenceBatch({
+            ("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
+                native_basis_admission=native_basis_admission
+            ),
+            ("OKX", "SWAP"): okx,
+            ("OKX", "FUTURES"): okx,
+        })
+    )

@@ -14,6 +14,10 @@ pub struct Trade {
     pub is_block_trade: bool,
     #[prost(bool, tag="6")]
     pub is_buyer_maker: bool,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="7")]
+    pub quantity_unit: i32,
+    #[prost(enumeration="TradeIdentityKind", tag="8")]
+    pub identity_kind: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Quote {
@@ -27,6 +31,8 @@ pub struct Quote {
     pub ask_quantity: ::core::option::Option<super::super::common::v1::DecimalValue>,
     #[prost(uint32, tag="5")]
     pub level: u32,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="6")]
+    pub quantity_unit: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Bar {
@@ -58,6 +64,14 @@ pub struct Bar {
     pub lifecycle: i32,
     #[prost(bytes="vec", optional, tag="14")]
     pub supersedes_event_id: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="15")]
+    pub volume_unit: i32,
+    #[prost(message, optional, tag="16")]
+    pub base_volume: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, optional, tag="17")]
+    pub quote_volume: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, optional, tag="18")]
+    pub contract_volume: ::core::option::Option<super::super::common::v1::DecimalValue>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BookLevel {
@@ -69,6 +83,8 @@ pub struct BookLevel {
     pub quantity: ::core::option::Option<super::super::common::v1::DecimalValue>,
     #[prost(uint32, tag="4")]
     pub order_count: u32,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="5")]
+    pub quantity_unit: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OrderBookSnapshot {
@@ -80,6 +96,19 @@ pub struct OrderBookSnapshot {
     pub levels: ::prost::alloc::vec::Vec<BookLevel>,
     #[prost(uint32, tag="4")]
     pub depth: u32,
+    /// Monotonic per `(provider profile, instrument, channel)` resync generation.
+    /// A value of zero is legacy/unverified and cannot be execution-grade.
+    #[prost(uint64, tag="5")]
+    pub book_generation: u64,
+    /// True only after the provider-specific snapshot/sequence admission rule has
+    /// been proven. For a Binance REST bootstrap this stays false until a WS diff
+    /// range bridges its `lastUpdateId`.
+    #[prost(bool, tag="6")]
+    pub sequence_verified: bool,
+    /// The readable projection contains the requested top-N depth rather than
+    /// every provider level. Clients must not assume omitted levels are absent.
+    #[prost(bool, tag="7")]
+    pub truncated: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OrderBookDelta {
@@ -95,6 +124,13 @@ pub struct OrderBookDelta {
     pub updates: ::prost::alloc::vec::Vec<BookLevel>,
     #[prost(bool, tag="6")]
     pub reset: bool,
+    /// Must match the snapshot generation used to reconstruct this delta chain.
+    #[prost(uint64, tag="7")]
+    pub book_generation: u64,
+    /// The delta was admitted only after continuity with `snapshot_sequence` was
+    /// proven; false is non-execution-grade legacy/bootstrap evidence.
+    #[prost(bool, tag="8")]
+    pub sequence_verified: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FundingRate {
@@ -111,6 +147,10 @@ pub struct OpenInterest {
     pub quantity: ::core::option::Option<super::super::common::v1::DecimalValue>,
     #[prost(message, optional, tag="2")]
     pub notional: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="3")]
+    pub quantity_unit: i32,
+    #[prost(string, tag="4")]
+    pub sampling_interval: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MarkIndexPrice {
@@ -118,6 +158,77 @@ pub struct MarkIndexPrice {
     pub mark_price: ::core::option::Option<super::super::common::v1::DecimalValue>,
     #[prost(message, optional, tag="2")]
     pub index_price: ::core::option::Option<super::super::common::v1::DecimalValue>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LongShortRatio {
+    #[prost(enumeration="LongShortRatioPopulation", tag="1")]
+    pub population: i32,
+    #[prost(string, tag="2")]
+    pub sampling_interval: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub long_value: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, optional, tag="4")]
+    pub short_value: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, optional, tag="5")]
+    pub long_short_ratio: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(enumeration="MetricUnit", tag="6")]
+    pub value_unit: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TakerFlow {
+    #[prost(string, tag="1")]
+    pub sampling_interval: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub buy_volume: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, optional, tag="3")]
+    pub sell_volume: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, optional, tag="4")]
+    pub buy_sell_ratio: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="5")]
+    pub quantity_unit: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Basis {
+    #[prost(enumeration="BasisKind", tag="1")]
+    pub kind: i32,
+    #[prost(string, tag="2")]
+    pub sampling_interval: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub basis: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(enumeration="MetricUnit", tag="4")]
+    pub basis_unit: i32,
+    #[prost(message, optional, tag="5")]
+    pub annualized_basis: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(string, tag="6")]
+    pub reference_instrument_uid: ::prost::alloc::string::String,
+    #[prost(string, tag="7")]
+    pub formula_id: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag="8")]
+    pub input_instrument_uids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Versioned instrument metadata as an event. The envelope still identifies the
+/// instrument revision; this payload gives consumers the exact tradable rules
+/// observed at that revision without copying provider-specific JSON.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ContractMetadata {
+    #[prost(string, tag="1")]
+    pub contract_kind: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub settlement_asset: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub contract_multiplier: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, optional, tag="4")]
+    pub price_tick: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, optional, tag="5")]
+    pub quantity_step: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(int64, optional, tag="6")]
+    pub expiry_time_ns: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag="7")]
+    pub funding_interval_ns: ::core::option::Option<i64>,
+    #[prost(bool, tag="8")]
+    pub continuous: bool,
+    #[prost(string, tag="9")]
+    pub underlying_instrument_uid: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Ticker {
@@ -133,6 +244,10 @@ pub struct Ticker {
     pub low_24h: ::core::option::Option<super::super::common::v1::DecimalValue>,
     #[prost(message, optional, tag="6")]
     pub volume_24h: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="7")]
+    pub last_quantity_unit: i32,
+    #[prost(enumeration="super::super::common::v1::QuantityUnit", tag="8")]
+    pub volume_24h_unit: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EventEnvelope {
@@ -202,7 +317,7 @@ pub struct EventEnvelope {
     pub canonical_payload_hash: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes="vec", tag="33")]
     pub raw_capture_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(oneof="event_envelope::Payload", tags="40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50")]
+    #[prost(oneof="event_envelope::Payload", tags="40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54")]
     pub payload: ::core::option::Option<event_envelope::Payload>,
 }
 /// Nested message and enum types in `EventEnvelope`.
@@ -231,6 +346,43 @@ pub mod event_envelope {
         FeedState(super::super::super::quality::v1::FeedStateEvent),
         #[prost(message, tag="50")]
         QualityEvent(super::super::super::quality::v1::DataQualityEvent),
+        #[prost(message, tag="51")]
+        LongShortRatio(super::LongShortRatio),
+        #[prost(message, tag="52")]
+        TakerFlow(super::TakerFlow),
+        #[prost(message, tag="53")]
+        Basis(super::Basis),
+        #[prost(message, tag="54")]
+        ContractMetadata(super::ContractMetadata),
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum TradeIdentityKind {
+    Unspecified = 0,
+    Native = 1,
+    DerivedRawCapture = 2,
+}
+impl TradeIdentityKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "TRADE_IDENTITY_KIND_UNSPECIFIED",
+            Self::Native => "TRADE_IDENTITY_KIND_NATIVE",
+            Self::DerivedRawCapture => "TRADE_IDENTITY_KIND_DERIVED_RAW_CAPTURE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TRADE_IDENTITY_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "TRADE_IDENTITY_KIND_NATIVE" => Some(Self::Native),
+            "TRADE_IDENTITY_KIND_DERIVED_RAW_CAPTURE" => Some(Self::DerivedRawCapture),
+            _ => None,
+        }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -264,6 +416,119 @@ impl BarLifecycle {
             "BAR_LIFECYCLE_FINAL" => Some(Self::Final),
             "BAR_LIFECYCLE_REVISED" => Some(Self::Revised),
             "BAR_LIFECYCLE_CANCELLED" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+}
+/// The population behind a long/short ratio is material: global accounts, top
+/// accounts and top positions are different provider products and must never be
+/// collapsed into one unnamed ratio.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum LongShortRatioPopulation {
+    Unspecified = 0,
+    GlobalAccount = 1,
+    TopAccount = 2,
+    TopPosition = 3,
+}
+impl LongShortRatioPopulation {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "LONG_SHORT_RATIO_POPULATION_UNSPECIFIED",
+            Self::GlobalAccount => "LONG_SHORT_RATIO_POPULATION_GLOBAL_ACCOUNT",
+            Self::TopAccount => "LONG_SHORT_RATIO_POPULATION_TOP_ACCOUNT",
+            Self::TopPosition => "LONG_SHORT_RATIO_POPULATION_TOP_POSITION",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "LONG_SHORT_RATIO_POPULATION_UNSPECIFIED" => Some(Self::Unspecified),
+            "LONG_SHORT_RATIO_POPULATION_GLOBAL_ACCOUNT" => Some(Self::GlobalAccount),
+            "LONG_SHORT_RATIO_POPULATION_TOP_ACCOUNT" => Some(Self::TopAccount),
+            "LONG_SHORT_RATIO_POPULATION_TOP_POSITION" => Some(Self::TopPosition),
+            _ => None,
+        }
+    }
+}
+/// A provider-native basis and a QDL-derived basis have different authority and
+/// provenance rules. Consumers can only compare them after inspecting this kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BasisKind {
+    Unspecified = 0,
+    ProviderNative = 1,
+    Derived = 2,
+}
+impl BasisKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BASIS_KIND_UNSPECIFIED",
+            Self::ProviderNative => "BASIS_KIND_PROVIDER_NATIVE",
+            Self::Derived => "BASIS_KIND_DERIVED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BASIS_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "BASIS_KIND_PROVIDER_NATIVE" => Some(Self::ProviderNative),
+            "BASIS_KIND_DERIVED" => Some(Self::Derived),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum MetricUnit {
+    Unspecified = 0,
+    Ratio = 1,
+    Price = 2,
+    BaseAsset = 3,
+    QuoteAsset = 4,
+    Contract = 5,
+    Notional = 6,
+    Percent = 7,
+    BasisPoints = 8,
+}
+impl MetricUnit {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "METRIC_UNIT_UNSPECIFIED",
+            Self::Ratio => "METRIC_UNIT_RATIO",
+            Self::Price => "METRIC_UNIT_PRICE",
+            Self::BaseAsset => "METRIC_UNIT_BASE_ASSET",
+            Self::QuoteAsset => "METRIC_UNIT_QUOTE_ASSET",
+            Self::Contract => "METRIC_UNIT_CONTRACT",
+            Self::Notional => "METRIC_UNIT_NOTIONAL",
+            Self::Percent => "METRIC_UNIT_PERCENT",
+            Self::BasisPoints => "METRIC_UNIT_BASIS_POINTS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "METRIC_UNIT_UNSPECIFIED" => Some(Self::Unspecified),
+            "METRIC_UNIT_RATIO" => Some(Self::Ratio),
+            "METRIC_UNIT_PRICE" => Some(Self::Price),
+            "METRIC_UNIT_BASE_ASSET" => Some(Self::BaseAsset),
+            "METRIC_UNIT_QUOTE_ASSET" => Some(Self::QuoteAsset),
+            "METRIC_UNIT_CONTRACT" => Some(Self::Contract),
+            "METRIC_UNIT_NOTIONAL" => Some(Self::Notional),
+            "METRIC_UNIT_PERCENT" => Some(Self::Percent),
+            "METRIC_UNIT_BASIS_POINTS" => Some(Self::BasisPoints),
             _ => None,
         }
     }

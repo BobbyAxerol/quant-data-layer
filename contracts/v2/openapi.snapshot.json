@@ -15,6 +15,16 @@
       "BarPayload": {
         "additionalProperties": false,
         "properties": {
+          "base_volume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "close": {
             "$ref": "#/components/schemas/DecimalValue"
           },
@@ -22,6 +32,16 @@
             "exclusiveMinimum": 0.0,
             "title": "Close Time Ns",
             "type": "integer"
+          },
+          "contract_volume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "feed": {
             "const": "BAR",
@@ -62,6 +82,26 @@
             "title": "Origin",
             "type": "string"
           },
+          "quote_volume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resample_lineage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResampleLineageView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "revision": {
             "minimum": 0.0,
             "title": "Revision",
@@ -86,6 +126,9 @@
           },
           "volume": {
             "$ref": "#/components/schemas/DecimalValue"
+          },
+          "volume_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
           }
         },
         "required": [
@@ -97,6 +140,7 @@
           "low",
           "close",
           "volume",
+          "volume_unit",
           "lifecycle",
           "revision",
           "origin"
@@ -112,6 +156,86 @@
           "EMIT_REVISIONS"
         ],
         "title": "BarRevisionPolicy",
+        "type": "string"
+      },
+      "BasisKind": {
+        "enum": [
+          "PROVIDER_NATIVE",
+          "DERIVED"
+        ],
+        "title": "BasisKind",
+        "type": "string"
+      },
+      "BasisPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "annualized_basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "basis": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "basis_unit": {
+            "$ref": "#/components/schemas/MetricUnit"
+          },
+          "feed": {
+            "const": "BASIS",
+            "default": "BASIS",
+            "title": "Feed",
+            "type": "string"
+          },
+          "formula_id": {
+            "default": "",
+            "maxLength": 160,
+            "title": "Formula Id",
+            "type": "string"
+          },
+          "input_instrument_uids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Input Instrument Uids",
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BasisKind"
+          },
+          "reference_instrument_uid": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Reference Instrument Uid",
+            "type": "string"
+          },
+          "sampling_interval": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Sampling Interval",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "sampling_interval",
+          "basis",
+          "basis_unit"
+        ],
+        "title": "BasisPayload",
+        "type": "object"
+      },
+      "BasisSeries": {
+        "enum": [
+          "NATIVE",
+          "CONTINUOUS"
+        ],
+        "title": "BasisSeries",
         "type": "string"
       },
       "BatchItemResponse": {
@@ -229,6 +353,12 @@
       "BookDeltaPayload": {
         "additionalProperties": false,
         "properties": {
+          "book_generation": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Book Generation",
+            "type": "integer"
+          },
           "checksum": {
             "anyOf": [
               {
@@ -262,6 +392,11 @@
           "reset": {
             "default": false,
             "title": "Reset",
+            "type": "boolean"
+          },
+          "sequence_verified": {
+            "default": false,
+            "title": "Sequence Verified",
             "type": "boolean"
           },
           "snapshot_sequence": {
@@ -302,6 +437,9 @@
           "quantity": {
             "$ref": "#/components/schemas/DecimalValue"
           },
+          "quantity_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
+          },
           "side": {
             "enum": [
               "BID",
@@ -314,7 +452,8 @@
         "required": [
           "side",
           "price",
-          "quantity"
+          "quantity",
+          "quantity_unit"
         ],
         "title": "BookLevel",
         "type": "object"
@@ -322,6 +461,12 @@
       "BookSnapshotPayload": {
         "additionalProperties": false,
         "properties": {
+          "book_generation": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Book Generation",
+            "type": "integer"
+          },
           "checksum": {
             "anyOf": [
               {
@@ -357,6 +502,16 @@
             "minLength": 1,
             "title": "Native Sequence",
             "type": "string"
+          },
+          "sequence_verified": {
+            "default": false,
+            "title": "Sequence Verified",
+            "type": "boolean"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -376,6 +531,82 @@
         ],
         "title": "ConsumerGrade",
         "type": "string"
+      },
+      "ContractMetadataPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "continuous": {
+            "default": false,
+            "title": "Continuous",
+            "type": "boolean"
+          },
+          "contract_kind": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Contract Kind",
+            "type": "string"
+          },
+          "contract_multiplier": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "expiry_time_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Time Ns"
+          },
+          "feed": {
+            "const": "CONTRACT_METADATA",
+            "default": "CONTRACT_METADATA",
+            "title": "Feed",
+            "type": "string"
+          },
+          "funding_interval_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Funding Interval Ns"
+          },
+          "price_tick": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "quantity_step": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "settlement_asset": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Settlement Asset",
+            "type": "string"
+          },
+          "underlying_instrument_uid": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Underlying Instrument Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_kind",
+          "settlement_asset",
+          "contract_multiplier",
+          "price_tick",
+          "quantity_step"
+        ],
+        "title": "ContractMetadataPayload",
+        "type": "object"
       },
       "ContractView": {
         "additionalProperties": false,
@@ -511,7 +742,11 @@
           "FUNDING_RATE",
           "OPEN_INTEREST",
           "MARK_INDEX_PRICE",
-          "TICKER"
+          "TICKER",
+          "LONG_SHORT_RATIO",
+          "TAKER_FLOW",
+          "BASIS",
+          "CONTRACT_METADATA"
         ],
         "title": "FeedType",
         "type": "string"
@@ -627,6 +862,15 @@
         ],
         "title": "GapView",
         "type": "object"
+      },
+      "Grade": {
+        "enum": [
+          "EXECUTION",
+          "ALPHA",
+          "RESEARCH"
+        ],
+        "title": "Grade",
+        "type": "string"
       },
       "HTTPValidationError": {
         "properties": {
@@ -799,6 +1043,83 @@
         "title": "InstrumentView",
         "type": "object"
       },
+      "IntervalSourcePolicy": {
+        "enum": [
+          "NATIVE_ONLY",
+          "NATIVE_OR_EXACT_RESAMPLE"
+        ],
+        "title": "IntervalSourcePolicy",
+        "type": "string"
+      },
+      "LongShortKind": {
+        "enum": [
+          "GLOBAL_ACCOUNT",
+          "TOP_ACCOUNT",
+          "TOP_POSITION"
+        ],
+        "title": "LongShortKind",
+        "type": "string"
+      },
+      "LongShortRatioPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "feed": {
+            "const": "LONG_SHORT_RATIO",
+            "default": "LONG_SHORT_RATIO",
+            "title": "Feed",
+            "type": "string"
+          },
+          "long_short_ratio": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "long_value": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "population": {
+            "$ref": "#/components/schemas/LongShortRatioPopulation"
+          },
+          "sampling_interval": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Sampling Interval",
+            "type": "string"
+          },
+          "short_value": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "value_unit": {
+            "$ref": "#/components/schemas/MetricUnit",
+            "default": "RATIO"
+          }
+        },
+        "required": [
+          "population",
+          "sampling_interval",
+          "long_value",
+          "short_value",
+          "long_short_ratio"
+        ],
+        "title": "LongShortRatioPayload",
+        "type": "object"
+      },
+      "LongShortRatioPopulation": {
+        "enum": [
+          "GLOBAL_ACCOUNT",
+          "TOP_ACCOUNT",
+          "TOP_POSITION"
+        ],
+        "title": "LongShortRatioPopulation",
+        "type": "string"
+      },
+      "MarkIndexKind": {
+        "enum": [
+          "MARK",
+          "INDEX",
+          "BOTH"
+        ],
+        "title": "MarkIndexKind",
+        "type": "string"
+      },
       "MarkIndexPricePayload": {
         "additionalProperties": false,
         "properties": {
@@ -875,12 +1196,16 @@
             "discriminator": {
               "mapping": {
                 "BAR": "#/components/schemas/BarPayload",
+                "BASIS": "#/components/schemas/BasisPayload",
                 "BOOK_DELTA": "#/components/schemas/BookDeltaPayload",
                 "BOOK_SNAPSHOT": "#/components/schemas/BookSnapshotPayload",
+                "CONTRACT_METADATA": "#/components/schemas/ContractMetadataPayload",
                 "FUNDING_RATE": "#/components/schemas/FundingRatePayload",
+                "LONG_SHORT_RATIO": "#/components/schemas/LongShortRatioPayload",
                 "MARK_INDEX_PRICE": "#/components/schemas/MarkIndexPricePayload",
                 "OPEN_INTEREST": "#/components/schemas/OpenInterestPayload",
                 "QUOTE": "#/components/schemas/QuotePayload",
+                "TAKER_FLOW": "#/components/schemas/TakerFlowPayload",
                 "TICKER": "#/components/schemas/TickerPayload",
                 "TRADE": "#/components/schemas/TradePayload"
               },
@@ -912,6 +1237,18 @@
                 "$ref": "#/components/schemas/MarkIndexPricePayload"
               },
               {
+                "$ref": "#/components/schemas/LongShortRatioPayload"
+              },
+              {
+                "$ref": "#/components/schemas/TakerFlowPayload"
+              },
+              {
+                "$ref": "#/components/schemas/BasisPayload"
+              },
+              {
+                "$ref": "#/components/schemas/ContractMetadataPayload"
+              },
+              {
                 "$ref": "#/components/schemas/TickerPayload"
               }
             ],
@@ -919,6 +1256,18 @@
           },
           "quality": {
             "$ref": "#/components/schemas/QualityView"
+          },
+          "received_at_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received At Ns"
           },
           "revision": {
             "minimum": 0.0,
@@ -962,6 +1311,20 @@
         "title": "MarketDataView",
         "type": "object"
       },
+      "MetricUnit": {
+        "enum": [
+          "RATIO",
+          "PRICE",
+          "BASE_ASSET",
+          "QUOTE_ASSET",
+          "CONTRACT",
+          "NOTIONAL",
+          "PERCENT",
+          "BASIS_POINTS"
+        ],
+        "title": "MetricUnit",
+        "type": "string"
+      },
       "OpenInterestPayload": {
         "additionalProperties": false,
         "properties": {
@@ -983,10 +1346,27 @@
           },
           "quantity": {
             "$ref": "#/components/schemas/DecimalValue"
+          },
+          "quantity_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
+          },
+          "sampling_interval": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sampling Interval"
           }
         },
         "required": [
-          "quantity"
+          "quantity",
+          "quantity_unit"
         ],
         "title": "OpenInterestPayload",
         "type": "object"
@@ -1075,6 +1455,16 @@
             "title": "Complete",
             "type": "boolean"
           },
+          "event_recency_state": {
+            "default": "LIVE",
+            "enum": [
+              "LIVE",
+              "STALE",
+              "NOT_APPLICABLE"
+            ],
+            "title": "Event Recency State",
+            "type": "string"
+          },
           "execution_eligible": {
             "title": "Execution Eligible",
             "type": "boolean"
@@ -1099,6 +1489,30 @@
             "maxLength": 200,
             "minLength": 1,
             "title": "Policy Id",
+            "type": "string"
+          },
+          "provider_session_liveness_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Session Liveness Ms"
+          },
+          "provider_session_state": {
+            "default": "NOT_APPLICABLE",
+            "enum": [
+              "LIVE",
+              "STALE",
+              "DISCONNECTED",
+              "UNKNOWN",
+              "NOT_APPLICABLE"
+            ],
+            "title": "Provider Session State",
             "type": "string"
           },
           "state": {
@@ -1133,6 +1547,16 @@
         "title": "QualityView",
         "type": "object"
       },
+      "QuantityUnit": {
+        "enum": [
+          "BASE_ASSET",
+          "QUOTE_ASSET",
+          "CONTRACT",
+          "SHARE"
+        ],
+        "title": "QuantityUnit",
+        "type": "string"
+      },
       "QuotePayload": {
         "additionalProperties": false,
         "properties": {
@@ -1159,13 +1583,17 @@
             "minimum": 1.0,
             "title": "Level",
             "type": "integer"
+          },
+          "quantity_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
           }
         },
         "required": [
           "bid_price",
           "bid_quantity",
           "ask_price",
-          "ask_quantity"
+          "ask_quantity",
+          "quantity_unit"
         ],
         "title": "QuotePayload",
         "type": "object"
@@ -1256,6 +1684,592 @@
         "title": "RecoveryPolicy",
         "type": "string"
       },
+      "ReferenceBatchItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReferenceDataResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instrument_uid": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProblemDetails"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "product": {
+            "$ref": "#/components/schemas/ReferenceProduct"
+          },
+          "status": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "product",
+          "status"
+        ],
+        "title": "ReferenceBatchItemResponse",
+        "type": "object"
+      },
+      "ReferenceBatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "consumer_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Consumer Id",
+            "type": "string"
+          },
+          "require_all": {
+            "default": true,
+            "title": "Require All",
+            "type": "boolean"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceRequirement"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Requirements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "requirements"
+        ],
+        "title": "ReferenceBatchRequest",
+        "type": "object"
+      },
+      "ReferenceBatchResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error_count": {
+            "minimum": 0.0,
+            "title": "Error Count",
+            "type": "integer"
+          },
+          "partial": {
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "request_id": {
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceBatchItemResponse"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "schema": {
+            "default": "qdl.reference.batch.v2",
+            "title": "Schema",
+            "type": "string"
+          },
+          "success_count": {
+            "minimum": 0.0,
+            "title": "Success Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "partial",
+          "success_count",
+          "error_count",
+          "results"
+        ],
+        "title": "ReferenceBatchResponse",
+        "type": "object"
+      },
+      "ReferenceCoverageView": {
+        "additionalProperties": false,
+        "properties": {
+          "complete_left": {
+            "title": "Complete Left",
+            "type": "boolean"
+          },
+          "complete_right": {
+            "title": "Complete Right",
+            "type": "boolean"
+          },
+          "observed_max_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Max Ms"
+          },
+          "observed_min_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Min Ms"
+          },
+          "requested_end_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested End Ms"
+          },
+          "requested_start_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Start Ms"
+          },
+          "terminal_reason": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Terminal Reason",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "complete_left",
+          "complete_right",
+          "truncated",
+          "terminal_reason"
+        ],
+        "title": "ReferenceCoverageView",
+        "type": "object"
+      },
+      "ReferenceDataResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_hit": {
+            "title": "Cache Hit",
+            "type": "boolean"
+          },
+          "coalesced": {
+            "title": "Coalesced",
+            "type": "boolean"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/ReferenceCoverageView"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
+          },
+          "instrument_uid": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "lineage": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceLineageView"
+            },
+            "minItems": 1,
+            "title": "Lineage",
+            "type": "array"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceObservationView"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "product": {
+            "$ref": "#/components/schemas/ReferenceProduct"
+          },
+          "received_at_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "Received At Ns",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "OK",
+              "MISSING",
+              "UNAVAILABLE",
+              "ERROR"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "product",
+          "status",
+          "lineage",
+          "coverage",
+          "received_at_ns",
+          "cache_hit",
+          "coalesced"
+        ],
+        "title": "ReferenceDataResponse",
+        "type": "object"
+      },
+      "ReferenceFieldView": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "name",
+          "value",
+          "unit"
+        ],
+        "title": "ReferenceFieldView",
+        "type": "object"
+      },
+      "ReferenceLineageView": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Adapter Version",
+            "type": "string"
+          },
+          "capability_constraint": {
+            "anyOf": [
+              {
+                "maxLength": 240,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capability Constraint"
+          },
+          "capability_name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Capability Name",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_endpoint": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Provider Endpoint",
+            "type": "string"
+          },
+          "source_role": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Source Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "provider_endpoint",
+          "source_role",
+          "adapter_version",
+          "capability_name"
+        ],
+        "title": "ReferenceLineageView",
+        "type": "object"
+      },
+      "ReferenceObservationView": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceFieldView"
+            },
+            "minItems": 1,
+            "title": "Fields",
+            "type": "array"
+          },
+          "instrument_revision": {
+            "minimum": 1.0,
+            "title": "Instrument Revision",
+            "type": "integer"
+          },
+          "instrument_uid": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "object"
+          },
+          "observed_at_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "Observed At Ns",
+            "type": "integer"
+          },
+          "product": {
+            "$ref": "#/components/schemas/ReferenceProduct"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "instrument_revision",
+          "product",
+          "observed_at_ns",
+          "fields"
+        ],
+        "title": "ReferenceObservationView",
+        "type": "object"
+      },
+      "ReferenceProduct": {
+        "enum": [
+          "FUNDING_RATE",
+          "OPEN_INTEREST",
+          "LONG_SHORT_RATIO",
+          "TAKER_FLOW",
+          "MARK_INDEX_PRICE",
+          "CONTRACT_METADATA",
+          "BASIS"
+        ],
+        "title": "ReferenceProduct",
+        "type": "string"
+      },
+      "ReferenceRequirement": {
+        "additionalProperties": false,
+        "properties": {
+          "basis_contract_type": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basis Contract Type"
+          },
+          "basis_series": {
+            "$ref": "#/components/schemas/BasisSeries",
+            "default": "NATIVE"
+          },
+          "consumer_grade": {
+            "$ref": "#/components/schemas/Grade"
+          },
+          "deadline_ms": {
+            "default": 20000,
+            "maximum": 120000.0,
+            "minimum": 100.0,
+            "title": "Deadline Ms",
+            "type": "integer"
+          },
+          "end_time_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Time Ns"
+          },
+          "instrument_uid": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval"
+          },
+          "limit": {
+            "default": 100,
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "long_short_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LongShortKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mark_index_kind": {
+            "$ref": "#/components/schemas/MarkIndexKind",
+            "default": "BOTH"
+          },
+          "max_freshness_ms": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 259200000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Freshness Ms"
+          },
+          "max_pages": {
+            "default": 20,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Pages",
+            "type": "integer"
+          },
+          "page_size": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Size"
+          },
+          "product": {
+            "$ref": "#/components/schemas/ReferenceProduct"
+          },
+          "require_full_coverage": {
+            "default": true,
+            "title": "Require Full Coverage",
+            "type": "boolean"
+          },
+          "source_policy_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Source Policy Id",
+            "type": "string"
+          },
+          "start_time_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Time Ns"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "product",
+          "consumer_grade",
+          "source_policy_id"
+        ],
+        "title": "ReferenceRequirement",
+        "type": "object"
+      },
       "RequirementModel": {
         "additionalProperties": false,
         "properties": {
@@ -1265,6 +2279,16 @@
           },
           "consumer_grade": {
             "$ref": "#/components/schemas/ConsumerGrade"
+          },
+          "event_recency_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StalePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "feed": {
             "$ref": "#/components/schemas/FeedType"
@@ -1304,6 +2328,19 @@
             ],
             "title": "Max Freshness Ms"
           },
+          "max_session_liveness_ms": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 86400000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Session Liveness Ms"
+          },
           "recovery": {
             "$ref": "#/components/schemas/RecoveryPolicy",
             "default": "SNAPSHOT_AND_REPLAY"
@@ -1328,6 +2365,16 @@
             "$ref": "#/components/schemas/StalePolicy",
             "default": "BLOCK"
           },
+          "warmup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WarmupSpecification"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "warmup_limit": {
             "default": 0,
             "maximum": 10000.0,
@@ -1343,6 +2390,46 @@
           "source_policy_id"
         ],
         "title": "RequirementModel",
+        "type": "object"
+      },
+      "ResampleLineageView": {
+        "additionalProperties": false,
+        "properties": {
+          "base_interval": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Base Interval",
+            "type": "string"
+          },
+          "constituent_count": {
+            "minimum": 1.0,
+            "title": "Constituent Count",
+            "type": "integer"
+          },
+          "constituent_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Constituent Sha256",
+            "type": "string"
+          },
+          "first_watermark": {
+            "minimum": 0.0,
+            "title": "First Watermark",
+            "type": "integer"
+          },
+          "last_watermark": {
+            "minimum": 0.0,
+            "title": "Last Watermark",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_interval",
+          "constituent_count",
+          "first_watermark",
+          "last_watermark",
+          "constituent_sha256"
+        ],
+        "title": "ResampleLineageView",
         "type": "object"
       },
       "SnapshotResponse": {
@@ -1453,6 +2540,44 @@
         "title": "SystemReadinessSummary",
         "type": "object"
       },
+      "TakerFlowPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "buy_sell_ratio": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "buy_volume": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "feed": {
+            "const": "TAKER_FLOW",
+            "default": "TAKER_FLOW",
+            "title": "Feed",
+            "type": "string"
+          },
+          "quantity_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
+          },
+          "sampling_interval": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Sampling Interval",
+            "type": "string"
+          },
+          "sell_volume": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "sampling_interval",
+          "buy_volume",
+          "sell_volume",
+          "buy_sell_ratio",
+          "quantity_unit"
+        ],
+        "title": "TakerFlowPayload",
+        "type": "object"
+      },
       "TickerPayload": {
         "additionalProperties": false,
         "properties": {
@@ -1479,6 +2604,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/DecimalValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_quantity_unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuantityUnit"
               },
               {
                 "type": "null"
@@ -1514,6 +2649,16 @@
                 "type": "null"
               }
             ]
+          },
+          "volume_24h_unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuantityUnit"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1522,13 +2667,22 @@
         "title": "TickerPayload",
         "type": "object"
       },
+      "TradeIdentityKind": {
+        "enum": [
+          "NATIVE",
+          "DERIVED_RAW_CAPTURE"
+        ],
+        "title": "TradeIdentityKind",
+        "type": "string"
+      },
       "TradePayload": {
         "additionalProperties": false,
         "properties": {
           "aggressor_side": {
             "enum": [
               "BUY",
-              "SELL"
+              "SELL",
+              "UNKNOWN"
             ],
             "title": "Aggressor Side",
             "type": "string"
@@ -1538,6 +2692,9 @@
             "default": "TRADE",
             "title": "Feed",
             "type": "string"
+          },
+          "identity_kind": {
+            "$ref": "#/components/schemas/TradeIdentityKind"
           },
           "is_block_trade": {
             "default": false,
@@ -1560,13 +2717,18 @@
           },
           "quantity": {
             "$ref": "#/components/schemas/DecimalValue"
+          },
+          "quantity_unit": {
+            "$ref": "#/components/schemas/QuantityUnit"
           }
         },
         "required": [
           "native_trade_id",
           "price",
           "quantity",
-          "aggressor_side"
+          "quantity_unit",
+          "aggressor_side",
+          "identity_kind"
         ],
         "title": "TradePayload",
         "type": "object"
@@ -1671,6 +2833,75 @@
         ],
         "title": "WarmupResponse",
         "type": "object"
+      },
+      "WarmupSpecification": {
+        "additionalProperties": false,
+        "properties": {
+          "deadline_ms": {
+            "default": 20000,
+            "maximum": 120000.0,
+            "minimum": 100.0,
+            "title": "Deadline Ms",
+            "type": "integer"
+          },
+          "interval_source_policy": {
+            "$ref": "#/components/schemas/IntervalSourcePolicy",
+            "default": "NATIVE_OR_EXACT_RESAMPLE"
+          },
+          "max_cache_age_ms": {
+            "default": 60000,
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "title": "Max Cache Age Ms",
+            "type": "integer"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "time_range": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WarmupTimeRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "WarmupSpecification",
+        "type": "object"
+      },
+      "WarmupTimeRange": {
+        "additionalProperties": false,
+        "properties": {
+          "end_time_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "End Time Ns",
+            "type": "integer"
+          },
+          "start_time_ns": {
+            "exclusiveMinimum": 0.0,
+            "title": "Start Time Ns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_time_ns",
+          "end_time_ns"
+        ],
+        "title": "WarmupTimeRange",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -1687,7 +2918,7 @@
   },
   "info": {
     "title": "Quant Data Layer V2",
-    "version": "2.0.0-shadow"
+    "version": "2.0.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1771,6 +3002,58 @@
                 }
               ],
               "title": "Interval"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_freshness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_recency_policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/StalePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Recency Policy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_session_liveness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Session Liveness Ms"
             }
           },
           {
@@ -1988,6 +3271,65 @@
         ]
       }
     },
+    "/v2/market-data/reference:batch": {
+      "post": {
+        "description": "Return bounded provider reference data for declared alpha/research use.\n\nUnlike the canonical spool route, this path is deliberately a typed,\nbounded provider query.  It carries coverage and lineage on every result,\nand never fabricates a missing metric as zero or silently substitutes a\ndifferent venue.",
+        "operationId": "reference_data_batch_v2_market_data_reference_batch_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-QDL-Purpose",
+            "required": true,
+            "schema": {
+              "title": "X-Qdl-Purpose",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReferenceBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
+        "summary": "Reference Data Batch",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
     "/v2/market-data/warmup:batch": {
       "post": {
         "operationId": "warmup_batch_v2_market_data_warmup_batch_post",
@@ -2106,10 +3448,83 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 1000,
-              "maximum": 10000,
-              "minimum": 1,
-              "title": "Limit",
+              "anyOf": [
+                {
+                  "maximum": 10000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start_time_ns",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start Time Ns"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end_time_ns",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End Time Ns"
+            }
+          },
+          {
+            "in": "query",
+            "name": "interval_source_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IntervalSourcePolicy",
+              "default": "NATIVE_OR_EXACT_RESAMPLE"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_cache_age_ms",
+            "required": false,
+            "schema": {
+              "default": 60000,
+              "maximum": 86400000,
+              "minimum": 0,
+              "title": "Max Cache Age Ms",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deadline_ms",
+            "required": false,
+            "schema": {
+              "default": 20000,
+              "maximum": 120000,
+              "minimum": 100,
+              "title": "Deadline Ms",
               "type": "integer"
             }
           },
@@ -2129,6 +3544,40 @@
                 }
               ],
               "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_recency_policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/StalePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Recency Policy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_session_liveness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Session Liveness Ms"
             }
           },
           {
@@ -2306,6 +3755,40 @@
           },
           {
             "in": "query",
+            "name": "event_recency_policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/StalePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Recency Policy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_session_liveness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Session Liveness Ms"
+            }
+          },
+          {
+            "in": "query",
             "name": "require_full_coverage",
             "required": false,
             "schema": {
@@ -2464,10 +3947,83 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 1000,
-              "maximum": 10000,
-              "minimum": 1,
-              "title": "Limit",
+              "anyOf": [
+                {
+                  "maximum": 10000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start_time_ns",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start Time Ns"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end_time_ns",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End Time Ns"
+            }
+          },
+          {
+            "in": "query",
+            "name": "interval_source_policy",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IntervalSourcePolicy",
+              "default": "NATIVE_OR_EXACT_RESAMPLE"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_cache_age_ms",
+            "required": false,
+            "schema": {
+              "default": 60000,
+              "maximum": 86400000,
+              "minimum": 0,
+              "title": "Max Cache Age Ms",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deadline_ms",
+            "required": false,
+            "schema": {
+              "default": 20000,
+              "maximum": 120000,
+              "minimum": 100,
+              "title": "Deadline Ms",
               "type": "integer"
             }
           },
@@ -2487,6 +4043,40 @@
                 }
               ],
               "title": "Max Freshness Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_recency_policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/StalePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Recency Policy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_session_liveness_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400000,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Session Liveness Ms"
             }
           },
           {

@@ -1,54 +1,113 @@
 """Stable Python SDK V2 with typed public models and generated transports."""
 
+__version__ = "2.0.0"
+
 from qdl_sdk.client import AsyncDataLayerClient, DataLayerClientV2, WarmupStreamSession
 from qdl_sdk.credentials import (
     CallbackCredentialProvider,
     CredentialProvider,
+    RotatingJwtCredentialProvider,
     StaticBearerCredential,
 )
 from qdl_sdk.cursor import CursorCheckpoint, FileCursorStore, MemoryCursorStore
 from qdl_sdk.errors import DataLayerError
+from qdl_sdk.handoff import ClosedBarHandoff
 from qdl_sdk.models import (
+    BasisKind,
     BarRevisionPolicy,
+    BatchResponse,
     ControlEvent,
     DataRequirement,
+    EXECUTION_PRICE_VALIDATION_FEEDS,
     Feed,
+    FeedStatusResponse,
     GapPolicy,
     Grade,
+    InstrumentPageResponse,
+    InstrumentResponse,
+    InstrumentView,
+    IntervalSourcePolicy,
+    LongShortRatioPopulation,
     MarketDataView,
+    MetricUnit,
+    OPTIONAL_INTERVAL_FEEDS,
+    QuantityUnit,
     RecoveryPolicy,
     SnapshotResponse,
     StalePolicy,
     StreamEvent,
+    TradeIdentityKind,
     WarmupResponse,
+    WarmupSpecification,
+    WarmupTimeRange,
+)
+from qdl_sdk.projection import market_data_view_from_stream
+from qdl_sdk.reference import (
+    BasisSeries,
+    LongShortKind,
+    MarkIndexKind,
+    ReferenceBatchRequest,
+    ReferenceBatchResponse,
+    ReferenceDataResponse,
+    ReferenceProduct,
+    ReferenceRequirement,
 )
 from qdl_sdk.transport import GrpcStreamTransport, RestQueryTransport
+from qdl_sdk.tls import WorkloadTlsConfig
 from qdl_sdk.v1_facade import V1CompatibilityFacade
 
 __all__ = [
+    "__version__",
     "AsyncDataLayerClient",
+    "BasisKind",
+    "BasisSeries",
     "BarRevisionPolicy",
+    "BatchResponse",
     "CallbackCredentialProvider",
+    "ClosedBarHandoff",
     "CursorCheckpoint",
     "ControlEvent",
     "CredentialProvider",
     "DataLayerClientV2",
     "DataLayerError",
     "DataRequirement",
+    "EXECUTION_PRICE_VALIDATION_FEEDS",
     "FileCursorStore",
     "Feed",
+    "FeedStatusResponse",
     "GapPolicy",
     "Grade",
     "GrpcStreamTransport",
+    "InstrumentPageResponse",
+    "InstrumentResponse",
+    "InstrumentView",
+    "IntervalSourcePolicy",
+    "LongShortRatioPopulation",
+    "LongShortKind",
+    "MarkIndexKind",
     "MemoryCursorStore",
     "MarketDataView",
+    "market_data_view_from_stream",
+    "MetricUnit",
+    "OPTIONAL_INTERVAL_FEEDS",
+    "QuantityUnit",
     "RestQueryTransport",
     "RecoveryPolicy",
+    "ReferenceBatchRequest",
+    "ReferenceBatchResponse",
+    "ReferenceDataResponse",
+    "ReferenceProduct",
+    "ReferenceRequirement",
+    "RotatingJwtCredentialProvider",
     "SnapshotResponse",
     "StalePolicy",
     "StaticBearerCredential",
     "StreamEvent",
+    "TradeIdentityKind",
     "WarmupResponse",
+    "WarmupSpecification",
+    "WarmupTimeRange",
+    "WorkloadTlsConfig",
     "V1CompatibilityFacade",
     "WarmupStreamSession",
 ]

@@ -5,6 +5,7 @@ from typing import Any
 
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
+from qdl.domain.quantity import quantity_unit_proto
 
 from qdl.canonical.market import _envelope
 from qdl.canonical.trade import (
@@ -15,7 +16,9 @@ from qdl.canonical.trade import (
 )
 
 
-def _levels(rows: list[list[str]], side: int) -> list[market_data_pb2.BookLevel]:
+def _levels(
+    rows: list[list[str]], side: int, quantity_unit: int
+) -> list[market_data_pb2.BookLevel]:
     output = []
     for row in rows:
         if len(row) < 4:
@@ -26,13 +29,14 @@ def _levels(rows: list[list[str]], side: int) -> list[market_data_pb2.BookLevel]
                 price=_decimal(row[0]),
                 quantity=_decimal(row[1]),
                 order_count=int(_required({"order_count": row[3]}, "order_count")),
+                quantity_unit=quantity_unit,
             )
         )
     return output
 
 
 def canonicalize_okx_book(
-    frame: Mapping[str, Any], context: TradeContext
+    frame: Mapping[str, Any], context: TradeContext, *, snapshot_sequence: str | None = None
 ) -> market_data_pb2.EventEnvelope:
     argument = frame.get("arg")
     rows = frame.get("data")
@@ -52,11 +56,21 @@ def canonicalize_okx_book(
         source_sequence=sequence,
         source_event_time_ms=int(_required(row, "ts")),
     )
+    unit = quantity_unit_proto(
+        venue=context.venue,
+        market=context.market,
+        product_type=context.product_type,
+    )
     levels = [
-        *_levels(row.get("bids", []), common_pb2.BOOK_SIDE_BID),
-        *_levels(row.get("asks", []), common_pb2.BOOK_SIDE_ASK),
+        *_levels(row.get("bids", []), common_pb2.BOOK_SIDE_BID, unit),
+        *_levels(row.get("asks", []), common_pb2.BOOK_SIDE_ASK, unit),
     ]
     checksum = str(row.get("checksum") or "")
+    generation = int(context.connection_generation)
+    # Legacy/test callers may not provide a connection generation.  Preserve
+    # their additive wire compatibility, but never label that book as sequence
+    # verified; the V2 quality projection will keep it out of execution use.
+    sequence_verified = generation >= 1
     if action == "snapshot":
         envelope.book_snapshot.CopyFrom(
             market_data_pb2.OrderBookSnapshot(
@@ -64,16 +78,26 @@ def canonicalize_okx_book(
                 checksum=checksum,
                 levels=levels,
                 depth=max(len(row.get("bids", [])), len(row.get("asks", []))),
+                book_generation=generation,
+                sequence_verified=sequence_verified,
+                truncated=False,
             )
         )
     else:
+        if not str(snapshot_sequence or "").strip():
+            raise ValueError(
+                "OKX book delta requires the active websocket snapshot sequence"
+            )
         envelope.book_delta.CopyFrom(
             market_data_pb2.OrderBookDelta(
                 native_sequence_start=str(_required(row, "prevSeqId")),
                 native_sequence_end=sequence,
+                snapshot_sequence=str(snapshot_sequence),
                 checksum=checksum,
                 updates=levels,
                 reset=False,
+                book_generation=generation,
+                sequence_verified=sequence_verified,
             )
         )
     _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))
@@ -94,6 +118,11 @@ def canonicalize_deribit_option_book_fixture(
         feed="book_snapshot",
         source_sequence=sequence,
         source_event_time_ms=int(_required(frame, "timestamp")),
+    )
+    unit = quantity_unit_proto(
+        venue=context.venue,
+        market=context.market,
+        product_type=context.product_type,
     )
     levels = []
     for side, key in (
@@ -120,6 +149,9 @@ def canonicalize_deribit_option_book_fixture(
             native_sequence=sequence,
             levels=levels,
             depth=max(len(frame.get("bids", [])), len(frame.get("asks", []))),
+            book_generation=int(context.connection_generation),
+            sequence_verified=False,
+            truncated=False,
         )
     )
     _set_canonical_payload_hash(envelope, enabled=bool(context.source_session_id))

@@ -13,6 +13,26 @@ Other services should connect to `data_layer` using this rule:
 
 The `data_layer` is the system-of-record gateway for market-data distribution inside this stack.
 
+### V2 On-Demand Reference Data
+
+`POST /v2/market-data/reference:batch` is available to a V2 alpha/research
+identity only when its signed manifest declares the exact
+`instrument_uid/feed/interval/freshness` requirement. It performs bounded
+provider reads with typed provenance, units, coverage and `UNAVAILABLE`; it is
+not a background subscription and does not add a WebSocket connection.
+
+The ready five-liquid paper manifests expose:
+
+- Binance USD-M: funding, daily OI, long/short ratio, taker flow, native or
+  continuous daily basis, mark/index and contract metadata.
+- OKX Swap: funding, current OI, mark/index and contract metadata. Unsupported
+  provider metrics remain typed `UNAVAILABLE`; no Binance value is substituted.
+
+Use these products for alpha/research features and diagnostics. They are never
+execution or risk authority except a separately declared fresh
+`MARK_INDEX_PRICE` read. A new alpha must add its own manifest requirement
+before calling a reference metric; it must not reuse another alpha's identity.
+
 ## 1. Connection Architecture
 
 Production services should **never** connect directly to external exchanges (Binance, DNSE, etc.) if they are running within the `bobby_network`. Instead, they must use the `data_layer` as a unified gateway.
@@ -589,6 +609,52 @@ The target architecture is:
 | Paper/live executor reads exchange price directly | `client.latest_trade("binance", symbol)` plus `stream_trades()` |
 | Service trusts any Redis key if present | validate `source` and `timestamp` with `validate_source()` / `validate_freshness()` |
 | Service treats `/v1/vn/quote-last` as live | only use it for recovery/inspection unless live TTL state is confirmed |
+
+### V2 Universal Warmup Contract
+
+Phase 10.2 adds one provider-neutral BAR history contract for alpha and Trading
+System consumers. At this source milestone it is available through the V2 API
+and `qdl_sdk`; active V1 routes and Redis contracts are unchanged until a later
+versioned consumer-manifest cutover.
+
+The V2 request declares:
+
+- one canonical `instrument_uid`, BAR interval and source policy;
+- exactly one horizon: `rows`, or `[start_time_ns, end_time_ns)`;
+- `NATIVE_ONLY` or `NATIVE_OR_EXACT_RESAMPLE` interval policy;
+- maximum cache age and a bounded request deadline;
+- finality, coverage, gap, stale and recovery policy.
+
+Available operations are:
+
+```text
+GET  /v2/market-data/{instrument_uid}/warmup
+GET  /v2/market-data/{instrument_uid}/history
+POST /v2/market-data/warmup:batch
+```
+
+Operational behavior:
+
+1. Native provider intervals are preferred. A non-native interval is created
+   only from a complete consecutive set of final canonical constituents and
+   carries constituent lineage and watermark.
+2. Wide requests are bounded and provider-aware. Compatible work is shared,
+   while different symbols retain explicit item identity and failure status.
+3. Cache reuse includes instrument, target/source interval, source policy,
+   closed-bar boundary and age. Cached partial or stale data cannot become a
+   successful execution-grade result.
+4. At the next interval boundary, fetch the latest already-closed bar, append
+   it to the bounded FIFO, then run the strategy once immediately. Do not wait
+   one additional candle and do not drive candle logic from tick-level logs.
+5. A required batch is successful only when all requested items are complete.
+   Partial diagnostic batches expose one typed problem per failed instrument.
+6. The Data Layer supplies timestamped facts and freshness. Trading System
+   remains responsible for limit/stop/OCO placement and all risk decisions.
+
+The bounded real-provider Phase 10.2 evidence covers every BAR slice currently
+declared for Binance and OKX. VN execution eligibility still requires a real,
+authenticated open-session admission; closed-market data is not accepted as a
+substitute.
 
 ### Recommended Alpha Migration Steps
 

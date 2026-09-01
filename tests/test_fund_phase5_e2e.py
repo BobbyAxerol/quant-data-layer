@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 import tempfile
 import time
@@ -13,6 +14,7 @@ import httpx
 from qdl.api_v2 import create_v2_app
 from qdl.canonical.market import canonicalize_binance_usdm_bar
 from qdl.canonical.trade import TradeContext, canonical_event, raw_market_event
+from qdl.common.v1 import common_pb2
 from qdl.consumer import (
     ConsumerManifestLoader,
     ConsumerMigrationRegistry,
@@ -83,6 +85,7 @@ def _record(venue: str, market: str, native_symbol: str) -> InstrumentRecord:
 
 
 def _envelope(record: InstrumentRecord, feed: FeedType, source_id: str):
+    now = time.time_ns()
     common = dict(
         schema_name=f"qdl.marketdata.{feed.value.lower()}", schema_major=2,
         event_id=b"e" * 16, instrument_uid=record.instrument_uid,
@@ -90,15 +93,16 @@ def _envelope(record: InstrumentRecord, feed: FeedType, source_id: str):
         venue=record.identity.venue, market=record.identity.market,
         product_type="PERPETUAL", native_symbol=record.native_symbol,
         provider=f"{record.identity.venue}_DIRECT", source_id=source_id,
-        source_role=1, lease_epoch=1, source_event_time_ns=time.time_ns(),
-        received_at_ns=time.time_ns(), normalized_at_ns=time.time_ns(),
-        published_at_ns=time.time_ns(), source_sequence="1", partition_sequence=1,
+        source_role=1, lease_epoch=1, source_event_time_ns=now,
+        received_at_ns=now, normalized_at_ns=now,
+        published_at_ns=now, source_sequence="1", partition_sequence=1,
         normalizer_version="phase5-e2e", adapter_version="fixture-v1",
         config_revision=1,
     )
     if feed is FeedType.BAR:
         return market_data_pb2.EventEnvelope(**common, bar=market_data_pb2.Bar(
-            interval="1m", open_time_ns=1, close_time_ns=2, is_final=True, revision=1,
+            interval="1m", open_time_ns=now - 60_000_000_000, close_time_ns=now,
+            is_final=True, revision=1,
             lifecycle=market_data_pb2.BAR_LIFECYCLE_REVISED,
             supersedes_event_id=b"previous",
         ))
@@ -129,14 +133,17 @@ def _payload(feed: FeedType, now: int) -> dict:
             "open_time_ns": now - 60_000_000_000,
             "close_time_ns": now,
             "open": "60000", "high": "60100", "low": "59900",
-            "close": "60050", "volume": "10", "trade_count": 5,
+            "close": "60050", "volume": "10", "volume_unit": "BASE_ASSET",
+            "trade_count": 5,
             "origin": "VENUE_NATIVE", "is_final": True,
         }
     return {
         "native_trade_id": "trade-1",
         "price": "60050",
         "quantity": "0.01",
+        "quantity_unit": "BASE_ASSET",
         "aggressor_side": "BUY",
+        "identity_kind": "NATIVE",
         "is_block_trade": False,
         "is_buyer_maker": False,
     }
@@ -190,8 +197,28 @@ class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
             )
             backend.put_latest(domain, item)
             if domain.warmup_limit:
+                interval_ns = 60_000_000_000
+                history = tuple(
+                    replace(
+                        item,
+                        observed_at_ns=now - (domain.warmup_limit - index - 1) * interval_ns,
+                        payload={
+                            **item.payload,
+                            "open_time_ns": now
+                            - (domain.warmup_limit - index) * interval_ns,
+                            "close_time_ns": now
+                            - (domain.warmup_limit - index - 1) * interval_ns,
+                        },
+                    )
+                    for index in range(domain.warmup_limit)
+                )
                 backend.put_history(domain, HistoryResult(
-                    (item,), CoverageStatus.FULL, "snapshot", token, 0, time.time_ns()
+                    history,
+                    CoverageStatus.FULL,
+                    "snapshot",
+                    token,
+                    0,
+                    time.time_ns(),
                 ))
             service = V2QueryService(
                 instruments=InstrumentQuery(instruments), backend=backend,
@@ -328,6 +355,9 @@ class Phase5EndToEndTests(unittest.IsolatedAsyncioTestCase):
                     "low": canonical.bar.low.source_text,
                     "close": canonical.bar.close.source_text,
                     "volume": canonical.bar.volume.source_text,
+                    "volume_unit": common_pb2.QuantityUnit.Name(
+                        canonical.bar.volume_unit
+                    ).removeprefix("QUANTITY_UNIT_"),
                     "trade_count": canonical.bar.trade_count,
                     "origin": "VENUE_NATIVE",
                     "is_final": canonical.bar.is_final,

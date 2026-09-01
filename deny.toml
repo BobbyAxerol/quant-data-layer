@@ -1,23 +1,53 @@
+# Rust supply-chain policy for the Linux production workspace.
+# Keep exceptions empty unless an advisory/license is reviewed and documented.
+[graph]
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+]
+all-features = false
+no-default-features = false
+
 [advisories]
-version = 2
-yanked = "deny"
+ignore = []
+git-fetch-with-cli = true
 
 [licenses]
-version = 2
-confidence-threshold = 0.8
 allow = [
-  "Apache-2.0",
-  "BSD-3-Clause",
-  "CDLA-Permissive-2.0",
-  "ISC",
-  "MIT",
-  "Unicode-3.0",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
 ]
+confidence-threshold = 0.8
+exceptions = []
+
+[licenses.private]
+ignore = false
+registries = []
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+allow-workspace = true
+deny = []
+skip = []
+skip-tree = []
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[sources.allow-org]
+github = []
+gitlab = []
+bitbucket = []

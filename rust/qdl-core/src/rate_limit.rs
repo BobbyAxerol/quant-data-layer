@@ -1,4 +1,6 @@
-#[derive(Clone, Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TokenBucket {
     capacity: u64,
     tokens: u64,
@@ -33,6 +35,53 @@ impl TokenBucket {
         }
         self.tokens -= amount;
         true
+    }
+
+    pub fn capacity(&self) -> u64 {
+        self.capacity
+    }
+
+    pub fn refill_tokens(&self) -> u64 {
+        self.refill_tokens
+    }
+
+    pub fn refill_interval_ns(&self) -> i64 {
+        self.refill_interval_ns
+    }
+
+    pub fn available_tokens(&mut self, now_ns: i64) -> u64 {
+        self.refill(now_ns);
+        self.tokens
+    }
+
+    /// Returns the deterministic wait for an admissible amount after applying
+    /// elapsed refill, or `None` when the amount can never fit this bucket.
+    pub fn retry_after_ns(&mut self, amount: u64, now_ns: i64) -> Option<i64> {
+        self.refill(now_ns);
+        if amount == 0 || amount > self.capacity {
+            return None;
+        }
+        if amount <= self.tokens {
+            return Some(0);
+        }
+        let deficit = amount.saturating_sub(self.tokens);
+        let periods =
+            deficit.saturating_add(self.refill_tokens.saturating_sub(1)) / self.refill_tokens;
+        let ready_at_ns = self
+            .last_refill_ns
+            .saturating_add((periods as i64).saturating_mul(self.refill_interval_ns));
+        Some(ready_at_ns.saturating_sub(now_ns).max(1))
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.capacity == 0
+            || self.refill_tokens == 0
+            || self.refill_interval_ns <= 0
+            || self.tokens > self.capacity
+        {
+            return Err("token bucket state is invalid".into());
+        }
+        Ok(())
     }
 
     fn refill(&mut self, now_ns: i64) {

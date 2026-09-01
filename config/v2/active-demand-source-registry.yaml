@@ -1,0 +1,190 @@
+schema: qdl.v2.active-demand-source-registry.v1
+revision: 3
+owner_registry:
+  root: trading_system
+  path: config/_config/portfolio_account_config_setup.yaml
+# Dark Phase 11.1 planning limits. These are admission bounds for one shared
+# runtime per venue/market/feed, not a request to create workers or sessions.
+# Any newly declared feed must receive an explicit bounded budget; it cannot
+# silently consume broad-universe capacity.
+admission:
+  max_subscriptions_per_connection: 200
+  max_total_slices: 1024
+  budgets:
+    - venue: BINANCE
+      market: SPOT
+      feed: BAR
+      max_slices: 128
+    - venue: BINANCE
+      market: SPOT
+      feed: QUOTE
+      max_slices: 128
+    - venue: BINANCE
+      market: SPOT
+      feed: TRADE
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: BAR
+      max_slices: 512
+    - venue: BINANCE
+      market: USDM
+      feed: QUOTE
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: TRADE
+      max_slices: 512
+    - venue: BINANCE
+      market: USDM
+      feed: BOOK_SNAPSHOT
+      max_slices: 32
+    - venue: BINANCE
+      market: USDM
+      feed: BOOK_DELTA
+      max_slices: 32
+    - venue: BINANCE
+      market: USDM
+      feed: FUNDING_RATE
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: OPEN_INTEREST
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: LONG_SHORT_RATIO
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: TAKER_FLOW
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: MARK_PRICE
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: INDEX_PRICE
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: MARK_INDEX_PRICE
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: CONTRACT_METADATA
+      max_slices: 128
+    - venue: BINANCE
+      market: USDM
+      feed: BASIS
+      max_slices: 64
+    - venue: OKX
+      market: SPOT
+      feed: BAR
+      max_slices: 128
+    - venue: OKX
+      market: SPOT
+      feed: QUOTE
+      max_slices: 128
+    - venue: OKX
+      market: SPOT
+      feed: TRADE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: BAR
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: QUOTE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: TRADE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: BOOK_SNAPSHOT
+      max_slices: 32
+    - venue: OKX
+      market: SWAP
+      feed: BOOK_DELTA
+      max_slices: 32
+    - venue: OKX
+      market: SWAP
+      feed: FUNDING_RATE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: OPEN_INTEREST
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: MARK_PRICE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: INDEX_PRICE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: MARK_INDEX_PRICE
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: CONTRACT_METADATA
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: BASIS
+      max_slices: 64
+    - venue: OKX
+      market: FUTURES
+      feed: BOOK_SNAPSHOT
+      max_slices: 32
+    - venue: OKX
+      market: FUTURES
+      feed: BOOK_DELTA
+      max_slices: 32
+sources:
+  - source_id: alpha-compose
+    root: execution_alpha
+    parser: ALPHA_COMPOSE_V1
+    path: null
+    glob: alphas/*/docker-compose.yml
+    source_policy_id: crypto_primary_v2
+    priority: 100
+    ttl_seconds: 180
+    default_warmup_limit: 700
+    bar_freshness_multiplier: 3
+  - source_id: current-v2-production-demand
+    root: repository
+    parser: PRODUCTION_DEMAND_V1
+    path: config/v2/stable-crypto-demand.yaml
+    glob: null
+    source_policy_id: crypto_primary_v2
+    priority: 20
+    ttl_seconds: 180
+    default_warmup_limit: 1
+    bar_freshness_multiplier: 3
+  - source_id: phase115c-paper-consumer-demand
+    root: repository
+    parser: PRODUCTION_DEMAND_V1
+    path: config/v2/phase115c-paper-consumer-demand.yaml
+    glob: null
+    source_policy_id: crypto_primary_v2
+    priority: 20
+    ttl_seconds: 180
+    default_warmup_limit: 1
+    bar_freshness_multiplier: 3
+  - source_id: stable-reference-l2-demand
+    root: repository
+    parser: UNIVERSAL_DEMAND_V1
+    path: config/v2/stable-reference-l2-demand.yaml
+    glob: null
+    source_policy_id: crypto_liquid_v2
+    priority: 50
+    ttl_seconds: 180
+    default_warmup_limit: 1
+    bar_freshness_multiplier: 3

@@ -1,0 +1,26 @@
+schema: qdl.v2.liquid-crypto-feature-policy.v1
+revision: 1
+perpetual_base_assets:
+  - BTC
+  - ETH
+  - SOL
+  - DOGE
+  - BNB
+perpetual_settlement_asset: USDT
+perpetual_venue_markets:
+  - venue: BINANCE
+    market: USDM
+  - venue: OKX
+    market: SWAP
+l2_base_assets:
+  - BTC
+  - ETH
+l2_dated_venue_markets:
+  - venue: BINANCE
+    market: USDM
+  - venue: OKX
+    market: FUTURES
+l2_depth_per_side: 100
+l2_freshness_ms: 60000
+l2_ttl_seconds: 180
+source_policy_id: crypto_liquid_v2

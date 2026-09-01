@@ -1,0 +1,92 @@
+# Example only. It is not mounted by any runtime role in Phase 10.1.
+# The matching universe registry is config/v2/universes/crypto-and-vn-core-v1.json.
+schema: qdl.v2.universal-demand.v1
+revision: 1
+requirements:
+- consumer_id: trading-system.execution.v2
+  purpose: EXECUTION
+  universe:
+    selector_id: binance-usdm-core-v1
+    kind: SEGMENT
+    venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    universe_ref: binance-usdm-core-v1
+    segment_id: core
+  feed: TRADE
+  source_policy_id: crypto_primary_v2
+  interval: null
+  warmup_limit: 0
+  max_freshness_ms: 15000
+  priority: 10
+  ttl_seconds: 180
+  require_final_bars: false
+  require_live: true
+  execution_grade: true
+  depth_levels: 0
+  configuration_revision: 1
+- consumer_id: trading-system.execution.v2
+  purpose: EXECUTION
+  universe:
+    selector_id: okx-swap-core-v1
+    kind: SEGMENT
+    venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    universe_ref: okx-swap-core-v1
+    segment_id: core
+  feed: QUOTE
+  source_policy_id: crypto_primary_v2
+  interval: null
+  warmup_limit: 0
+  max_freshness_ms: 5000
+  priority: 10
+  ttl_seconds: 180
+  require_final_bars: false
+  require_live: true
+  execution_grade: true
+  depth_levels: 0
+  configuration_revision: 1
+- consumer_id: alpha.daily-bars.v2
+  purpose: ALPHA
+  universe:
+    selector_id: binance-usdm-core-v1
+    kind: SEGMENT
+    venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    universe_ref: binance-usdm-core-v1
+    segment_id: core
+  feed: BAR
+  source_policy_id: crypto_primary_v2
+  interval: 1m
+  warmup_limit: 700
+  max_freshness_ms: 180000
+  priority: 100
+  ttl_seconds: 300
+  require_final_bars: true
+  require_live: true
+  execution_grade: false
+  depth_levels: 0
+  configuration_revision: 1
+- consumer_id: alpha.vn-bars.v2
+  purpose: ALPHA
+  universe:
+    selector_id: dnse-vn-derivative-core-v1
+    kind: UNIVERSE_REF
+    venue: HNX
+    market: VN_DERIVATIVES
+    product_type: FUTURE
+    universe_ref: dnse-vn-derivative-core-v1
+  feed: BAR
+  source_policy_id: vn_primary_v2
+  interval: 1m
+  warmup_limit: 700
+  max_freshness_ms: 180000
+  priority: 100
+  ttl_seconds: 300
+  require_final_bars: true
+  require_live: true
+  execution_grade: false
+  depth_levels: 0
+  configuration_revision: 1

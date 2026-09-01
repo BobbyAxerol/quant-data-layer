@@ -18,7 +18,11 @@ class Phase5OpenApiContractTests(unittest.TestCase):
         current = build_openapi()
         self.assertEqual(current, expected)
         paths = current["paths"]
-        self.assertEqual(len(paths), 10)
+        self.assertEqual(len(paths), 11)
+        self.assertIn("/v2/market-data/reference:batch", paths)
+        reference = paths["/v2/market-data/reference:batch"]["post"]
+        self.assertIn("application/json", reference["requestBody"]["content"])
+        self.assertIn("application/json", reference["responses"]["200"]["content"])
         for path, operations in paths.items():
             for method, operation in operations.items():
                 if method not in {"get", "post"}:

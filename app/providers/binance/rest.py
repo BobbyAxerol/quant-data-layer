@@ -21,9 +21,18 @@ BINANCE_KLINE_URLS = {
 
 
 class BinanceProviderError(RuntimeError):
-    def __init__(self, message: str, attempts: list[dict] | None = None):
+    def __init__(
+        self,
+        message: str,
+        attempts: list[dict] | None = None,
+        *,
+        retry_after_ms: int | None = None,
+    ):
         super().__init__(message)
         self.attempts = attempts or []
+        if retry_after_ms is not None and retry_after_ms < 0:
+            raise ValueError("retry_after_ms must be non-negative")
+        self.retry_after_ms = retry_after_ms
 
 
 def normalize_interval(interval: str) -> str:
@@ -80,4 +89,3 @@ def fetch_klines(
         f"Failed to fetch historical klines for {symbol} from Binance",
         attempts=errors,
     )
-

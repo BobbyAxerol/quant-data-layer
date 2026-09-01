@@ -2,6 +2,13 @@
 
 from typing import TYPE_CHECKING, Any
 
+from qdl.consumer.stable import (
+    StableConsumerMigration,
+    StableConsumerMigrationPlan,
+    StablePrimaryConsumerRoute,
+    StablePrimaryConsumerRoutePlan,
+    primary_fallback_return_drill,
+)
 from qdl.consumer.manifest import (
     ConsumerManifest,
     ConsumerManifestLoader,
@@ -12,6 +19,40 @@ from qdl.consumer.manifest import (
     ConsumerRoute,
     MigrationState,
     UsageTelemetry,
+)
+from qdl.consumer.realtime_route import (
+    RealtimeRoute,
+    RealtimeRouteDecision,
+    RealtimeSliceHealth,
+    RealtimeSliceObservation,
+    evaluate_realtime_health,
+    requirement_key,
+    select_realtime_route,
+)
+from qdl.consumer.release import (
+    ReleaseReadinessSummary,
+    ReleaseResourceBudget,
+    ReleaseRouteObservation,
+    StableReleaseConsumerRoute,
+    StableReleaseProductRoute,
+    StableReleaseRoutePlan,
+    V1FallbackReference,
+    evaluate_release_readiness,
+    is_explicit_v1_exclusion,
+)
+from qdl.consumer.universal_release import (
+    ConsumerRouteBinding,
+    ConsumerClassRule,
+    FallbackRule,
+    UniversalConsumerClass,
+    UniversalReleaseCoverage,
+    UniversalReleaseExclusion,
+    UniversalReleaseManifest,
+    UniversalReleasePolicy,
+    UniversalReleaseProduct,
+    UniversalResourceBudget,
+    UniversalV1Rollback,
+    build_universal_release_manifest,
 )
 
 if TYPE_CHECKING:
@@ -26,9 +67,42 @@ __all__ = [
     "ConsumerQuotas",
     "ConsumerRoute",
     "MigrationState",
+    "StableConsumerMigration",
+    "StableConsumerMigrationPlan",
+    "StablePrimaryConsumerRoute",
+    "StablePrimaryConsumerRoutePlan",
+    "primary_fallback_return_drill",
     "ManifestShadowConsumer",
     "ShadowObservation",
     "UsageTelemetry",
+    "RealtimeRoute",
+    "RealtimeRouteDecision",
+    "RealtimeSliceHealth",
+    "RealtimeSliceObservation",
+    "evaluate_realtime_health",
+    "requirement_key",
+    "select_realtime_route",
+    "ReleaseReadinessSummary",
+    "ReleaseResourceBudget",
+    "ReleaseRouteObservation",
+    "StableReleaseConsumerRoute",
+    "StableReleaseProductRoute",
+    "StableReleaseRoutePlan",
+    "V1FallbackReference",
+    "evaluate_release_readiness",
+    "is_explicit_v1_exclusion",
+    "ConsumerRouteBinding",
+    "ConsumerClassRule",
+    "FallbackRule",
+    "UniversalConsumerClass",
+    "UniversalReleaseCoverage",
+    "UniversalReleaseExclusion",
+    "UniversalReleaseManifest",
+    "UniversalReleasePolicy",
+    "UniversalReleaseProduct",
+    "UniversalResourceBudget",
+    "UniversalV1Rollback",
+    "build_universal_release_manifest",
 ]
 
 

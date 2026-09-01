@@ -24,6 +24,7 @@ pip-delete-this-directory.txt
 
 data/
 logs/
+state/
 *.parquet
 symbols_spot.json
 Documentation/

@@ -9,19 +9,51 @@ from pydantic import ValidationError
 from qdl_sdk.cursor import CursorCheckpoint, CursorStore, MemoryCursorStore
 from qdl_sdk.errors import ContinuityError, CursorExpiredError, DataLayerError
 from qdl_sdk.models import (
+    BatchResponse,
     ControlEvent,
     DataRequirement,
     Feed,
+    FeedStatusResponse,
     Grade,
+    InstrumentPageResponse,
+    InstrumentResponse,
+    InstrumentView,
     SnapshotResponse,
     StreamEvent,
     WarmupResponse,
 )
+from qdl_sdk.reference import ReferenceBatchResponse, ReferenceRequirement
 
 
 class QueryTransport(Protocol):
     async def warmup(self, requirement: DataRequirement, *, consumer_id: str) -> dict: ...
+    async def warmup_batch(
+        self,
+        requirements: tuple[DataRequirement, ...],
+        *,
+        consumer_id: str,
+        require_all: bool,
+    ) -> dict: ...
+    async def reference_batch(
+        self,
+        requirements: tuple[ReferenceRequirement, ...],
+        *,
+        consumer_id: str,
+        require_all: bool,
+    ) -> dict: ...
     async def snapshot(self, requirement: DataRequirement, *, consumer_id: str) -> dict: ...
+    async def feed_status(self, requirement: DataRequirement, *, consumer_id: str) -> dict: ...
+    async def instruments(
+        self,
+        *,
+        consumer_id: str,
+        consumer_grade: Grade,
+        cursor: str | None,
+        limit: int,
+    ) -> dict: ...
+    async def instrument(
+        self, identity: str, *, consumer_id: str, consumer_grade: Grade
+    ) -> dict: ...
     async def close(self) -> None: ...
 
 
@@ -41,6 +73,32 @@ class TelemetryRecorder(Protocol):
     def record(
         self, *, consumer_id: str, sdk_major: int, contract: str, cursor_offset: int
     ) -> None: ...
+
+
+def _fixed_interval_ns(interval: str) -> int:
+    units = {
+        "s": 1_000_000_000,
+        "m": 60 * 1_000_000_000,
+        "h": 3_600_000_000_000,
+        "d": 86_400_000_000_000,
+        "w": 604_800_000_000_000,
+    }
+    value = str(interval or "")
+    if len(value) < 2 or value != value.lower() or value[-1] not in units:
+        raise ContinuityError(
+            "SCHEMA_NOT_SUPPORTED", "BAR interval is not a canonical fixed duration"
+        )
+    try:
+        count = int(value[:-1])
+    except ValueError as error:
+        raise ContinuityError(
+            "SCHEMA_NOT_SUPPORTED", "BAR interval count is invalid"
+        ) from error
+    if count < 1:
+        raise ContinuityError(
+            "SCHEMA_NOT_SUPPORTED", "BAR interval must be positive"
+        )
+    return count * units[value[-1]]
 
 
 def _validate_query_payload(
@@ -65,7 +123,15 @@ def _validate_query_payload(
             raise ContinuityError("PARTIAL_RESULT", "warmup count does not match returned rows")
         if requirement.require_full_coverage and response.coverage != "FULL":
             raise ContinuityError("PARTIAL_RESULT", "warmup response is not full coverage")
-    for row in rows:
+        specification = requirement.warmup_specification
+        if specification is not None and specification.rows is not None:
+            if response.count != specification.rows:
+                raise ContinuityError(
+                    "PARTIAL_RESULT",
+                    "warmup row count differs from the requested horizon",
+                )
+    for index, row in enumerate(rows):
+        is_tail = index == len(rows) - 1
         if row.instrument_uid != requirement.instrument_uid:
             raise ContinuityError("CONFLICT", "query response instrument does not match requirement")
         if row.feed.value != requirement.feed.value:
@@ -80,18 +146,48 @@ def _validate_query_payload(
         state = quality.state.upper()
         freshness_ms = quality.freshness_ms
         if (
-            requirement.max_freshness_ms is not None
+            is_tail
+            and state != "MARKET_CLOSED"
+            and requirement.max_freshness_ms is not None
             and freshness_ms > requirement.max_freshness_ms
-            and requirement.stale_policy.value in {"BLOCK", "PAUSE"}
+            and requirement.effective_event_recency_policy.value in {"BLOCK", "PAUSE"}
         ):
             raise ContinuityError("DATA_STALE", "query response exceeds freshness policy")
+        if (
+            is_tail
+            and quality.provider_session_state in {"STALE", "DISCONNECTED", "UNKNOWN"}
+        ):
+            raise ContinuityError(
+                "DATA_STALE", "query response provider session is not live"
+            )
+        if is_tail and requirement.max_session_liveness_ms is not None and (
+            quality.provider_session_state != "LIVE"
+            or quality.provider_session_liveness_ms is None
+            or quality.provider_session_liveness_ms
+            > requirement.max_session_liveness_ms
+        ):
+            raise ContinuityError(
+                "DATA_STALE", "query response provider session exceeds its policy"
+            )
         if quality.gap_open and requirement.gap_policy.value in {"BLOCK", "PAUSE"}:
             raise ContinuityError("OPEN_SEQUENCE_GAP", "query response has an open gap")
-        if state in {"STALE", "OFFLINE", "UNAVAILABLE"} and requirement.stale_policy.value in {
+        if is_tail and state in {
+            "STALE", "OFFLINE", "UNAVAILABLE"
+        } and requirement.stale_policy.value in {
             "BLOCK", "PAUSE",
         }:
             raise ContinuityError("DATA_STALE", f"query response quality state is {state}")
-        if requirement.consumer_grade is Grade.EXECUTION and not quality.execution_eligible:
+        if (
+            is_tail
+            and requirement.consumer_grade is Grade.EXECUTION
+            and not quality.execution_eligible
+            and not (
+                requirement.feed is Feed.TRADE
+                and requirement.effective_event_recency_policy.value == "OBSERVE"
+                and quality.event_recency_state == "STALE"
+                and quality.provider_session_state in {"LIVE", "NOT_APPLICABLE"}
+            )
+        ):
             raise ContinuityError(
                 "SOURCE_NON_AUTHORITATIVE",
                 "execution-grade response is not execution eligible",
@@ -102,6 +198,46 @@ def _validate_query_payload(
             lifecycle = str(getattr(row.payload, "lifecycle", "")).upper()
             if lifecycle not in {"FINAL", "REVISED"}:
                 raise ContinuityError("DATA_NOT_READY", "bar response is not final")
+    if requirement.feed is Feed.BAR:
+        opens = [int(row.payload.open_time_ns) for row in rows]
+        if opens != sorted(set(opens)):
+            raise ContinuityError(
+                "OPEN_SEQUENCE_GAP", "BAR warmup is duplicate or out of order"
+            )
+        specification = requirement.warmup_specification
+        if warmup and specification is not None and specification.time_range is not None:
+            interval_ns = _fixed_interval_ns(requirement.interval or "")
+            start_ns = specification.time_range.start_time_ns
+            end_ns = specification.time_range.end_time_ns
+            if any(value < start_ns or value + interval_ns > end_ns for value in opens):
+                raise ContinuityError(
+                    "PARTIAL_RESULT", "BAR warmup escapes the requested time range"
+                )
+    return response
+
+
+def _validate_feed_status_payload(
+    requirement: DataRequirement, payload: dict
+) -> FeedStatusResponse:
+    """Validate status identity without reapplying snapshot freshness policy."""
+    try:
+        response = FeedStatusResponse.model_validate(payload)
+    except ValidationError as error:
+        raise ContinuityError(
+            "SCHEMA_NOT_SUPPORTED", "feed-status response violates the typed V2 contract"
+        ) from error
+    if response.instrument_uid != requirement.instrument_uid:
+        raise ContinuityError(
+            "CONFLICT", "feed-status instrument does not match requirement"
+        )
+    if response.feed is not requirement.feed:
+        raise ContinuityError(
+            "CONFLICT", "feed-status feed does not match requirement"
+        )
+    if response.quality.policy_id != requirement.source_policy_id:
+        raise ContinuityError(
+            "CONFLICT", "feed-status source policy does not match requirement"
+        )
     return response
 
 
@@ -137,16 +273,22 @@ class WarmupStreamSession:
         self._reconnect_attempts = 0
         self._telemetry = telemetry
         self.state_restored = state_restored
+        self._checkpoint_generation_started = state_restored
+        self._closed = False
 
     def __aiter__(self):
         return self
 
     async def __anext__(self) -> StreamEvent | ControlEvent:
+        if self._closed or self._events is None:
+            raise StopAsyncIteration
         try:
             event = await self._events.__anext__()
         except CursorExpiredError:
+            await self._close_events()
             self.warmup = await self._fresh_snapshot()
             self._last_seen_offset = self.warmup.watermark_offset
+            self._checkpoint_generation_started = False
             self._events = self._subscribe(
                 self.warmup.stream_cursor
             )
@@ -157,11 +299,16 @@ class WarmupStreamSession:
                 self.warmup,
             )
         except DataLayerError as error:
+            await self._close_events()
             if not error.retryable or self._reconnect_attempts >= self._max_reconnect_attempts:
                 raise
             self._reconnect_attempts += 1
             await asyncio.sleep(min(0.1 * 2 ** (self._reconnect_attempts - 1), 2.0))
-            checkpoint = self._cursor_store.load(self._cursor_key)
+            checkpoint = (
+                self._cursor_store.load(self._cursor_key)
+                if self._checkpoint_generation_started
+                else None
+            )
             if checkpoint is None:
                 token = self.warmup.stream_cursor
                 self._last_seen_offset = self.warmup.watermark_offset
@@ -180,11 +327,10 @@ class WarmupStreamSession:
                 "OPEN_SEQUENCE_GAP",
                 f"non-monotonic stream offset {event.logical_offset} after {self._last_seen_offset}",
             )
-        if event.logical_offset != self._last_seen_offset + 1:
-            raise ContinuityError(
-                "OPEN_SEQUENCE_GAP",
-                f"expected offset {self._last_seen_offset + 1}, observed {event.logical_offset}",
-            )
+        # A signed cursor advances across the physical durable partition, but
+        # the server emits only records matching this logical requirement.
+        # Gaps in physical offsets therefore represent filtered records, not
+        # a loss of matching data; server replay/gap checks remain authority.
         self._last_seen_offset = event.logical_offset
         self._reconnect_attempts = 0
         return event
@@ -192,10 +338,12 @@ class WarmupStreamSession:
     def acknowledge(self, event: StreamEvent) -> None:
         if event.logical_offset > self._last_seen_offset:
             raise ValueError("cannot acknowledge an event that was not observed")
-        self._cursor_store.save(
-            self._cursor_key,
-            CursorCheckpoint(event.resume_token, event.logical_offset),
-        )
+        checkpoint = CursorCheckpoint(event.resume_token, event.logical_offset)
+        if self._checkpoint_generation_started:
+            self._cursor_store.save(self._cursor_key, checkpoint)
+        else:
+            self._cursor_store.replace(self._cursor_key, checkpoint)
+            self._checkpoint_generation_started = True
         if self._telemetry is not None:
             self._telemetry.record(
                 consumer_id=self.consumer_id,
@@ -203,6 +351,19 @@ class WarmupStreamSession:
                 contract="grpc:Subscribe",
                 cursor_offset=event.logical_offset,
             )
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await self._close_events()
+
+    async def _close_events(self) -> None:
+        events = self._events
+        self._events = None
+        close = getattr(events, "aclose", None)
+        if close is not None:
+            await close()
 
     def _subscribe(self, token: str):
         return self._stream_transport.subscribe(
@@ -213,7 +374,7 @@ class WarmupStreamSession:
         ).__aiter__()
 
     async def _fresh_snapshot(self) -> WarmupResponse:
-        if self.requirement.warmup_limit > 0:
+        if self.requirement.warmup_specification is not None:
             payload = await self._query_transport.warmup(
                 self.requirement, consumer_id=self.consumer_id
             )
@@ -279,6 +440,18 @@ class AsyncDataLayerClient:
         self._record_query("/v2/market-data/snapshot", response)
         return response
 
+    async def feed_status(self, requirement: DataRequirement) -> FeedStatusResponse:
+        """Return typed provider/session quality for a governed requirement.
+
+        Status intentionally exposes a stale event as status, rather than
+        converting it into a usable snapshot.  Callers must still use
+        :meth:`snapshot` or :meth:`warmup` before acting on market data.
+        """
+        payload = await self.query_transport.feed_status(
+            requirement, consumer_id=self.consumer_id
+        )
+        return _validate_feed_status_payload(requirement, payload)
+
     async def warmup(self, requirement: DataRequirement) -> WarmupResponse:
         payload = await self.query_transport.warmup(
             requirement, consumer_id=self.consumer_id
@@ -287,6 +460,301 @@ class AsyncDataLayerClient:
         assert isinstance(response, WarmupResponse)
         self._record_query("/v2/market-data/warmup", response)
         return response
+
+    async def warmup_batch(
+        self,
+        requirements: tuple[DataRequirement, ...] | list[DataRequirement],
+        *,
+        require_all: bool = True,
+    ) -> BatchResponse:
+        values = tuple(requirements)
+        if not 1 <= len(values) <= 10_000:
+            raise ValueError("warmup batch requires between 1 and 10000 items")
+        identities = {
+            (item.instrument_uid, item.feed.value, item.interval)
+            for item in values
+        }
+        if len(identities) != len(values):
+            raise ValueError("warmup batch contains duplicate requirements")
+        if not require_all and any(
+            item.consumer_grade is Grade.EXECUTION for item in values
+        ):
+            raise ValueError("execution-grade warmup batch must require all items")
+        responses = []
+        for offset in range(0, len(values), 100):
+            chunk = values[offset:offset + 100]
+            payload = await self.query_transport.warmup_batch(
+                chunk,
+                consumer_id=self.consumer_id,
+                require_all=require_all,
+            )
+            responses.append(self._validate_batch_chunk(chunk, payload))
+        response = BatchResponse.model_validate({
+            "schema": "qdl.marketdata.batch.v2",
+            "request_id": responses[0].request_id,
+            "partial": any(item.partial for item in responses),
+            "success_count": sum(item.success_count for item in responses),
+            "error_count": sum(item.error_count for item in responses),
+            "results": [
+                result.model_dump(mode="json", by_alias=True)
+                for item in responses
+                for result in item.results
+            ],
+        })
+        if len(response.results) != len(values):
+            raise ContinuityError(
+                "PARTIAL_RESULT", "batch response cardinality differs from request"
+            )
+        if require_all and response.partial:
+            raise DataLayerError(
+                "PARTIAL_RESULT",
+                "required warmup batch contains one or more explicit failures",
+                retryable=any(
+                    item.problem is not None and item.problem.retryable
+                    for item in response.results
+                ),
+            )
+        self._record_batch(response)
+        return response
+
+    async def reference_batch(
+        self,
+        requirements: tuple[ReferenceRequirement, ...] | list[ReferenceRequirement],
+        *,
+        require_all: bool = True,
+    ) -> ReferenceBatchResponse:
+        """Fetch bounded provider reference data through the typed V2 contract.
+
+        Reference results do not carry a stream cursor, so this method keeps
+        them out of cursor telemetry rather than inventing a replay offset.
+        Callers receive explicit capability/coverage failures per item.
+        """
+
+        values = tuple(requirements)
+        if not 1 <= len(values) <= 10_000:
+            raise ValueError("reference batch requires between 1 and 10000 items")
+        if not all(isinstance(item, ReferenceRequirement) for item in values):
+            raise TypeError("reference batch requires typed ReferenceRequirement items")
+        if len({item.consumer_grade for item in values}) != 1:
+            raise ValueError("reference batch cannot mix consumer grades")
+        identities = {
+            (
+                item.instrument_uid,
+                item.product.value,
+                item.interval,
+                item.start_time_ns,
+                item.end_time_ns,
+                item.long_short_kind.value if item.long_short_kind else None,
+                item.mark_index_kind.value,
+                item.basis_series.value,
+                str(item.basis_contract_type or "").strip().upper() or None,
+            )
+            for item in values
+        }
+        if len(identities) != len(values):
+            raise ValueError("reference batch contains duplicate requirements")
+
+        responses = []
+        for offset in range(0, len(values), 100):
+            chunk = values[offset:offset + 100]
+            payload = await self.query_transport.reference_batch(
+                chunk,
+                consumer_id=self.consumer_id,
+                require_all=require_all,
+            )
+            responses.append(self._validate_reference_batch_chunk(chunk, payload))
+        response = ReferenceBatchResponse.model_validate({
+            "schema": "qdl.reference.batch.v2",
+            "request_id": responses[0].request_id,
+            "partial": any(item.partial for item in responses),
+            "success_count": sum(item.success_count for item in responses),
+            "error_count": sum(item.error_count for item in responses),
+            "results": [
+                result.model_dump(mode="json", by_alias=True)
+                for item in responses
+                for result in item.results
+            ],
+        })
+        if len(response.results) != len(values):
+            raise ContinuityError(
+                "PARTIAL_RESULT", "reference batch cardinality differs from request"
+            )
+        if require_all and response.partial:
+            raise DataLayerError(
+                "PARTIAL_RESULT",
+                "required reference batch contains one or more explicit failures",
+                retryable=any(
+                    item.problem is not None and item.problem.retryable
+                    for item in response.results
+                ),
+            )
+        return response
+
+    @staticmethod
+    def _validate_reference_batch_chunk(
+        values: tuple[ReferenceRequirement, ...],
+        payload: dict,
+    ) -> ReferenceBatchResponse:
+        try:
+            response = ReferenceBatchResponse.model_validate(payload)
+        except ValidationError as error:
+            raise ContinuityError(
+                "SCHEMA_NOT_SUPPORTED",
+                "reference batch response violates the typed V2 contract",
+            ) from error
+        if len(response.results) != len(values):
+            raise ContinuityError(
+                "PARTIAL_RESULT", "reference batch cardinality differs from request"
+            )
+        for requirement, item in zip(values, response.results, strict=True):
+            if item.instrument_uid != requirement.instrument_uid:
+                raise ContinuityError(
+                    "CONFLICT", "reference batch order or instrument identity changed"
+                )
+            if item.product.value != requirement.product.value:
+                raise ContinuityError(
+                    "CONFLICT", "reference batch product changed from the request"
+                )
+            if item.data is not None:
+                if item.data.instrument_uid != requirement.instrument_uid:
+                    raise ContinuityError(
+                        "CONFLICT", "reference data instrument differs from the request"
+                    )
+                if item.data.product.value != requirement.product.value:
+                    raise ContinuityError(
+                        "CONFLICT", "reference data product differs from the request"
+                    )
+            elif item.problem is None:
+                raise ContinuityError(
+                    "PARTIAL_RESULT",
+                    "reference batch item has neither data nor explicit problem",
+                )
+        return response
+
+    @staticmethod
+    def _validate_batch_chunk(
+        values: tuple[DataRequirement, ...],
+        payload: dict,
+    ) -> BatchResponse:
+        try:
+            response = BatchResponse.model_validate(payload)
+        except ValidationError as error:
+            raise ContinuityError(
+                "SCHEMA_NOT_SUPPORTED",
+                "batch response violates the typed V2 contract",
+            ) from error
+        if len(response.results) != len(values):
+            raise ContinuityError(
+                "PARTIAL_RESULT", "batch response cardinality differs from request"
+            )
+        for requirement, item in zip(values, response.results, strict=True):
+            if item.instrument_uid != requirement.instrument_uid:
+                raise ContinuityError(
+                    "CONFLICT", "batch response order or instrument identity changed"
+                )
+            if item.data is not None:
+                _validate_query_payload(
+                    requirement,
+                    item.data.model_dump(mode="json", by_alias=True),
+                    warmup=True,
+                )
+            elif item.problem is None:
+                raise ContinuityError(
+                    "PARTIAL_RESULT", "batch item has neither data nor explicit problem"
+                )
+        return response
+
+    async def instrument(
+        self, identity: str, *, consumer_grade: Grade
+    ) -> InstrumentResponse:
+        payload = await self.query_transport.instrument(
+            identity,
+            consumer_id=self.consumer_id,
+            consumer_grade=consumer_grade,
+        )
+        try:
+            return InstrumentResponse.model_validate(payload)
+        except ValidationError as error:
+            raise ContinuityError(
+                "SCHEMA_NOT_SUPPORTED",
+                "instrument response violates the typed V2 contract",
+            ) from error
+
+    async def resolve_instrument(
+        self,
+        *,
+        venue: str,
+        product_type: str,
+        native_symbol: str,
+        consumer_grade: Grade,
+        market: str | None = None,
+        page_limit: int = 500,
+        max_pages: int = 100,
+    ) -> InstrumentView:
+        if not isinstance(consumer_grade, Grade):
+            raise TypeError("consumer_grade must use the typed SDK enum")
+        if not 1 <= page_limit <= 500 or not 1 <= max_pages <= 100:
+            raise ValueError("instrument resolver page bounds are invalid")
+        expected = {
+            "venue": venue.strip().upper(),
+            "product_type": product_type.strip().upper(),
+            "native_symbol": native_symbol.strip().upper(),
+            "market": market.strip().upper() if market is not None else None,
+        }
+        if not all(expected[key] for key in ("venue", "product_type", "native_symbol")):
+            raise ValueError("venue, product_type and native_symbol are required")
+        cursor: str | None = None
+        matches: list[InstrumentView] = []
+        seen_cursors: set[str] = set()
+        for _ in range(max_pages):
+            payload = await self.query_transport.instruments(
+                consumer_id=self.consumer_id,
+                consumer_grade=consumer_grade,
+                cursor=cursor,
+                limit=page_limit,
+            )
+            try:
+                page = InstrumentPageResponse.model_validate(payload)
+            except ValidationError as error:
+                raise ContinuityError(
+                    "SCHEMA_NOT_SUPPORTED",
+                    "instrument page violates the typed V2 contract",
+                ) from error
+            for item in page.items:
+                if (
+                    item.venue.upper() == expected["venue"]
+                    and item.product_type.upper() == expected["product_type"]
+                    and item.native_symbol.upper() == expected["native_symbol"]
+                    and (
+                        expected["market"] is None
+                        or item.market.upper() == expected["market"]
+                    )
+                ):
+                    matches.append(item)
+            if page.next_cursor is None:
+                break
+            if page.next_cursor in seen_cursors:
+                raise ContinuityError(
+                    "CONFLICT", "instrument catalog returned a cursor cycle"
+                )
+            seen_cursors.add(page.next_cursor)
+            cursor = page.next_cursor
+        else:
+            raise ContinuityError(
+                "PARTIAL_RESULT", "instrument catalog exceeded bounded pagination"
+            )
+        active = [item for item in matches if item.status.upper() == "ACTIVE"]
+        if len(active) == 1:
+            return active[0]
+        if not active:
+            raise DataLayerError(
+                "INSTRUMENT_NOT_FOUND",
+                "no active V2 instrument matches the venue/product/native symbol",
+                retryable=False,
+            )
+        raise ContinuityError(
+            "CONFLICT", "instrument identity is ambiguous; specify market"
+        )
 
     @asynccontextmanager
     async def warmup_then_stream(
@@ -297,7 +765,7 @@ class AsyncDataLayerClient:
     ):
         cursor_key = self._cursor_key(requirement)
         checkpoint = self.cursor_store.load(cursor_key)
-        if requirement.warmup_limit > 0:
+        if requirement.warmup_specification is not None:
             raw_warmup = await self.query_transport.warmup(
                 requirement, consumer_id=self.consumer_id
             )
@@ -367,9 +835,7 @@ class AsyncDataLayerClient:
         try:
             yield session
         finally:
-            close = getattr(events, "aclose", None)
-            if close is not None:
-                await close()
+            await session.aclose()
 
     async def close(self) -> None:
         await self.stream_transport.close()
@@ -400,6 +866,18 @@ class AsyncDataLayerClient:
                 cursor_offset=int(watermark),
             )
 
+    def _record_batch(self, response: BatchResponse) -> None:
+        if self.telemetry is None:
+            return
+        for item in response.results:
+            if item.data is not None:
+                self.telemetry.record(
+                    consumer_id=self.consumer_id,
+                    sdk_major=2,
+                    contract="/v2/market-data/warmup:batch",
+                    cursor_offset=item.data.watermark_offset,
+                )
+
 
 class DataLayerClientV2:
     """Sync facade for scripts; async applications must use AsyncDataLayerClient."""
@@ -419,4 +897,43 @@ class DataLayerClientV2:
             asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(self.async_client.snapshot(requirement))
+        raise RuntimeError("sync SDK cannot run inside an active event loop")
+
+    def feed_status(self, requirement: DataRequirement) -> FeedStatusResponse:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.async_client.feed_status(requirement))
+        raise RuntimeError("sync SDK cannot run inside an active event loop")
+
+    def warmup_batch(
+        self,
+        requirements: tuple[DataRequirement, ...] | list[DataRequirement],
+        *,
+        require_all: bool = True,
+    ) -> BatchResponse:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(
+                self.async_client.warmup_batch(
+                    requirements, require_all=require_all
+                )
+            )
+        raise RuntimeError("sync SDK cannot run inside an active event loop")
+
+    def reference_batch(
+        self,
+        requirements: tuple[ReferenceRequirement, ...] | list[ReferenceRequirement],
+        *,
+        require_all: bool = True,
+    ) -> ReferenceBatchResponse:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(
+                self.async_client.reference_batch(
+                    requirements, require_all=require_all
+                )
+            )
         raise RuntimeError("sync SDK cannot run inside an active event loop")

@@ -51,7 +51,9 @@ x-kafka-common: &kafka-common
       target: /etc/kafka/secrets
       read_only: true
   healthcheck:
-    test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server $${HOSTNAME}:9092 --command-config /etc/kafka/secrets/admin.properties >/dev/null 2>&1"]
+    # Liveness stays lightweight inside the broker cgroup. Authenticated Kafka
+    # readiness/quorum checks run from the disposable phase8_admin client.
+    test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/9092'"]
     interval: 5s
     timeout: 5s
     retries: 36
@@ -132,6 +134,23 @@ services:
       retries: 20
     mem_limit: 64m
     cpus: 0.25
+
+  phase8_admin:
+    image: apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9
+    profiles: ["phase8-admin"]
+    entrypoint: ["/bin/true"]
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - phase8_shadow
+    volumes:
+      - type: bind
+        source: ${QDL_PHASE8_CERT_DIR:?set QDL_PHASE8_CERT_DIR}
+        target: /etc/kafka/secrets
+        read_only: true
+    mem_limit: 512m
+    cpus: 0.5
 
 networks:
   phase8_shadow:

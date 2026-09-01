@@ -1,11 +1,32 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from qdl.domain.instrument import InstrumentRecord, InstrumentRegistry
-from qdl.query.contracts import CoverageStatus, DataRequirement, FeedType
+from qdl.query.contracts import (
+    CoverageStatus,
+    DataRequirement,
+    FeedType,
+    METRIC_INTERVAL_FEEDS,
+    OPTIONAL_INTERVAL_FEEDS,
+    QueryProblem,
+)
 from qdl.query.lifecycle import BarLifecycle
+
+if TYPE_CHECKING:
+    from qdl.warmup.handoff import ResampleLineage
+
+
+# A fresh provider snapshot has no durable canonical-log position to resume.
+# Keeping one contract sentinel prevents edge adapters from fabricating a cursor.
+NON_REPLAYABLE_STREAM_CURSOR = "PASS_THROUGH_NO_REPLAY"
+
+
+class QueryBackendError(RuntimeError):
+    def __init__(self, problem: QueryProblem) -> None:
+        super().__init__(problem.detail)
+        self.problem = problem
 
 
 @dataclass(frozen=True)
@@ -30,12 +51,34 @@ class QualityMetadata:
     execution_eligible: bool
     policy_id: str
     flags: tuple[str, ...] = ()
+    # ``freshness_ms`` stays the backwards-compatible age of the latest market
+    # event.  Event recency and provider transport liveness are separate facts:
+    # a quiet trade must never masquerade as a fresh executable price, but it
+    # also must not be reported as a disconnected provider session.
+    event_recency_state: str = "LIVE"
+    provider_session_state: str = "NOT_APPLICABLE"
+    provider_session_liveness_ms: int | None = None
 
     def __post_init__(self) -> None:
         if self.freshness_ms < 0:
             raise ValueError("freshness_ms cannot be negative")
         if not self.state.strip() or not self.policy_id.strip():
             raise ValueError("quality state and policy_id are required")
+        if self.event_recency_state not in {"LIVE", "STALE", "NOT_APPLICABLE"}:
+            raise ValueError("event recency state is invalid")
+        if self.provider_session_state not in {
+            "LIVE",
+            "STALE",
+            "DISCONNECTED",
+            "UNKNOWN",
+            "NOT_APPLICABLE",
+        }:
+            raise ValueError("provider session state is invalid")
+        if (
+            self.provider_session_liveness_ms is not None
+            and self.provider_session_liveness_ms < 0
+        ):
+            raise ValueError("provider session liveness cannot be negative")
 
 
 @dataclass(frozen=True)
@@ -93,6 +136,8 @@ class MarketDataItem:
     watermark_offset: int = 0
     bar_lifecycle: BarLifecycle | None = None
     supersedes_event_id: str | None = None
+    received_at_ns: int | None = None
+    resample_lineage: "ResampleLineage | None" = None
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.instrument_id.strip():
@@ -101,10 +146,21 @@ class MarketDataItem:
             raise ValueError("market-data revision/time fields are invalid")
         if self.watermark_offset < 0:
             raise ValueError("market-data watermark_offset cannot be negative")
+        if self.received_at_ns is not None and self.received_at_ns <= 0:
+            raise ValueError("market-data received_at_ns must be positive")
         if self.feed is FeedType.BAR and not self.interval:
             raise ValueError("bar item requires interval")
-        if self.feed is not FeedType.BAR and self.interval is not None:
-            raise ValueError("interval is valid only for bar items")
+        if self.feed in METRIC_INTERVAL_FEEDS and not self.interval:
+            raise ValueError("metric-series item requires sampling interval")
+        if self.feed in OPTIONAL_INTERVAL_FEEDS and self.interval is not None and not self.interval.strip():
+            raise ValueError("open-interest item sampling interval cannot be blank")
+        if (
+            self.feed is not FeedType.BAR
+            and self.feed not in METRIC_INTERVAL_FEEDS
+            and self.feed not in OPTIONAL_INTERVAL_FEEDS
+            and self.interval is not None
+        ):
+            raise ValueError("interval is valid only for bar or metric-series items")
         if self.feed is FeedType.BAR:
             if self.bar_lifecycle in {None, BarLifecycle.UNSPECIFIED}:
                 raise ValueError("bar item requires an explicit lifecycle")
@@ -116,7 +172,11 @@ class MarketDataItem:
                     raise ValueError("final or revised bar must declare is_final=true")
             if self.bar_lifecycle is BarLifecycle.REVISED and not self.supersedes_event_id:
                 raise ValueError("revised bar must identify the superseded event")
-        elif self.bar_lifecycle is not None or self.supersedes_event_id is not None:
+        elif (
+            self.bar_lifecycle is not None
+            or self.supersedes_event_id is not None
+            or self.resample_lineage is not None
+        ):
             raise ValueError("bar lifecycle metadata is valid only for bar items")
 
 

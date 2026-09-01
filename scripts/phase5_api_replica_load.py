@@ -63,6 +63,8 @@ def _service():
             "native_trade_id": "phase5-load-trade",
             "price": "60000.1",
             "quantity": "0.01",
+            "quantity_unit": "BASE_ASSET",
+            "identity_kind": "NATIVE",
             "aggressor_side": "BUY",
             "is_block_trade": False,
             "is_buyer_maker": False,

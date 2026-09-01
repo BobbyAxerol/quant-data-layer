@@ -1,0 +1,52 @@
+{
+  "captured_at_utc": "2026-08-29T05:06:21Z",
+  "captures": [
+    {
+      "captured_at_utc": "2026-08-29T05:06:21Z",
+      "endpoint": "https://fapi.binance.com/fapi/v1/exchangeInfo",
+      "filtered_capture": "config/v2/captures/binance-usdm-exchangeinfo.filtered.json",
+      "filtered_capture_bytes": 6208,
+      "filtered_capture_sha256": "7f7c387ed491887bd87803c68d2bb48a553d69a82490309bf16e26414a71f702",
+      "full_response_bytes": 1090684,
+      "full_response_sha256": "160c4857ad00a29a1156bbd0b2993a01cce6c227420a2e1a0d1a77b2c7b97a08",
+      "market": "USDM",
+      "venue": "BINANCE"
+    },
+    {
+      "captured_at_utc": "2026-08-22T12:15:00Z",
+      "endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+      "filtered_capture": "config/v2/captures/binance-spot-exchangeinfo.filtered.json",
+      "filtered_capture_bytes": 4963,
+      "filtered_capture_sha256": "c6bff3c65fb567bcf498e8d27bcc78f6d64d33831d57c13b7a4eaa8e4e8d8506",
+      "full_response_bytes": 17513220,
+      "full_response_sha256": "abb93d8a0a3c7c4e9e3f0738cbfb24f025ce16a98e78d33775093a2f75eb663e",
+      "market": "SPOT",
+      "venue": "BINANCE"
+    },
+    {
+      "captured_at_utc": "2026-08-29T05:06:21Z",
+      "endpoint": "https://www.okx.com/api/v5/public/instruments?instType=SWAP",
+      "filtered_capture": "config/v2/captures/okx-instruments-swap.filtered.json",
+      "filtered_capture_bytes": 5257,
+      "filtered_capture_sha256": "506de7a36ec11912eb8d039ff245a8a42fe359a79b65ff9a2a1bc30dde74cfe0",
+      "full_response_bytes": 483705,
+      "full_response_sha256": "afa3702b14306fe75c5616259a758836dc236927a6d6c178df64247cdbc9f3f7",
+      "market": "SWAP",
+      "venue": "OKX"
+    },
+    {
+      "captured_at_utc": "2026-08-22T12:15:00Z",
+      "endpoint": "https://www.okx.com/api/v5/public/instruments?instType=SPOT",
+      "filtered_capture": "config/v2/captures/okx-instruments-spot.filtered.json",
+      "filtered_capture_bytes": 1084,
+      "filtered_capture_sha256": "ec3c6f66375837087b2c59285012e52b6cbf7eff4aaeb36ebd12c22c5f2b7516",
+      "full_response_bytes": 1491741,
+      "full_response_sha256": "9c2e7f521ca89e9bb793d6a42a997973bc172492fdbb1e5274fd750feb569773",
+      "market": "SPOT",
+      "venue": "OKX"
+    }
+  ],
+  "fabricated_metadata": false,
+  "note": "Rows are verbatim provider bytes reduced to demanded symbols by scripts/filter_metadata_capture.py. Each capture records its own timestamp; no field is rewritten.",
+  "schema": "qdl.v2.metadata-capture-provenance.v1"
+}

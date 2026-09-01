@@ -178,6 +178,9 @@ Edit `.env` and fill in your credentials:
 # Required for VN stock live data (DNSE)
 DNSE_API_KEY=your_dnse_api_key
 DNSE_API_SECRET_KEY=your_dnse_secret
+DNSE_API_VERSION=2026-07-23
+# Explicit opt-in only when an approved egress proxy is required.
+DNSE_REST_USE_ENV_PROXY=false
 
 # Optional: vnstock API key
 VNSTOCK_API_KEY=your_vnstock_key
@@ -305,6 +308,8 @@ All configuration is via environment variables. See [`.env.example`](./.env.exam
 | `REDIS_DB` | `2` | Redis database index |
 | `DNSE_API_KEY` | — | DNSE OpenAPI key |
 | `DNSE_API_SECRET_KEY` | — | DNSE OpenAPI secret |
+| `DNSE_API_VERSION` | `2026-07-23` | Explicit DNSE REST contract revision |
+| `DNSE_REST_USE_ENV_PROXY` | `false` | Opt in to an approved environment proxy; TLS verification remains mandatory |
 | `VNSTOCK_API_KEY` | — | vnstock API key |
 | `VNSTOCK_SOURCE` | `KBS` | vnstock data source |
 | `VNSTOCK_POLL_INTERVAL` | `3.0` | Polling interval (seconds) |

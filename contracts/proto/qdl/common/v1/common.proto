@@ -13,6 +13,17 @@ message DecimalValue {
   string source_text = 4;
 }
 
+// QuantityUnit makes native quantity semantics explicit across spot,
+// derivatives and equity markets. Asset symbols and contract multipliers are
+// resolved from the versioned Instrument referenced by instrument_uid.
+enum QuantityUnit {
+  QUANTITY_UNIT_UNSPECIFIED = 0;
+  QUANTITY_UNIT_BASE_ASSET = 1;
+  QUANTITY_UNIT_QUOTE_ASSET = 2;
+  QUANTITY_UNIT_CONTRACT = 3;
+  QUANTITY_UNIT_SHARE = 4;
+}
+
 enum SourceRole {
   SOURCE_ROLE_UNSPECIFIED = 0;
   SOURCE_ROLE_PRIMARY = 1;

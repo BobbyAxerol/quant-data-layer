@@ -78,6 +78,24 @@ jobs:
           tar --no-same-owner -xzf "${archive}"
           "./${directory}/cargo-deny" check
 
+  sdk-python310:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up declared minimum Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.10"
+
+      - name: Build and import standalone SDK wheel
+        run: |
+          python scripts/build_qdl_sdk_release.py --output-dir /tmp/qdl-sdk
+          python -m pip install --disable-pip-version-check /tmp/qdl-sdk/qdl_sdk-2.0.0-py3-none-any.whl
+          cd "$(mktemp -d)"
+          PYTHONPATH= python -c 'import qdl_sdk; assert qdl_sdk.__version__ == "2.0.0"'
+
   unit-tests:
     runs-on: ubuntu-latest
     steps:
@@ -145,6 +163,7 @@ jobs:
         env:
           QDL_BETA_CURSOR_KEYS_JSON: '{"beta-k1":"phase71-ci-cursor-key-material-32-bytes"}'
           QDL_BETA_JWT_KEYS_JSON: '{"phase7-test":"phase7-test-secret-material-32bytes"}'
+          QDL_BETA_JWT_KEY_SUBJECTS_JSON: '{"phase7-test":"spiffe://qdl/paper/alpha-okx-reference-shadow"}'
         run: |
           docker image inspect redis:7.2-alpine >/dev/null 2>&1 || docker pull redis:7.2-alpine
           export QDL_BETA_IMAGE="$(docker image inspect data-layer:v0.1.0 --format '{{.Id}}')"
