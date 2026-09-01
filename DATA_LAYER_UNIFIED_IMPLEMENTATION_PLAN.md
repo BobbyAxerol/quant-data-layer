@@ -28351,3 +28351,25 @@ Release, a failed Git push leaves the current remote refs unchanged and the
 release worktree can be discarded. After a successful public tag push, do not
 retag or delete it to hide a problem; publish a new patch tag if a source fix
 is required. The GitHub Release publication itself remains an owner action.
+
+**Execution and cleanup (`PASS`, 2026-09-01).** The carried audit entries were
+rebased as plan-only commits `3609f6c`, `266683f`, and `44fb5dc`; the closure
+entry is `7ebe1d1`. Both `origin/dev` and `origin/main` were fast-forwarded to
+that exact commit. Annotated tag `v2.0.0` (tag object
+`fce42957e37825c645458251b4a038d13c7b5877`) was created and pushed, pointing
+to `7ebe1d150640155797dbd59f7b4f668b4e6cb8c4` with the configured owner
+identity. The older local-only rehearsal tag `2.0.0` remains untouched.
+
+The canonical checkout was synchronized cleanly to the same `main` and `dev`
+commit. Its four pre-existing generated-file edits were saved without loss as
+named local stash `preserve-generated-before-v2.0.0-local-sync`; an ownership
+repair changed only the `generated/` tree metadata from stale `nobody:nogroup`
+to `bobby:bobby` so Git could perform a correct checkout. No source content was
+edited by that repair. Four clean merged worktrees and one clean detached V1
+attestation worktree were removed, and five stale `/tmp` worktree metadata
+entries were pruned. Fully merged **local** feature branches were deleted.
+Remote feature branches remain intact for PR history; local
+`feat/v2-stable-rust-binance-okx` is intentionally retained because it is
+still ahead of its remote by two commits. No Docker, runtime, provider,
+Kafka, Redis, SQLite, V1/V2 consumer, Trading System, alpha, broker or order
+resource was changed.
