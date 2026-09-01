@@ -29254,3 +29254,15 @@ No reader, stream, alpha, provider, Kafka/Redis/SQLite, PostgreSQL, command,
 order, session, position or broker state was changed. The remaining action in
 this source slice is to commit this ledger update, push the three `dev`
 branches, verify ancestry, and then begin Phase B's real-config compiler proof.
+
+**Phase A cross-repository closure and cleanup (`COMPLETE`, 2026-09-01).**
+The source-convergence commits pushed to `origin/dev` are Data Layer
+`e235f84`, Trading System `613ef15` and Execution Alpha `a8cb775`; this
+follow-up journal records their verified cleanup. All required source ancestry
+checks passed; `main` remains unchanged. No Data
+Layer image or runtime role was created by this source phase. The two
+unreferenced cross-repository test images were removed only after a
+zero-container-reference check; the image set fell from `67.87 GiB` to
+`66.15 GiB` and host disk from `203/290 GiB` to `202/290 GiB`. Existing
+BuildKit cache, V1/V2 runtime images, volumes, topics, databases and running
+services were retained. Phase B is the sole active work item.
