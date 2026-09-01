@@ -30067,3 +30067,43 @@ intact (`8.537 GiB`) because its layers have shared ownership and no broad
 prune was authorized. No volume, network, runtime state, active image,
 rollback image, source, secret, service or alpha state was removed. The next
 phase is Phase B source work from fresh `dev` feature branches.
+
+**Phase B real-config revalidation and closure (`COMPLETE / DEV INTEGRATED`,
+2026-09-01).** Fresh feature worktrees started from the current three-repository
+`dev` tuple: Data Layer `37eda44`, Trading System `2c92fee` and Execution Alpha
+`9069fcb`. The Execution Alpha exporter rendered the real Compose/config
+inventory twice with byte-identical SHA-256
+`738363ab1c8a56f75a6e1b728d96dab59b7632c09023d6a28a7e3b72068e0d60`:
+`93` deployments (`9` declared Binance paper, `9` native OKX no-order probes,
+and `75` explicitly blocked). The actual declarations cover directional,
+multi-symbol, bracket/mark, grid/L2 and basis/reference profiles; their
+required native venue/symbol universe, interval, history, feed and policy
+fields come only from Compose/config selectors.
+
+The active reader image was used only as an isolated dependency container:
+network disabled, read-only source/root filesystem, non-root host UID and
+tmpfs-only scratch. It compiled the two inventory renders byte-for-byte into
+the same report SHA-256
+`1a859f933086715fca40e5efc1bd8293a9cc25a86b03a1bab3b6f224557cf2c6`:
+`17` admitted sealed bindings, `106` exact native V2 products and `76` typed
+compiler blocks. Execution Alpha deployment-requirement regressions passed
+`7/7`; Data Layer compiler regressions passed `6/6`; Trading System binding
+contract regressions passed `12/12` and its independent parser loaded all
+`17/106` generated identities. Tests covered the declared single/multi-symbol,
+bracket, grid/L2 and basis/reference classes plus maxlen bounds,
+malformed/duplicate and capability-failure cases. A test-only host Pytest cache
+write was rejected by the read-only source mount and is explicitly harmless;
+the test itself passed.
+
+The only paired native capability block remains the Binance-specific
+`basis_arb_binance` OKX data probe for `BASIS` under
+`crypto_liquid_v2`; it is recorded as
+`CAPABILITY_UNAVAILABLE:BASIS:crypto_liquid_v2`, never substituted from
+Binance or turned into zero. DNSE/VN stays V1-primary; sandbox/non-paper and
+unreviewed profiles remain explicit policy blocks. No provider request,
+runtime role/image build, Kafka/Redis/SQLite/PostgreSQL mutation, alpha
+container/state, Gateway/Risk call, session, command, order or broker action
+occurred. All `/tmp/qdl-phaseb-*` inventory/compiler artifacts and disposable
+containers were removed. Phase C is now the next permitted action: seal one
+canonical reader image/bundle from this `dev` state, then use its separately
+recorded BAR-edge projection handoff to materialize authentic final BARs.
