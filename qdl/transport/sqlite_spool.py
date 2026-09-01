@@ -85,6 +85,18 @@ class SpoolStats:
         )
 
 
+@dataclass(frozen=True)
+class SpoolReadiness:
+    """Bounded, read-only cache health summary.
+
+    `spool_state` is updated atomically alongside append and retention work.
+    Health checks need that durable state, not a full aggregate over `events`.
+    """
+
+    records: int
+    payload_bytes: int
+
+
 class SQLiteDurableSpool:
     """Bounded, fsync-backed migration bridge with portable logical cursors.
 
@@ -729,6 +741,25 @@ class SQLiteDurableSpool:
             oldest_accepted_at_ns=int(row["oldest"]) if row["oldest"] is not None else None,
             newest_accepted_at_ns=int(row["newest"]) if row["newest"] is not None else None,
         )
+
+    def readiness_summary(self) -> SpoolReadiness:
+        """Read the bounded, transaction-maintained usage state for health checks.
+
+        A missing or invalid singleton is a durable-state invariant violation,
+        so callers deliberately fail closed rather than approximating it from
+        the much larger event table.
+        """
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT event_records, payload_bytes FROM spool_state WHERE singleton = 1"
+            ).fetchone()
+        if row is None:
+            raise PayloadCorruption("spool usage state is missing")
+        records = int(row["event_records"])
+        payload_bytes = int(row["payload_bytes"])
+        if records < 0 or payload_bytes < 0:
+            raise PayloadCorruption("spool usage state is invalid")
+        return SpoolReadiness(records=records, payload_bytes=payload_bytes)
 
     def storage_bytes(self) -> int:
         return sum(

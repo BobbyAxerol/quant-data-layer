@@ -451,10 +451,13 @@ def stable_readiness(
     extra_probes=(),
 ) -> MeasuredRuntimeReadiness:
     async def cache():
-        stats = await asyncio.to_thread(spool.stats)
+        summary = await asyncio.to_thread(spool.readiness_summary)
         return _ready(
             "query_cache",
-            detail=f"bounded rebuildable cache records={stats.records} utilization={stats.utilization:.6f}",
+            detail=(
+                "bounded rebuildable cache readable "
+                f"records={summary.records} payload_bytes={summary.payload_bytes}"
+            ),
         )
 
     async def redis_probe():

@@ -18,7 +18,12 @@ from qdl.transport.contracts import (
     StreamName,
 )
 from qdl.transport.publisher import DurablePublisher, PublisherState
-from qdl.transport.sqlite_spool import SQLiteDurableSpool, SpoolConfig, SpoolStats
+from qdl.transport.sqlite_spool import (
+    SQLiteDurableSpool,
+    SpoolConfig,
+    SpoolReadiness,
+    SpoolStats,
+)
 
 __all__ = [
     "AppendResult",
@@ -38,6 +43,7 @@ __all__ = [
     "RetryDecision",
     "SQLiteDurableSpool",
     "SpoolConfig",
+    "SpoolReadiness",
     "SpoolStats",
     "StoredEvent",
     "StreamName",

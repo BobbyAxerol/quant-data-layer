@@ -28373,3 +28373,77 @@ Remote feature branches remain intact for PR history; local
 still ahead of its remote by two commits. No Docker, runtime, provider,
 Kafka, Redis, SQLite, V1/V2 consumer, Trading System, alpha, broker or order
 resource was changed.
+
+## 24.3.18 Phase 53.3 V2 Query Readiness Prerequisite
+
+**Status:** `IN PROGRESS / SOURCE REPAIR BEFORE ALPHA NO-ORDER PACKET`
+(2026-09-01).
+
+**Linkage and goal.** This is the Data Layer prerequisite for Trading System
+Unified Plan Section 53.3, *Representative Alpha No-Order Proof, Paper
+Rollout And Broad Config Readiness*. The owner approved that phase. Before a
+real-provider alpha may consume V2, both V2 query replicas must report their
+actual cache state correctly; a false `NOT_READY` cannot be bypassed through
+V1 or a relaxed SLA.
+
+**Observed bounded diagnosis.** Both query replicas remain live with zero
+restart/OOM evidence, but their required `query_cache` readiness probe invokes
+`SQLiteDurableSpool.stats()`. That diagnostic performs a full `events` table
+aggregate. Against the current shared canonical spool (roughly 398k records;
+about 0.95 GiB database plus 2.27 GiB WAL), the aggregate exceeded the
+one-second probe deadline and turned a readable cache into `NOT_READY`.
+`spool_state.event_records` and `spool_state.payload_bytes` already maintain
+the same capacity counters atomically on append and trim; the readiness path
+does not require diagnostic oldest/newest/storage aggregation.
+
+**Approved source scope.** Add one provider-neutral, read-only spool readiness
+summary backed by the existing singleton `spool_state` row, and make only the
+stable `query_cache` health probe use it. Preserve `stats()` unchanged for
+diagnostics, preserve capacity/maintenance semantics, and fail closed when
+the singleton row is absent or SQLite rejects the bounded read. No provider,
+contract, manifest, authority, Rust core, ingestion, projector, stream,
+Redis, Kafka, SQLite data, V1 endpoint, Trading System, alpha, broker or
+order-path change is part of this source slice.
+
+**Source gates and rollback.** Deterministic tests must prove the summary
+tracks append/trim usage, does not call the full diagnostic aggregate, and
+still makes readiness `NOT_READY` on a database failure. Run focused Python
+unit tests, compile and `git diff --check` in the existing non-root,
+network-disabled test image. Rollback is a source revert. Only after source
+exit may a separately recorded, serial two-query-reader runtime packet build
+one immutable Python image and recreate `query_v2_1` then `query_v2_2`; its
+exact current image remains rollback. Alpha containers, Trading System and
+all order paths stay untouched until the query readiness evidence passes.
+
+**Source implementation and exit (`PASS / RUNTIME PACKET NEXT`, 2026-09-01).**
+`SQLiteDurableSpool.readiness_summary()` now reads exactly the existing
+singleton `spool_state` usage counters under the spool lock and rejects a
+missing/negative state with `PayloadCorruption`. `SpoolStats` and its full
+aggregate remain unchanged. Stable query readiness now calls only that bounded
+summary and reports readable record/payload counters; a raised SQLite error is
+still converted by the shared readiness framework into required `NOT_READY`.
+
+**Evidence actually run:**
+
+- Network-disabled/read-only `qdl-v2-python:2.0.0-7c29542` tests:
+  `tests.test_phase533_query_readiness` plus
+  `tests.test_phaseb_stable_release`: **10/10 passed**.
+- The same isolated runner executed `tests.test_phaseb_stable_edge` plus
+  `tests.test_phase115c_five_liquid_handoff`: **56 passed, 1 intentionally
+  skipped** (`isolated Redis is not configured`). This covers stable catalog
+  identity/lineage, final-bar/query contracts, cursor replay, quiet/disconnect
+  session semantics, projector recovery, L2 contract and five-symbol OKX
+  status isolation.
+- Host `python3 -B -m compileall` over each changed module and test, and
+  `git diff --check`, passed. The retained `tradingsystem-test:latest` image
+  has an obsolete Ruff parser which rejects this repository's already-existing
+  Poetry caret specifier before inspecting source; no dependency was installed
+  and no lint result is claimed from that incompatible tool.
+
+**Runtime / cleanup boundary.** Every test container used `--rm`, network
+`none`, read-only source and tmpfs `/tmp`; no image, cache, service, Kafka,
+Redis, SQLite, provider, V1/V2 route, Trading System, alpha or order state was
+created or changed. The next permitted operation is one immutable Python
+reader image followed by serial recreate of only `query_v2_1` and
+`query_v2_2`, retaining their exact current image as rollback; it must then
+prove mTLS readiness before the alpha no-order packet begins.
