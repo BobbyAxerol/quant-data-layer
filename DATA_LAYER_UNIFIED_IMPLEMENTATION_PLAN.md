@@ -29273,3 +29273,24 @@ removed after remote-`dev` ancestry verification. The canonical `main`
 checkout and the separately retained `fix/phase533-python310-sdk` worktree
 were not changed. No source or runtime artifact was deleted outside this
 closed source phase.
+
+**Phase B current inventory/compiler proof (`PASS / SOURCE-ONLY`, 2026-09-01).**
+The current Execution Alpha Compose/config export (inventory SHA-256
+`738363ab1c8a56f75a6e1b728d96dab59b7632c09023d6a28a7e3b72068e0d60`) was
+compiled twice inside the existing `qdl-v2-python:2.0.0-dev-d619be6` image
+with network disabled, source read-only and caller-owned `/tmp` outputs. Both
+renders were byte-identical: compilation SHA-256
+`1a859f933086715fca40e5efc1bd8293a9cc25a86b03a1bab3b6f224557cf2c6`,
+`ADMITTED=17`, `BLOCKED=76`, and `106` exact V2 products. Each output is a
+derived disposable artifact only; it created no provider demand, image,
+identity, runtime bundle, Kafka/Redis/SQLite state, alpha, session, order or
+broker action.
+
+The one blocked paired probe is intentional and explicit:
+`basis_arb_binance:...:okx-probe` needs native OKX `BASIS` under
+`crypto_liquid_v2`, which the current capability catalog has not certified.
+It is therefore `CAPABILITY_UNAVAILABLE:BASIS:crypto_liquid_v2`, rather than
+being supplied by Binance or a fabricated equivalent. All other required
+routes are sealed native mappings. The downstream Trading System parser
+interoperability correction is recorded in its Phase B journal; Phase B does
+not close until that source commit is integrated to `dev`.
