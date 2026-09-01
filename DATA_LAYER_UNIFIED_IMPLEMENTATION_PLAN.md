@@ -28847,3 +28847,18 @@ real-provider acceptance evidence.
   requirement/policy permits them. Alpha remains `ALPHA` grade; Trading System
   Risk retains the independent execution-grade reread.
 - DNSE/VN remains V1-primary and outside this crypto rollout.
+
+**Phase A source-gate journal (`PASS / DEV INTEGRATION NEXT`, 2026-09-01).**
+The V2 binding/compiler branch was revalidated in an isolated, network-disabled
+and read-only container before `dev` integration. `139` relevant source tests
+passed with `1` documented skip across alpha entitlement compilation,
+query-readiness, five-liquid/native final-BAR materialization, stable reader
+recovery, reference/L2 materialization and SDK stream/feed contracts. The
+SDK release build also reproduced `qdl-sdk==2.0.1` with wheel SHA-256
+`2e6fbfa074876a14c9f43320d739067a3b980e4c4a86e309bdaefea7d3162529`.
+`compileall` and `git diff --check` passed. Recovery/overlap log records came
+from deterministic negative test cases and no provider was contacted.
+
+No V2 role, bundle, image, Kafka/Redis/SQLite state, V1 service, Trading
+System, alpha process or order path changed. The next valid Phase A operation
+is merge to `dev`; runtime image/build and reader rolling remain Phase C only.
