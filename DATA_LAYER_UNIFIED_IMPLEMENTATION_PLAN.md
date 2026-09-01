@@ -29910,3 +29910,18 @@ facade tests, `5/5` probe tests and `45/45` V2 runtime regressions in
 disposable read-only/no-network containers. No real provider request or Data
 Layer runtime mutation occurred. The next allowed Data Layer action remains
 the already-approved paired real-provider no-order proof.
+
+**Risk reread ordering dependency (`IN PROGRESS / NO DATA LAYER CHANGE`,
+2026-09-01).** The paired native proof needs a Trading System no-order V2
+cache reread even if an OKX strategy profile later rejects the preview. The
+pending narrow Gateway/Risk source correction changes only that read ordering
+for explicitly V2-marked no-order payloads; no Data Layer endpoint, identity,
+reader, provider, Kafka/Redis/SQLite state or runtime role changes. The
+real-provider paired proof remains blocked until that source gate passes.
+
+**Risk reread ordering exit (`PASS / NO DATA LAYER MUTATION`, 2026-09-01).**
+Trading System now performs its existing V2 cache read before a V2-marked
+no-order mode rejection; its focused source matrix passed `63/63` with a
+specific zero-write ordering test. This does not modify any Data Layer
+contract, reader, provider, identity, durable state or runtime role. The
+paired Binance/OKX no-order proof is now permitted against the sealed reader.
