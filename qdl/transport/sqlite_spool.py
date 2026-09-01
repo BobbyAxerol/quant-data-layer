@@ -195,10 +195,6 @@ class SQLiteDurableSpool:
                 payload_bytes INTEGER NOT NULL,
                 last_maintenance_ns INTEGER NOT NULL
             );
-            INSERT OR IGNORE INTO spool_state(
-                singleton, event_records, payload_bytes, last_maintenance_ns
-            )
-            SELECT 1, COUNT(*), COALESCE(SUM(LENGTH(payload)), 0), 0 FROM events;
 
             CREATE TABLE IF NOT EXISTS cache_identity (
                 singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -207,6 +203,7 @@ class SQLiteDurableSpool:
             );
             """
         )
+        self._ensure_usage_state()
         self._connection.execute(
             """
             INSERT OR IGNORE INTO cache_identity(singleton, cache_id, created_at_ns)
@@ -214,6 +211,41 @@ class SQLiteDurableSpool:
             """,
             (uuid.uuid4().hex, self._clock_ns()),
         )
+
+    def _ensure_usage_state(self) -> None:
+        """Initialize legacy spool usage once without rescanning live caches."""
+        with self._lock:
+            existing = self._connection.execute(
+                "SELECT 1 FROM spool_state WHERE singleton = 1"
+            ).fetchone()
+            if existing is not None:
+                return
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute(
+                    "SELECT 1 FROM spool_state WHERE singleton = 1"
+                ).fetchone()
+                if existing is None:
+                    records, payload_bytes = self._aggregate_event_usage_locked()
+                    self._connection.execute(
+                        """
+                        INSERT INTO spool_state(
+                            singleton, event_records, payload_bytes, last_maintenance_ns
+                        ) VALUES (1, ?, ?, 0)
+                        """,
+                        (records, payload_bytes),
+                    )
+                self._connection.execute("COMMIT")
+            except BaseException:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+
+    def _aggregate_event_usage_locked(self) -> tuple[int, int]:
+        row = self._connection.execute(
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0) FROM events"
+        ).fetchone()
+        return int(row[0]), int(row[1])
 
     @property
     def cache_id(self) -> str:

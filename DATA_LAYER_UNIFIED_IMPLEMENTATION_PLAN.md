@@ -28447,3 +28447,81 @@ created or changed. The next permitted operation is one immutable Python
 reader image followed by serial recreate of only `query_v2_1` and
 `query_v2_2`, retaining their exact current image as rollback; it must then
 prove mTLS readiness before the alpha no-order packet begins.
+
+**Bounded reader runtime packet (`APPROVED / EXECUTING`, 2026-09-01).** Build
+exactly one immutable Python image from source commit `9d42d69` as
+`qdl-v2-python:2.0.0-phase533-readiness-9d42d69`, with the commit and release
+OCI build arguments. Validate the existing stable Compose topology using the
+same non-secret runtime bundle already mounted by the readers:
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/phase12-paper-20260830/phase12.runtime.env`, plus only the four currently
+active sealed Compose overlays recorded in the running container labels. The
+active final overlay intentionally pins the old reader image, so a final
+payload-free override applies the new immutable image only to `query_v2_1`
+and `query_v2_2`; it follows rather than alters the sealed overlays. Compose
+then targets `docker compose up -d --no-deps query_v2_1`, followed by the same
+command for `query_v2_2`.
+
+**Exact blast radius and rollback.** Both roles retain their existing command,
+memory `512 MiB`, CPU `0.75`, read-only filesystem, `stable_state`,
+`stable_tls` and `/runtime` mounts. The direct rollback coordinate for each is
+its current image
+`sha256:7b5c848d2add9e0e36d88bfb837c93448140b7ade3a87d9e94e4902b2bf3f18e`
+with the same bundle/overlays and only that target role recreated. This packet
+does not reset Kafka offsets/topology, flush Redis, delete/checkpoint SQLite,
+or recreate V1, Rust core, ingestors, bar edge, projectors, streams, Trading
+System, alpha or the order path. It performs normal process startup reads
+only; no acceptance client, provider request or consumer route is started.
+
+**Runtime exit.** After each serial recreate, require mTLS `/health/ready`
+`200`, all required dependencies `READY`, restart count `0`, `OOMKilled=false`
+and a bounded error scan. A repeated three-sample readiness check must pass
+for both replicas before any alpha no-order packet is eligible. Retain exactly
+the new active reader image and the named prior rollback image; no image/cache
+prune occurs in this packet.
+
+**In-packet startup diagnosis and corrected source scope (2026-09-01).** The
+first serial `query_v2_1` recreate used the new bounded health probe but did
+not bind its port: process state was uninterruptible SQLite I/O with the
+canonical database/WAL open, no crash and no OOM. Read-only code inspection
+identified the second full scan: `_migrate()` executes `INSERT OR IGNORE INTO
+spool_state SELECT COUNT(*), SUM(LENGTH(payload)) FROM events` on every open,
+even when the singleton state row already exists. The role was immediately
+recreated back on its sealed rollback image; `query_v2_2` and every excluded
+role remained untouched.
+
+The same provider-neutral repair now also makes initialization check the
+existing singleton first. Only a genuinely legacy/missing state row enters a
+short SQLite `BEGIN IMMEDIATE` initialization transaction and performs the
+one necessary aggregate to reconstruct exact capacity. Existing state opens
+must make no `events` aggregate; concurrent initializers serialize and retain
+the same correct result. Regression must cover existing-state no-aggregate,
+missing-state reconstruction, append/trim counters and fail-closed readiness.
+No retention, event ID, cursor, provider, manifest, Rust, Kafka, Redis, V1,
+or external consumer behavior changes. The superseded image is not retained
+as a rollout candidate; rebuild one replacement only after this source exit.
+
+**Startup repair source exit (`PASS / REPLACEMENT READER NEXT`, 2026-09-01).**
+The migration now creates schema objects first, checks `spool_state` by its
+singleton key, and returns immediately for a live cache. A missing state is
+reconstructed inside `BEGIN IMMEDIATE`, re-checking after the lock so only one
+initializer can aggregate legacy events; rollback on failure preserves the
+previous durable state. The former source commit's bounded health summary is
+retained and now has a startup path with the same bounded behavior.
+
+**Evidence actually run:** host `compileall` and `git diff --check` passed;
+the existing non-root, network-disabled/read-only Python runner executed the
+focused stable suite **68 passed, 1 intentionally skipped** (the only skipped
+case needs an explicitly isolated Redis). The five new/updated checks cover
+existing-state reopen without aggregate, missing-state exact reconstruction,
+append/trim counter agreement, no `stats()` call in health, and fail-closed
+SQLite error. Existing catalog, query, replay, projector recovery, session,
+L2 and five-symbol OKX identity tests remain green.
+
+**First image/role cleanup evidence.** The first candidate image reached only
+the source-open path on `query_v2_1`, exposed no listener and made no provider
+or consumer request. Its pre-bind scan was diagnosed, then exactly that role
+was recreated back to its prior sealed image. `query_v2_2` and all excluded
+roles were never recreated. The first candidate image is now an unreferenced
+test artifact and will be removed only after the replacement image passes
+runtime readiness; no cache, volume, Kafka, Redis or data-plane cleanup is
+authorized.

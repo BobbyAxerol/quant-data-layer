@@ -37,14 +37,13 @@ class _Registry:
 class Phase533QueryReadinessTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="qdl-phase533-readiness-")
-        self.spool = SQLiteDurableSpool(
-            SpoolConfig(
-                path=Path(self.temp.name) / "cache.sqlite3",
-                min_free_disk_bytes=0,
-                max_partition_records=1,
-            )
+        self.spool_config = SpoolConfig(
+            path=Path(self.temp.name) / "cache.sqlite3",
+            min_free_disk_bytes=0,
+            max_partition_records=1,
         )
-        self.config = SimpleNamespace(
+        self.spool = SQLiteDurableSpool(self.spool_config)
+        self.runtime_config = SimpleNamespace(
             role="query_v2",
             authority_mode="RUST_PRIMARY",
             authority_revision=10,
@@ -64,10 +63,40 @@ class Phase533QueryReadinessTests(unittest.TestCase):
         self.assertEqual(summary.records, 1)
         self.assertEqual(summary.payload_bytes, len(b"second"))
 
+    def test_existing_usage_state_reopens_without_event_aggregate(self):
+        self.spool.append(_event(1, b"first"))
+        self.spool.close()
+
+        with patch.object(
+            SQLiteDurableSpool,
+            "_aggregate_event_usage_locked",
+            side_effect=AssertionError("live cache must not be rescanned"),
+        ):
+            reopened = SQLiteDurableSpool(self.spool_config)
+        try:
+            self.assertEqual(reopened.readiness_summary().records, 1)
+        finally:
+            reopened.close()
+
+    def test_missing_usage_state_is_reconstructed_once(self):
+        self.spool.append(_event(1, b"first"))
+        self.spool.append(_event(2, b"second"))
+        self.spool.close()
+        with sqlite3.connect(self.spool_config.path) as connection:
+            connection.execute("DELETE FROM spool_state")
+
+        reopened = SQLiteDurableSpool(self.spool_config)
+        try:
+            summary = reopened.readiness_summary()
+            self.assertEqual(summary.records, 1)
+            self.assertEqual(summary.payload_bytes, len(b"second"))
+        finally:
+            reopened.close()
+
     def test_stable_readiness_uses_bounded_summary_not_full_stats(self):
         self.spool.append(_event(1, b"payload"))
         readiness = stable_readiness(
-            self.config, _Registry(), self.spool, quota=_Quota()
+            self.runtime_config, _Registry(), self.spool, quota=_Quota()
         )
 
         with patch.object(self.spool, "stats", side_effect=AssertionError("full scan")):
@@ -84,7 +113,7 @@ class Phase533QueryReadinessTests(unittest.TestCase):
                 raise sqlite3.DatabaseError("cache unavailable")
 
         readiness = stable_readiness(
-            self.config, _Registry(), BrokenSpool(), quota=_Quota()
+            self.runtime_config, _Registry(), BrokenSpool(), quota=_Quota()
         )
         snapshot = asyncio.run(readiness.snapshot())
 
