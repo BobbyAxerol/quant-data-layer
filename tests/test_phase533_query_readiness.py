@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from qdl.runtime.readiness import ComponentState
-from qdl.runtime.stable import stable_readiness
+from qdl.runtime.stable import build_stable_spool, stable_readiness
 from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
 
 
@@ -92,6 +92,34 @@ class Phase533QueryReadinessTests(unittest.TestCase):
             self.assertEqual(summary.payload_bytes, len(b"second"))
         finally:
             reopened.close()
+
+    def test_default_spool_open_retains_integrity_check(self):
+        path = Path(self.temp.name) / "default-integrity.sqlite3"
+        with patch.object(
+            SQLiteDurableSpool, "integrity_check", return_value=True
+        ) as check:
+            spool = SQLiteDurableSpool(SpoolConfig(path=path, min_free_disk_bytes=0))
+        try:
+            check.assert_called_once_with()
+        finally:
+            spool.close()
+
+    def test_rebuildable_stable_spool_skips_open_time_integrity_scan(self):
+        stable_config = SimpleNamespace(
+            durable_state_dir=Path(self.temp.name) / "stable",
+            cursor_ttl_seconds=60,
+        )
+        with patch.object(
+            SQLiteDurableSpool,
+            "_validate_integrity",
+            side_effect=AssertionError("stable startup must not full-scan cache"),
+        ):
+            spool = build_stable_spool(stable_config)
+        try:
+            self.assertFalse(spool.config.verify_integrity_on_open)
+            self.assertTrue(spool.integrity_check())
+        finally:
+            spool.close()
 
     def test_stable_readiness_uses_bounded_summary_not_full_stats(self):
         self.spool.append(_event(1, b"payload"))

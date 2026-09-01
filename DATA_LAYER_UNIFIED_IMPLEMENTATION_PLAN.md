@@ -28525,3 +28525,58 @@ roles were never recreated. The first candidate image is now an unreferenced
 test artifact and will be removed only after the replacement image passes
 runtime readiness; no cache, volume, Kafka, Redis or data-plane cleanup is
 authorized.
+
+**Replacement reader packet (`APPROVED / EXECUTING`, 2026-09-01).** The exact
+replacement source is commit `de4aca8`; build it once as
+`qdl-v2-python:2.0.0-phase533-readiness-de4aca8`. The final temporary two-role
+override is updated to that tag and follows all same sealed overlays/bundle.
+It serially recreates only `query_v2_1` and `query_v2_2`, preserving the
+previous `sha256:7b5c…f3f18e` image as the direct rollback coordinate. The
+failed first candidate `qdl-v2-python:2.0.0-phase533-readiness-9d42d69` must
+not be used again and is removed only after this replacement passes.
+
+**Second startup scan diagnosis and final source scope (2026-09-01).** While
+the replacement `query_v2_1` bound and returned all-ready mTLS health,
+`query_v2_2` exposed a second independent open-path scan: default
+`SQLiteDurableSpool.__init__()` runs `PRAGMA quick_check(1)` after every
+schema open. It creates SQLite temporary I/O and scans the shared cache/WAL
+before a reader can bind. This is valuable as an explicit integrity audit but
+is not a safe per-process liveness prerequisite for the rebuildable stable
+cache.
+
+The final same-scope correction adds a `SpoolConfig` open-integrity flag that
+remains **true by default** for all other spool uses. Only
+`build_stable_spool()` selects `false`, leaving the existing explicit
+`integrity_check()` API/runbook intact. Stable startup instead proves readable
+durable state through the bounded `spool_state` query; any SQLite error still
+fails required readiness closed. Regression must prove default integrity
+behavior remains, stable configuration skips only the open-time full scan,
+and all prior startup/health cases remain correct. No cache data, provider,
+event/cursor semantics, Kafka, Redis, V1, Rust or consumer policy changes.
+
+**Final startup source exit (`PASS / FINAL READER ROLL NEXT`, 2026-09-01).**
+`SpoolConfig.verify_integrity_on_open` now defaults to `true`; ordinary durable
+spools therefore retain the prior corruption check. Only the rebuildable
+stable canonical cache opts out at process-open time. Its explicit
+`integrity_check()` remains available for a deliberate maintenance audit, and
+the normal V2 reader liveness path remains fail-closed through the bounded
+state-row read. This removes the last known whole-cache scan from query-reader
+startup without weakening default spool integrity semantics.
+
+**Evidence actually run:** host `compileall` and `git diff --check` passed.
+The existing non-root, network-disabled, read-only Python image ran
+`tests.test_phase533_query_readiness`, `tests.test_phaseb_stable_release`,
+`tests.test_phaseb_stable_edge`, and
+`tests.test_phase115c_five_liquid_handoff`: **70 passed, 1 intentionally
+skipped** (the isolated-Redis case). New regression checks prove ordinary
+spools still execute their open integrity check, stable cache construction
+does not, and a manual stable-cache integrity audit remains available. Earlier
+tests retain exact legacy-state reconstruction, append/trim accounting and
+fail-closed bounded readiness coverage.
+
+**Next bounded runtime step.** Build exactly one replacement immutable reader
+image from this final source commit, update the existing two-role temporary
+override, and serially recreate only `query_v2_1` then `query_v2_2`. Require
+three all-ready mTLS samples, no restart/OOM and no bounded errors on each role
+before removing only the two unreferenced failed candidate images. No alpha
+or Trading System proof begins until this exit passes.

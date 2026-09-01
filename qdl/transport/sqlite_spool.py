@@ -39,6 +39,7 @@ class SpoolConfig:
     replay_retention_seconds: int = 24 * 3600
     maintenance_interval_seconds: int = 30
     max_partition_records: int = 0
+    verify_integrity_on_open: bool = True
 
     def __post_init__(self) -> None:
         if self.max_records <= 0 or self.max_payload_bytes <= 0:
@@ -114,7 +115,8 @@ class SQLiteDurableSpool:
         )
         self._connection.row_factory = sqlite3.Row
         self._initialize_schema()
-        self._validate_integrity()
+        if config.verify_integrity_on_open:
+            self._validate_integrity()
 
     def _initialize_schema(self) -> None:
         for attempt in range(4):

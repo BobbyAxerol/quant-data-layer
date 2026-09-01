@@ -425,6 +425,7 @@ def build_stable_spool(config: StableRuntimeConfig) -> SQLiteDurableSpool:
         consumer_ttl_seconds=config.cursor_ttl_seconds,
         replay_retention_seconds=24 * 3600,
         max_partition_records=10_000,
+        verify_integrity_on_open=False,
     ))
 
 
