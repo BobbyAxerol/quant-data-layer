@@ -29352,8 +29352,8 @@ page rejection, exact `10,000` acceptance and `10,001` refusal. This is source
 only: no provider request, image build, reader/bar-edge restart, Kafka, Redis,
 SQLite, V1, Trading System, alpha, order or broker mutation is allowed.
 
-**Phase B durable-history correction and full CI exit (`PASS / SOURCE COMMIT
-PENDING`, 2026-09-01).** The shared Binance vendor edge now walks backward in
+**Phase B durable-history correction and full CI exit (`COMPLETE / DEV
+INTEGRATED`, 2026-09-01).** The shared Binance vendor edge now walks backward in
 bounded pages of at most `1,000` rows until the declared `1..10,000` final-BAR
 window is complete. Every page is retried through the existing bounded fetcher
 and rejected when it is incomplete, crosses the requested close boundary,
@@ -29377,9 +29377,10 @@ immediately after this journal entry; no image was built and no broad cache
 cleanup is authorized in this slice.
 
 This closes the source correctness defect that prevented config-derived alpha
-bindings with `maxlen` above `1,000`. The next allowed operation is to commit
-this coherent source/test-journal slice, integrate it into `data_layer:dev`,
-and then perform the release/bundle work defined by Phase C.
+bindings with `maxlen` above `1,000`. Tested source commit `42f966c`
+(`fix(v2): align durable bar history with alpha warmup`) was fast-forwarded to
+remote `data_layer:dev`; `main` and every runtime role remain unchanged. The
+next allowed operation is the release/bundle work defined by Phase C.
 
 **Scoped test cleanup (`PASS`, 2026-09-01).** Removed only the stopped
 `qdl-phaseb-full-suite` container after its exit code and logs were recorded.
