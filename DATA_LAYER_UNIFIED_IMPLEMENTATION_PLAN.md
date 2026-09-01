@@ -29594,3 +29594,52 @@ It does not certify any alpha strategy or paper execution. The next permitted
 step is Phase D: temporary paired Binance USD-M/OKX Swap no-order proof using
 real V2 data and the sealed bindings, with exact pre/post zero-mutation
 evidence for each alpha class.
+
+### Phase 54 - Approved Full Five-Phase Alpha Consumer Execution
+
+**Status:** IN PROGRESS / OWNER-APPROVED, 2026-09-01.
+
+The owner approved execution of the complete five-phase rollout recorded in
+this ledger and the cross-repository Trading System/Alpha journals. The
+rollout starts with source convergence and ends only after paired real-data
+no-order evidence, bounded paper canaries, release reconciliation and scoped
+cleanup. No phase may silently reduce the declared target to a generic
+five-liquid manifest.
+
+**Cross-venue invariant.** Every representative alpha acceptance runs native
+Binance USD-M and OKX Swap readers concurrently, with distinct identities,
+cursor/state/log namespaces and native instrument mappings. V1/V2 output
+parity is compared only inside one venue and one identical candle corpus;
+Binance and OKX signals are never asserted equal. A reviewed Binance alpha
+without a production OKX deployment receives only a declared temporary
+OKX no-order probe, never an invented paper/live strategy deployment.
+
+**Runtime and release invariant.** Data Layer rolls only the shared
+query/stream reader roles in its release step. V1, Kafka topology/offsets,
+Redis, SQLite, Rust ingest/projector, broker/order paths and DNSE/VN
+V1-primary routing remain untouched unless a later named packet explicitly
+records otherwise. One canonical shared image serves all bindings; phase,
+symbol, interval and alpha names are not production image identities.
+
+**Completion and cleanup invariant.** Every source-changing slice is tested,
+committed with the owner identity and integrated into dev before its phase
+closes. Main changes only through the final approved stable-release PR.
+Temporary containers use --rm; test images/worktrees are removed only after
+remote-dev ancestry and zero-container-reference checks. The retained set
+is the active release image plus one named rollback image, with pre/post disk
+evidence recorded here.
+
+**Phase 1 source-convergence gate (PASS / dev integration next).** A fresh
+remote-ref audit proves the declared V2 branches
+origin/fix/phase533-v2-query-readiness,
+origin/feat/v2-alpha-config-bindings and
+origin/feat/v2-stable-rust-binance-okx are already ancestors of origin/dev.
+They are recorded rather than merged a second time. The dev-equivalent source
+gate ran in qdl-v2-python:2.0.0-dev-be59ac8 with network disabled, read-only
+source, non-root UID and tmpfs-only writes: 85 tests passed, 0 failures, 0
+errors and 1 declared skip across alpha deployment binding, sealed reader
+release, stable deployment and stable edge contracts. Expected fixture logs
+exercise invalid CLI input, stale BAR recovery and projector recovery; they
+are asserted outcomes, not provider/runtime calls. No reader role, provider,
+Kafka/Redis/SQLite, alpha, Trading System, order or broker state changed.
+The next source action is to fast-forward this tested journal commit to dev.
