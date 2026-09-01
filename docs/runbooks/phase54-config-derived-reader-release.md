@@ -49,6 +49,7 @@ Create a new `0700` directory outside the source checkout:
     <deployment>.binding.json
     compilation-report.json
   reader-image.override.yml
+  reader-rollback.override.yml
   release-manifest.json
 ```
 
@@ -56,7 +57,8 @@ Create a new `0700` directory outside the source checkout:
 provenance only. It must not contain a credential, key, token, provider
 payload, cursor, database dump, Redis/Kafka state or log body.
 
-`reader-image.override.yml` changes only these service image fields:
+`reader-image.override.yml` and `reader-rollback.override.yml` each change
+only these service image fields:
 
 ```text
 query_v2_1
@@ -82,8 +84,14 @@ Recreate the four roles in this order:
 3. `stream_v2_passive`
 4. `stream_v2_active`
 
-The next role starts only when the previous role is healthy, has no restart or
-OOM state, reports the expected image/binding generation and stays within its
+The query replicas must return `/health/ready` `200`. Stream replicas use a
+cooperative lease: the required condition is exactly one `gateway_lease=READY`
+and one `gateway_lease=STANDBY`, with every non-lease dependency ready. A
+standby deliberately returns `503` from `/health/ready`; inspect its
+`/health/dependencies` instead. Lease ownership may move during the serial
+roll, so the container name is not an authority assertion. The next role starts
+only when this condition holds, every changed role has no restart/OOM state,
+all four report the expected image/config generation and stay within their
 existing resource limits. If one role fails, stop the sequence and recreate
 only that role with the recorded old image and selector set.
 
@@ -92,10 +100,11 @@ projectors, Trading System, alpha services and order paths are excluded.
 
 ## Exit And Cleanup
 
-Phase C passes only when the canonical image/bundle provenance is sealed, all
-four reader roles are healthy on the new image and their original phase-name
-worktree or temporary image override is not part of the live Compose command.
-The subsequent Phase D alpha proof uses real Binance and OKX data but remains
+Phase C passes only when the canonical image/bundle provenance is sealed, both
+query replicas are ready, the stream pair holds exactly one clean leader and
+one clean standby on the new image, and their original phase-name worktree or
+temporary image override is not part of the live Compose command. The
+subsequent Phase D alpha proof uses real Binance and OKX data but remains
 no-order.
 
 Retain the active reader image and one named rollback image. Remove only

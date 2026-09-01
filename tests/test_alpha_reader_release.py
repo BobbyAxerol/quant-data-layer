@@ -108,6 +108,7 @@ class AlphaReaderReleaseTests(unittest.TestCase):
             source_revision=SOURCE_REVISION,
             image_reference="qdl-v2-python:2.0.0-dev-ccccccc",
             image_id=IMAGE_ID,
+            rollback_image_reference="qdl-v2-python:2.0.0-rollback-bbbbbbb",
             rollback_image_id=ROLLBACK_IMAGE_ID,
             apply=apply,
         )
@@ -133,15 +134,22 @@ class AlphaReaderReleaseTests(unittest.TestCase):
                 sorted(path.relative_to(first_dir).as_posix() for path in first_dir.rglob("*") if path.is_file()),
                 sorted(path.relative_to(second_dir).as_posix() for path in second_dir.rglob("*") if path.is_file()),
             )
-            for relative in ("inventory.json", "compilation-report.json", "reader-image.override.yml", "release-manifest.json"):
+            for relative in ("inventory.json", "compilation-report.json", "reader-image.override.yml", "reader-rollback.override.yml", "release-manifest.json"):
                 self.assertEqual((first_dir / relative).read_bytes(), (second_dir / relative).read_bytes())
             manifest = json.loads((first_dir / "release-manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["image_id"], IMAGE_ID)
             self.assertEqual(manifest["rollback_image_id"], ROLLBACK_IMAGE_ID)
+            self.assertEqual(manifest["rollback_image_reference"], "qdl-v2-python:2.0.0-rollback-bbbbbbb")
             self.assertEqual(manifest["services"], list(self.preparer.READER_SERVICES))
             self.assertFalse(manifest["secret_values_recorded"])
             override = (first_dir / "reader-image.override.yml").read_text(encoding="utf-8")
             self.assertEqual(override.count("image: qdl-v2-python:2.0.0-dev-ccccccc"), 4)
+            self.assertEqual(
+                (first_dir / "reader-rollback.override.yml").read_text(encoding="utf-8").count(
+                    "image: qdl-v2-python:2.0.0-rollback-bbbbbbb"
+                ),
+                4,
+            )
             self.assertNotIn("runtime", override.lower())
             self.assertNotIn("password", (first_dir / "release-manifest.json").read_text(encoding="utf-8").lower())
 
@@ -162,6 +170,7 @@ class AlphaReaderReleaseTests(unittest.TestCase):
                     source_revision=SOURCE_REVISION,
                     image_reference="qdl-v2-python:2.0.0-dev-ccccccc",
                     image_id=IMAGE_ID,
+                    rollback_image_reference="qdl-v2-python:2.0.0-rollback-bbbbbbb",
                     rollback_image_id=ROLLBACK_IMAGE_ID,
                     apply=False,
                 )
@@ -182,6 +191,7 @@ class AlphaReaderReleaseTests(unittest.TestCase):
                     source_revision=SOURCE_REVISION,
                     image_reference="not-an-image",
                     image_id=IMAGE_ID,
+                    rollback_image_reference="qdl-v2-python:2.0.0-rollback-bbbbbbb",
                     rollback_image_id=ROLLBACK_IMAGE_ID,
                     apply=False,
                 )
@@ -194,7 +204,21 @@ class AlphaReaderReleaseTests(unittest.TestCase):
                     source_revision=SOURCE_REVISION,
                     image_reference="qdl-v2-python:2.0.0-dev-ccccccc",
                     image_id=IMAGE_ID,
+                    rollback_image_reference="qdl-v2-python:2.0.0-rollback-bbbbbbb",
                     rollback_image_id=IMAGE_ID,
+                    apply=False,
+                )
+            with self.assertRaisesRegex(self.preparer.ReleasePreparationError, "rollback image reference"):
+                self.preparer.prepare_alpha_reader_release(
+                    inventory_path=inventory,
+                    bindings_dir=bindings,
+                    report_path=report,
+                    output_dir=root / "release-three",
+                    source_revision=SOURCE_REVISION,
+                    image_reference="qdl-v2-python:2.0.0-dev-ccccccc",
+                    image_id=IMAGE_ID,
+                    rollback_image_reference="not-an-image",
+                    rollback_image_id=ROLLBACK_IMAGE_ID,
                     apply=False,
                 )
 

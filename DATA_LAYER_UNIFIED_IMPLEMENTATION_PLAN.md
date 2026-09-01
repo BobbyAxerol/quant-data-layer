@@ -29014,7 +29014,7 @@ preparer lands and receives its own exact SHA/tag. The secret-free release
 bundle lives outside every checkout under a newly named
 `/home/bobby/.local/state/qdl-v2/releases/` directory and contains only the
 verified inventory, its `17` sealed bindings, compilation report, source/image
-digests and a four-role image override. It does not contain credentials,
+digests and candidate/rollback four-role image overrides. It does not contain credentials,
 private keys, provider payloads, cursors, SQLite, Redis/Kafka data or logs.
 
 **Approved runtime scope.** After candidate source/image gates pass, serially
@@ -29046,6 +29046,18 @@ restart count, health, manifest checksum, lag and RSS; after each, verify the
 same and stop/rollback the just-changed reader if it is not healthy. The later
 Phase D no-order alpha proof, not this phase, is the first permitted alpha or
 Gateway/Risk mutation.
+
+**Stream readiness semantics.** `stream_v2_active` and
+`stream_v2_passive` are cooperative lease replicas, not two independently
+ready writers. Their names do not assert ownership. At any sampled point the
+acceptance condition is exactly one replica with `/health/ready` `200` and a
+`READY` `gateway_lease`, while the other returns `/health/dependencies` `200`
+with every non-lease component `READY` and `gateway_lease=STANDBY` (its
+`/health/ready` is intentionally `503`). Both must remain live, restart-free
+and on the candidate image. Zero leaders, two leaders, an unexpected component
+state or a lease-error is a rollout failure. Pre-roll inspection observed the
+expected shape: query replicas and named active stream ready; named passive
+stream standby with consumer manifests/cache/Redis/authority all ready.
 
 **Increment 1 - sealed bundle preparer (`IN PROGRESS / SOURCE-ONLY`,
 2026-09-01).** The bundle is a durable release coordinate rather than an
@@ -29082,6 +29094,15 @@ commands used the non-root candidate image with read-only source; runtime
 mutations and order actions remained `0`. The final candidate image must be
 rebuilt from the commit containing this preparer before the private release
 bundle is materialized.
+
+**Increment 1 rollback-selector correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** The initial preparer records the rollback image ID but not its
+companion Compose selector. Before any service roll it must accept and validate
+the explicit rollback image reference, write a fixed four-role
+`reader-rollback.override.yml`, and bind both reference/ID pairs into the
+manifest. This is an in-scope correctness correction, not a new runtime
+feature: rollback must never depend on reconstructing a command manually or on
+a mutable historical tag.
 
 **Rollback and close boundary.** Source rollback is a revert. Runtime rollback
 is a serial four-role recreate using the exact retained `b75a...e910e` image

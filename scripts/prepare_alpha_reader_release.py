@@ -194,6 +194,7 @@ def prepare_alpha_reader_release(
     source_revision: str,
     image_reference: str,
     image_id: str,
+    rollback_image_reference: str,
     rollback_image_id: str,
     apply: bool,
 ) -> dict[str, object]:
@@ -203,6 +204,8 @@ def prepare_alpha_reader_release(
         raise ReleasePreparationError("source revision must be a full lowercase Git SHA")
     if not _IMAGE_REFERENCE.fullmatch(image_reference):
         raise ReleasePreparationError("image reference is not a canonical reader tag")
+    if not _IMAGE_REFERENCE.fullmatch(rollback_image_reference):
+        raise ReleasePreparationError("rollback image reference is not a canonical reader tag")
     if not _IMAGE_ID.fullmatch(image_id) or not _IMAGE_ID.fullmatch(rollback_image_id):
         raise ReleasePreparationError("candidate and rollback image IDs must be immutable sha256 digests")
     if image_id == rollback_image_id:
@@ -230,6 +233,7 @@ def prepare_alpha_reader_release(
         "source_revision": source_revision,
         "image_reference": image_reference,
         "image_id": image_id,
+        "rollback_image_reference": rollback_image_reference,
         "rollback_image_id": rollback_image_id,
         "services": list(READER_SERVICES),
         "inventory_sha256": inventory_sha256,
@@ -269,6 +273,9 @@ def prepare_alpha_reader_release(
         override = staging / "reader-image.override.yml"
         override.write_bytes(_render_override(image_reference))
         override.chmod(0o640)
+        rollback_override = staging / "reader-rollback.override.yml"
+        rollback_override.write_bytes(_render_override(rollback_image_reference))
+        rollback_override.chmod(0o640)
         _write_json(staging / "release-manifest.json", manifest)
         staging.rename(output)
     except Exception:
@@ -288,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--image-reference", required=True)
     parser.add_argument("--image-id", required=True)
+    parser.add_argument("--rollback-image-reference", required=True)
     parser.add_argument("--rollback-image-id", required=True)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--confirm")
@@ -302,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
         source_revision=args.source_revision,
         image_reference=args.image_reference,
         image_id=args.image_id,
+        rollback_image_reference=args.rollback_image_reference,
         rollback_image_id=args.rollback_image_id,
         apply=args.apply,
     )
