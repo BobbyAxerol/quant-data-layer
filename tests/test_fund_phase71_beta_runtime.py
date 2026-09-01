@@ -376,6 +376,7 @@ class Phase71ConfigAndTopologyTests(unittest.TestCase):
         self.assertNotIn("execution_network", raw)
         self.assertNotIn("events.market", raw)
         self.assertIn("qdl:beta:v2:", raw)
+        self.assertIn("QDL_BETA_JWT_KEY_SUBJECTS_JSON", raw)
         self.assertEqual(compose["services"]["qdl_beta_redis"]["user"], "999:999")
         self.assertIn("yes", compose["services"]["qdl_beta_redis"]["command"])
         self.assertEqual(
@@ -391,6 +392,13 @@ class Phase71ConfigAndTopologyTests(unittest.TestCase):
                 service["networks"], ["qdl_beta_internal", "qdl_beta_ingress"]
             )
             self.assertTrue(all(str(port).startswith("127.0.0.1:") for port in service["ports"]))
+            self.assertEqual(
+                service["environment"]["QDL_DATA_JWT_KEY_SUBJECTS_JSON"],
+                "${QDL_BETA_JWT_KEY_SUBJECTS_JSON:?set an isolated beta workload key-to-subject binding JSON}",
+            )
+
+        smoke_script = (Path(__file__).parents[1] / "scripts" / "phase71_beta_topology_smoke.sh").read_text()
+        self.assertIn("QDL_BETA_JWT_KEY_SUBJECTS_JSON", smoke_script)
 
     def test_shared_redis_quota_is_atomic_and_fails_closed(self):
         payload = manifest_mapping(

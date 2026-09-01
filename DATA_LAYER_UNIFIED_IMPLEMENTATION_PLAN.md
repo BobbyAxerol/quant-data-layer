@@ -28175,3 +28175,64 @@ changed from `65.27GB` before cleanup to `64.60GB` after, reclaiming about
 rollback image was removed. The eight exact `/tmp/qdl_release_ci_retry*`
 config/log artifacts were also removed after their bounded result was recorded
 above. The branch is ready for normal diff/stage/commit/push review.
+
+**Release CI Phase 7.1 topology repair (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** GitHub Actions run `33471417194` confirms that the two remaining
+red checks are the same `unit-tests` job for `push` and `pull_request`; all
+steps through the Phase 7 typed-contract gate pass. The first failing step is
+the isolated Phase 7.1 beta topology smoke. A local probe reproduced the
+failure without touching a serving namespace: `query_v2_beta` and both
+`stream_v2_beta` processes fail closed because the isolated compose fixture
+passes `QDL_DATA_JWT_KEYS_JSON` but omits the now-required
+`QDL_DATA_JWT_KEY_SUBJECTS_JSON` key-to-manifest-subject binding. This is a CI
+fixture/compose wiring defect, not a workflow bypass, provider, data-plane, or
+runtime serving defect.
+
+- **Approved scope:** on `fix/release-ci-phase71` from `origin/dev`, add the
+  required isolated key-to-subject JSON input to the beta compose, the Phase
+  7.1 smoke script, and the CI fixture; add a regression assertion; reproduce
+  the exact topology smoke with a disposable project; run the affected unit
+  module and the full CI unit discovery gate.
+- **Invariants / exclusions:** retain key-to-subject pinning; do not weaken
+  token verification or add a permissive default. No V1/V2 serving role,
+  endpoint, route, Kafka, Redis, SQLite, provider, Trading System, alpha,
+  order path, secret, or durable state mutation is permitted. Test containers,
+  networks, volumes, and the local build image are disposable and will be
+  removed after evidence is recorded.
+- **Exit / rollback:** both beta query/stream services start only with an exact
+  key-subject map; the authenticated alpha-shadow token succeeds; active /
+  passive failover still fences correctly; the full unit discovery gate passes.
+  Rollback is to leave the unmerged branch unused. `dev` and `main` are not
+  modified by this task.
+
+**Release CI Phase 7.1 topology repair (`LOCAL PASS / COMMITTED, NOT PUSHED`,
+2026-09-01).** The repair preserves the security invariant rather than
+introducing a default: beta compose now requires
+`QDL_BETA_JWT_KEY_SUBJECTS_JSON` and projects it unchanged as
+`QDL_DATA_JWT_KEY_SUBJECTS_JSON`; the smoke script requires and exports it;
+the CI fixture binds `phase7-test` only to
+`spiffe://qdl/paper/alpha-okx-reference-shadow`, the exact subject in its
+signed smoke token. The compose regression asserts all three V2 services carry
+the mandatory key-subject binding and that the smoke script cannot omit it.
+
+**Evidence actually run:**
+
+- Network-disabled/read-only Phase 7.1 module with a disposable `/tmp` tmpfs:
+  `12/12` passed.
+- Exact isolated Phase 7.1 topology smoke using project
+  `qdl_phase71_ci_final`: authenticated query `200`, V1 beta-key count `0`,
+  active/passive lease epoch `1 -> 2`, and V1 topology unchanged.
+- Exact full CI discovery in the named disposable Compose runner
+  `qdl_release_ci_phase71b_runner`: **`1249` passed, `0` failures/errors,
+  `6` skipped, `231.619s`, `OOMKilled=false`**.
+
+**Cleanup evidence:** `qdl_phase71_ci_final` self-tore down its isolated
+containers/networks/volumes; `qdl_release_ci_phase71b_runner` and its only two
+CI dependency containers/networks were removed explicitly. No production
+volume was used or removed. The unreferenced local `data-layer:v0.1.0` CI image
+was deleted after the test; Docker image storage returned from `65.27GB` to
+`64.60GB` (about `0.67GB` reclaimed). No broad prune, V1/V2 serving image,
+Kafka, Redis, SQLite, provider, Trading System, alpha, order path or durable
+state changed. The coherent repair is committed on `fix/release-ci-phase71`
+with the owner identity; pending delivery only is an explicitly requested push
+for review. `dev`/`main` remain untouched until a user-approved merge.

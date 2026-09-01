@@ -14,9 +14,10 @@ PROD_REDIS_CONTAINER="${QDL_V1_REDIS_CONTAINER:-redis_marketdata}"
 : "${QDL_BETA_INIT_IMAGE:?set QDL_BETA_INIT_IMAGE to an immutable image ID/digest}"
 : "${QDL_BETA_CURSOR_KEYS_JSON:?set isolated beta cursor keys}"
 : "${QDL_BETA_JWT_KEYS_JSON:?set isolated beta JWT keys}"
+: "${QDL_BETA_JWT_KEY_SUBJECTS_JSON:?set isolated beta workload key-to-subject bindings}"
 
 export QDL_BETA_IMAGE QDL_BETA_REDIS_IMAGE QDL_BETA_INIT_IMAGE
-export QDL_BETA_CURSOR_KEYS_JSON QDL_BETA_JWT_KEYS_JSON
+export QDL_BETA_CURSOR_KEYS_JSON QDL_BETA_JWT_KEYS_JSON QDL_BETA_JWT_KEY_SUBJECTS_JSON
 export QDL_BETA_SOURCE_BINDINGS=""
 export QDL_BETA_CONSUMER_MANIFESTS="/app/consumers/shadow/alpha-okx-reference.yaml:/app/consumers/shadow/trading-system-binance-execution.yaml"
 export QDL_BETA_JWT_ISSUER="${QDL_BETA_JWT_ISSUER:-https://identity.qdl.beta.invalid}"
