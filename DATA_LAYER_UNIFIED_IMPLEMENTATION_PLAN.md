@@ -28976,3 +28976,15 @@ The tested compiler source is now in remote `data_layer:dev` at
 remain unchanged. The next permitted action is Phase C's separately recorded
 canonical reader-image/bundle packet. It must seal this inventory/binding
 generation before any reader roll and retain V1 plus per-role rollback digests.
+
+**Phase B scoped cleanup (PASS, 2026-09-01).** Deleted only the two temporary
+cross-repository proof directories under /tmp (qdl-phaseb-bindings.*, 852 KiB
+total) and two unreferenced test-only images:
+execution-alpha-runtime-numba:0.1.1 (sha256:7f1df0...dc5e9, 369 MB) and
+tradingsystem-test:latest (sha256:f10829...de08, 192 MB). No test container
+remained because every test used --rm. Disk changed from 203/290 GiB used
+(88 GiB free) to 201/290 GiB used (90 GiB free). The active reader image
+qdl-v2-python:2.0.0-phase533-readiness-36914d2 (sha256:b75a41...10e) and both
+query/stream replicas remained running; no runtime restart occurred. No broad
+BuildKit prune was performed because its shared-cache retention set was not
+proven.
