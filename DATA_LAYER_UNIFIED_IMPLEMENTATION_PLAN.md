@@ -28314,3 +28314,40 @@ recovery/evidence images. No image was removed by that rejected command. A
 fresh owner acknowledgement after this risk disclosure is required before
 removing those non-referenced images. The materially safe cache cleanup above
 is complete; all volumes and runtime services remain intact.
+
+## 24.3.17 V2 Stable Public Tag And Local Repository Convergence
+
+**Status:** `IN PROGRESS / SOURCE-ONLY / NO RUNTIME MUTATION` (2026-09-01)
+
+**Goal and scope.** Carry the three owner-authored Docker cleanup audit entries
+from the previously diverged local `dev` history (`9efb5e5`, `111f38a`,
+`340343a`) into the current release lineage, then publish one immutable public
+Git tag for the already merged V2 stable source. This is documentation and Git
+delivery only. It does not rebuild or recreate a service, change a manifest,
+touch V1/V2 routing, Kafka, Redis, SQLite, provider state, Trading System,
+alpha runtime, broker/order path, volumes, networks, images or caches.
+
+**Release identity.** Historical local tag `2.0.0` remains immutable at
+`747231f` as the documented rehearsal artifact and is not pushed, moved or
+rewritten. The public release tag is the new annotated `v2.0.0`, created only
+after the carried audit records are fast-forwarded through `dev` and `main`.
+It must point to the exact final `main` commit, use the configured owner Git
+identity, and be pushed without creating a GitHub Release object; the owner
+will publish the GitHub Release separately.
+
+**Governing evidence and exit.** The release source already contains the
+closed 149-route C2 evidence and the merged Phase 7.1 CI repair. This narrow
+documentation carry-forward requires a clean release worktree, exact
+fast-forward ancestry for `origin/dev` and `origin/main`, `git diff --check`,
+and an audited plan-only diff. After the tag is pushed, synchronize the
+canonical local checkout without overwriting its four dirty generated files;
+preserve them in a named local stash before resetting branch pointers to the
+corresponding remote refs. Remove only clean, merged local worktrees and
+prunable worktree metadata. No remote feature branch deletion or Docker cleanup
+is implied by this release task.
+
+**Rollback / decision boundary.** Before the owner publishes the GitHub
+Release, a failed Git push leaves the current remote refs unchanged and the
+release worktree can be discarded. After a successful public tag push, do not
+retag or delete it to hide a problem; publish a new patch tag if a source fix
+is required. The GitHub Release publication itself remains an owner action.
