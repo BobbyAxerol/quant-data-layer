@@ -29654,3 +29654,61 @@ were already ancestors of their respective dev lines. The sole disposable
 artifact is the unreferenced Trading System test image; scoped cleanup and
 canonical Data Layer dev fast-forward occur after this closeout record reaches
 remote dev.
+
+### Phase 54 - Phase 2 Config-Derived Binding Expansion
+
+**Status:** IN PROGRESS / SOURCE-ONLY, 2026-09-01.
+
+**Scope.** Compile every actual Execution Alpha Compose deployment into either
+one exact secret-free V2 binding or one typed blocked record. Inputs are the
+real deployment configuration and its declarative data-requirements profile:
+native venue/market/product/symbol universe, final BAR interval, maxlen and
+min-bars, realtime execution context, L2/reference needs, freshness/gap and
+fallback policy. Strategy code and backtest parameters are not inferred or
+rewritten.
+
+**Current baseline.** The fresh offline inventory has 93 deployments:
+DECLARED=9, DECLARED_NO_ORDER_PROBE=9 and BLOCKED=75
+(DNSE_V1_PRIMARY=8, MODE_OUTSIDE_PAPER_V2_ROLLOUT=35,
+PROFILE_REVIEW_REQUIRED=32). The paired probes are native OKX Swap data-plane
+proofs, not fabricated strategy or broker-paper deployments.
+
+**Exit, tests and rollback.** Compile the actual inventory twice byte-for-byte;
+validate every generated binding with both Data Layer and Trading System
+parsers; cover 2500/5000/10000 maxlen, single/multi-symbol, bracket,
+grid/L2 and basis/reference profiles, malformed/cross-venue/duplicate records
+and required-capability failure. Tests are no-network/read-only and write only
+caller-owned tmpfs artifacts. A failure blocks the affected deployment rather
+than widening a route. Rollback is a source revert of the Phase 2 commits;
+no runtime bundle, provider demand, reader, Kafka/Redis/SQLite, alpha,
+Trading System or order path may change in this phase.
+
+**Closure (`PASS / SOURCE-ONLY`, 2026-09-01).** The exact Compose/config
+inventory was exported twice in isolated containers with the network disabled,
+read-only source and tmpfs-only scratch state. Both renders are byte-identical:
+`93` deployments, inventory SHA-256
+`738363ab1c8a56f75a6e1b728d96dab59b7632c09023d6a28a7e3b72068e0d60`;
+`9` DECLARED, `9` DECLARED_NO_ORDER_PROBE and `75` typed BLOCKED. The Data
+Layer compiler rendered `17` admitted bindings containing `106` exact V2
+products and `76` explicit blocks, twice with compilation SHA-256
+`1a859f933086715fca40e5efc1bd8293a9cc25a86b03a1bab3b6f224557cf2c6`.
+The additional compiler block is the correct native outcome for the
+Binance-specific basis profile: `CAPABILITY_UNAVAILABLE:BASIS:crypto_liquid_v2`
+on its OKX Swap no-order probe. It was neither cross-routed nor represented as
+zero data.
+
+The portable Trading System binding parser accepted all `17` compiler outputs
+and all `106` product identities with the same compiler digest. Focused
+regression coverage also exercised `2500`, `5000` and `10000` history rows as
+admitted values and `10001` as an explicit block. The registry/profile suite
+covers single-symbol directional, multi-symbol, bracket/mark, grid L2 and
+basis/reference requirements, malformed/duplicate/cross-venue rejection and
+missing required capability. A targeted representative-runtime source scan
+found no direct Binance/OKX, Redis or WebSocket client bypass in
+`adaptive_hma_cpp`, `scalping_purely`, `fib_sl_tp_strength` or `dynamic_grid`.
+
+No runtime bundle/image/role, provider request, Kafka, Redis, SQLite, V1,
+Trading System, alpha container, cursor/state/log, database row, session,
+reservation, order or broker request was created. Phase 2 is complete after
+this journal commit reaches `dev`; Phase 3 alone may build the canonical
+reader/stream release tuple and roll its four shared roles.
