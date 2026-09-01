@@ -29925,3 +29925,121 @@ no-order mode rejection; its focused source matrix passed `63/63` with a
 specific zero-write ordering test. This does not modify any Data Layer
 contract, reader, provider, identity, durable state or runtime role. The
 paired Binance/OKX no-order proof is now permitted against the sealed reader.
+
+**Phase 4 paired-reader packet (`IN PROGRESS / OWNER-APPROVED`, 2026-09-01).**
+The active sealed V2 query/stream reader is read by exactly eight temporary
+native alpha probes: one Binance USD-M and one OKX Swap counterpart for each
+directional, multi-symbol, bracket and grid/L2 class. Every probe uses its
+existing sealed binding and separate mTLS/JWT access identity; it must prove
+final BAR warmup, signed cursor reconnect and any declared quote/mark/L2 path
+without a direct provider connection. Data Layer roles, Kafka, Redis, SQLite,
+reader image/release bundle and V1 stay untouched. Results remain insufficient
+for paper promotion unless all scoped pairs finish and produce zero alpha/order
+state mutation evidence.
+
+**First paired-reader receipt (FAILED CLOSED / ZERO MUTATION, 2026-09-01).**
+The packet ran the four representative native pairs, eight read-only alpha
+probes, against real V2 query/stream. Every probe rejected the first exact
+latest-final-BAR with required-data-not-available; no route selected V1
+fallback. The temporary no-order Gateway exited 0 and was removed.
+Before/after PostgreSQL checks across all scoped accounts were identical and
+all-zero; control and market Redis scoped keys were empty and unchanged; every
+temporary container and private tmpfs namespace was removed. Thus no order,
+state, cache, cursor, provider or execution mutation occurred.
+
+**Root cause and bounded repair (IN PROGRESS / SOURCE-ONLY, 2026-09-01).**
+The current V2 BAR edge mounts the narrow Phase-12 projection containing only
+ten five-liquid 1m routes. The sealed real alpha inventory declares 36
+deployment BAR routes, 26 unique native physical Binance USD-M/OKX Swap
+routes, including 5m, 15m, 30m, 1h and 1d. Existing catalog and the shared
+Rust core already carry the capability metadata; the missing link is a
+reusable compiler that turns the union of admitted sealed alpha bindings into
+one bounded shared BAR-edge projection. It must deduplicate exact canonical
+identity, require V2_PRIMARY plus realtime plus final BAR, retain the exact
+venue/source-policy/interval mapping, and reject unbound/non-final/mismatched
+routes. require_live=false for a final-BAR alpha route must not suppress
+materialization: it controls consumer liveness policy, not whether the shared
+edge owns a provider-confirmed close. The repair is source-only until an
+explicit later packet authorizes a single bar-edge rolling recreate with a new
+namespaced checkpoint. It creates no symbol worker, image, topic, Redis prefix,
+consumer group or alpha-specific service.
+
+## Phase 54.1 - Cross-Repository Alpha V2 Production Execution Ledger
+
+**Status:** `OWNER-APPROVED / ACTIVE`, 2026-09-01.
+
+**Outcome.** Make V2 the normal, versioned data-read plane for admitted alpha
+and Trading System consumers. V1 remains an explicit, observable rollback only
+where the sealed route permits it. `dev` is the sole production-capable
+integration line; `main` is stable release-only. Every eligible crypto alpha
+is proved against both native Binance USD-M and OKX Swap data. This paired
+proof verifies each venue independently; it does not assert cross-venue price
+or signal equality.
+
+**Global invariants.** One shared provider/ingest/core/bar-edge/read plane
+serves all admitted symbols and intervals. No alpha, symbol, interval, feed or
+venue may create a dedicated image, topic, worker, identity or long-lived
+container. Requirements are declarative at the deployment/config boundary:
+native venue/product/instrument, final BAR/history `maxlen`/`min_bars`,
+TRADE/QUOTE/MARK/BOOK/reference feeds, freshness/finality/gap/fallback policy,
+and required versus optional semantics. Provider values are real or durably
+captured provider bytes; absence is typed `BLOCKED` or optional-unavailable,
+never zero-filled or cross-venue substituted. DNSE/VN stays V1-primary.
+
+| Phase | Data Layer deliverable and hard exit | Runtime / rollback boundary |
+| --- | --- | --- |
+| A | Converge tested Phase-4 source with Trading System and Execution Alpha into each remote `dev`; record the three SHA tuple and `qdl_sdk` provenance. | Source-only; revert coherent `dev` commits. Do not alter dirty canonical checkouts. |
+| B | Compile every actual eligible alpha configuration to a sealed native binding or typed `BLOCKED`; compile one shared BAR-edge projection from the union of admitted alpha demand **and active baseline demand**. | Source-only; no provider/runtime state. A later BAR-edge handoff must retain existing routes. |
+| C | Build one canonical semver-plus-SHA reader image and sealed bundle; separately apply the bounded BAR-edge projection required for authentic final BAR. | Reader roll is only query/stream. BAR edge, if required, is one named role with its own checkpoint/config rollback; V1/Kafka/Redis/SQLite/core/ingestors/projectors stay intact. |
+| D | Run bounded native Binance/OKX no-order proof for representative closed-bar, multi-symbol, bracket/conditional and grid/L2 classes; cover all admitted binding classes with data-only contract probes. | Temporary `--rm` consumers and no-order Gateway only; exact DB/Redis/state scope must remain zero-mutated. |
+| E | Promote passing paper canaries per admitted class, publish stable release only after evidence, then clean merged worktrees and unreferenced test images by exact inventory. | Paper scopes are namespaced; V1 is retained rollback. `dev -> main` only through release PR/tag. |
+
+**Mandatory test matrix.** Source gates cover deterministic double render,
+native identity isolation, malformed/duplicate rejection, required/optional
+capability semantics, `maxlen` 2,500/5,000/10,000, single/multi-symbol,
+bracket, grid/L2 and basis/reference declarations. Runtime gates cover final
+BAR, warmup/FIFO append, signed cursor replay/reconnect, quote/mark/L2
+sequence/reset/resync, freshness/watermark/gap, bounded resource use, and
+V1-fallback-return only where policy permits it. Alpha/V1-V2 parity is within
+the same venue and candle corpus. No-order evidence additionally proves zero
+execution sessions, commands, reservations, orders, groups, brackets, fills,
+broker attempts, persistent alpha state and scoped Redis mutation.
+
+**Lifecycle and cleanup.** Each coherent tested source slice is committed with
+the owner identity, pushed/merged to `dev`, then verified with
+`git merge-base --is-ancestor` before its worktree or local branch is removed.
+Never reset or delete a dirty canonical checkout. At phase close retain only
+the active runtime digest and named rollback digest; record exact container
+references plus disk before/after before removing unreferenced test images or
+BuildKit cache. Runtime state, volumes, networks, source, secrets and active
+containers are excluded from cleanup.
+
+**Phase B shared BAR-demand compiler exit (`PASS / SOURCE-ONLY`, 2026-09-01).**
+The compiler now accepts a repeatable set of sealed alpha bindings and an
+optional active `MATERIALIZED` baseline projection. The retained projection is
+not trusted as a broad catalog: its schema/status/digests/binding IDs are
+validated, then every retained route is resolved again through the current
+strict catalog and must still be a final BAR. This prevents a new alpha union
+from deleting the active Trading System 1m baseline while still rejecting an
+unknown or non-final retained route. It produces one shared catalog/acquisition
+projection, deduplicated by canonical identity, without creating any
+symbol-specific topology.
+
+An isolated non-root, network-disabled, read-only test container passed `7/7`
+projection tests, including alpha `require_live=false`, duplicate alpha route,
+active-baseline retention and missing-baseline rejection; the existing binding
+compiler/release suite passed `10/10`. A separate offline tmpfs-only real
+artifact compile read all `17` sealed alpha bindings: their demand selected
+`25` native final-BAR routes. Unioning the active ten-route
+`trading-system.paper.stable` projection produced exactly `35` routes, with
+no baseline removal. A second offline verifier mapped all 35 binding IDs to
+current catalog source IDs and confirmed each exists in the active Rust core's
+182-source configuration. These commands made zero provider requests, runtime
+changes, order actions or persistent writes; all output was tmpfs-only.
+
+The source repair is ready for its coherent Data Layer commit and `dev`
+integration. A later bounded runtime packet may materialize a namespaced
+35-route projection and recreate only `binance_bar_edge`; it must retain the
+current source image, V1, Kafka/Redis/SQLite, Rust core, ingestors, projectors,
+Trading System, alpha and order path, with exact old projection/checkpoint
+rollback coordinates recorded at execution time.
