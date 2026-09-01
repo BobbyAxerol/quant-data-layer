@@ -29455,3 +29455,142 @@ tests, then the corrected invocation passed. No service, data-plane resource,
 provider, alpha or order path changed. The next in-scope operation is one
 replacement candidate build from this tested source, followed by the existing
 deterministic inventory/compiler and sealed-bundle gates.
+
+**Phase C replacement candidate and rolling packet (`READY / APPROVED`,
+2026-09-01).** The tested source commit is
+`be59ac830c30311aa5799cc0a83db596fc6079cc`, now fast-forwarded to
+`origin/dev`. Its one immutable reader image is
+`qdl-v2-python:2.0.0-dev-be59ac8`, image ID
+`sha256:d06dd8c84fda7eda89f07ac8f9c55c1a975b68581e82adf840e3155509d99766`,
+OCI revision `be59ac8...`, release label `2.0.0-dev-be59ac8`, user
+`qdl:qdl`. The selected in-image, network-disabled/read-only/non-root matrix
+passed `111` tests; the build had no source mount. The real Execution Alpha
+inventory export is secret-free and deterministic: semantic inventory digest
+`738363ab1c8a56f75a6e1b728d96dab59b7632c09023d6a28a7e3b72068e0d60`,
+`93` deployments, with two candidate compiler passes byte-identical
+(`17 ADMITTED`, `76 BLOCKED`, compilation digest
+`1a859f933086715fca40e5efc1bd8293a9cc25a86b03a1bab3b6f224557cf2c6`).
+The sealed secret-free bundle is
+`/home/bobby/.local/state/qdl-v2/releases/2.0.0-dev-be59ac8/`, manifest
+digest `17196a73dbdfc599ba492370e5c42b68568b3d518ae907758c7833d79650a73b`,
+with `17` binding files and only the four reader-role image fields. Its
+candidate Compose renders cleanly with the active runtime env and existing
+C2 override.
+
+The approved serial runtime action is constrained to Compose project
+`qdl_v2_stable_candidate` and only `query_v2_2`, `query_v2_1`, then the
+currently observed stream `STANDBY`, then the currently observed stream
+`READY`, using the sealed image override above. Before and after every role,
+record bounded image ID, health/dependency state, restart count and RSS. Query
+roles require mTLS `/health/ready=200`; streams require both dependencies
+healthy and exactly one `gateway_lease=READY` plus one `STANDBY`. Stop on the
+first failure. The exact rollback is the sealed four-role override to
+`qdl-v2-python:2.0.0-dev-d619be6`, image ID
+`sha256:e5cea2afa405188293e28fa8b1fd1a6ac22b2b62db8aa2e95efc44913b407963`,
+recreating only the failed role. Excluded: V1, Kafka topology/offsets, Redis,
+SQLite, Rust core, ingestors, bar edge, projectors, Trading System, alpha,
+broker credentials and every order path. This normal reader rollout neither
+creates provider demand nor changes authority; the later Phase D no-order
+pair tests are the first alpha consumer use of the new bindings.
+
+**Canonical deployment-source selection (`APPROVED / PRE-ROLL`, 2026-09-01).**
+The four-role candidate must not be launched from this feature worktree. Its
+new healthchecks live in the `dev` Compose source, while the sealed bundle
+deliberately changes only image fields. Before the reader roll, the one
+canonical Data Layer checkout `/home/bobby/data_layer` is fast-forwarded from
+clean `main` to clean `origin/dev` at `be59ac8`; `main` remains the stable
+release ref and is neither merged nor mutated. This is a source selector only,
+not a service action. It gives the eventual containers the canonical working
+directory and the exact source/image/bundle tuple, rather than a feature
+worktree label or an untracked hand-written override. Returning the canonical
+checkout to a released `main` revision remains part of Phase E closeout after
+an approved release merge.
+
+**Phase C reader runtime handoff (`PASS / DEV PRE-RELEASE`, 2026-09-01).**
+Using only `/home/bobby/data_layer` at `dev@be59ac8`, the sealed image override
+serially recreated `query_v2_2`, `query_v2_1`, the observed standby
+`stream_v2_passive`, then the observed leader `stream_v2_active`. Each query
+returned typed mTLS `READY`; final Docker health is `healthy` for all four and
+every role has restart count `0`. The cooperative post-roll state is exactly
+one lease holder (`stream_v2_passive`, `READY`, epoch `10`) and one standby
+(`stream_v2_active`, `STANDBY`); all four use image ID
+`sha256:d06dd8c84fda7eda89f07ac8f9c55c1a975b68581e82adf840e3155509d99766`.
+Measured post-roll RSS is bounded at query-1 `124.9 MiB`, query-2 `114.5 MiB`,
+stream-active `109.1 MiB`, stream-passive `111.4 MiB` of `512 MiB` each. The
+container labels resolve only canonical source files plus the sealed release
+override, never a feature worktree. V1, Kafka topology/offsets, Redis,
+SQLite, Rust, ingestors, bar edge, projectors, Trading System, alpha and every
+order path remained untouched. This is a DEV pre-release reader rollout, not
+a stable-main release and not an alpha acceptance.
+
+**Phase C scoped cleanup (`READY`, 2026-09-01).** Before cleanup Docker held
+the active candidate `be59ac8`, active rollback `d619be6`, and the superseded
+non-active build-only candidate `3c5099c` with its matching secret-free
+release bundle. Before removal, require a zero-container-reference check for
+the old image. Remove only that old image, old release directory, and the
+caller-owned `/tmp/qdl-phasec-reader-be59ac8.*` compiler inputs/outputs after
+their hashes are recorded above. Do not prune BuildKit broadly: it contains
+shared layers whose exact ownership cannot be proven from this phase. Record
+post-cleanup image/cache/disk values and retain the active plus one rollback
+image.
+
+**Phase C durable-projection recovery (`IN PROGRESS / MINIMAL RUNTIME REPAIR`,
+2026-09-01).** Post-roll inventory found all three existing projectors stopped
+with `OOMKilled=true`: replicas 2/3 had exited about three hours before the
+reader roll; replica 1 exited while the reader handoff was in progress. Their
+last bounded logs show the known failure chain `no active stable stream gateway
+accepted canonical data`; the old stream startup path was unavailable, then
+the projector retry loop exhausted its `512 MiB` cgroup. This is a prerequisite
+for real V2 alpha evidence, not an alpha strategy issue. The new stream pair
+is now healthy and has a single clean lease, so recover with the narrowest
+possible action: serially `start` the existing stopped containers
+`projector_v2`, `_2`, `_3` in place on their current certified bounded image
+`qdl-v2-python:2.0.0-phase533-projector-631d694`
+(`sha256:288e617c7ec137dfcac5e94a5977772f2e0f39eac3ff48585980c0b26b0071bb`),
+with unchanged `512 MiB` cgroup, `stable-projector-v1` group, offsets, TLS,
+runtime/state mounts and `2048` records / `32 MiB` pending bounds. Observe
+each before starting the next: running, `OOMKilled=false`, restart `0`,
+healthy stream ingestion and bounded RSS/error scan. On failure stop only
+that recovered role; do not recreate, reset Kafka, flush Redis, delete
+SQLite, change image, V1, Rust, ingestor, bar edge, Trading System, alpha or
+order path. Normal canonical/cache writes after a healthy start are expected
+durable projection recovery, not a test-order or authority mutation.
+
+**Phase C durable-projection recovery (`PASS`, 2026-09-01).** The existing
+projectors were started serially in place, never recreated: `_1` first, then
+`_2`, then `_3`. After a bounded catch-up window all three are `running`,
+`OOMKilled=false`, restart `0`, and their actual local HTTP readiness endpoint
+returns typed `READY` with authority `RUST_PRIMARY` and config revision
+`phasec36-reference-l2-r14`. The initially attempted HTTPS probe correctly
+failed with `WRONG_VERSION_NUMBER`; projector health is deliberately an
+internal HTTP listener, whereas query/stream public reader probes remain
+mTLS. Post-recovery RSS is bounded at `_1` `116.3 MiB`, `_2` `297.5 MiB` and
+`_3` `327.1 MiB` of their unchanged `512 MiB` limits. The bounded 90-second
+error scan found no `error|exception|oom|killed|fatal|gateway|cache|traceback`
+match after recovery. This restored normal durable projection from the
+already-running stream without offset reset, Redis flush, SQLite deletion,
+image change, V1/Rust/ingestor/bar-edge, Trading System, alpha or order-path
+mutation.
+
+**Phase C cleanup and close (`COMPLETE / DEV PRE-RELEASE`, 2026-09-01).**
+The current reader runtime is the canonical tuple: source
+`/home/bobby/data_layer` `dev@be59ac8`; sealed bundle manifest
+`17196a73dbdfc599ba492370e5c42b68568b3d518ae907758c7833d79650a73b`;
+four reader roles on image
+`qdl-v2-python:2.0.0-dev-be59ac8` / ID
+`sha256:d06dd8c84fda7eda89f07ac8f9c55c1a975b68581e82adf840e3155509d99766`;
+and named rollback `qdl-v2-python:2.0.0-dev-d619be6` / ID
+`sha256:e5cea2afa405188293e28fa8b1fd1a6ac22b2b62db8aa2e95efc44913b407963`.
+After a zero-container-reference check, removed only the superseded
+`qdl-v2-python:2.0.0-dev-3c5099c` image, its `440 KiB` release directory and
+the `724 KiB` caller-owned compiler directory. Docker images moved from
+`67.47 GiB` to `66.81 GiB`; BuildKit is `15.74 GiB` with `6.876 GiB`
+reclaimable and was deliberately not broadly pruned because ownership is
+shared. Host disk is `204/290 GiB`, with `86 GiB` available. No active image,
+volume, network, source, runtime state, V1 role or rollback image was removed.
+
+Phase C is therefore complete as a **DEV pre-release reader/bundle rollout**.
+It does not certify any alpha strategy or paper execution. The next permitted
+step is Phase D: temporary paired Binance USD-M/OKX Swap no-order proof using
+real V2 data and the sealed bindings, with exact pre/post zero-mutation
+evidence for each alpha class.
