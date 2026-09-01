@@ -28802,3 +28802,48 @@ action was created. The next and only remaining Phase 53.3 runtime decision is
 the separately scoped sealed-binding, temporary `--rm` alpha/Gateway no-order
 packet with pre/post mutation evidence. Source rollback is this commit's
 revert; V1/VN remain unchanged.
+
+## Cross-Repository V2 Alpha Consumer Production Rollout
+
+**Status:** `APPROVED / PHASE A IN PROGRESS` (2026-09-01). The detailed
+cross-repository contract is recorded in Trading System plan Section 54. This
+Data Layer entry owns the binding compiler, immutable reader release and
+real-provider acceptance evidence.
+
+### Data Layer Responsibilities
+
+1. **Phase A.** Merge the current V2 source branch to `dev` only after source
+   gates pass there. Record the Data Layer SHA and public `qdl_sdk` version in
+   the release tuple; keep `main` unchanged until stable certification.
+2. **Phase B.** Replace the five-liquid-only declaration with a deterministic
+   config-derived binding compiler. It must consume alpha requirements for
+   native Binance USD-M/OKX Swap identity, final BAR/history, `maxlen` and
+   `min_bars`, TRADE/QUOTE/MARK/BOOK, reference products and exact fallback/
+   freshness policy. It emits a sealed, versioned, secret-free binding per
+   alpha deployment or a typed `BLOCKED` reason. It does not create a
+   subscription, symbol worker, image, topic or identity per symbol.
+3. **Phase C.** Build one canonical immutable Python reader/query/stream image
+   from the merged `dev` SHA and seal its runtime bundle. Replace only reader
+   roles with per-role rollback digest. V1, Kafka, Redis, SQLite, Rust core,
+   ingestors, bar-edge and projectors stay intact unless a source change makes
+   their replacement necessary.
+4. **Phase D.** Supply real provider V2 data for paired Binance/OKX no-order
+   alpha proof. A successful route requires native identity, finality,
+   authoritative/complete/no-gap quality, cursor replay/reconnect and bounded
+   resource evidence. A product that needs unavailable data must be `BLOCKED`,
+   never represented as zero/synthetic/fallback data.
+5. **Phase E.** Publish only a release-tagged image/config after paper-canary
+   evidence. Retain V1 as named rollback. After release, remove only confirmed
+   unreferenced test images/cache and merged worktrees, recording disk
+   before/after and retention coordinates.
+
+### Data Layer Acceptance Rules
+
+- Binance and OKX are paired test venues for each eligible alpha class; source
+  and provider data remain native to their venue.
+- Support declared warmup windows through `10,000` rows while preserving
+  bounded request/batch/stream quotas and final-BAR-only execution inputs.
+- Reference data and L2 become execution inputs only when an exact consumer
+  requirement/policy permits them. Alpha remains `ALPHA` grade; Trading System
+  Risk retains the independent execution-grade reread.
+- DNSE/VN remains V1-primary and outside this crypto rollout.
