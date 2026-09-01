@@ -29266,3 +29266,10 @@ zero-container-reference check; the image set fell from `67.87 GiB` to
 `66.15 GiB` and host disk from `203/290 GiB` to `202/290 GiB`. Existing
 BuildKit cache, V1/V2 runtime images, volumes, topics, databases and running
 services were retained. Phase B is the sole active work item.
+
+**Worktree closure (`COMPLETE`, 2026-09-01).** The clean
+`feat/v2-alpha-binding-completion` worktree and merged local branch were
+removed after remote-`dev` ancestry verification. The canonical `main`
+checkout and the separately retained `fix/phase533-python310-sdk` worktree
+were not changed. No source or runtime artifact was deleted outside this
+closed source phase.
