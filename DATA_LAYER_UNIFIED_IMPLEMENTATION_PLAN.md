@@ -29388,3 +29388,70 @@ Docker inventory changed from `63` to `62` containers; images stayed
 `66.15 GB`, BuildKit cache stayed `14.39 GB`, and no volume/network/runtime
 resource was removed. The retained active and rollback image set was not
 altered; no broad prune was performed.
+
+### Five-Phase Alpha Rollout - Phase C Candidate 3c5099c
+
+**Status:** `IN PROGRESS / BUILD-BUNDLE-TEST ONLY` (2026-09-01).
+
+**Objective.** Promote the source-integrated Data Layer `dev` revision
+`3c5099cd6a4c8b6b5eb8926842bcfd098f101127` into exactly one canonical reader
+candidate image, `qdl-v2-python:2.0.0-dev-3c5099c`, and a secret-free binding
+bundle under `/home/bobby/.local/state/qdl-v2/releases/2.0.0-dev-3c5099c/`.
+The bundle is compiled from the actual `execution_alpha:dev` Compose/config
+inventory at `10bb7eb`, not a generic five-symbol fixture. It must be
+deterministic across two compiles and include only admitted secret-free route
+bindings plus typed `BLOCKED` deployment records in its report.
+
+**Known rollback and exact later runtime scope.** The currently serving four
+reader roles use `qdl-v2-python:2.0.0-dev-d619be6`, image
+`sha256:e5cea2afa405188293e28fa8b1fd1a6ac22b2b62db8aa2e95efc44913b407963`:
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, `stream_v2_passive` in Compose
+project `qdl_v2_stable_candidate`. If and only if the candidate source/image/
+bundle gates pass, a later serial rolling packet may recreate those four roles
+only. It retains V1, Kafka topology and offsets, Redis, SQLite, Rust core,
+ingestors, bar edge, projectors, Trading System, alpha, broker credentials and
+the order path. Rollback is the generated four-role override pointing at the
+recorded `d619be6` image ID; no generic "prior image" instruction is allowed.
+
+**Current slice gates and exclusions.** Build one image with OCI revision
+`3c5099c...`; verify label, non-root UID/GID and digest; run selected
+binding/release/reference/L2/query/stream source tests inside that image with
+no source mount, no network and tmpfs-only write paths. Export actual alpha
+requirements, compile twice against the candidate, verify inventory,
+compilation and per-binding digests, and seal the release directory with
+`0700` ownership. No reader role, bundle-mounted runtime, provider, alpha,
+Gateway/Risk, database, Redis, Kafka, cursor, execution session, order or
+broker path may change in this build-bundle-test slice. Docker cleanup retains
+the active rollback image and this named candidate; all other test artifacts
+are scoped and measured.
+
+**Reader-health completeness correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** Candidate preflight proved that both query replicas answer the
+typed mTLS readiness endpoint and both stream replicas answer typed dependency
+health. It also exposed a Compose correctness gap: only `query_v2_1` declared
+a Docker healthcheck, so `query_v2_2` and both stream replicas could appear
+merely process-up during a later serial roll. Before any runtime mutation, add
+the same mTLS `/health/ready` healthcheck to `query_v2_2` and mTLS
+`/health/dependencies` healthchecks to the active/passive streams; the latter
+is intentional because a cooperative stream standby is healthy while not
+lease-ready. Add a source regression asserting all four reader roles use the
+right endpoint, certificate root and `5s/3s/20` bounded cadence. This changes
+no provider, binding semantics, manifest capability, V1 route, Kafka, Redis,
+SQLite, Rust, alpha, Gateway/Risk or order path. The non-active `3c5099c`
+image/bundle becomes disposable only after one replacement candidate passes
+the same build, provenance, deterministic-compile and rendered-Compose gates;
+the currently serving `d619be6` image remains the sole rollback artifact.
+
+**Reader-health source gate (`PASS`, 2026-09-01).** Added the missing Docker
+healthchecks without changing reader topology: `query_v2_2` now probes its
+local mTLS `/health/ready`; `stream_v2_active` and `stream_v2_passive` probe
+their local mTLS `/health/dependencies`. The stream endpoint deliberately
+accepts a healthy standby rather than incorrectly requiring lease ownership.
+`tests.test_phaseb_stable_deployment` passed `26/26` in
+`qdl-v2-python:2.0.0-dev-3c5099c`, network disabled, root filesystem
+read-only, UID/GID `10001`, with only an ephemeral `/tmp`; the first attempt
+used an invalid nested tmpfs below a read-only source mount and exited before
+tests, then the corrected invocation passed. No service, data-plane resource,
+provider, alpha or order path changed. The next in-scope operation is one
+replacement candidate build from this tested source, followed by the existing
+deterministic inventory/compiler and sealed-bundle gates.

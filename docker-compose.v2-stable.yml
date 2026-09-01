@@ -289,6 +289,7 @@ services:
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
+    healthcheck: {test: [CMD, python, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/query/ca.crt'); c.load_cert_chain('/stable-certs/query/server.crt','/stable-certs/query/server.key'); urllib.request.urlopen('https://localhost:8200/health/ready',context=c,timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 
   stream_v2_active:
     <<: *python
@@ -309,6 +310,7 @@ services:
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/stream/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/stream/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
+    healthcheck: {test: [CMD, python, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/stream/ca.crt'); c.load_cert_chain('/stable-certs/stream/server.crt','/stable-certs/stream/server.key'); urllib.request.urlopen('https://localhost:8200/health/dependencies',context=c,timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 
   stream_v2_passive:
     <<: *python
@@ -329,6 +331,7 @@ services:
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/stream/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/stream/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
+    healthcheck: {test: [CMD, python, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/stream/ca.crt'); c.load_cert_chain('/stable-certs/stream/server.crt','/stable-certs/stream/server.key'); urllib.request.urlopen('https://localhost:8200/health/dependencies',context=c,timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 
   projector_v2:
     <<: *python

@@ -1220,6 +1220,24 @@ class StableComposeAndBundleTests(unittest.TestCase):
             self.assertTrue(
                 all(str(port).startswith("127.0.0.1:") for port in services[name]["ports"])
             )
+        for name in ("query_v2_1", "query_v2_2"):
+            with self.subTest(query_healthcheck=name):
+                healthcheck = services[name]["healthcheck"]
+                command = " ".join(healthcheck["test"])
+                self.assertIn("https://localhost:8200/health/ready", command)
+                self.assertIn("/stable-certs/query/ca.crt", command)
+                self.assertEqual(healthcheck["interval"], "5s")
+                self.assertEqual(healthcheck["timeout"], "3s")
+                self.assertEqual(healthcheck["retries"], 20)
+        for name in ("stream_v2_active", "stream_v2_passive"):
+            with self.subTest(stream_healthcheck=name):
+                healthcheck = services[name]["healthcheck"]
+                command = " ".join(healthcheck["test"])
+                self.assertIn("https://localhost:8200/health/dependencies", command)
+                self.assertIn("/stable-certs/stream/ca.crt", command)
+                self.assertEqual(healthcheck["interval"], "5s")
+                self.assertEqual(healthcheck["timeout"], "3s")
+                self.assertEqual(healthcheck["retries"], 20)
         projector_names = ("projector_v2", "projector_v2_2", "projector_v2_3")
         for name in projector_names:
             self.assertNotIn("ports", services[name])
