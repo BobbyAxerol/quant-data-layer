@@ -29712,3 +29712,87 @@ Trading System, alpha container, cursor/state/log, database row, session,
 reservation, order or broker request was created. Phase 2 is complete after
 this journal commit reaches `dev`; Phase 3 alone may build the canonical
 reader/stream release tuple and roll its four shared roles.
+
+### Phase 54 - Phase 3 Canonical Reader/Stream Release
+
+**Status:** IN PROGRESS / OWNER-APPROVED RUNTIME PACKET, 2026-09-01.
+
+**Goal and scope.** Build one immutable, shared Data Layer reader image from
+the Phase 2 `dev` revision and seal the actual config-derived binding bundle.
+Use canonical product naming `qdl-v2-python:2.0.0-dev-<commit>`; no phase,
+alpha, symbol or interval identity is allowed in the image name. After
+source/image/bundle gates pass, serially recreate only `query_v2_2`,
+`query_v2_1`, `stream_v2_passive` and `stream_v2_active` in the existing
+`qdl_v2_stable_candidate` project. The new image serves all declared bindings.
+
+**Frozen blast radius.** Retain V1 `data_layer_service`, Kafka brokers/topics/
+offsets, stable Redis, SQLite/spool, Rust cores, ingestors, bar edge,
+projectors, TLS/identities, Trading System, alpha processes and all order
+paths unchanged. Normal reader cache reads are expected; this phase creates no
+provider demand, no alpha cursor/state/log and no consumer or order record.
+
+**Tests and exit.** The candidate must be built without a source bind, carry
+its exact OCI revision/release labels, and pass the config compiler/release
+tests under `--network none`, read-only root filesystem, non-root UID and
+tmpfs-only scratch. Seal inventory/report/bindings atomically with input/image/
+rollback SHA-256s; render Compose against the canonical checkout. For every
+serial role, record before/after image ID, health/dependency state, restart
+count and RSS. Queries require mTLS `READY`; streams require exactly one
+`READY` lease and one `STANDBY`. Stop on first failure.
+
+**Rollback and cleanup.** The currently active reader image
+`qdl-v2-python:2.0.0-dev-be59ac8` / ID
+`sha256:d06dd8c84fda7eda89f07ac8f9c55c1a975b68581e82adf840e3155509d99766`
+is the named per-role rollback with unchanged runtime/TLS mounts. Roll back
+only the failed reader role. On success retain the new active image plus this
+rollback image; remove only zero-reference temporary test images, temporary
+compiler artifacts and this phase worktree after `dev` ancestry is proven.
+No broad prune, volume/network/state deletion or source reset is permitted.
+
+**Build, seal and source gates (`PASS`, 2026-09-01).** The canonical checkout
+`/home/bobby/data_layer@b1729675632822acd2496536bd58cff4160d6323` built one
+non-root immutable image, `qdl-v2-python:2.0.0-dev-b172967` / ID
+`sha256:8bb504458b0608f5e43f355c06b71a61e8f3018a854d3a81ac0f9084e9269160`.
+Its OCI revision/version labels exactly match the source/release coordinate.
+The image-contained no-network, read-only, non-root regression matrix passed
+`43/43` (`test_alpha_deployment_bindings`, `test_phaseb_stable_deployment`,
+`test_phase115_universal_release`). Expected negative-fixture output covered
+invalid CLI input, stale final-BAR recovery and bounded DNSE queue fencing;
+no provider was contacted.
+
+An isolated clean Execution Alpha `dev@8c4a27f` source export yielded the
+actual `93` deployment inventory at SHA-256
+`738363ab1c8a56f75a6e1b728d96dab59b7632c09023d6a28a7e3b72068e0d60`.
+The candidate compiler admitted `17` bindings / `106` native products and
+blocked `76`, compilation SHA-256
+`1a859f933086715fca40e5efc1bd8293a9cc25a86b03a1bab3b6f224557cf2c6`.
+The portable Trading System parser independently accepted all 17/106. The
+sealed secret-free release is
+`/home/bobby/.local/state/qdl-v2/releases/2.0.0-dev-b172967`, manifest
+`998850767a0a732873b8cce22448dea7a41b035072d3a9c6155210d08b61aba8`;
+it records no secret, runtime mutation or order action and has a rendered
+four-role candidate plus exact per-role rollback override. Canonical Compose
+rendered successfully before any role change.
+
+**Bounded reader handoff (`PASS / DEV PRE-RELEASE`, 2026-09-01).** With the
+existing project/runtime/TLS mounts, serially recreated only `query_v2_2`,
+`query_v2_1`, the observed standby `stream_v2_active`, then the observed owner
+`stream_v2_passive`. All four now use `8bb504...69160`, are Docker `healthy`,
+restart `0`, OOM false. Both query replicas return typed mTLS `READY`; the
+stream pair converged to exactly one `READY` lease (`active`) and one
+`STANDBY` (`passive`). A bounded ten-minute error scan found zero
+`fatal|panic|oom|traceback|exception|not_ready|unavailable` matches. Post-roll
+RSS was query `112.0/115.3 MiB` and stream `114.6/109.3 MiB`, each below the
+unchanged `512 MiB` cgroup. V1, Kafka topology/offsets, Redis, SQLite,
+Rust/ingestors/bar edge/projectors, Trading System, alpha and every order path
+were not recreated or reset.
+
+**Cleanup and decision.** Before build the Docker image store was `66.81 GiB`
+and host disk `204/290 GiB`; after build/roll it is `67.48 GiB` and
+`207/290 GiB`. Retain only the active candidate and the named rollback
+`qdl-v2-python:2.0.0-dev-be59ac8` / `sha256:d06dd8...99766`; no unreferenced
+candidate image was created. Remove only caller-owned temporary compiler
+inputs and the detached source worktree after this journal commit is integrated
+into `dev`; no broad BuildKit prune is safe because its remaining cache has
+shared ownership. Phase 3 is complete as a dev-pre-release reader rollout.
+Phase 4 is the first permitted alpha/Gateway/Risk runtime proof.
