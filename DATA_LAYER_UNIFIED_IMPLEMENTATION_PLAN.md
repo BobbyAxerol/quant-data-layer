@@ -29294,3 +29294,13 @@ being supplied by Binance or a fabricated equivalent. All other required
 routes are sealed native mappings. The downstream Trading System parser
 interoperability correction is recorded in its Phase B journal; Phase B does
 not close until that source commit is integrated to `dev`.
+
+**Phase B integration candidate (`IMPLEMENTED / CI PENDING`, 2026-09-01).**
+The compiler evidence journal is now on remote `data_layer:dev` at `4b49efe`.
+The three caller-owned inventory/compiler directories (724 KiB total) were
+deleted after byte-identity and parser proof; no image was built and no Docker
+cache was created by this phase. Docker image storage remains `66.15 GiB`;
+the active/referenced image set and all V1/V2 runtime state were intentionally
+retained. `main` remains unchanged. The only Phase B source correction lies in
+Trading System route parsing and is awaiting its own CI result; then the
+canonical shared-reader release packet of Phase C is the next allowed action.
