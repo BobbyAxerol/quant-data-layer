@@ -29851,6 +29851,24 @@ reader rollback image. Stop on any V2 freshness, identity, sequence, cache
 reread or zero-mutation failure. Phase 5 paper canaries are forbidden until
 this complete paired matrix passes.
 
+**Cursor-handoff preflight repair (`IN PROGRESS / SOURCE-ONLY`, 2026-09-01).**
+Source review found that the initial alpha probe checked the final BAR yielded
+from `warmup_then_stream`, but did not independently prove that the server
+accepts the resulting signed handoff cursor on a reconnect. This is a probe
+evidence gap, not a reader, provider or route failure. The narrow shared-alpha
+repair adds an exact-binding V2 bar-handoff read that obtains the sealed
+warmup cursor and observes `REPLAYING -> LIVE` twice from that same signed
+cursor. It does not wait for the next 5m/15m/1h close, change bar finality, add
+a provider request, or expose a new Data Layer endpoint. The normal alpha
+stream remains unchanged and still receives its current final warmup BAR.
+
+The source gate must cover valid handoff/reconnect, wrong or missing control,
+timeout, exact native identity and no cross-venue route selection. It is
+strictly source-only: V1, query/stream roles, Kafka, Redis, SQLite, state,
+identities, Trading System, alpha processes and order paths remain untouched.
+After this repair passes, the existing temporary paired packet is still the
+only permitted real-provider runtime action.
+
 **Preflight correction (2026-09-01, no runtime mutation).** The first
 read-only binding/identity inspection found a real interoperability defect:
 the generated per-alpha sealed binding uses a local consumer identifier such
@@ -29880,3 +29898,15 @@ no Data Layer role, provider, Kafka, Redis, SQLite, PostgreSQL, alpha state,
 session, command, order, bracket, reservation or broker action changed. The
 next action is the reusable source-only no-order probe; Phase 4 runtime pairs
 remain pending.
+
+**Signed-cursor proof source exit (`PASS / NO DATA LAYER MUTATION`,
+2026-09-01).** The shared alpha adapter now validates the sealed V2 BAR
+warmup cursor by subscribing twice with the same server-issued token and
+requiring the control boundary `REPLAYING -> LIVE` both times. This uses the
+existing V2 query/stream contracts; it neither adds an endpoint nor changes
+provider, Rust, Python reader, Kafka, Redis, SQLite, runtime bundle or
+identity. The retained alpha image passed `7/7` exact handoff/fail-closed
+facade tests, `5/5` probe tests and `45/45` V2 runtime regressions in
+disposable read-only/no-network containers. No real provider request or Data
+Layer runtime mutation occurred. The next allowed Data Layer action remains
+the already-approved paired real-provider no-order proof.
