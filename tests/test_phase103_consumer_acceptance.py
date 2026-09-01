@@ -24,6 +24,7 @@ from qdl.certification.phase103_consumer_acceptance import (
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from qdl.query.contracts import RecoveryPolicy
 from scripts.phase103_consumer_receipt_acceptance import (
     _query_product,
     _query_product_with_quality,
@@ -62,18 +63,17 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             {item.consumer_id for item in scope.products},
             PHASE103_CONSUMER_IDS,
         )
-        self.assertEqual(len(scope.products), 45)
+        self.assertEqual(len(scope.products), 110)
         self.assertEqual(
             sum(item.delivery is DeliveryClass.DURABLE for item in scope.products),
-            40,
+            110,
         )
         pass_through = [
             item
             for item in scope.products
             if item.delivery is DeliveryClass.PROVIDER_PASS_THROUGH
         ]
-        self.assertEqual(len(pass_through), 5)
-        self.assertTrue(all(item.binding_id is not None for item in pass_through))
+        self.assertEqual(pass_through, [])
         self.assertEqual(
             {
                 item.binding_id
@@ -92,7 +92,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 "binance-usdm-solusdt-bar-15m",
             },
         )
-        self.assertEqual(len(scope.excluded), 66)
+        self.assertEqual(len(scope.excluded), 76)
         excluded = next(
             item for item in scope.excluded
             if item.reason == "VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE"
@@ -104,7 +104,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             item for item in scope.excluded
             if item.reason == "LATER_PHASE_PRODUCT"
         ]
-        self.assertEqual(len(later_phase), 65)
+        self.assertEqual(len(later_phase), 75)
         self.assertEqual(
             {item.consumer_id for item in later_phase},
             {"trading-system.paper.stable", "alpha.binance.paper.stable"},
@@ -204,6 +204,22 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 and (consumer_id is None or item.consumer_id == consumer_id)
                 and (interval is None or item.interval == interval)
             )
+        )
+
+    def _pass_through_bar(self):
+        """Exercise the legal provider history path without weakening the manifest."""
+        durable = self._product(
+            feed="BAR",
+            consumer_id="alpha.binance.paper.stable",
+            interval="15m",
+        )
+        return replace(
+            durable,
+            delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
+            requirement=replace(
+                durable.requirement,
+                recovery=RecoveryPolicy.FRESH_SNAPSHOT,
+            ),
         )
 
     def _view(
@@ -372,12 +388,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 product = self._product(feed=feed)
                 validate_product_view(product, self._view(product))
 
-        pass_through = self._product(
-            feed="BAR",
-            delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
-            consumer_id="alpha.binance.paper.stable",
-            interval="15m",
-        )
+        pass_through = self._pass_through_bar()
         validate_product_view(pass_through, self._view(pass_through))
         baseline = self._view(pass_through)
         durable_upgrade = baseline.model_copy(
@@ -577,12 +588,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         self.assertEqual(result[5]["common_row_count"], 2)
 
     def test_provider_pass_through_bar_keeps_exact_replica_comparison(self):
-        bar = self._product(
-            feed="BAR",
-            delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
-            consumer_id="alpha.binance.paper.stable",
-            interval="15m",
-        )
+        bar = self._pass_through_bar()
         minute = 60_000_000_000
 
         class WarmupClient:
@@ -678,12 +684,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             _stream_event_timeout_seconds(bar, 15.0) * 1_000,
             bar.requirement.max_freshness_ms,
         )
-        alpha_bar = self._product(
-            feed="BAR",
-            delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
-            consumer_id="alpha.binance.paper.stable",
-            interval="15m",
-        )
+        alpha_bar = self._pass_through_bar()
         self.assertEqual(_stream_event_timeout_seconds(alpha_bar, 15.0), 915.0)
         trade = self._product(feed="TRADE")
         self.assertEqual(_stream_event_timeout_seconds(trade, 15.0), 15.0)

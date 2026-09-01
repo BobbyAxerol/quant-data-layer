@@ -29304,3 +29304,86 @@ the active/referenced image set and all V1/V2 runtime state were intentionally
 retained. `main` remains unchanged. The only Phase B source correction lies in
 Trading System route parsing and is awaiting its own CI result; then the
 canonical shared-reader release packet of Phase C is the next allowed action.
+
+**Phase B CI regression correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-01).**
+The baseline `unit-tests` failure was reproduced in a read-only/no-network
+container at `test_catalog_demand_consistency`. Its negative pass-through
+fixture selected the first `FRESH_SNAPSHOT` requirement without constraining
+the feed; the expanded reference manifest now orders a `BASIS` requirement
+first. `BASIS` correctly remains ineligible for provider BAR pass-through, so
+the test fixture rather than the policy is stale. The registered alpha BAR
+requirements correctly require `SNAPSHOT_AND_REPLAY`; the fixture must derive
+one `FRESH_SNAPSHOT` variant from a declared BAR before testing pass-through.
+The same targeted run exposed a second stale assertion: it assumed five
+Binance `15m` and five OKX `1h` BAR requirements, while the expanded paired
+manifest declares both `15m` and `1h` for each of five native instruments.
+The repair must compare the full paired 20-route set independently of YAML
+ordering. It must retain the replay and unknown-instrument negative
+assertions, and must not change provider admission, fallback, catalog, demand,
+image, runtime or any data plane.
+
+**Phase B full-suite fixture reconciliation (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** The complete CI-equivalent suite ran `1,272` tests in a
+network-disabled, read-only container with an ephemeral `/app/logs` mount and
+found `3` stale count assertions plus `3` selectors that assumed the prior
+five-liquid/pass-through manifest. The source-of-truth manifests now declare
+`110` Phase-10.3 products, all durable; `76` exclusions; `303` release routes
+(`299` V2 and `4` V1); and a legal alpha warmup maximum of `10,000` rows. The
+pass-through semantic checks remain necessary but are now unit-derived from a
+declared `15m` BAR with only its recovery policy changed to `FRESH_SNAPSHOT`.
+The narrow repair updates test expectations and that synthetic test fixture
+only. It does not alter the manifest, catalog, provider admission, fallback,
+durability, maxlen policy, image, runtime or data plane.
+
+**Phase B durable-history bound repair (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** Re-running the affected suite proved one real configuration
+defect instead of another stale assertion: the consumer contract permits
+`10,000` final BAR warmup rows, but the stable BAR edge Compose value and its
+constructor capped warmup/catch-up at `1,000`; the Binance REST edge also made
+only one `<=1,000`-row request. The repair is deliberately shared and
+provider-neutral at the core boundary: the Python Binance vendor adapter gains
+bounded backward pagination with per-page retry, end-boundary, duplicate,
+continuity and no-progress checks; the stable edge retains one global bound but
+permits `1..10,000` for both bootstrap and gap repair; the existing OKX
+adapter's bounded 10,000-page implementation remains unchanged. Compose will
+declare both bounds as `10,000`, matching the approved public V2 maximum. New
+tests must cover a real-shaped multi-page Binance response, ignored/repeated
+page rejection, exact `10,000` acceptance and `10,001` refusal. This is source
+only: no provider request, image build, reader/bar-edge restart, Kafka, Redis,
+SQLite, V1, Trading System, alpha, order or broker mutation is allowed.
+
+**Phase B durable-history correction and full CI exit (`PASS / SOURCE COMMIT
+PENDING`, 2026-09-01).** The shared Binance vendor edge now walks backward in
+bounded pages of at most `1,000` rows until the declared `1..10,000` final-BAR
+window is complete. Every page is retried through the existing bounded fetcher
+and rejected when it is incomplete, crosses the requested close boundary,
+conflicts on an open time, makes no backward progress, or creates an interval
+gap. The stable edge and its deployed Compose configuration now expose the
+same `10,000` bound for both bootstrap and catch-up; existing OKX bounded
+pagination was left unchanged. This is a shared adapter correction, not an
+alpha-specific workaround and does not add a symbol worker, topic, service or
+image.
+
+The isolated source matrix passed `32/32` BAR-history/bootstrap tests,
+including ten-page Binance history, ignored-cursor rejection, exact `10,000`
+acceptance, `10,001` refusal, continuity and checkpoint recovery. The complete
+CI-equivalent suite then passed `1,275` tests with `6` documented skips in
+`274.128s`, inside `qdl-phaseb-full-suite`: network disabled, source mounted
+read-only, non-root UID, and tmpfs-only cache/log paths. No provider was
+contacted and no Data Layer role, V1, Kafka, Redis, SQLite, Trading System,
+alpha, execution session, order, broker or persistent state changed. The
+scoped test container is the only disposable runtime artifact and is removed
+immediately after this journal entry; no image was built and no broad cache
+cleanup is authorized in this slice.
+
+This closes the source correctness defect that prevented config-derived alpha
+bindings with `maxlen` above `1,000`. The next allowed operation is to commit
+this coherent source/test-journal slice, integrate it into `data_layer:dev`,
+and then perform the release/bundle work defined by Phase C.
+
+**Scoped test cleanup (`PASS`, 2026-09-01).** Removed only the stopped
+`qdl-phaseb-full-suite` container after its exit code and logs were recorded.
+Docker inventory changed from `63` to `62` containers; images stayed
+`66.15 GB`, BuildKit cache stayed `14.39 GB`, and no volume/network/runtime
+resource was removed. The retained active and rollback image set was not
+altered; no broad prune was performed.

@@ -39,6 +39,8 @@ from qdl.transport.kafka_raw import KafkaRawPublisher, KafkaRawPublisherConfig
 
 logger = logging.getLogger(__name__)
 
+_MAX_DURABLE_BAR_ROWS = 10_000
+
 
 _STATE_SCHEMA_V2 = "qdl.stable-bar-edge-state.v2"
 _STATE_SCHEMA_V3 = "qdl.stable-bar-edge-state.v3"
@@ -139,10 +141,14 @@ class StableBinanceBarEdge:
         clock=time.time,
         generation_clock_ns=time.time_ns,
     ) -> None:
-        if not 1 <= warmup_rows <= 1000:
-            raise ValueError("stable BAR warmup rows must be between 1 and 1000")
-        if not 1 <= max_catchup_rows <= 1000:
-            raise ValueError("stable BAR catch-up rows must be between 1 and 1000")
+        if not 1 <= warmup_rows <= _MAX_DURABLE_BAR_ROWS:
+            raise ValueError(
+                "stable BAR warmup rows must be between 1 and 10000"
+            )
+        if not 1 <= max_catchup_rows <= _MAX_DURABLE_BAR_ROWS:
+            raise ValueError(
+                "stable BAR catch-up rows must be between 1 and 10000"
+            )
         if not 0.01 <= settlement_delay_seconds <= 2.0:
             raise ValueError("stable BAR initial poll delay must be between 0.01 and 2 seconds")
         if not 0.01 <= final_retry_initial_seconds <= final_retry_max_seconds <= 5.0:
@@ -619,7 +625,7 @@ class StableBinanceBarEdge:
         """Return the real-history bound for one fixed-duration BAR.
 
         `warmup_rows` stays a global upper bound, but a weekly provider request
-        for 1,000 rows would require roughly nineteen years that neither
+        for 10,000 rows would require roughly 192 years that neither
         Binance nor OKX can truthfully supply.  The interval-aware cap makes
         a long BAR bootstrap bounded and honest while keeping minute/hour
         warmups at the configured maximum.

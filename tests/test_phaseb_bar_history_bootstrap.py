@@ -182,6 +182,65 @@ class BarHistoryAdapterTests(unittest.TestCase):
         self.assertEqual(calls[0]["limit"], 1_000)
         self.assertEqual(calls[0]["end_time"], 1_002 * interval_ms - 1)
 
+    def test_binance_history_pages_to_the_declared_v2_maximum(self):
+        interval_ms = 60_000
+        observed_ms = 10_002 * interval_ms + 123
+        calls = []
+
+        def fetcher(*_args, **kwargs):
+            calls.append(kwargs)
+            last_open = int(kwargs["end_time"]) - 59_999
+            first_open = last_open - (int(kwargs["limit"]) - 1) * interval_ms
+            return {
+                "data": [
+                    _binance_row(first_open + index * interval_ms)
+                    for index in range(int(kwargs["limit"]))
+                ]
+            }
+
+        values = fetch_binance_history(
+            _binance_binding(),
+            limit=10_000,
+            now_ms=observed_ms,
+            fetcher=fetcher,
+            sleep=lambda _seconds: None,
+        )
+        self.assertEqual(len(values), 10_000)
+        self.assertEqual([call["limit"] for call in calls], [1_000] * 10)
+        self.assertEqual(calls[0]["end_time"], 10_002 * interval_ms - 1)
+        payloads = [json.loads(item.raw_frame_bytes) for item in values]
+        self.assertEqual(payloads[0]["row"][0], 2 * interval_ms)
+        self.assertEqual(payloads[-1]["row"][0], 10_001 * interval_ms)
+        with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
+            fetch_binance_history(
+                _binance_binding(),
+                limit=10_001,
+                now_ms=observed_ms,
+                fetcher=fetcher,
+                sleep=lambda _seconds: None,
+            )
+
+    def test_binance_history_rejects_a_repeated_page(self):
+        interval_ms = 60_000
+        observed_ms = 1_002 * interval_ms + 123
+        rows = [
+            _binance_row((2 + index) * interval_ms)
+            for index in range(1_000)
+        ]
+        with self.assertRaisesRegex(RuntimeError, "exceeds requested end boundary"):
+            fetch_binance_history(
+                _binance_binding(),
+                limit=1_001,
+                now_ms=observed_ms,
+                # Ignore the requested cursor but still honour the requested
+                # page length. The second one-row page is therefore valid in
+                # shape yet outside its requested end boundary.
+                fetcher=lambda *_args, **kwargs: {
+                    "data": rows[-int(kwargs["limit"]):]
+                },
+                sleep=lambda _seconds: None,
+            )
+
     def test_okx_history_preserves_confirmed_native_rows_and_rejects_partial(self):
         start = 60_000
         records = tuple(
@@ -832,6 +891,10 @@ class StableBarBootstrapTests(unittest.TestCase):
             compose["services"]["binance_bar_edge"]["environment"]
             ["QDL_STABLE_BAR_WARMUP_ROWS"]
         )
+        catchup = int(
+            compose["services"]["binance_bar_edge"]["environment"]
+            ["QDL_STABLE_BAR_MAX_CATCHUP_ROWS"]
+        )
         source_by_id = {item.binding_id: item for item in self.catalog.bindings}
         history_uids = {
             source_by_id[item.binding_id].instrument.instrument_uid
@@ -853,8 +916,29 @@ class StableBarBootstrapTests(unittest.TestCase):
                 if item["feed"] == "BAR"
                 and item["instrument_uid"] in history_uids
             )
-        self.assertEqual(max(declared), 1000)
+        self.assertEqual(max(declared), 10_000)
         self.assertGreaterEqual(configured, max(declared))
+        self.assertGreaterEqual(catchup, max(declared))
+
+    def test_stable_bar_edge_accepts_the_public_10000_row_bound(self):
+        edge = StableBinanceBarEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=self.authority,
+            publisher=self._NoopPublisher(),
+            warmup_rows=10_000,
+            max_catchup_rows=10_000,
+        )
+        self.assertEqual(edge.warmup_rows, 10_000)
+        self.assertEqual(edge.max_catchup_rows, 10_000)
+        with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
+            StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=self._NoopPublisher(),
+                warmup_rows=10_001,
+            )
 
     def test_durable_ack_watermark_skips_overlapping_restart_bootstrap(self):
         class Envelope:

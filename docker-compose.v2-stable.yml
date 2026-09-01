@@ -672,7 +672,8 @@ services:
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-binance-bars
       # Must cover the greatest durable final-BAR warmup declared by the
       # governed Trading System/alpha manifests.
-      QDL_STABLE_BAR_WARMUP_ROWS: "1000"
+      QDL_STABLE_BAR_WARMUP_ROWS: "10000"
+      QDL_STABLE_BAR_MAX_CATCHUP_ROWS: "10000"
       # A final row is provider-confirmed, not timer-confirmed. Start the
       # first bounded read promptly after the close, then retry that exact
       # target until it is durably ACKed.
