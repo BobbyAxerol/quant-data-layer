@@ -28991,7 +28991,7 @@ proven.
 
 ### Phase C - Canonical Reader Release And Sealed Alpha Binding Bundle
 
-**Status:** `COMPLETE / DEV INTEGRATION PENDING` (2026-09-01).
+**Status:** `COMPLETE / DEV INTEGRATED` (2026-09-01).
 
 **Detailed procedure:** `docs/runbooks/phase54-config-derived-reader-release.md`.
 
@@ -29164,3 +29164,46 @@ source or runtime-state deletion occurred. Disk moved from `204/290 GiB` used
 readiness/lease checks still passed. The next permitted action is Phase D's
 four representative paired Binance/OKX no-order proof; no alpha or order was
 started by Phase C.
+
+### Phase 54 Execution Ledger - Approved Five-Phase Consumer Rollout
+
+**Status:** `APPROVED / PHASE A ACTIVE` (2026-09-01).
+
+This ledger makes the cross-repository rollout executable without changing its
+established contracts. It is governed by this section, Trading System Unified
+Plan Section 54, and the Alpha Runtime Migration Architecture rollout entry.
+Every source slice integrates through `dev`; `main` remains release-only until
+Phase E certification.
+
+**Shared invariants.** Each eligible crypto acceptance is a paired native
+Binance USD-M and OKX Swap observation. V1/V2 parity is compared only within
+the same venue/candle corpus; no test asserts Binance-to-OKX strategy parity.
+DNSE/VN remains V1-primary. Provider data is real or durable provider-byte
+replay. No alpha, symbol or interval creates a dedicated Data Layer worker,
+image, topic or identity.
+
+| Phase | Scope | Required exit evidence | Runtime boundary |
+| --- | --- | --- | --- |
+| A | Converge tested V2 source in all three `dev` branches and record one release tuple. | ancestry/range-diff, source suites on `dev`, SHA tuple and `qdl_sdk` version. | source only |
+| B | Compile sealed binding from each real alpha Compose/config declaration. | every eligible crypto deployment admitted or typed `BLOCKED`; 2,500/5,000/10,000 history bounds; native identity. | source only |
+| C | Build canonical reader image/bundle and roll shared V2 readers. | SHA -> digest -> bundle -> role/rollback map; healthy query/lease pair. | four reader roles only |
+| D | Prove four representative alpha classes in concurrent Binance/OKX no-order pairs. | real V2 warmup/cursor/reconnect/final BAR, declared L2/reference, Risk reread and exact zero mutation. | disposable consumers only |
+| E | Run admitted paper canaries and close release. | same-venue input parity, observable V1 fallback, paper lifecycle/capacity, cleanup inventory. | declared paper scopes only |
+
+**Phase closure discipline.** Each coherent slice is tested, journaled and
+committed with the configured user identity, then merged to `dev`. Only after
+ancestry/reference verification may its feature worktree/branch and exact
+test-only artifacts be removed. A reviewed release PR is the only route from
+`dev` to `main`.
+
+**Phase A revalidation (`PASS / DEV FAST-FORWARD NEXT`, 2026-09-01).** The
+requested V2 source refs are already ancestors of `origin/dev`: Data Layer
+`origin/fix/phase533-v2-query-readiness` at `5cf8e21`, Trading System
+`origin/feat/alpha-sdk-v2-convergence` at `ce8daa9`, and Execution Alpha
+`origin/feat/alpha-sdk-v2-convergence` at `f78c40d`. In all three repositories
+`origin/main` is also an ancestor of `origin/dev`; no history rewrite or
+blind merge is needed. The Data Layer feature branch, based on `dev`, passed
+the isolated read-only/no-network binding/release/entitlement/reference/L2
+suite: **27/27**. No provider, runtime role, Kafka/Redis/SQLite, Trading
+System, alpha, order or broker state was touched. Phase A next records the
+three committed integration SHAs and fast-forwards `dev` only.
