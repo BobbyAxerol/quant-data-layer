@@ -28039,3 +28039,70 @@ check run is expected until the repair PR is opened. The host has no GitHub API
 token, therefore it did not create a PR or mutate `dev`. Pending only: GitHub
 reruns complete CI on `fix/rust-contract-ci -> dev`, then that repair merges
 into `dev` before opening `dev -> main`.
+
+**Release promotion CI closure repair (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** `origin/dev` at `9d44df8` contains the merged Rust lint repair,
+but the release PR still has exactly two failed CI gates: the Rust
+dependency/license/advisory policy (`cargo-deny`) and Python `unit-tests`.
+This repair runs only on `fix/release-ci-closure` from that exact `origin/dev`
+head. Its goal is a green, reproducible equivalent of both failed GitHub gates
+without weakening security policy or masking a failing test.
+
+- **Allowed work:** reproduce the exact isolated Compose unit command; repair
+  the proven unit defect; update the Rust dependency graph or explicitly
+  reviewed license policy only where necessary to remove real advisory/license
+  failures; run the exact local contract, Python unit, generated-source and
+  dependency-policy gates; record bounded test-container cleanup.
+- **Invariants / exclusions:** no runtime role, image, manifest, endpoint,
+  V1/V2 route, Kafka, Redis, SQLite, provider request, Trading System, alpha,
+  order path, secret or durable state change. CI tests use an isolated Compose
+  project and no production namespace. A security advisory may not be ignored
+  merely to make CI green.
+- **Exit / rollback:** all local equivalents pass, scoped test containers and
+  networks are removed, `git diff --check` is clean, and one coherent commit is
+  pushed for PR review. Rollback is to leave the unmerged feature branch unused;
+  `dev` and `main` remain untouched until the user merges the PR.
+
+**Release promotion CI closure repair (`LOCAL PASS / PUSHED FOR REVIEW`,
+2026-09-01).** The two failures were stale test assumptions plus a genuine
+dependency-policy failure, not a serving-path defect. `OKX SWAP BAR` had
+already become the canonical Rust-native business-WebSocket acquisition route,
+while its unit test still asserted the superseded Python REST recipe. The
+disabled-acquisition test also counted logical bindings even though the
+approved L2 design deliberately projects `BOOK_SNAPSHOT` and `BOOK_DELTA`
+through one physical source ID. The tests now assert the authoritative route
+and the stronger invariant that every enabled physical source, and no disabled
+Spot source, is materialized.
+
+The Rust REST edge moves from `reqwest 0.11.27` to `0.12.28` with the same
+HTTP/1/2 Rustls-only feature set. The locked graph remains compatible with the
+declared Rust 1.82 MSRV and removes the advisory/license-affected legacy
+TLS/Hyper graph; optional HTTP/3 is not enabled. No advisory or license rule
+was suppressed. Actual local exit evidence:
+
+- Exact isolated Compose equivalent of GitHub `unit-tests`:
+  `docker compose -f /tmp/qdl_release_ci_closure.resolved.yml run --rm
+  test_runner python -m unittest discover -s tests` exited `0`. The resolved
+  project had unique `qdl_release_ci_closure` networks, no host ports, and no
+  volumes; it did not target a running runtime namespace. The only output of
+  note was an existing FastAPI/TestClient deprecation warning.
+- Exact `cargo-deny 0.20.2 check` in disposable `rust:1.82-slim`: advisories,
+  bans, licenses, and sources all passed. Existing duplicate-version notices
+  remain policy-level warnings only.
+- Strict Rust 1.82 source gate passed in a bounded disposable container:
+  `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
+  --locked -- -D warnings`, and `cargo test --workspace --locked`.
+- Targeted production-catalog regression passed `12/12`; a full
+  network-disabled, read-only image-baked Python discovery run also exited `0`.
+
+**CI closure artifact hygiene (`PASS / CLEAN`, 2026-09-01).** The exact
+Compose test namespace was removed with `down --remove-orphans`; it removed
+only its three disposable containers and two project-scoped networks, with no
+volume removal. `data-layer:v0.1.0` was then verified to have zero container
+references and removed. Docker image storage changed from `65.24GB` to
+`64.58GB` (about `0.66GB` reclaimed); no broad prune, volume, source, runtime
+state, serving image, V1/V2 role, Kafka, Redis, SQLite, Trading System, alpha,
+or order path was touched. The coherent source-only repair was committed and
+pushed as `fix/release-ci-closure`; the remaining external action is to open
+and merge its review PR into `dev`, which will rerun the same required GitHub
+gates before the existing `dev -> main` release PR is reconsidered.

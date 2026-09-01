@@ -63,9 +63,19 @@ class DisabledAcquisitionTests(unittest.TestCase):
             if binding.binding_id in SPOT_BINDINGS
         }
         self.assertEqual(configured & source_ids, set())
+        enabled_binding_ids = {
+            binding.binding_id
+            for binding in self.acquisition.bindings
+            if binding.enabled
+        }
+        expected_configured = {
+            binding.source_id
+            for binding in self.catalog.bindings
+            if binding.binding_id in enabled_binding_ids
+        }
         self.assertEqual(
-            len(config["core"]["bindings"]),
-            len(self.catalog.bindings) - len(SPOT_BINDINGS),
+            configured,
+            expected_configured,
         )
 
     def test_no_ingestor_role_is_generated_for_a_disabled_market(self):
