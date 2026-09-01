@@ -28988,3 +28988,62 @@ qdl-v2-python:2.0.0-phase533-readiness-36914d2 (sha256:b75a41...10e) and both
 query/stream replicas remained running; no runtime restart occurred. No broad
 BuildKit prune was performed because its shared-cache retention set was not
 proven.
+
+### Phase C - Canonical Reader Release And Sealed Alpha Binding Bundle
+
+**Status:** `IN PROGRESS / BUILD-AND-TEST FIRST` (2026-09-01).
+
+**Detailed procedure:** `docs/runbooks/phase54-config-derived-reader-release.md`.
+
+**Goal.** Replace the phase-named reader artifact only with one canonical,
+immutable Data Layer image built from the merged `dev` source, while preparing
+the exact config-derived alpha binding bundle that later no-order alpha pairs
+will mount read-only. This phase does not create an alpha-specific service,
+symbol worker, topic, identity or image.
+
+**Source and artifact coordinates.** The source baseline is `data_layer:dev`
+`6967573552733cdaf8576cd8ef95ef95960f793f`. The candidate has the canonical
+pre-release tag `qdl-v2-python:2.0.0-dev-6967573` and OCI labels for that
+commit/release; its inspected immutable image ID becomes the reader pin. The
+secret-free release bundle lives outside every checkout under a newly named
+`/home/bobby/.local/state/qdl-v2/releases/` directory and contains only the
+verified inventory, its `17` sealed bindings, compilation report, source/image
+digests and a four-role image override. It does not contain credentials,
+private keys, provider payloads, cursors, SQLite, Redis/Kafka data or logs.
+
+**Approved runtime scope.** After candidate source/image gates pass, serially
+recreate only `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive` in Compose project `qdl_v2_stable_candidate`. The active
+reader image is `qdl-v2-python:2.0.0-phase533-readiness-36914d2`
+(`sha256:b75a414226d1990eea6b07022fdbd3d8cb9cad332294384f4ddb9010454e910e`)
+and is the exact four-role rollback image. V1, Kafka topology/offsets, Redis,
+SQLite, Rust core, both ingestors, bar edge, projectors, Trading System, alpha
+containers, broker credentials and order path are excluded. Normal reader
+startup reads are allowed; no new provider subscription or durable-store reset
+is part of this packet.
+
+**Runtime hygiene invariant.** Docker labels show the currently serving
+readers were originally launched from a removed phase worktree and a stack of
+historical overrides. The successor invocation must use this canonical active
+Phase C worktree and one new release-owned override as the final image layer;
+it may retain only the existing required base/C2/security/bar-edge overrides
+that are proven in the rendered config. It must not rely on a `/tmp` override
+or recreate an unrelated role merely to normalize labels.
+
+**Build/test gates.** Build exactly one image. Inspect its OCI revision,
+non-root user and digest; run the selected binding/release/reference/L2/query/
+stream unit matrix inside that immutable image with network disabled, read-only
+filesystem and tmpfs-only test state; run `docker compose config --quiet` with
+the sealed public selector files; compile/re-render the binding bundle twice
+and verify all hashes. Before every serial reader recreate record image,
+restart count, health, manifest checksum, lag and RSS; after each, verify the
+same and stop/rollback the just-changed reader if it is not healthy. The later
+Phase D no-order alpha proof, not this phase, is the first permitted alpha or
+Gateway/Risk mutation.
+
+**Rollback and close boundary.** Source rollback is a revert. Runtime rollback
+is a serial four-role recreate using the exact retained `b75a...e910e` image
+and pre-roll compose selector set. This phase closes only after the image is
+immutable, the secret-free bundle is sealed, four-reader rollout health passes
+and the obsolete phase-named active worktree/temporary override is no longer a
+runtime dependency. It does not certify an alpha consumer or paper order.
