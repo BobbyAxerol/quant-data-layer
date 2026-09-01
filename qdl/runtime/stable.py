@@ -727,11 +727,11 @@ async def serve_stable_projector() -> None:
         namespace=config.redis_prefix.rstrip(":"),
         dedicated_database=True,
     )
-    spool_stats = await asyncio.to_thread(spool.stats)
+    spool_usage = await asyncio.to_thread(spool.readiness_summary)
     await asyncio.to_thread(
         target.bind_cache,
         spool.cache_id,
-        initialize_if_missing=spool_stats.records == 0,
+        initialize_if_missing=spool_usage.records == 0,
     )
     active_broker: list[ConfluentProjectorBroker | None] = [None]
 

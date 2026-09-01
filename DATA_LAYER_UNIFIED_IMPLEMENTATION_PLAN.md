@@ -28600,3 +28600,65 @@ INDEX`; previous tests continue to cover normal integrity checking, stable
 cache open behavior, legacy state reconstruction and fail-closed readiness.
 The final image must be rebuilt from this commit; the two previous candidate
 images remain non-authoritative and are removed only after final runtime exit.
+
+**Shared-runtime impact and bounded completion packet (`APPROVED / EXECUTING`,
+2026-09-01).** Runtime inspection after the reader repair found that
+`stream_v2_active` and `stream_v2_passive` still ran the old image. Both build
+the same stable spool and consequently reported `query_cache=NOT_READY` from
+the same obsolete full-scan readiness path. The three stopped projectors then
+correctly received stream ingest rejection, retried against the bounded
+pending queue and were eventually cgroup-OOM-killed. This is one shared
+startup defect, not a new provider/data or topology issue.
+
+The approved completion packet therefore uses the already-built immutable
+`qdl-v2-python:2.0.0-phase533-readiness-36914d2`
+(`sha256:b75a414226d1990eea6b07022fdbd3d8cb9cad332294384f4ddb9010454e910e`)
+for the existing V2 cache-user roles only: serially roll the already-passed
+`query_v2_1`/`query_v2_2` if needed, then `stream_v2_active`,
+`stream_v2_passive`, `projector_v2`, `projector_v2_2` and `projector_v2_3`.
+No new role, worker, symbol process, topic, partition, identity or resource
+limit is created. Each retains its command, 512 MiB cgroup, existing
+`stable_state`, TLS and runtime mounts, consumer group and offsets. Normal
+real canonical projection writes resume only after the active stream is
+`READY`; there is no Kafka reset, Redis flush, SQLite deletion, V1, Rust,
+ingestor, bar-edge, Trading System, alpha, broker or order-path change.
+
+**Runtime exit and rollback.** First require three mTLS `READY` samples from
+each query reader; then roll stream active/passive one at a time and require
+their cache, authority and lease components to be ready. Start each existing
+projector sequentially with the same final image, requiring `running`,
+restart `0`, `OOMKilled=false`, bounded Kafka/stream catch-up and a final
+five-minute error scan without cache/gateway/OOM/fatal errors. Direct rollback
+for any one role is its pre-packet image with unchanged mounts: reader
+`sha256:7b5c848d2add9e0e36d88bfb837c93448140b7ade3a87d9e94e4902b2bf3f18e`,
+stream `sha256:6859cfb0359e94816986e4e9b7a4a9f6486dd9fce6ac607b04e275086efbd42b`,
+projector `sha256:36ed90b9a18e1c3bbd8cfc6169543f3a3ce1ce79f76f798e7777125cba9c63ed`.
+Failure stops/recreates only the failed role and leaves all durable state
+intact. Alpha no-order proof remains blocked until the seven-role V2 read and
+projection plane passes.
+
+**Projector bootstrap correction (`PASS / PROJECTOR IMAGE NEXT`, 2026-09-01).**
+One final read-only source inspection found the projector itself used
+`spool.stats()` only to decide whether `RedisStableProjectionTarget.bind_cache`
+should initialize an empty cache. It needs only the usage counter, not oldest,
+newest or a full payload aggregate. It now uses the same bounded
+`readiness_summary().records` as the reader health path. Query and stream roles
+already running `sha256:b75a…e910e` do not need another recreate because their
+runtime behavior is unchanged; only the three stopped projectors require the
+successor immutable image from this source commit.
+
+**Evidence actually run:** host compile/diff checks passed; the isolated
+non-root/read-only/no-network stable matrix reports **72 passed, 1
+intentionally skipped**. The added regression asserts that
+`serve_stable_projector` uses the bounded usage summary and cannot regress to
+`spool.stats()` at startup. Existing projector recovery, Kafka, stream
+ingestion, catalog, cursor, L2, final-bar and five-symbol identity cases
+remain in the matrix.
+
+**Revised final projector packet.** Build one immutable Python image from this
+commit and update only `projector_v2`, `projector_v2_2`, and `projector_v2_3`
+in the existing temporary override. Sequentially recreate those three stopped
+roles. The active query/stream image remains the already-tested
+`sha256:b75a…e910e`; its replacement is unnecessary and therefore excluded.
+The prior projector image `sha256:36ed…c63ed` with the same mounts remains the
+per-role rollback. No other component may be recreated.

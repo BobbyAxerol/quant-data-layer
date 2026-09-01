@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import sqlite3
 import tempfile
 import unittest
-import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from qdl.runtime.readiness import ComponentState
-from qdl.runtime.stable import build_stable_spool, stable_readiness
+from qdl.runtime.stable import (
+    build_stable_spool,
+    serve_stable_projector,
+    stable_readiness,
+)
 from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
 
 
@@ -151,6 +155,11 @@ class Phase533QueryReadinessTests(unittest.TestCase):
             self.assertFalse(any("DROP INDEX" in sql for sql in statements))
         finally:
             reopened.close()
+
+    def test_projector_bootstrap_uses_bounded_usage_summary(self):
+        source = inspect.getsource(serve_stable_projector)
+        self.assertIn("spool.readiness_summary", source)
+        self.assertNotIn("spool.stats", source)
 
     def test_stable_readiness_uses_bounded_summary_not_full_stats(self):
         self.spool.append(_event(1, b"payload"))
