@@ -177,8 +177,8 @@ class ConsumerManifestLoader:
         }:
             raise ValueError("consumer manifest spec contains unknown fields")
         requirements = spec.get("requirements")
-        if not isinstance(requirements, list) or not 1 <= len(requirements) <= 100:
-            raise ValueError("consumer manifest requires 1..100 requirements")
+        if not isinstance(requirements, list) or not 1 <= len(requirements) <= 256:
+            raise ValueError("consumer manifest requires 1..256 requirements")
         permissions = spec.get("permissions")
         purposes = spec.get("purposes")
         quotas = spec.get("quotas")

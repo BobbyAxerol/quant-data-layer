@@ -5,7 +5,7 @@ metadata:
   owner: alpha-platform
   subject: spiffe://qdl/paper/alpha-binance-stable
   environment: paper
-  revision: 8
+  revision: 9
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -22,149 +22,45 @@ spec:
   quotas:
     requests_per_minute: 180
     max_batch_items: 50
-    max_warmup_rows: 2000
+    max_warmup_rows: 10000
     max_streams: 20
     max_buffer_events: 2000
   requirements:
-  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
-    feed: TRADE
-    consumer_grade: ALPHA
-    source_policy_id: crypto_primary_v2
-    warmup_limit: 0
-    max_freshness_ms: 15000
-    event_recency_policy: OBSERVE
-    max_session_liveness_ms: 45000
-    require_full_coverage: true
-    require_final_bars: true
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: SNAPSHOT_AND_REPLAY
-    bar_revision_policy: LATEST
-  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
-    feed: TRADE
-    consumer_grade: ALPHA
-    source_policy_id: crypto_primary_v2
-    warmup_limit: 0
-    max_freshness_ms: 15000
-    event_recency_policy: OBSERVE
-    max_session_liveness_ms: 45000
-    require_full_coverage: true
-    require_final_bars: true
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: SNAPSHOT_AND_REPLAY
-    bar_revision_policy: LATEST
-  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
-    feed: BAR
-    consumer_grade: ALPHA
-    source_policy_id: crypto_primary_v2
-    warmup_limit: 500
-    max_freshness_ms: 180000
-    require_full_coverage: true
-    require_final_bars: true
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: SNAPSHOT_AND_REPLAY
-    bar_revision_policy: EMIT_REVISIONS
-    interval: 1m
-  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
-    feed: BAR
-    consumer_grade: ALPHA
-    source_policy_id: crypto_primary_v2
-    warmup_limit: 500
-    max_freshness_ms: 180000
-    require_full_coverage: true
-    require_final_bars: true
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: SNAPSHOT_AND_REPLAY
-    bar_revision_policy: EMIT_REVISIONS
-    interval: 1m
-  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
-    feed: BAR
-    consumer_grade: ALPHA
-    source_policy_id: crypto_primary_v2
-    warmup_limit: 500
-    max_freshness_ms: 1080000
-    require_full_coverage: true
-    require_final_bars: true
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-    interval: 15m
-  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
-    feed: BAR
-    consumer_grade: ALPHA
-    source_policy_id: crypto_primary_v2
-    warmup_limit: 500
-    max_freshness_ms: 1080000
-    require_full_coverage: true
-    require_final_bars: true
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-    interval: 15m
-  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
-    feed: TRADE
-    consumer_grade: ALPHA
-    source_policy_id: crypto_primary_v2
-    warmup_limit: 0
-    max_freshness_ms: 15000
-    event_recency_policy: OBSERVE
-    max_session_liveness_ms: 45000
-    require_full_coverage: true
-    require_final_bars: true
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: SNAPSHOT_AND_REPLAY
-    bar_revision_policy: LATEST
-  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
-    feed: BAR
-    consumer_grade: ALPHA
-    source_policy_id: crypto_primary_v2
-    warmup_limit: 500
-    max_freshness_ms: 180000
-    require_full_coverage: true
-    require_final_bars: true
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: SNAPSHOT_AND_REPLAY
-    bar_revision_policy: EMIT_REVISIONS
-    interval: 1m
-  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
-    feed: BAR
-    consumer_grade: ALPHA
-    source_policy_id: crypto_primary_v2
-    warmup_limit: 500
-    max_freshness_ms: 1080000
-    require_full_coverage: true
-    require_final_bars: true
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-    interval: 15m
   - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
     feed: TRADE
     consumer_grade: ALPHA
     source_policy_id: crypto_primary_v2
+    interval: null
     warmup_limit: 0
     max_freshness_ms: 15000
-    event_recency_policy: OBSERVE
-    max_session_liveness_ms: 45000
     require_full_coverage: true
-    require_final_bars: true
+    require_final_bars: false
     stale_policy: BLOCK
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: QUOTE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 5000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
   - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
     feed: BAR
     consumer_grade: ALPHA
     source_policy_id: crypto_primary_v2
-    warmup_limit: 500
+    interval: 1m
+    warmup_limit: 10000
     max_freshness_ms: 180000
     require_full_coverage: true
     require_final_bars: true
@@ -172,39 +68,477 @@ spec:
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: EMIT_REVISIONS
-    interval: 1m
   - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
     feed: BAR
     consumer_grade: ALPHA
     source_policy_id: crypto_primary_v2
-    warmup_limit: 500
-    max_freshness_ms: 1080000
+    interval: 3m
+    warmup_limit: 10000
+    max_freshness_ms: 540000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
     gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 5m
+    warmup_limit: 10000
+    max_freshness_ms: 900000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
     interval: 15m
+    warmup_limit: 10000
+    max_freshness_ms: 2700000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 30m
+    warmup_limit: 10000
+    max_freshness_ms: 5400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1h
+    warmup_limit: 10000
+    max_freshness_ms: 10800000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 2h
+    warmup_limit: 10000
+    max_freshness_ms: 21600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 4h
+    warmup_limit: 10000
+    max_freshness_ms: 43200000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 6h
+    warmup_limit: 10000
+    max_freshness_ms: 64800000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 8h
+    warmup_limit: 10000
+    max_freshness_ms: 86400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 12h
+    warmup_limit: 10000
+    max_freshness_ms: 129600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1d
+    warmup_limit: 10000
+    max_freshness_ms: 259200000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 3d
+    warmup_limit: 10000
+    max_freshness_ms: 777600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1w
+    warmup_limit: 10000
+    max_freshness_ms: 1814400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BOOK_SNAPSHOT
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BOOK_DELTA
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: TRADE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 15000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: QUOTE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 5000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1m
+    warmup_limit: 10000
+    max_freshness_ms: 180000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 3m
+    warmup_limit: 10000
+    max_freshness_ms: 540000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 5m
+    warmup_limit: 10000
+    max_freshness_ms: 900000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 15m
+    warmup_limit: 10000
+    max_freshness_ms: 2700000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 30m
+    warmup_limit: 10000
+    max_freshness_ms: 5400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1h
+    warmup_limit: 10000
+    max_freshness_ms: 10800000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 2h
+    warmup_limit: 10000
+    max_freshness_ms: 21600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 4h
+    warmup_limit: 10000
+    max_freshness_ms: 43200000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 6h
+    warmup_limit: 10000
+    max_freshness_ms: 64800000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 8h
+    warmup_limit: 10000
+    max_freshness_ms: 86400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 12h
+    warmup_limit: 10000
+    max_freshness_ms: 129600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1d
+    warmup_limit: 10000
+    max_freshness_ms: 259200000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 3d
+    warmup_limit: 10000
+    max_freshness_ms: 777600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1w
+    warmup_limit: 10000
+    max_freshness_ms: 1814400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BOOK_SNAPSHOT
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: BOOK_DELTA
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
   - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: TRADE
     consumer_grade: ALPHA
     source_policy_id: crypto_primary_v2
+    interval: null
     warmup_limit: 0
     max_freshness_ms: 15000
-    event_recency_policy: OBSERVE
-    max_session_liveness_ms: 45000
     require_full_coverage: true
-    require_final_bars: true
+    require_final_bars: false
     stale_policy: BLOCK
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: QUOTE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 5000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
   - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: BAR
     consumer_grade: ALPHA
     source_policy_id: crypto_primary_v2
-    warmup_limit: 500
+    interval: 1m
+    warmup_limit: 10000
     max_freshness_ms: 180000
     require_full_coverage: true
     require_final_bars: true
@@ -212,20 +546,772 @@ spec:
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: EMIT_REVISIONS
-    interval: 1m
   - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: BAR
     consumer_grade: ALPHA
     source_policy_id: crypto_primary_v2
-    warmup_limit: 500
-    max_freshness_ms: 1080000
+    interval: 3m
+    warmup_limit: 10000
+    max_freshness_ms: 540000
     require_full_coverage: true
     require_final_bars: true
     stale_policy: BLOCK
     gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 5m
+    warmup_limit: 10000
+    max_freshness_ms: 900000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 15m
+    warmup_limit: 10000
+    max_freshness_ms: 2700000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 30m
+    warmup_limit: 10000
+    max_freshness_ms: 5400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1h
+    warmup_limit: 10000
+    max_freshness_ms: 10800000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 2h
+    warmup_limit: 10000
+    max_freshness_ms: 21600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 4h
+    warmup_limit: 10000
+    max_freshness_ms: 43200000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 6h
+    warmup_limit: 10000
+    max_freshness_ms: 64800000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 8h
+    warmup_limit: 10000
+    max_freshness_ms: 86400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 12h
+    warmup_limit: 10000
+    max_freshness_ms: 129600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1d
+    warmup_limit: 10000
+    max_freshness_ms: 259200000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 3d
+    warmup_limit: 10000
+    max_freshness_ms: 777600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1w
+    warmup_limit: 10000
+    max_freshness_ms: 1814400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BOOK_SNAPSHOT
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+    feed: BOOK_DELTA
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: TRADE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 15000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: QUOTE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 5000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1m
+    warmup_limit: 10000
+    max_freshness_ms: 180000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 3m
+    warmup_limit: 10000
+    max_freshness_ms: 540000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 5m
+    warmup_limit: 10000
+    max_freshness_ms: 900000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 15m
+    warmup_limit: 10000
+    max_freshness_ms: 2700000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 30m
+    warmup_limit: 10000
+    max_freshness_ms: 5400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1h
+    warmup_limit: 10000
+    max_freshness_ms: 10800000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 2h
+    warmup_limit: 10000
+    max_freshness_ms: 21600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 4h
+    warmup_limit: 10000
+    max_freshness_ms: 43200000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 6h
+    warmup_limit: 10000
+    max_freshness_ms: 64800000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 8h
+    warmup_limit: 10000
+    max_freshness_ms: 86400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 12h
+    warmup_limit: 10000
+    max_freshness_ms: 129600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1d
+    warmup_limit: 10000
+    max_freshness_ms: 259200000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 3d
+    warmup_limit: 10000
+    max_freshness_ms: 777600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1w
+    warmup_limit: 10000
+    max_freshness_ms: 1814400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BOOK_SNAPSHOT
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
+    feed: BOOK_DELTA
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: TRADE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 15000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: QUOTE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 5000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1m
+    warmup_limit: 10000
+    max_freshness_ms: 180000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 3m
+    warmup_limit: 10000
+    max_freshness_ms: 540000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 5m
+    warmup_limit: 10000
+    max_freshness_ms: 900000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 15m
+    warmup_limit: 10000
+    max_freshness_ms: 2700000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 30m
+    warmup_limit: 10000
+    max_freshness_ms: 5400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1h
+    warmup_limit: 10000
+    max_freshness_ms: 10800000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 2h
+    warmup_limit: 10000
+    max_freshness_ms: 21600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 4h
+    warmup_limit: 10000
+    max_freshness_ms: 43200000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 6h
+    warmup_limit: 10000
+    max_freshness_ms: 64800000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 8h
+    warmup_limit: 10000
+    max_freshness_ms: 86400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 12h
+    warmup_limit: 10000
+    max_freshness_ms: 129600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1d
+    warmup_limit: 10000
+    max_freshness_ms: 259200000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 3d
+    warmup_limit: 10000
+    max_freshness_ms: 777600000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BAR
+    consumer_grade: ALPHA
+    source_policy_id: crypto_primary_v2
+    interval: 1w
+    warmup_limit: 10000
+    max_freshness_ms: 1814400000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BOOK_SNAPSHOT
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: BOOK_DELTA
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 2000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+    max_session_liveness_ms: 45000
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: BASIS
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: 1d
+    warmup_limit: 0
+    max_freshness_ms: 259200000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-    interval: 15m
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: CONTRACT_METADATA
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 86400000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: FUNDING_RATE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 32400000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: LONG_SHORT_RATIO
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: 1d
+    warmup_limit: 0
+    max_freshness_ms: 259200000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: MARK_INDEX_PRICE
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: null
+    warmup_limit: 0
+    max_freshness_ms: 60000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: OPEN_INTEREST
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: 1d
+    warmup_limit: 0
+    max_freshness_ms: 86400000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
+  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+    feed: TAKER_FLOW
+    consumer_grade: ALPHA
+    source_policy_id: crypto_liquid_v2
+    interval: 1d
+    warmup_limit: 0
+    max_freshness_ms: 259200000
+    require_full_coverage: true
+    require_final_bars: false
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: FRESH_SNAPSHOT
+    bar_revision_policy: LATEST
   - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
     feed: BASIS
     consumer_grade: ALPHA
@@ -317,7 +1403,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: BASIS
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -330,7 +1416,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: CONTRACT_METADATA
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -343,7 +1429,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: FUNDING_RATE
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -356,7 +1442,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: LONG_SHORT_RATIO
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -369,7 +1455,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: MARK_INDEX_PRICE
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -382,7 +1468,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: OPEN_INTEREST
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -395,7 +1481,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: TAKER_FLOW
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -499,7 +1585,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
     feed: BASIS
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -512,7 +1598,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
     feed: CONTRACT_METADATA
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -525,7 +1611,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
     feed: FUNDING_RATE
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -538,7 +1624,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
     feed: LONG_SHORT_RATIO
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -551,7 +1637,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
     feed: MARK_INDEX_PRICE
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -564,7 +1650,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
     feed: OPEN_INTEREST
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2
@@ -577,98 +1663,7 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
-    feed: TAKER_FLOW
-    consumer_grade: ALPHA
-    source_policy_id: crypto_liquid_v2
-    interval: 1d
-    warmup_limit: 0
-    max_freshness_ms: 259200000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
-    feed: BASIS
-    consumer_grade: ALPHA
-    source_policy_id: crypto_liquid_v2
-    interval: 1d
-    warmup_limit: 0
-    max_freshness_ms: 259200000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
-    feed: CONTRACT_METADATA
-    consumer_grade: ALPHA
-    source_policy_id: crypto_liquid_v2
-    interval: null
-    warmup_limit: 0
-    max_freshness_ms: 86400000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
-    feed: FUNDING_RATE
-    consumer_grade: ALPHA
-    source_policy_id: crypto_liquid_v2
-    interval: null
-    warmup_limit: 0
-    max_freshness_ms: 32400000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
-    feed: LONG_SHORT_RATIO
-    consumer_grade: ALPHA
-    source_policy_id: crypto_liquid_v2
-    interval: 1d
-    warmup_limit: 0
-    max_freshness_ms: 259200000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
-    feed: MARK_INDEX_PRICE
-    consumer_grade: ALPHA
-    source_policy_id: crypto_liquid_v2
-    interval: null
-    warmup_limit: 0
-    max_freshness_ms: 60000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
-    feed: OPEN_INTEREST
-    consumer_grade: ALPHA
-    source_policy_id: crypto_liquid_v2
-    interval: 1d
-    warmup_limit: 0
-    max_freshness_ms: 86400000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-  - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
     feed: TAKER_FLOW
     consumer_grade: ALPHA
     source_policy_id: crypto_liquid_v2

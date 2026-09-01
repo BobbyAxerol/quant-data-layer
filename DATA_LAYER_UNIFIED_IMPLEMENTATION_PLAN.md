@@ -28724,3 +28724,81 @@ SQLite deletion, V1/Rust/ingestor/bar-edge change, Trading System, alpha,
 broker or order-path mutation. It establishes only the V2 query/stream/cache
 prerequisite for the next isolated alpha no-order proof; it is not itself
 consumer acceptance or authority promotion.
+
+### Phase 53.3 - Alpha Entitlement And Advisory-Context Convergence
+
+**Status:** `IN PROGRESS / SOURCE-ONLY` (2026-09-01).
+
+**Goal and approved scope.** Complete the source prerequisite for the
+representative alpha no-order proof without widening execution authority. The
+two stable alpha consumer manifests must derive their Binance USD-M/OKX Swap
+five-liquid requirements from the existing canonical demand/catalog, including
+native final BAR intervals, TRADE, QUOTE, depth-100 L2 snapshot/delta and
+provider-supported reference data. Alpha remains `ALPHA` grade with
+`execution_dependency=FORBIDDEN`; only the Trading System Risk consumer owns
+execution-grade cache admission. A manifest requirement is an entitlement,
+not a subscription: shared Rust ingestors/core/bar-edge remain the sole data
+plane and no symbol-specific worker, image, topic, identity or container may
+be introduced.
+
+**Invariants and decision boundary.** The compiler must be deterministic and
+idempotent, derive native identity/policy/freshness from reviewed source
+artifacts, retain exact V1 fallback only where the release route already
+proves it, and make quote/mark/L2/reference routes `BLOCKED` rather than
+silently falling back. Existing `1..100` manifest capacity is too small for a
+least-privilege five-liquid alpha (Binance needs 125 routes and OKX 110), while
+the existing shared Trading-System source demand already declares 186 routes.
+The loader boundary may therefore become `1..256`; it is a declaration limit,
+not a request, stream or warmup concurrency increase. Per-request quotas stay
+bounded (`max_batch_items <= 100`, `max_warmup_rows <= 10,000`). DNSE/VN stays
+unchanged and V1-primary. No runtime bundle, image, role, provider request,
+Kafka/Redis/SQLite data, Trading System/alpha process, order or broker action
+is allowed in this source slice.
+
+**Required source gates.** Compile and contract tests must prove both rendered
+manifests load; exactly five native instruments per venue; 70 native BAR,
+5 TRADE, 5 QUOTE, 5 BOOK_SNAPSHOT and 5 BOOK_DELTA routes per venue; reference
+coverage only where the canonical reference manifest supports that venue;
+`ALPHA` grade/no execution privilege; venue/symbol isolation; exact policy and
+fallback decisions; quota bounds; deterministic re-render; and release/primary
+route integrity. The later real packet renders a sealed binding SHA from these
+artifacts and runs the named `--rm` no-order alpha proof. Source revert is
+rollback.
+
+**Source/config exit (`PASS / SEALED RUNTIME PACKET NEXT`, 2026-09-01).** A
+deterministic compiler now materializes the two alpha manifests from the
+approved stable crypto demand, source catalog and reference/L2 manifest; it
+does not enumerate symbols, provider calls or subscriptions itself. The
+rendered `alpha.binance.paper.stable` revision `9` has `125` requirements and
+`alpha.okx.paper.stable` revision `8` has `110`: each venue has exactly five
+native perpetual instruments, `70` final BAR routes, and five each of TRADE,
+QUOTE, BOOK_SNAPSHOT and BOOK_DELTA, plus only reference products supported by
+the existing canonical reference entitlement. The shared manifest declaration
+limit is now `1..256`, while request/batch/warmup/stream quotas stay bounded;
+this accommodates the `125`/`110` declared entitlements and the pre-existing
+`186`-requirement Trading System manifest without increasing runtime
+concurrency.
+
+The release route was deterministically regenerated to revision `15` and the
+primary-consumer route to revision `4`. It now contains `303` products:
+`5` monitoring, `61` Trading System, `125` Binance alpha, `110` OKX alpha and
+`2` unchanged VN products. V1 fallback is retained only for admitted Binance
+TRADE routes; final BAR, quote, L2 and reference products fail closed rather
+than silently changing source. The V2 paper acceptance projection has `299`
+V2-primary products (`234` durable, `65` on-demand); its five-liquid
+Trading-System/Binance-alpha/OKX-alpha subset has `295` (`230` durable, `65`
+on-demand). Alpha quote context is deliberately `ALPHA` grade with `5s`
+freshness, while the Trading System/Risk execution-grade quote remains `2s`;
+Risk independently re-reads the latter before normal or preview admission.
+
+Evidence: the isolated non-root, read-only, no-network Data Layer runner
+passed **32/32** entitlement/release/fallback/consumer tests, **9/9** native
+final-BAR materialization tests and **54/54** reference/L2/contract/SDK
+consumer tests. The compiler dry run returned no changed files after apply;
+`compileall` and `git diff --check` passed. These are source/config gates
+only: no runtime bundle/image/role, provider request, Kafka/Redis/SQLite
+state, Trading System, alpha process, execution session, paper order or broker
+action was created. The next and only remaining Phase 53.3 runtime decision is
+the separately scoped sealed-binding, temporary `--rm` alpha/Gateway no-order
+packet with pre/post mutation evidence. Source rollback is this commit's
+revert; V1/VN remain unchanged.
