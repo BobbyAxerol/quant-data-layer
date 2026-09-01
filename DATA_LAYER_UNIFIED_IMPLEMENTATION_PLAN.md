@@ -28233,6 +28233,7 @@ volume was used or removed. The unreferenced local `data-layer:v0.1.0` CI image
 was deleted after the test; Docker image storage returned from `65.27GB` to
 `64.60GB` (about `0.67GB` reclaimed). No broad prune, V1/V2 serving image,
 Kafka, Redis, SQLite, provider, Trading System, alpha, order path or durable
-state changed. The coherent repair is committed on `fix/release-ci-phase71`
-with the owner identity; pending delivery only is an explicitly requested push
-for review. `dev`/`main` remain untouched until a user-approved merge.
+state changed. The coherent repair was committed as `500a558` on
+`fix/release-ci-phase71` with the owner identity, then pushed to
+`origin/fix/release-ci-phase71` for review. `dev`/`main` remain untouched until
+a user-approved merge.
