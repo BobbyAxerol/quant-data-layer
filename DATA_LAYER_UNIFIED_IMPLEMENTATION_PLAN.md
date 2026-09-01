@@ -28878,3 +28878,94 @@ qdl_sdk wheel:                2.0.1
 This records source convergence only. It does not certify any existing reader
 runtime as the new binding compiler, nor authorize a service roll. Phase B
 starts from this `dev` baseline; Phase C is still the first runtime mutation.
+
+### Phase B Config-Derived Binding Compiler (`IN PROGRESS / SOURCE-ONLY`, 2026-09-01)
+
+**Approved scope.** Replace the five-liquid-only compiler input with a portable
+deployment-requirement inventory exported from `execution_alpha` configuration
+and reconciled against the corresponding Compose service environment. Each
+eligible Binance USD-M or OKX Swap deployment must declare its native identity,
+final BAR interval, warmup/maxlen/min-bars, typed realtime/reference/L2 feeds,
+freshness/finality/gap policy and fallback. The Data Layer compiler resolves
+only catalog/capability-backed slices and emits a secret-free, deterministic
+sealed binding or an explicit `BLOCKED` result. It creates no subscription,
+provider call, symbol worker, topic, identity, image, bundle or runtime state.
+
+**Invariants.** The compiler is provider-neutral after native identity
+resolution; Binance and OKX requirements stay venue-native and are both
+rendered for every representative alpha class. Existing V1 routes and the
+five-liquid manifests remain compatibility inputs until the later Phase C
+bundle replacement. DNSE/VN remains V1-primary. `maxlen` may be 1..10,000;
+missing/optional metrics never become zero. A config/Compose mismatch, unknown
+catalog identity, unsupported feed or missing required capability fails closed
+with a typed result rather than a partial binding.
+
+**Required source gates.** Tests must cover deterministic re-render; all active
+Binance/OKX Compose deployments being represented as an admitted binding or
+typed block; 2,500/5,000/10,000 history bounds; multi-symbol, bracket, grid/L2
+and basis/reference profiles; Binance/OKX identity isolation; capability
+failure; and portable Trading System binding parsing. Source-only test runs use
+network-disabled/read-only containers where dependencies require Docker. No
+runtime service, provider, Kafka, Redis, SQLite, V1, Trading System, alpha,
+execution session, order, broker state or deployment configuration may change.
+
+**Rollback and decision boundary.** This phase is reverted solely by reverting
+its source commits on `dev`. A new immutable reader image and any rolling change
+remain Phase C decisions and are explicitly excluded here.
+
+**Compiler and portable-SDK slice (`PASS / SOURCE-ONLY`, 2026-09-01).** Added
+`scripts/compile_alpha_deployment_bindings.py`, a deterministic compiler which
+consumes the portable Execution Alpha inventory and emits only the existing
+`qdl.v2.consumer-route-binding.v1` contract. It resolves each required route
+through the stable source catalog and reference/L2 entitlement, preserves
+native Binance USD-M and OKX Swap identity, retains no alpha execution-grade
+privilege, and emits one typed `BLOCKED` result rather than a partial binding
+when any required route is unavailable. The output writer is explicit and
+caller-owned; Phase B created no mounted binding or release artifact.
+
+The real Compose inventory was exported in a disposable, network-disabled,
+read-only alpha container: `93` records with SHA-256
+`e77a93363b59561a95053faa02afb2634d2d6e0b82e0e0366bcfdc943dbbcda4`.
+The compiler admitted `17` exact bindings containing `106` V2 products and
+blocked `76` records. The blocked set is fully explained: `35` non-paper
+deployments, `32` unreviewed profiles, `8` DNSE/VN V1-primary deployments, and
+one native OKX basis probe whose `*-USDT-SWAP` route has no declared
+same-family basis capability. No unavailable metric was converted to zero or
+silently sourced from another venue. A Trading System SDK-only container parsed
+all `17` bindings and selected all `106` exact routes; all were advisory
+(`execution_grade=false`), and every OKX no-order probe had zero V1 fallback.
+
+The isolated no-network/read-only Data Layer regression command ran `22/22`
+tests across the new compiler plus current entitlement/reference/universal
+release contracts. It also exposed and corrected a real shared-contract gap:
+metric series (`OPEN_INTEREST`, `LONG_SHORT_RATIO`, `TAKER_FLOW`, `BASIS`) may
+carry their explicit sampling interval, while point-in-time products remain
+interval-free and fail closed. No Data Layer service/image/provider/Kafka/Redis
+SQLite/V1/Trading System/alpha/order state changed. Source rollback remains a
+revert; Phase B is still open only for cross-repository commit/`dev` integration.
+
+**Optional-metric and cross-repository source exit (`PASS / DEV INTEGRATION NEXT`,
+2026-09-01).** The compiler now distinguishes an unavailable optional metric
+from a required route failure. A capability-backed optional route is excluded
+from the sealed binding and recorded in `optional_unavailable` with exact
+venue/native identity/feed/interval/policy/reason; it is never represented as
+zero, silently re-routed, or permitted to be the only admitted route. Unknown
+identity, malformed booleans and unavailable required routes still fail
+closed. The isolated Data Layer regression command now passed `23/23` tests,
+including optional-unavailable, no-admitted-required-route, checksum,
+determinism, reference/L2 and universal-release cases; isolated Ruff passed.
+
+A fresh real-Compose source proof exported `93` records with inventory SHA
+`e77a93363b59561a95053faa02afb2634d2d6e0b82e0e0366bcfdc943dbbcda4`.
+Two identical compiler writes produced the same compilation SHA
+`940b2fe002b0c14d5da0181352c20fe1d6ae163fc6d10bde55c90c48b33a0ba4`;
+the second changed no files. It admitted `17` bindings/`106` routes and
+typed-blocked `76` records (`35` out-of-paper, `32` profile review,
+`8` DNSE/V1-primary, `1` unavailable native OKX basis). A separately
+isolated Trading System parser proof accepted every binding, preserved four
+`1d` metric-series routes, found zero execution-grade alpha routes and zero
+OKX V1 fallbacks. These are source-only artifacts in a scoped temporary
+directory: no provider, image, runtime role, Kafka, Redis, SQLite, V1,
+Trading System, alpha, execution or broker state changed. Phase B is ready
+only for its three coherent commits and fast-forward integration into `dev`;
+Phase C remains the first permitted runtime handoff.
