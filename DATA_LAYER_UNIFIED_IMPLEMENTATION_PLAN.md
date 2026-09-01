@@ -29196,6 +29196,39 @@ ancestry/reference verification may its feature worktree/branch and exact
 test-only artifacts be removed. A reviewed release PR is the only route from
 `dev` to `main`.
 
+#### Phase B Full Config Inventory Completion (`IN PROGRESS / SOURCE-ONLY`)
+
+**Goal.** Complete the already-landed compiler so every real eligible crypto
+deployment from Execution Alpha is represented by a declarative requirement
+record and becomes either an exact sealed V2 binding or a typed actionable
+`BLOCKED` result. The historical five-liquid manifest remains compatibility
+input only; it is never the default source of alpha truth.
+
+**Approved scope.** Requirement records carry native `venue`, `product` and
+instrument identity; final signal BAR interval; warmup `maxlen`/`min_bars`;
+TRADE/QUOTE/MARK_INDEX/BOOK needs; reference series; freshness/finality/gap
+policy; required/optional status; and allowed fallback policy. Values must be
+derived from the deployment Compose/config boundary, not strategy code. Each
+crypto family gets a concurrent native Binance USD-M and OKX Swap test route;
+a Binance-only economic model receives an explicit native OKX data probe, not
+a fabricated equivalent strategy. DNSE/VN remains V1-primary.
+
+**Invariants.** `maxlen` accepts only `1..10,000`; non-final history cannot
+become execution state; identity is exact and venue-native; optional absence is
+recorded rather than zero-filled; required absence is fail-closed. The compiler
+does not create provider demand, a worker, topic, image, identity, runtime
+bundle or persistent state.
+
+**Required tests and exit.** Cover every rendered Compose service, all declared
+Binance/OKX pairs, 2,500/5,000/10,000 warmup bounds, single/multi-symbol,
+portfolio, bracket, grid/L2 and basis/reference classes, malformed config,
+unknown instrument, missing required capability, optional omission, duplicate
+identity and deterministic double render. Data Layer parser plus Trading System
+portable parser must select the same route set. Phase exits only when the full
+inventory has a hash, each record is `ADMITTED` or typed `BLOCKED`, and no
+secret/runtime mutation occurred. Revert only the Phase B source commits on
+`dev` if required.
+
 **Phase A revalidation (`PASS / DEV FAST-FORWARD NEXT`, 2026-09-01).** The
 requested V2 source refs are already ancestors of `origin/dev`: Data Layer
 `origin/fix/phase533-v2-query-readiness` at `5cf8e21`, Trading System
@@ -29207,3 +29240,17 @@ the isolated read-only/no-network binding/release/entitlement/reference/L2
 suite: **27/27**. No provider, runtime role, Kafka/Redis/SQLite, Trading
 System, alpha, order or broker state was touched. Phase A next records the
 three committed integration SHAs and fast-forwards `dev` only.
+
+**Phase A integration closure (`PASS / DEV PUSH PENDING`, 2026-09-01).** The
+three source lines now converge without a history rewrite: Data Layer
+`963939d` (`dev` base), Trading System `613ef15`, and Execution Alpha
+`a8cb775`. Both consumer commits were fast-forwarded from their respective
+official local `dev` branches after their source-only gates passed. The shared
+SDK coordinate is the reproducible Data Layer `qdl-sdk==2.0.1` artifact
+`2e6fbfa074876a14c9f43320d739067a3b980e4c4a86e309bdaefea7d3162529`; its
+wheel, SBOM and manifest were compared byte-for-byte before acceptance.
+
+No reader, stream, alpha, provider, Kafka/Redis/SQLite, PostgreSQL, command,
+order, session, position or broker state was changed. The remaining action in
+this source slice is to commit this ledger update, push the three `dev`
+branches, verify ancestry, and then begin Phase B's real-config compiler proof.
