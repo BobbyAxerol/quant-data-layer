@@ -497,6 +497,18 @@ fn capture_id(session: &str, generation: u64, received_at_ns: i64, frame: &[u8])
     digest.finalize()[..16].to_vec()
 }
 
+/// One already-validated provider frame awaiting durable publication.
+/// Grouping its immutable coordinates keeps retry behavior coupled to the
+/// exact record identity without widening the publisher API.
+struct RawFrameRef<'a> {
+    binding: &'a RawBinding,
+    session_id: &'a str,
+    generation: u64,
+    raw_frame: &'a [u8],
+    received_at_ns: i64,
+    transport_protocol: TransportProtocol,
+}
+
 struct RawPublisher {
     sink: FencedKafkaSink,
     authority: AuthorityRecord,
@@ -595,21 +607,16 @@ impl RawPublisher {
 
     async fn enqueue_with_retry(
         &self,
-        binding: &RawBinding,
-        session_id: &str,
-        generation: u64,
-        raw_frame: &[u8],
-        received_at_ns: i64,
-        transport_protocol: TransportProtocol,
+        frame: RawFrameRef<'_>,
         stopped: &AtomicBool,
     ) -> Result<PendingKafkaAppend, KafkaTransportError> {
         let record = self.record(
-            binding,
-            session_id,
-            generation,
-            raw_frame,
-            received_at_ns,
-            transport_protocol,
+            frame.binding,
+            frame.session_id,
+            frame.generation,
+            frame.raw_frame,
+            frame.received_at_ns,
+            frame.transport_protocol,
         );
         let publication = self.publication();
         let backoff = BackoffPolicy {
@@ -633,7 +640,7 @@ impl RawPublisher {
                         "{}",
                         serde_json::to_string(&json!({
                             "event": "qdl_native_raw_enqueue_retry",
-                            "runtime": binding.venue.as_str(),
+                            "runtime": frame.binding.venue.as_str(),
                             "attempt": failures,
                             "retry_class": format!("{:?}", error.retry_class()).to_ascii_uppercase(),
                             "error": error.to_string(),
@@ -907,12 +914,14 @@ async fn enqueue_lossless_frame(
     }
     let delivery = publisher
         .enqueue_with_retry(
-            &frame.binding,
-            &frame.session_id,
-            frame.generation,
-            &frame.raw_frame,
-            frame.received_at_ns,
-            frame.transport_protocol,
+            RawFrameRef {
+                binding: &frame.binding,
+                session_id: &frame.session_id,
+                generation: frame.generation,
+                raw_frame: &frame.raw_frame,
+                received_at_ns: frame.received_at_ns,
+                transport_protocol: frame.transport_protocol,
+            },
             stopped,
         )
         .await;

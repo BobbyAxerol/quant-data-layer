@@ -58,9 +58,7 @@ impl DemandSubscription {
             return Err("demand subscription feed is unspecified".into());
         }
         if !is_realtime_subscription_feed(self.feed) {
-            return Err(
-                "reference demand must not enter the realtime subscription planner".into(),
-            );
+            return Err("reference demand must not enter the realtime subscription planner".into());
         }
         if self.feed == FeedType::Bar && self.interval.is_none() {
             return Err("BAR demand subscription requires interval".into());
@@ -154,9 +152,7 @@ pub fn validate_requirement(requirement: &DataRequirement) -> Result<(), String>
         return Err("BAR demand requires interval".into());
     }
     if feed != FeedType::Bar && has_interval && !is_interval_capable_reference_feed(feed) {
-        return Err(
-            "interval is valid only for BAR and interval-capable reference demand".into(),
-        );
+        return Err("interval is valid only for BAR and interval-capable reference demand".into());
     }
     if (!universe.expected_universe_sha256.is_empty()
         && universe.expected_universe_sha256.len() != 32)
@@ -230,10 +226,7 @@ fn is_realtime_subscription_feed(feed: FeedType) -> bool {
 fn is_interval_capable_reference_feed(feed: FeedType) -> bool {
     matches!(
         feed,
-        FeedType::OpenInterest
-            | FeedType::LongShortRatio
-            | FeedType::TakerFlow
-            | FeedType::Basis
+        FeedType::OpenInterest | FeedType::LongShortRatio | FeedType::TakerFlow | FeedType::Basis
     )
 }
 

@@ -27994,3 +27994,48 @@ broker, signal, sizing, or order path was changed by this handoff.
 This closes the approved bounded L2 mapping and 149-route C2 handoff. It is
 real-provider-backed V2 *data-plane* evidence, not a claim of broker/order
 execution authority, which is outside this packet's declared scope.
+
+**Release promotion CI repair (`IN PROGRESS`, 2026-08-31).** PR #12 merged to
+`dev` at `d7f9c81`, but its GitHub `contract-tests` job failed only at the
+existing Rust generated-contract command (`cargo fmt`, strict Clippy, and
+workspace tests inside `rust:1.82-slim`); Buf format/breaking, generated-source
+verification, and Python generated-contract tests passed. This source-only
+repair runs on `fix/rust-contract-ci` from `origin/dev`, preserving the dirty,
+diverged local `dev` worktree unchanged. Scope is limited to reproducing the
+exact CI command, correcting its proven source/build defect, and running the
+same contract gate plus relevant deterministic tests. It excludes runtime
+images, manifests, V1/V2 routing, Kafka, Redis, SQLite, provider access,
+Trading System, alpha, order paths, and branch promotion. Rollback is to leave
+this unmerged feature branch unused; `dev` and `main` are not modified here.
+
+Exit requires a clean diff check, exact Rust CI command passing, an explicit
+GitHub CI rerun on the pushed repair branch, and a documented merge sequence
+`fix/rust-contract-ci -> dev -> main`. No branch or worktree cleanup occurs
+until the merged state and every remaining local-only commit are classified.
+
+**Release promotion CI repair (`SOURCE PASS / PUSHED / GITHUB CI PENDING`,
+2026-08-31).**
+The exact Rust 1.82 CI command reproduced the failure: `rustfmt` required three
+deterministic formatting changes in `qdl-venue-core`, then strict Clippy exposed
+pre-existing `too_many_arguments`/`type_complexity` findings in the L2 adapter,
+L2 book parser, and native raw ingestor. The repair does not suppress lints.
+It groups existing internal frame metadata in `TransitionMetadata`, names the
+existing bid/ask map pair `BookSideMaps`, and groups one already-validated raw
+publication frame in `RawFrameRef`; capture identity, retry/backoff, sequence,
+L2 state transition, durable publication, wire schema, manifest, and endpoint
+behavior are unchanged.
+
+The exact disposable `rust:1.82-slim` gate now passes:
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked
+-- -D warnings`, and `cargo test --workspace --locked`. All executed workspace
+tests passed; one Redis integration case remains explicitly ignored without
+`QDL_TEST_REDIS_URL`. The existing immutable V2 Python image also passed the
+generated-contract regression `7/7` with network disabled, read-only source,
+and UID/GID `10001`. No container, image, provider, durable store, runtime
+configuration, or consumer changed during these source tests. Commit
+`27bbf18` was pushed to `origin/fix/rust-contract-ci`; the repository workflow
+intentionally runs only for PRs to `dev`/`main` or direct `dev` pushes, so no
+check run is expected until the repair PR is opened. The host has no GitHub API
+token, therefore it did not create a PR or mutate `dev`. Pending only: GitHub
+reruns complete CI on `fix/rust-contract-ci -> dev`, then that repair merges
+into `dev` before opening `dev -> main`.
