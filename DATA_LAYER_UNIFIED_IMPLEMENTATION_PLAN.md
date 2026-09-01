@@ -28580,3 +28580,23 @@ override, and serially recreate only `query_v2_1` then `query_v2_2`. Require
 three all-ready mTLS samples, no restart/OOM and no bounded errors on each role
 before removing only the two unreferenced failed candidate images. No alpha
 or Trading System proof begins until this exit passes.
+
+**Last startup-path correction (`PASS / FINAL IMAGE REBUILD`, 2026-09-01).**
+Live `query_v2_1` inspection showed its process still blocked in SQLite I/O
+after the two bounded-state repairs. The remaining cause was the original
+schema script's unconditional `DROP INDEX` followed by recreate of the
+retention index on every spool open. It is neither a migration nor a
+correctness requirement when the named index already exists, and it forces a
+whole-`events` reindex against the shared cache. The schema now keeps only
+`CREATE INDEX IF NOT EXISTS`; a normal open preserves the existing index.
+There is no event, cursor, retention, provider, Kafka, Redis, V1 or contract
+semantic change.
+
+**Evidence actually run:** `compileall` and `git diff --check` passed. The
+same isolated non-root/read-only/no-network suite now reports **71 passed, 1
+intentionally skipped**. Its new trace-level regression proves reopening a
+spool requests the retention index declaratively but does not issue `DROP
+INDEX`; previous tests continue to cover normal integrity checking, stable
+cache open behavior, legacy state reconstruction and fail-closed readiness.
+The final image must be rebuilt from this commit; the two previous candidate
+images remain non-authoritative and are removed only after final runtime exit.

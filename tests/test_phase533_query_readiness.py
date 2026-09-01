@@ -4,6 +4,7 @@ import asyncio
 import sqlite3
 import tempfile
 import unittest
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -120,6 +121,36 @@ class Phase533QueryReadinessTests(unittest.TestCase):
             self.assertTrue(spool.integrity_check())
         finally:
             spool.close()
+
+    def test_open_does_not_rebuild_retention_index(self):
+        path = Path(self.temp.name) / "no-reindex.sqlite3"
+        initial = SQLiteDurableSpool(SpoolConfig(path=path, min_free_disk_bytes=0))
+        initial.close()
+
+        statements: list[str] = []
+        original_connect = sqlite3.connect
+
+        class TracedConnection(sqlite3.Connection):
+            def executescript(self, script):
+                statements.append(script)
+                return super().executescript(script)
+
+        with patch(
+            "qdl.transport.sqlite_spool.sqlite3.connect",
+            side_effect=lambda *args, **kwargs: original_connect(
+                *args, factory=TracedConnection, **kwargs
+            ),
+        ):
+            reopened = SQLiteDurableSpool(
+                SpoolConfig(path=path, min_free_disk_bytes=0)
+            )
+        try:
+            self.assertTrue(
+                any("CREATE INDEX IF NOT EXISTS idx_qdl_spool_events_retention" in sql for sql in statements)
+            )
+            self.assertFalse(any("DROP INDEX" in sql for sql in statements))
+        finally:
+            reopened.close()
 
     def test_stable_readiness_uses_bounded_summary_not_full_stats(self):
         self.spool.append(_event(1, b"payload"))

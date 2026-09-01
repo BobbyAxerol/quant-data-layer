@@ -163,7 +163,6 @@ class SQLiteDurableSpool:
                 PRIMARY KEY (stream, partition_key, logical_offset),
                 UNIQUE (stream, event_id)
             );
-            DROP INDEX IF EXISTS idx_qdl_spool_events_retention;
             CREATE INDEX IF NOT EXISTS idx_qdl_spool_events_retention
                 ON events (committed_at_ns);
 
