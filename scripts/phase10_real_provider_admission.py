@@ -107,7 +107,9 @@ def _load_slices(path: Path) -> tuple[DemandSlice, ...]:
                 raise ProviderAdmissionError(f"requirement is missing {error.args[0]}") from error
             if item.venue not in {"BINANCE", "OKX"}:
                 continue
-            if item.feed not in {"TRADE", "QUOTE", "BAR"}:
+            if item.feed not in {
+                "TRADE", "QUOTE", "BAR", "BOOK_SNAPSHOT", "BOOK_DELTA",
+            }:
                 raise ProviderAdmissionError(f"unsupported Phase 10.1 feed: {item.feed}")
             slices[item.key] = item
     values = tuple(sorted(slices.values(), key=lambda item: item.key))
@@ -126,6 +128,11 @@ def _endpoint(slice_: DemandSlice) -> tuple[str, dict[str, str]]:
             return f"{base}/trades", {"symbol": symbol, "limit": "1"}
         if slice_.feed == "QUOTE":
             return f"{base}/ticker/bookTicker", {"symbol": symbol}
+        if slice_.feed in {"BOOK_SNAPSHOT", "BOOK_DELTA"}:
+            # REST can only attest the current L2 snapshot. Delta continuity
+            # remains a Rust WebSocket/core responsibility, but both public
+            # products must prove the same venue-owned depth source exists.
+            return f"{base}/depth", {"symbol": symbol, "limit": "100"}
         return f"{base}/klines", {"symbol": symbol, "interval": slice_.interval or "", "limit": "3"}
     if slice_.venue == "OKX":
         if slice_.market not in {"SWAP", "SPOT"}:
@@ -135,6 +142,8 @@ def _endpoint(slice_: DemandSlice) -> tuple[str, dict[str, str]]:
             return f"{base}/trades", {"instId": symbol, "limit": "1"}
         if slice_.feed == "QUOTE":
             return f"{base}/books", {"instId": symbol, "sz": "1"}
+        if slice_.feed in {"BOOK_SNAPSHOT", "BOOK_DELTA"}:
+            return f"{base}/books", {"instId": symbol, "sz": "100"}
         return f"{base}/candles", {"instId": symbol, "bar": slice_.interval or "", "limit": "3"}
     raise ProviderAdmissionError(f"unsupported venue: {slice_.venue}")
 
@@ -158,6 +167,24 @@ def _validate_binance(slice_: DemandSlice, payload: Any, received_ms: int) -> in
             raise ProviderAdmissionError("binance quote must be an object")
         _positive_decimal(payload.get("bidPrice"), "binance bid price")
         _positive_decimal(payload.get("askPrice"), "binance ask price")
+        return received_ms
+    if slice_.feed in {"BOOK_SNAPSHOT", "BOOK_DELTA"}:
+        if not isinstance(payload, Mapping):
+            raise ProviderAdmissionError("binance depth must be an object")
+        try:
+            update_id = int(str(payload.get("lastUpdateId")))
+        except (TypeError, ValueError) as error:
+            raise ProviderAdmissionError("binance depth update id is invalid") from error
+        if update_id <= 0:
+            raise ProviderAdmissionError("binance depth update id must be positive")
+        for side in ("bids", "asks"):
+            levels = payload.get(side)
+            if not isinstance(levels, list) or not levels or not isinstance(levels[0], list):
+                raise ProviderAdmissionError(f"binance depth has no {side}")
+            if len(levels[0]) < 2:
+                raise ProviderAdmissionError(f"binance depth {side} level is incomplete")
+            _positive_decimal(levels[0][0], f"binance depth {side} price")
+            _positive_decimal(levels[0][1], f"binance depth {side} quantity")
         return received_ms
     if not isinstance(payload, list) or not payload:
         raise ProviderAdmissionError("binance klines must contain rows")
@@ -188,7 +215,7 @@ def _validate_okx(slice_: DemandSlice, payload: Any, received_ms: int) -> int:
         if not str(row.get("tradeId") or "").strip():
             raise ProviderAdmissionError("okx trade id is missing")
         return _timestamp_ms(row.get("ts"), "okx trade time")
-    if slice_.feed == "QUOTE":
+    if slice_.feed in {"QUOTE", "BOOK_SNAPSHOT", "BOOK_DELTA"}:
         row = _first_mapping(data, "okx books")
         bids, asks = row.get("bids"), row.get("asks")
         if not isinstance(bids, list) or not bids or not isinstance(asks, list) or not asks:

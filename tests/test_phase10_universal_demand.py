@@ -521,9 +521,15 @@ class UniversalDemandTests(unittest.TestCase):
                 ("BINANCE", "SPOT", "BTCUSDT"),
                 ("BINANCE", "USDM", "BTCUSDT"),
                 ("BINANCE", "USDM", "ETHUSDT"),
+                ("BINANCE", "USDM", "SOLUSDT"),
+                ("BINANCE", "USDM", "DOGEUSDT"),
+                ("BINANCE", "USDM", "BNBUSDT"),
                 ("OKX", "SPOT", "BTC-USDT"),
                 ("OKX", "SWAP", "BTC-USDT-SWAP"),
                 ("OKX", "SWAP", "ETH-USDT-SWAP"),
+                ("OKX", "SWAP", "SOL-USDT-SWAP"),
+                ("OKX", "SWAP", "DOGE-USDT-SWAP"),
+                ("OKX", "SWAP", "BNB-USDT-SWAP"),
             },
         )
 
@@ -543,6 +549,12 @@ class UniversalDemandTests(unittest.TestCase):
                     return Response([{"id": 1, "price": "1", "qty": "1", "time": 1_000}])
                 if url.endswith("/ticker/bookTicker"):
                     return Response({"bidPrice": "1", "askPrice": "2"})
+                if url.endswith("/depth"):
+                    return Response({
+                        "lastUpdateId": 1,
+                        "bids": [["1", "1"]],
+                        "asks": [["2", "1"]],
+                    })
                 return Response([[0, "1", "2", "1", "1", "1", 1_000]])
             if url.endswith("/trades"):
                 return Response({"code": "0", "data": [{"px": "1", "sz": "1", "tradeId": "1", "ts": "1000"}]})

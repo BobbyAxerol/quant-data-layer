@@ -40,9 +40,30 @@ from qdl.runtime.stable_deployment import StableAcquisitionPlan
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 DEFAULT_ACQUISITION_PATH = ROOT / "config/v2/stable-acquisition-bindings.yaml"
-_MAX_BINDINGS = 128
 _MAX_PRE_ACK_FRAMES = 128
 _HEARTBEAT_SECONDS = 10.0
+
+# Phase 10.3 is retained as a reproducible, historical provider-protocol
+# baseline. Universal five-symbol/L2 admission belongs to the later Phase
+# 11.x verifiers; silently widening this script would change the meaning of
+# its recorded evidence and ask its BTC/ETH-only websocket parser to certify
+# products it was never designed to own.
+_PHASE10_BASELINE_BINDING_IDS = frozenset(
+    {
+        "binance-usdm-btcusdt-trade",
+        "binance-usdm-btcusdt-quote",
+        "binance-usdm-btcusdt-bar-1m",
+        "binance-usdm-ethusdt-trade",
+        "binance-usdm-ethusdt-quote",
+        "binance-usdm-ethusdt-bar-1m",
+        "okx-swap-btcusdt-trade",
+        "okx-swap-btcusdt-quote",
+        "okx-swap-btcusdt-bar-1m",
+        "okx-swap-eth-usdt-swap-trade",
+        "okx-swap-eth-usdt-swap-quote",
+        "okx-swap-eth-usdt-swap-bar-1m",
+    }
+)
 
 
 class ProviderAdmissionError(RuntimeError):
@@ -185,7 +206,7 @@ def load_active_provider_bindings(
     catalog_path: Path = DEFAULT_CATALOG_PATH,
     acquisition_path: Path = DEFAULT_ACQUISITION_PATH,
 ) -> tuple[NativeBinding, ...]:
-    """Resolve every enabled crypto binding exercised by Phase 10.3.
+    """Resolve the recorded twelve-binding Phase 10.3 provider baseline.
 
     `RUST_NATIVE` bindings are read from direct provider WebSockets. A
     `PYTHON_REST` binding is allowed only for a Binance/OKX final BAR and
@@ -197,6 +218,8 @@ def load_active_provider_bindings(
     sources = {item.binding_id: item for item in catalog.bindings}
     values: list[NativeBinding] = []
     for item in acquisition.bindings:
+        if item.binding_id not in _PHASE10_BASELINE_BINDING_IDS:
+            continue
         if not item.enabled or item.mode not in {"RUST_NATIVE", "PYTHON_REST"}:
             continue
         source = sources[item.binding_id]
@@ -234,8 +257,15 @@ def load_active_provider_bindings(
             )
         )
     result = tuple(sorted(values, key=lambda item: item.binding_id))
-    if not result or len(result) > _MAX_BINDINGS:
-        raise ProviderAdmissionError("active provider binding count is outside admission bound")
+    result_ids = {item.binding_id for item in result}
+    if result_ids != _PHASE10_BASELINE_BINDING_IDS:
+        missing = sorted(_PHASE10_BASELINE_BINDING_IDS - result_ids)
+        unexpected = sorted(result_ids - _PHASE10_BASELINE_BINDING_IDS)
+        raise ProviderAdmissionError(
+            "Phase 10.3 baseline bindings are missing or changed "
+            f"missing={','.join(missing) or 'none'} "
+            f"unexpected={','.join(unexpected) or 'none'}"
+        )
     if {item.venue for item in result} != {"BINANCE", "OKX"}:
         raise ProviderAdmissionError("active provider demand must include Binance and OKX")
     if any(item.market not in {"USDM", "SWAP"} for item in result):

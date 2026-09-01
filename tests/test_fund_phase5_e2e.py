@@ -85,6 +85,7 @@ def _record(venue: str, market: str, native_symbol: str) -> InstrumentRecord:
 
 
 def _envelope(record: InstrumentRecord, feed: FeedType, source_id: str):
+    now = time.time_ns()
     common = dict(
         schema_name=f"qdl.marketdata.{feed.value.lower()}", schema_major=2,
         event_id=b"e" * 16, instrument_uid=record.instrument_uid,
@@ -92,15 +93,16 @@ def _envelope(record: InstrumentRecord, feed: FeedType, source_id: str):
         venue=record.identity.venue, market=record.identity.market,
         product_type="PERPETUAL", native_symbol=record.native_symbol,
         provider=f"{record.identity.venue}_DIRECT", source_id=source_id,
-        source_role=1, lease_epoch=1, source_event_time_ns=time.time_ns(),
-        received_at_ns=time.time_ns(), normalized_at_ns=time.time_ns(),
-        published_at_ns=time.time_ns(), source_sequence="1", partition_sequence=1,
+        source_role=1, lease_epoch=1, source_event_time_ns=now,
+        received_at_ns=now, normalized_at_ns=now,
+        published_at_ns=now, source_sequence="1", partition_sequence=1,
         normalizer_version="phase5-e2e", adapter_version="fixture-v1",
         config_revision=1,
     )
     if feed is FeedType.BAR:
         return market_data_pb2.EventEnvelope(**common, bar=market_data_pb2.Bar(
-            interval="1m", open_time_ns=1, close_time_ns=2, is_final=True, revision=1,
+            interval="1m", open_time_ns=now - 60_000_000_000, close_time_ns=now,
+            is_final=True, revision=1,
             lifecycle=market_data_pb2.BAR_LIFECYCLE_REVISED,
             supersedes_event_id=b"previous",
         ))

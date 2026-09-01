@@ -58,8 +58,6 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
             {
                 "binance-usdm-btcusdt-bar-1m",
                 "binance-usdm-ethusdt-bar-1m",
-                "okx-swap-btcusdt-bar-1m",
-                "okx-swap-eth-usdt-swap-bar-1m",
             },
         )
 
@@ -166,7 +164,7 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
         )
         final = admission.parse_okx_rest_bar(
             '{"arg":{"channel":"candle1m","instId":"BTC-USDT-SWAP"},"data":[["1000","1","3","1","2","0","0","0","1"]]}',
-            binding=binding,
+            binding=replace(binding, mode="PYTHON_REST"),
             observed_ms=61_000,
         )
         self.assertEqual(final.binding_id, binding.binding_id)
@@ -175,7 +173,7 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(admission.ProviderAdmissionError, "not final"):
             admission.parse_okx_rest_bar(
                 '{"arg":{"channel":"candle1m","instId":"BTC-USDT-SWAP"},"data":[["1000","1","3","1","2","0","0","0","0"]]}',
-                binding=binding,
+                binding=replace(binding, mode="PYTHON_REST"),
                 observed_ms=61_000,
             )
 
@@ -271,7 +269,7 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
             cpu_seconds=0.1,
             max_rss_kib=1,
         )
-        self.assertEqual(report["rest_closed_bar_recovery_count"], 4)
+        self.assertEqual(report["rest_closed_bar_recovery_count"], 2)
         self.assertEqual({item["transport"] for item in report["bindings"]}, {"HTTP"})
 
 

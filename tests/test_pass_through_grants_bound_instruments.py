@@ -1,11 +1,4 @@
-"""A binding at one interval must not deny the pass-through at another.
-
-Routing decides per requirement — instrument, feed and interval together — so
-an instrument materialised at 1m still routes to the pass-through when a
-consumer asks for 15m. Granting the pass-through only to *unbound* instruments
-refused exactly that case, and refused it as unlicensed, which is both the
-wrong answer and the wrong reason.
-"""
+"""Bound intervals remain durable; explicit unbound intervals may pass through."""
 
 from __future__ import annotations
 
@@ -85,19 +78,21 @@ class PassThroughGrantScopeTests(unittest.TestCase):
             self.assertEqual(decision.reason_code, "NO_ACTIVE_ENTITLEMENT")
 
     def test_a_bound_interval_is_not_routed_to_the_pass_through(self) -> None:
-        """The extra grant must not become a way to bypass the spool."""
+        """A binding wins, while a separately unbound interval can pass through."""
         from qdl.runtime.provider_history import ProviderBarHistorySource
         from qdl.runtime.routed_query import RoutedQueryBackend
 
         class _Spool:
-            catalog = self.catalog
             schema_digest = "d" * 64
+
+            def __init__(self, catalog) -> None:
+                self.catalog = catalog
 
             def history(self, requirement):
                 return "FROM_SPOOL"
 
         routed = RoutedQueryBackend(
-            _Spool(), ProviderBarHistorySource(self.catalog)
+            _Spool(self.catalog), ProviderBarHistorySource(self.catalog)
         )
         bound_requirement = DataRequirement(
             instrument_uid=BINANCE_ETH,
@@ -113,9 +108,30 @@ class PassThroughGrantScopeTests(unittest.TestCase):
 
         from dataclasses import replace
 
-        self.assertTrue(
-            routed.routes_to_pass_through(replace(bound_requirement, interval="15m"))
+        materialized_15m = replace(bound_requirement, interval="15m")
+        self.assertFalse(routed.routes_to_pass_through(materialized_15m))
+
+        # The production catalog now materializes every supported ETH interval.
+        # Remove one binding only in this fixture to retain coverage that an
+        # otherwise declared instrument can use the explicit snapshot-only
+        # provider product for an interval the spool does not cover.
+        unbound_catalog = StableSourceCatalog(
+            canonical_stream=self.catalog.canonical_stream,
+            bindings=tuple(
+                binding
+                for binding in self.catalog.bindings
+                if binding.requirement_key
+                != (BINANCE_ETH, FeedType.BAR, materialized_15m.interval)
+            ),
+            catalog_revision=self.catalog.catalog_revision,
+            source_policy_revision=self.catalog.source_policy_revision,
+            authority_revision=self.catalog.authority_revision,
+            instruments=self.catalog.instruments,
         )
+        unbound_routed = RoutedQueryBackend(
+            _Spool(unbound_catalog), ProviderBarHistorySource(unbound_catalog)
+        )
+        self.assertTrue(unbound_routed.routes_to_pass_through(materialized_15m))
 
 
 if __name__ == "__main__":
