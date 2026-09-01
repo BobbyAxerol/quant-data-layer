@@ -67,9 +67,10 @@ stream_v2_active
 stream_v2_passive
 ```
 
-It is appended as the final Compose override. Existing security, TLS,
-authority and bar-edge override files are retained only after a rendered
-`docker compose config --quiet` proves they are still needed. A `/tmp` override
+It is appended as the final Compose override from the canonical checkout
+`/home/bobby/data_layer`. Existing security, TLS, authority and bar-edge
+override files are retained only after a rendered `docker compose config
+--quiet` proves they are still needed. A `/tmp` override or feature worktree
 is never a production selector.
 
 ## Rolling Packet
@@ -77,12 +78,13 @@ is never a production selector.
 Before each serial recreate, capture only bounded metadata: role name, image
 ID, health, restart count, RSS, manifest checksum and query/stream lag.
 
-Recreate the four roles in this order:
+Recreate the two query roles first, then inspect the stream lease and recreate
+the currently observed standby followed by the current lease holder:
 
 1. `query_v2_2`
 2. `query_v2_1`
-3. `stream_v2_passive`
-4. `stream_v2_active`
+3. stream replica with `gateway_lease=STANDBY`
+4. stream replica with `gateway_lease=READY`
 
 The query replicas must return `/health/ready` `200`. Stream replicas use a
 cooperative lease: the required condition is exactly one `gateway_lease=READY`

@@ -28991,7 +28991,7 @@ proven.
 
 ### Phase C - Canonical Reader Release And Sealed Alpha Binding Bundle
 
-**Status:** `IN PROGRESS / BUILD-AND-TEST FIRST` (2026-09-01).
+**Status:** `COMPLETE / DEV INTEGRATION PENDING` (2026-09-01).
 
 **Detailed procedure:** `docs/runbooks/phase54-config-derived-reader-release.md`.
 
@@ -29028,13 +29028,17 @@ containers, broker credentials and order path are excluded. Normal reader
 startup reads are allowed; no new provider subscription or durable-store reset
 is part of this packet.
 
-**Runtime hygiene invariant.** Docker labels show the currently serving
-readers were originally launched from a removed phase worktree and a stack of
-historical overrides. The successor invocation must use this canonical active
-Phase C worktree and one new release-owned override as the final image layer;
-it may retain only the existing required base/C2/security/bar-edge overrides
-that are proven in the rendered config. It must not rely on a `/tmp` override
-or recreate an unrelated role merely to normalize labels.
+**Runtime hygiene invariant.** Docker labels showed the serving readers were
+originally launched from a removed phase worktree and a stack of historical
+overrides. The successor invocation must use the canonical checkout
+`/home/bobby/data_layer` and one new release-owned override as the final image
+layer; it may retain only the existing required base/C2 selectors that are
+proven in rendered config. It must not rely on a `/tmp` override, a feature
+worktree or recreate an unrelated role merely to normalize labels. The
+canonical root's base/C2 Compose files are byte-identical to this Phase C
+worktree (`60624...c144`, `8013...fca3`), so a same-image serial label
+normalization of the four approved roles is permitted after their first image
+handoff; it does not alter the rendered service specification or data plane.
 
 **Build/test gates.** Build exactly one image. Inspect its OCI revision,
 non-root user and digest; run the selected binding/release/reference/L2/query/
@@ -29058,6 +29062,9 @@ and on the candidate image. Zero leaders, two leaders, an unexpected component
 state or a lease-error is a rollout failure. Pre-roll inspection observed the
 expected shape: query replicas and named active stream ready; named passive
 stream standby with consumer manifests/cache/Redis/authority all ready.
+For every serial stream handoff, recreate the currently observed `STANDBY`
+replica first and the current `READY` lease holder second; a fixed container
+name order would be wrong after a prior healthy handoff reverses ownership.
 
 **Increment 1 - sealed bundle preparer (`IN PROGRESS / SOURCE-ONLY`,
 2026-09-01).** The bundle is a durable release coordinate rather than an
@@ -29110,3 +29117,50 @@ and pre-roll compose selector set. This phase closes only after the image is
 immutable, the secret-free bundle is sealed, four-reader rollout health passes
 and the obsolete phase-named active worktree/temporary override is no longer a
 runtime dependency. It does not certify an alpha consumer or paper order.
+
+**Phase C close (`PASS / RUNTIME HANDOFF COMPLETE`, 2026-09-01).** Source
+commits `95f84cd` and `d619be6` added the sealed bundle preparer and explicit
+rollback selector. The final immutable reader image is
+`qdl-v2-python:2.0.0-dev-d619be6`
+(`sha256:e5cea2afa405188293e28fa8b1fd1a6ac22b2b62db8aa2e95efc44913b407963`),
+with OCI revision `d619be6f64f0ec00144d39773db70e9c1f2ba6c0`, non-root
+`qdl:qdl`, and `27/27` scoped unit/contract tests passed inside that image
+with no network, read-only filesystem and tmpfs bytecode state. The real
+`execution_alpha:origin/dev` archive was exported twice in isolated no-network
+containers: both inventories were `93` deployments with SHA
+`e77a93363b59561a95053faa02afb2634d2d6e0b82e0e0366bcfdc943dbbcda4`.
+Both compilations produced `17` admitted and `76` typed-blocked deployments,
+`106` products and compilation SHA
+`940b2fe002b0c14d5da0181352c20fe1d6ae163fc6d10bde55c90c48b33a0ba4`.
+The two sealed bundles were byte-identical; final release bundle
+`/home/bobby/.local/state/qdl-v2/releases/2.0.0-dev-d619be6` has manifest SHA
+`dba055812ab87eb836895fd71c3dfd5573b2c9ba7f4c589be2c956881e1756c5` and
+contains candidate and exact rollback selector for only the four reader roles.
+
+**Bounded runtime handoff (`PASS`).** The first serial candidate handoff
+verified the four services, then the final canonical-root normalization
+recreated exactly `query_v2_2`, `query_v2_1`, the observed stream standby and
+the observed stream leader using only
+`/home/bobby/data_layer/docker-compose.v2-stable.yml`, its byte-identical C2
+override (`8013...fca3`) and the sealed candidate override. V1, Kafka,
+Redis, SQLite, Rust, ingestors, bar edge, projectors, Trading System, alpha,
+database and order/broker paths were not recreated or reset. Every final role
+uses `e5cea...7963`, is running with restart count `0` and `OOMKilled=false`;
+both query mTLS readiness probes returned `200`; stream active reported exactly
+one `READY` lease and stream passive exactly one clean `STANDBY`, with all
+other dependency components ready. Runtime labels now point to canonical
+`/home/bobby/data_layer` and the sealed bundle, not `/tmp` or any feature
+worktree. Reader/stream lag has no active alpha consumer in this phase and is
+therefore intentionally not asserted; Phase D owns real cursor/reconnect/lag
+evidence with paired Binance/OKX no-order consumers.
+
+**Scoped cleanup (`PASS`).** Removed exactly the two unreferenced preparer
+images `376d...77a` and `70c8...d49`, the superseded
+`2.0.0-dev-95f84cd` bundle and `/tmp/qdl-phasec-execution-alpha.0P7bHe`.
+Retained only the active reader image `e5cea...7963` and named reader rollback
+image `b75a...e910e` for this packet. No broad BuildKit prune, volume/network,
+source or runtime-state deletion occurred. Disk moved from `204/290 GiB` used
+(`86 GiB` free) to `203/290 GiB` used (`87 GiB` free), and post-cleanup mTLS
+readiness/lease checks still passed. The next permitted action is Phase D's
+four representative paired Binance/OKX no-order proof; no alpha or order was
+started by Phase C.
