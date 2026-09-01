@@ -29796,3 +29796,87 @@ inputs and the detached source worktree after this journal commit is integrated
 into `dev`; no broad BuildKit prune is safe because its remaining cache has
 shared ownership. Phase 3 is complete as a dev-pre-release reader rollout.
 Phase 4 is the first permitted alpha/Gateway/Risk runtime proof.
+
+### Phase 54 - Phase 4 Paired Native Alpha No-Order Acceptance
+
+**Status:** IN PROGRESS / OWNER-APPROVED BOUNDED RUNTIME PROOF, 2026-09-01.
+
+**Goal.** Prove that the sealed V2 reader release is consumed as real
+provider-derived data by the shared alpha runtime and Trading System admission
+path, without creating any execution effect. Four representative runtime
+classes run as paired native workloads: Binance USD-M and OKX Swap start
+concurrently for one class at a time. A pair is two temporary consumers, not
+two new strategy variants, images, providers, workers or symbol-specific
+services.
+
+**Scope and invariants.** The input is release manifest
+`998850767a0a732873b8cce22448dea7a41b035072d3a9c6155210d08b61aba8` and
+the actual config-derived binding inventory. Each workload uses its exact
+sealed consumer binding, V2 query/stream identity, real provider-derived
+cache, read-only alpha source, tmpfs-only cursor/state/log paths,
+`TRADING_NO_ORDER=true`, no broker credential and no direct venue client.
+The temporary Gateway is a single no-order-only reader of existing
+PostgreSQL/Redis/V2 cache state; it starts no background writer and is removed
+after the matrix. V1, Kafka topology/offsets, Redis/SQLite durable state,
+ingestors, Rust core, bar edge, projectors, running alpha services, Trading
+System services and every order path are excluded.
+
+**Required paired matrix.**
+
+| Class | Binance USD-M and native OKX Swap proof |
+| --- | --- |
+| closed-bar directional | final BAR warmup, FIFO append, signed-cursor replay and reconnect |
+| multi-symbol signal | execution symbol plus regime symbol retain native identity and one candle boundary |
+| bracket/conditional | final BAR, quote and mark reach typed BRACKET/CONDITIONAL/OCO preflight |
+| grid/L2 limit | L2 snapshot, delta, reset/resnapshot and tick-normalised L2 LIMIT/OCO preflight |
+
+For each native venue, V1/V2 semantic comparison only uses that same venue's
+captured corpus. A missing active risk profile may return a typed
+`PREVIEW_REJECTED` after the required V2 cache reread; it is never
+auto-created, bypassed or replaced by a cross-venue profile.
+
+**Exit gates.** Record route/binding hashes, finality/freshness/watermark/gap,
+cursor replay/reconnect, typed intent and independent Risk cache reread,
+allowed fallback-return or BLOCKED result, CPU/RAM/open connections and
+container exit. Exact no-order scope checks must show no execution session,
+command/journal/outbox, reservation/pending exposure, order/bracket/group,
+broker attempt or persistent alpha state mutation. All temporary containers
+must be absent after `--rm`; remove only the caller-owned tmpfs/log/cursor
+namespace and ephemeral secret environment file. No image prune, volume
+deletion, Redis flush, SQLite reset or shared-state cleanup is allowed.
+
+**Rollback/decision boundary.** Stop the temporary no-order Gateway and pair,
+remove their scoped namespace, and retain the existing V1 route plus named V2
+reader rollback image. Stop on any V2 freshness, identity, sequence, cache
+reread or zero-mutation failure. Phase 5 paper canaries are forbidden until
+this complete paired matrix passes.
+
+**Preflight correction (2026-09-01, no runtime mutation).** The first
+read-only binding/identity inspection found a real interoperability defect:
+the generated per-alpha sealed binding uses a local consumer identifier such
+as `alpha.<alpha_id>.binance.paper`, while V2 workload access is granted to
+the platform identities `alpha.binance.paper.stable` and
+`alpha.okx.paper.stable`. The existing alpha runtime incorrectly used one
+identifier for both binding verification and V2 transport authentication. The
+required narrow cross-repository correction is to retain the local binding
+identifier for checksum/route selection and add a separate access-consumer
+identifier solely to the V2 SDK/JWT transport. It does not change Data Layer
+provider admission, manifest auth, route capability or server-side policy.
+No alpha, query, stream, gateway, database, Redis, cursor or order process was
+started in this preflight.
+
+**Shared bracket-context source gate (`PASS / NO RUNTIME MUTATION`,
+2026-09-01).** The paired proof found and closed the one missing execution
+transport path before real-provider use: a V2 alpha bracket now carries the
+same normalized `risk_context` and typed `execution_intent` through the shared
+SDK, Gateway bracket schema, persisted bracket metadata and generated entry or
+child leg payload. This makes `data_layer_contract=V2_PRIMARY` observable by
+the existing independent Risk V2 cache reread. It is additive and legacy
+bracket callers still emit no context. The isolated Trading System source
+matrix passed `62/62` across typed intent, bracket, alpha SDK order-state and
+no-order admission tests; Alpha Runtime passed `26/26` contract tests plus
+`5/5` typed-intent tests. All runs were no-network, read-only and disposable;
+no Data Layer role, provider, Kafka, Redis, SQLite, PostgreSQL, alpha state,
+session, command, order, bracket, reservation or broker action changed. The
+next action is the reusable source-only no-order probe; Phase 4 runtime pairs
+remain pending.
