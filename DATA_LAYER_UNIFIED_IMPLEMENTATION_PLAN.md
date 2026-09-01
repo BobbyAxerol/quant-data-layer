@@ -28969,3 +28969,10 @@ directory: no provider, image, runtime role, Kafka, Redis, SQLite, V1,
 Trading System, alpha, execution or broker state changed. Phase B is ready
 only for its three coherent commits and fast-forward integration into `dev`;
 Phase C remains the first permitted runtime handoff.
+
+**Phase B integration closure (`COMPLETE / DEV INTEGRATED`, 2026-09-01).**
+The tested compiler source is now in remote `data_layer:dev` at
+`ee002b137d6cc0c7918a30dc52f30cbb28d74b78`; `main` and all runtime roles
+remain unchanged. The next permitted action is Phase C's separately recorded
+canonical reader-image/bundle packet. It must seal this inventory/binding
+generation before any reader roll and retain V1 plus per-role rollback digests.
