@@ -163,6 +163,7 @@ jobs:
         env:
           QDL_BETA_CURSOR_KEYS_JSON: '{"beta-k1":"phase71-ci-cursor-key-material-32-bytes"}'
           QDL_BETA_JWT_KEYS_JSON: '{"phase7-test":"phase7-test-secret-material-32bytes"}'
+          QDL_BETA_JWT_KEY_SUBJECTS_JSON: '{"phase7-test":"spiffe://qdl/paper/alpha-okx-reference-shadow"}'
         run: |
           docker image inspect redis:7.2-alpine >/dev/null 2>&1 || docker pull redis:7.2-alpine
           export QDL_BETA_IMAGE="$(docker image inspect data-layer:v0.1.0 --format '{{.Id}}')"
