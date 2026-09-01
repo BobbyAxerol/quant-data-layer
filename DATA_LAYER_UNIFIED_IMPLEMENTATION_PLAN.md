@@ -28662,3 +28662,46 @@ roles. The active query/stream image remains the already-tested
 `sha256:b75a…e910e`; its replacement is unnecessary and therefore excluded.
 The prior projector image `sha256:36ed…c63ed` with the same mounts remains the
 per-role rollback. No other component may be recreated.
+
+**Public SDK artifact correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-01).**
+The first Python 3.10 alpha-runtime regression after the Phase 53.3 no-order
+adapter exposed an artifact mismatch, not a data-plane defect: its vendored
+`qdl-sdk==2.0.0` wheel has source digest
+`1535f7f5cfb50050dc300a3b65471508ca9e10d4f3bcff0d9a9a9108cc23737e` and
+predates the sealed V2 public fields `event_recency_policy`,
+`max_session_liveness_ms`, and provider-session quality. The current public
+SDK source has a different digest and the matching generated protobuf fields.
+The existing 2.0.0 artifact must remain immutable; replacing bytes under the
+same package version would break provenance and reproducibility.
+
+The approved narrow source scope is therefore one reproducible **`qdl-sdk
+2.0.1`** patch artifact: update only the SDK version constants, SDK release
+builder/CI assertions and version-specific SDK tests; build the wheel from
+the already-sealed contracts; then let the alpha runtime pin the resulting
+wheel by exact name/hash. Data Layer service version, Rust core, provider
+adapters, V1/V2 API routes, manifests, runtime roles, Kafka, Redis, SQLite,
+identities and consumer routing are excluded. The gates are a clean SDK
+release build, exact Python 3.10 standalone import, current typed
+`DataRequirement`/`QualityView` field validation, generated-contract presence
+and the existing SDK release tests. The source rollback is to retain the
+immutable 2.0.0 artifact and restore the alpha pin; no runtime rollback is
+needed because this packet starts no Data Layer role.
+
+**SDK 2.0.1 source exit (`PASS / CONSUMER PIN NEXT`, 2026-09-01).** The
+public SDK version and deterministic builder now produce
+`qdl_sdk-2.0.1-py3-none-any.whl`; Data Layer service/OpenAPI remains `2.0.0`.
+The builder produced SHA-256
+`2e6fbfa074876a14c9f43320d739067a3b980e4c4a86e309bdaefea7d3162529`, source
+digest `2aac992269797848acc2177268f01f606dd69cba2239da1cb4c9110dd5c5b6c8`
+and generated-contract digest
+`2a25a601ae80b2ee4b36e6d1cb8ca44a13b8a037bf69a96f45659d1782a3a624`.
+The artifact includes the current typed `DataRequirement` and `QualityView`
+fields plus generated query protobuf, but no service internals.
+
+The isolated non-root/no-network/read-only Data Layer runner passed **20/20**
+SDK release, feed-status, consumer-manifest and stable release tests. A
+separate Python 3.10 alpha-runtime verifier imported the artifact and
+constructed observed-event/session-liveness models as `2.0.1 OBSERVE LIVE`.
+No Data Layer role, provider, Kafka, Redis, SQLite, manifest/authority or
+endpoint was changed. The sole consumer action is the matching alpha-runtime
+vendor pin; the prior immutable 2.0.0 wheel remains intact and rollbackable.

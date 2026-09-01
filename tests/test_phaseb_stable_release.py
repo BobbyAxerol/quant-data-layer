@@ -304,14 +304,14 @@ class StableRuntimeDependencyTests(unittest.TestCase):
 
 
 class StableReleaseVersionContractTests(unittest.TestCase):
-    def test_package_sdk_and_openapi_are_exactly_2_0_0(self):
+    def test_service_openapi_and_sdk_versions_are_explicit(self):
         package = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         snapshot = json.loads(
             (ROOT / "contracts/v2/openapi.snapshot.json").read_text(encoding="utf-8")
         )
         generated = build_openapi()
         self.assertEqual(package["project"]["version"], "2.0.0")
-        self.assertEqual(qdl_sdk.__version__, "2.0.0")
+        self.assertEqual(qdl_sdk.__version__, "2.0.1")
         self.assertEqual(generated["info"]["version"], "2.0.0")
         self.assertEqual(snapshot, generated)
         # ``reference:batch`` is a governed V2 public path in the checked-in
