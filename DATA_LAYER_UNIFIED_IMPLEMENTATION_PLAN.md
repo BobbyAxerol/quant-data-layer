@@ -28862,3 +28862,19 @@ from deterministic negative test cases and no provider was contacted.
 No V2 role, bundle, image, Kafka/Redis/SQLite state, V1 service, Trading
 System, alpha process or order path changed. The next valid Phase A operation
 is merge to `dev`; runtime image/build and reader rolling remain Phase C only.
+
+**Phase A integration closure (`COMPLETE / DEV INTEGRATED`, 2026-09-01).**
+The tested source payload is now contained by remote `dev` at
+`dc4ca8ed534de516328f63b2904d0d7d248f3969`; `main` is unchanged. The
+cross-repository source tuple for the V2 rollout is:
+
+```text
+data_layer payload SHA:       dc4ca8e
+trading_system payload SHA:   dcd6cd1
+execution_alpha payload SHA:  76b110b
+qdl_sdk wheel:                2.0.1
+```
+
+This records source convergence only. It does not certify any existing reader
+runtime as the new binding compiler, nor authorize a service roll. Phase B
+starts from this `dev` baseline; Phase C is still the first runtime mutation.
