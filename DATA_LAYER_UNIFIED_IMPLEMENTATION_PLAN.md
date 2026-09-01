@@ -29002,10 +29002,16 @@ will mount read-only. This phase does not create an alpha-specific service,
 symbol worker, topic, identity or image.
 
 **Source and artifact coordinates.** The source baseline is `data_layer:dev`
-`6967573552733cdaf8576cd8ef95ef95960f793f`. The candidate has the canonical
-pre-release tag `qdl-v2-python:2.0.0-dev-6967573` and OCI labels for that
-commit/release; its inspected immutable image ID becomes the reader pin. The
-secret-free release bundle lives outside every checkout under a newly named
+`6967573552733cdaf8576cd8ef95ef95960f793f`. The final candidate tag must be
+`qdl-v2-python:2.0.0-dev-<exact-feature-sha>` and its OCI revision must equal
+that exact source SHA; a mutable tag is never the runtime pin. The first
+preparer gate built `qdl-v2-python:2.0.0-dev-8db07ea` from
+`8db07ea9f7d3ae27c31575c9a14fb7e6b54376be`, inspected image
+`sha256:376d474759c96bab1b3ac75a0c9311097fe3c93ba310b427f97afa963f58f77a`,
+and passed its isolated selected matrix (`23` tests). It is a build-gate
+artifact only: the final image is rebuilt after the source-managed bundle
+preparer lands and receives its own exact SHA/tag. The secret-free release
+bundle lives outside every checkout under a newly named
 `/home/bobby/.local/state/qdl-v2/releases/` directory and contains only the
 verified inventory, its `17` sealed bindings, compilation report, source/image
 digests and a four-role image override. It does not contain credentials,
@@ -29040,6 +29046,42 @@ restart count, health, manifest checksum, lag and RSS; after each, verify the
 same and stop/rollback the just-changed reader if it is not healthy. The later
 Phase D no-order alpha proof, not this phase, is the first permitted alpha or
 Gateway/Risk mutation.
+
+**Increment 1 - sealed bundle preparer (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** The bundle is a durable release coordinate rather than an
+ad-hoc shell copy. Add one small source-managed preparer and deterministic
+unit test. It may only validate the already sealed inventory/compilation,
+write a new caller-owned output directory atomically, render the four fixed
+reader image service overrides and record hashes/provenance. It must reject an
+existing output directory, unknown/duplicated reader roles, malformed image
+digests, a report/inventory digest mismatch, or any attempt to write outside
+the caller-owned output. It must not parse, copy or emit a runtime env file,
+certificate, identity, cursor, provider payload, Kafka/Redis/SQLite state or
+secret. The inventory export itself is read from an ephemeral `origin/dev`
+archive of Execution Alpha, never from the detached user checkout or a
+long-lived duplicate worktree. The archive is removed once the sealed bundle
+hash has been verified twice.
+
+**Increment 1 implementation (`PASS / SOURCE-ONLY`, 2026-09-01).** Added
+`scripts/prepare_alpha_reader_release.py` and
+`tests/test_alpha_reader_release.py`. The preparer accepts only an inventory,
+the compiler's named binding directory/report and explicit immutable release
+coordinates. It verifies inventory/report/binding checksums and canonical SDK
+bindings, creates an output directory once through a private staging rename,
+and writes only `inventory.json`, `bindings/`, `compilation-report.json`,
+`reader-image.override.yml` and `release-manifest.json`. It rejects malformed
+coordinates, a candidate equal to rollback, non-canonical/tampered bindings,
+input/report mismatch and an existing/unsafe output path. The override has the
+fixed four reader services only. No env, TLS, identity, runtime state, provider
+payload or secret is accepted or emitted. Isolated source-mounted, no-network
+tests passed: `python -m unittest -q tests.test_alpha_reader_release
+tests.test_alpha_deployment_bindings` (`10` tests), followed by
+`python -m compileall -q scripts/prepare_alpha_reader_release.py
+tests/test_alpha_reader_release.py` with bytecode redirected to tmpfs. Both
+commands used the non-root candidate image with read-only source; runtime
+mutations and order actions remained `0`. The final candidate image must be
+rebuilt from the commit containing this preparer before the private release
+bundle is materialized.
 
 **Rollback and close boundary.** Source rollback is a revert. Runtime rollback
 is a serial four-role recreate using the exact retained `b75a...e910e` image
