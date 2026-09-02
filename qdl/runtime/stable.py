@@ -63,7 +63,14 @@ logger = logging.getLogger(__name__)
 
 
 _STABLE_SPOOL_RECORD_FLOOR = 1_000_000
-_STABLE_SPOOL_PARTITION_WINDOW = 10_000
+# The public history contract remains capped at 10,000 rows.  A small physical
+# tail lets a verified late backfill coexist with that current market-time
+# window instead of evicting an otherwise required recent BAR by append order.
+_STABLE_SPOOL_PUBLIC_PARTITION_WINDOW = 10_000
+_STABLE_SPOOL_LATE_BACKFILL_HEADROOM = 64
+_STABLE_SPOOL_PARTITION_WINDOW = (
+    _STABLE_SPOOL_PUBLIC_PARTITION_WINDOW + _STABLE_SPOOL_LATE_BACKFILL_HEADROOM
+)
 
 
 @dataclass(frozen=True, slots=True)

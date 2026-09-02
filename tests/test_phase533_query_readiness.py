@@ -118,8 +118,11 @@ class Phase533QueryReadinessTests(unittest.TestCase):
         capacity = stable_spool_capacity(catalog)
 
         self.assertEqual(capacity.physical_partitions, 101)
-        self.assertEqual(capacity.max_partition_records, 10_000)
-        self.assertEqual(capacity.max_records, 1_010_000)
+        # The public query/SDK ceiling stays 10,000.  The extra bounded
+        # physical tail prevents late backfills from evicting current rows by
+        # logical append order before market-time selection.
+        self.assertEqual(capacity.max_partition_records, 10_064)
+        self.assertEqual(capacity.max_records, 1_016_464)
 
     def test_rebuildable_stable_spool_skips_open_time_integrity_scan(self):
         stable_config = SimpleNamespace(
