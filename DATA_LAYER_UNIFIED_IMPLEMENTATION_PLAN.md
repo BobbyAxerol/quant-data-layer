@@ -30872,3 +30872,50 @@ bundle mount, service, provider, Kafka, Redis, SQLite, V1, Trading System,
 alpha process, broker or execution state changed. The caller-owned temporary
 inventory/binding directory is retained only for the next sealed-bundle step;
 it contains no secret or durable runtime data and must be removed in Phase E.
+
+**Phase 54.2 Phase D projector handoff repair (`OWNER-APPROVED / ACTIVE`,
+2026-09-02).** The rerun did not fall back: both native 15m alpha reads were
+correctly authenticated against their sealed V2 bindings and fail-closed with
+`required data exceeds its freshness policy` before any Gateway/Risk request.
+This is now traced to the durable projection handoff, not the alpha policy:
+`binance_bar_edge` continues to ACK real Binance and OKX final BARs, including
+the bound ETH 15m routes at `06:00`, `06:15` and `06:30` UTC, while all three
+long-lived projectors repeatedly report `no active stable stream gateway
+accepted canonical data`. The active stream lease is presently held by
+`stream_v2_passive`; mTLS health from a projector reaches both stream roles,
+so the safe repair is to refresh only the projector HTTP clients and preserve
+the authoritative Kafka group/checkpoints and shared durable cache.
+
+**Approved bounded packet.** Recreate one at a time exactly
+`projector_v2`, `projector_v2_2` and `projector_v2_3` into the existing
+canonical reader image `qdl-v2-python:2.0.0-6962966`
+(`sha256:221aceb394b9ad55661bb6d81e0b1acad6a880ac18f75b1b44d03d9b4c0c3377`)
+with the exact existing runtime/TLS/state mounts and consumer group
+`stable-projector-v1`. This is a reconnect/image-normalisation repair only:
+do **not** reset Kafka offsets or topology, flush Redis, delete SQLite, change
+V1/Rust/ingestor/bar-edge/query/stream, recreate Trading System or alpha, or
+touch any order path. Rollback is the exact three-role image
+`qdl-v2-python:2.0.0-phase533-projector-631d694`
+(`sha256:288e617c7ec137dfcac5e94a5977772f2e0f39eac3ff48585980c0b26b0071bb`)
+under the same mounts. Normal canonical/cache catch-up writes are expected;
+they are the intended durable projection, not alpha execution mutation.
+
+**Exit tests.** Require all three projectors running without OOM/restart and
+without the rejected-canonical loop; verify a fresh V2 latest final 15m BAR
+for native Binance `ETHUSDT` and OKX `ETH-USDT-SWAP`, then rerun the same
+concurrent directional no-order pair. Before/after scoped PostgreSQL and
+Redis checks must remain zero for the temporary alpha/Gateway namespace. Stop
+and rollback the three projectors if the canonical handoff still rejects or a
+cache/identity mismatch appears; do not weaken the sealed freshness policy.
+
+**Phase 54.2 Phase D projector image-completeness correction (`OWNER-AUTHORISED / ACTIVE`, 2026-09-02).** The bounded projector reconnect exposed a packaging defect in the candidate Python image, not a data or policy defect: the running `qdl-v2-python:2.0.0-6962966` image starts the projector health process but `python -c 'import confluent_kafka'` fails, while the retained approved rollback projector image imports `confluent_kafka==2.15.0`. A projector without its Kafka client cannot consume `md.canonical.v2`; its HTTP health process alone is therefore not projection evidence. Rust core and bar edge continue to emit/ACK real canonical/final-BAR data, but query correctly fails closed until a Kafka-capable projector materialises it.
+
+**Exact correction and invariants.** Rebuild the same committed Data Layer source revision `dev@6962966` without build cache as one canonical non-phase artifact `qdl-v2-python:2.0.0-6962966-r2`; source, Dockerfile, lockfile, release schema and topology are unchanged. Before rollout, prove OCI revision/release labels, non-root/read-only import of `confluent_kafka` and the stable projector modules. Then rolling-recreate exactly `projector_v2`, `projector_v2_2` and `projector_v2_3`, one at a time, to this image with their existing runtime/TLS/state mounts and group `stable-projector-v1`. Query/stream remain on their already verified reader image in this bounded repair. Do not reset Kafka offsets/topology, flush Redis, delete SQLite, recreate Rust/ingestor/bar-edge/query/stream/V1, alter Trading System/alpha or touch the order path. Rollback remains the named Kafka-capable `qdl-v2-python:2.0.0-phase533-projector-631d694` image with the same mounts.
+
+**Exit and cleanup.** Require all three projectors `restart=0`, `OOM=false`, no rejected-canonical loop, and a new final 15m native BAR in the V2 query cache for Binance `ETHUSDT` and OKX `ETH-USDT-SWAP`; only then rerun the existing disposable paired adaptive no-order proof. The rejected incomplete reader image is retained only while its running query/stream roles need their documented rollback coordinate; no broad image/cache prune is authorised until Phase D proof closes.
+
+**Phase 54.2 Phase D historical-BAR provenance correction (`IN PROGRESS / NARROW SOURCE FIX`, 2026-09-02).** With the repaired projectors, authenticated native Binance/OKX 15m V2 reads now return 700 complete, authoritative, gap-free final bars and a LIVE tail. The paired alpha probe still correctly stops before Gateway/Risk because Alpha Runtime permits only `LAST_EVENT_STALE` on historical rows: Binance history also carries `BACKFILLED`, and OKX bars carry `FIELD_MISSING` because the native candle does not expose a trade-count field. These are declared BAR provenance/optional-field facts, not missing OHLC values, synthetic history, a stale tail, or a reason to relax execution quality. The bounded repair changes only shared Alpha Runtime historical-BAR validation: permit `BACKFILLED` and `FIELD_MISSING` alongside `LAST_EVENT_STALE` for non-current BAR warmup rows; current tail remains `LIVE`/final, and non-BAR, unknown flags, gaps, incomplete/non-authoritative rows, source-policy mismatch and stale current bars remain fail-closed. Required gates are deterministic validator regressions for Binance/OKX historical flags and rejection cases, the focused source suite, then the same disposable Binance/OKX directional proof. No Data Layer runtime, provider, Kafka, Redis, SQLite, V1, Trading System, alpha strategy/config, broker or order state is in scope.
+
+**Phase 54.2 Phase D V2 stream-loop ownership correction (`IN PROGRESS / NARROW SOURCE FIX`, 2026-09-02).** The provenance gate now passes, and the paired no-order probe reaches its signed stream reconnect. It then fails before Gateway/Risk because `DataLayerGateway` constructs the async V2 adapter on its dedicated `AsyncSdkRunner`, while legacy `V2PubSub` opens a second event loop for the same client. The resulting cross-loop `asyncio.Event` error is deterministic and cannot be fixed by retrying. The bounded correction is to schedule `V2PubSub` on the adapter-owner runner when it is supplied by `DataLayerGateway`; its existing standalone thread/loop remains only for directly constructed test adapters. It changes no route, freshness rule, provider call, stream protocol, consumer identity, runtime role, data-plane state or order path. Required gates: owner-loop regression, existing PubSub acknowledgement/backpressure/final-bar tests, complete focused source suite, then the same disposable paired Binance/OKX no-order proof with pre/post zero-mutation evidence. Rollback is an Execution Alpha source revert; no Data Layer runtime mutation is required for this source correction.
+
+**Phase 54.2 Phase D owner-loop gate and first paired class (`PASS / NO-ORDER`, 2026-09-02).** The shared runtime now runs gateway-created typed streams and their cursor acknowledgements on the adapter-owner `AsyncSdkRunner`; direct test-only PubSub use retains its standalone loop. The new owner-loop regression plus all focused source gates passed **77/77** in `4.902s` in the existing shared Numba image with complete Alpha source and Trading System SDK mounted read-only, non-root, network-disabled and tmpfs-only. The first real class pair, `adaptive_hma_cpp` 15m, then passed concurrently against native Binance USD-M `ETHUSDT` and OKX Swap `ETH-USDT-SWAP`: each read 700 FIFO closed bars, observed its initial V2 final bar, verified two signed-cursor `REPLAYING -> LIVE` handoffs, and reached one no-order Gateway/Risk preview preserving `data_layer_contract=V2_PRIMARY`. Both previews returned the expected `PREVIEW_REJECTED` rather than creating an execution action. The active stable consumer manifest revisions were read from runtime and used exactly (`9` Binance, `8` OKX); no claim was made from the stale probe revision. Scoped PostgreSQL evidence for the 20-minute proof window is zero for `execution_sessions`, `orders`, `fills` and `order_brackets`; the exact temporary Redis namespace is empty and both `--rm` containers removed themselves. Projector/query/stream/V1/Kafka/Redis/SQLite/Trading System/alpha services and order paths remain unchanged. The phase stays open only for its three already-approved representative pairs: multi-symbol, bracket and grid/L2; no new class, role or topology is authorised.
