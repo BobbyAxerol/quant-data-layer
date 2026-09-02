@@ -965,10 +965,12 @@ async def _stream_resume(
                         timeout_seconds=event_timeout_seconds,
                     )
                 resumed_controls.extend(controls)
-                replay_only = _replay_precedes_handoff(
-                    logical_offset=resumed.logical_offset,
-                    watermark_offset=session.warmup.watermark_offset,
-                )
+                # This context was opened with `resume_restored_state=True`.
+                # Its bounded frame proves cursor recovery only, even when the
+                # durable offset is newer than the reconnect snapshot watermark.
+                # A strict V2 snapshot below is the sole current/executable
+                # attestation after reconnect.
+                replay_only = True
                 resumed_view = market_data_view_from_stream(
                     resumed,
                     template=session.warmup.data[-1],
