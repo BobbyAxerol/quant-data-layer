@@ -526,12 +526,18 @@ class V2QueryService:
             if (
                 initial_problem is not None
                 and initial_problem.code is CanonicalErrorCode.DATA_STALE
-                and result.cache_hit
+                and self._reference_snapshot_was_current_at_receipt(
+                    _requirement,
+                    request,
+                    result,
+                )
             ):
-                # A cache hit may have crossed this caller's governed
-                # freshness boundary after it was stored. Refresh the same
-                # catalog-bound provider request once; a genuinely stale
-                # provider observation remains DATA_STALE below.
+                # A current provider snapshot may age while an otherwise
+                # bounded shared batch is finishing. Refresh the same
+                # catalog-bound request once only when it was current at its
+                # local receipt and then crossed the caller's freshness bound.
+                # A provider result that arrives already stale is deliberately
+                # terminal below.
                 result = await self.reference_batch.fetch_one(
                     request,
                     bypass_cache=True,
@@ -603,6 +609,34 @@ class V2QueryService:
             },
         }
         return ReferenceBatchQueryResult(request_id, resolved)
+
+    def _reference_snapshot_was_current_at_receipt(
+        self,
+        requirement: ReferenceDataRequirement,
+        request: ReferenceRequest,
+        result: ReferenceBatchResult,
+    ) -> bool:
+        """Identify an internally aged current snapshot without masking source staleness."""
+
+        freshness_ms = requirement.max_freshness_ms
+        if (
+            freshness_ms is None
+            or request.is_history
+            or result.status is not ReferenceStatus.OK
+            or result.received_at_ns <= 0
+        ):
+            return False
+        newest_observed_ns = max(
+            (item.observed_at_ns for item in result.observations),
+            default=0,
+        )
+        if newest_observed_ns <= 0:
+            return False
+        source_age_at_receipt_ms = max(
+            0,
+            (result.received_at_ns - newest_observed_ns) // 1_000_000,
+        )
+        return source_age_at_receipt_ms <= freshness_ms
 
     def _reference_problem(
         self,

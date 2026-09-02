@@ -31348,3 +31348,75 @@ After source commit, build one immutable Python query image, recreate only
 rollback image, then run exactly one fresh C2 client. No stream, core,
 ingestor, projector, V1, Kafka/Redis/SQLite, Trading System, alpha or order
 role is in this repair.
+
+**Reader-cache repair runtime packet (`OWNER-APPROVED / PRE-BUILD`, 2026-09-02).**
+Build the shared canonical reader from committed source `dev@40b7165` as
+`qdl-v2-python:2.0.1-40b7165`, attest its OCI revision/release labels, and
+prove the focused cache-regression inside the immutable image under a
+non-root, read-only, network-disabled container. Render one operator-only
+query image override, then rolling-recreate exactly `query_v2_1` followed by
+`query_v2_2`; require each replacement to be healthy with `restart=0` and
+`OOMKilled=false` before continuing. The exact rollback coordinate is the
+currently active `qdl-v2-python:2.0.1-1f64da7`
+`sha256:4a2b8d55116d582c6e142be81259695002461dc7757d23cb85858e1eaf35da24`
+with the same runtime mounts. Keep stream/core/ingestor/projector/V1,
+Kafka offsets/topology, Redis, SQLite, Trading System, alpha and the order
+path unchanged. On a healthy pair, create exactly one fresh 299-product,
+four-identity, 300-second C2 no-order client namespace; it must use public
+V2 query/stream only, establish signed cursor replay/reconnect, exercise its
+declared V1 fallback drill, and prove zero venue-direct connections, zero
+Gateway/Risk/order action and zero scoped execution rows. Failure stops here
+and restores only the two query roles to the named rollback image.
+
+**Reader-cache repair rollout evidence (`PASS / TWO-QUERY ROLLING`, 2026-09-02).**
+Built `qdl-v2-python:2.0.1-40b7165`
+`sha256:0272638902ce33f45715c13c0c0bdb54975d36b1cc8bb3aee2a6b0835c0d64fe`
+from `dev@40b7165`; OCI labels report the same revision and release. Its
+three exact cache regressions passed in an isolated non-root, read-only,
+network-disabled container (`3/3`). Compose preflight resolved that image
+only for `query_v2_1` and `query_v2_2`. The roles were recreated serially;
+both now report the identical digest, `healthy`, `restart=0`, `OOM=false` and
+bounded clean Uvicorn startup. Core, ingestor, stream, projector, V1,
+Kafka/Redis/SQLite, Trading System, alpha and order paths were unchanged.
+The named `1f64da7` query image remains the exact rollback coordinate. The
+only remaining acceptance for this correction is one fresh C2 namespace.
+
+**C2 batch-receipt freshness diagnosis (`FAIL-CLOSED / NARROW QUERY REPAIR`,
+2026-09-02).** The fresh C2 client exited before its observation window on
+`OKX.SWAP.PERPETUAL.ETH-USDT` execution `MARK_INDEX_PRICE`. A separately
+authenticated, V2-only, read-only query using the same Trading-System identity
+returned the identical official OKX mark/index route as `OK` with provider
+observation age `342ms` and receipt age `227ms`; it used no V1 or direct venue
+connection. The source is therefore healthy. The defect is internal batch
+timing: a concurrent reference batch can receive a current snapshot early,
+then complete other bounded provider work after that snapshot has crossed its
+`2,000ms` execution bound. The response is correctly rejected, but the prior
+repair only refreshed a literal cache hit and not an otherwise valid result
+whose local receipt has aged while shared/batched work was completing.
+
+The bounded correction is provider-neutral and remains fail-closed: refresh
+the identical on-demand snapshot exactly once only when its local
+`received_at_ns` has itself crossed the declared freshness bound. A provider
+observation that is already stale when freshly received is not refreshed and
+remains terminal `DATA_STALE`. It changes no SLA, adapter, provider endpoint,
+manifest, cache key, topology or consumer route. Required source gates cover
+fresh cached, aged shared/batch receipt, genuinely stale fresh provider,
+identity preservation and no duplicate provider work; then rebuild one query
+image, roll only the two query roles back through the same exact rollback
+coordinate if unhealthy, and run one fresh C2 namespace.
+
+**Batch-receipt source gate (`PASS / SOURCE-ONLY`, 2026-09-02).** The shared
+query service now classifies a snapshot as internally ageable only when its
+provider observation was within the declared bound at `received_at_ns`; an
+aged cache hit, an aged leader result, or an aged coalesced result then receives
+one exact-identity bypass-cache refresh. A response whose provider observation
+was already stale at receipt cannot take that path and remains `DATA_STALE`.
+The focused reference suite passed **14/14**: valid cache, ordinary cache
+refresh, internally aged batch receipt, shared refresh singleflight and
+freshly received genuinely stale provider values. The broader non-root,
+read-only, network-disabled matrix passed **81/81** in `19.083s`, covering the
+reference, L2, runtime-convergence, native-ingestor and handoff boundaries.
+No runtime, provider, Kafka, Redis, SQLite, V1, Trading System, alpha or order
+state was accessed by these source gates. Next: commit, build one final reader
+image, serially replace only the two query replicas and rerun the one C2
+namespace with the existing exact rollback image retained.

@@ -132,6 +132,24 @@ class FixtureReferenceAdapter:
             self.active -= 1
 
 
+class AdvanceClockAfterFirstFetchBatch(ReferenceBatch):
+    """Model a snapshot received before the rest of a shared batch finishes."""
+
+    def __init__(self, *args, clock, adapter, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._test_clock = clock
+        self._test_adapter = adapter
+        self._advance_once = True
+
+    async def fetch_one(self, request, *, bypass_cache=False):
+        result = await super().fetch_one(request, bypass_cache=bypass_cache)
+        if self._advance_once and not bypass_cache:
+            self._advance_once = False
+            self._test_clock["ns"] += 2_100_000_000
+            self._test_adapter.observed_at_ns = self._test_clock["ns"]
+        return result
+
+
 class RetryOnceReferenceAdapter(FixtureReferenceAdapter):
     """Deterministic admission pressure without bypassing ReferenceBatch."""
 
@@ -463,6 +481,158 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(second.partial)
         self.assertEqual(adapter.calls, 2)
         self.assertFalse(second.results[0].result.cache_hit)
+
+    async def test_execution_mark_refreshes_an_aged_batch_receipt_once(self):
+        clock = {"ns": NOW_NS}
+        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS)
+        registry = InstrumentRegistry()
+        registry.register(self.binance, [])
+        execution_grants = EntitlementPolicy((
+            EntitlementGrant(
+                source_id="BINANCE_DIRECT",
+                license_revision="phase113-test",
+                purposes=frozenset({AccessPurpose.INTERNAL_EXECUTION}),
+                products=frozenset({DataProduct.CANONICAL_SNAPSHOT}),
+                valid_from_ns=0,
+            ),
+        ))
+        batch = AdvanceClockAfterFirstFetchBatch(
+            {("BINANCE", "USDM"): adapter},
+            clock=clock,
+            adapter=adapter,
+            clock_ns=lambda: clock["ns"],
+            monotonic=lambda: 0.0,
+        )
+        service = V2QueryService(
+            instruments=InstrumentQuery(registry),
+            backend=MemoryMarketDataBackend(),
+            entitlements=execution_grants,
+            reference_batch=batch,
+            reference_source_id=lambda _item: "BINANCE_DIRECT",
+            clock_ns=lambda: clock["ns"],
+        )
+        requirement = ReferenceDataRequirement(
+            instrument_uid=self.binance.instrument_uid,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id="crypto_liquid_v2",
+            limit=1,
+            page_size=1,
+            max_pages=1,
+            max_freshness_ms=2_000,
+        )
+        result = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("phase113-execution", (requirement,)),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertFalse(result.partial)
+        self.assertEqual(adapter.calls, 2)
+
+    async def test_shared_execution_mark_refresh_uses_one_provider_call(self):
+        clock = {"ns": NOW_NS}
+        adapter = FixtureReferenceAdapter(
+            delay_seconds=0.02,
+            observed_at_ns=NOW_NS - 1_500_000_000,
+        )
+        registry = InstrumentRegistry()
+        registry.register(self.binance, [])
+        execution_grants = EntitlementPolicy((
+            EntitlementGrant(
+                source_id="BINANCE_DIRECT",
+                license_revision="phase113-test",
+                purposes=frozenset({AccessPurpose.INTERNAL_EXECUTION}),
+                products=frozenset({DataProduct.CANONICAL_SNAPSHOT}),
+                valid_from_ns=0,
+            ),
+        ))
+        service = V2QueryService(
+            instruments=InstrumentQuery(registry),
+            backend=MemoryMarketDataBackend(),
+            entitlements=execution_grants,
+            reference_batch=ReferenceBatch(
+                {("BINANCE", "USDM"): adapter},
+                clock_ns=lambda: clock["ns"],
+                monotonic=lambda: 0.0,
+            ),
+            reference_source_id=lambda _item: "BINANCE_DIRECT",
+            clock_ns=lambda: clock["ns"],
+        )
+        requirement = ReferenceDataRequirement(
+            instrument_uid=self.binance.instrument_uid,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id="crypto_liquid_v2",
+            limit=1,
+            page_size=1,
+            max_pages=1,
+            max_freshness_ms=2_000,
+        )
+        initial = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("phase113-execution", (requirement,)),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertFalse(initial.partial)
+        clock["ns"] += 600_000_000
+        adapter.observed_at_ns = clock["ns"]
+        first, second = await asyncio.gather(
+            service.reference_data_batch_async(
+                ReferenceBatchRequirement("phase113-execution", (requirement,)),
+                purpose=AccessPurpose.INTERNAL_EXECUTION,
+            ),
+            service.reference_data_batch_async(
+                ReferenceBatchRequirement("phase113-execution", (requirement,)),
+                purpose=AccessPurpose.INTERNAL_EXECUTION,
+            ),
+        )
+        self.assertFalse(first.partial)
+        self.assertFalse(second.partial)
+        self.assertEqual(adapter.calls, 2)
+
+    async def test_execution_mark_does_not_refresh_a_freshly_received_stale_provider_value(self):
+        clock = {"ns": NOW_NS}
+        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - 2_100_000_000)
+        registry = InstrumentRegistry()
+        registry.register(self.binance, [])
+        execution_grants = EntitlementPolicy((
+            EntitlementGrant(
+                source_id="BINANCE_DIRECT",
+                license_revision="phase113-test",
+                purposes=frozenset({AccessPurpose.INTERNAL_EXECUTION}),
+                products=frozenset({DataProduct.CANONICAL_SNAPSHOT}),
+                valid_from_ns=0,
+            ),
+        ))
+        service = V2QueryService(
+            instruments=InstrumentQuery(registry),
+            backend=MemoryMarketDataBackend(),
+            entitlements=execution_grants,
+            reference_batch=ReferenceBatch(
+                {("BINANCE", "USDM"): adapter},
+                clock_ns=lambda: clock["ns"],
+            ),
+            reference_source_id=lambda _item: "BINANCE_DIRECT",
+            clock_ns=lambda: clock["ns"],
+        )
+        requirement = ReferenceDataRequirement(
+            instrument_uid=self.binance.instrument_uid,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id="crypto_liquid_v2",
+            limit=1,
+            page_size=1,
+            max_pages=1,
+            max_freshness_ms=2_000,
+        )
+        result = await service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "phase113-execution",
+                (requirement,),
+                require_all=False,
+            ),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
+        self.assertEqual(adapter.calls, 1)
 
     async def test_retryable_reference_result_reuses_shared_warmup_policy(self):
         adapter = RetryOnceReferenceAdapter()
