@@ -31635,3 +31635,334 @@ provider, Kafka/Redis/SQLite, V1, Trading System, alpha, Gateway/Risk or order
 path was accessed. Next: commit this source-only slice; build one canonical
 reader/stream image, roll only the approved two query and two stream roles,
 then run exactly one fresh C2 client after normal health checks.
+
+**Quiet `BOOK_DELTA` reader handoff (`OWNER-APPROVED / PRE-ROLL`, 2026-09-02).**
+Committed source `43faf3d20630bcc4720af326e0b60c9aeaa0e601` built exactly one
+canonical shared reader/stream image,
+`qdl-v2-python:2.0.1-43faf3d@sha256:6090b3a6c1c6bc431a329ab85cad7fe61750a33dbed3a5bb2d264c532f211545`.
+Its OCI revision/version labels equal `43faf3d`/`2.0.1`, and its configured
+container user is non-root `qdl:qdl`. The immutable no-network, read-only,
+non-root image gate passed the same **62/62 in 32.349s** matrix.
+
+Pre-roll evidence shows precisely four affected roles, all healthy, restart
+`0`, non-OOM and currently on the exact rollback image
+`qdl-v2-python:2.0.1-09e5d03@sha256:9403705e86099de96c38d064cbc7a86e74c76c71cbbcebb028e9c587568b2dd4`:
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, `stream_v2_passive`. The
+runtime selector will change only their image field, serially queries first
+then current stream standby and lease holder; any failing role is recreated
+only with that exact `09e5d03` selector. V1, Kafka topology/offsets, Redis,
+SQLite, Rust, ingestors, bar edge, projectors, Trading System, alpha and order
+paths remain excluded. Pre-roll disk capacity is `32G` free on `/`.
+
+**Fresh C2 packet after quiet-delta correction (`OWNER-APPROVED / IN
+PROGRESS`, 2026-09-02).** Run exactly one disposable four-identity, 300-second
+Phase-10.5 C2 client from the candidate image on `executor_network`. It can
+reach only `https://query_v2_1:8200`, `https://query_v2_2:8200`,
+`qdl-v2-stream-a:8210`, `qdl-v2-stream-b:8210` and the existing local V1
+fallback endpoint for the manifest-authorized local comparison. It has a
+read-only root filesystem, tmpfs-only cursor/input state, dropped privileges
+after narrowly copying declared mTLS/JWT files, no Docker socket, no provider
+credential, no Trading System/Gateway/Risk credential and no order path.
+
+The serving V1 container was read-only verified unchanged against its frozen
+`v1.2.4` provenance: image
+`sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65`,
+container-ID hash `0ec6292fc6fd94f88410cff826674e17ba8076fe63f5933f4258263c3217bd7a`.
+The fresh evidence namespace therefore seals the same valid V1 binding rather
+than mutating/recreating V1. C2 must prove all declared products across
+monitoring, Trading-System paper, Binance paper alpha and OKX paper alpha:
+warmup, signed cursor/replay/reconnect, V2-primary selection, permitted
+`V2 -> V1 -> V2` fallback and `BLOCKED` no-fallback behavior. Exit requires
+`order_actions=0`, `provider_connections=0`, temporary cursor removal and no
+unexpected runtime mutation. Any failure retains only bounded diagnostic
+evidence and leaves V1 plus the exact `09e5d03` reader rollback selector
+available.
+
+**C2 bootstrap preflight correction (`NO ENDPOINT REQUEST / CLEANED`,
+2026-09-02).** Two disposable namespaces stopped at bootstrap with `setpriv:
+setgroups failed: Operation not permitted`; neither made a V2/V1 request. The
+first hypothesis about Docker-level `no-new-privileges` was disproved by the
+second run without that flag. The actual cause is the candidate image's
+intentional default `qdl` user: the bootstrap needs a one-time root process to
+copy the declared files into tmpfs before it drops to UID/GID `10001`. The real
+C2 command therefore uses `--user 0:0` only for that reviewed bootstrap.
+`setpriv --clear-groups`, empty inheritable/ambient capabilities and
+`--no-new-privs` still apply to the actual unprivileged client process. No
+provider, broker/order path or runtime role was contacted or mutated; each
+container was `--rm` and each wrapper-only namespace is disposable and removed
+before the one real C2 probe.
+
+**C2 runtime-record preflight (`NO ENDPOINT REQUEST / CLEANED`, 2026-09-02).**
+The first correctly dropped-privilege client reached its local command and
+proved UID `10001`, no effective/inheritable/ambient capabilities and
+`NoNewPrivs=1`, but exited before any V2/V1 request because the disposable
+container was missing the existing read-only `/runtime/authority.json` mount.
+This is a harness mount omission, not an authority or data-plane failure. The
+retry mounts precisely the same already-serving runtime directory used by the
+query roles (`phase103-shared-primary-e0bedff-retry.../runtime`) read-only;
+it does not write or recreate it. The failed namespace contains only wrapper,
+bounded error and non-secret provenance/binding files and is removed before
+the real C2 probe.
+
+**C2 real route finding (`FAIL-CLOSED / BOUNDED BAR AUDIT REQUIRED`,
+2026-09-02).** The first actual unprivileged C2 client correctly reached V2
+and stopped at `trading-system.paper.stable` / `OKX.SWAP.PERPETUAL.SOL-USDT` /
+final `BAR 1m` with `required feed has an unresolved sequence gap`. Its
+security receipt remains correct (UID `10001`, no effective/inheritable/
+ambient capabilities, `NoNewPrivs=1`). This is an actual durable final-BAR
+continuity failure, not quiet L2 admission, fallback, provider-session SLA or
+an execution action. The failed receipt is retained as bounded diagnosis;
+there were no order actions, provider connections or runtime writes from the
+client.
+
+**Next correction scope.** Before any further C2 attempt, run a read-only
+audit over the full governed Binance/OKX final-BAR set to identify every open
+sequence gap at once. For each confirmed gap, verify the same exact closed
+window from the real venue provider, back up the relevant existing bar-edge
+checkpoint, remove only the affected binding watermark(s), then restart only
+the relevant existing shared bar-edge role(s) on their unchanged image. Normal
+provider-to-Kafka/canonical/projector repair writes are allowed; direct SQLite
+writes, synthetic bars, topology/offset reset, Redis flush, V1, Rust,
+query/stream, Trading System, alpha and order mutations remain prohibited.
+If the audit is clean after repair, run exactly one fresh C2 client.
+
+**Full governed BAR audit and repair packet (`OWNER-APPROVED / PRE-APPLY`,
+2026-09-02).** A bounded read-only audit inspected the latest 1,000 distinct
+opens for every `51` materialized primary final-BAR partition. It found exactly
+eight gaps: `okx-swap-sol-usdt-swap-bar-1m`,
+`okx-swap-eth-usdt-swap-bar-30m`, `binance-usdm-btcusdt-bar-30m`,
+`binance-usdm-btcusdt-bar-5m`, `binance-usdm-bnbusdt-bar-15m`,
+`binance-usdm-ethusdt-bar-15m`, `binance-usdm-ethusdt-bar-1m` and
+`binance-usdm-ethusdt-bar-5m`. The same existing multiplexed
+`binance_bar_edge` owns bounded history bootstrap for both Binance and OKX;
+there is no per-symbol worker or new topology.
+
+Real-provider read-only preflight passed for every one of those eight bindings:
+each Binance/OKX wrapper returned exactly `1,000` contiguous confirmed closed
+rows with `test_provenance=false`. The apply packet backs up and hashes only
+`phase54-alpha-demand-5edbc8c.json`, stops only `binance_bar_edge`, removes
+only those eight keys from `last_open_ms` with an atomic structured JSON
+rewrite, then starts its unchanged image/runtime. Its normal bootstrap must
+deduplicate existing cache rows and publish real missing final BARs through the
+existing Kafka/canonical/projector route. Rollback restores the exact backup
+and starts only this role. No direct SQLite write, source/image change, V1,
+Kafka offset/topology, Redis, Rust, ingestor, query/stream, Trading System,
+alpha or order action is allowed.
+
+**BAR checkpoint ownership correction (`IN PROGRESS / BOUNDED RUNTIME
+REPAIR`, 2026-09-02).** The atomic eight-watermark JSON rewrite correctly
+preserved content but was performed by the host privileged helper, leaving the
+single checkpoint `phase54-alpha-demand-5edbc8c.json` as `root:root 0600`.
+The existing bar-edge deliberately runs as UID/GID `10001`; its next startup
+therefore failed closed with `stable BAR checkpoint is unreadable`. This is a
+local file-ownership defect introduced by the repair procedure, not a provider
+or data-quality failure. No direct durable-store mutation happened after the
+role stopped, and the exact pre-apply checkpoint remains retained.
+
+**Approved corrective scope, invariants and rollback.** Change only that
+checkpoint's owner/group to `10001:10001` and its mode to `0640`, matching the
+runtime directory's non-root ownership while keeping it non-world-readable;
+then start only the same existing `binance_bar_edge` role on its unchanged
+image/runtime. Verify restart count, OOM state and normal real-provider
+bootstrap acknowledgement before re-auditing continuity. If the role cannot
+read or bootstrap after the permission repair, stop only this role, restore the
+captured pre-apply checkpoint byte-for-byte with UID/GID `10001:10001` and
+mode `0640`, then start only this role. V1, Kafka topology/offsets, Redis,
+SQLite, Rust, ingestors, projectors, query/stream, Trading System, alpha and
+order paths remain excluded. A fresh C2 run remains forbidden until the
+post-repair governed BAR audit is clean.
+
+**Shared all-interval BAR convergence (`IN PROGRESS / BOUNDED RUNTIME
+HANDOFF`, 2026-09-02).** The durable route contract now exposes `299` V2
+products, including `140` unique Binance USD-M/OKX Swap BAR partitions across
+the five-liquid universe and native intervals. The already-running shared
+query/stream image `qdl-v2-python:2.0.1-43faf3d` parses the committed catalog
+as `142` enabled crypto BAR bindings (`70` Binance, `70` OKX, plus the two
+preserved legacy BTC `1m` identities). The only mismatch is operational:
+the existing `binance_bar_edge` remains on its older `7c8db16` image and its
+checkpoint consequently declares only `35` bindings. This is why a broad
+cache audit sees unmaterialized long/native BAR lanes even though the source
+and consumer manifest are already complete.
+
+**Approved narrow handoff.** Reuse the existing immutable
+`43faf3d` Python image; do not build another image, add a service, worker,
+topic, volume, group, or per-symbol process. Before replacing only the shared
+`binance_bar_edge` role, perform an isolated no-network constructor test with
+the exact current checkpoint expanded to the candidate's enabled binding ID
+set. It must preserve every existing watermark, preserve authority/catalog/
+acquisition/cache identity, set only the `binding_ids` list to the exact
+candidate set, and prove the edge marks the `107` newly enabled bindings for
+normal real-provider bootstrap. Then atomically rewrite only this checkpoint,
+with an exact SHA-256 backup record and non-root `10001:10001`/`0640` metadata,
+and recreate only `binance_bar_edge` on `43faf3d`. The normal bootstrap is
+allowed to write only authentic closed BARs through the existing
+provider -> Kafka -> Rust canonical -> projector pipeline. It must not write
+SQLite directly or synthesize data.
+
+**Exit, rollback and C2 boundary.** Require the focused final-BAR/checkpoint
+regression matrix, role health/no OOM, an acknowledgement showing all `142`
+bindings checkpointed, and a governed C2 BAR audit over the exact manifest
+partitions before one fresh 299-product/four-identity C2 no-order acceptance.
+Rollback is exact: stop only `binance_bar_edge`, restore the checkpoint backup
+with the preserved non-root mode/ownership, recreate only that role on
+`qdl-v2-python:2.0.0-7c8db16@sha256:b87b03fbde11a913e9e057b17886e7d7a2d457f2f1b12b4dab4c687f3ec21ea8`.
+V1, Kafka topology/offsets, Redis, SQLite, Rust, ingestors, projectors,
+query/stream, Trading System, alpha and order paths remain excluded.
+
+**Runtime-mount provenance correction (`IN PROGRESS / NO DATA-PLANE WRITE`,
+2026-09-02).** The first all-interval bar-edge recreate failed before provider
+bootstrap because the generic bundle env resolved `QDL_STABLE_RUNTIME_DIR` to
+the query runtime (`phase103...`) rather than the role's serving runtime
+(`session-liveness-43cdbe3...`). The new edge intentionally reads its sealed
+`phase54-alpha-demand-5edbc8c/catalog.yaml` and `acquisition.yaml` from the
+latter; the generic mount lacks those files, so startup failed closed with
+`FileNotFoundError`. The checkpoint stayed at `35/140` watermarks/bindings and
+the role emitted zero bootstrap acknowledgements: no provider, Kafka,
+canonical, projector, Redis or SQLite data-plane write occurred.
+
+**Correction.** Preserve the same four compose files and the already-created
+canonical image selector, but supply only the bar-edge's verified existing
+runtime-directory value for Compose interpolation. Validate the rendered
+service's three mounts before recreate; it must mount
+`session-liveness-43cdbe3.../runtime -> /runtime:ro`, the existing state
+volume and TLS volume, with no other diff. Then recreate only
+`binance_bar_edge` and continue the exact 140-binding bootstrap. The rollback
+selector/path remains unchanged.
+
+**Sealed BAR projection convergence (`IN PROGRESS / CONFIG-ONLY REPAIR`,
+2026-09-02).** With the correct mount restored, the new image correctly proved
+that the mounted `phase54-alpha-demand-5edbc8c` projection itself still
+contains only `35` BAR bindings. The full committed/image catalog is revision
+`8` and acquisition revision `16` as the checkpoint expects, but its sealed
+projection was never materialized from the all-interval crypto catalog. This
+is a stale control-plane projection, not a Python/Rust/provider defect. The
+first corrected recreate therefore failed closed before any provider call,
+with checkpoint watermarks unchanged (`35/140`).
+
+**Bounded materialization and rollback.** While only `binance_bar_edge` is
+stopped, atomically replace just the mounted phase54 `catalog.yaml`,
+`acquisition.yaml` and their projection receipt from the already tested,
+immutable-image-matching committed source documents. The receipt must record
+the exact `140` enabled Binance/OKX crypto BAR IDs, source SHA-256 values and
+the four C2 consumer identities; DNSE remains absent. Rename the existing
+three-file projection directory to a timestamped rollback directory on the
+same filesystem, retaining its hashes. This changes no source checkout,
+authority, identity, image, Kafka/Redis/SQLite state or consumer route. Then
+recreate only the existing shared bar-edge with the verified mount/image. The
+previous projection directory plus `7c8db16` image/checkpoint backup are the
+complete rollback coordinate.
+
+**All-interval bootstrap result and final active-gap repair (`IN PROGRESS`,
+2026-09-02).** The corrected shared edge started on
+`qdl-v2-python:2.0.1-43faf3d`, restored the preserved `35` watermarks and
+completed real-provider bootstrap for all `140` Binance/OKX crypto BAR
+bindings, publishing `87,435` authentic closed rows. Its checkpoint is now
+`140/140`; all three projectors are running with restart/OOM `0`. A read-only
+audit over the exact C2 route set reports `140/140` partitions present,
+`0` missing, `0` insufficient, and one remaining real discontinuity:
+Binance USD-M BTCUSDT `1m` on its governed preserved
+`binance-usdm-btcusdt-bar-stable-001` partition. This identity is active C2
+input, so it cannot be dismissed as legacy.
+
+**Final bounded repair.** Verify the latest 1,000 closed BTCUSDT `1m` rows
+from the real Binance provider through the existing bar wrapper, then stop
+only `binance_bar_edge`, back up/hash the current 140-binding checkpoint,
+remove only `binance-usdm-btcusdt-bar-1m` from `last_open_ms`, and start the
+same role/image/mount. Its normal deduplicating bootstrap must fill only
+missing authentic final opens; it must retain the other `139` watermarks. If
+provider/bootstrap/health fails, restore this exact checkpoint and start only
+this role. Re-run the exact 140-partition read-only audit; C2 remains blocked
+until it reports zero missing/gapped/insufficient partitions.
+
+**All-interval BAR repair exit (`PASS / FRESH C2 AUTHORIZED`, 2026-09-02).**
+The targeted BTCUSDT `1m` provider preflight returned `1,000` real,
+contiguous, closed rows with `test_provenance=false`. Removing only its
+watermark made the shared edge publish `27` missing opens while deduplicating
+the other `973`; it completed the same `140`-binding bootstrap and restored a
+`140/140` checkpoint. After projector catch-up, the exact governed C2 audit
+reports `140/140` partitions present, `0` missing, `0` gapped, `0`
+insufficient, with `156..1000` retained distinct final rows per partition.
+All three projectors and the edge are running with restart/OOM `0`. The two
+runtime preflight failures before this result made zero provider/Kafka writes;
+the successful repairs used only normal authentic provider BAR writes.
+
+**Fresh C2 scope.** Run exactly one disposable `299`-product, four-identity,
+`300`-second no-order acceptance from `qdl-v2-python:2.0.1-43faf3d`. The
+launcher starts as root only to copy declared mTLS/JWT files into tmpfs, then
+uses `setpriv` to run the actual client as UID/GID `10001` with all effective,
+inheritable and ambient capabilities cleared and `NoNewPrivs=1`. It has a
+read-only root filesystem, no Docker socket, provider credential, order,
+Gateway/Risk or broker connection; it may reach only the two V2 query replicas,
+the two V2 stream endpoints and the manifest-authorized local V1 fallback for
+the required `V2 -> V1 -> V2` drill. Exit requires full route coverage,
+signed cursor/reconnect, V2-primary, policy-correct fallback, zero order
+actions/provider connections, and deletion of temporary cursor state. Any
+failure preserves bounded evidence only and leaves V1 plus the exact bar-edge
+and reader rollback coordinates available.
+
+**C2 launcher preflight (`NO ENDPOINT REQUEST / CLEANED`, 2026-09-02).** The
+first disposable launcher stopped before the dropped-privilege client started:
+the mechanically copied `run-c2.sh` wrapper had mode `0700`, so UID `10001`
+could not open it. The only output was local shell `Permission denied`; no
+V2/V1 endpoint, stream, provider, cursor, order or runtime state was touched.
+Correct only this non-secret static wrapper to be readable/executable by the
+runtime UID, remove its two local error receipts from the same disposable
+namespace, then run the one real C2 probe. This launcher-only preflight does
+not count as an acceptance attempt.
+
+**C2 BAR freshness diagnosis (`APPROVED / READ-ONLY`, 2026-09-02).** The
+all-interval durable continuity gate is clean (`140/140`, no missing or open
+sequence gap), but the first real C2 client subsequently stopped at a governed
+OKX final `BAR 1m` freshness decision. Before any retry, run a compact,
+read-only typed-status matrix for BTC, ETH, SOL, DOGE and BNB across both V2
+query replicas. The isolated client uses only the existing Trading-System
+paper identity and reads state, freshness, session liveness, gap and
+completeness; it has no provider, order, Gateway/Risk or write capability.
+The decision boundary is narrow: repair only a confirmed shared
+projection/provider-lineage defect, never relax the SLA or manufacture a bar.
+
+**C2 OKX final-BAR root cause and narrow repair (`APPROVED / IN PROGRESS`,
+2026-09-02).** The typed read-only matrix reached both V2 query replicas with
+zero provider connections/order actions. All five Binance USD-M `BAR 1m`
+routes were `LIVE`, complete and gap-free at about `39-40s`; all five OKX Swap
+routes were consistently complete/gap-free but `STALE` at about `1,600s`.
+The shared edge logs prove the 140-route historical bootstrap succeeded, then
+acknowledges only Binance recurring final BARs. The active `phase54`
+acquisition projection declares all 70 OKX final BAR routes `RUST_NATIVE`,
+while the running OKX Rust ingestor has only its declared realtime/L2 bindings
+and does not materialize those candle routes. This is a shared ownership
+mismatch, not DOGE-specific provider behaviour, a gap, or a reason to relax
+freshness.
+
+The already-certified bound-bar compiler deliberately projects an enabled,
+final OKX Swap BAR from broad `RUST_NATIVE` capability to the shared Python
+REST finality edge. Repair only the stale union-projection path so a retained
+multi-consumer projection can be rematerialized from its exact 140 binding IDs;
+strict-load the candidate, prove all 70 Binance and 70 OKX BAR routes have
+`PYTHON_REST` ownership, atomically swap only the three phase54 projection
+files with an exact rollback directory, then recreate only `binance_bar_edge`
+on its existing immutable image. Normal authentic provider BAR writes are
+allowed. V1, Kafka topology/offsets, Redis, SQLite, Rust/ingestors/projectors,
+query/stream, Trading System, alpha and order paths remain excluded. C2 may
+retry only after the five-symbol/two-replica matrix is LIVE and the 140-route
+continuity audit remains clean.
+
+**Union-projection compiler source exit (`PASS / CONFIG-ONLY REPAIR READY`,
+2026-09-02).** `scripts/phase12_materialize_bound_bar_edge.py` now accepts
+both its original single-consumer receipt and its own multi-consumer
+`consumer_ids` receipt when retaining a declared baseline. The retained route
+identity remains the exact final BAR binding IDs plus catalog/acquisition
+hashes; it does not broaden a consumer, venue, symbol or interval. The
+compiler preserves the legacy singleton receipt shape and emits an explicit
+plural identity only for a union receipt. Its new regression proves a retained
+OKX final BAR is rematerialized as `PYTHON_REST`, not silently left
+`RUST_NATIVE`.
+
+An isolated, read-only, no-network source matrix passed **45/45** in
+`17.304s`: union/retention identity, invalid/missing/non-final rejection,
+strict catalog/acquisition loading, Binance/OKX native history pagination and
+finality, checkpoint/cache-generation fail-closed behavior, bounded retries,
+and fast final-BAR scheduling. No runtime role, provider, Kafka, Redis,
+SQLite, V1, Trading System, alpha or order path was touched. Next is exactly
+one configuration-only materialization from the active 140-route union, then
+the bounded one-role bar-edge handoff already described above.

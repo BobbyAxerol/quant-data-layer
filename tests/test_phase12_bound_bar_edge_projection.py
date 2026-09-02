@@ -120,6 +120,20 @@ def _retained_projection(*binding_ids: str) -> dict:
     }
 
 
+def _retained_union_projection(*binding_ids: str) -> dict:
+    return {
+        "schema": "qdl.phase12.bound-bar-edge-projection.v1",
+        "status": "MATERIALIZED",
+        "consumer_ids": [
+            "alpha.binance.paper.stable",
+            "trading-system.paper.stable",
+        ],
+        "binding_ids": list(binding_ids),
+        "catalog_sha256": "c" * 64,
+        "acquisition_sha256": "d" * 64,
+    }
+
+
 class BoundBarEdgeProjectionTests(unittest.TestCase):
     def test_projects_exact_final_bar_routes_without_mutating_inputs(self) -> None:
         catalog, acquisition = _documents()
@@ -246,6 +260,46 @@ class BoundBarEdgeProjectionTests(unittest.TestCase):
                 acquisition_document=acquisition,
                 retained_projection=_retained_projection("missing-bar-route"),
             )
+
+    def test_rematerializes_multi_consumer_projection_with_okx_rest_finality(self) -> None:
+        catalog, acquisition = _documents()
+        alpha = _alpha_binding_for_source_ids(
+            "alpha.first.binance.paper",
+            "binance-usdm-ethusdt-bar-15m",
+        )
+
+        result = projection.build_bound_bar_projection_set(
+            bindings=(alpha,),
+            catalog_document=catalog,
+            acquisition_document=acquisition,
+            retained_projection=_retained_union_projection(
+                "binance-usdm-btcusdt-bar-1m",
+                "okx-swap-eth-usdt-swap-bar-1m",
+            ),
+            retained_projection_sha256="e" * 64,
+        )
+
+        selected = {
+            item["binding_id"]: item for item in result.acquisition["bindings"]
+        }
+        self.assertEqual(
+            selected["okx-swap-eth-usdt-swap-bar-1m"]["mode"],
+            "PYTHON_REST",
+        )
+        self.assertEqual(
+            result.summary["retained_projection"],
+            {
+                "consumer_ids": [
+                    "alpha.binance.paper.stable",
+                    "trading-system.paper.stable",
+                ],
+                "binding_ids": [
+                    "binance-usdm-btcusdt-bar-1m",
+                    "okx-swap-eth-usdt-swap-bar-1m",
+                ],
+                "sha256": "e" * 64,
+            },
+        )
 
     def test_rejects_native_acquisition_outside_declared_okx_final_bar_recovery(self) -> None:
         catalog, acquisition = _documents()

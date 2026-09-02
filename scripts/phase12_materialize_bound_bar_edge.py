@@ -128,6 +128,33 @@ def _bar_key_from_source(source: object) -> tuple[str, ...]:
     )
 
 
+def _retained_projection_consumer_ids(
+    projection: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    """Read the consumer identity from a legacy or union projection receipt."""
+
+    if projection is None:
+        return ()
+    singular = projection.get("consumer_id")
+    plural = projection.get("consumer_ids")
+    if isinstance(singular, str) and singular:
+        if plural is not None:
+            if (
+                not isinstance(plural, list)
+                or any(not isinstance(item, str) or not item for item in plural)
+                or set(plural) != {singular}
+            ):
+                raise ValueError("retained BAR projection consumer identities are invalid")
+        return (singular,)
+    if (
+        isinstance(plural, list)
+        and plural
+        and all(isinstance(item, str) and item for item in plural)
+    ):
+        return tuple(sorted(set(plural)))
+    raise ValueError("retained BAR projection consumer identity is invalid")
+
+
 def _retained_bar_binding_ids(projection: Mapping[str, Any] | None) -> tuple[str, ...]:
     """Return only a verified active final-BAR baseline route set."""
 
@@ -137,8 +164,7 @@ def _retained_bar_binding_ids(projection: Mapping[str, Any] | None) -> tuple[str
         raise ValueError("retained BAR projection schema is invalid")
     if projection.get("status") != "MATERIALIZED":
         raise ValueError("retained BAR projection is not materialized")
-    if not isinstance(projection.get("consumer_id"), str):
-        raise ValueError("retained BAR projection consumer_id is invalid")
+    _retained_projection_consumer_ids(projection)
     for field in ("catalog_sha256", "acquisition_sha256"):
         value = projection.get(field)
         if not isinstance(value, str) or len(value) != 64:
@@ -272,6 +298,7 @@ def build_bound_bar_projection_set(
             raise ValueError("sealed BAR route resolved to a non-final catalog binding")
         selected_ids.append(source.binding_id)
 
+    retained_consumer_ids = _retained_projection_consumer_ids(retained_projection)
     retained_ids = _retained_bar_binding_ids(retained_projection)
     for binding_id in retained_ids:
         source = source_by_binding_id.get(binding_id)
@@ -356,11 +383,15 @@ def build_bound_bar_projection_set(
         "order_actions": 0,
     }
     if retained_projection is not None:
-        summary["retained_projection"] = {
-            "consumer_id": retained_projection["consumer_id"],
+        retained_summary = {
             "binding_ids": list(retained_ids),
             "sha256": retained_projection_sha256,
         }
+        if len(retained_consumer_ids) == 1:
+            retained_summary["consumer_id"] = retained_consumer_ids[0]
+        else:
+            retained_summary["consumer_ids"] = list(retained_consumer_ids)
+        summary["retained_projection"] = retained_summary
     if len(bindings) == 1:
         summary["consumer_id"] = bindings[0].consumer_id
         summary["binding_sha256"] = bindings[0].binding_sha256
