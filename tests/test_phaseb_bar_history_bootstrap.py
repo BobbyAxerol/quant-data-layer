@@ -605,6 +605,34 @@ class StableBarBootstrapTests(unittest.TestCase):
             finally:
                 spool.close()
 
+    def test_targeted_history_repair_bound_is_independent_from_runtime_warmup(self):
+        class Envelope:
+            def __init__(self, open_ms: int):
+                self.raw_frame_bytes = json.dumps({"row": _binance_row(open_ms)}).encode()
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-targeted-repair-") as directory:
+            spool, edge = self._cached_edge(directory, self._NoopPublisher())
+            try:
+                source, _acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self.assertEqual(edge.warmup_rows, 2)
+                with patch(
+                    "qdl.runtime.stable_bar_edge.fetch_binance_history",
+                    return_value=(Envelope(60_000), Envelope(120_000), Envelope(180_000)),
+                ):
+                    plan = edge.prepare_history_repair(
+                        source.binding_id,
+                        rows=3,
+                        observed_ms=240_000,
+                    )
+                self.assertEqual(len(plan.envelopes), 3)
+                self.assertEqual(len(plan.missing_envelopes), 3)
+            finally:
+                spool.close()
+
     def test_targeted_history_repair_is_provider_neutral_and_count_fenced(self):
         class Envelope:
             def __init__(self, open_ms: int):

@@ -671,7 +671,16 @@ class StableBinanceBarEdge:
             raise ValueError(
                 f"stable BAR repair binding is not enabled history demand: {binding_id}"
             ) from error
-        maximum_rows = self._bootstrap_rows_for(source)
+        # A repair is a bounded recovery operation, not an ordinary service
+        # warmup.  The active edge may intentionally retain a smaller startup
+        # warmup (for example 500 rows), while a verified historical hole can
+        # require a larger provider-backed window.  Keep the repair bounded by
+        # the same truthful interval capacity and global public maximum, but
+        # never couple it to the live loop's configured warmup size.
+        maximum_rows = min(
+            _MAX_DURABLE_BAR_ROWS,
+            durable_bar_history_capacity_rows(source.interval or ""),
+        )
         if rows > maximum_rows:
             raise ValueError(
                 f"stable BAR repair rows exceed durable provider window binding={binding_id} "
