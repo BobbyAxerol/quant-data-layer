@@ -31304,3 +31304,15 @@ test-only. The next bounded action is to build one immutable shared Rust image,
 pin it only for `ingestor_binance_usdm` and `ingestor_okx_swap`, then recreate
 those two roles serially and verify their rendered authority, binding count,
 restart/OOM state and real V2 L2 materialization before the one final C2 run.
+
+**Authority-log image (`BUILT / TWO-INGESTOR ROLLOUT PENDING`, 2026-09-02).**
+Commit `7d9d5d4` built one shared, immutable Rust image
+`qdl-v2-rust:2.0.1-7d9d5d4@sha256:f29fe2a6e4acd5fcff1a94601a837cfcc99b47ae5b970061fd1101155f54c334`.
+Its OCI labels bind revision `7d9d5d4` and release `2.0.1-7d9d5d4`; it is the
+only new runtime image required by this correction. The pre-roll override pins
+only the two native ingestors to it. Their exact rollback is the currently
+running immutable image
+`sha256:cfb686cf23fce8bea8c9c29c31630571bb6aad1b3a137f6dae1d28644649951f`.
+The Rust cores remain pinned to their existing c63 image and are excluded from
+this rollout. The disposable builder tag is retained only until this bounded
+evidence is complete, then removed under the phase cleanup rule.
