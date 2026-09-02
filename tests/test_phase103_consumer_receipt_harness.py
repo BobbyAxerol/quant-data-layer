@@ -48,6 +48,7 @@ from qdl_sdk import (
     StalePolicy,
     StreamEvent,
 )
+from qdl_sdk.models import SnapshotResponse
 from qdl_sdk.errors import ContinuityError, DataLayerError
 from qdl.runtime.stable_bar_edge import durable_bar_history_capacity_rows
 
@@ -1229,6 +1230,30 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "fresh-snapshot")
         self.assertEqual(client.snapshot_calls, 2)
         self.assertEqual(client.status_calls, 1)
+
+    async def test_strict_snapshot_unwraps_the_typed_sdk_envelope(self):
+        requirement = self._requirement()
+        expected = SimpleNamespace(kind="market-data-view")
+        client = self._Client(
+            (SnapshotResponse.model_construct(request_id="test", data=expected),),
+            self._status(
+                requirement,
+                state="LIVE",
+                event_recency_state="LIVE",
+                freshness_ms=1,
+                execution_eligible=True,
+            ),
+        )
+
+        result = await _strict_snapshot_for_c2(
+            client,
+            product=self._product(),
+            requirement=requirement,
+            timeout_seconds=0.25,
+        )
+
+        self.assertIs(result, expected)
+        self.assertEqual(client.snapshot_calls, 1)
 
     async def test_disconnected_quote_never_retries_or_accepts_stale_data(self):
         requirement = self._requirement()
