@@ -31523,3 +31523,19 @@ normal reader audit writes only are expected. On any failure stop and recreate
 only the failed role with its exact rollback selector. After all four are
 healthy, run exactly one fresh 299-product, four-identity, 300-second C2
 no-order acceptance and remove only its disposable client namespace.
+
+**Quiet-session reader rolling evidence (`PASS / READY FOR ONE C2`, 2026-09-02).**
+The approved selector was applied once, in the recorded order, to exactly
+`query_v2_2`, `query_v2_1`, `stream_v2_active`, and
+`stream_v2_passive`. All four now run
+`qdl-v2-python:2.0.1-09e5d03@sha256:9403705e86099de96c38d064cbc7a86e74c76c71cbbcebb028e9c587568b2dd4`,
+are Docker-healthy with restart count `0` and `OOMKilled=false`. The stream
+lease converged normally: `stable-stream-active` holds epoch `15`; passive is
+the expected standby. Query/stream logs contained no new error record during
+the bounded post-roll check. V1, Kafka topology/offsets, Redis, SQLite, Rust
+core, ingestors, bar edge, projectors, Trading System, alpha and order paths
+were not recreated or mutated. The only remaining operation in this bounded
+packet is one fresh 299-product, four-identity, 300-second C2 no-order
+acceptance from a disposable, execution-network-only client; its V1
+provenance/binding will be derived afresh from the running V1 container and
+the client namespace will be removed after its receipt is retained.
