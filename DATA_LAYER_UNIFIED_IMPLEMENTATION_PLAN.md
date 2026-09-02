@@ -30542,3 +30542,76 @@ retry once with the new binding bundle and these leaf mounts only.
 **Phase D reference-window and funding-boundary correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The paired authenticated no-order diagnostic reached the real V2 reference plane with the active alpha manifest revisions (`9` Binance, `8` OKX) and no broker credential or durable alpha state. It exposed two bounded semantic defects rather than a provider outage: the reusable probe applied one daily closed-BAR right edge to every reference product, while funding is an independently settled series; and Binance funding rows may arrive a few milliseconds after an official settlement boundary although the adapter's existing tolerance was only applied after the provider response had already been bounded and filtered. The correction is deliberately narrow: retain raw provider timestamps and strict full-coverage/freshness checks, use a declared settled funding window for the probe while preserving completed-period windows for taker/basis and provider snapshot windows for OI/long-short, and make the existing Binance funding tolerance effective in the outbound pagination envelope and selection boundary. No TTL is widened, no result is fabricated, no cross-venue fallback is permitted, and V1, Kafka, Redis, SQLite, Rust, ingestors, projectors, Trading System, alpha services and every order path remain excluded. Required gates: deterministic boundary/coverage and stale-history regression tests, immutable source test subset, then one concurrent real Binance/OKX reference pair; any non-OK product remains a fail-closed result.
 
 **Phase D Binance funding-boundary source gate (`PASS / SOURCE-ONLY`, 2026-09-02).** `BinanceUsdmReferenceAdapter` now applies its pre-existing 60-second funding-settlement tolerance to the outbound provider end boundary and the accepted right-edge selection, while retaining the provider's raw timestamp in the canonical observation. It does not relax other products or make a full-coverage claim for a row outside the declared tolerance. A deterministic regression simulates a provider that withholds the final `+3ms` funding row unless the requested end is widened; it passes only with the real envelope and selection behavior. In immutable `qdl-v2-python:2.0.0-136c52e`, network-disabled/read-only/non-root source tests `tests.test_phase104_reference_batch`, `tests.test_phase113_reference_v2` and `tests.test_reference_l2_consumer_acceptance` passed `48/48` in `7.645s`; focused adapter coverage passed `25/25` in `0.235s`. The prior paired real diagnostic remains evidence only: Binance funding had a genuine `+5ms` provider settlement jitter and the requested daily right edge omitted it. No runtime service, provider configuration, durable state, V1, Trading System, alpha or order path changed. The source is ready for a single shared query-reader image after its companion Alpha Runtime source slice commits.
+
+**Phase D settled-reference reader packet (`APPROVED / PRE-BUILD`,
+2026-09-02).** Build exactly one shared Python reader image from committed
+source `a3f423d` as `qdl-v2-python:2.0.0-a3f423d`, with OCI revision/release
+labels pinned to that commit. Independently build exactly one standard Alpha
+Runtime probe image from committed source `b1299bc` and the already pinned
+Trading System Alpha SDK revision, as `execution-alpha-runtime:2.0.0-b1299bc`.
+No Numba derivative is needed for the reference-only probe. Both builds are
+sequential because the host has bounded free memory; they must be inspected
+and smoke-imported as non-root, read-only, network-disabled images before any
+runtime use. The only eligible runtime change after the build gates is a
+serial replacement of `query_v2_2` then `query_v2_1` with the new shared
+reader image through one operator-state override. Their exact rollback is the
+currently active `qdl-v2-python:2.0.0-136c52e` image ID
+`sha256:2a2b533ad073d18953fab526fbfca22dc2c76d7b8d656b7cae059e8d43b48a50`
+and unchanged runtime mount. The packet excludes streams, V1, Kafka
+topology/offsets, Redis, SQLite, Rust, ingestors, bar edge, projectors,
+Trading System, alpha services, broker credentials and every order path. Its
+acceptance is one concurrent disposable Binance USD-M/OKX Swap real V2
+reference probe using sealed bindings/UID-1000 workload identities; every
+requested reference product must be strict-OK and no alpha durable state,
+Gateway/Risk request or order may be created. Disk baseline before this packet:
+`/dev/root` 229 GiB used / 62 GiB available; Docker images 77.74 GiB with
+56.55 GiB reclaimable and BuildKit cache 27.84 GiB with 8.579 GiB reclaimable.
+Cleanup is deferred until Phase D closes so the explicit active/rollback
+images remain recoverable.
+
+**Phase D settled-reference image gate (`PASS / PRE-ROLL`, 2026-09-02).** The
+single reader build completed sequentially as `qdl-v2-python:2.0.0-a3f423d`,
+image ID `sha256:dccc24b2f4a9f4f0aff58551cfe09f7ce8e7a5f42e4ef372b27b0c5b6b58d659`.
+OCI labels report `revision=a3f423d`, `release=2.0.0-a3f423d`, and the image
+runs as `qdl:qdl` (`10001:10001`). A disposable non-root/read-only/no-network
+import of `BinanceUsdmReferenceAdapter` passed. The new operator-only override
+is `/home/bobby/.local/state/qdl-v2/phase54-settled-reference-a3f423d/query-image.override.yml`
+(SHA-256 `a2c804c9fbc786618a41a1e99d351cc03f91137b660ecec623000760bf0051c8`)
+and changes only `query_v2_1` and `query_v2_2`; the paired rollback override is
+SHA-256 `8154ece125e412e636470dd8acc79443c0f7a04ce26c435874f4a5865d738640`
+and restores only those roles to `2.0.0-136c52e`. The exact current Compose
+stack, stable env and all existing overrides rendered successfully with the new
+file appended last. The next approved action is serial `query_v2_2`, then
+`query_v2_1`, with bounded health/restart/image checks after each role. No
+other service is eligible.
+
+**Phase D settled-reference reader handoff and paired proof (`PASS / NO-ORDER`,
+2026-09-02).** `query_v2_2` then `query_v2_1` were serially recreated through
+the recorded override. Both now run
+`qdl-v2-python:2.0.0-a3f423d` / image ID
+`sha256:dccc24b2f4a9f4f0aff58551cfe09f7ce8e7a5f42e4ef372b27b0c5b6b58d659`,
+are healthy and have restart count `0`. The exact `136c52e` override/image is
+retained as rollback; streams, V1, Kafka/Redis/SQLite, Rust, ingestors, bar
+edge, projectors, Trading System, alpha services and order path were unchanged.
+
+One concurrent disposable UID-1000/no-broker/no-Gateway/Risk Binance USD-M and
+OKX Swap reference pair then used V2_PRIMARY, sealed bindings, mTLS/JWT leaf
+mounts and tmpfs-only cursor/audit state. Every request used `require_all=true`.
+Binance `BTCUSDT` passed: FUNDING_RATE `90` observations
+(`/fapi/v1/fundingRate`), OPEN_INTEREST `30`
+(`/futures/data/openInterestHist`), LONG_SHORT_RATIO `30`
+(`/futures/data/globalLongShortAccountRatio`), TAKER_FLOW `30`
+(`/futures/data/takerlongshortRatio`), CONTINUOUS BASIS `30`
+(`data.binance.vision` plus `/fapi/v1/klines`) and CONTRACT_METADATA `1`
+(`/fapi/v1/exchangeInfo`). OKX `BTC-USDT-SWAP` passed the two products its
+sealed binding actually declares: FUNDING_RATE `90`
+(`/api/v5/public/funding-rate-history`) and CONTRACT_METADATA `1`
+(`/api/v5/public/instruments`). This is real provider evidence, not generated
+data or a cross-venue fallback. An initial Binance invocation stopped before a
+provider request because CLI enum `continuous` was invalid; the rerun used the
+declared `CONTINUOUS` enum and both sides passed. All `--rm` containers
+self-removed and the scoped `/tmp` cursor/audit/output directory was removed.
+No alpha durable state, V1 fallback read, Gateway/Risk request, signal/sizing
+mutation, database/Redis test row or broker action was created. Phase D remains
+in progress only for the approved paired representative alpha-class no-order
+proofs.
