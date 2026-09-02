@@ -3,7 +3,10 @@ from __future__ import annotations
 import copy
 import json
 import tempfile
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 import unittest
 from dataclasses import replace
 from pathlib import Path

@@ -5,7 +5,10 @@ import json
 import re
 import subprocess
 import time
-import tomllib
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 support is declared by pyproject.
+    import tomli as tomllib
 from pathlib import Path
 from typing import Any
 

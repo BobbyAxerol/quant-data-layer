@@ -9,7 +9,7 @@ an endpoint, provider, or broker call.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from qdl._compat import StrEnum
 
 from qdl.consumer.manifest import ConsumerManifest, ConsumerRoute
 from qdl.query import (

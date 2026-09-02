@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass
-from enum import StrEnum
+from qdl._compat import StrEnum
 from pathlib import Path
 from typing import Any
 

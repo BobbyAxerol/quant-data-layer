@@ -6,7 +6,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from enum import StrEnum
+from qdl._compat import StrEnum
 from typing import Mapping, Protocol
 
 from redis import Redis

@@ -4,7 +4,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import asdict, dataclass
-from enum import StrEnum
+from qdl._compat import StrEnum
 from typing import Any, Mapping
 
 from qdl.canary.phase9 import ProductionCanaryAuthorizer

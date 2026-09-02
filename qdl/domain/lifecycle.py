@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import StrEnum
+from qdl._compat import StrEnum
 
 
 class BarLifecycle(StrEnum):

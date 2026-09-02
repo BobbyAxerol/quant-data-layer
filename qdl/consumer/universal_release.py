@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from enum import StrEnum
+from qdl._compat import StrEnum
 import hashlib
 import json
 from pathlib import Path

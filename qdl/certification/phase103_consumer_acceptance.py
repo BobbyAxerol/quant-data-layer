@@ -12,7 +12,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from enum import StrEnum
+from qdl._compat import StrEnum
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from enum import IntEnum, StrEnum
+from enum import IntEnum
+
+from qdl._compat import StrEnum
 
 
 class ValidationLevel(IntEnum):

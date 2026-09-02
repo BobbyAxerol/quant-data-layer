@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import StrEnum
+from qdl._compat import StrEnum
 from qdl.domain.lifecycle import BarLifecycle
 from qdl.query.contracts import FeedType
 

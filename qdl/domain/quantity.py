@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import StrEnum
+from qdl._compat import StrEnum
 
 from qdl.common.v1 import common_pb2
 

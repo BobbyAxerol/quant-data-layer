@@ -30305,6 +30305,34 @@ bundle is independently verified. Phase B is therefore complete as source
 evidence; Phase C may build one canonical reader artifact from this immutable
 input.
 
+**Phase B Python 3.10 compatibility repair (`COMPLETE / SOURCE-ONLY`,
+2026-09-02).** The published Python `3.10+` support is now internally
+consistent: one `qdl._compat.StrEnum` preserves the string wire behavior used
+by canonical enums, all affected core modules import that shared primitive, and
+the release/SBOM reader uses standard-library `tomllib` on 3.11+ with the
+conditional locked `tomli` dependency on 3.10. No enum value, V2 schema,
+provider adapter, Docker role, bundle, runtime routing or data-plane state was
+changed.
+
+**Compatibility evidence and cleanup.** A disposable Python 3.10 container
+installed only declared import dependencies into a caller-owned temporary
+directory; its actual proof then ran `--network none`, read-only, non-root and
+with tmpfs-only output. `tests.test_python310_compat` passed `3/3`; two real
+Compose/config exports were byte-identical and two Data Layer compiles were
+byte-identical. The independent Trading System parser accepted all `18`
+bindings. The verified output was `93` deployments, `18` admitted bindings,
+`75` explicit typed blocks, inventory SHA-256
+`7e27bebc8cd82113d78cda0cfaed9759f32c54fbb10bfe83b795ecc08d1b2c5c` and
+compilation SHA-256
+`aef316653ecfb1423c89fcdeec145faf3fd249243a37c849e65681267d8d04e4`.
+Python 3.12 regression passed `55/55` with one expected ownership skip, and
+the compiler/release suite passed `36/36` (negative-case stderr was expected
+by those tests). All temporary dependency/inventory/binding directories and
+containers were removed. The sole pulled test image `python:3.10-slim` had no
+container references and was removed; host root usage changed from
+`248523239424/310911414272` to `248521027584/310911414272` bytes. Rollback is
+a normal source revert; no runtime change is allowed in this slice.
+
 **Phase C bounded reader packet (`OWNER-APPROVED / PRE-BUILD`, 2026-09-02).**
 The candidate is one shared image tag `qdl-v2-python:2.0.0-5edbc8c`, built
 from Data Layer `dev@5edbc8c7707be3a0f57117d7b78bc6d7f0f8e89a`; the exact
