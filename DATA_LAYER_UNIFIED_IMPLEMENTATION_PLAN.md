@@ -31966,3 +31966,112 @@ and fast final-BAR scheduling. No runtime role, provider, Kafka, Redis,
 SQLite, V1, Trading System, alpha or order path was touched. Next is exactly
 one configuration-only materialization from the active 140-route union, then
 the bounded one-role bar-edge handoff already described above.
+
+**Receipt normalization preflight (`NO RUNTIME MUTATION`, 2026-09-02).** The
+active union receipt is semantically correct but was copied with one literal
+trailing `\\n` byte sequence, so the strict compiler rejects it rather than
+silently accepting malformed JSON. Preserve the active receipt byte-for-byte;
+create only a parsed/normalized diagnostic copy in the scoped repair evidence
+directory, verify it has the same JSON object and route IDs, then use that copy
+as the compiler input. The active projection is not changed by this preflight.
+
+**OKX final-BAR union materialization (`PASS / ONE-ROLE SWAP READY`,
+2026-09-02).** The no-network compiler strictly materialized the normalized,
+preserved active union into a scoped candidate projection. Its `140` catalog
+and acquisition binding IDs are unique and identical: `70` Binance USD-M and
+`70` OKX Swap final-BAR routes. Every candidate acquisition route is exactly
+`PYTHON_REST`; there are no residual `RUST_NATIVE` BAR owners. Candidate
+SHA-256 values are catalog `c8bc73879c631d9979d2bcd060b610a9eeb849edbd1df267a033a38ba694c527`,
+acquisition `8d7976672b6cb67765ebfe5e6ea6147f721b6802240e569be63d925c131bba70`
+and receipt `05acdcaa8683c974619e2155206ef551cb7bae08c23ae0ff3d13f61fe7f404f5`.
+The invoking Trading System binding remains explicit at the receipt top level;
+the retained baseline records the exact four C2 identities
+`monitoring.multivenue.stable`, `trading-system.paper.stable`,
+`alpha.binance.paper.stable` and `alpha.okx.paper.stable`, preserving the
+already active union rather than narrowing an entitlement. This step contacted
+no provider and changed no runtime/durable data.
+
+**Next bounded mutation.** Stop only the existing shared `binance_bar_edge`,
+rename the active phase54 projection directory to a timestamped rollback
+directory on the same filesystem, install this verified candidate as the active
+phase54 directory with existing `bobby:bobby`/`0755` directory and `0644` file
+permissions, then recreate only that edge with the already-running immutable
+`qdl-v2-python:2.0.1-43faf3d@sha256:6090b3a6c1c6bc431a329ab85cad7fe61750a33dbed3a5bb2d264c532f211545`
+and verified serving runtime mount. The old directory is the exact rollback;
+restoring it and recreating the same one role returns the prior ownership model.
+The edge may write only authentic provider-confirmed final BARs through its
+existing Kafka -> Rust canonical -> projector path. No V1, Kafka
+topology/offset, Redis, SQLite, Rust/ingestor/projector/query/stream, Trading
+System, alpha or order path mutation is in scope.
+
+**OKX final-BAR runtime repair exit (`PASS / C2 RETRY AUTHORIZED`,
+2026-09-02).** The exact one-role atomic swap retained the prior phase54
+projection under a timestamped rollback directory and recreated only
+`binance_bar_edge` on the already active immutable `43faf3d` reader image.
+The role is `running`, `restart=0`, `oom=false`; all three unchanged projectors
+are also `running`, `restart=0`, `oom=false`. Its checkpoint now has exactly
+`140` declared IDs and `140` watermarks (`70` Binance, `70` OKX). Bounded edge
+logs prove authentic final-BAR acknowledgement for the bootstrap and the next
+five-liquid Binance and OKX `1m` closes; no direct durable-store write or
+synthetic market datum was used.
+
+The isolated typed status probe then read both V2 query replicas as the
+restricted Trading System paper identity. All `20/20` observations (five
+symbols x two venues x two replicas) are `LIVE`, complete and gap-free, with
+final-BAR freshness about `7.5-8.4s`; all BAR provider-session fields are
+correctly `NOT_APPLICABLE`. The initial no-client preflight omitted an explicit
+root bootstrap user and stopped before any endpoint request; rerunning with the
+documented bootstrap UID reached the dropped-privilege client successfully.
+This is a launcher correction only, not a data-plane failure. The full C2
+client itself already validates every product's final-BAR warmup/order/parity
+contracts across both replicas, so its fresh 299-product run is the governed
+140-route continuity acceptance rather than a duplicate ad-hoc audit.
+
+**C2 retry scope.** Run exactly one disposable, four-identity, `300`-second
+no-order acceptance from the existing `43faf3d` image. It must validate all
+declared V2 products, including the 140 final-BAR set, reference reads, signed
+cursor/reconnect and policy-correct V2 -> V1 -> V2 fallback. Exit requires
+`PASS_V2_DATA_PLANE_ONLY`, zero provider connections and order actions,
+removed temporary cursor state, and no mutation outside its bounded evidence
+directory. Failure leaves V1 and the exact projection rollback directory
+unchanged; it does not trigger another runtime change automatically.
+
+**C2 reference transport correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-02).** The first fresh C2 client reached the real V2 data plane but
+stopped on a reference-batch HTTP `ReadTimeout`; its acceptance file is empty,
+the bounded error receipt is retained, and it made no broker/order action.
+This is not a BAR/provider freshness failure: every V2 reference requirement
+is deliberately constructed with a `60s` provider deadline, while the C2
+launcher passed a generic `15s` timeout and the client derived only `30s`
+(`15s + 15s` return margin). The query boundary permits the declared request
+up to its bounded `90s` server deadline, so the disposable client was
+incorrectly cancelling a valid in-flight reference contract.
+
+Correct only the acceptance client: derive its reference HTTP transport timeout
+from the maximum declared reference-request deadline, plus the existing
+bounded return margin (`60s -> 75s`), while preserving the `15s` timeout for
+durable BAR/TRADE/QUOTE/L2 reads. Add deterministic tests for normal and
+declared-long reference deadlines; do not alter reference product freshness,
+provider retry policy, query runtime, image, Kafka/Redis/SQLite, V1, Rust,
+ingestors, projectors, query/stream services, Trading System, alpha or order
+path. The follow-up C2 client may mount only this committed source file over
+its disposable test client path; it is not a runtime rollout or new image.
+
+**C2 reference transport source exit (`PASS / RETRY READY`, 2026-09-02).**
+The acceptance client now computes reference HTTP transport time from the
+largest declared `ReferenceRequirement.deadline_ms`, not the unrelated generic
+durable-read timeout. In the governed scope, `60,000ms` produces the existing
+bounded `75s` transport window; ordinary BAR/TRADE/QUOTE/L2 reads remain at
+their existing `15s` timeout. No endpoint contract, freshness limit, retry
+policy, runtime service or image changed. The focused isolated/no-network
+regression `tests.test_phase105_identity_acceptance` passed **11/11**,
+including `60s -> 75s`, short-deadline retention and empty-scope fail-closed
+cases. An earlier combined command named a nonexistent test module after the
+relevant 11 tests passed; it was corrected and is not counted as evidence.
+
+The next C2 client is a fresh disposable namespace and mounts this committed
+acceptance source file read-only over
+`/app/scripts/phase105_consumer_v2_identity_acceptance.py`. That isolates the
+test-client correction without changing the reader/runtime image. It still
+reaches only V2 query/stream and the policy-authorized V1 fallback, has no
+provider/broker/Gateway/Risk path, and is deleted by Docker on exit.

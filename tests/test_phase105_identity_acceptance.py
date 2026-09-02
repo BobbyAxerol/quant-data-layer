@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct
 from qdl.query import DataRequirement, FeedType, RecoveryPolicy
@@ -18,6 +19,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _identity_files_for_consumers,
     _route_summary,
     _reference_batch_concurrency,
+    _reference_transport_timeout_seconds,
     _run_consumer_groups,
     _v1_base_url,
     parser,
@@ -155,6 +157,27 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
         self.assertEqual(_reference_batch_concurrency(8), 4)
         with self.assertRaisesRegex(ValueError, "positive"):
             _reference_batch_concurrency(0)
+
+    def test_reference_transport_uses_declared_deadline_not_generic_read_timeout(self) -> None:
+        products = (
+            SimpleNamespace(sdk_requirement=SimpleNamespace(deadline_ms=60_000)),
+            SimpleNamespace(sdk_requirement=SimpleNamespace(deadline_ms=20_000)),
+        )
+        self.assertEqual(
+            _reference_transport_timeout_seconds(
+                products, generic_timeout_seconds=15.0
+            ),
+            75.0,
+        )
+        self.assertEqual(
+            _reference_transport_timeout_seconds(
+                (SimpleNamespace(sdk_requirement=SimpleNamespace(deadline_ms=5_000)),),
+                generic_timeout_seconds=15.0,
+            ),
+            30.0,
+        )
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            _reference_transport_timeout_seconds((), generic_timeout_seconds=15.0)
 
     def test_route_summary_counts_declared_v1_and_blocked_without_claiming_transition(self) -> None:
         requirement = DataRequirement(

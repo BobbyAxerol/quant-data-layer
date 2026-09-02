@@ -108,6 +108,28 @@ def _reference_batch_concurrency(observation_concurrency: int) -> int:
     return min(observation_concurrency, _MAX_REFERENCE_BATCH_CONCURRENCY)
 
 
+def _reference_transport_timeout_seconds(
+    products: tuple[ReferenceAcceptanceProduct, ...],
+    *,
+    generic_timeout_seconds: float,
+) -> float:
+    """Keep the disposable client alive through its declared provider contract.
+
+    Durable query/stream reads retain the generic C2 timeout.  Reference
+    batches carry their own bounded provider deadline, so a client must not
+    cancel a valid request before that contract plus the response margin.
+    """
+
+    if not products:
+        raise ValueError("C2 reference transport requires at least one product")
+    declared_timeout_seconds = max(
+        item.sdk_requirement.deadline_ms / 1_000 for item in products
+    )
+    return acceptance_transport_timeout_seconds(
+        max(generic_timeout_seconds, declared_timeout_seconds)
+    )
+
+
 def _identity_files(args: argparse.Namespace) -> dict[str, IdentityFiles]:
     return _identity_files_for_consumers(args, tuple(IDENTITY_PREFIXES))
 
@@ -241,7 +263,10 @@ async def _certify_references(
     )
     if not reference_products:
         return []
-    transport_timeout_seconds = acceptance_transport_timeout_seconds(timeout_seconds)
+    transport_timeout_seconds = _reference_transport_timeout_seconds(
+        reference_products,
+        generic_timeout_seconds=timeout_seconds,
+    )
 
     async def read_replica(client, *, label: str):
         values: dict[tuple[str, str, str, str, str], tuple[str, float, int, int, dict[str, int | bool]]] = {}
