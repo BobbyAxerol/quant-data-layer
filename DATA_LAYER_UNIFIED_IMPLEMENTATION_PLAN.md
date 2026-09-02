@@ -31394,26 +31394,28 @@ then complete other bounded provider work after that snapshot has crossed its
 repair only refreshed a literal cache hit and not an otherwise valid result
 whose local receipt has aged while shared/batched work was completing.
 
-The bounded correction is provider-neutral and remains fail-closed: refresh
-the identical on-demand snapshot exactly once only when its local
-`received_at_ns` has itself crossed the declared freshness bound. A provider
-observation that is already stale when freshly received is not refreshed and
-remains terminal `DATA_STALE`. It changes no SLA, adapter, provider endpoint,
-manifest, cache key, topology or consumer route. Required source gates cover
-fresh cached, aged shared/batch receipt, genuinely stale fresh provider,
-identity preservation and no duplicate provider work; then rebuild one query
-image, roll only the two query roles back through the same exact rollback
-coordinate if unhealthy, and run one fresh C2 namespace.
+The bounded correction is provider-neutral and remains fail-closed: after all
+initial bounded work returns, revalidate every on-demand snapshot and refresh
+the identical request exactly once only when its provider observation was
+within bound at `received_at_ns` but aged while cache/shared/batch work was
+completing. A provider observation that is already stale when freshly received
+is not refreshed and remains terminal `DATA_STALE`. It changes no SLA,
+adapter, provider endpoint, manifest, cache key, topology or consumer route.
+Required source gates cover fresh cached, aged shared/batch receipt, genuinely
+stale fresh provider, identity preservation and no duplicate provider work;
+then rebuild one query image, roll only the two query roles back through the
+same exact rollback coordinate if unhealthy, and run one fresh C2 namespace.
 
 **Batch-receipt source gate (`PASS / SOURCE-ONLY`, 2026-09-02).** The shared
 query service now classifies a snapshot as internally ageable only when its
-provider observation was within the declared bound at `received_at_ns`; an
-aged cache hit, an aged leader result, or an aged coalesced result then receives
-one exact-identity bypass-cache refresh. A response whose provider observation
-was already stale at receipt cannot take that path and remains `DATA_STALE`.
-The focused reference suite passed **14/14**: valid cache, ordinary cache
-refresh, internally aged batch receipt, shared refresh singleflight and
-freshly received genuinely stale provider values. The broader non-root,
+provider observation was within the declared bound at `received_at_ns`; after
+the initial bounded batch completes, an aged cache hit, leader result or
+coalesced result receives one exact-identity bypass-cache refresh immediately
+before response assembly. A response whose provider observation was already
+stale at receipt cannot take that path and remains `DATA_STALE`. The focused
+reference suite passed **14/14**: valid cache, ordinary cache refresh,
+snapshot aging only after initial batch completion, shared refresh singleflight
+and freshly received genuinely stale provider values. The broader non-root,
 read-only, network-disabled matrix passed **81/81** in `19.083s`, covering the
 reference, L2, runtime-convergence, native-ingestor and handoff boundaries.
 No runtime, provider, Kafka, Redis, SQLite, V1, Trading System, alpha or order

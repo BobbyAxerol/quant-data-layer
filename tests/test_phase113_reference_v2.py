@@ -132,8 +132,8 @@ class FixtureReferenceAdapter:
             self.active -= 1
 
 
-class AdvanceClockAfterFirstFetchBatch(ReferenceBatch):
-    """Model a snapshot received before the rest of a shared batch finishes."""
+class AdvanceClockAfterInitialBatchExecutor(BoundedWarmupExecutor):
+    """Model a snapshot aging only after all initial batch work completes."""
 
     def __init__(self, *args, clock, adapter, **kwargs):
         super().__init__(*args, **kwargs)
@@ -141,9 +141,9 @@ class AdvanceClockAfterFirstFetchBatch(ReferenceBatch):
         self._test_adapter = adapter
         self._advance_once = True
 
-    async def fetch_one(self, request, *, bypass_cache=False):
-        result = await super().fetch_one(request, bypass_cache=bypass_cache)
-        if self._advance_once and not bypass_cache:
+    async def execute(self, *args, **kwargs):
+        result = await super().execute(*args, **kwargs)
+        if self._advance_once:
             self._advance_once = False
             self._test_clock["ns"] += 2_100_000_000
             self._test_adapter.observed_at_ns = self._test_clock["ns"]
@@ -496,18 +496,20 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
                 valid_from_ns=0,
             ),
         ))
-        batch = AdvanceClockAfterFirstFetchBatch(
-            {("BINANCE", "USDM"): adapter},
+        executor = AdvanceClockAfterInitialBatchExecutor(
             clock=clock,
             adapter=adapter,
-            clock_ns=lambda: clock["ns"],
-            monotonic=lambda: 0.0,
         )
         service = V2QueryService(
             instruments=InstrumentQuery(registry),
             backend=MemoryMarketDataBackend(),
             entitlements=execution_grants,
-            reference_batch=batch,
+            warmup_executor=executor,
+            reference_batch=ReferenceBatch(
+                {("BINANCE", "USDM"): adapter},
+                clock_ns=lambda: clock["ns"],
+                monotonic=lambda: 0.0,
+            ),
             reference_source_id=lambda _item: "BINANCE_DIRECT",
             clock_ns=lambda: clock["ns"],
         )

@@ -518,30 +518,12 @@ class V2QueryService:
             admitted.append((index, requirement, request))
 
         async def work(
-            candidate: tuple[int, ReferenceDataRequirement, ReferenceRequest]
+            candidate: tuple[int, ReferenceDataRequirement, ReferenceRequest],
+            *,
+            bypass_cache: bool = False,
         ) -> ReferenceBatchResult:
             _index, _requirement, request = candidate
-            result = await self.reference_batch.fetch_one(request)
-            initial_problem = self._reference_problem(_requirement, request, result)
-            if (
-                initial_problem is not None
-                and initial_problem.code is CanonicalErrorCode.DATA_STALE
-                and self._reference_snapshot_was_current_at_receipt(
-                    _requirement,
-                    request,
-                    result,
-                )
-            ):
-                # A current provider snapshot may age while an otherwise
-                # bounded shared batch is finishing. Refresh the same
-                # catalog-bound request once only when it was current at its
-                # local receipt and then crossed the caller's freshness bound.
-                # A provider result that arrives already stale is deliberately
-                # terminal below.
-                result = await self.reference_batch.fetch_one(
-                    request,
-                    bypass_cache=True,
-                )
+            result = await self.reference_batch.fetch_one(request, bypass_cache=bypass_cache)
             # Rust provider admission deliberately communicates bounded
             # pressure through a typed retry delay.  Keep Rust as the only
             # admission authority and let the shared executor honor that
@@ -563,7 +545,43 @@ class V2QueryService:
             provider=lambda candidate: candidate[2].instrument.identity.venue,
             deadline_ms=lambda candidate: candidate[1].deadline_ms,
         )
+
+        # Revalidate after every bounded initial task has returned. A current
+        # mark/index snapshot can become stale while another item in the same
+        # batch finishes. Refresh those exact current-at-receipt snapshots
+        # once here, immediately before response assembly; provider-stale
+        # observations never take this branch.
+        refresh_candidates = []
         for execution in executions:
+            if execution.error is not None or execution.value is None:
+                continue
+            _index, requirement, request = execution.item
+            problem = self._reference_problem(requirement, request, execution.value)
+            if (
+                problem is not None
+                and problem.code is CanonicalErrorCode.DATA_STALE
+                and self._reference_snapshot_was_current_at_receipt(
+                    requirement,
+                    request,
+                    execution.value,
+                )
+            ):
+                refresh_candidates.append(execution.item)
+        refreshed_by_index = {}
+        if refresh_candidates:
+            refreshed = await self.warmup_executor.execute(
+                tuple(refresh_candidates),
+                work=lambda candidate: work(candidate, bypass_cache=True),
+                identity=lambda candidate: candidate[2].cache_key,
+                provider=lambda candidate: candidate[2].instrument.identity.venue,
+                deadline_ms=lambda candidate: candidate[1].deadline_ms,
+            )
+            refreshed_by_index = {
+                execution.item[0]: execution for execution in refreshed
+            }
+
+        for initial_execution in executions:
+            execution = refreshed_by_index.get(initial_execution.item[0], initial_execution)
             index, requirement, request = execution.item
             if execution.error is not None:
                 retry_after_ms = getattr(execution.error, "retry_after_ms", None)
