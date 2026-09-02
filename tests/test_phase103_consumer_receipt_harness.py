@@ -50,6 +50,7 @@ from qdl_sdk import (
 )
 from qdl_sdk.models import SnapshotResponse
 from qdl_sdk.errors import ContinuityError, DataLayerError
+from qdl.adapters.intervals import canonical_interval_ms, provider_bar_calendar_anchor_ms
 from qdl.runtime.stable_bar_edge import durable_bar_history_capacity_rows
 
 
@@ -287,6 +288,27 @@ class Phase103HistoricalBarReplayTests(unittest.TestCase):
                 latest_open_time_ns=20 * self.INTERVAL_NS,
             )
 
+    def test_historical_seed_uses_shared_provider_calendar_anchors(self):
+        for interval, venue in (
+            ("1w", "BINANCE"),
+            ("1w", "OKX"),
+            ("3d", "BINANCE"),
+            ("3d", "OKX"),
+        ):
+            interval_ns = canonical_interval_ms(interval) * 1_000_000
+            anchor_ns = provider_bar_calendar_anchor_ms(
+                interval,
+                provider=venue,
+            ) * 1_000_000
+            latest_open_ns = anchor_ns + 20 * interval_ns
+            seed = _historical_bar_replay_requirement(
+                self._requirement(interval=interval),
+                latest_open_time_ns=latest_open_ns,
+                calendar_provider=venue,
+            )
+
+            self.assertEqual(seed.warmup.time_range.start_time_ns, latest_open_ns - 2 * interval_ns)
+            self.assertEqual(seed.warmup.time_range.end_time_ns, latest_open_ns - interval_ns)
     def test_historical_replay_applies_only_to_non_execution_durable_bars(self):
         self.assertTrue(_uses_historical_bar_replay(self._product()))
         self.assertFalse(

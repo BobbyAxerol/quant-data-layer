@@ -45,7 +45,7 @@ from qdl.certification.phase103_consumer_acceptance import (
     validate_resume_offsets,
     warmup_content_fingerprint,
 )
-from qdl.adapters.intervals import canonical_interval_ms
+from qdl.adapters.intervals import canonical_interval_ms, is_valid_bar_open_ms
 from qdl.runtime.stable_bar_edge import durable_bar_history_capacity_rows
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
@@ -229,7 +229,12 @@ def _c2_requirement(requirement):
     )
 
 
-def _historical_bar_replay_requirement(requirement, *, latest_open_time_ns: int):
+def _historical_bar_replay_requirement(
+    requirement,
+    *,
+    latest_open_time_ns: int,
+    calendar_provider: str | None = None,
+):
     """Build one aligned, bounded cursor seed before two retained BAR records.
 
     The caller has already checked the current strict requirement.  This
@@ -243,9 +248,15 @@ def _historical_bar_replay_requirement(requirement, *, latest_open_time_ns: int)
     if requirement.consumer_grade.value == "EXECUTION":
         raise ValueError("execution BAR receipts must use the strict live path")
     interval_ns = canonical_interval_ms(requirement.interval) * 1_000_000
+    latest_open_ms, sub_millisecond_ns = divmod(latest_open_time_ns, 1_000_000)
     if (
         latest_open_time_ns <= 2 * interval_ns
-        or latest_open_time_ns % interval_ns
+        or sub_millisecond_ns
+        or not is_valid_bar_open_ms(
+            requirement.interval,
+            latest_open_ms,
+            provider=calendar_provider,
+        )
     ):
         raise ValueError("latest BAR open time cannot form a retained replay seed")
     original_warmup = requirement.warmup_specification
@@ -812,6 +823,7 @@ async def _stream_resume(
             stream_requirement = _historical_bar_replay_requirement(
                 requirement,
                 latest_open_time_ns=int(strict_current.payload.open_time_ns),
+                calendar_provider=getattr(product, "venue", None),
             )
             event_timeout_seconds = timeout_seconds
         async with _strict_warmup_then_stream_for_c2(
