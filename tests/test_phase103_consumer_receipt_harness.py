@@ -1149,6 +1149,70 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.snapshot_calls, 1)
         self.assertEqual(client.status_calls, 1)
 
+    async def test_verified_book_snapshot_retries_only_until_a_fresh_renewal_arrives(self):
+        requirement = DataRequirement(
+            instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+            feed=Feed.BOOK_SNAPSHOT,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=60_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.BOOK_SNAPSHOT)
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "book snapshot renewal pending"), "fresh-book"),
+            self._status(
+                requirement,
+                provider_session_state="NOT_APPLICABLE",
+                provider_session_liveness_ms=None,
+            ),
+        )
+
+        with patch(
+            "scripts.phase103_consumer_receipt_acceptance._BOOK_SNAPSHOT_RETRY_SECONDS",
+            0.001,
+        ):
+            result = await _strict_snapshot_for_c2(
+                client,
+                product=product,
+                requirement=requirement,
+                timeout_seconds=0.25,
+            )
+
+        self.assertEqual(result, "fresh-book")
+        self.assertEqual(client.snapshot_calls, 2)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_book_snapshot_gap_or_session_mismatch_never_retries(self):
+        requirement = DataRequirement(
+            instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+            feed=Feed.BOOK_SNAPSHOT,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=60_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.BOOK_SNAPSHOT)
+        for status in (
+            self._status(
+                requirement,
+                provider_session_state="NOT_APPLICABLE",
+                provider_session_liveness_ms=None,
+                gap_open=True,
+            ),
+            self._status(requirement),
+        ):
+            client = self._Client((DataLayerError("DATA_STALE", "bad book"),), status)
+            with self.assertRaisesRegex(ContinuityError, "complete, gap-free snapshot state"):
+                await _strict_snapshot_for_c2(
+                    client,
+                    product=product,
+                    requirement=requirement,
+                    timeout_seconds=0.25,
+                )
+            self.assertEqual(client.snapshot_calls, 1)
+            self.assertEqual(client.status_calls, 1)
+
     async def test_quiet_connected_trade_retries_but_still_requires_a_fresh_snapshot(self):
         requirement = DataRequirement(
             instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",

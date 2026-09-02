@@ -75,6 +75,7 @@ DEFAULT_ACQUISITION = ROOT / "config/v2/stable-acquisition-bindings.yaml"
 DEFAULT_TRADING_MANIFEST = ROOT / "consumers/stable/trading-system-paper.yaml"
 DEFAULT_ALPHA_MANIFEST = ROOT / "consumers/stable/alpha-binance-paper.yaml"
 _QUIET_QUOTE_RETRY_SECONDS = 0.2
+_BOOK_SNAPSHOT_RETRY_SECONDS = 1.0
 _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS = 2.0
 _QUIET_CONTINUITY_FEEDS = frozenset({"TRADE", "BOOK_DELTA"})
 # C2 proves a representative retained BAR window, not an impossible request
@@ -468,6 +469,11 @@ async def _query_product_with_quality(
     """Query both replicas and retain only compact quality evidence for B3."""
     requirement = _c2_requirement(sdk_requirement(product))
     bar_alignment: dict[str, object] | None = None
+    snapshot_timeout_seconds = (
+        _stream_event_timeout_seconds(product, timeout_seconds)
+        if product.feed.value == "BOOK_SNAPSHOT"
+        else timeout_seconds
+    )
     primary_started = time.perf_counter()
     if product.feed.value == "BAR":
         primary_response = await primary.warmup(requirement)
@@ -482,7 +488,7 @@ async def _query_product_with_quality(
             primary,
             product=product,
             requirement=requirement,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=snapshot_timeout_seconds,
         )
         primary_latency_ms = (time.perf_counter() - primary_started) * 1000
         primary_view = primary_response.data
@@ -512,7 +518,7 @@ async def _query_product_with_quality(
             secondary,
             product=product,
             requirement=requirement,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=snapshot_timeout_seconds,
         )
         secondary_latency_ms = (time.perf_counter() - secondary_started) * 1000
         secondary_view = secondary_response.data
@@ -584,6 +590,33 @@ def _fresh_quote_status_is_retryable(
     )
 
 
+def _book_snapshot_status_is_refreshable(
+    product: AcceptanceProduct,
+    requirement,
+    status,
+) -> bool:
+    """Permit a bounded retry while a verified book snapshot renews.
+
+    Snapshot delivery has no provider-session liveness contract. The stale
+    response remains rejected; this only permits a subsequent strict read while
+    the typed book state is identity-matched, complete and gap-free.
+    """
+
+    quality = status.quality
+    return (
+        product.feed.value == "BOOK_SNAPSHOT"
+        and status.instrument_uid == requirement.instrument_uid
+        and status.feed is requirement.feed
+        and quality.policy_id == requirement.source_policy_id
+        and quality.state in {"LIVE", "STALE"}
+        and quality.event_recency_state in {"LIVE", "STALE"}
+        and quality.provider_session_state == "NOT_APPLICABLE"
+        and quality.provider_session_liveness_ms is None
+        and quality.complete
+        and not quality.gap_open
+    )
+
+
 async def _wait_for_live_snapshot_retry(
     client: AsyncDataLayerClient,
     *,
@@ -595,7 +628,7 @@ async def _wait_for_live_snapshot_retry(
 ) -> None:
     if error.code != "DATA_STALE":
         raise error
-    if product.feed.value not in {"QUOTE", *_QUIET_CONTINUITY_FEEDS}:
+    if product.feed.value not in {"QUOTE", "BOOK_SNAPSHOT", *_QUIET_CONTINUITY_FEEDS}:
         raise error
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -613,15 +646,24 @@ async def _wait_for_live_snapshot_retry(
         retryable = _quiet_quote_is_retryable(
             product, requirement, status
         ) or _fresh_quote_status_is_retryable(product, requirement, status)
+        retry_delay_seconds = _QUIET_QUOTE_RETRY_SECONDS
+    elif product.feed.value == "BOOK_SNAPSHOT":
+        retryable = _book_snapshot_status_is_refreshable(product, requirement, status)
+        retry_delay_seconds = _BOOK_SNAPSHOT_RETRY_SECONDS
     else:
         retryable = (
             _quiet_continuity_status_is_observable(product, requirement, status)
             or _fresh_continuity_status_is_observable(product, requirement, status)
         )
     if not retryable:
+        required_state = (
+            "a verified complete, gap-free snapshot state"
+            if product.feed.value == "BOOK_SNAPSHOT"
+            else "a live provider session"
+        )
         raise ContinuityError(
             "DATA_STALE",
-            f"C2 strict {product.feed.value} retry requires a live provider session",
+            f"C2 strict {product.feed.value} retry requires {required_state}",
         ) from error
     remaining = deadline - time.monotonic()
     if remaining <= 0:

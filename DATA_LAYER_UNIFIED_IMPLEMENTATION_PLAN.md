@@ -32296,3 +32296,79 @@ provider, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path
 changed during this source gate. The next permitted action is one fresh
 four-identity C2 receipt on the restored edge; it must still prove real
 two-venue warmup rather than relying on this test alone.
+
+**Final C2 interval-aware packet (`APPROVED / IN PROGRESS`, 2026-09-02).** One
+fresh evidence namespace pins source commit `27dd967` read-only into the
+otherwise existing immutable client image
+`qdl-v2-python:2.0.1-413683a@sha256:4125cb95e2954cdef8bc1a97a43b3cb82a61530328b544126d8170e2dbbcb17c`.
+It mounts only the committed `qdl/` source and changed C2 helper so its shared
+capacity import is exact; it does not build an image or alter a service. The
+`--rm` client runs on `executor_network`, copies only the four sealed paper
+identities into tmpfs, drops to UID `10001` with `NoNewPrivs` and no effective
+capabilities, and observes exactly `300s`. It reaches existing query/stream
+and permitted V1 local fallback endpoints only. It has no provider credentials
+or Docker socket, and cannot invoke broker, Gateway, Risk, order, signal,
+sizing or alpha state. Exit requires `299` product views, V2-primary quality,
+bounded 700/interval-capacity BAR warmup, signed cursor/reconnect, correct
+fallback policy, zero provider connections/order actions and removed cursor
+state. Any failure leaves all runtime roles unchanged.
+
+**C2 launcher preflight (`NON-EXECUTION INPUT FIX`, 2026-09-02).** The first
+disposable container exited at its shell entrypoint with `Permission denied`
+opening the read-only mounted bootstrap script. It never executed bootstrap,
+copied an identity, contacted V1/V2, created a cursor or wrote an evidence
+receipt; Docker removed it. The two private evidence scripts were changed from
+host-only mode to read-only `0644` and will be invoked through `/bin/sh`, which
+does not grant the client any additional privilege. This launcher correction
+does not count as a C2 run and changed no runtime role or data plane.
+
+**C2 privilege-drop preflight (`NON-EXECUTION LAUNCHER FIX`, 2026-09-02).** A
+second disposable launch also stopped before bootstrap because the immutable
+image defaults to UID `10001`, while the bootstrap intentionally needs a
+brief root phase only to copy sealed identity material into tmpfs before
+dropping it. A network-disabled, read-only probe proves that explicit
+`--user 0:0` followed by the existing `setpriv --reuid=10001 --regid=10001
+--clear-groups --inh-caps=-all --ambient-caps=-all --no-new-privs` produces
+UID/GID `10001`, no effective/permitted/inheritable/ambient capabilities and
+`NoNewPrivs=1`. The actual client will use exactly that bootstrap boundary;
+root has no network-only execution code, Docker socket or lasting evidence
+write path. The two failed launchers self-removed before identity copy, V1/V2
+request, cursor creation or data action, so neither is an acceptance attempt.
+
+**BOOK_SNAPSHOT receipt correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-02).** The first real client reached V2 under the required non-root
+boundary and failed at `Trading System / OKX DOGE / BOOK_SNAPSHOT` before its
+300-second observation. The manifest declares a `60s` snapshot freshness SLA,
+but the C2 query path incorrectly used its generic `15s` transport deadline
+and only permitted retry for quote/trade/book-delta continuity feeds. A
+verified book snapshot has no stream-session liveness field by design; it must
+be allowed to wait through its own declared renewal cadence only while typed
+status remains identity-matched, `LIVE` or `STALE`, complete and gap-free with
+`NOT_APPLICABLE` session state. This does not accept stale data: the next
+snapshot must still pass the original V2 freshness admission before the fixed
+deadline. The correction is limited to C2's client timeout/retry policy and
+adds positive plus gap/mismatched-state regressions. No data-plane service,
+provider or consumer configuration changes.
+
+**BOOK_SNAPSHOT source gate (`PASS / READY FOR ONE FRESH C2`, 2026-09-02).**
+The C2 client now derives the strict `BOOK_SNAPSHOT` request deadline from the
+declared snapshot freshness SLA (`60s` for the governed execution books), not
+the unrelated generic `15s` transport default. A stale snapshot is still never
+accepted: retry is allowed only if the typed status matches the same instrument,
+feed and source policy, remains `LIVE` or `STALE`, is complete and gap-free,
+and declares `NOT_APPLICABLE` session liveness as required for snapshot
+delivery. A gap, a conventional provider session field or any identity/policy
+mismatch fails closed. The retry cadence is one second in production; the unit
+test substitutes a millisecond delay solely to keep deterministic no-network
+tests fast.
+
+Evidence: the existing immutable reader image
+`qdl-v2-python:2.0.1-413683a@sha256:4125cb95e2954cdef8bc1a97a43b3cb82a61530328b544126d8170e2dbbcb17c`
+ran the read-only, `--network none`, UID `10001` regression matrix:
+`python -m unittest tests.test_phase103_consumer_receipt_harness tests.test_phase105_consumer_acceptance tests.test_phase105_identity_acceptance tests.test_phase105_fallback_acceptance tests.test_phaseb_bar_history_bootstrap tests.test_canonical_intervals`.
+Result: `107/107 PASS` in `15.460s`. The first run exposed only the new unit
+test's `0.25s` artificial deadline versus the real one-second retry cadence;
+the test now stubs that cadence rather than changing production behavior. No
+runtime role, provider request, Kafka/Redis/SQLite state, V1, Trading System,
+alpha or order path changed. The one permitted next action is a fresh
+299-product/four-identity/300-second no-order C2 receipt in a new namespace.
