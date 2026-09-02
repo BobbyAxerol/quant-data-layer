@@ -31282,3 +31282,25 @@ catalog/instrument lineage updates. This proves the full compiler output is
 compatible with the mounted legacy subset; it has not written any runtime
 file, restarted a role, called a provider or changed V1/Kafka/Redis/SQLite,
 Trading System, alpha or order state.
+
+**Native-ingestor authority log correction (`SOURCE PASS / IMMUTABLE IMAGE AND
+BOUNDED INGESTOR ROLLOUT PENDING`, 2026-09-02).** The first Binance ingestor recreate started with its rendered
+authority record correctly set to `RUST_PRIMARY`, and `RawPublisher` applies
+that record to the fenced sink to select `PrimaryRaw`. Read-only source
+inspection found its startup JSON nevertheless writes the literal
+`"RUST_SHADOW"`. This does not alter the selected sink/data behavior, but it
+would make operational evidence lie about the active authority. Correct the
+shared Rust startup formatter to report `config.authority.mode`, add a focused
+mode regression, then build one immutable Rust image and recreate the same two
+existing ingestors once each. No core, V1, Kafka/Redis/SQLite, query/stream,
+projector, Trading System, alpha or order role is in this correction.
+
+The formatter now maps the already-fenced `AuthorityMode` enum directly to
+`RUST_SHADOW`, `RUST_CANARY` or `RUST_PRIMARY`; it does not introduce a second
+authority decision. The full native-ingestor Rust suite passed **13/13** in the
+repository's dependency-complete, disposable builder image with network
+disabled, including the new three-mode startup-log regression. The builder is
+test-only. The next bounded action is to build one immutable shared Rust image,
+pin it only for `ingestor_binance_usdm` and `ingestor_okx_swap`, then recreate
+those two roles serially and verify their rendered authority, binding count,
+restart/OOM state and real V2 L2 materialization before the one final C2 run.

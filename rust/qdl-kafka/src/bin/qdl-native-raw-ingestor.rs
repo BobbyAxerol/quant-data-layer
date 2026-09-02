@@ -312,6 +312,14 @@ impl IngestorConfig {
     }
 }
 
+fn authority_mode_name(mode: &AuthorityMode) -> &'static str {
+    match mode {
+        AuthorityMode::RustShadow => "RUST_SHADOW",
+        AuthorityMode::RustCanary => "RUST_CANARY",
+        AuthorityMode::RustPrimary => "RUST_PRIMARY",
+    }
+}
+
 fn required(name: &str) -> Result<String, String> {
     env::var(name).map_err(|_| format!("required environment variable is missing: {name}"))
 }
@@ -2003,7 +2011,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         serde_json::to_string(&json!({
             "event": "qdl_native_raw_ingestor_started",
             "runtime": format!("{:?}", config.runtime).to_ascii_uppercase(),
-            "authority": "RUST_SHADOW",
+            "authority": authority_mode_name(&config.authority.mode),
             "bindings": config.bindings.len(),
             "latest_state_flush_ms": config.latest_state_flush_ms,
             "production_public_writes": 0,
@@ -2088,9 +2096,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        book_snapshot_renewal_period, next_connection_generation, partition_binance_bindings,
+        authority_mode_name, book_snapshot_renewal_period, next_connection_generation, partition_binance_bindings,
         partition_bindings, partition_okx_bindings, pending_binance_frame, pending_okx_frame,
-        DeliveryClass, LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
+        AuthorityMode, DeliveryClass, LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
         SessionLivenessWriter,
     };
     use std::collections::HashMap;
@@ -2130,6 +2138,13 @@ mod tests {
             delivery_class,
             l2: None,
         }
+    }
+
+    #[test]
+    fn startup_authority_name_matches_fenced_mode() {
+        assert_eq!(authority_mode_name(&AuthorityMode::RustShadow), "RUST_SHADOW");
+        assert_eq!(authority_mode_name(&AuthorityMode::RustCanary), "RUST_CANARY");
+        assert_eq!(authority_mode_name(&AuthorityMode::RustPrimary), "RUST_PRIMARY");
     }
 
     #[test]
