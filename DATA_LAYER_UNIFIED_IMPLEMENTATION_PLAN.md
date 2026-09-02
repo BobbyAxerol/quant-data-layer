@@ -30152,6 +30152,15 @@ with V1 retained only through a sealed per-product fallback policy. It does
 not change strategy/backtest logic, portfolio/risk configuration, broker
 credentials, broker execution or a venue's native capability.
 
+**Execution authorization (2026-09-02).** The owner authorized the complete
+five-phase rollout without per-slice approval prompts. Source work must merge
+to `dev` at the end of each coherent tested slice; `main` remains stable
+release-only. Every eligible crypto alpha proof and canary has a concurrent
+native Binance USD-M and OKX Swap observation. This authorization does not
+permit deletion of source/runtime state, a broad prune, V1 removal, or a
+cross-venue data substitution; the rollback and cleanup boundaries below stay
+mandatory.
+
 **Non-negotiable invariants.** Every crypto alpha proof runs a native Binance
 USD-M and OKX Swap pair concurrently. Provider bytes must be real V2 data;
 synthetic records are limited to deterministic unit/contract tests. A route
@@ -30193,6 +30202,18 @@ created per alpha, symbol or interval.
   of Git. The portable Trading System parser accepts every admitted binding.
 - Rollback: discard only the temporary sealed bundle; no catalog, Kafka, Redis,
   SQLite, provider or execution mutation occurs.
+
+**Phase A current-source gate (`PASS / DEV MERGE NEXT`, 2026-09-02).** The
+current Data Layer Phase-D branch was tested before integration in an existing
+immutable runtime image with the source mounted read-only, `--network none`,
+non-root UID `10001`, read-only root filesystem and tmpfs-only scratch.
+`python -m unittest` ran alpha-reader release, alpha workload identity,
+reference batch, V2 reference and reference/L2 consumer tests: **55 passed,
+1 expected ownership skip** in `6.883s`. The source diff adds only the sealed
+binding readability/identity tooling and completed-period reference semantics;
+no provider, runtime role, Kafka/Redis/SQLite, Trading System, alpha, database
+or order-path state was changed. The coherent branch head is `d59c2cd`; merge
+to `dev` is the next permitted Phase-A action.
 
 ### Phase C — Canonical reader/stream release artifact
 
