@@ -32128,3 +32128,91 @@ requirements; retain `qdl-v2-python:2.0.1-43faf3d` as the exact rollback
 image. No other role, data store, consumer, provider connection, Trading
 System, alpha or order path is in scope. A single fresh full C2 retry follows
 only if both readers pass.
+
+**C2 L2 typed-status finding (`FAIL-CLOSED / SHARED-LIVENESS DIAGNOSIS`,
+2026-09-02).** The bounded C2 retry reached the real V2 read plane through the
+two freshly rolled query replicas and stopped without any order, signal,
+provider-client, or durable-store action at `OKX.SWAP.PERPETUAL.DOGE-USDT /
+BOOK_DELTA`: the client received `required data exceeds freshness policy` with
+`C2 strict BOOK_DELTA retry requires a live provider session`. This is a real
+quality admission failure, not a launcher, long-final-BAR, identity, fallback,
+or missing-demand error. Read-only runtime inventory confirms that the single
+shared OKX ingestor has `BOOK` bindings for all five governed swaps (`BTC`,
+`ETH`, `SOL`, `DOGE`, `BNB`) and its normal 30-second snapshot-renewal loop is
+active. The next bounded source investigation is to read typed
+`BOOK_SNAPSHOT` and `BOOK_DELTA` status from both query replicas for all five
+OKX swaps, then correct only the shared provider-session lineage if the status
+proves the current heartbeat is not being joined to the corresponding logical
+delta. No additional container, per-symbol worker, feed policy/SLA relaxation,
+synthetic event, data-store mutation, V1, Trading System, alpha or order-path
+change is permitted. A fresh C2 run remains prohibited until the typed status
+and regression result are clean.
+
+**C2 L2 typed-status exit (`PASS / ONE RETRY AUTHORIZED`, 2026-09-02).** A
+fresh disposable read-only probe used the restricted Trading System paper
+identity against both active V2 query replicas. It observed all `20/20`
+governed OKX L2 products (five swaps x `BOOK_SNAPSHOT` and `BOOK_DELTA` x two
+replicas) as `LIVE`, complete and gap-free. Every `BOOK_DELTA`, including
+`DOGE-USDT-SWAP`, has `provider_session_state=LIVE`, a bounded
+`3-444ms` session-liveness age and a fresh `368-837ms` event; snapshots are
+fresh `1.2-23.6s` under their declared `60s` SLA. The probe contacted only the
+existing query replicas, reported `provider_connections=0` and
+`order_actions=0`, and its Docker client self-removed. This proves the earlier
+C2 observation was a transient session-generation transition that the existing
+shared session-lineage design correctly exposed fail-closed, not a missing
+symbol binding, cross-symbol mix, stale SLA, or provider-adapter defect.
+
+No source or runtime correction is required for that transient state. The
+single remaining C2 retry is now authorized: a fresh four-identity,
+300-second, no-order acceptance on the existing V2 reader/stream runtime. It
+must still fail closed on a renewed non-LIVE/gap/incomplete state; no retry or
+policy widening follows automatically if it fails.
+
+**C2 durable-BAR horizon correction (`IN PROGRESS / SHARED HARNESS + ONE EDGE
+CONVERGENCE`, 2026-09-02).** The authorized retry reached the V2 reader with a
+healthy L2 session and instead exposed a deterministic semantic mismatch at
+`BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR 12h`: C2 treated the consumer quota
+`max_warmup_rows=10,000` as an exact required retained history horizon, so the
+query correctly returned `PARTIAL_RESULT` when its bounded durable cache held
+fewer than ten thousand 12-hour bars. This is not a missing BAR, a provider
+failure, a stale quality admission, or a server-side partial response being
+accepted. The source policy deliberately caps durable bootstrap history to
+three years for long intervals because neither venue can truthfully provide
+ten thousand weekly/long-duration bars; requests above retained availability
+must use the existing explicit `FRESH_SNAPSHOT` history path and return typed
+coverage rather than invented rows.
+
+The repair has two bounded parts. First, C2 will use an explicit 700-row
+certification horizon for governed `BAR` products, while retaining the public
+per-consumer `10,000` quota and all `2,500/5,000/10,000` source contract gates.
+This is an acceptance workload size, not a reduction of caller capability or
+an SDK/endpoint policy change. Second, converge the one live shared
+`binance_bar_edge` from its observed old `1,000`-row environment to the
+already committed canonical `10,000` bound. The edge will receive a new
+namespaced checkpoint so it makes authentic, bounded provider history reads
+and normal Kafka/canonical/cache writes for the existing 140 governed bindings;
+no current state is erased. Its exact old image/config/checkpoint remain the
+rollback. The initial retained horizon is still interval-aware and capped at
+three years, so this step cannot imply fictional 10,000-week data.
+
+Required exit: deterministic helper/unit tests for the 700-row C2 horizon and
+the unchanged `10,000` quota; a read-only two-venue 700-row warmup sample; one
+role health/restart/OOM check after the edge bootstrap; then exactly one fresh
+four-identity 300-second C2 acceptance. No V1, Kafka topology/offsets,
+Redis/SQLite deletion or flush, Rust/ingestor/projector/query/stream role,
+Trading System, alpha or order-path mutation is in scope. If provider history
+cannot complete an interval-aware bounded window, the edge stays fail-closed
+and the old checkpoint/image is restored; no retry silently lowers coverage.
+
+**C2-horizon source gate (`PASS / RUNTIME UNCHANGED`, 2026-09-02).** The C2
+client now derives a certification-only `700`-row BAR request from its sealed
+product requirement, leaving the manifest's public `max_warmup_rows=10,000`
+quota unchanged. Non-BAR requirements retain their exact request object. The
+focused non-network, read-only, UID-`10001` matrix in the immutable
+`qdl-v2-python:2.0.1-413683a` image passed `54/54` in `5.986s`, including the
+new BAR-bound and non-BAR identity regressions plus the existing C2,
+identity/fallback and Phase-10.5 acceptance cases. No provider, runtime role,
+Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changed.
+The next permitted action is the already approved one-role bar-edge
+convergence using a fresh checkpoint; source rollback is the committed helper
+revert and runtime rollback is the recorded prior image/config/checkpoint.

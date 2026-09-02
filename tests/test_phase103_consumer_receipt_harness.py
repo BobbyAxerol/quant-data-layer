@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import ANY, call, patch
 
 from scripts.phase103_consumer_receipt_acceptance import (
+    _c2_requirement,
     _cursor_directory,
     _historical_bar_replay_requirement,
     _strict_snapshot_for_c2,
@@ -53,6 +54,30 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
+    def test_c2_bounds_bar_history_without_reducing_the_public_request(self):
+        requirement = DataRequirement(
+            instrument_uid="bar-uid",
+            feed=Feed.BAR,
+            consumer_grade=Grade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            interval="12h",
+            warmup_limit=10_000,
+            max_freshness_ms=86_400_000,
+        )
+        bounded = _c2_requirement(requirement)
+        self.assertEqual(requirement.warmup_limit, 10_000)
+        self.assertEqual(bounded.warmup_limit, 700)
+
+    def test_c2_keeps_non_bar_requirement_exact(self):
+        requirement = DataRequirement(
+            instrument_uid="trade-uid",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=3_000,
+        )
+        self.assertIs(_c2_requirement(requirement), requirement)
+
     def test_parser_requires_the_sealed_handoff_coordinates(self):
         parsed = parser().parse_args(
             [

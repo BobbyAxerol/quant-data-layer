@@ -76,6 +76,10 @@ DEFAULT_ALPHA_MANIFEST = ROOT / "consumers/stable/alpha-binance-paper.yaml"
 _QUIET_QUOTE_RETRY_SECONDS = 0.2
 _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS = 2.0
 _QUIET_CONTINUITY_FEEDS = frozenset({"TRADE", "BOOK_DELTA"})
+# C2 proves a representative retained BAR window, not an impossible request
+# for the full per-consumer quota on every calendar interval. Production
+# callers still declare their own bounded maxlen through the public SDK.
+_C2_BAR_WARMUP_ROWS = 700
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +196,26 @@ def _uses_historical_bar_replay(product: AcceptanceProduct) -> bool:
         product.delivery is DeliveryClass.DURABLE
         and product.feed.value == "BAR"
         and product.requirement.consumer_grade.value != "EXECUTION"
+    )
+
+
+def _c2_requirement(requirement):
+    """Keep the C2 BAR history proof bounded without reducing public quota.
+
+    The registered manifest quota remains the caller's `1..10,000` ceiling.
+    A fixed C2 proof must instead fit the real retained final-BAR window across
+    all native intervals; otherwise a 12-hour or weekly route would be asked
+    for decades of history merely because its client is allowed to request it.
+    """
+
+    if requirement.feed.value != "BAR":
+        return requirement
+    specification = requirement.warmup_specification
+    if specification is None or specification.rows is None:
+        raise ValueError("C2 BAR product requires a row-bounded warmup policy")
+    return replace(
+        requirement,
+        warmup_limit=min(_C2_BAR_WARMUP_ROWS, specification.rows),
     )
 
 
@@ -433,7 +457,7 @@ async def _query_product_with_quality(
     dict[str, object] | None,
 ]:
     """Query both replicas and retain only compact quality evidence for B3."""
-    requirement = sdk_requirement(product)
+    requirement = _c2_requirement(sdk_requirement(product))
     bar_alignment: dict[str, object] | None = None
     primary_started = time.perf_counter()
     if product.feed.value == "BAR":
@@ -693,7 +717,7 @@ async def _stream_resume(
     if product.delivery is not DeliveryClass.DURABLE:
         return None, None, (), ()
     cursor_path = _cursor_path(state_dir, product)
-    requirement = sdk_requirement(product)
+    requirement = _c2_requirement(sdk_requirement(product))
     historical_replay = _uses_historical_bar_replay(product)
     stream_requirement = requirement
     strict_watermark: int | None = None
