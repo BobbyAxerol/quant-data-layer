@@ -11,7 +11,11 @@ from qdl.runtime.stable_deployment import (
     stable_authority_record,
     write_stable_runtime_bundle,
 )
-from scripts.refresh_v2_rust_core_runtime import CORE_FILES, refresh
+from scripts.refresh_v2_rust_core_runtime import (
+    CORE_FILES,
+    _HOT_L2_SOURCE_IDS,
+    refresh,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,8 +49,8 @@ class RustCoreRuntimeRefreshTests(unittest.TestCase):
         for name in CORE_FILES:
             payload = json.loads((runtime / name).read_text())
             for binding in payload["core"]["bindings"]:
-                if binding.get("l2") is not None:
-                    binding["l2"].pop("snapshot_refresh_seconds", None)
+                if binding.get("source_id") in _HOT_L2_SOURCE_IDS:
+                    binding["l2"].pop("materialized_snapshot_interval_ms", None)
             (runtime / name).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         (runtime / "unrelated.json").write_text('{"untouched":true}\n')
         environment = root / "rollout.env"
@@ -69,7 +73,7 @@ class RustCoreRuntimeRefreshTests(unittest.TestCase):
             state_root=root / "state",
         )
 
-    def test_dry_run_proves_only_l2_cadence_changes(self):
+    def test_dry_run_proves_only_declared_hot_l2_materialization_changes(self):
         with tempfile.TemporaryDirectory() as raw:
             result = self._refresh(Path(raw), apply=False)
             self.assertEqual(result["status"], "DRY_RUN")
@@ -102,6 +106,14 @@ class RustCoreRuntimeRefreshTests(unittest.TestCase):
                     for binding in payload["core"]["bindings"]
                     if binding.get("l2") is not None
                 ))
+                self.assertEqual(
+                    {
+                        binding["source_id"]
+                        for binding in payload["core"]["bindings"]
+                        if binding.get("l2", {}).get("materialized_snapshot_interval_ms") == 1000
+                    },
+                    _HOT_L2_SOURCE_IDS,
+                )
                 self.assertTrue((root / "state" / "refresh" / "rollback" / name).is_file())
 
     def test_fails_closed_when_non_l2_binding_changes(self):

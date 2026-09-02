@@ -723,6 +723,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: binance-usdm-ethusdt-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -736,6 +737,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: binance-usdm-ethusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -1656,6 +1658,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: okx-swap-eth-usdt-swap-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1669,6 +1672,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: okx-swap-eth-usdt-swap-quote
   mode: RUST_NATIVE
   runtime: OKX

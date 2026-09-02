@@ -1127,11 +1127,59 @@ class StableDeploymentContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "OKX L2 acquisition"):
                 StableAcquisitionPlan.load(path, catalog=self.catalog)
 
+            invalid_hot_l2 = copy.deepcopy(payload)
+            for item in invalid_hot_l2["bindings"]:
+                if item["binding_id"] in {
+                    "binance-usdm-ethusdt-book_delta",
+                    "binance-usdm-ethusdt-book_snapshot",
+                }:
+                    item["l2"]["materialized_snapshot_interval_ms"] = 99
+            path.write_text(
+                yaml.safe_dump(invalid_hot_l2, sort_keys=False), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "materialized snapshot cadence"):
+                StableAcquisitionPlan.load(path, catalog=self.catalog)
+
         primary = copy.deepcopy(self.authority)
         primary["mode"] = "RUST_PRIMARY"
         primary["public_write_allowed"] = True
         with self.assertRaisesRegex(ValueError, "not an isolated shared Rust"):
             self.acquisition.core_config(catalog=self.catalog, authority=primary)
+
+    def test_hot_l2_materialization_is_core_only_and_keeps_provider_refresh(self):
+        core = self.acquisition.core_config(
+            catalog=self.catalog, authority=self.authority
+        )
+        hot = {
+            (item["venue"], item["market"], item["native_symbol"]): item["l2"]
+            for item in core["core"]["bindings"]
+            if item.get("l2", {}).get("materialized_snapshot_interval_ms") == 1_000
+        }
+        self.assertEqual(
+            hot,
+            {
+                ("BINANCE", "USDM", "ETHUSDT"): {
+                    "provider_protocol": "BINANCE_DIFF_DEPTH",
+                    "depth_per_side": 100,
+                    "snapshot_refresh_seconds": 30,
+                    "materialized_snapshot_interval_ms": 1_000,
+                },
+                ("OKX", "SWAP", "ETH-USDT-SWAP"): {
+                    "provider_protocol": "OKX_PUBLIC_BOOKS",
+                    "depth_per_side": 100,
+                    "snapshot_refresh_seconds": 30,
+                    "materialized_snapshot_interval_ms": 1_000,
+                },
+            },
+        )
+        ingestors = self.acquisition.native_ingestor_configs(
+            catalog=self.catalog, authority=self.authority
+        )
+        for config in ingestors.values():
+            for binding in config["bindings"]:
+                if binding["native_symbol"] in {"ETHUSDT", "ETH-USDT-SWAP"} and binding["feed"] == "BOOK":
+                    self.assertNotIn("materialized_snapshot_interval_ms", binding["l2"])
+                    self.assertEqual(binding["l2"]["snapshot_refresh_seconds"], 30)
 
     def test_generated_primary_authority_builds_every_shared_runtime_role(self):
         primary = stable_authority_record(

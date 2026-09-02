@@ -4,7 +4,7 @@
 The stable successor runtime is a role-config directory, not a generic bundle.
 This tool deliberately rewrites only ``core.json``, ``core-002.json`` and
 ``core-003.json`` after proving that their sole semantic change is the declared
-L2 snapshot refresh cadence.  It also advances only the immutable Rust image
+L2 materialized-snapshot cadence. It also advances only the immutable Rust image
 selector in the sibling Compose environment file.  All prior bytes are kept in
 one private rollback directory before the atomic replacements occur.
 """
@@ -40,6 +40,11 @@ CONFIRM = "REFRESH_QDL_V2_RUST_CORE_RUNTIME"
 DEFAULT_STATE_ROOT = Path("/home/bobby/.local/state/qdl-v2")
 CORE_FILES = ("core.json", "core-002.json", "core-003.json")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_HOT_L2_SOURCE_IDS = frozenset({
+    "binance-usdm-ethusdt-book-primary-v2",
+    "okx-swap-eth-usdt-swap-book-primary-v2",
+})
+_HOT_L2_MATERIALIZATION_INTERVAL_MS = 1_000
 
 
 def _sha256(value: bytes) -> str:
@@ -104,7 +109,7 @@ def _without_bindings(value: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _validate_only_snapshot_refresh(
+def _validate_only_materialized_snapshot_interval(
     active: Mapping[str, Any],
     expected: Mapping[str, Any],
     *,
@@ -134,18 +139,32 @@ def _validate_only_snapshot_refresh(
             raise ValueError(f"{file_name} has invalid L2 contract: {source_id}")
         current_l2 = dict(current_l2)
         refreshed_l2 = dict(refreshed_l2)
-        old_cadence = current_l2.pop("snapshot_refresh_seconds", None)
-        new_cadence = refreshed_l2.pop("snapshot_refresh_seconds", None)
+        old_provider_refresh = current_l2.pop("snapshot_refresh_seconds", None)
+        new_provider_refresh = refreshed_l2.pop("snapshot_refresh_seconds", None)
+        old_materialization = current_l2.pop("materialized_snapshot_interval_ms", None)
+        new_materialization = refreshed_l2.pop("materialized_snapshot_interval_ms", None)
         current_without["l2"] = current_l2
         refreshed_without["l2"] = refreshed_l2
         if current_without != refreshed_without:
             raise ValueError(f"{file_name} changes L2 binding fields beyond cadence: {source_id}")
-        if old_cadence is not None or new_cadence != 30:
-            raise ValueError(f"{file_name} has invalid L2 cadence transition: {source_id}")
+        if old_provider_refresh != new_provider_refresh or new_provider_refresh != 30:
+            raise ValueError(f"{file_name} changes provider refresh cadence: {source_id}")
+        if source_id in _HOT_L2_SOURCE_IDS:
+            if old_materialization is not None or new_materialization != _HOT_L2_MATERIALIZATION_INTERVAL_MS:
+                raise ValueError(f"{file_name} has invalid hot materialization transition: {source_id}")
+        elif old_materialization is not None or new_materialization is not None:
+            raise ValueError(f"{file_name} changes undeclared materialization cadence: {source_id}")
         l2_sources.append(source_id)
     if not l2_sources:
         raise ValueError(f"{file_name} has no L2 binding to refresh")
-    return {"file": file_name, "l2_source_ids": sorted(l2_sources)}
+    if not _HOT_L2_SOURCE_IDS.issubset(l2_sources):
+        raise ValueError(f"{file_name} lacks a declared hot materialization binding")
+    return {
+        "file": file_name,
+        "l2_source_ids": sorted(l2_sources),
+        "materialized_snapshot_interval_ms": _HOT_L2_MATERIALIZATION_INTERVAL_MS,
+        "hot_l2_source_ids": sorted(_HOT_L2_SOURCE_IDS),
+    }
 
 
 def _render_expected(
@@ -242,7 +261,7 @@ def refresh(
     )
     active_bytes = {name: (runtime_dir / name).read_bytes() for name in CORE_FILES}
     changes = [
-        _validate_only_snapshot_refresh(
+        _validate_only_materialized_snapshot_interval(
             _read_json(runtime_dir / name, field=f"active {name}"),
             json.loads(expected_bytes[name]),
             file_name=name,

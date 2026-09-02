@@ -58,6 +58,7 @@ class StableL2Acquisition:
     depth_per_side: int
     rest_snapshot_url: str | None
     snapshot_refresh_seconds: int | None
+    materialized_snapshot_interval_ms: int | None = None
 
     def validate(self, source: StableSourceBinding, acquisition: "StableAcquisitionBinding") -> None:
         if source.feed not in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}:
@@ -66,6 +67,10 @@ class StableL2Acquisition:
             raise ValueError("L2 depth is outside bounded range")
         if acquisition.mode != "RUST_NATIVE" or acquisition.sequence_policy != "CONTIGUOUS":
             raise ValueError("L2 acquisition requires lossless Rust-native continuity")
+        if self.materialized_snapshot_interval_ms is not None and not (
+            100 <= self.materialized_snapshot_interval_ms <= 60_000
+        ):
+            raise ValueError("L2 materialized snapshot cadence is outside bounded range")
         if self.provider_protocol == "BINANCE_DIFF_DEPTH":
             if (
                 source.instrument.identity.venue != "BINANCE"
@@ -100,11 +105,16 @@ class StableL2Acquisition:
         raise ValueError("L2 provider protocol is not certified")
 
     def core_mapping(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "provider_protocol": self.provider_protocol,
             "depth_per_side": self.depth_per_side,
             "snapshot_refresh_seconds": self.snapshot_refresh_seconds,
         }
+        if self.materialized_snapshot_interval_ms is not None:
+            result["materialized_snapshot_interval_ms"] = (
+                self.materialized_snapshot_interval_ms
+            )
+        return result
 
 
 def validate_shared_authority_record(authority: Mapping[str, Any]) -> None:
@@ -343,10 +353,16 @@ class StableAcquisitionPlan:
                 raise ValueError("stable acquisition 'enabled' must be a boolean")
             l2_raw = value.get("l2")
             if l2_raw is not None:
-                if not isinstance(l2_raw, dict) or set(l2_raw) != {
+                required_l2 = {
                     "provider_protocol", "depth_per_side", "rest_snapshot_url",
                     "snapshot_refresh_seconds",
-                }:
+                }
+                optional_l2 = {"materialized_snapshot_interval_ms"}
+                if (
+                    not isinstance(l2_raw, dict)
+                    or not required_l2 <= set(l2_raw)
+                    or set(l2_raw) - required_l2 - optional_l2
+                ):
                     raise ValueError("stable L2 acquisition fields are incomplete or unknown")
                 l2 = StableL2Acquisition(
                     provider_protocol=str(l2_raw["provider_protocol"]).upper(),
@@ -359,6 +375,11 @@ class StableAcquisitionPlan:
                     snapshot_refresh_seconds=(
                         int(l2_raw["snapshot_refresh_seconds"])
                         if l2_raw["snapshot_refresh_seconds"] is not None
+                        else None
+                    ),
+                    materialized_snapshot_interval_ms=(
+                        int(l2_raw["materialized_snapshot_interval_ms"])
+                        if l2_raw.get("materialized_snapshot_interval_ms") is not None
                         else None
                     ),
                 )
