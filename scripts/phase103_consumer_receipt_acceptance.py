@@ -849,18 +849,44 @@ async def _stream_resume(
                 )
             if not quiet_primary:
                 assert first is not None
-                first_view = market_data_view_from_stream(
-                    first,
-                    template=session.warmup.data[-1],
-                    requirement=stream_requirement,
-                )
+                first_replay_only = False
+                try:
+                    first_view = market_data_view_from_stream(
+                        first,
+                        template=session.warmup.data[-1],
+                        requirement=stream_requirement,
+                    )
+                except ContinuityError as error:
+                    # A snapshot cursor can race a delayed provider frame. The
+                    # frame is never execution input: accept it only as signed
+                    # replay state and immediately re-read strict current V2
+                    # quality below. Gaps, identity violations and every other
+                    # continuity error remain fail-closed.
+                    if historical_replay or error.code != "DATA_STALE":
+                        raise
+                    first_view = market_data_view_from_stream(
+                        first,
+                        template=session.warmup.data[-1],
+                        requirement=stream_requirement,
+                        replay_only=True,
+                    )
+                    first_replay_only = True
                 validate_product_view(
                     product,
                     first_view,
-                    require_current_quality=not historical_replay,
+                    require_current_quality=not historical_replay and not first_replay_only,
+                    **({"state_replay": True} if first_replay_only else {}),
                 )
                 session.acknowledge(first)
                 first_offset = first.logical_offset
+                if first_replay_only:
+                    current = await _strict_snapshot_for_c2(
+                        first_client,
+                        product=product,
+                        requirement=requirement,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    validate_product_view(product, current.data)
     finally:
         await first_client.close()
 

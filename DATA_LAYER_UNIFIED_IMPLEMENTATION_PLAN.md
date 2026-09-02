@@ -32708,3 +32708,51 @@ Gateway/Risk or order path changed. Next: commit this source slice, build one
 immutable disposable acceptance-client image, run its no-source-mount matrix,
 then run exactly one fresh 299-product/four-identity C2 receipt. The current
 reader runtime remains `c13c...5386` throughout.
+
+**C2 stale-first-frame diagnosis (`FAIL-CLOSED / SOURCE-ONLY ACCEPTANCE
+REPAIR`, 2026-09-03).** The replay-revalidation C2 progressed beyond DOGE BAR
+and then stopped at Trading System's `OKX BTC QUOTE` when its first stream
+frame was stale under the execution freshness policy. A governed read-only
+trace immediately afterward proves the actual route is healthy: V2 snapshot
+freshness `227ms`, typed status `235ms`, first stream frame `134ms`, all
+`LIVE`, complete, gap-free and execution-eligible at `3136504 -> 3136505`.
+This identifies an admissible replay race, not an OKX outage: a delayed frame
+can arrive after a fresh snapshot cursor and must never be treated as an
+execution price.
+
+The C2 harness must therefore handle only a first-frame `DATA_STALE` as
+replay-only state, then immediately require/validate a new strict current V2
+snapshot before accepting cursor continuity. `OPEN_SEQUENCE_GAP`, identity,
+session, finality, source-authority and a failed strict read remain fail-closed;
+no SLA or provider data is altered. Regression must cover stale-first/fresh
+readback and stale-first/stale-readback rejection. This changes acceptance
+semantics only, not SDK runtime delivery or any V2 reader service. After the
+source/image matrix, one fresh C2 receipt is again permitted.
+
+**C2 replay-revalidation image gate (`PASS / FINAL RECEIPT READY`,
+2026-09-02).** Commit `7cd0265` is sealed as
+`qdl-v2-python:2.0.4-7cd0265@sha256:8099b83488fb583e9d06c8021e2195c0724a12107ea921c2caf9d269741dd0cd`.
+The image-contained, no-source-mount matrix ran read-only as UID/GID `10001`
+with `--network none` and passed **178/178** with one explicit skip in
+`45.342s`. It combines the physical-tail reader/transport/bar-edge matrix with
+the C2 replay, identity, fallback and release-certification suite. The next
+operation is exactly one fresh C2 four-identity/299-product/300-second receipt
+using this image only as a disposable client; it does not recreate the already
+healthy reader roles on `c13c...5386`.
+
+**C2 stale-first-frame contract source gate (`PASS / IMMUTABLE CLIENT REBUILD
+REQUIRED`, 2026-09-03).** The acceptance harness now distinguishes a delayed
+first durable stream frame from a current execution price. Only a first-frame
+`DATA_STALE` outside historical BAR replay may be projected as `state_replay`;
+it is acknowledged solely for signed-cursor continuity and is immediately
+followed by a strict current V2 snapshot under the original requirement. The
+current read must pass normal freshness, session, gap, identity, finality and
+source-authority validation before resume proceeds. `OPEN_SEQUENCE_GAP`, every
+non-stale error, and a stale current read still fail closed. New regressions
+prove both the fresh-readback success and stale-readback rejection. The
+isolated source-mounted Docker matrix ran `64/64` in `5.985s` as UID/GID
+`10001`, read-only, capability-dropped and network-disabled. No runtime role,
+provider, Kafka, Redis, SQLite, V1, Trading System, alpha, Gateway/Risk or
+order path changed. Next is one immutable disposable client build, a
+no-source-mount regression, then one fresh 299-product/four-identity/300-second
+C2 receipt; readers remain on `c13c...5386`.

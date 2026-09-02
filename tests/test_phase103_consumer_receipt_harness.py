@@ -553,6 +553,135 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resumed_client.stream_calls, [(requirement, True)])
         readback.assert_awaited_once()
 
+    async def test_execution_quote_stale_first_frame_requires_current_snapshot_before_resume(self):
+        requirement = DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.QUOTE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            warmup_limit=0,
+            max_freshness_ms=3_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(
+            delivery=DeliveryClass.DURABLE,
+            feed=Feed.QUOTE,
+            interval=None,
+            requirement=SimpleNamespace(
+                consumer_grade=Grade.EXECUTION,
+                max_freshness_ms=3_000,
+            ),
+            identity=("trading-system.paper.stable", "instrument", "QUOTE", "", "policy"),
+        )
+        warmup = SimpleNamespace(data=[object()], watermark_offset=9)
+        first = StreamEvent(10, "resume-10", object())
+        resumed = StreamEvent(11, "resume-11", object())
+        first_session = self._Session(warmup=warmup, items=(first,))
+        resumed_session = self._Session(warmup=warmup, items=(resumed,))
+        first_client = self._Client(strict_warmup=warmup, session=first_session)
+        resumed_client = self._Client(strict_warmup=warmup, session=resumed_session)
+        first_current = SimpleNamespace(data=SimpleNamespace())
+        resumed_current = SimpleNamespace(data=SimpleNamespace())
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-stale-quote-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream",
+                    side_effect=(
+                        ContinuityError("DATA_STALE", "delayed quote"),
+                        SimpleNamespace(),
+                        SimpleNamespace(),
+                    ),
+                ) as project,
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    side_effect=(first_current, resumed_current),
+                ) as readback,
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                )
+
+        self.assertEqual(result, (10, 11, (), ()))
+        self.assertEqual(first_session.acknowledged, [first])
+        self.assertEqual(resumed_session.acknowledged, [resumed])
+        self.assertEqual(readback.await_count, 2)
+        self.assertNotIn("replay_only", project.call_args_list[0].kwargs)
+        self.assertTrue(project.call_args_list[1].kwargs["replay_only"])
+        self.assertTrue(project.call_args_list[2].kwargs["replay_only"])
+        self.assertIn(
+            call(product, first_current.data),
+            validate.call_args_list,
+        )
+        self.assertIn(
+            call(product, resumed_current.data),
+            validate.call_args_list,
+        )
+
+    async def test_execution_quote_stale_first_frame_fails_closed_when_current_snapshot_is_stale(self):
+        requirement = DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.QUOTE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            warmup_limit=0,
+            max_freshness_ms=3_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(
+            delivery=DeliveryClass.DURABLE,
+            feed=Feed.QUOTE,
+            interval=None,
+            requirement=SimpleNamespace(
+                consumer_grade=Grade.EXECUTION,
+                max_freshness_ms=3_000,
+            ),
+            identity=("trading-system.paper.stable", "instrument", "QUOTE", "", "policy"),
+        )
+        warmup = SimpleNamespace(data=[object()], watermark_offset=9)
+        first = StreamEvent(10, "resume-10", object())
+        first_client = self._Client(
+            strict_warmup=warmup,
+            session=self._Session(warmup=warmup, items=(first,)),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-stale-quote-block-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", return_value=first_client),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream",
+                    side_effect=(
+                        ContinuityError("DATA_STALE", "delayed quote"),
+                        SimpleNamespace(),
+                    ),
+                ),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    side_effect=ContinuityError("DATA_STALE", "current quote stale"),
+                ),
+                self.assertRaisesRegex(ContinuityError, "current quote stale"),
+            ):
+                await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                )
+
 
 class Phase103ReplayReadbackTests(unittest.IsolatedAsyncioTestCase):
     class _Session:
