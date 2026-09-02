@@ -31566,3 +31566,20 @@ mutation. If bootstrap or health fails, stop only this role, restore its exact
 checkpoint backup and start it on its unchanged image. After projector catch-up,
 prove both replicas return a contiguous governed DOGE warmup and run one new
 299-product C2 no-order client; the failed client does not count as acceptance.
+
+**DOGE BAR repair evidence (`PASS / READY FOR FRESH C2`, 2026-09-02).** A
+read-only real-provider preflight through the same Binance bar wrapper returned
+exactly 1,000 contiguous closed `DOGEUSDT 1m` rows and covered the full missing
+window. The stopped role's checkpoint backup was retained, then only the DOGE
+`1m` watermark was removed and byte-verified after installation. Starting the
+same `qdl-v2-python:2.0.0-7c8db16@sha256:b87b03fbde11a913e9e057b17886e7d7a2d457f2f1b12b4dab4c687f3ec21ea8`
+bar-edge container produced one normal bootstrap acknowledgement: 1,000
+provider rows, `973` already durable and `27` published (the 26 repaired
+historical bars plus the next naturally closed BAR). The role is running with
+restart `0` and `OOMKilled=false`. After projector catch-up, a read-only spool
+audit reported `gap_segments=0`; authenticated Trading-System-paper warmups
+through both V2 replicas returned 1,000 LIVE, complete, gap-free rows at the
+same watermark `4169` and tail open. No V1, topology, offsets, Redis/SQLite
+reset/delete, Rust, ingestor, query/stream role, Trading System, alpha or order
+path changed. The sole next operation is one fresh 299-product, four-identity,
+300-second C2 client with the same V1 rollback drill.
