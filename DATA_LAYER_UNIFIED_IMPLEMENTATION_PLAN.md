@@ -30783,3 +30783,42 @@ this source correction to `dev`, rebuild one canonical image from that exact
 revision, regenerate the prior invalid bundle under a new versioned release
 path, and rerun canonical Compose preflight before the already authorized
 four-role serial handoff.
+
+**Phase 54.2 Phase C canonical reader/stream handoff (`PASS / DEV
+PRE-RELEASE`, 2026-09-02).** Data Layer `dev@69629668a48471c6c6871d7fae98ef7ee515d8b2`
+built the one shared canonical reader/stream image
+`qdl-v2-python:2.0.0-6962966` / image ID
+`sha256:221aceb394b9ad55661bb6d81e0b1acad6a880ac18f75b1b44d03d9b4c0c3377`.
+OCI revision and release labels equal that source/release coordinate; it runs
+as `qdl:qdl` (`10001:10001`). With no source mount, `--network none`,
+read-only root, non-root UID and tmpfs-only scratch, the image regression
+matrix passed `64/64` with `1` expected ownership skip in `7.377s`.
+
+The verified, repeatable real-Compose inventory/compiler inputs remained
+unchanged. A new atomically sealed, secret-free bundle at
+`/home/bobby/.local/state/qdl-v2/releases/2.0.0-6962966` has `18` bindings,
+manifest SHA-256 `40e244b54d8c228e8cd967e5bc2b8f9a7ab5cce7570acc45b1fb99725220abe2`,
+candidate override SHA-256
+`60b865c2b538af0883d1ce2417da812247d97f47e146b59226786be817e4cbaf` and
+exact mixed-image rollback override SHA-256
+`6f0f7cd50788c769698e4f600d8e968cee3e47fc12b8063dcfa6dd882d9e7e15`.
+Canonical Compose rendered successfully: only `query_v2_1`, `query_v2_2`,
+`stream_v2_active` and `stream_v2_passive` select the candidate; Rust,
+Binance/OKX ingestors, projector and bar edge retain their prior selectors.
+
+The approved serial handoff recreated exactly `query_v2_2`, `query_v2_1`,
+the observed standby `stream_v2_passive`, then the observed lease holder
+`stream_v2_active`, always with `--no-deps`. Every role is Docker healthy on
+the candidate, restart count `0`, OOM `false`; both query replicas return mTLS
+`READY`; stream lease converged to exactly one `READY` (`stream_v2_passive`)
+and one `STANDBY` (`stream_v2_active`). Post-roll RSS was `111.8`, `197.3`,
+`109.6` and `115.3 MiB` respectively, below the unchanged `512 MiB` cgroup;
+the bounded eight-minute error scan found `0` fatal/panic/OOM/traceback/
+exception/not-ready/unavailable matches for each role. No V1 service, Kafka
+topology/offset, Redis, SQLite, Rust core, ingestor, bar edge, projector,
+Trading System, alpha, Gateway/Risk or order path was recreated, reset or
+otherwise mutated. The rejected invalid `2.0.0-a04c899` bundle was never
+referenced by Compose and remains only as a trace artifact until Phase E exact
+cleanup inventory; it is not a rollback coordinate. Phase C is closed. The
+only next permitted work is Phase D's declared disposable paired no-order
+alpha proof using this sealed bundle.
