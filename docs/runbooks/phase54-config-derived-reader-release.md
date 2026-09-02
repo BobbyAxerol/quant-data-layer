@@ -20,9 +20,10 @@ Record the following before build:
 - Data Layer catalog, reference manifest, release-routing and policy hashes.
 - Existing reader image digest and its four exact role names.
 
-The candidate tag format is `qdl-v2-python:<service-semver>-dev-<git-sha>`.
-The Docker image ID, rather than a mutable tag, is the rollout and rollback
-coordinate.
+The candidate tag format is `qdl-v2-python:<service-semver>-<git-sha>`.
+The Docker image ID, rather than a mutable tag, is the rollout coordinate.
+Rollback is a complete immutable mapping for each of the four reader roles;
+do not assume the previous query and stream roles share one image.
 
 ## Build And Source Gates
 
@@ -82,8 +83,9 @@ and `jwt/` read-only into that alpha; do not mount the parent state root. The
 alpha UID must parse its binding and read both private keys in an isolated
 no-network container before any V2 provider or Gateway/Risk call.
 
-`reader-image.override.yml` and `reader-rollback.override.yml` each change
-only these service image fields:
+`reader-image.override.yml` changes all four services to the one candidate
+image. `reader-rollback.override.yml` restores the exact pre-roll image for
+each service, so either file changes only these service image fields:
 
 ```text
 query_v2_1
@@ -92,8 +94,11 @@ stream_v2_active
 stream_v2_passive
 ```
 
-It is appended as the final Compose override from the canonical checkout
-`/home/bobby/data_layer`. Existing security, TLS, authority and bar-edge
+The manifest stores `rollback_images` with one immutable reference/ID pair per
+role. A missing role, mutable reference, duplicate service, or candidate-equal
+rollback ID fails bundle generation. It is appended as the final Compose
+override from the canonical checkout `/home/bobby/data_layer`. Existing
+security, TLS, authority and bar-edge
 override files are retained only after a rendered `docker compose config
 --quiet` proves they are still needed. A `/tmp` override or feature worktree
 is never a production selector.

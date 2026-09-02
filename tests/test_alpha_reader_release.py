@@ -15,8 +15,27 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPILER_PATH = ROOT / "scripts/compile_alpha_deployment_bindings.py"
 PREPARER_PATH = ROOT / "scripts/prepare_alpha_reader_release.py"
 IMAGE_ID = "sha256:" + "a" * 64
-ROLLBACK_IMAGE_ID = "sha256:" + "b" * 64
+QUERY_ROLLBACK_IMAGE_ID = "sha256:" + "b" * 64
+STREAM_ROLLBACK_IMAGE_ID = "sha256:" + "c" * 64
 SOURCE_REVISION = "c" * 40
+ROLLBACK_IMAGES = {
+    "query_v2_1": {
+        "image_reference": "qdl-v2-python:2.0.0-rollback-query-bbbbbbb",
+        "image_id": QUERY_ROLLBACK_IMAGE_ID,
+    },
+    "query_v2_2": {
+        "image_reference": "qdl-v2-python:2.0.0-rollback-query-bbbbbbb",
+        "image_id": QUERY_ROLLBACK_IMAGE_ID,
+    },
+    "stream_v2_active": {
+        "image_reference": "qdl-v2-python:2.0.0-rollback-stream-ccccccc",
+        "image_id": STREAM_ROLLBACK_IMAGE_ID,
+    },
+    "stream_v2_passive": {
+        "image_reference": "qdl-v2-python:2.0.0-rollback-stream-ccccccc",
+        "image_id": STREAM_ROLLBACK_IMAGE_ID,
+    },
+}
 
 
 def _module(name: str, path: Path):
@@ -109,8 +128,7 @@ class AlphaReaderReleaseTests(unittest.TestCase):
             source_revision=SOURCE_REVISION,
             image_reference="qdl-v2-python:2.0.0-dev-ccccccc",
             image_id=IMAGE_ID,
-            rollback_image_reference="qdl-v2-python:2.0.0-rollback-bbbbbbb",
-            rollback_image_id=ROLLBACK_IMAGE_ID,
+            rollback_images=ROLLBACK_IMAGES,
             apply=apply,
         )
 
@@ -138,18 +156,23 @@ class AlphaReaderReleaseTests(unittest.TestCase):
             for relative in ("inventory.json", "compilation-report.json", "reader-image.override.yml", "reader-rollback.override.yml", "release-manifest.json"):
                 self.assertEqual((first_dir / relative).read_bytes(), (second_dir / relative).read_bytes())
             manifest = json.loads((first_dir / "release-manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["schema"], "qdl.v2.alpha-reader-release.v2")
             self.assertEqual(manifest["image_id"], IMAGE_ID)
-            self.assertEqual(manifest["rollback_image_id"], ROLLBACK_IMAGE_ID)
-            self.assertEqual(manifest["rollback_image_reference"], "qdl-v2-python:2.0.0-rollback-bbbbbbb")
+            self.assertEqual(manifest["image_selector"], "qdl-v2-python:2.0.0-dev-ccccccc@" + IMAGE_ID)
+            self.assertEqual(manifest["rollback_images"], ROLLBACK_IMAGES)
             self.assertEqual(manifest["services"], list(self.preparer.READER_SERVICES))
             self.assertFalse(manifest["secret_values_recorded"])
             override = (first_dir / "reader-image.override.yml").read_text(encoding="utf-8")
-            self.assertEqual(override.count("image: qdl-v2-python:2.0.0-dev-ccccccc"), 4)
+            self.assertEqual(override.count("image: qdl-v2-python:2.0.0-dev-ccccccc@" + IMAGE_ID), 4)
             self.assertEqual(
                 (first_dir / "reader-rollback.override.yml").read_text(encoding="utf-8").count(
-                    "image: qdl-v2-python:2.0.0-rollback-bbbbbbb"
-                ),
-                4,
+                    "image: qdl-v2-python:2.0.0-rollback-query-bbbbbbb@" + QUERY_ROLLBACK_IMAGE_ID
+                ), 2,
+            )
+            self.assertEqual(
+                (first_dir / "reader-rollback.override.yml").read_text(encoding="utf-8").count(
+                    "image: qdl-v2-python:2.0.0-rollback-stream-ccccccc@" + STREAM_ROLLBACK_IMAGE_ID
+                ), 2,
             )
             self.assertNotIn("runtime", override.lower())
             self.assertNotIn("password", (first_dir / "release-manifest.json").read_text(encoding="utf-8").lower())
@@ -180,8 +203,7 @@ class AlphaReaderReleaseTests(unittest.TestCase):
                     source_revision=SOURCE_REVISION,
                     image_reference="qdl-v2-python:2.0.0-dev-ccccccc",
                     image_id=IMAGE_ID,
-                    rollback_image_reference="qdl-v2-python:2.0.0-rollback-bbbbbbb",
-                    rollback_image_id=ROLLBACK_IMAGE_ID,
+                    rollback_images=ROLLBACK_IMAGES,
                     apply=False,
                 )
             self._prepare(root / "fresh", apply=True)
@@ -201,10 +223,11 @@ class AlphaReaderReleaseTests(unittest.TestCase):
                     source_revision=SOURCE_REVISION,
                     image_reference="not-an-image",
                     image_id=IMAGE_ID,
-                    rollback_image_reference="qdl-v2-python:2.0.0-rollback-bbbbbbb",
-                    rollback_image_id=ROLLBACK_IMAGE_ID,
+                    rollback_images=ROLLBACK_IMAGES,
                     apply=False,
                 )
+            same_as_candidate = deepcopy(ROLLBACK_IMAGES)
+            same_as_candidate["query_v2_1"]["image_id"] = IMAGE_ID
             with self.assertRaisesRegex(self.preparer.ReleasePreparationError, "must differ"):
                 self.preparer.prepare_alpha_reader_release(
                     inventory_path=inventory,
@@ -214,11 +237,12 @@ class AlphaReaderReleaseTests(unittest.TestCase):
                     source_revision=SOURCE_REVISION,
                     image_reference="qdl-v2-python:2.0.0-dev-ccccccc",
                     image_id=IMAGE_ID,
-                    rollback_image_reference="qdl-v2-python:2.0.0-rollback-bbbbbbb",
-                    rollback_image_id=IMAGE_ID,
+                    rollback_images=same_as_candidate,
                     apply=False,
                 )
-            with self.assertRaisesRegex(self.preparer.ReleasePreparationError, "rollback image reference"):
+            incomplete = deepcopy(ROLLBACK_IMAGES)
+            incomplete.pop("stream_v2_passive")
+            with self.assertRaisesRegex(self.preparer.ReleasePreparationError, "cover exactly"):
                 self.preparer.prepare_alpha_reader_release(
                     inventory_path=inventory,
                     bindings_dir=bindings,
@@ -227,8 +251,21 @@ class AlphaReaderReleaseTests(unittest.TestCase):
                     source_revision=SOURCE_REVISION,
                     image_reference="qdl-v2-python:2.0.0-dev-ccccccc",
                     image_id=IMAGE_ID,
-                    rollback_image_reference="not-an-image",
-                    rollback_image_id=ROLLBACK_IMAGE_ID,
+                    rollback_images=incomplete,
+                    apply=False,
+                )
+            malformed = deepcopy(ROLLBACK_IMAGES)
+            malformed["stream_v2_active"]["image_reference"] = "not-an-image"
+            with self.assertRaisesRegex(self.preparer.ReleasePreparationError, "rollback image reference"):
+                self.preparer.prepare_alpha_reader_release(
+                    inventory_path=inventory,
+                    bindings_dir=bindings,
+                    report_path=report,
+                    output_dir=root / "release-four",
+                    source_revision=SOURCE_REVISION,
+                    image_reference="qdl-v2-python:2.0.0-dev-ccccccc",
+                    image_id=IMAGE_ID,
+                    rollback_images=malformed,
                     apply=False,
                 )
 

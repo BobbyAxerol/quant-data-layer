@@ -22,7 +22,7 @@ _PRIVATE_ARTIFACT_MODE = 0o640
 # directly into non-root alpha workloads, so the release copy must be readable
 # by that workload without making any credential artifact readable.
 _PUBLIC_BINDING_MODE = 0o444
-SCHEMA = "qdl.v2.alpha-reader-release.v1"
+SCHEMA = "qdl.v2.alpha-reader-release.v2"
 READER_SERVICES = (
     "query_v2_1",
     "query_v2_2",
@@ -176,11 +176,63 @@ def _validate_output(path: Path, *, inventory: Path, bindings: Path, report: Pat
     return output
 
 
-def _render_override(image_reference: str) -> bytes:
+def _image_selector(image_reference: str, image_id: str) -> str:
+    """Pin a readable local tag to the immutable image ID Compose must run."""
+
+    return f"{image_reference}@{image_id}"
+
+
+def _render_override(images_by_service: Mapping[str, Mapping[str, str]]) -> bytes:
     return (
         "services:\n"
-        + "".join(f"  {service}:\n    image: {image_reference}\n" for service in READER_SERVICES)
+        + "".join(
+            "  "
+            + service
+            + "\n    image: "
+            + _image_selector(
+                images_by_service[service]["image_reference"],
+                images_by_service[service]["image_id"],
+            )
+            + "\n"
+            for service in READER_SERVICES
+        )
     ).encode("utf-8")
+
+
+def _validate_rollback_images(
+    value: Mapping[str, Mapping[str, str]],
+    *,
+    candidate_image_id: str,
+) -> dict[str, dict[str, str]]:
+    if set(value) != set(READER_SERVICES):
+        raise ReleasePreparationError("rollback images must cover exactly the reader services")
+    result: dict[str, dict[str, str]] = {}
+    for service in READER_SERVICES:
+        item = value[service]
+        if not isinstance(item, Mapping) or set(item) != {"image_reference", "image_id"}:
+            raise ReleasePreparationError("rollback image entry is invalid")
+        image_reference = str(item["image_reference"] or "").strip()
+        image_id = str(item["image_id"] or "").strip()
+        if not _IMAGE_REFERENCE.fullmatch(image_reference):
+            raise ReleasePreparationError("rollback image reference is not a canonical reader tag")
+        if not _IMAGE_ID.fullmatch(image_id):
+            raise ReleasePreparationError("rollback image ID must be an immutable sha256 digest")
+        if image_id == candidate_image_id:
+            raise ReleasePreparationError("rollback image must differ from candidate image")
+        result[service] = {"image_reference": image_reference, "image_id": image_id}
+    return result
+
+
+def _parse_rollback_role(value: str) -> tuple[str, dict[str, str]]:
+    service, separator, selector = value.partition("=")
+    image_reference, at, image_id = selector.rpartition("@")
+    if not separator or not at or not service or not image_reference or not image_id:
+        raise ReleasePreparationError(
+            "rollback role must be service=qdl-v2-python:<tag>@sha256:<digest>"
+        )
+    if service not in READER_SERVICES:
+        raise ReleasePreparationError("rollback role is outside the reader services")
+    return service, {"image_reference": image_reference, "image_id": image_id}
 
 
 def _write_json(path: Path, value: Mapping[str, Any]) -> bytes:
@@ -199,8 +251,7 @@ def prepare_alpha_reader_release(
     source_revision: str,
     image_reference: str,
     image_id: str,
-    rollback_image_reference: str,
-    rollback_image_id: str,
+    rollback_images: Mapping[str, Mapping[str, str]],
     apply: bool,
 ) -> dict[str, object]:
     """Validate and atomically seal only public alpha-reader release artifacts."""
@@ -209,12 +260,16 @@ def prepare_alpha_reader_release(
         raise ReleasePreparationError("source revision must be a full lowercase Git SHA")
     if not _IMAGE_REFERENCE.fullmatch(image_reference):
         raise ReleasePreparationError("image reference is not a canonical reader tag")
-    if not _IMAGE_REFERENCE.fullmatch(rollback_image_reference):
-        raise ReleasePreparationError("rollback image reference is not a canonical reader tag")
-    if not _IMAGE_ID.fullmatch(image_id) or not _IMAGE_ID.fullmatch(rollback_image_id):
-        raise ReleasePreparationError("candidate and rollback image IDs must be immutable sha256 digests")
-    if image_id == rollback_image_id:
-        raise ReleasePreparationError("candidate image must differ from rollback image")
+    if not _IMAGE_ID.fullmatch(image_id):
+        raise ReleasePreparationError("candidate image ID must be an immutable sha256 digest")
+    candidate_images = {
+        service: {"image_reference": image_reference, "image_id": image_id}
+        for service in READER_SERVICES
+    }
+    validated_rollback_images = _validate_rollback_images(
+        rollback_images,
+        candidate_image_id=image_id,
+    )
 
     inventory, inventory_sha256 = _validate_inventory(inventory_path)
     report = _validate_report(report_path, inventory_sha256=inventory_sha256)
@@ -238,12 +293,13 @@ def prepare_alpha_reader_release(
         "source_revision": source_revision,
         "image_reference": image_reference,
         "image_id": image_id,
-        "rollback_image_reference": rollback_image_reference,
-        "rollback_image_id": rollback_image_id,
+        "image_selector": _image_selector(image_reference, image_id),
+        "rollback_images": validated_rollback_images,
         "services": list(READER_SERVICES),
         "inventory_sha256": inventory_sha256,
         "compilation_sha256": report["compilation_sha256"],
         "binding_count": len(binding_files),
+        "rollback_services": list(READER_SERVICES),
         "input_sha256": input_hashes,
         "secret_values_recorded": False,
         "runtime_mutations": 0,
@@ -276,10 +332,10 @@ def prepare_alpha_reader_release(
             shutil.copyfile(source, destination)
             destination.chmod(_PUBLIC_BINDING_MODE)
         override = staging / "reader-image.override.yml"
-        override.write_bytes(_render_override(image_reference))
+        override.write_bytes(_render_override(candidate_images))
         override.chmod(_PRIVATE_ARTIFACT_MODE)
         rollback_override = staging / "reader-rollback.override.yml"
-        rollback_override.write_bytes(_render_override(rollback_image_reference))
+        rollback_override.write_bytes(_render_override(validated_rollback_images))
         rollback_override.chmod(_PRIVATE_ARTIFACT_MODE)
         _write_json(staging / "release-manifest.json", manifest)
         staging.rename(output)
@@ -300,13 +356,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--image-reference", required=True)
     parser.add_argument("--image-id", required=True)
-    parser.add_argument("--rollback-image-reference", required=True)
-    parser.add_argument("--rollback-image-id", required=True)
+    parser.add_argument(
+        "--rollback-role",
+        action="append",
+        required=True,
+        metavar="SERVICE=IMAGE@SHA256",
+        help="repeat exactly once for each reader service",
+    )
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--confirm")
     args = parser.parse_args(argv)
     if args.apply and args.confirm != CONFIRM:
         raise RuntimeError(f"--apply requires --confirm {CONFIRM}")
+    rollback_images: dict[str, dict[str, str]] = {}
+    for raw in args.rollback_role:
+        service, image = _parse_rollback_role(raw)
+        if service in rollback_images:
+            raise ReleasePreparationError("rollback role is duplicated")
+        rollback_images[service] = image
     result = prepare_alpha_reader_release(
         inventory_path=args.inventory,
         bindings_dir=args.bindings_dir,
@@ -315,8 +382,7 @@ def main(argv: list[str] | None = None) -> int:
         source_revision=args.source_revision,
         image_reference=args.image_reference,
         image_id=args.image_id,
-        rollback_image_reference=args.rollback_image_reference,
-        rollback_image_id=args.rollback_image_id,
+        rollback_images=rollback_images,
         apply=args.apply,
     )
     print(json.dumps(result, indent=2, sort_keys=True))

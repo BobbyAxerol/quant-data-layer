@@ -30333,6 +30333,61 @@ container references and was removed; host root usage changed from
 `248523239424/310911414272` to `248521027584/310911414272` bytes. Rollback is
 a normal source revert; no runtime change is allowed in this slice.
 
+**Phase C exact-rollback correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-02).** Read-only runtime provenance found the four approved reader
+roles are intentionally not on one image: `query_v2_1` and `query_v2_2` are
+on `qdl-v2-python:2.0.0-a3f423d`
+(`sha256:dccc24b2f4a9f4f0aff58551cfe09f7ce8e7a5f42e4ef372b27b0c5b6b58d659`),
+while `stream_v2_active` and `stream_v2_passive` are on
+`qdl-v2-python:2.0.0-5edbc8c`
+(`sha256:b2a2848011c84a6f6eaafd74b5a1a5b4908e0c1f9cfdbeb78325c3c0c3a0985c`).
+The old reader-release generator can encode only one rollback image for all
+four roles, so it cannot make an exact recovery promise for this real state.
+Before any new reader build, change only the secret-free release generator,
+its unit tests and this runbook to require a complete per-role
+`service -> {image_reference, image_id}` rollback mapping, validate every
+service and immutable ID, and render the exact per-role rollback override.
+The new versioned bundle manifest must record that mapping and reject an
+incomplete/mutable/candidate-equal map. This is control-plane provenance only:
+no V1 endpoint, provider adapter, Kafka/Redis/SQLite state, Rust core,
+ingestor, projector, query/stream role, Trading System, alpha or order path
+changes in this correction. Source exit is deterministic bundle tests plus
+rendered mixed-image override proof; rollback is a normal source revert.
+
+**Phase C canonical reader packet (`APPROVED / FOLLOWS SOURCE EXIT`,
+2026-09-02).** After that correction is committed to `dev`, fast-forward the
+canonical checkout and build exactly one shared image from the resulting full
+source SHA as `qdl-v2-python:2.0.0-<sha>`. Seal one versioned release bundle
+from the existing actual inventory/compiler digests
+`7e27bebc...d1b2c5c` / `aef31665...d8d04e4`; render it only as the final
+image override together with the exact mixed rollback override. The sole
+eligible rollout roles are `query_v2_2`, `query_v2_1`, then the observed
+stream standby and lease holder. V1, Kafka topology/offsets, Redis, SQLite,
+Rust, ingestors, bar edge, projectors, Trading System, alpha and all order
+paths remain excluded. Per-role health/provenance/lease checks gate the next
+step; rollback recreates only the failed role with its recorded pre-roll image
+and unchanged runtime mount.
+
+**Phase C exact-rollback source gate (`PASS / SOURCE-ONLY`, 2026-09-02).**
+`prepare_alpha_reader_release.py` now emits the versioned
+`qdl.v2.alpha-reader-release.v2` control-plane manifest. Its candidate and
+rollback overrides use digest-pinned `tag@sha256` selectors, and every bundle
+requires exactly `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive` with their own canonical tag/immutable ID pair. Missing,
+duplicated, malformed or candidate-equal entries fail closed. The unit suite
+passed `10/10` for compiler/release behavior, including a deterministic
+mixed-query/stream rollback override and all reject paths. A separate actual
+inventory CLI dry run as the operator UID, network-disabled and read-only,
+accepted the current mixed map with `18` bindings and manifest SHA-256
+`5bdcfb7c917ccc380773a4e2d5ca5e194308288188291ed88ffca5173b43e7ae`;
+the temporary output was tmpfs-only and no release bundle was written. The
+initial UID-10001 attempt correctly could not traverse the operator-only input
+directory, confirming that bundle generation remains an operator action rather
+than a reader privilege. No source provider, container, Kafka/Redis/SQLite,
+V1, Trading System, alpha or order-path state changed. This source slice is
+ready to commit to `dev`; only the subsequent packet may build or recreate the
+four reader roles.
+
 **Phase C bounded reader packet (`OWNER-APPROVED / PRE-BUILD`, 2026-09-02).**
 The candidate is one shared image tag `qdl-v2-python:2.0.0-5edbc8c`, built
 from Data Layer `dev@5edbc8c7707be3a0f57117d7b78bc6d7f0f8e89a`; the exact
