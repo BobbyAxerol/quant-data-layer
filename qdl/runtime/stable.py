@@ -31,6 +31,7 @@ from qdl.runtime.readiness import (
     MeasuredRuntimeReadiness,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_capacity import STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
 from qdl.runtime.stable_deployment import validate_shared_authority_record
 from qdl.runtime.stable_ingest import (
     StableHttpCanonicalSink,
@@ -63,14 +64,6 @@ logger = logging.getLogger(__name__)
 
 
 _STABLE_SPOOL_RECORD_FLOOR = 1_000_000
-# The public history contract remains capped at 10,000 rows.  A small physical
-# tail lets a verified late backfill coexist with that current market-time
-# window instead of evicting an otherwise required recent BAR by append order.
-_STABLE_SPOOL_PUBLIC_PARTITION_WINDOW = 10_000
-_STABLE_SPOOL_LATE_BACKFILL_HEADROOM = 64
-_STABLE_SPOOL_PARTITION_WINDOW = (
-    _STABLE_SPOOL_PUBLIC_PARTITION_WINDOW + _STABLE_SPOOL_LATE_BACKFILL_HEADROOM
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,10 +89,10 @@ def stable_spool_capacity(catalog: StableSourceCatalog) -> StableSpoolCapacity:
         raise ValueError("stable spool requires at least one physical partition")
     return StableSpoolCapacity(
         physical_partitions=physical_partitions,
-        max_partition_records=_STABLE_SPOOL_PARTITION_WINDOW,
+        max_partition_records=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
         max_records=max(
             _STABLE_SPOOL_RECORD_FLOOR,
-            physical_partitions * _STABLE_SPOOL_PARTITION_WINDOW,
+            physical_partitions * STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
         ),
     )
 

@@ -30,6 +30,10 @@ from qdl.adapters.okx.bar_edge import (
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
+from qdl.runtime.stable_capacity import (
+    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+    STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
+)
 from qdl.runtime.stable_deployment import (
     StableAcquisitionBinding,
     StableAcquisitionPlan,
@@ -40,7 +44,7 @@ from qdl.transport.kafka_raw import KafkaRawPublisher, KafkaRawPublisherConfig
 
 logger = logging.getLogger(__name__)
 
-_MAX_DURABLE_BAR_ROWS = 10_000
+_MAX_DURABLE_BAR_ROWS = STABLE_SPOOL_PUBLIC_PARTITION_WINDOW
 
 
 _STATE_SCHEMA_V2 = "qdl.stable-bar-edge-state.v2"
@@ -760,9 +764,13 @@ class StableBinanceBarEdge:
                     SELECT payload FROM events
                     WHERE stream = ? AND partition_key = ?
                     ORDER BY logical_offset DESC
-                    LIMIT 10000
+                    LIMIT ?
                     """,
-                    (source.canonical_stream, source.partition_key),
+                    (
+                        source.canonical_stream,
+                        source.partition_key,
+                        STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+                    ),
                 ).fetchall()
             finally:
                 connection.close()

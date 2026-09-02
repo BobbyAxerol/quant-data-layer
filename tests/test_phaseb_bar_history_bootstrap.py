@@ -40,6 +40,10 @@ from qdl.runtime.stable_bar_edge import (
     _canonical_cache_id,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_capacity import (
+    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+    STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
+)
 from qdl.runtime.stable_deployment import (
     StableAcquisitionPlan,
     stable_authority_record,
@@ -601,6 +605,57 @@ class StableBarBootstrapTests(unittest.TestCase):
                 self.assertEqual(
                     [json.loads(item.raw_frame_bytes)["row"][0] for item in publisher.batches[0]],
                     [120_000],
+                )
+            finally:
+                spool.close()
+
+    def test_durable_coverage_reads_physical_tail_without_widening_public_limit(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-physical-tail-") as directory:
+            spool, edge = self._cached_edge(directory, self._NoopPublisher())
+            try:
+                source, _acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(spool, source, open_ms=60_000)
+                payload = spool._connection.execute(
+                    "SELECT payload FROM events WHERE stream = ? AND partition_key = ?",
+                    (source.canonical_stream, source.partition_key),
+                ).fetchone()[0]
+
+                class Cursor:
+                    def fetchall(self):
+                        return [(payload,)]
+
+                class Connection:
+                    def __init__(self):
+                        self.calls = []
+
+                    def execute(self, statement, parameters):
+                        self.calls.append((statement, parameters))
+                        return Cursor()
+
+                    def close(self):
+                        return None
+
+                connection = Connection()
+                with patch.object(edge, "_assert_canonical_cache_identity"), patch(
+                    "qdl.runtime.stable_bar_edge.sqlite3.connect",
+                    return_value=connection,
+                ):
+                    covered = edge._durable_final_bar_opens(source, frozenset({60_000}))
+
+                self.assertEqual(covered, frozenset({60_000}))
+                self.assertEqual(STABLE_SPOOL_PUBLIC_PARTITION_WINDOW, 10_000)
+                self.assertEqual(STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW, 10_064)
+                self.assertEqual(
+                    connection.calls[0][1],
+                    (
+                        source.canonical_stream,
+                        source.partition_key,
+                        STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+                    ),
                 )
             finally:
                 spool.close()
