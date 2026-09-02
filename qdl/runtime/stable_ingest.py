@@ -22,7 +22,7 @@ from qdl.raw.envelope import validate_raw_envelope
 from qdl.runtime.lease import GatewayFenced
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.stream import DurableStreamGateway
-from qdl.transport import DurableEvent, SQLiteDurableSpool, StoredEvent
+from qdl.transport import BackpressureRequired, DurableEvent, SQLiteDurableSpool, StoredEvent
 
 
 _INGEST_SCHEMA = "qdl.v2.stable-canonical-ingest.v1"
@@ -194,6 +194,11 @@ def install_stable_canonical_ingest(
             )
         except GatewayFenced as error:
             raise HTTPException(status_code=409, detail="stable gateway was fenced") from error
+        except BackpressureRequired as error:
+            raise HTTPException(
+                status_code=503,
+                detail="stable canonical cache capacity temporarily unavailable",
+            ) from error
         duplicate_ids = [
             event.event_id
             for (_binding, _envelope, event), stored in zip(

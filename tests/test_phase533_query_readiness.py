@@ -13,6 +13,7 @@ from qdl.runtime.readiness import ComponentState
 from qdl.runtime.stable import (
     build_stable_spool,
     serve_stable_projector,
+    stable_spool_capacity,
     stable_readiness,
 )
 from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
@@ -109,19 +110,32 @@ class Phase533QueryReadinessTests(unittest.TestCase):
         finally:
             spool.close()
 
+    def test_catalog_derived_spool_capacity_covers_all_physical_windows(self):
+        catalog = SimpleNamespace(bindings=tuple(
+            SimpleNamespace(partition_key=f"physical/{index}") for index in range(101)
+        ))
+
+        capacity = stable_spool_capacity(catalog)
+
+        self.assertEqual(capacity.physical_partitions, 101)
+        self.assertEqual(capacity.max_partition_records, 10_000)
+        self.assertEqual(capacity.max_records, 1_010_000)
+
     def test_rebuildable_stable_spool_skips_open_time_integrity_scan(self):
         stable_config = SimpleNamespace(
             durable_state_dir=Path(self.temp.name) / "stable",
             cursor_ttl_seconds=60,
         )
+        catalog = SimpleNamespace(bindings=(SimpleNamespace(partition_key="physical/one"),))
         with patch.object(
             SQLiteDurableSpool,
             "_validate_integrity",
             side_effect=AssertionError("stable startup must not full-scan cache"),
         ):
-            spool = build_stable_spool(stable_config)
+            spool = build_stable_spool(stable_config, catalog)
         try:
             self.assertFalse(spool.config.verify_integrity_on_open)
+            self.assertEqual(spool.config.max_records, 1_000_000)
             self.assertTrue(spool.integrity_check())
         finally:
             spool.close()

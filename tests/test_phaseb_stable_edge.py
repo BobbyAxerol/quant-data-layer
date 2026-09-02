@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import tempfile
@@ -74,7 +75,7 @@ from qdl.runtime.stable_source import (
 )
 from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import DurableStreamGateway
-from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
+from qdl.transport import BackpressureRequired, DurableEvent, SQLiteDurableSpool, SpoolConfig
 from qdl.transport.kafka_projector import KafkaProjectorRecord
 from qdl.warmup import WarmupSpecification, WarmupTimeRange
 
@@ -2140,6 +2141,51 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(rejected.status_code, 401)
         finally:
             await sink.close()
+            await client.aclose()
+
+    async def test_canonical_ingest_maps_shared_spool_capacity_to_typed_503(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        raw_topic, _canonical_topic, raw_record, canonical_record = _broker_records(
+            binding, raw, event
+        )
+        app = FastAPI()
+        secret = b"phase-b-stable-capacity-secret-32"
+        install_stable_canonical_ingest(
+            app, gateway=self.gateway, catalog=self.catalog,
+            spool=self.spool, secret=secret,
+        )
+        body = json.dumps({
+            "schema": "qdl.v2.stable-canonical-ingest.v1",
+            "batch_id": "00000000-0000-4000-8000-000000000001",
+            "events": [{
+                "canonical": base64.b64encode(canonical_record.payload).decode("ascii"),
+                "raw_stream": raw_topic,
+                "raw_event_id": raw_record.event_id.hex(),
+                "raw_provider_envelope": base64.b64encode(raw_record.payload).decode("ascii"),
+            }],
+        }, sort_keys=True, separators=(",", ":")).encode()
+        signature = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        )
+        try:
+            with patch.object(
+                self.gateway,
+                "publish_many",
+                side_effect=BackpressureRequired("bridge max_records exhausted"),
+            ):
+                response = await client.post(
+                    "/internal/v2/canonical/events", content=body,
+                    headers={"X-QDL-Stable-Signature": signature},
+                )
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(
+                response.json(),
+                {"detail": "stable canonical cache capacity temporarily unavailable"},
+            )
+        finally:
             await client.aclose()
 
     async def test_signed_http_sink_chunks_by_exact_request_bytes(self):

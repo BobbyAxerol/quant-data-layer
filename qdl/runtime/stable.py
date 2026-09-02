@@ -62,6 +62,41 @@ from qdl.transport.kafka_projector import (
 logger = logging.getLogger(__name__)
 
 
+_STABLE_SPOOL_RECORD_FLOOR = 1_000_000
+_STABLE_SPOOL_PARTITION_WINDOW = 10_000
+
+
+@dataclass(frozen=True, slots=True)
+class StableSpoolCapacity:
+    """Catalog-derived hard bounds for the shared canonical replay cache."""
+
+    physical_partitions: int
+    max_partition_records: int
+    max_records: int
+
+
+def stable_spool_capacity(catalog: StableSourceCatalog) -> StableSpoolCapacity:
+    """Keep global capacity compatible with the catalog's physical windows.
+
+    Snapshot and delta bindings for a single book deliberately share one
+    partition. The record bound must therefore count physical keys rather than
+    logical product requirements, otherwise a larger manifest can deadlock the
+    shared cache before any declared partition window is reached.
+    """
+
+    physical_partitions = len({binding.partition_key for binding in catalog.bindings})
+    if physical_partitions <= 0:
+        raise ValueError("stable spool requires at least one physical partition")
+    return StableSpoolCapacity(
+        physical_partitions=physical_partitions,
+        max_partition_records=_STABLE_SPOOL_PARTITION_WINDOW,
+        max_records=max(
+            _STABLE_SPOOL_RECORD_FLOOR,
+            physical_partitions * _STABLE_SPOOL_PARTITION_WINDOW,
+        ),
+    )
+
+
 def _env_flag(
     env: Mapping[str, str], name: str, *, default: bool
 ) -> bool:
@@ -412,11 +447,14 @@ def build_stable_identity(
     return DataPlaneIdentityService(security, manifests, quota=quota)
 
 
-def build_stable_spool(config: StableRuntimeConfig) -> SQLiteDurableSpool:
+def build_stable_spool(
+    config: StableRuntimeConfig, catalog: StableSourceCatalog
+) -> SQLiteDurableSpool:
     config.durable_state_dir.mkdir(parents=True, exist_ok=True)
+    capacity = stable_spool_capacity(catalog)
     return SQLiteDurableSpool(SpoolConfig(
         path=config.durable_state_dir / "canonical-cache.sqlite3",
-        max_records=1_000_000,
+        max_records=capacity.max_records,
         max_payload_bytes=2 * 1024 * 1024 * 1024,
         max_storage_bytes=3 * 1024 * 1024 * 1024,
         max_partitions=100_000,
@@ -424,7 +462,7 @@ def build_stable_spool(config: StableRuntimeConfig) -> SQLiteDurableSpool:
         min_free_disk_bytes=512 * 1024 * 1024,
         consumer_ttl_seconds=config.cursor_ttl_seconds,
         replay_retention_seconds=24 * 3600,
-        max_partition_records=10_000,
+        max_partition_records=capacity.max_partition_records,
         verify_integrity_on_open=False,
     ))
 
@@ -521,8 +559,8 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     config.state_dir.mkdir(parents=True, exist_ok=True)
     manifests = load_stable_manifests(config)
     identity = build_stable_identity(config, manifests)
-    spool = build_stable_spool(config)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
+    spool = build_stable_spool(config, catalog)
     handoff = build_stable_handoff(config, spool)
     service, _backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
@@ -600,9 +638,9 @@ def create_stable_stream_runtime(
     config.state_dir.mkdir(parents=True, exist_ok=True)
     manifests = load_stable_manifests(config)
     identity = build_stable_identity(config, manifests)
-    spool = build_stable_spool(config)
-    handoff = build_stable_handoff(config, spool)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
+    spool = build_stable_spool(config, catalog)
+    handoff = build_stable_handoff(config, spool)
     async_redis = AsyncRedis.from_url(config.redis_url, decode_responses=True)
     lease = ActivePassiveGatewayLease(
         RedisGatewayLeaseStore(async_redis, prefix=config.redis_prefix),
@@ -692,8 +730,8 @@ async def serve_stable_projector() -> None:
     config = StableRuntimeConfig.from_environment("projector_v2")
     config.state_dir.mkdir(parents=True, exist_ok=True)
     manifests = load_stable_manifests(config)
-    spool = build_stable_spool(config)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
+    spool = build_stable_spool(config, catalog)
     assert config.kafka_cert_root is not None
     assert config.kafka_bootstrap_servers is not None
     assert config.kafka_client_id is not None
