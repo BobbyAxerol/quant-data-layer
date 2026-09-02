@@ -723,9 +723,11 @@ class BinanceUsdmReferenceAdapter:
         while pages < request.max_pages and len(selected) < request.limit:
             logical_start = cursor_start if direction == "FORWARD" else request.start_ms
             logical_end = request.end_ms if direction == "FORWARD" else cursor_end
+            provider_start = logical_start
+            provider_end = logical_end + boundary_tolerance_ms
             response = await page(
-                logical_start + provider_time_offset_ms,
-                logical_end + provider_time_offset_ms,
+                provider_start + provider_time_offset_ms,
+                provider_end + provider_time_offset_ms,
                 min(per_page, request.limit - len(selected)),
             )
             data = self._response_data(response, endpoint)
@@ -751,8 +753,10 @@ class BinanceUsdmReferenceAdapter:
                 raise ReferenceProviderError(f"Binance {endpoint} forward pagination made no progress")
             if direction == "BACKWARD" and oldest > cursor_end:
                 raise ReferenceProviderError(f"Binance {endpoint} backward pagination made no progress")
+            lower_selection_bound = request.start_ms
+            upper_selection_bound = request.end_ms + boundary_tolerance_ms
             for item, timestamp_ms in zip(page_observations, page_times):
-                if request.start_ms <= timestamp_ms <= request.end_ms:
+                if lower_selection_bound <= timestamp_ms <= upper_selection_bound:
                     prior = selected.get(timestamp_ms)
                     if prior is not None and prior != item:
                         raise ReferenceProviderError(

@@ -202,26 +202,25 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         calls = []
 
         def funding(symbol, *, start_time, end_time, limit, **kwargs):
-            del end_time, limit, kwargs
-            calls.append((symbol, start_time))
-            rows = {
-                1_000: [
-                    {"symbol": symbol, "fundingRate": "0.1", "fundingTime": "1003"},
-                    {"symbol": symbol, "fundingRate": "0.2", "fundingTime": "2000"},
-                ],
-                2_001: [
-                    {"symbol": symbol, "fundingRate": "0.3", "fundingTime": "3003"},
-                ],
-            }
-            return {"data": rows[start_time]}
+            del limit, kwargs
+            calls.append((symbol, start_time, end_time))
+            rows = [
+                {"symbol": symbol, "fundingRate": "0.1", "fundingTime": "100003"},
+                {"symbol": symbol, "fundingRate": "0.2", "fundingTime": "200000"},
+            ]
+            if end_time >= 300003:
+                rows.append(
+                    {"symbol": symbol, "fundingRate": "0.3", "fundingTime": "300003"}
+                )
+            return {"data": rows}
 
         result = await ReferenceBatch({("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
             funding_fetcher=funding, max_attempts=1, sleep=no_sleep,
         )}).fetch_one(ReferenceRequest(
             instrument=self.btc,
             product=ReferenceProduct.FUNDING_RATE,
-            start_ms=1_000,
-            end_ms=3_005,
+            start_ms=100_000,
+            end_ms=300_000,
             limit=3,
             page_size=2,
             max_pages=2,
@@ -230,11 +229,12 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ReferenceStatus.OK)
         self.assertEqual(
             [item.observed_at_ns // 1_000_000 for item in result.observations],
-            [1_003, 2_000, 3_003],
+            [100_003, 200_000, 300_003],
         )
         self.assertTrue(result.coverage.complete_left)
         self.assertTrue(result.coverage.complete_right)
-        self.assertEqual(calls, [("BTCUSDT", 1_000), ("BTCUSDT", 2_001)])
+        self.assertEqual(calls[0], ("BTCUSDT", 100_000, 360_000))
+        self.assertTrue(all(end_time == 360_000 for _symbol, _start_time, end_time in calls))
 
     async def test_funding_boundary_gap_beyond_tolerance_remains_partial(self):
         def funding(symbol, **kwargs):

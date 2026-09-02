@@ -30510,3 +30510,35 @@ network-disabled, read-only with tmpfs-only test state. `git diff --check` and
 required real UID-1000 proof because the intentionally private host state root
 is not directly traversable by the alpha process. No runtime role, provider,
 durable state, V1, Trading System, alpha service or order path changed.
+
+**Phase D two-identity materialization packet (`APPROVED / PRE-APPLY`,
+2026-09-02).** Invoke the committed helper through one disposable root Docker
+container per exact paper probe identity: `phase54-reference-binance` from the
+existing `alpha-binance` TLS/JWT sources and `phase54-reference-okx` from the
+existing `alpha-okx` TLS/JWT sources. Each helper has network disabled,
+read-only root/source mounts, tmpfs `/tmp`, and only the governed QDL state
+root bind-mounted writable for its new target. It may create only
+`workload-identities/<id>`; it must not mutate the protected source identity
+or existing release bundle. Then a UID-1000 alpha image mounts only the two
+leaf directories read-only and proves it can open both private keys without
+printing them. No running service, provider request, durable state, V1,
+Trading System, alpha process, Gateway/Risk or order path is included.
+
+**Phase D two-identity materialization (`PASS / RUNTIME UNCHANGED`,
+2026-09-02).** The helper created only
+`workload-identities/phase54-reference-binance` (manifest SHA-256
+`c7b0b95fc9d5533ba9ab25f2b2ec1dab35af6b746fb9801147a9b2f459c6c13d`) and
+`workload-identities/phase54-reference-okx` (manifest SHA-256
+`035c8ca6f80bbf11ce720e80c76cbc3bc2a35d4a8fd429a214914baf4439bfac`). The
+four protected source-key SHA-256 values were identical before/after. The host
+operator cannot traverse the new workload-owned `0500` leaf directories; two
+disposable non-network `execution-alpha-runtime:2.0.0-3f366a9` containers
+running UID/GID `1000:1000` successfully opened both mounted TLS and JWT
+private keys without printing them. No provider or V2 API request, service
+recreate, durable mutation, V1/Trading System/alpha process or order action
+occurred. The exact paired Binance USD-M/OKX Swap reference readers may now
+retry once with the new binding bundle and these leaf mounts only.
+
+**Phase D reference-window and funding-boundary correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The paired authenticated no-order diagnostic reached the real V2 reference plane with the active alpha manifest revisions (`9` Binance, `8` OKX) and no broker credential or durable alpha state. It exposed two bounded semantic defects rather than a provider outage: the reusable probe applied one daily closed-BAR right edge to every reference product, while funding is an independently settled series; and Binance funding rows may arrive a few milliseconds after an official settlement boundary although the adapter's existing tolerance was only applied after the provider response had already been bounded and filtered. The correction is deliberately narrow: retain raw provider timestamps and strict full-coverage/freshness checks, use a declared settled funding window for the probe while preserving completed-period windows for taker/basis and provider snapshot windows for OI/long-short, and make the existing Binance funding tolerance effective in the outbound pagination envelope and selection boundary. No TTL is widened, no result is fabricated, no cross-venue fallback is permitted, and V1, Kafka, Redis, SQLite, Rust, ingestors, projectors, Trading System, alpha services and every order path remain excluded. Required gates: deterministic boundary/coverage and stale-history regression tests, immutable source test subset, then one concurrent real Binance/OKX reference pair; any non-OK product remains a fail-closed result.
+
+**Phase D Binance funding-boundary source gate (`PASS / SOURCE-ONLY`, 2026-09-02).** `BinanceUsdmReferenceAdapter` now applies its pre-existing 60-second funding-settlement tolerance to the outbound provider end boundary and the accepted right-edge selection, while retaining the provider's raw timestamp in the canonical observation. It does not relax other products or make a full-coverage claim for a row outside the declared tolerance. A deterministic regression simulates a provider that withholds the final `+3ms` funding row unless the requested end is widened; it passes only with the real envelope and selection behavior. In immutable `qdl-v2-python:2.0.0-136c52e`, network-disabled/read-only/non-root source tests `tests.test_phase104_reference_batch`, `tests.test_phase113_reference_v2` and `tests.test_reference_l2_consumer_acceptance` passed `48/48` in `7.645s`; focused adapter coverage passed `25/25` in `0.235s`. The prior paired real diagnostic remains evidence only: Binance funding had a genuine `+5ms` provider settlement jitter and the requested daily right edge omitted it. No runtime service, provider configuration, durable state, V1, Trading System, alpha or order path changed. The source is ready for a single shared query-reader image after its companion Alpha Runtime source slice commits.
