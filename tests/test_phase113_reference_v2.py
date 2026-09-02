@@ -407,6 +407,63 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
 
+    async def test_execution_mark_refreshes_a_cached_value_that_crossed_its_bound(self):
+        clock = {"ns": NOW_NS}
+        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - 1_500_000_000)
+        registry = InstrumentRegistry()
+        registry.register(self.binance, [])
+        execution_grants = EntitlementPolicy((
+            EntitlementGrant(
+                source_id="BINANCE_DIRECT",
+                license_revision="phase113-test",
+                purposes=frozenset({AccessPurpose.INTERNAL_EXECUTION}),
+                products=frozenset({DataProduct.CANONICAL_SNAPSHOT}),
+                valid_from_ns=0,
+            ),
+        ))
+        service = V2QueryService(
+            instruments=InstrumentQuery(registry),
+            backend=MemoryMarketDataBackend(),
+            entitlements=execution_grants,
+            reference_batch=ReferenceBatch(
+                {("BINANCE", "USDM"): adapter},
+                clock_ns=lambda: clock["ns"],
+                # Keep the TTL valid so this proves freshness bypass rather
+                # than ordinary cache expiry.
+                monotonic=lambda: 0.0,
+            ),
+            reference_source_id=lambda _item: "BINANCE_DIRECT",
+            clock_ns=lambda: clock["ns"],
+        )
+        requirement = ReferenceDataRequirement(
+            instrument_uid=self.binance.instrument_uid,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id="crypto_liquid_v2",
+            limit=1,
+            page_size=1,
+            max_pages=1,
+            max_freshness_ms=2_000,
+        )
+        first = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("phase113-execution", (requirement,)),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertFalse(first.partial)
+        self.assertEqual(adapter.calls, 1)
+
+        # The cached source has now crossed 2s, but the refreshed provider
+        # observation is current. A cache hit must not turn it into stale data.
+        clock["ns"] += 600_000_000
+        adapter.observed_at_ns = clock["ns"]
+        second = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("phase113-execution", (requirement,)),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertFalse(second.partial)
+        self.assertEqual(adapter.calls, 2)
+        self.assertFalse(second.results[0].result.cache_hit)
+
     async def test_retryable_reference_result_reuses_shared_warmup_policy(self):
         adapter = RetryOnceReferenceAdapter()
         sleeps: list[float] = []

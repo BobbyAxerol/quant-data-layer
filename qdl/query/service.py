@@ -522,6 +522,20 @@ class V2QueryService:
         ) -> ReferenceBatchResult:
             _index, _requirement, request = candidate
             result = await self.reference_batch.fetch_one(request)
+            initial_problem = self._reference_problem(_requirement, request, result)
+            if (
+                initial_problem is not None
+                and initial_problem.code is CanonicalErrorCode.DATA_STALE
+                and result.cache_hit
+            ):
+                # A cache hit may have crossed this caller's governed
+                # freshness boundary after it was stored. Refresh the same
+                # catalog-bound provider request once; a genuinely stale
+                # provider observation remains DATA_STALE below.
+                result = await self.reference_batch.fetch_one(
+                    request,
+                    bypass_cache=True,
+                )
             # Rust provider admission deliberately communicates bounded
             # pressure through a typed retry delay.  Keep Rust as the only
             # admission authority and let the shared executor honor that

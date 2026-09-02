@@ -154,12 +154,28 @@ class ReferenceBatch:
 
         return tuple(await asyncio.gather(*(self.fetch_one(request) for request in requests)))
 
-    async def fetch_one(self, request: ReferenceRequest) -> ReferenceBatchResult:
+    async def fetch_one(
+        self,
+        request: ReferenceRequest,
+        *,
+        bypass_cache: bool = False,
+    ) -> ReferenceBatchResult:
+        """Resolve one request, optionally replacing a stale cached snapshot.
+
+        ``bypass_cache`` is intentionally an internal query-service recovery
+        primitive. It preserves the request identity and provider lane while
+        preventing an already diagnosed stale cache entry from being returned
+        a second time. It is not a generic retry policy.
+        """
         key = request.cache_key
         now = self._monotonic()
         async with self._lock:
             self._evict_expired(now)
-            cached = self._cache.get(key)
+            if bypass_cache:
+                self._cache.pop(key, None)
+                cached = None
+            else:
+                cached = self._cache.get(key)
             if cached is not None:
                 self._cache.move_to_end(key)
                 self._cache_hits += 1

@@ -31316,3 +31316,35 @@ running immutable image
 The Rust cores remain pinned to their existing c63 image and are excluded from
 this rollout. The disposable builder tag is retained only until this bounded
 evidence is complete, then removed under the phase cleanup rule.
+
+**C2 reference-cache freshness repair (`IN PROGRESS / PYTHON QUERY SOURCE
+ONLY`, 2026-09-02).** The first post-convergence C2 client exited before its
+observation window at the Binance BTC execution `MARK_INDEX_PRICE` request:
+the typed V2 response was correctly fail-closed as `DATA_STALE` against the
+declared `2,000ms` bound. A separate read-only query using the same Trading
+System identity then returned the same official `/fapi/v1/premiumIndex`
+product as `OK`, with provider observation age `1,094ms` and receipt age
+`720ms`; it did not contact a venue directly, write an order or mutate a
+service. The discrepancy is not an SLA reason to retry: `ReferenceBatch`
+caches any snapshot for two seconds without checking the requesting
+requirement's freshness limit. A source observation already around one second
+old can therefore be returned from cache after its `2,000ms` execution limit.
+
+The in-scope correction makes the query service bypass/refetch an `OK` cached
+result only when its newest provider observation no longer satisfies the
+current request's declared freshness. It preserves the strict provider
+timestamp, does not alter the `2,000ms` SLA, cache key, provider adapter,
+source lineage or external API. The refetch is exactly once and only after a
+cache-hit `DATA_STALE`; a provider result genuinely stale remains terminal
+`DATA_STALE`.
+
+The focused valid-cache, stale-cache-refresh and genuinely-stale regression
+passed **3/3**. The broader non-root, read-only, network-disabled matrix of
+reference, runtime convergence, L2, native-ingestor and handoff behavior
+passed **78/78** in `19.000s`; no provider or runtime role was accessed.
+After source commit, build one immutable Python query image, recreate only
+`query_v2_1` and `query_v2_2` serially, retain their current
+`sha256:4a2b8d55116d582c6e142be81259695002461dc7757d23cb85858e1eaf35da24`
+rollback image, then run exactly one fresh C2 client. No stream, core,
+ingestor, projector, V1, Kafka/Redis/SQLite, Trading System, alpha or order
+role is in this repair.
