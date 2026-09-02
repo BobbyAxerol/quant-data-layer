@@ -30751,3 +30751,35 @@ No alpha durable state, V1 fallback read, Gateway/Risk request, signal/sizing
 mutation, database/Redis test row or broker action was created. Phase D remains
 in progress only for the approved paired representative alpha-class no-order
 proofs.
+
+**Phase 54.2 Phase C release-render defect (`FAIL-CLOSED / SOURCE FIX`,
+2026-09-02).** The bounded canonical-reader preflight stopped before any
+container recreation because the newly sealed `reader-image.override.yml` was
+not valid YAML: the generator emitted each service name without its required
+mapping colon. This was a control-plane renderer defect, not a provider,
+reader, runtime or data-plane failure. The release bundle remains unconsumed;
+V1, Kafka topology/offsets, Redis, SQLite, Rust, ingestors, bar edge,
+projectors, Trading System, alpha and every order path remain unchanged. The
+in-scope repair is exactly one generator character plus a regression that
+parses both generated candidate and per-role rollback overrides with the same
+YAML parser used by Compose. The bundle must then be regenerated atomically
+from the unchanged candidate image and exact inventory/compiler digests; only
+after a successful canonical Compose render may the already approved four-role
+serial reader/stream packet resume. Rollback remains the recorded mixed-image
+per-role selector map; no broad cleanup or durable mutation is authorized.
+
+**Phase 54.2 Phase C release-render source gate (`PASS / SOURCE-ONLY`,
+2026-09-02).** The generator now emits a valid YAML service mapping for both
+candidate and exact per-role rollback overrides. The regression parses each
+generated override with PyYAML and verifies exactly the four permitted reader
+roles and their immutable selectors, closing the blind spot that allowed a
+text-count-only test to pass. In the existing immutable reader image with the
+working source mounted read-only, `--network none`, non-root UID `10001`,
+read-only root and tmpfs-only scratch, `tests.test_alpha_reader_release` and
+`tests.test_python310_compat` passed `7/7` in `1.887s`. No image, release
+bundle, Compose service, provider, V1/V2 data plane, alpha, Trading System,
+Gateway/Risk or order state was changed. The next operation is commit/push
+this source correction to `dev`, rebuild one canonical image from that exact
+revision, regenerate the prior invalid bundle under a new versioned release
+path, and rerun canonical Compose preflight before the already authorized
+four-role serial handoff.

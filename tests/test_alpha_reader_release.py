@@ -164,6 +164,20 @@ class AlphaReaderReleaseTests(unittest.TestCase):
             self.assertFalse(manifest["secret_values_recorded"])
             override = (first_dir / "reader-image.override.yml").read_text(encoding="utf-8")
             self.assertEqual(override.count("image: qdl-v2-python:2.0.0-dev-ccccccc@" + IMAGE_ID), 4)
+            parsed_override = yaml.safe_load(override)
+            self.assertEqual(set(parsed_override), {"services"})
+            self.assertEqual(set(parsed_override["services"]), set(self.preparer.READER_SERVICES))
+            self.assertTrue(
+                all(
+                    parsed_override["services"][service]["image"]
+                    == "qdl-v2-python:2.0.0-dev-ccccccc@" + IMAGE_ID
+                    for service in self.preparer.READER_SERVICES
+                )
+            )
+            parsed_rollback = yaml.safe_load(
+                (first_dir / "reader-rollback.override.yml").read_text(encoding="utf-8")
+            )
+            self.assertEqual(set(parsed_rollback["services"]), set(self.preparer.READER_SERVICES))
             self.assertEqual(
                 (first_dir / "reader-rollback.override.yml").read_text(encoding="utf-8").count(
                     "image: qdl-v2-python:2.0.0-rollback-query-bbbbbbb@" + QUERY_ROLLBACK_IMAGE_ID

@@ -188,7 +188,7 @@ def _render_override(images_by_service: Mapping[str, Mapping[str, str]]) -> byte
         + "".join(
             "  "
             + service
-            + "\n    image: "
+            + ":\n    image: "
             + _image_selector(
                 images_by_service[service]["image_reference"],
                 images_by_service[service]["image_id"],
