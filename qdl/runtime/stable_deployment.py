@@ -17,6 +17,7 @@ _MODES = frozenset({"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
 _SEQUENCE_POLICIES = frozenset({"NONE", "MONOTONIC", "CONTIGUOUS"})
 STABLE_TOPIC_PARTITIONS = 6
 STABLE_CORE_WORKER_COUNT = 3
+STABLE_CORE_DEDUP_CAPACITY = 100_000
 V2_REALTIME_RAW_TOPIC = "md.raw.realtime.v2"
 SHARED_REALTIME_CORE_GROUP_ID = "qdl-v2-realtime-core-v2"
 SHARED_REALTIME_CORE_ID_PREFIX = "qdl-v2-realtime-core"
@@ -559,7 +560,9 @@ class StableAcquisitionPlan:
                 "canonical_stream": self.canonical_topic,
                 "quarantine_stream": self.quarantine_topic,
                 "allow_test_provenance": False,
-                "dedup_capacity": 1_000_000,
+                # Kafka transactions atomically commit output and raw offsets;
+                # this is a bounded in-process replay guard, not durable state.
+                "dedup_capacity": STABLE_CORE_DEDUP_CAPACITY,
                 "bindings": bindings,
             },
             "raw_topics": [self.raw_topic],

@@ -30,6 +30,7 @@ from qdl.runtime.stable_deployment import (
     SHARED_REALTIME_CORE_GROUP_ID,
     SHARED_REALTIME_CORE_ID_PREFIX,
     STABLE_CORE_WORKER_COUNT,
+    STABLE_CORE_DEDUP_CAPACITY,
     AuthorityPromotionScope,
     StableAcquisitionPlan,
     stable_authority_record,
@@ -574,6 +575,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             }
             self.assertTrue(core["strict_subscription_scope"])
             self.assertEqual(core["raw_topics"], ["md.raw.realtime.v2"])
+            self.assertEqual(core["core"]["dedup_capacity"], STABLE_CORE_DEDUP_CAPACITY)
             self.assertEqual(
                 {item["source_id"] for item in core["core"]["bindings"]},
                 expected_sources,

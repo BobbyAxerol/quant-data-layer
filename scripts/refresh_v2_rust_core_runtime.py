@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
+    STABLE_CORE_DEDUP_CAPACITY,
     StableAcquisitionPlan,
     validate_shared_authority_record,
     write_stable_runtime_bundle,
@@ -45,6 +46,7 @@ _HOT_L2_SOURCE_IDS = frozenset({
     "okx-swap-eth-usdt-swap-book-primary-v2",
 })
 _HOT_L2_MATERIALIZATION_INTERVAL_MS = 1_000
+_PREVIOUS_STABLE_CORE_DEDUP_CAPACITY = 1_000_000
 
 
 def _sha256(value: bytes) -> str:
@@ -98,15 +100,18 @@ def _bindings(value: Mapping[str, Any], *, field: str) -> tuple[dict[str, Any], 
     return tuple(result)
 
 
-def _without_bindings(value: Mapping[str, Any]) -> dict[str, Any]:
+def _without_bindings_and_dedup_capacity(value: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
     result = dict(value)
     core = result.get("core")
     if not isinstance(core, Mapping):
         raise ValueError("core config lacks core object")
     normalized_core = dict(core)
     normalized_core.pop("bindings", None)
+    dedup_capacity = normalized_core.pop("dedup_capacity", None)
+    if not isinstance(dedup_capacity, int):
+        raise ValueError("core config lacks integer dedup capacity")
     result["core"] = normalized_core
-    return result
+    return result, dedup_capacity
 
 
 def _validate_only_materialized_snapshot_interval(
@@ -115,8 +120,18 @@ def _validate_only_materialized_snapshot_interval(
     *,
     file_name: str,
 ) -> dict[str, Any]:
-    if _without_bindings(active) != _without_bindings(expected):
+    active_without, active_dedup_capacity = _without_bindings_and_dedup_capacity(active)
+    expected_without, expected_dedup_capacity = _without_bindings_and_dedup_capacity(expected)
+    if active_without != expected_without:
         raise ValueError(f"{file_name} changes a non-binding core field")
+    if (
+        active_dedup_capacity not in {
+            _PREVIOUS_STABLE_CORE_DEDUP_CAPACITY,
+            STABLE_CORE_DEDUP_CAPACITY,
+        }
+        or expected_dedup_capacity != STABLE_CORE_DEDUP_CAPACITY
+    ):
+        raise ValueError(f"{file_name} has an invalid bounded dedup transition")
     before = _bindings(active, field=f"active {file_name}")
     after = _bindings(expected, field=f"expected {file_name}")
     before_ids = [str(item["source_id"]) for item in before]
@@ -150,7 +165,10 @@ def _validate_only_materialized_snapshot_interval(
         if old_provider_refresh != new_provider_refresh or new_provider_refresh != 30:
             raise ValueError(f"{file_name} changes provider refresh cadence: {source_id}")
         if source_id in _HOT_L2_SOURCE_IDS:
-            if old_materialization is not None or new_materialization != _HOT_L2_MATERIALIZATION_INTERVAL_MS:
+            if (
+                old_materialization not in {None, _HOT_L2_MATERIALIZATION_INTERVAL_MS}
+                or new_materialization != _HOT_L2_MATERIALIZATION_INTERVAL_MS
+            ):
                 raise ValueError(f"{file_name} has invalid hot materialization transition: {source_id}")
         elif old_materialization is not None or new_materialization is not None:
             raise ValueError(f"{file_name} changes undeclared materialization cadence: {source_id}")
@@ -164,6 +182,10 @@ def _validate_only_materialized_snapshot_interval(
         "l2_source_ids": sorted(l2_sources),
         "materialized_snapshot_interval_ms": _HOT_L2_MATERIALIZATION_INTERVAL_MS,
         "hot_l2_source_ids": sorted(_HOT_L2_SOURCE_IDS),
+        "dedup_capacity": {
+            "before": active_dedup_capacity,
+            "after": expected_dedup_capacity,
+        },
     }
 
 
@@ -244,8 +266,6 @@ def refresh(
         raise ValueError("active rollout environment is invalid")
     if _DIGEST.fullmatch(active_rust_image) is None or _DIGEST.fullmatch(new_rust_image) is None:
         raise ValueError("Rust image selectors must be immutable SHA-256 digests")
-    if active_rust_image == new_rust_image:
-        raise ValueError("Rust core runtime refresh requires a different immutable image")
     if apply:
         if output_dir is None:
             raise ValueError("apply requires an output directory")
@@ -272,6 +292,7 @@ def refresh(
     next_env = _replace_rust_image(
         active_env, expected_old=active_rust_image, new=new_rust_image
     )
+    image_selector_changed = active_env != next_env
     result: dict[str, Any] = {
         "schema": "qdl.v2.rust-core-runtime-refresh.v1",
         "status": "APPLIED" if apply else "DRY_RUN",
@@ -281,13 +302,14 @@ def refresh(
         "authority_bytes_preserved": True,
         "active_rust_image": active_rust_image,
         "new_rust_image": new_rust_image,
+        "image_selector_changed": image_selector_changed,
         "changes": changes,
         "files": {
             name: {"before": _sha256(active_bytes[name]), "after": _sha256(expected_bytes[name])}
             for name in CORE_FILES
         },
         "rollout_env_sha256": {"before": _sha256(active_env), "after": _sha256(next_env)},
-        "production_mutations": 0 if not apply else 4,
+        "production_mutations": 0 if not apply else len(CORE_FILES) + int(image_selector_changed),
     }
     if not apply:
         return result
@@ -311,8 +333,9 @@ def refresh(
                 target = runtime_dir / name
                 _write_atomic(target, expected_bytes[name], mode=0o644)
                 applied.append(target)
-            _write_atomic(rollout_env, next_env, mode=0o600)
-            applied.append(rollout_env)
+            if image_selector_changed:
+                _write_atomic(rollout_env, next_env, mode=0o600)
+                applied.append(rollout_env)
         except Exception:
             for target in reversed(applied):
                 backup = rollback_dir / ("rollout.env" if target == rollout_env else target.name)
