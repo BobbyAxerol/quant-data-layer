@@ -32408,6 +32408,19 @@ freshness convergence and one fresh disposable four-identity/299-product/300s
 C2 no-order receipt. No cache rebuild, flush, deletion, synthetic record or
 SLA relaxation is authorized.
 
+**C2 projector-memory launcher correction (`NON-EXECUTION / RETRY READY`,
+2026-09-02).** The first disposable C2 client proved its bootstrap boundary
+(UID/GID `10001`, no effective/permitted/inheritable/ambient capabilities and
+`NoNewPrivs=1`) and self-removed, then stopped before its first identity,
+market-data, cursor or fallback read because the packet omitted the existing
+read-only runtime bind that supplies `/runtime/authority.json`. The failure is
+therefore a packet mount defect, not a provider, V2 reader, fallback or C2
+acceptance result. The retry mounts only the already active
+`/home/bobby/.local/state/qdl-v2/phase103-shared-primary-e0bedff-retry-20260825T054740Z/runtime`
+directory read-only at `/runtime`; it changes no service, image, Kafka/Redis/
+SQLite state, V1, Trading System, alpha or order path. Fresh evidence stays in
+a new namespace, and the original failed launcher receipt remains preserved.
+
 **C2 projector memory/throughput repair (`APPROVED / IN PROGRESS`, 2026-09-02).** The capacity rollout exposed a separate bounded-runtime defect before C2 can be rerun. The current three existing projector roles share one Kafka group and one SQLite cache; `projector_v2_2` and `projector_v2_3` were OOM-killed at their `512 MiB` cgroup limit after authentic backlog catch-up, while `projector_v2` remains live at about `522 MiB` cgroup usage (`~385 MiB` anonymous PSS). The live passive-named stream is the active lease holder and reports `READY`; this is not a provider, lease or consumer identity failure. The single surviving projector is therefore insufficient to catch up canonical TRADE freshness promptly and C2 correctly remains fail-closed.
 
 Approved source scope is deliberately narrow and shared: replace the canonical HTTP sink's repeated full-JSON chunk measurement with linear bounded chunk accounting; make projector batch and pending limits explicit, bounded runtime configuration rather than a hard-coded `512` batch; bound the Confluent consumer prefetch queue; and assign only the three existing projector roles an evidence-backed `768 MiB` cgroup budget. No provider adapter, event identity, schema, Kafka topic/group/offset, Redis, SQLite data/file, V1, Rust, ingestor, query/stream, Trading System, alpha or order path changes. Source exit requires deterministic chunk-equivalence/max-byte tests, config-bound tests, existing projector/order/retention regression, full focused non-network reader matrix, and an immutable-image rerun. Runtime exit is a rolling recreate only of the three existing projector roles with the exact prior image/config retained as rollback; require all three running, no OOM/restart, accepted canonical ingestion, cache event-recency convergence across the governed five-symbol Binance/OKX TRADE set, then one fresh disposable 299-product/four-identity/300-second C2 receipt. Do not reset Kafka offsets, delete/flush the cache, synthesize records, relax freshness, or retry C2 before that evidence exists.
