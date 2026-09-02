@@ -31583,3 +31583,55 @@ same watermark `4169` and tail open. No V1, topology, offsets, Redis/SQLite
 reset/delete, Rust, ingestor, query/stream role, Trading System, alpha or order
 path changed. The sole next operation is one fresh 299-product, four-identity,
 300-second C2 client with the same V1 rollback drill.
+
+**C2 quiet `BOOK_DELTA` SDK admission correction (`APPROVED / SOURCE-ONLY`,
+2026-09-02).** The repaired C2 client reached the next governed route and
+failed closed only at the Trading-System-paper `OKX.SWAP.PERPETUAL.DOGE-USDT`
+`BOOK_DELTA` snapshot because `qdl_sdk.client._validate_query_payload` still
+accepted a quiet, connected execution-grade `TRADE` but rejected the
+equivalent explicitly governed `BOOK_DELTA` before the existing C2 continuity
+validator could classify it. A direct authenticated typed read immediately
+afterward from both V2 query replicas reported the same product `LIVE`,
+complete, gap-free, session-live, within the 45-second session SLA and
+`execution_eligible=false` solely because its last book mutation was quiet.
+
+**Narrow correction and invariant.** Generalize that SDK exception only to
+`BOOK_DELTA` with `event_recency_policy=OBSERVE`, stale event recency, a LIVE
+provider session, bounded declared session liveness, complete coverage and no
+open gap. It remains non-executable continuity/replay input. `BOOK_SNAPSHOT`,
+`QUOTE`, `MARK_INDEX_PRICE`, every `BLOCK` request, missing/expired/
+disconnected session, incomplete coverage and open sequence gap remain
+fail-closed. No manifest, Rust/provider, durable store, Kafka/Redis/SQLite,
+runtime role, V1, Trading System, alpha, Gateway/Risk or order behavior is in
+this source slice.
+
+**Exit, rollback and next boundary.** Add SDK unit regressions for the allowed
+quiet delta and the rejected session-SLA/session-state/gap/coverage/price-feed
+variants, then run the focused SDK/C2 acceptance matrix in an isolated
+no-network image. If any test fails, revert this source slice; the active
+reader image remains untouched. Only after source exit may one canonical
+reader/stream image be built and the already-approved four reader roles be
+rolled with `09e5d03` retained as exact rollback, followed by one fresh
+four-identity 300-second C2 acceptance.
+
+**Quiet `BOOK_DELTA` SDK source exit (`PASS / READY FOR BOUNDED READER ROLL`,
+2026-09-02).** `qdl_sdk.client` now centralizes the existing quiet-continuity
+exception. It preserves legacy `TRADE` behavior and admits `BOOK_DELTA` only
+with the explicitly governed `OBSERVE` policy, LIVE provider session, declared
+and in-bound session liveness, complete coverage and no open gap. It does not
+admit `BOOK_SNAPSHOT` or any price-bearing feed, and it does not change
+`execution_eligible=false`: a quiet delta is still non-executable replay
+evidence. The initial regression correctly showed that a missing session SLA
+is rejected even earlier at `DataRequirement` construction; the test now
+asserts that stronger contract boundary.
+
+`git diff --check` passed. The isolated immutable-image, non-root, read-only,
+network-disabled matrix passed **62/62 in 28.551s**:
+`test_qdl_sdk_stream_projection`, Phase-10.3/10.5 acceptance and release
+certification, five-liquid handoff, and alpha deployment bindings. It covers
+allowed quiet delta, missing SLA, `BLOCK`, disconnected session, open gap,
+incomplete coverage and quiet `BOOK_SNAPSHOT` rejection. No runtime role,
+provider, Kafka/Redis/SQLite, V1, Trading System, alpha, Gateway/Risk or order
+path was accessed. Next: commit this source-only slice; build one canonical
+reader/stream image, roll only the approved two query and two stream roles,
+then run exactly one fresh C2 client after normal health checks.

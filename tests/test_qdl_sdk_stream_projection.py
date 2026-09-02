@@ -472,6 +472,109 @@ class SdkStreamProjectionTests(unittest.TestCase):
                 warmup=False,
             )
 
+    def test_query_sdk_observes_only_governed_quiet_book_delta(self):
+        requirement = DataRequirement(
+            instrument_uid="uid-1",
+            feed=Feed.BOOK_DELTA,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=1_000,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+        )
+        data = template(Feed.BOOK_DELTA).model_dump(mode="json")
+        data["quality"].update(
+            {
+                "freshness_ms": 2_000,
+                "event_recency_state": "STALE",
+                "provider_session_state": "LIVE",
+                "provider_session_liveness_ms": 1,
+                "execution_eligible": False,
+            }
+        )
+        accepted = _validate_query_payload(
+            requirement,
+            {"request_id": "quiet-book-delta", "data": data},
+            warmup=False,
+        )
+        self.assertFalse(accepted.data.quality.execution_eligible)
+
+        blocked_policy = DataRequirement(
+            instrument_uid="uid-1",
+            feed=Feed.BOOK_DELTA,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=1_000,
+            event_recency_policy=StalePolicy.BLOCK,
+            max_session_liveness_ms=45_000,
+        )
+        with self.assertRaises(ContinuityError):
+            _validate_query_payload(
+                blocked_policy,
+                {"request_id": "blocked-book-delta", "data": data},
+                warmup=False,
+            )
+
+        with self.assertRaisesRegex(ValueError, "provider session SLA"):
+            DataRequirement(
+                instrument_uid="uid-1",
+                feed=Feed.BOOK_DELTA,
+                consumer_grade=Grade.EXECUTION,
+                source_policy_id="crypto_primary_v2",
+                max_freshness_ms=1_000,
+                event_recency_policy=StalePolicy.OBSERVE,
+            )
+
+        data["quality"]["provider_session_state"] = "DISCONNECTED"
+        with self.assertRaisesRegex(ContinuityError, "provider session"):
+            _validate_query_payload(
+                requirement,
+                {"request_id": "disconnected-book-delta", "data": data},
+                warmup=False,
+            )
+
+        data["quality"].update({"provider_session_state": "LIVE", "gap_open": True})
+        with self.assertRaisesRegex(ContinuityError, "open gap"):
+            _validate_query_payload(
+                requirement,
+                {"request_id": "gapped-book-delta", "data": data},
+                warmup=False,
+            )
+
+        data["quality"].update({"gap_open": False, "complete": False})
+        with self.assertRaisesRegex(ContinuityError, "execution eligible"):
+            _validate_query_payload(
+                requirement,
+                {"request_id": "partial-book-delta", "data": data},
+                warmup=False,
+            )
+
+        book_snapshot = template(Feed.BOOK_SNAPSHOT).model_dump(mode="json")
+        book_snapshot["quality"].update(
+            {
+                "freshness_ms": 2_000,
+                "event_recency_state": "STALE",
+                "provider_session_state": "LIVE",
+                "provider_session_liveness_ms": 1,
+                "execution_eligible": False,
+            }
+        )
+        snapshot_requirement = DataRequirement(
+            instrument_uid="uid-1",
+            feed=Feed.BOOK_SNAPSHOT,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=1_000,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+        )
+        with self.assertRaisesRegex(ContinuityError, "execution eligible"):
+            _validate_query_payload(
+                snapshot_requirement,
+                {"request_id": "quiet-book-snapshot", "data": book_snapshot},
+                warmup=False,
+            )
+
     def test_execution_book_requires_verified_generation(self):
         unverified = envelope(Feed.BOOK_SNAPSHOT)
         unverified.book_snapshot.sequence_verified = False
