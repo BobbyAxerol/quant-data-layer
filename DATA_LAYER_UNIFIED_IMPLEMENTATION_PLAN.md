@@ -32496,3 +32496,107 @@ Evidence: the network-disabled, read-only UID-`10001` matrix in existing immutab
 **C2 late-backfill coverage-reader correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The five-row provider-backed apply reached the live canonical SQLite writer: the DOGE `1h` partition grew to `10,005` physical rows and contains five real `FINAL` BAR envelopes at the exact approved openings. The client still timed out with four remaining because `StableBinanceBarEdge._durable_final_bar_opens()` reads only `LIMIT 10,000`; its own new physical late-backfill headroom therefore makes the first four retained rows invisible to the coverage reader. This is a narrow shared contract defect between physical spool retention and the reader, not a provider gap, Rust dedup fault, projector failure, query/stream consumer fault, or evidence of lost repair data. The source correction must centralize public (`10,000`) and physical (`10,064`) BAR window constants, retain the public API ceiling unchanged, and make durable coverage inspect the physical window. Required tests prove no caller can request more than `10,000` public BAR rows, while coverage sees a bounded late-backfill tail and is not confused by non-BAR or mismatched identity. Then build one immutable Python image, rolling-recreate only `binance_bar_edge` with existing mounts, use that image for a read-only zero-coverage verification, and only then resume C2. No cache reset, re-publish, V1, Kafka topology/offset mutation, Redis/SQLite deletion, Trading System, alpha or order-path change is allowed; the five raw/canonical writes already committed are preserved as real evidence.
 
 **C2 late-backfill coverage-reader source gate (`PASS / IMMUTABLE EDGE IMAGE REQUIRED`, 2026-09-02).** `qdl.runtime.stable_capacity` is now the single source for the public `10,000` BAR contract and the bounded `10,064` physical spool window. `stable_spool_capacity()` and `StableBinanceBarEdge` consume the same shared constants; durable final-BAR coverage binds the physical window as a SQLite `LIMIT` parameter, while public request validation remains capped at `10,000`. The new regression proves the reader requests the physical tail and still recognizes only an identity-matched final BAR; existing provider/gap/mismatch regressions remain in the same matrix. The isolated, network-disabled, read-only UID-`10001` matrix passed `55/55` in `11.763s`: `test_phase533_query_readiness`, `test_phaseb_bar_history_bootstrap`, `test_c419_fast_final_bar_delivery`, and `test_phase115c_bar_edge_schedule`. No runtime role or data state changed during this source gate. Next: commit this source slice, build one immutable Python image, rolling-recreate only `binance_bar_edge`, read-only verify zero missing for the already-persisted five provider BARs, then resume C2 without re-publishing them.
+
+**C2 coverage-reader edge rollout (`APPROVED / IN PROGRESS`, 2026-09-02).** Source commit `9e3a99f` was built as immutable `qdl-v2-python:2.0.2-9e3a99f@sha256:2ab6a946e5ca59e234063fb661a7a7738795dab124e371b5579db31febfd42e0`; the no-source-mount, network-disabled, read-only UID-`10001` image matrix passed `55/55` in `12.326s`. The runtime packet rolling-recreates exactly `binance_bar_edge` with this image, retaining its existing runtime/TLS/state/Redis/Kafka mounts, service name, network and authority record. The exact rollback coordinate is the current `qdl-v2-python:2.0.1-43faf3d@sha256:6090b3a6c1c6bc431a329ab85cad7fe61750a33dbed3a5bb2d264c532f211545` with the same mounts. No stream/query/projector/core/ingestor/V1 role, Kafka topology or offsets, Redis/SQLite reset/deletion, Trading System, alpha or order path is in scope. After the role returns running without OOM/restart, a disposable read-only coverage probe must report zero missing for the five already-canonical provider BARs; no re-publish is permitted.
+
+**C2 edge rollout manifest correction (`PASS / RECOVERY ROLLING REQUIRED`, 2026-09-02).** The first edge recreate failed before its event loop because the command omitted the pre-existing runtime overlay `/home/bobby/.local/state/qdl-v2/phase543-reader-binding-20260902/bar-edge-history-convergence-20260902T1815Z/bar-edge-history.override.yml`. Without it, Compose fell back to legacy `stable-crypto-bar-edge.json` (`state.v1`, four obsolete bindings), which the current V4-only runtime correctly rejects. The attempted same-image rollback repeated that command omission and also stopped before any provider request, Kafka publish, checkpoint persist or data-plane mutation. Read-only compatibility probes prove the overlay's exact V4 checkpoint `/var/lib/qdl-stable/runtime/phase54-alpha-demand-5edbc8c.history10000-20260902.json` matches current catalog/acquisition `8/16`, warmup `10,000`, canonical cache identity and 140 BAR bindings; it restores with 130 already checkpointed and preserves the existing bounded bootstrap behavior for the ten newly demanded OKX SOL BAR bindings. Correct recovery is a one-role recreate using the existing history overlay plus a disposable image-only overlay for `2ab6...42e0`. The image-only file is removed immediately after the service starts. This restores the original runtime configuration rather than copying/deleting a checkpoint or creating a new state namespace.
+
+**C2 edge recovery checkpoint selection (`PASS / ONE-ROLE RECOVERY`, 2026-09-02).** The history-`10000` checkpoint attempted the ten uncheckpointed OKX SOL bindings; its truthful provider history returned an authentic time gap and the edge retried fail-closed. The role remained running, but cannot progress while that incomplete bootstrap blocks the shared loop. A separate existing V4 checkpoint `phase54-alpha-demand-5edbc8c.json` is a strict match for the same current catalog/acquisition/cache identity and all 140 binding IDs; a disposable no-loop probe with its matching `QDL_STABLE_BAR_WARMUP_ROWS=1000` restored all 140 watermarks and issued a new generation successfully. `1000` is the edge's bootstrap retention parameter only; it does not reduce the public `10,000` request ceiling or the explicit provider `FRESH_SNAPSHOT` coverage contract. The recovery overlay therefore selects this complete real checkpoint and sets only the matching bootstrap value; current `10,000` bounded catch-up remains unchanged. This avoids fabricated provider history and prevents one known native long-history gap from blocking already-certified Binance/OKX BAR lanes.
+
+**C2 durable-coverage reader runtime exit (`PASS / ONE REAL C2 RECEIPT PENDING`, 2026-09-02).** The recovered `binance_bar_edge` now runs immutable `qdl-v2-python:2.0.2-9e3a99f@sha256:2ab6a946e5ca59e234063fb661a7a7738795dab124e371b5579db31febfd42e0` with the matching existing V4 checkpoint `phase54-alpha-demand-5edbc8c.json`, `warmup_rows=1000`, the unchanged catalog/acquisition/cache identity and all `140` BAR bindings checkpointed. It is `running`, has no OOM kill/restart, restores the same real provider-derived watermark generation and continues normal final-BAR ACKs. A disposable no-write, authenticated provider/cache probe on the formerly blocked `binance-usdm-dogeusdt-bar-1h` reads the physical `10,064` spool window and returns `missing_rows=0`; it publishes nothing and confirms the five already-committed provider BARs are visible to the corrected coverage reader. The next and only acceptance action is one fresh C2 four-identity, 299-product, true-300-second no-order receipt using the existing V2 query/stream endpoints and V1 local fallback policy. It may read V2/V1 only; it has zero provider, Gateway, Risk, order or state-mutation authority. Rollback is immediate by stopping/removing only the disposable C2 client; V1, Kafka topology/offsets, Redis, SQLite, all runtime roles, Trading System, alpha and order paths remain unchanged.
+
+**C2 retry 20260902T223058Z (`FAIL-CLOSED / READ-ONLY FRESHNESS DIAGNOSIS`, 2026-09-02).** The immutable `2ab6...42e0` C2 client passed its `116/116` no-source-mount, network-disabled preflight matrix. Its first two launcher starts stopped before an endpoint request because copied wrapper permissions omitted, respectively, world read/execute for the container mount and the documented bootstrap `--user 0:0`; both were corrected only on the disposable evidence scripts. The actual client then dropped to UID `10001`, `NoNewPrivs=1`, all effective/permitted/inheritable/ambient capabilities zero, and made no provider, Gateway, Risk, order or state mutation. It correctly stopped at `trading-system.paper.stable / OKX.SWAP.PERPETUAL.ETH-USDT / BAR 1m` with typed `required data exceeds its freshness policy`; it did not reach the 300-second observation. This is a real V2 quality decision, not a DOGE coverage regression or a basis for widening SLA. Next scope is read-only typed status, cache/watermark and bar-edge lineage for the five OKX liquid symbols on both query replicas; only a proven shared projection/provider defect may be repaired, then one new C2 receipt is permitted.
+
+**C2 OKX final-BAR projection attachment (`APPROVED / CONFIG-ONLY RUNTIME REPAIR`, 2026-09-02).** Read-only deployed-config inspection proves the C2 failure is a missing overlay, not a provider, quality-policy or Rust-core defect. The sealed V4 projection `/runtime/phase54-alpha-demand-5edbc8c/{catalog,acquisition}.yaml` contains all `140` binding identities and deliberately projects every enabled OKX Swap final BAR to the bounded Python provider-finality edge (`PYTHON_REST`), while the image-default acquisition plan declares the same routes `RUST_NATIVE`. The active edge retained only its state/warmup override and therefore read the image-default plan; it ACKed Binance only, leaving `OKX ETH 1m` stale. The corrected packet recreates only `binance_bar_edge` with immutable `2ab6...42e0` and the existing sealed `catalog.yaml`, `acquisition.yaml`, complete V4 checkpoint `phase54-alpha-demand-5edbc8c.json`, `warmup_rows=1000` and unchanged `max_catchup_rows=10000`. It permits normal authentic final-BAR writes through the existing raw -> Rust canonical -> projector/cache plane. It excludes V1, Kafka topology/offsets, Redis/SQLite reset/deletion, Rust/ingestors/projectors/query/stream, Trading System, alpha and order path. Rollback is one recreate of only the same edge with its prior image/config; no durable state is deleted. Exit requires live real-provider ACKs for both Binance and OKX final BAR lanes, no OOM/restart, and a fresh C2 receipt.
+
+**C2 sealed-BAR config hardening (`APPROVED / SOURCE + ONE-ROLE CONFIG ONLY`, 2026-09-02).** The source Compose contract will expose `QDL_STABLE_SOURCE_BINDINGS` and `QDL_STABLE_ACQUISITION_BINDINGS` as explicit optional runtime overrides with the current image paths as safe defaults. This does not change any default source deployment; it prevents a future bounded edge recreate from silently discarding an already-sealed projection. The one-role runtime override supplies the existing V4 catalog/acquisition paths plus state/warmup/image provenance. Gates are Compose render with the sealed env, stable catalog/acquisition validation and the focused final-BAR/C2 regression matrix before the sole edge recreate. Rollback is removal of the overlay/variables and the prior one-role image/config only. No bundle secret is printed or committed.
+
+**C2 source/runtime projector-bound reconciliation (`APPROVED / SOURCE-ONLY`, 2026-09-02).** The focused Compose contract test correctly caught an unrelated source drift before rollout: all three live projectors have `QDL_STABLE_MAX_PENDING_RECORDS=2048` under their approved `512 MiB` bound, while the current source Compose file had regressed to `1024` in all three service stanzas. The runtime is healthy; no projector is being recreated. The source must restore `2048` so the next ordinary deployment cannot silently halve the tested bounded backlog. This is a three-line declarative reconciliation, covered by the existing Compose isolation/capacity test; it does not widen memory, queue bytes, topology, V1, data plane or consumer authority.
+
+**C2 source/runtime projector-byte reconciliation (`APPROVED / SOURCE-ONLY`, 2026-09-02).** The same contract gate then identified the paired source drift: live projectors retain the approved `QDL_STABLE_MAX_PENDING_BYTES=33554432`, while all three source stanzas declared `16777216`. Restore the existing `32 MiB` tested limit in source together with the `2048` record bound. No runtime role changes, no memory limit increase, and no data-plane/consumer mutation is permitted.
+
+**C2 sealed-BAR mount correction (`FAIL-CLOSED / ONE-ROLE RECOVERY`, 2026-09-02).** The first sealed-projection recreate stopped before its event loop, provider request, Kafka publish or checkpoint write because the generic Compose environment mounted `/runtime` from `phase103...`, whereas the existing sealed BAR projection is under `session-liveness-43cdbe3.../runtime`. The container is cleanly `exited`, `restart=0`, `OOMKilled=false`; no data-plane mutation occurred. Recovery is still one role only: retain the same `2ab6...42e0` image and sealed override, but set only the Compose host `QDL_STABLE_RUNTIME_DIR` for this edge recreate to the existing session-liveness runtime directory. This makes the already-declared `/runtime/phase54-alpha-demand-5edbc8c/{catalog,acquisition}.yaml` paths resolvable. All other service mounts remain untouched because `--no-deps` targets only the edge. Rollback remains the prior one-role image/config.
+
+**C2 sealed-BAR mount recovery exit (`PASS / C2 RETRY READY`, 2026-09-02).** The one-role recovery is now `running` on immutable `2ab6...42e0`, `restart=0`, `OOMKilled=false`, restores the matched 140-binding V4 checkpoint and produces real provider final-BAR ACKs for both venue lanes. The first catch-up ACK contains the enabled OKX Swap BAR identities across BTC/ETH/SOL/DOGE/BNB; subsequent real `1m` ACKs include `okx-swap-eth-usdt-swap-bar-1m` and the other four liquid OKX swaps alongside their Binance USD-M peers. These are normal authentic provider -> raw Kafka -> Rust canonical -> projector/cache writes, not synthetic repair data. The sealed source/acquisition path is therefore the required stable edge contract. A fresh four-identity C2 no-order client will use a new evidence namespace; its inherited V1 fallback policy and all no-order exclusions remain unchanged.
+
+**C2 final no-order receipt (`IN PROGRESS`, 2026-09-02).** A prior C2 attempt
+stopped fail-closed before its 300-second observation at an OKX BAR freshness
+read; the root cause was the missing sealed acquisition projection now repaired
+by the one-role edge recovery above. Two disposable diagnostics were used only
+to validate the launcher topology and were not acceptance: the one-network
+probe correctly could not resolve the executor-network stream aliases, while
+the two-network probe demonstrated the full scope needs the declared 300-second
+window rather than a shortened diagnostic deadline. Both made no provider,
+Gateway, Risk, order or persistent-state mutation and are excluded from
+evidence. The one valid next operation is exactly one new four-identity,
+299-product, 300-second C2 client attached to the existing stable-internal and
+executor networks. It is read-only, non-root after bootstrap, has no order or
+provider authority, uses immutable image `2ab6...42e0`, and self-removes after
+writing only bounded receipt evidence. V1 remains the governed rollback path;
+all runtime services, Kafka/Redis/SQLite state, Trading System and alpha remain
+unchanged during this receipt.
+
+**C2 final launcher correction (`FAIL-CLOSED / RETRY READY`, 2026-09-02).**
+The first final-client creation inherited the immutable image's normal Uvicorn
+entrypoint rather than explicitly running `/bin/sh /bootstrap-c2.sh`. Its
+read-only root filesystem made that mistake fail before bootstrap, identity
+copy, endpoint, provider, stream, Gateway, Risk, order or state activity; the
+exited disposable container was removed. The retry changes only the test
+container entrypoint/command to the already-proven bootstrap pair. It keeps the
+same two existing networks, image, read-only inputs and bounded evidence path.
+
+**C2 DOGE 1h physical-tail reader diagnosis (`FAIL-CLOSED / SOURCE REPAIR`,
+2026-09-02).** The corrected final client reached V2 with its governed alpha
+identity and stopped at `BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR 1h` because the
+warmup returned `OPEN_SEQUENCE_GAP`. A read-only typed-status probe proves the
+latest tail itself is `LIVE`, complete, gap-free and execution-eligible; the
+warmup failure is therefore not a provider/session/SLA issue. A no-network,
+read-only audit of the canonical SQLite partition found `10,006` unique,
+market-time-contiguous final BAR opens and no duplicate payloads. The defect is
+the shared reader's contradictory retention view: the spool correctly retains
+the bounded physical `10,064` rows for authentic late backfills, but
+`StableSpoolQueryBackend` still scans only `10,000` rows by logical append
+offset. Six valid late-backfill rows fall just outside that scan even though
+their market times lie in the public warmup tail; the reader then correctly
+fails closed on the artificial gap.
+
+The in-scope repair is one shared source change: every internal BAR scan used
+to construct history, latest quality, stored events and gap status must read
+`STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW`, then sort/select the caller's market
+time window and retain the unchanged public maximum of `10,000` rows. It must
+not widen any public API/SDK quota, clear a gap manually, alter providers,
+Kafka, Redis, SQLite, V1, Trading System, alpha or order behavior. Regression
+must cover a physical tail containing late valid BARs whose logical offsets are
+old enough to fall outside a `10,000` append-tail scan, plus normal gaps and
+public-limit invariants. After source/image gates, only existing V2 query and
+stream readers may be rolled to consume the fix; a new full C2 receipt is then
+the sole acceptance action.
+
+**C2 physical-tail reader source gate (`PASS / IMMUTABLE READER HANDOFF
+READY`, 2026-09-02).** The repair centralizes the distinction between the
+public BAR ceiling and the small retained physical headroom. `SQLiteDurableSpool`
+now permits an internal tail read up to the explicit configured partition
+capacity only; default/public callers remain capped at `10,000`. The shared
+stable reader uses the physical `10,064` window only for BAR latest/history/
+quality/gap construction, then sorts by market time and returns the caller's
+unchanged bounded public result. Book and non-BAR paths retain their existing
+public bounds. A regression materializes `10,064` authentic-shaped rows where
+64 recent market-time repairs have old append offsets: a 700-BAR public warmup
+is ordered, full and gap-free, while a real missing bar remains fail-closed.
+
+The isolated source gate used the existing immutable
+`qdl-v2-python@sha256:2ab6a946e5ca59e234063fb661a7a7738795dab124e371b5579db31febfd42e0`
+with the candidate source mounted read-only, UID/GID `10001`, a read-only root,
+ephemeral `/tmp` and `--network none`. It passed **117/117** with one explicit
+skip in `33.853s`: stable reader/edge, durable transport, bounded bar-edge
+projection, fast final-bar delivery, C2 consumer acceptance and stable
+deployment. No runtime role, provider, Kafka, Redis, SQLite, V1, Trading
+System, alpha, Gateway/Risk or order path changed. `git diff --check` passed.
+
+**Next bounded operation.** Commit this source/documentation slice, build one
+canonical immutable Python reader image from that commit, rerun the same
+no-source-mount matrix, then rolling-recreate only `stream_v2_passive`,
+`stream_v2_active`, `query_v2_1` and `query_v2_2` with their exact current
+images retained as rollback coordinates. After healthy/restart-free checks,
+run exactly one fresh four-identity C2 no-order receipt. V1 and every other
+role remain unchanged.

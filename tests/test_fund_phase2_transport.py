@@ -145,6 +145,24 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
                 [row.event.payload for row in latest], [b"event-4", b"event-5"]
             )
 
+    def test_tail_allows_only_configured_internal_partition_headroom(self):
+        with self.spool(max_partition_records=10_064) as spool:
+            self.assertEqual(
+                spool.read_tail(
+                    stream=event(1).stream,
+                    partition_key=event(1).partition_key,
+                    limit=10_064,
+                ),
+                [],
+            )
+        with self.spool() as spool:
+            with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
+                spool.read_tail(
+                    stream=event(1).stream,
+                    partition_key=event(1).partition_key,
+                    limit=10_001,
+                )
+
     def test_partition_window_is_bounded_and_old_cursor_expires(self):
         with self.spool(max_records=10, max_partition_records=3) as spool:
             spool.append_many([event(index) for index in range(1, 6)])

@@ -443,10 +443,18 @@ class SQLiteDurableSpool:
         partition_key: str,
         limit: int = 100,
     ) -> list[StoredEvent]:
-        """Return the newest bounded partition window in logical order."""
+        """Return a bounded retained partition window in logical order.
 
-        if limit <= 0 or limit > 10_000:
-            raise ValueError("limit must be between 1 and 10000")
+        The public replay/query contract remains capped independently at
+        10,000 rows.  A stable runtime may retain a small, explicitly bounded
+        per-partition headroom for authentic late backfills; its internal
+        reader must be able to inspect that configured physical window before
+        selecting the public market-time tail.
+        """
+
+        max_tail_rows = max(10_000, self.config.max_partition_records)
+        if limit <= 0 or limit > max_tail_rows:
+            raise ValueError(f"limit must be between 1 and {max_tail_rows}")
         with self._lock:
             rows = self._connection.execute(
                 """

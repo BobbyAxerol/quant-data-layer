@@ -354,8 +354,8 @@ services:
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
       # Keep the Kafka and Python working sets bounded while a shared durable
       # cache catches up; every durable event remains Kafka-authoritative.
-      QDL_STABLE_MAX_PENDING_RECORDS: "1024"
-      QDL_STABLE_MAX_PENDING_BYTES: "16777216"
+      QDL_STABLE_MAX_PENDING_RECORDS: "2048"
+      QDL_STABLE_MAX_PENDING_BYTES: "33554432"
       QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "128"
       QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
     volumes:
@@ -391,8 +391,8 @@ services:
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
-      QDL_STABLE_MAX_PENDING_RECORDS: "1024"
-      QDL_STABLE_MAX_PENDING_BYTES: "16777216"
+      QDL_STABLE_MAX_PENDING_RECORDS: "2048"
+      QDL_STABLE_MAX_PENDING_BYTES: "33554432"
       QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "128"
       QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
     volumes:
@@ -428,8 +428,8 @@ services:
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
-      QDL_STABLE_MAX_PENDING_RECORDS: "1024"
-      QDL_STABLE_MAX_PENDING_BYTES: "16777216"
+      QDL_STABLE_MAX_PENDING_RECORDS: "2048"
+      QDL_STABLE_MAX_PENDING_BYTES: "33554432"
       QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "128"
       QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
     volumes:
@@ -677,7 +677,11 @@ services:
       <<: *stable-env
       QDL_STABLE_INSTANCE_ID: stable-binance-bar-edge
       QDL_STABLE_CONSUMER_GROUP: stable-binance-bar-edge
-      QDL_STABLE_ACQUISITION_BINDINGS: /app/config/v2/stable-acquisition-bindings.yaml
+      # The image defaults are valid for a standalone build. A sealed runtime
+      # projection may override both files together without changing service
+      # topology or losing the final-BAR ownership contract on recreate.
+      QDL_STABLE_SOURCE_BINDINGS: ${QDL_STABLE_SOURCE_BINDINGS:-/app/config/v2/stable-source-bindings.yaml}
+      QDL_STABLE_ACQUISITION_BINDINGS: ${QDL_STABLE_ACQUISITION_BINDINGS:-/app/config/v2/stable-acquisition-bindings.yaml}
       QDL_STABLE_RUNTIME_DIR: /runtime
       QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_KAFKA_CERT_ROOT: /stable-certs/producer

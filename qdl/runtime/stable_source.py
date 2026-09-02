@@ -39,6 +39,10 @@ from qdl.runtime.stable_catalog import (
     StableSourceCatalog,
     canonical_payload_interval,
 )
+from qdl.runtime.stable_capacity import (
+    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+    STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
+)
 from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import GrpcSnapshot
 from qdl.transport import Cursor, SQLiteDurableSpool, StoredEvent
@@ -185,7 +189,12 @@ class StableSpoolQueryBackend:
     def latest(self, requirement: DataRequirement) -> MarketDataItem | None:
         binding = self.catalog.binding_for(requirement)
         records = self._records(
-            requirement, limit=10_000 if requirement.feed is FeedType.BAR else 1
+            requirement,
+            limit=(
+                STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+                if requirement.feed is FeedType.BAR
+                else 1
+            ),
         )
         if not records:
             return None
@@ -210,7 +219,7 @@ class StableSpoolQueryBackend:
         # the bounded retained BAR window before selecting the market-time tail;
         # selecting logical append offsets first can manufacture a false gap.
         read_limit = (
-            10_000
+            STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
             if start_ns is not None or binding.feed is FeedType.BAR
             else requested
         )
@@ -282,7 +291,11 @@ class StableSpoolQueryBackend:
             records = tuple(self.spool.read_tail(
                 stream=binding.canonical_stream,
                 partition_key=binding.partition_key,
-                limit=10_000,
+                limit=(
+                    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+                    if binding.feed is FeedType.BAR
+                    else STABLE_SPOOL_PUBLIC_PARTITION_WINDOW
+                ),
             ))
             gaps.extend(self._gaps(binding, records))
         return tuple(sorted(gaps, key=lambda item: (item.detected_at_ns, item.gap_id)))
@@ -293,7 +306,7 @@ class StableSpoolQueryBackend:
         rows = self._records(
             requirement,
             limit=(
-                10_000
+                STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
                 if start_ns is not None or binding.feed is FeedType.BAR
                 else requested
             ),
@@ -364,12 +377,12 @@ class StableSpoolQueryBackend:
                 start_ns=start_ns,
                 end_ns=end_ns,
                 interval_ns=interval_ns,
-                max_rows=10_000,
+                max_rows=STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
             )
             rows = len(expected_opens)
             if rows < 1:
                 raise ValueError("warmup time range contains no governed session bars")
-        if rows > 10_000:
+        if rows > STABLE_SPOOL_PUBLIC_PARTITION_WINDOW:
             raise ValueError("stable spool time range exceeds bounded query rows")
         return rows, start_ns, end_ns, expected_opens
 
@@ -386,7 +399,10 @@ class StableSpoolQueryBackend:
         # explicit; it is not an unbounded recovery scan.
         physical_limit = limit
         if binding.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}:
-            physical_limit = min(10_000, max(limit, limit * 512))
+            physical_limit = min(
+                STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
+                max(limit, limit * 512),
+            )
         rows = self.spool.read_tail(
             stream=binding.canonical_stream,
             partition_key=binding.partition_key,
