@@ -136,6 +136,35 @@ class BlockingAdapter:
         )
 
 
+class ReceiptTimestampAdapter:
+    def __init__(self) -> None:
+        self.request_started_at_ns = None
+
+    async def fetch(self, request, *, capability, received_at_ns):
+        self.request_started_at_ns = received_at_ns
+        observation = ReferenceObservation(
+            instrument_uid=request.instrument.instrument_uid,
+            instrument_revision=request.instrument.metadata_revision,
+            product=request.product,
+            observed_at_ns=150_000_000,
+            fields=(decimal_field("open_interest_contracts", "1", "CONTRACTS"),),
+            labels=(("native_symbol", request.instrument.native_symbol),),
+        )
+        return ReferenceFetch(
+            observations=(observation,),
+            lineage=(
+                provider_lineage(
+                    provider="BINANCE_DIRECT",
+                    endpoint="test",
+                    capability_name="open_interest",
+                    capability=capability,
+                    adapter_version="test",
+                ),
+            ),
+            coverage=ReferenceCoverage(0, 200, 150, 150, True, True, False, "TEST"),
+        )
+
+
 class ReferenceRequestTests(unittest.TestCase):
     def setUp(self) -> None:
         self.btc = instrument(
@@ -197,6 +226,25 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(btc_result.coverage.complete_left)
         self.assertTrue(btc_result.coverage.complete_right)
         self.assertEqual(sorted(calls), [("BTCUSDT", 100), ("BTCUSDT", 201), ("BTCUSDT", 301), ("ETHUSDT", 100), ("ETHUSDT", 201), ("ETHUSDT", 301)])
+
+    async def test_successful_reference_result_receipt_is_captured_after_provider_fetch(self):
+        adapter = ReceiptTimestampAdapter()
+        values = iter((100_000_000, 200_000_000))
+        batch = ReferenceBatch(
+            {("BINANCE", "USDM"): adapter},
+            clock_ns=lambda: next(values),
+        )
+
+        result = await batch.fetch_one(
+            ReferenceRequest(
+                instrument=self.btc,
+                product=ReferenceProduct.OPEN_INTEREST,
+            )
+        )
+
+        self.assertEqual(adapter.request_started_at_ns, 100_000_000)
+        self.assertEqual(result.received_at_ns, 200_000_000)
+        self.assertLessEqual(result.observations[0].observed_at_ns, result.received_at_ns)
 
     async def test_funding_boundary_jitter_is_tolerated_without_rewriting_raw_time(self):
         calls = []

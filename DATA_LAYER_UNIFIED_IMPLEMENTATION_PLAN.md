@@ -31012,3 +31012,56 @@ V2 Python image, `tests.test_phase115_universal_release` and
 round-trip/tamper rejection and retained V1 alpha compiler compatibility for
 native Binance/OKX routes. No runtime artifact, service, Kafka/Redis/SQLite
 state, V1 route, Trading System, alpha or order path changed.
+
+**Phase 54.3 Trading System binding artifact (`PREPARED / NO RUNTIME CUTOVER`,
+2026-09-02).** Both active V2 query replicas read
+`trading-system.paper.stable` revision `7`. A new binding was derived
+deterministically from the active sealed V1 42-product artifact: it retains
+release revision `2`, universal manifest
+`1f04190793e56b1fff9a39f0a377d54a40f947b6a7d702dfde334f03593021e9`, all
+42 exact product identities and V1 rollback data, and adds only
+`consumer_manifest_revision=7`. Its V2 binding checksum is
+`b2f6b0334a0bf2842880e7f917927d842f9ac06186c0902319c9e847915f2a64`.
+Data Layer and Trading System parsers independently accept it for revision 7;
+the Trading System parser rejects revision 6 before a network connection. The
+new file is in a new `0700` operator directory and has not replaced the active
+mount, changed a service, or mutated Kafka/Redis/SQLite/V1/alpha/order state.
+
+**Phase 54.3 reference receipt-timestamp correction (`OWNER-APPROVED /
+SOURCE-ONLY`, 2026-09-02).** A real authenticated Trading-System V2 read
+found that `ReferenceBatch._resolve_request` captures `received_at_ns` before
+the bounded provider await. OKX mark/index legitimately returns a provider
+timestamp a few tens of milliseconds later, which then appears impossible to
+a strict consumer even though the request/identity/coverage are correct. The
+root correction keeps the adapter's request-start timestamp for its documented
+missing-provider-time fallback, but stamps a successful
+`ReferenceBatchResult.received_at_ns` only after the provider fetch completes.
+This makes the public receipt timestamp a real local completion boundary and
+keeps provider observation time unmodified. Error/unavailable paths retain
+their original early timestamp because no provider observation is accepted.
+
+**Invariant and gates.** No clock tolerance, freshness relaxation, cross-venue
+substitution, fabricated observation, provider adapter behavior, contract
+shape, runtime role, Kafka/Redis/SQLite state or order path is changed. Add a
+deterministic clock/adapter regression proving adapter fallback receives the
+request-start instant while a successful result reports the later completion
+instant; retain existing bounded batch/coverage behavior. Run focused
+reference batch plus V2 reference contract tests in an isolated no-network
+image. Only after source gates pass may one standard V2 Python image be built
+and exactly `query_v2_1` then `query_v2_2` be serially recreated with their
+existing runtime/TLS/state mounts; the prior query image is the rollback.
+
+**Source-gate evidence (`PASS / NO RUNTIME MUTATION`, 2026-09-02).** In the
+existing non-root, read-only, network-disabled V2 Python test image,
+`python -m unittest tests.test_phase104_reference_batch
+tests.test_phase113_reference_v2 tests.test_reference_l2_consumer_acceptance`
+passed **49/49** in `6.589s`. The new deterministic regression proves the
+adapter receives `100_000_000` as request-start while a successful result is
+stamped at the later `200_000_000` completion instant. `git diff --check` and
+`python -m py_compile qdl/reference/batch.py` pass. Repository-wide Ruff is
+not an exit gate here: its isolated invocation reports pre-existing style and
+unused-import findings throughout this legacy module/test file, including
+lines untouched by this patch; no changed-line formatting or compile failure
+was accepted. No container, image, provider request, cache, Kafka, Redis,
+SQLite, V1, Trading System, alpha or order path changed during source
+verification.
