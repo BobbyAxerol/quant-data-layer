@@ -69,6 +69,9 @@ class KafkaProjectorConfig:
     max_poll_interval_ms: int = 300_000
     checkpoint_batch_size: int = 128
     checkpoint_interval_ms: int = 100
+    queued_max_messages_kbytes: int = 16 * 1024
+    fetch_max_bytes: int = 8 * 1024 * 1024
+    max_partition_fetch_bytes: int = 2 * 1024 * 1024
 
     def validate(self) -> None:
         if not all((
@@ -85,6 +88,10 @@ class KafkaProjectorConfig:
             10 <= self.checkpoint_interval_ms <= 5_000
         ):
             raise ValueError("Kafka stable projector checkpoint policy is invalid")
+        if not 1_024 <= self.queued_max_messages_kbytes <= 64 * 1024:
+            raise ValueError("Kafka stable projector queue bound is invalid")
+        if not 1_024 * 1_024 <= self.max_partition_fetch_bytes <= self.fetch_max_bytes <= 32 * 1024 * 1024:
+            raise ValueError("Kafka stable projector fetch bounds are invalid")
         for value in (self.ca_path, self.certificate_path, self.key_path):
             if not value.is_file():
                 raise ValueError(f"Kafka stable projector TLS file is unavailable: {value}")
@@ -121,6 +128,9 @@ class ConfluentProjectorBroker:
             "isolation.level": "read_committed",
             "session.timeout.ms": config.session_timeout_ms,
             "max.poll.interval.ms": config.max_poll_interval_ms,
+            "queued.max.messages.kbytes": config.queued_max_messages_kbytes,
+            "fetch.max.bytes": config.fetch_max_bytes,
+            "max.partition.fetch.bytes": config.max_partition_fetch_bytes,
             "on_commit": self._on_commit,
         })
         self._consumer.subscribe(

@@ -111,6 +111,7 @@ class StableProjectorEngine:
         max_pending_records: int = 10_000,
         max_pending_bytes: int = 256 * 1024 * 1024,
         max_batch_records: int = 128,
+        max_batch_bytes: int | None = None,
         batch_wait_seconds: float = 0.025,
     ) -> None:
         if (
@@ -123,6 +124,10 @@ class StableProjectorEngine:
             raise ValueError("stable projector pending bounds must be positive")
         if not 1 <= max_batch_records <= 1000 or not 0 < batch_wait_seconds <= 1:
             raise ValueError("stable projector batch policy is invalid")
+        if max_batch_bytes is None:
+            max_batch_bytes = min(8 * 1024 * 1024, max_pending_bytes)
+        if not 1 <= max_batch_bytes <= max_pending_bytes:
+            raise ValueError("stable projector batch byte bound is invalid")
         self.broker = broker
         self.spool = spool
         self.catalog = catalog
@@ -134,6 +139,7 @@ class StableProjectorEngine:
         self.max_pending_records = max_pending_records
         self.max_pending_bytes = max_pending_bytes
         self.max_batch_records = max_batch_records
+        self.max_batch_bytes = max_batch_bytes
         self.batch_wait_seconds = batch_wait_seconds
         poll_headroom = min(max_batch_records, max(1, max_pending_records // 4))
         self._canonical_pause_high_records = max(
@@ -151,6 +157,7 @@ class StableProjectorEngine:
         self._raw_committed = 0
         self._canonical_committed = 0
         self._duplicate_projections = 0
+        self._deferred_record: KafkaProjectorRecord | None = None
 
     async def accept(self, record: KafkaProjectorRecord) -> None:
         await self.accept_many((record,))
@@ -212,7 +219,10 @@ class StableProjectorEngine:
         await self._drain_ready()
 
     async def run_once(self, timeout_seconds: float = 1.0) -> bool:
-        record = await asyncio.to_thread(self.broker.poll, timeout_seconds)
+        record = self._deferred_record
+        self._deferred_record = None
+        if record is None:
+            record = await asyncio.to_thread(self.broker.poll, timeout_seconds)
         if record is None:
             # Another projector replica may have persisted the correlated raw
             # envelope into the shared cache. Retry bounded local partitions so
@@ -220,6 +230,7 @@ class StableProjectorEngine:
             await self._drain_ready()
             return False
         records = [record]
+        batch_bytes = len(record.payload)
         deadline = asyncio.get_running_loop().time() + self.batch_wait_seconds
         while len(records) < self.max_batch_records:
             remaining = deadline - asyncio.get_running_loop().time()
@@ -228,7 +239,13 @@ class StableProjectorEngine:
             item = await asyncio.to_thread(self.broker.poll, remaining)
             if item is None:
                 break
+            if batch_bytes + len(item.payload) > self.max_batch_bytes:
+                # Kafka has already delivered this record. Keep it in-order for
+                # the next bounded drain instead of overfilling a Python batch.
+                self._deferred_record = item
+                break
             records.append(item)
+            batch_bytes += len(item.payload)
         await self.accept_many(records)
         return True
 

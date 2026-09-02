@@ -180,6 +180,9 @@ class StableRuntimeDependencyTests(unittest.TestCase):
             )
             self.assertFalse(broker._consumer.config["enable.auto.commit"])
             self.assertEqual(broker._consumer.config["isolation.level"], "read_committed")
+            self.assertEqual(broker._consumer.config["queued.max.messages.kbytes"], 16 * 1024)
+            self.assertEqual(broker._consumer.config["fetch.max.bytes"], 8 * 1024 * 1024)
+            self.assertEqual(broker._consumer.config["max.partition.fetch.bytes"], 2 * 1024 * 1024)
             broker.close()
             self.assertFalse(broker.ping())
 

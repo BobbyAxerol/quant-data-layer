@@ -9,6 +9,7 @@ import json
 import re
 import ssl
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -274,9 +275,8 @@ class StableHttpCanonicalSink:
         values = tuple(events)
         if not 1 <= len(values) <= 1000:
             raise ValueError("stable HTTP sink batch must contain 1..1000 events")
-        encoded = tuple(self._encode_event(event) for event in values)
         stored_values = []
-        for chunk_values, chunk_encoded in self._request_chunks(values, encoded):
+        for chunk_values, chunk_encoded in self._request_chunks(values):
             stored_values.extend(
                 await self._publish_chunk(chunk_values, chunk_encoded)
             )
@@ -306,34 +306,53 @@ class StableHttpCanonicalSink:
             "events": encoded,
         }, sort_keys=True, separators=(",", ":")).encode()
 
+    @staticmethod
+    def _empty_body_size() -> int:
+        """Return the exact fixed JSON envelope size without retaining a batch."""
+
+        return len(json.dumps({
+            "schema": _INGEST_SCHEMA,
+            # UUID textual length is fixed; this avoids making a trial body for
+            # every candidate event while preserving the actual wire bound.
+            "batch_id": "00000000-0000-4000-8000-000000000000",
+            "events": (),
+        }, sort_keys=True, separators=(",", ":")).encode())
+
+    @staticmethod
+    def _encoded_item_size(item: dict[str, str]) -> int:
+        return len(json.dumps(item, sort_keys=True, separators=(",", ":")).encode())
+
     def _request_chunks(
-        self,
-        values: tuple[DurableEvent, ...],
-        encoded: tuple[dict[str, str], ...],
-    ) -> tuple[tuple[tuple[DurableEvent, ...], tuple[dict[str, str], ...]], ...]:
-        chunks = []
+        self, values: tuple[DurableEvent, ...],
+    ) -> Iterator[tuple[tuple[DurableEvent, ...], tuple[dict[str, str], ...]]]:
+        """Yield exact wire-bounded chunks without O(n^2) trial JSON bodies."""
+
         current_values: list[DurableEvent] = []
         current_encoded: list[dict[str, str]] = []
-        for event, item in zip(values, encoded, strict=True):
-            candidate = (*current_encoded, item)
-            if len(self._body(candidate)) > self.max_request_bytes:
+        current_size = self._empty_body_size()
+        for event in values:
+            item = self._encode_event(event)
+            item_size = self._encoded_item_size(item)
+            candidate_size = current_size + item_size + (1 if current_values else 0)
+            if candidate_size > self.max_request_bytes:
                 if not current_values:
                     raise ValueError(
                         "stable canonical event exceeds request byte bound"
                     )
-                chunks.append((tuple(current_values), tuple(current_encoded)))
+                yield tuple(current_values), tuple(current_encoded)
                 current_values = [event]
                 current_encoded = [item]
-                if len(self._body(tuple(current_encoded))) > self.max_request_bytes:
+                current_size = self._empty_body_size() + item_size
+                if current_size > self.max_request_bytes:
                     raise ValueError(
                         "stable canonical event exceeds request byte bound"
                     )
                 continue
             current_values.append(event)
             current_encoded.append(item)
+            current_size = candidate_size
         if current_values:
-            chunks.append((tuple(current_values), tuple(current_encoded)))
-        return tuple(chunks)
+            yield tuple(current_values), tuple(current_encoded)
 
     async def _publish_chunk(
         self,

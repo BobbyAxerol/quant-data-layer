@@ -191,6 +191,8 @@ class StableRuntimeConfig:
     stream_ingest_urls: tuple[str, ...] = ()
     max_pending_records: int = 10_000
     max_pending_bytes: int = 256 * 1024 * 1024
+    projector_max_batch_records: int = 128
+    projector_max_batch_bytes: int = 8 * 1024 * 1024
     # Off unless a deployment turns it on. Declaring catalog metadata for an
     # instrument must never open the pass-through product by itself.
     pass_through_enabled: bool = False
@@ -257,6 +259,13 @@ class StableRuntimeConfig:
             raise ValueError("stable runtime ports/bounds must be positive")
         if self.max_buffer_events > 10_000 or self.max_replay_events > 10_000:
             raise ValueError("stable stream/replay bounds exceed contract maximum")
+        if self.role == "projector_v2":
+            if not 1 <= self.projector_max_batch_records <= 512:
+                raise ValueError("stable projector batch bound must be 1..512")
+            if self.max_pending_records < self.projector_max_batch_records:
+                raise ValueError("stable projector pending records must cover one batch")
+            if not 1 <= self.projector_max_batch_bytes <= self.max_pending_bytes:
+                raise ValueError("stable projector batch byte bound is invalid")
         if not 5 <= self.lease_ttl_seconds <= 300 or not (
             0 < self.lease_renew_seconds < self.lease_ttl_seconds
         ):
@@ -353,6 +362,12 @@ class StableRuntimeConfig:
             stream_ingest_urls=tuple(str(value) for value in urls_raw),
             max_pending_records=int(env.get("QDL_STABLE_MAX_PENDING_RECORDS", "10000")),
             max_pending_bytes=int(env.get("QDL_STABLE_MAX_PENDING_BYTES", "268435456")),
+            projector_max_batch_records=int(
+                env.get("QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS", "128")
+            ),
+            projector_max_batch_bytes=int(
+                env.get("QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES", "8388608")
+            ),
             pass_through_enabled=_env_flag(
                 env, "QDL_STABLE_PASS_THROUGH_ENABLED", default=False
             ),
@@ -786,7 +801,8 @@ async def serve_stable_projector() -> None:
             target=target,
             max_pending_records=config.max_pending_records,
             max_pending_bytes=config.max_pending_bytes,
-            max_batch_records=512,
+            max_batch_records=config.projector_max_batch_records,
+            max_batch_bytes=config.projector_max_batch_bytes,
             batch_wait_seconds=0.01,
         )
 

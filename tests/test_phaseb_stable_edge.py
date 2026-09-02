@@ -1312,6 +1312,50 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sleeps, [0.25])
         self.assertEqual(active, [brokers[0], None, brokers[1], None])
 
+    async def test_run_once_defers_a_polled_record_at_the_batch_byte_bound(self):
+        class Record:
+            def __init__(self, payload):
+                self.payload = payload
+
+        class PollingBroker(_Broker):
+            def __init__(self, records):
+                super().__init__()
+                self.records = list(records)
+
+            def poll(self, timeout_seconds):
+                del timeout_seconds
+                return self.records.pop(0) if self.records else None
+
+        first = Record(b"aaa")
+        second = Record(b"bbb")
+        broker = PollingBroker((first, second))
+        engine = StableProjectorEngine(
+            broker=broker,
+            spool=self.spool,
+            catalog=self.catalog,
+            canonical_topic="qdl.stable.canonical.phase-b.v2",
+            raw_topics=(),
+            sink=LocalStableCanonicalSink(self.gateway, self.spool),
+            projector=StableCompatibilityProjector(self.catalog),
+            target=InMemoryStableProjectionTarget(),
+            max_pending_records=10,
+            max_pending_bytes=1024,
+            max_batch_records=4,
+            max_batch_bytes=4,
+        )
+        accepted = []
+
+        async def accept_many(records):
+            accepted.append(tuple(records))
+
+        engine.accept_many = accept_many
+        self.assertTrue(await engine.run_once(timeout_seconds=0.01))
+        self.assertEqual(accepted, [(first,)])
+        self.assertIs(engine._deferred_record, second)
+        self.assertTrue(await engine.run_once(timeout_seconds=0.01))
+        self.assertEqual(accepted, [(first,), (second,)])
+        self.assertIsNone(engine._deferred_record)
+
     async def test_canonical_before_raw_waits_and_checkpoints_after_all_downstreams(self):
         binding, raw, event = _stable_pair(
             self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
@@ -2407,12 +2451,28 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             values.update({
                 "QDL_STABLE_MAX_PENDING_RECORDS": "2048",
                 "QDL_STABLE_MAX_PENDING_BYTES": "33554432",
+                "QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS": "128",
+                "QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES": "8388608",
             })
             bounded_projector = StableRuntimeConfig.from_environment(
                 "projector_v2", values
             )
             self.assertEqual(bounded_projector.max_pending_records, 2048)
             self.assertEqual(bounded_projector.max_pending_bytes, 33_554_432)
+            self.assertEqual(bounded_projector.projector_max_batch_records, 128)
+            self.assertEqual(bounded_projector.projector_max_batch_bytes, 8_388_608)
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "2049"
+            with self.assertRaisesRegex(ValueError, "projector batch bound"):
+                StableRuntimeConfig.from_environment("projector_v2", values)
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "128"
+            values["QDL_STABLE_MAX_PENDING_RECORDS"] = "64"
+            with self.assertRaisesRegex(ValueError, "pending records"):
+                StableRuntimeConfig.from_environment("projector_v2", values)
+            values["QDL_STABLE_MAX_PENDING_RECORDS"] = "2048"
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES"] = "33554433"
+            with self.assertRaisesRegex(ValueError, "batch byte bound"):
+                StableRuntimeConfig.from_environment("projector_v2", values)
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES"] = "8388608"
             authority_path = Path(values["QDL_STABLE_RUNTIME_DIR"]) / "authority.json"
             primary = json.loads(authority_path.read_text(encoding="utf-8"))
             primary.update({"mode": "RUST_PRIMARY", "revision": 2})
