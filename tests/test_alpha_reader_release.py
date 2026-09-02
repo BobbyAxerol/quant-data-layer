@@ -4,6 +4,7 @@ from copy import deepcopy
 import importlib.util
 import json
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 
@@ -152,6 +153,15 @@ class AlphaReaderReleaseTests(unittest.TestCase):
             )
             self.assertNotIn("runtime", override.lower())
             self.assertNotIn("password", (first_dir / "release-manifest.json").read_text(encoding="utf-8").lower())
+            binding_files = sorted((first_dir / "bindings").glob("*.binding.json"))
+            self.assertTrue(binding_files)
+            self.assertTrue(
+                all(stat.S_IMODE(path.stat().st_mode) == 0o444 for path in binding_files)
+            )
+            self.assertEqual(
+                stat.S_IMODE((first_dir / "release-manifest.json").stat().st_mode),
+                0o640,
+            )
 
     def test_rejects_tampered_binding_and_existing_output(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

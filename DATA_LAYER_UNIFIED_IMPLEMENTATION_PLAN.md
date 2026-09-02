@@ -30377,3 +30377,52 @@ the active reader remains `2.0.0-5edbc8c` and its digest is retained as the
 only rollback for this two-role packet. The next operation is a rendered
 two-query override preflight, followed by serial recreation exactly as recorded
 above; no other role is eligible.
+
+**Phase D two-query preflight (`PASS / RUNTIME UNCHANGED`, 2026-09-02).** The
+scoped override
+`/home/bobby/.local/state/qdl-v2/phase54-reference-finality-021b372/query-image.override.yml`
+(SHA-256 `e9aa1ded94595800f4f60981eecaece446ff1d13539430ef5da838e1b38df6c7`)
+renders only `query_v2_1` and `query_v2_2` to `qdl-v2-python:2.0.0-021b372`.
+The paired rollback override SHA-256 is
+`315927b39c76452746dc6ceded02a4bdc0f473706c004a201292c91b327d1b9e` and
+restores only those two roles to `qdl-v2-python:2.0.0-5edbc8c`. Compose
+preflight proves stream roles remain `2.0.0-5edbc8c`; Rust, both ingestors and
+the projector remain on their prior image selectors. The next approved action
+is serial `--no-deps --force-recreate` of query replica 1, health/provenance
+verification, then replica 2. Any readiness/provenance failure triggers only
+the two-role rollback override; no data-store reset/flush or topology mutation
+is permitted.
+
+**Phase D sealed-binding workload-readability defect (`FAIL-CLOSED / SOURCE
+CORRECTION APPROVED`, 2026-09-02).** Both serially recreated query replicas
+are healthy on `qdl-v2-python:2.0.0-021b372`; no other role changed. The first
+paired disposable Binance/OKX reference readers stopped before a V2 request,
+provider call, Gateway/Risk call or order action because their sealed binding
+files are generated mode `0640` and owned by host UID/GID `1001`, while the
+immutable alpha image deliberately runs as non-root `alpha` UID/GID `1000`.
+The binding contains only route identity/policy/hash data, never a secret;
+keeping it unreadable to its intended workload makes the release artifact
+non-deployable. Correct the shared release generator, not the old artifact or
+the alpha image: published `bindings/*.binding.json` must be immutable
+world-readable `0444` (or an equivalently readable bind mount), while release
+env, JWT/private keys and TLS private keys remain private. Add a regression
+that asserts the split. Regenerate a new atomic release bundle from the
+candidate source, validate its hashes/modes with the actual alpha UID, then
+rerun exactly the same pair. No chmod-in-place, service restart, provider
+simulation, V1/Kafka/Redis/SQLite mutation, Trading System/alpha service
+change or order action is authorized by this correction.
+
+**Phase D sealed-binding source gate (`PASS / SOURCE-ONLY`, 2026-09-02).**
+`prepare_alpha_reader_release.py` now classifies artifacts by their actual
+security boundary: route bindings are immutable `0444` workload-mount inputs;
+release manifests, compilation reports and compose overrides remain `0640`;
+private runtime env/JWT/TLS material remains outside this release bundle and is
+not widened. The regression creates two atomic bundles and proves deterministic
+content, `0444` for every published binding and `0640` for the release
+manifest. In immutable `qdl-v2-python:2.0.0-021b372`, network-disabled,
+read-only, non-root mode, `tests.test_alpha_reader_release` passed `4/4` in
+1.768s. `git diff --check` and `py_compile` passed. No runtime service,
+provider call, source authority, V1/Kafka/Redis/SQLite state, Trading System,
+alpha service or order path changed. The next permitted operation is a new
+atomic release bundle with this generator, followed by a UID-1000 readability
+check and the same two disposable V2 reference probes.

@@ -17,6 +17,11 @@ from qdl.consumer.universal_release import ConsumerRouteBinding
 
 
 CONFIRM = "PREPARE_QDL_ALPHA_READER_RELEASE"
+_PRIVATE_ARTIFACT_MODE = 0o640
+# Route bindings contain hashes, identity and policy only. They are mounted
+# directly into non-root alpha workloads, so the release copy must be readable
+# by that workload without making any credential artifact readable.
+_PUBLIC_BINDING_MODE = 0o444
 SCHEMA = "qdl.v2.alpha-reader-release.v1"
 READER_SERVICES = (
     "query_v2_1",
@@ -181,7 +186,7 @@ def _render_override(image_reference: str) -> bytes:
 def _write_json(path: Path, value: Mapping[str, Any]) -> bytes:
     rendered = json.dumps(value, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     path.write_bytes(rendered)
-    path.chmod(0o640)
+    path.chmod(_PRIVATE_ARTIFACT_MODE)
     return rendered
 
 
@@ -263,19 +268,19 @@ def prepare_alpha_reader_release(
         staging.mkdir(mode=0o700)
         (staging / "bindings").mkdir(mode=0o750)
         (staging / "inventory.json").write_bytes(inventory_path.read_bytes())
-        (staging / "inventory.json").chmod(0o640)
+        (staging / "inventory.json").chmod(_PRIVATE_ARTIFACT_MODE)
         (staging / "compilation-report.json").write_bytes(report_path.read_bytes())
-        (staging / "compilation-report.json").chmod(0o640)
+        (staging / "compilation-report.json").chmod(_PRIVATE_ARTIFACT_MODE)
         for source in binding_files:
             destination = staging / "bindings" / source.name
             shutil.copyfile(source, destination)
-            destination.chmod(0o640)
+            destination.chmod(_PUBLIC_BINDING_MODE)
         override = staging / "reader-image.override.yml"
         override.write_bytes(_render_override(image_reference))
-        override.chmod(0o640)
+        override.chmod(_PRIVATE_ARTIFACT_MODE)
         rollback_override = staging / "reader-rollback.override.yml"
         rollback_override.write_bytes(_render_override(rollback_image_reference))
-        rollback_override.chmod(0o640)
+        rollback_override.chmod(_PRIVATE_ARTIFACT_MODE)
         _write_json(staging / "release-manifest.json", manifest)
         staging.rename(output)
     except Exception:
