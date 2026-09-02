@@ -46,6 +46,7 @@ from qdl.certification.phase103_consumer_acceptance import (
     warmup_content_fingerprint,
 )
 from qdl.adapters.intervals import canonical_interval_ms
+from qdl.runtime.stable_bar_edge import durable_bar_history_capacity_rows
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl.certification.phase105_release_observations import compact_view_quality
@@ -213,9 +214,17 @@ def _c2_requirement(requirement):
     specification = requirement.warmup_specification
     if specification is None or specification.rows is None:
         raise ValueError("C2 BAR product requires a row-bounded warmup policy")
+    if not requirement.interval:
+        raise ValueError("C2 BAR product requires an interval")
+    rows = min(
+        _C2_BAR_WARMUP_ROWS,
+        specification.rows,
+        durable_bar_history_capacity_rows(requirement.interval),
+    )
     return replace(
         requirement,
-        warmup_limit=min(_C2_BAR_WARMUP_ROWS, specification.rows),
+        warmup_limit=rows,
+        warmup=(SdkWarmupSpecification(rows=rows) if requirement.warmup is not None else None),
     )
 
 

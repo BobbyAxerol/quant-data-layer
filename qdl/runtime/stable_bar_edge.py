@@ -84,6 +84,12 @@ def _bar_interval_ms(interval: str) -> int:
         raise ValueError(f"stable BAR interval is unsupported: {interval}") from error
 
 
+def durable_bar_history_capacity_rows(interval: str) -> int:
+    """Return the truthful retained-row ceiling for one durable BAR interval."""
+
+    return max(1, _BOOTSTRAP_HISTORY_LOOKBACK_MS // _bar_interval_ms(interval))
+
+
 def _source_provider(source: StableSourceBinding) -> str:
     """Return the catalog venue used for provider BAR calendar alignment."""
     instrument = getattr(source, "instrument", None)
@@ -630,10 +636,9 @@ class StableBinanceBarEdge:
         a long BAR bootstrap bounded and honest while keeping minute/hour
         warmups at the configured maximum.
         """
-        interval_ms = _bar_interval_ms(source.interval or "")
         return min(
             self.warmup_rows,
-            max(1, _BOOTSTRAP_HISTORY_LOOKBACK_MS // interval_ms),
+            durable_bar_history_capacity_rows(source.interval or ""),
         )
 
     def _settled_observed_ms(self) -> int:

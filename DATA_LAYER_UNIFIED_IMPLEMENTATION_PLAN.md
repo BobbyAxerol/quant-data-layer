@@ -32216,3 +32216,83 @@ Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changed.
 The next permitted action is the already approved one-role bar-edge
 convergence using a fresh checkpoint; source rollback is the committed helper
 revert and runtime rollback is the recorded prior image/config/checkpoint.
+
+**Bar-edge history convergence packet (`APPROVED / PRE-FLIGHT PASS`,
+2026-09-02).** The active service is healthy with no restart or OOM and is
+currently the already certified immutable
+`qdl-v2-python:2.0.1-43faf3d@sha256:6090b3a6c1c6bc431a329ab85cad7fe61750a33dbed3a5bb2d264c532f211545`.
+Its sole divergence is an inherited overlay setting
+`QDL_STABLE_BAR_WARMUP_ROWS=1000` and
+`QDL_STABLE_BAR_MAX_CATCHUP_ROWS=1000`; canonical Compose already declares
+`10000` for both. The one-role packet overlays only those two values and a
+fresh state path
+`/var/lib/qdl-stable/runtime/phase54-alpha-demand-5edbc8c.history10000-20260902.json`,
+then recreates only `binance_bar_edge` without dependencies. It keeps the
+current image, runtime/TLS mounts, Kafka topology/offsets, Redis, SQLite, V1,
+Rust/ingestors/projectors/readers, Trading System, alpha and order path
+unchanged. Rollback is exactly the existing image plus its old `1000` values
+and `/var/lib/qdl-stable/runtime/phase54-alpha-demand-5edbc8c.json` checkpoint.
+Preflight disk is `30 GB` available; no prune occurs while authentic bootstrap
+writes are in flight.
+
+**Packet render correction (`PASS / NO RECREATE YET`, 2026-09-02).** The first
+Compose render exposed an old environment-file default for
+`QDL_STABLE_RUNTIME_DIR`; it would have mounted an earlier runtime bundle than
+the currently serving edge. The packet was stopped before mutation and then
+rendered again with the exact active read-only bind mount
+`session-liveness-43cdbe3-20260829T162719Z/runtime`. The final render proves
+the unchanged image, `10000/10000` history limits, `0.10s` final-bar
+settlement delay, fresh checkpoint and exact active runtime/TLS/volume mounts.
+This is a preflight correction, not a runtime change.
+
+**History-convergence execution (`FAIL-CLOSED / ROLLBACK REQUIRED`,
+2026-09-02).** The one approved edge recreate started with the rendered exact
+mounts, correct `10000/10000` values, restart count `0` and no OOM. It
+authentically ACKed `130` existing Binance/OKX BAR bindings before the next
+OKX history page was rejected by the shared validator with
+`RuntimeError: OKX closed-bar history contains a time gap`. This is a real
+provider-history continuity failure under the expanded retention horizon, not
+a health-only failure, retry budget issue, synthetic record, or a reason to
+lower/ignore the gap. The edge entered its existing fail-closed cycle while
+the durable records already ACKed remained valid idempotent normal market-data
+writes. The packet therefore rolls only this role back to the exact prior
+`1000` overlay/state path; it does not erase the fresh checkpoint or any
+acknowledged data, and it does not touch V1, Kafka topology/offsets, Redis,
+SQLite, Rust, readers, Trading System, alpha or orders. Source investigation
+must reproduce and repair OKX paginated historical continuity before any later
+larger-retention packet is permitted.
+
+**Provider-gap diagnosis and corrected C2 invariant (`IN PROGRESS /
+SOURCE-ONLY`, 2026-09-02).** A disposable, read-only, real-provider probe of
+the exact failed binding `OKX SOL-USDT-SWAP / BAR 1m` returned `FULL` page
+coverage and `10,000` confirmed rows but one authentic two-minute step at
+`1787905740000 -> 1787905860000`. The provider's own historical series is
+therefore not contiguous over that ten-thousand-row range. C2 must not turn a
+per-consumer *ceiling* into an unconditional durable-retention promise, nor
+fill or ignore that native gap. Its governed BAR requirement is corrected to
+the smaller of `700`, the declared client quota and the shared three-year
+interval-aware durable capacity (`1w=156`, `3d=365`, `2d=547`, then `700` for
+the shorter supported intervals). Larger strategy-specific warmups remain the
+existing explicit `FRESH_SNAPSHOT` provider-history path, which returns typed
+coverage and stays blocked on a real gap. The shared capacity calculation will
+be exported from the bar-edge module and reused by C2; no new service,
+provider bypass, coverage relaxation, runtime mutation or data synthesis is
+allowed. Required source exit is deterministic short/long-interval capacity
+tests plus the focused no-network C2 matrix; the one final real C2 retry uses
+the restored healthy `1000` checkpoint and the corrected exact horizon.
+
+**Interval-aware durable-capacity source gate (`PASS / RUNTIME UNCHANGED`,
+2026-09-02).** `qdl.runtime.stable_bar_edge` now exposes the same
+provider-neutral three-year capacity calculation that its bootstrap uses, and
+the C2 harness takes the minimum of that capacity, `700` and the sealed public
+quota. It preserves a row-based explicit warmup object where one was supplied.
+The deterministic regression proves the public `10000` request remains
+unchanged, a `12h` C2 proof remains `700`, and `1w` uses the truthful `156`
+rows. The isolated immutable-image, non-network, read-only UID-`10001` matrix
+passed `105/105` in `15.184s`, covering C2/identity/fallback, BAR bootstrap,
+strict pagination/gap rejection and interval canonicalisation. The failed
+expanded checkpoint remains preserved only as runtime evidence; no service,
+provider, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path
+changed during this source gate. The next permitted action is one fresh
+four-identity C2 receipt on the restored edge; it must still prove real
+two-venue warmup rather than relying on this test alone.

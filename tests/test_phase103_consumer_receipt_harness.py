@@ -48,6 +48,7 @@ from qdl_sdk import (
     StreamEvent,
 )
 from qdl_sdk.errors import ContinuityError, DataLayerError
+from qdl.runtime.stable_bar_edge import durable_bar_history_capacity_rows
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +68,20 @@ class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
         bounded = _c2_requirement(requirement)
         self.assertEqual(requirement.warmup_limit, 10_000)
         self.assertEqual(bounded.warmup_limit, 700)
+
+    def test_c2_uses_the_shared_durable_capacity_for_calendar_bars(self):
+        requirement = DataRequirement(
+            instrument_uid="bar-uid",
+            feed=Feed.BAR,
+            consumer_grade=Grade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            interval="1w",
+            warmup_limit=10_000,
+            max_freshness_ms=604_800_000,
+        )
+        bounded = _c2_requirement(requirement)
+        self.assertEqual(durable_bar_history_capacity_rows("1w"), 156)
+        self.assertEqual(bounded.warmup_limit, 156)
 
     def test_c2_keeps_non_bar_requirement_exact(self):
         requirement = DataRequirement(
