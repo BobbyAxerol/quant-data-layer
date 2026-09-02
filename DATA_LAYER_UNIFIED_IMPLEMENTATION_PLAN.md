@@ -30822,3 +30822,53 @@ referenced by Compose and remains only as a trace artifact until Phase E exact
 cleanup inventory; it is not a rollback coordinate. Phase C is closed. The
 only next permitted work is Phase D's declared disposable paired no-order
 alpha proof using this sealed bundle.
+
+**Phase 54.2 Phase D final-BAR policy regression (`IN PROGRESS / NARROW
+SOURCE FIX`, 2026-09-02).** The first paired `adaptive_hma_cpp` V2-primary
+no-order attempt authenticated correctly and reached the sealed native
+Binance/OKX BAR warmup routes, then failed closed with `required data exceeds
+its freshness policy`; pre/post scoped execution evidence remains zero. The
+cause is local and deterministic: the config-derived alpha inventory regressed
+non-1m final BAR routes to a fixed `180000` ms, and Alpha Runtime also treated
+its legacy `180000` ms default as a hard cap even when a sealed binding declared
+a longer interval-aware policy. This is not a provider outage, retry issue or
+permission to widen a generic SLA.
+
+Approved in-scope repair: restore the previously certified final-BAR rule of
+`max(declared_policy, one complete BAR interval + 180000 ms settlement grace)`
+while preserving the explicit daily Basis policy; make an *absent* alpha local
+BAR cap defer to the sealed route, while an explicitly configured smaller cap
+may remain stricter and an explicitly weaker cap is rejected. Required tests:
+deterministic `1m/5m/15m/30m/1h/1d` inventory values, invalid interval
+fail-closed behavior, sealed-binding effective-freshness selection, and the
+existing compiler/parser matrix. No Data Layer provider, V2 reader/stream
+image, Kafka, Redis, SQLite, Rust, ingestor, projector, V1, Trading System,
+broker, order path or alpha strategy logic is in scope. Rollback is a normal
+Execution Alpha source revert plus removal of only regenerated sealed binding
+artifacts; the currently running canonical reader image remains unchanged.
+
+**Phase 54.2 Phase D final-BAR policy source gate (`PASS / RUNTIME
+UNCHANGED`, 2026-09-02).** The Alpha Runtime repair was validated in the
+existing shared `execution-alpha-runtime-numba:v2-primary-83b28a6` image with
+the complete Execution Alpha source and Trading System SDK mounted read-only,
+`--network none`, UID/GID `1000:1000`, read-only root and tmpfs-only scratch.
+`tests.test_deployment_requirements`, `tests.test_data_layer_v2_runtime`,
+`tests.test_v2_no_order_probe` and `tests.test_typed_execution_intent` passed
+**75/75** in `5.131s`. The source test proves the interval policy for
+`1m/5m/15m/30m/1h/1d`, explicit stricter cap behavior, omitted-cap sealed
+binding authority and explicit weaker-cap rejection.
+
+A second isolated export emitted the real 93-deployment inventory with SHA-256
+`35a18db3e0c946306d6796902428028dfd6f9e0b69d7e13db4d3834319e52762`.
+The unchanged Data Layer compiler admitted `18` bindings and typed-blocked
+`75`, compilation SHA-256
+`a98d66c2d7fe09968bb14a36700e00a93d436051f3e9a31925ed4ffbd84d61eb`.
+The Data Layer compiler/release suite passed `10/10`; the shared Trading System
+binding parser accepted all `18/18` regenerated bindings with each binding's
+required local consumer and manifest identity. Observed final-BAR policies are
+now Binance/OKX `15m=1080000`, multi-symbol `5m=480000`, Fib `30m=1980000`,
+Grid `1h=3780000`, and the explicit Basis `1d=172800000` ms. No image build,
+bundle mount, service, provider, Kafka, Redis, SQLite, V1, Trading System,
+alpha process, broker or execution state changed. The caller-owned temporary
+inventory/binding directory is retained only for the next sealed-bundle step;
+it contains no secret or durable runtime data and must be removed in Phase E.
