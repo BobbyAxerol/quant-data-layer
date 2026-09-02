@@ -32385,6 +32385,29 @@ Next permitted step is deliberately one runtime packet, not another design phase
 
 **Canonical-cache capacity runtime packet (`APPROVED / PRE-FLIGHT`, 2026-09-02).** Immutable image `qdl-v2-python:2.0.1-d9dea34@sha256:dcb15154ccff53490d152152af99a8aa808c9901c5d210135d791d74d0398bd7` is built from source commit `d9dea34`, with OCI revision/version labels matching that source. The same `184/184` network-disabled suite passed from the built image without a source mount. Runtime override and exact per-role rollback override are retained under `/home/bobby/.local/state/qdl-v2/releases/2.0.1-d9dea34/canonical-cache-capacity/`; they name only the existing seven cache users and do not create a topology, volume, network, state path or service. Pre-flight must render this override last against the active Compose stack, verify those seven image substitutions only, and preserve current mounts, TLS/runtime directory and environment. The bounded rolling packet then follows the stated stream -> projector -> query order. No cache delete/flush/replay or broader service action is authorized.
 
+**C2 projector memory immutable-image gate and runtime packet (`PASS / APPROVED`,
+2026-09-02).** The single shared image
+`qdl-v2-python:2.0.1-7352a1a@sha256:21084686cee5f6b108b34cd39183c0d839eac1723c85795f2fa50bb2b2764896`
+was built from source commit `7352a1a` with matching OCI revision/version
+labels. Its isolated, network-disabled, read-only UID-`10001` matrix passed
+`175` tests with `1` explicit skip in `31.155s`, without a source mount. The
+only approved runtime mutation is a rolling recreate of the three existing
+shared projector roles: `projector_v2`, `projector_v2_2`, and `projector_v2_3`.
+The final override is applied last and pins that image, `768 MiB` memory, `1024`
+pending records, `16 MiB` pending bytes, `128` records per batch and `8 MiB`
+per batch. The exact rollback is the current
+`qdl-v2-python:2.0.1-d9dea34@sha256:dcb15154ccff53490d152152af99a8aa808c9901c5d210135d791d74d0398bd7`
+with its current `512 MiB`, `2048` record and `32 MiB` pending configuration.
+The packet preserves the current runtime/TLS/state mounts, Kafka group and
+offsets, Kafka topology, Redis, SQLite files, V1, Rust, ingestors, query/stream,
+Trading System, alpha and all order paths. It stops and rolls back immediately
+on any new OOM/restart, cache admission failure, duplicate/gap evidence or
+freshness regression. Runtime exit is all three projectors running without OOM,
+bounded memory, accepted canonical ingestion, five-symbol Binance/OKX TRADE
+freshness convergence and one fresh disposable four-identity/299-product/300s
+C2 no-order receipt. No cache rebuild, flush, deletion, synthetic record or
+SLA relaxation is authorized.
+
 **C2 projector memory/throughput repair (`APPROVED / IN PROGRESS`, 2026-09-02).** The capacity rollout exposed a separate bounded-runtime defect before C2 can be rerun. The current three existing projector roles share one Kafka group and one SQLite cache; `projector_v2_2` and `projector_v2_3` were OOM-killed at their `512 MiB` cgroup limit after authentic backlog catch-up, while `projector_v2` remains live at about `522 MiB` cgroup usage (`~385 MiB` anonymous PSS). The live passive-named stream is the active lease holder and reports `READY`; this is not a provider, lease or consumer identity failure. The single surviving projector is therefore insufficient to catch up canonical TRADE freshness promptly and C2 correctly remains fail-closed.
 
 Approved source scope is deliberately narrow and shared: replace the canonical HTTP sink's repeated full-JSON chunk measurement with linear bounded chunk accounting; make projector batch and pending limits explicit, bounded runtime configuration rather than a hard-coded `512` batch; bound the Confluent consumer prefetch queue; and assign only the three existing projector roles an evidence-backed `768 MiB` cgroup budget. No provider adapter, event identity, schema, Kafka topic/group/offset, Redis, SQLite data/file, V1, Rust, ingestor, query/stream, Trading System, alpha or order path changes. Source exit requires deterministic chunk-equivalence/max-byte tests, config-bound tests, existing projector/order/retention regression, full focused non-network reader matrix, and an immutable-image rerun. Runtime exit is a rolling recreate only of the three existing projector roles with the exact prior image/config retained as rollback; require all three running, no OOM/restart, accepted canonical ingestion, cache event-recency convergence across the governed five-symbol Binance/OKX TRADE set, then one fresh disposable 299-product/four-identity/300-second C2 receipt. Do not reset Kafka offsets, delete/flush the cache, synthesize records, relax freshness, or retry C2 before that evidence exists.
