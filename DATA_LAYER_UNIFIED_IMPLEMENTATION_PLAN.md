@@ -30107,3 +30107,206 @@ occurred. All `/tmp/qdl-phaseb-*` inventory/compiler artifacts and disposable
 containers were removed. Phase C is now the next permitted action: seal one
 canonical reader image/bundle from this `dev` state, then use its separately
 recorded BAR-edge projection handoff to materialize authentic final BARs.
+
+**Phase 54.1 Phase D start and reference-plane boundary (`IN PROGRESS / OWNER-APPROVED`, 2026-09-01).**
+The active source tuple for the bounded proof is Data Layer `dev@5edbc8c`,
+Trading System `dev@77bfa7f`, Execution Alpha `dev@79b91e3`, and
+`qdl-sdk==2.0.1`. The active shared projection has now caught up without a
+synthetic write: the exact union is `35/35` final-BAR routes, all contiguous,
+with `1,000..1,440` retained rows and no missing route. This opens Phase D's
+real-provider read-only proof; it does not promote a reader, alpha, Gateway,
+Risk or paper order path.
+
+The four native Binance USD-M/OKX Swap pairs remain directional, multi-symbol,
+bracket/conditional and grid/L2. The separately declared basis/reference
+profile is a data-only contract probe, because reference observations are
+bounded provider reads and do not carry a stream cursor or execution authority.
+Source review found the Data Layer public V2 SDK already exposes the governed
+`/v2/market-data/reference:batch` contract, while the shared alpha facade does
+not yet expose a binding-validated reference method. The narrow in-scope repair
+is limited to the shared Execution Alpha facade/probe: map only sealed
+`FUNDING_RATE`, `OPEN_INTEREST`, `LONG_SHORT_RATIO`, `TAKER_FLOW`, `BASIS` or
+`CONTRACT_METADATA` routes to typed V2 `ReferenceRequirement` values, retain
+provider/interval/coverage/lineage, and fail closed for absent native basis.
+It creates no Data Layer service, topic, image, identity, worker, cache or
+provider-specific fallback. The existing query/stream roles, V1, Kafka,
+Redis, SQLite, Rust core, ingestors, projectors, Trading System and alpha
+containers remain excluded until the later temporary no-order packet.
+
+**Phase D test and rollback gate.** Source tests must prove exact
+route-to-reference mapping, interval/decimal/lineage preservation, required
+typed `UNAVAILABLE`/`MISSING`, no cross-venue substitution and no attempt to
+treat reference data as execution-grade. The runtime packet then uses only
+existing query/stream readers and temporary `--rm` consumers; it records native
+identity, response digest, provider lineage, coverage, freshness and bounded
+resources. Its rollback is removal of temporary consumers and a source revert;
+no durable data-plane or execution state is eligible for cleanup or mutation.
+
+## 54.2 Cross-Repository Alpha V2 Production Rollout Completion Charter
+
+**Status:** `OWNER-APPROVED / ACTIVE`, 2026-09-02. This is the authoritative
+Data Layer half of the five-phase alpha-consumer rollout. It is jointly tracked
+with Trading System section `54.13` and Execution Alpha's V2 migration ledger.
+The target is V2-primary data consumption for reviewed paper alpha classes,
+with V1 retained only through a sealed per-product fallback policy. It does
+not change strategy/backtest logic, portfolio/risk configuration, broker
+credentials, broker execution or a venue's native capability.
+
+**Non-negotiable invariants.** Every crypto alpha proof runs a native Binance
+USD-M and OKX Swap pair concurrently. Provider bytes must be real V2 data;
+synthetic records are limited to deterministic unit/contract tests. A route
+without a native provider-equivalent product is emitted as typed `BLOCKED`,
+never substituted from the other venue, approximated with zero, or silently
+sent through V1. DNSE/VN stays `V1_PRIMARY` in this rollout. One shared reader
+and stream image serves every declared route: no image, worker or container is
+created per alpha, symbol or interval.
+
+### Phase A — Source convergence and `dev` lifecycle
+
+- Reconcile the three V2 source branches against their respective `origin/dev`
+  heads, rerun their focused source tests on a clean integration checkout, and
+  record the immutable tuple `data_layer_sha`, `trading_system_sha`,
+  `execution_alpha_sha`, SDK version and generated-binding schema revision.
+- `execution_alpha/dev` already exists; formalize it as the only
+  production-capable integration branch rather than creating a duplicate.
+  Feature branches begin from and merge into `dev`; `main` is release-only.
+- Exit: each intended feature commit is an ancestor of `origin/dev`, no state,
+  log, secret or cache is staged, and no runtime role changes. A branch/worktree
+  is removable only after `git merge-base --is-ancestor <commit> origin/dev`.
+- Rollback: leave the merged source in `dev`, revert with a normal reviewed
+  commit if necessary; never reset a dirty canonical checkout or rewrite main.
+
+### Phase B — Actual-config binding compiler
+
+- Compile from each paper-capable alpha deployment's real Compose/config:
+  `venue`, market/product, native symbol universe, interval, feed set, finality,
+  `maxlen`, `min_bars`, freshness, gap, required/optional and fallback policy.
+  Data requirements remain declarative infrastructure metadata, not strategy
+  name heuristics.
+- Validate native instrument identity and compile one sealed binding per
+  consumer/deployment. Cover single-symbol, multi-symbol, bracket/conditional,
+  grid/L2 and reference/basis classes, including `maxlen` 2,500, 5,000 and
+  10,000. Existing unreviewed/de-listed/unsupported deployments fail closed
+  with a machine-readable reason.
+- Exit: every eligible crypto deployment has a hash/version/provenance binding
+  or an explicit typed block; generated secrets and runtime material remain out
+  of Git. The portable Trading System parser accepts every admitted binding.
+- Rollback: discard only the temporary sealed bundle; no catalog, Kafka, Redis,
+  SQLite, provider or execution mutation occurs.
+
+### Phase C — Canonical reader/stream release artifact
+
+- Build and attest one canonical `qdl-v2-python:<semver>-<gitsha>` reader/stream
+  image from `dev`, with source SHA, image digest and bundle revision recorded.
+  Replace phase-named test identity only for `query_v2_*` and `stream_v2_*`.
+  Rust is rebuilt only if Rust source changes.
+- Render and validate V2-primary plus V1 fallback routing. Rolling affects only
+  those named reader roles; V1, Kafka topology/offsets, Redis, SQLite,
+  ingestors, Rust core, projectors, Trading System, alpha and order path remain
+  unchanged. Retain the exact old reader image and bundle for rollback.
+- Exit: real V2 final BAR, quote/trade, mark/index, L2 and reference routes are
+  reachable only through their sealed policy. No role has a phase-worktree name
+  as its production identity.
+
+### Phase D — Paired real V2 no-order proof
+
+- Run one Binance/OKX pair at a time, concurrently within the pair, for four
+  representative alpha classes: `adaptive_hma_cpp` closed-bar,
+  `scalping_purely` multi-symbol BTC-regime/ETH-execution,
+  `fib_sl_tp_strength` bracket/conditional, and `dynamic_grid` grid/L2. Run
+  `basis_arb_binance` as a separate data-only reference capability probe.
+- Each temporary consumer uses real V2 data, a sealed native binding,
+  `V2_PRIMARY`, no broker credentials, tmpfs cursor/state/log directories and
+  `--rm`. Prove warmup/FIFO append, final BAR, signed cursor replay/reconnect,
+  native identity isolation, quote/mark/L2 sequence or reset/resync as required,
+  and bounded CPU/RAM/feed age/watermark/gap/fallback counters.
+- Alpha intent must reach the temporary no-order Gateway/Risk preview unchanged;
+  Risk independently rereads V2 execution context. Before/after exact scoped
+  PostgreSQL and Redis checks must show zero sessions, commands, reservations,
+  orders, fills, groups, brackets, broker attempts and persistent alpha state.
+  V1/V2 signal/`pos_weight`/sizing/intent parity is compared only within the
+  same venue/candle corpus, never between native venues.
+- Exit: all admitted pair products pass. Any unavailable OKX reference product
+  is a tested typed block; it cannot be hidden by a fallback or an invented
+  cross-venue value. Rollback is removal of only the temporary consumers and
+  their namespaced tmpfs/evidence artifacts.
+
+### Phase E — Paper canary, release closure and hygiene
+
+- Promote one passing class at a time to a namespaced natural closed-candle
+  paper canary. Binance runs end-to-end when its paper broker adapter is
+  available. OKX runs a matching paper canary only when its paper broker
+  capability is enabled; otherwise it remains explicitly V2 no-order certified,
+  never mislabeled as execution-ready.
+- Validate V2-primary read, policy-allowed forced V1 fallback-return, strategy
+  input/signal/`pos_weight`/sizing parity before submit, and a bounded full
+  paper lifecycle with no unexpected stale or fallback. Render-validate every
+  reviewed alpha deployment against its sealed binding.
+- Exit: source commits are merged to `dev`, evidence is journaled in all three
+  plans, and a release PR is the sole route to `main`. Retain active plus one
+  named rollback image. After container-reference and disk checks, remove only
+  merged feature worktrees, stopped disposable smoke containers, exact
+  unreferenced test images and their unused build cache; never prune volumes,
+  networks, runtime state, active containers, secrets or user source.
+
+**Phase B actual-config revalidation (`PASS / SOURCE-ONLY`, 2026-09-02).** A
+disposable, network-disabled Execution Alpha runtime exported the current real
+Compose/config inventory to a namespaced temporary artifact. It produced `93`
+deployments with inventory SHA-256
+`7e27bebc8cd82113d78cda0cfaed9759f32c54fbb10bfe83b795ecc08d1b2c5c`.
+The Data Layer's actual `compile_alpha_deployment_bindings.py` algorithm then
+resolved it against the current source catalog, reference/L2 entitlement,
+release routing and policy. It wrote `18` admitted sealed bindings and `75`
+typed blocks, compilation SHA-256
+`aef316653ecfb1423c89fcdeec145faf3fd249243a37c849e65681267d8d04e4`.
+The additional admitted binding is the native OKX basis companion limited to
+funding and contract metadata; unavailable native basis/ratio/OI/taker feeds
+remain optional typed blocks. No broad BTC/ETH-only manifest, cross-venue
+substitution, provider request, runtime bundle, service, Kafka/Redis/SQLite or
+execution mutation was used.
+
+The portable Trading System parser loaded every one of the `18` generated
+bindings with exact consumer and release-manifest identity. Data Layer compiler
+and reader-release unit suites passed `10/10` in a read-only, non-root,
+network-disabled container. The temporary artifact namespace is retained only
+through Phase C/D because it is the exact input to the candidate sealed reader
+release; it will be removed after its digest has been recorded and the release
+bundle is independently verified. Phase B is therefore complete as source
+evidence; Phase C may build one canonical reader artifact from this immutable
+input.
+
+**Phase C bounded reader packet (`OWNER-APPROVED / PRE-BUILD`, 2026-09-02).**
+The candidate is one shared image tag `qdl-v2-python:2.0.0-5edbc8c`, built
+from Data Layer `dev@5edbc8c7707be3a0f57117d7b78bc6d7f0f8e89a`; the exact
+candidate digest will be sealed before any recreation. The only roles eligible
+for rolling recreation are `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive`, currently all on immutable
+`sha256:d6f15b186ebd5916b19847685487a63ddbfd1eef844cecfcedd11858186448b5`
+(`qdl-v2-python:2.0.0-dev-5edbc8c`). The bundle is generated from the exact
+inventory/compiler artifacts in `/tmp/qdl-phase54-alpha-bindings.UYpveN` and
+is written atomically under the versioned QDL release state root.
+
+No other named role is in blast radius: V1, Kafka topology/offsets, stable
+Redis, SQLite, Rust core, ingestors, bar edge, projectors, runtime/TLS mounts,
+Trading System, alpha containers and every order path are excluded. Rollback is
+the existing four-role image digest and current reader override only; it does
+not reset, flush, delete or rebuild durable state. Post-roll only verifies
+health, sealed binding identity and real provider reads; no execution request
+is allowed.
+
+**Phase C artifact and reader handoff (PASS / DEV PRE-RELEASE, 2026-09-02).**
+One canonical reader/stream image was built from Data Layer dev source
+5edbc8c7707be3a0f57117d7b78bc6d7f0f8e89a as qdl-v2-python:2.0.0-5edbc8c,
+image sha256:b2a2848011c84a6f6eaafd74b5a1a5b4908e0c1f9cfdbeb78325c3c0c3a0985c.
+The sealed release root is
+/home/bobby/.local/state/qdl-v2/releases/2.0.0-5edbc8c; its secret-free
+binding manifest SHA-256 is
+33488998c7c890e70ec30833d3455cd7f51e018681618ce470f3b6d829d84fa8.
+The four approved reader roles were recreated serially and are healthy:
+query_v2_1, query_v2_2, stream_v2_active, and stream_v2_passive. Their exact
+retained rollback is qdl-v2-python:2.0.0-dev-5edbc8c
+(sha256:d6f15b186ebd5916b19847685487a63ddbfd1eef844cecfcedd11858186448b5).
+V1, Kafka topology/offsets, Redis, SQLite, Rust core, ingestors, bar edge,
+projectors, Trading System, alpha and every order path were not changed.
+Image label/import smoke passed. This is a reader artifact handoff only; it
+does not yet certify a real alpha consumer. Phase D is the next active gate.
