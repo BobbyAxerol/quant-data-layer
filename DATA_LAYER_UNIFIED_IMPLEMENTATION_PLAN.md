@@ -30426,3 +30426,87 @@ provider call, source authority, V1/Kafka/Redis/SQLite state, Trading System,
 alpha service or order path changed. The next permitted operation is a new
 atomic release bundle with this generator, followed by a UID-1000 readability
 check and the same two disposable V2 reference probes.
+
+**Phase D binding-readable artifact packet (`APPROVED / PRE-BUILD`,
+2026-09-02).** Build one immutable shared reader image from source commit
+`136c52e` as `qdl-v2-python:2.0.0-136c52e`, run the same network-disabled
+release-generator test in that image, and seal one new versioned bundle from
+the existing verified inventory/compiler report. The bundle may point only to
+this candidate reader image and the retained `2.0.0-5edbc8c` rollback reader.
+Before any reader role is recreated, verify the exact sealed bindings have mode
+`0444` and can be parsed by UID/GID `1000:1000`; otherwise stop before runtime
+mutation. The only later role change remains serial `query_v2_1` then
+`query_v2_2`, with per-role health/provenance checks and exact rollback. No
+V1, Kafka topology/offsets, Redis/SQLite, Rust, ingestion, bar edge,
+projector, Trading System, alpha service, broker credential or order path is
+in scope.
+
+**Phase D binding-readable reader handoff (`APPROVED / PRE-ROLL`,
+2026-09-02).** The new bundle is
+`/home/bobby/.local/state/qdl-v2/releases/2.0.0-136c52e`, source
+`136c52e6bade5bbfa9c5baf374286ee98e78826e`, candidate image
+`qdl-v2-python:2.0.0-136c52e` / image ID
+`sha256:2a2b533ad073d18953fab526fbfca22dc2c76d7b8d656b7cae059e8d43b48a50`,
+and release manifest SHA-256
+`60670346a9ac2a9edb723d1a709f37d842b11d5dc5fe75c515d92d55c54379ad`.
+All 18 binding files are mode `0444`; the alpha UID `1000` parsed an actual
+sealed binding, while the release manifest and compose overrides remain mode
+`0640`. The next bounded packet writes two temporary image-only Compose
+overrides and serially recreates exactly `query_v2_1` and `query_v2_2`. Its
+exact rollback is their current `qdl-v2-python:2.0.0-021b372` image ID
+`sha256:82e0c6cc57b8b4630cfa1cfaa7f017128f332601f2ea6613595be4abfd8035e2`
+with the unchanged runtime mount. The older `2.0.0-5edbc8c` remains retained as
+the pre-Phase-D reader rollback; neither is removed during this handoff. No
+other role or durable state may change.
+
+**Phase D workload-identity readability defect (`FAIL-CLOSED / SOURCE
+CORRECTION REQUIRED`, 2026-09-02).** Both query replicas rolled serially to
+`2.0.0-136c52e`, are Docker-healthy with restart count zero, and no other V2
+role changed. A non-network UID-1000 alpha-container check confirms the
+Binance TLS identity is readable, but confirms the staged OKX client private
+key is not readable (`EACCES`): it is host-owned `1001:1001` mode `0440` while
+the immutable alpha runtime intentionally runs UID/GID `1000:1000`. This
+stopped before any provider or V2 API request. Do not work around it by running
+the alpha as the host user or making the original private key world-readable.
+The required shared fix is a per-workload identity materialization path that
+creates an alpha-UID-owned, private `0400` client-key mount (and read-only
+certificate/CA) from the existing protected staging source, with a regression
+for both Binance and OKX. It must leave the source identity private, emit no
+secret value, and be reusable by every alpha/venue. Only after an actual
+UID-1000 mTLS read check passes may the paired real reference probes retry.
+V1, Kafka/Redis/SQLite, Rust/ingestors/bar edge/projectors, Trading System,
+alpha service definitions and all order paths remain excluded.
+
+**Phase D workload-identity materialization slice (`APPROVED / SOURCE-ONLY`,
+2026-09-02).** Add one filesystem-only Data Layer control-plane helper, not a
+service and not a per-symbol artifact. It accepts exactly a protected TLS
+directory (`ca.crt`, `client.crt`, `client.key`) and JWT directory
+(`private.key`), validates regular-file/no-symlink inputs, and atomically
+creates one per-workload output under the governed QDL state root. The mounted
+TLS/JWT leaf directories are owned by the declared non-root workload UID/GID;
+their private keys are `0400`, certificates/CA are `0444`, and the source keys
+remain unchanged. The release/binding manifest records only hash/path/mode
+metadata, never secret bytes. Unit coverage must prove deterministic dry run,
+atomic materialization, source-symlink/unexpected-file rejection, private-mode
+split and a real UID-1000 read. The helper must require effective root only for
+apply/chown and be invoked through a bounded disposable Docker-root helper; it
+must not alter any existing identity in place. On exit, materialize only the
+two disposable Binance/OKX probe identities and retry the exact paired
+reference read. No runtime role, provider source, durable store, Trading
+System/alpha service or order path may change.
+
+**Phase D workload-identity source gate (`PASS / SOURCE-ONLY`, 2026-09-02).**
+Added `scripts/materialize_alpha_v2_identity.py` and the Phase-54 runbook
+contract. The helper accepts only the exact TLS/JWT file sets, rejects
+symlinks, directories, extra/missing/empty files and an existing target, and
+requires effective root only for `--apply` ownership changes. It atomically
+renames a staged output under `workload-identities/<workload-id>`; `tls/` and
+`jwt/` are `0500` and UID/GID-bound, client/JWT private keys are `0400`, and
+certificates/CA/public key are `0444`. The protected source remains mode
+`0440`/unchanged. The root-only filesystem test plus release generator test
+passed `7/7` in 1.715s inside immutable `qdl-v2-python:2.0.0-136c52e`,
+network-disabled, read-only with tmpfs-only test state. `git diff --check` and
+`py_compile` passed. A separate disposable Docker bind-mount check remains the
+required real UID-1000 proof because the intentionally private host state root
+is not directly traversable by the alpha process. No runtime role, provider,
+durable state, V1, Trading System, alpha service or order path changed.

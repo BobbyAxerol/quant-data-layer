@@ -57,6 +57,31 @@ Create a new `0700` directory outside the source checkout:
 provenance only. It must not contain a credential, key, token, provider
 payload, cursor, database dump, Redis/Kafka state or log body.
 
+Bindings are intentionally public-to-their-declared-workload control-plane
+artifacts: each `bindings/*.binding.json` is immutable mode `0444` so the
+non-root alpha UID can parse its sealed route policy. All other bundle files
+remain operator-only mode `0640`. A binding never carries TLS/JWT material.
+
+## Workload Identity Mounts
+
+Never make a protected source private key world-readable or run an alpha as the
+host user. Before a real alpha handoff, materialize one distinct mount under
+the governed state root with `scripts/materialize_alpha_v2_identity.py`:
+
+```text
+/home/bobby/.local/state/qdl-v2/workload-identities/<workload-id>/
+  tls/  # ca.crt, client.crt: 0444; client.key: 0400
+  jwt/  # public.pem: 0444; private.key: 0400
+  identity-manifest.json  # operator-only hashes/modes, no secret bytes
+```
+
+The source TLS/JWT directories stay private and unchanged. The helper must run
+as root only to set the declared immutable container UID/GID ownership (today
+alpha `1000:1000`) and performs a staging-directory rename. Mount only `tls/`
+and `jwt/` read-only into that alpha; do not mount the parent state root. The
+alpha UID must parse its binding and read both private keys in an isolated
+no-network container before any V2 provider or Gateway/Risk call.
+
 `reader-image.override.yml` and `reader-rollback.override.yml` each change
 only these service image fields:
 
