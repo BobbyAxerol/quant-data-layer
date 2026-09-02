@@ -560,6 +560,82 @@ class StableBarBootstrapTests(unittest.TestCase):
             finally:
                 spool.close()
 
+    def test_targeted_history_repair_publishes_only_missing_without_advancing_checkpoint(self):
+        class Envelope:
+            def __init__(self, open_ms: int):
+                self.raw_frame_bytes = json.dumps({"row": _binance_row(open_ms)}).encode()
+
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return tuple(range(len(batch)))
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-targeted-repair-") as directory:
+            publisher = Publisher()
+            spool, edge = self._cached_edge(directory, publisher)
+            try:
+                source, _acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(spool, source, open_ms=60_000)
+                edge._last_open_ms[source.binding_id] = 180_000
+                with patch(
+                    "qdl.runtime.stable_bar_edge.fetch_binance_history",
+                    return_value=(Envelope(60_000), Envelope(120_000)),
+                ):
+                    plan = edge.prepare_history_repair(
+                        source.binding_id,
+                        rows=2,
+                        observed_ms=180_000,
+                    )
+                self.assertEqual(len(plan.missing_envelopes), 1)
+                self.assertEqual(edge.history_repair_remaining_rows(plan), 1)
+                self.assertEqual(edge.apply_history_repair(plan, expected_missing_rows=1), 1)
+                self.assertEqual(edge._last_open_ms[source.binding_id], 180_000)
+                self.assertEqual(
+                    [json.loads(item.raw_frame_bytes)["row"][0] for item in publisher.batches[0]],
+                    [120_000],
+                )
+            finally:
+                spool.close()
+
+    def test_targeted_history_repair_is_provider_neutral_and_count_fenced(self):
+        class Envelope:
+            def __init__(self, open_ms: int):
+                self.raw_frame_bytes = json.dumps({
+                    "data": [[str(open_ms), "1", "1", "1", "1", "1", "1", "1", "1"]]
+                }).encode()
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-targeted-repair-") as directory:
+            spool, edge = self._cached_edge(directory, self._NoopPublisher())
+            try:
+                source, _acquisition = next(
+                    pair for pair in edge.history_okx_bindings
+                    if pair[0].instrument.native_symbol == "BTC-USDT-SWAP"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(spool, source, open_ms=60_000)
+                with patch(
+                    "qdl.runtime.stable_bar_edge.fetch_okx_history",
+                    new_callable=AsyncMock,
+                    return_value=(Envelope(60_000), Envelope(120_000)),
+                ):
+                    plan = edge.prepare_history_repair(
+                        source.binding_id,
+                        rows=2,
+                        observed_ms=180_000,
+                    )
+                with self.assertRaisesRegex(RuntimeError, "missing-row count changed"):
+                    edge.apply_history_repair(plan, expected_missing_rows=0)
+            finally:
+                spool.close()
+
     def test_cache_binding_mismatch_fails_closed_before_publish(self):
         class Envelope:
             raw_frame_bytes = json.dumps({"row": _binance_row(60_000)}).encode()
