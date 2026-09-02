@@ -30388,6 +30388,29 @@ V1, Trading System, alpha or order-path state changed. This source slice is
 ready to commit to `dev`; only the subsequent packet may build or recreate the
 four reader roles.
 
+**Phase C canonical runtime packet (`APPROVED / PRE-BUILD`, 2026-09-02).**
+The canonical checkout is now Data Layer `dev@3e3b79285426772c5da774224a28006b47642b4c`.
+Build exactly one shared Python reader/stream image from that checkout as
+`qdl-v2-python:2.0.0-3e3b792`; verify OCI revision/user/ID, then run the
+reader-release and reference/L2 contract subset from the immutable image with
+no source mount, `--network none`, read-only root and tmpfs-only test state.
+Regenerate the real Execution Alpha Compose/config inventory and compilation
+twice in disposable containers, then seal one atomic operator-owned release
+under `/home/bobby/.local/state/qdl-v2/releases/2.0.0-3e3b792` from those exact
+digests. Its candidate selector is digest-pinned. Its exact rollback mapping
+is query 1/2 to `2.0.0-a3f423d` /
+`sha256:dccc24b2f4a9f4f0aff58551cfe09f7ce8e7a5f42e4ef372b27b0c5b6b58d659`
+and stream active/passive to `2.0.0-5edbc8c` /
+`sha256:b2a2848011c84a6f6eaafd74b5a1a5b4908e0c1f9cfdbeb78325c3c0c3a0985c`.
+Only after source/image/bundle preflight passes may Compose serially recreate
+`query_v2_2`, `query_v2_1`, then the observed stream standby and leader. Every
+role must show its pinned candidate selector, expected provenance, zero
+restart/OOM and correct ready/lease state before continuing. A failure rolls
+back only that role with its own recorded selector and unchanged runtime mount.
+V1, Kafka topology/offsets, Redis, SQLite, Rust, ingestors, bar edge,
+projectors, Trading System, alpha and all order paths are excluded; normal
+market-data writes are not introduced by this reader-only packet.
+
 **Phase C bounded reader packet (`OWNER-APPROVED / PRE-BUILD`, 2026-09-02).**
 The candidate is one shared image tag `qdl-v2-python:2.0.0-5edbc8c`, built
 from Data Layer `dev@5edbc8c7707be3a0f57117d7b78bc6d7f0f8e89a`; the exact
