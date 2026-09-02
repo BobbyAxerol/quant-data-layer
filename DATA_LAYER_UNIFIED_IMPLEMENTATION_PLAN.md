@@ -31496,3 +31496,30 @@ System, alpha, Gateway/Risk or order path was accessed by this source gate.
 Next permitted operation: commit this source slice, build one canonical reader
 image from that commit, then use the already-approved bounded query/stream
 handoff and exactly one 299-product C2 no-order acceptance.
+
+**Quiet-session reader handoff (`OWNER-APPROVED / PRE-ROLL`, 2026-09-02).**
+Source commit `09e5d03b3f9a068b37b4b8199b0b5337972344d6` built one canonical
+reader/stream image `qdl-v2-python:2.0.1-09e5d03`, image ID
+`sha256:9403705e86099de96c38d064cbc7a86e74c76c71cbbcebb028e9c587568b2dd4`.
+OCI revision/release labels equal that source coordinate; an immutable,
+non-root, read-only, network-disabled image gate passed the same **52/52**
+matrix in `32.685s`. The one operator-only selector
+`quiet-book-delta-09e5d03/reader-image.override.yml` (SHA-256
+`43978fc755a827dc2f2f4373564c097793931f07f9c34aee1d5287524132d1c5`) changes
+exactly `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive`. Its exact rollback selector (SHA-256
+`e446b4efa3ab5653fb7584f79a4cf984dbb3ec2ccb6db263eb75f0cbd60a8e32`) restores
+both queries to `qdl-v2-python:2.0.1-e634b95@sha256:7288e921ba4902deb4477cebc911bd4c6cc93e39a368773def722717ba77b504`
+and both streams to
+`qdl-v2-python:2.0.0-6962966@sha256:221aceb394b9ad55661bb6d81e0b1acad6a880ac18f75b1b44d03d9b4c0c3377`.
+
+Compose validation with the exact current environment/override chain passed.
+Rolling order is queries one at a time, then standby stream then lease-holder
+stream after observing lease state. Between roles require health/dependencies,
+restart count `0`, `OOMKilled=false` and expected immutable image. This packet
+does not recreate or write V1, Kafka topology/offsets, Redis, SQLite, Rust
+core, ingestors, bar-edge, projectors, Trading System, alpha or any order path;
+normal reader audit writes only are expected. On any failure stop and recreate
+only the failed role with its exact rollback selector. After all four are
+healthy, run exactly one fresh 299-product, four-identity, 300-second C2
+no-order acceptance and remove only its disposable client namespace.
