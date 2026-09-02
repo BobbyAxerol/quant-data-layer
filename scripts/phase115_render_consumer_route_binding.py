@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+import yaml
+
 from qdl.consumer.universal_release import (
     ConsumerRouteBinding,
     UniversalReleaseManifest,
@@ -49,10 +51,36 @@ def _manifest_from_artifact(value: Mapping[str, Any]) -> UniversalReleaseManifes
     return manifest
 
 
+def _consumer_manifest_revision(path: Path, *, consumer_id: str) -> int:
+    try:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise ValueError(f"consumer manifest is missing: {path}") from error
+    if not isinstance(value, Mapping):
+        raise ValueError("consumer manifest must be a mapping")
+    metadata = value.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise ValueError("consumer manifest metadata is missing")
+    if str(metadata.get("id", "")).strip() != consumer_id:
+        raise ValueError("consumer manifest id differs from requested consumer")
+    revision = metadata.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        raise ValueError("consumer manifest revision must be a positive integer")
+    return revision
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-artifact", type=Path, required=True)
     parser.add_argument("--consumer-id", required=True)
+    parser.add_argument(
+        "--consumer-manifest",
+        type=Path,
+        help=(
+            "Optional canonical consumer manifest. When supplied, render a "
+            "generation-bound v2 binding that seals metadata.revision."
+        ),
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--independent-v1-venue",
@@ -64,10 +92,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.release_artifact.resolve() == args.output.resolve():
         raise ValueError("release artifact and binding output must be different files")
     manifest = _manifest_from_artifact(_read_mapping(args.release_artifact))
+    consumer_id = str(args.consumer_id)
+    consumer_manifest_revision = (
+        _consumer_manifest_revision(args.consumer_manifest, consumer_id=consumer_id)
+        if args.consumer_manifest is not None
+        else None
+    )
     binding = ConsumerRouteBinding.from_manifest(
         manifest,
-        consumer_id=str(args.consumer_id),
+        consumer_id=consumer_id,
         independent_v1_venues=tuple(str(item) for item in args.independent_v1_venue),
+        consumer_manifest_revision=consumer_manifest_revision,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
@@ -80,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         "release_revision": binding.release_revision,
         "universal_manifest_sha256": binding.universal_manifest_sha256,
         "binding_sha256": binding.binding_sha256,
+        "consumer_manifest_revision": binding.consumer_manifest_revision,
         "product_count": len(binding.products),
         "runtime_mutations": 0,
         "order_actions": 0,

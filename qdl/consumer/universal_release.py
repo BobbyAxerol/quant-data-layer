@@ -34,7 +34,8 @@ from qdl.runtime.universal_realtime import UniversalRealtimePlan
 _SCHEMA = "qdl.v2.universal-release-manifest.v1"
 _POLICY_SCHEMA = "qdl.v2.universal-release-policy.v1"
 _COVERAGE_SCHEMA = "qdl.v2.universal-release-coverage.v1"
-_CONSUMER_ROUTE_BINDING_SCHEMA = "qdl.v2.consumer-route-binding.v1"
+_CONSUMER_ROUTE_BINDING_SCHEMA_V1 = "qdl.v2.consumer-route-binding.v1"
+_CONSUMER_ROUTE_BINDING_SCHEMA_V2 = "qdl.v2.consumer-route-binding.v2"
 _V2_VENUES = frozenset({"BINANCE", "OKX"})
 _REALTIME_FEEDS = frozenset({DemandFeed.TRADE, DemandFeed.QUOTE, DemandFeed.BAR})
 _BOOK_FEEDS = frozenset({DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA})
@@ -844,6 +845,10 @@ class ConsumerRouteBinding:
     independent_v1_venues: tuple[str, ...]
     products: tuple[UniversalReleaseProduct, ...]
     binding_sha256: str | None = None
+    # V1 bindings remain portable for existing unpromoted consumers. A V2
+    # binding seals the server-side consumer-manifest revision as well, so a
+    # JWT minted for another revision fails before any data-plane connection.
+    consumer_manifest_revision: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "consumer_id", _text(self.consumer_id, "binding consumer_id"))
@@ -852,6 +857,11 @@ class ConsumerRouteBinding:
             self.capability_matrix_revision,
             "consumer route binding capability matrix revision",
         )
+        if self.consumer_manifest_revision is not None:
+            _positive_int(
+                self.consumer_manifest_revision,
+                "consumer route binding consumer manifest revision",
+            )
         for field in (
             "universal_manifest_sha256", "policy_sha256", "capability_matrix_sha256",
             "inventory_sha256",
@@ -882,8 +892,12 @@ class ConsumerRouteBinding:
         object.__setattr__(self, "binding_sha256", expected)
 
     def _canonical_without_digest(self) -> dict[str, object]:
-        return {
-            "schema": _CONSUMER_ROUTE_BINDING_SCHEMA,
+        canonical = {
+            "schema": (
+                _CONSUMER_ROUTE_BINDING_SCHEMA_V2
+                if self.consumer_manifest_revision is not None
+                else _CONSUMER_ROUTE_BINDING_SCHEMA_V1
+            ),
             "contract_version": "2.0.0",
             "consumer_id": self.consumer_id,
             "consumer_class": self.consumer_class.value,
@@ -899,6 +913,9 @@ class ConsumerRouteBinding:
             "independent_v1_venues": list(self.independent_v1_venues),
             "products": [item.canonical_mapping() for item in self.products],
         }
+        if self.consumer_manifest_revision is not None:
+            canonical["consumer_manifest_revision"] = self.consumer_manifest_revision
+        return canonical
 
     def canonical_mapping(self) -> dict[str, object]:
         return {**self._canonical_without_digest(), "binding_sha256": self.binding_sha256}
@@ -910,6 +927,7 @@ class ConsumerRouteBinding:
         *,
         consumer_id: str,
         independent_v1_venues: tuple[str, ...] = ("DNSE",),
+        consumer_manifest_revision: int | None = None,
     ) -> "ConsumerRouteBinding":
         selected = tuple(
             item for item in manifest.products if item.consumer_id == _text(consumer_id, "binding consumer_id")
@@ -931,17 +949,31 @@ class ConsumerRouteBinding:
             v1_rollback=manifest.v1_rollback,
             independent_v1_venues=independent_v1_venues,
             products=tuple(sorted(selected, key=lambda item: item.requirement_id)),
+            consumer_manifest_revision=consumer_manifest_revision,
         )
 
     @classmethod
     def from_canonical_mapping(cls, value: Mapping[str, object]) -> "ConsumerRouteBinding":
-        expected = {
+        base_expected = {
             "schema", "contract_version", "consumer_id", "consumer_class",
             "release_revision", "universal_manifest_sha256", "policy_sha256",
             "capability_matrix", "inventory_sha256", "v1_rollback",
             "independent_v1_venues", "products", "binding_sha256",
         }
-        if set(value) != expected or value.get("schema") != _CONSUMER_ROUTE_BINDING_SCHEMA:
+        schema = value.get("schema")
+        if schema == _CONSUMER_ROUTE_BINDING_SCHEMA_V1:
+            expected = base_expected
+            consumer_manifest_revision = None
+        elif schema == _CONSUMER_ROUTE_BINDING_SCHEMA_V2:
+            expected = base_expected | {"consumer_manifest_revision"}
+            consumer_manifest_revision = _positive_int(
+                value.get("consumer_manifest_revision"),
+                "consumer route binding consumer manifest revision",
+            )
+        else:
+            expected = set()
+            consumer_manifest_revision = None
+        if set(value) != expected:
             raise ValueError("consumer route binding schema or fields are invalid")
         if value.get("contract_version") != "2.0.0":
             raise ValueError("consumer route binding contract version is invalid")
@@ -1027,6 +1059,7 @@ class ConsumerRouteBinding:
             independent_v1_venues=tuple(str(item) for item in venues),
             products=tuple(products),
             binding_sha256=str(value["binding_sha256"]),
+            consumer_manifest_revision=consumer_manifest_revision,
         )
 
 

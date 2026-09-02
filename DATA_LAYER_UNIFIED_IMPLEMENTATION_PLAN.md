@@ -30945,3 +30945,70 @@ cache/identity mismatch appears; do not weaken the sealed freshness policy.
 Post-proof evidence: all three Rust cores were running with `restart=0` and `OOM=false`; the Dynamic Grid scoped PostgreSQL counts remained zero for `execution_sessions`, `orders`, `fills` and `order_brackets`; both `--rm` consumer clients self-removed; and the exact disposable no-order Gateway was removed. V1, Kafka, Redis, SQLite, ingestors, projectors, query/stream, Trading System, alpha services and order paths were not changed. This is real-provider V2 consumer evidence for the declared two ETH L2 bindings, not a broad alpha paper rollout or a claim about unbound symbols.
 
 **Phase 54.2-D cleanup evidence (`COMPLETE / SCOPED`, 2026-09-02).** After confirming no container reference, removed exactly two test-only images: `trading-system-phase4-test:bracket-context-20260901-r2` (`sha256:e0a95c...`) and `tradingsystem-image:1.2.0-09fda78` (`sha256:ac2fd3...`). No V2 Data Layer image, role, Kafka topic/offset, Redis key, SQLite state, volume, network, V1 service, Trading System or alpha service was removed. The Alpha Runtime probe image remains because a separately user-stopped alpha container still references it. No broad prune was used. Post-cleanup host evidence: `54,881,800,192` bytes free (`83%` used); Docker inventory is `80.42GB` images, `36.55GB` build cache and `2.11GB` reclaimable local volumes. A pre-cleanup byte baseline was not captured before this exact image deletion, so this record deliberately does not claim bytes freed.
+
+### Phase 54.3 - Final V2 Consumer Closure, Release And Hygiene
+
+Status: `OWNER-APPROVED / ACTIVE` (2026-09-02).
+
+**Goal.** Close the already-approved V2 work as an operable product rather than
+as isolated proof: source convergence through `dev`, an authenticated
+Trading-System V2 reader, one bounded no-order acceptance, release provenance,
+and exact artifact/worktree cleanup across Data Layer, Trading System and
+Execution Alpha. This is not a new data-plane feature phase.
+
+**Root cause and scope.** The active V2 server loads
+`trading-system.paper.stable` manifest revision `7`, while the running Trading
+System service mints JWTs with revision `6`; V2 correctly rejects the request
+as `UNAUTHENTICATED`. The consumer binding currently carries route/release
+provenance but not the manifest revision needed to make this mismatch
+machine-checkable. Add that single immutable field to the binding contract and
+its parser/generator tests. Trading System must validate the sealed revision
+against its JWT configuration before startup. The only permitted runtime
+recreate is `market_data_service`; V1, Kafka, Redis, SQLite, V2 ingest/core/
+projector/query/stream roles, Gateway/Risk/executor, alpha strategy containers,
+brokers and order paths remain out of scope.
+
+**Required gates.**
+
+1. Rebase/integrate only reviewed V2 commits onto each repository's current
+   `origin/dev`; rerun affected Data Layer contract/compiler tests, Trading
+   System V2 bridge/deployment tests and Execution Alpha V2 runtime/no-order
+   tests. Every retained source change must be an ancestor of `dev` before a
+   worktree can be removed.
+2. Generate a revision-7 Trading-System binding/JWT configuration from the
+   active consumer manifest, render the one-service override, and prove stale
+   revision `6` is rejected before any network/order action. Build one
+   immutable Trading System image only if source changes require it.
+3. Serially recreate only `market_data_service`, preserving its logs, symbols,
+   V2 cursor/audit state and mTLS/JWT mounts. Rollback restores its exact
+   prior image and runtime binding; no store reset, topic/offset change or
+   alpha service start is allowed.
+4. Run one 300-second real V2 no-order acceptance using the existing
+   Binance/OKX bindings: final BAR, quote/trade, mark/index, L2 snapshot/delta,
+   signed cursor/reconnect, typed Risk read-back and zero execution state
+   mutation. A health response alone is insufficient.
+5. After all three repositories have pushed `dev` and the reviewed release
+   path reaches `main`, retain only active images plus one named rollback
+   image per runtime family. Remove only merged worktrees, stopped disposable
+   smoke containers, exact unreferenced test images and their unused BuildKit
+   cache. Never remove volumes, networks, source state, secrets or a
+   user-stopped alpha container without separate approval.
+
+**Exit.** Trading System reports its demanded V2 slices ready with no active
+fallback for V2-primary routes; source/release/runtime provenance is recorded
+in all three plans; all removable worktrees and test artifacts have an exact
+inventory and cleanup receipt. Only then may alpha logic refinement resume on
+the canonical `dev` checkout.
+
+**Phase 54.3 generation-bound binding source gate (`PASS / SOURCE-ONLY`,
+2026-09-02).** The sealed consumer-route artifact now has an additive
+`qdl.v2.consumer-route-binding.v2` form which binds the exact
+`consumer_manifest_revision`; its V1 predecessor remains readable for
+unpromoted consumers. The pure renderer emits V2 only when given the canonical
+consumer manifest, validates its consumer ID and positive revision, and emits
+no provider/runtime/order side effect. In the isolated, read-only, no-network
+V2 Python image, `tests.test_phase115_universal_release` and
+`tests.test_alpha_deployment_bindings` passed **19/19**. This includes V2
+round-trip/tamper rejection and retained V1 alpha compiler compatibility for
+native Binance/OKX routes. No runtime artifact, service, Kafka/Redis/SQLite
+state, V1 route, Trading System, alpha or order path changed.

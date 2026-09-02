@@ -336,6 +336,29 @@ class UniversalReleaseManifestTests(unittest.TestCase):
             manifest.digest,
         )
 
+    def test_generation_bound_consumer_route_binding_round_trips_and_keeps_v1_compatibility(self):
+        manifest, *_ = _manifest()
+        consumer_id = manifest.products[0].consumer_id
+        generation_bound = ConsumerRouteBinding.from_manifest(
+            manifest,
+            consumer_id=consumer_id,
+            consumer_manifest_revision=7,
+        )
+        self.assertEqual(
+            generation_bound.canonical_mapping()["schema"],
+            "qdl.v2.consumer-route-binding.v2",
+        )
+        self.assertEqual(generation_bound.consumer_manifest_revision, 7)
+        self.assertEqual(
+            ConsumerRouteBinding.from_canonical_mapping(
+                generation_bound.canonical_mapping()
+            ).consumer_manifest_revision,
+            7,
+        )
+        legacy = ConsumerRouteBinding.from_manifest(manifest, consumer_id=consumer_id)
+        self.assertEqual(legacy.canonical_mapping()["schema"], "qdl.v2.consumer-route-binding.v1")
+        self.assertIsNone(legacy.consumer_manifest_revision)
+
     def test_consumer_route_binding_rejects_unknown_tampered_and_duplicate_routes(self):
         manifest, *_ = _manifest()
         with self.assertRaisesRegex(ValueError, "no admitted product"):
@@ -418,6 +441,33 @@ class UniversalReleaseManifestTests(unittest.TestCase):
             )
             self.assertEqual(parsed.consumer_id, consumer_id)
             self.assertTrue(all(item.consumer_id == consumer_id for item in parsed.products))
+
+    def test_renderer_seals_consumer_manifest_revision_when_given_manifest(self):
+        manifest, *_ = _manifest()
+        consumer_id = manifest.products[0].consumer_id
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            artifact = root / "release.json"
+            consumer_manifest = root / "consumer.yaml"
+            output = root / "consumer-binding.json"
+            artifact.write_text(json.dumps({
+                "schema": "qdl.phase115.universal-release-preflight.v1",
+                "release_manifest": manifest.canonical_mapping(),
+                "release_summary": manifest.report_payload(),
+            }), encoding="utf-8")
+            consumer_manifest.write_text(yaml.safe_dump({
+                "metadata": {"id": consumer_id, "revision": 7},
+            }), encoding="utf-8")
+            self.assertEqual(render_consumer_binding([
+                "--release-artifact", str(artifact),
+                "--consumer-id", consumer_id,
+                "--consumer-manifest", str(consumer_manifest),
+                "--output", str(output),
+            ]), 0)
+            parsed = ConsumerRouteBinding.from_canonical_mapping(
+                json.loads(output.read_text(encoding="utf-8"))
+            )
+            self.assertEqual(parsed.consumer_manifest_revision, 7)
 
 
 class UniversalReleaseEvidenceTests(unittest.TestCase):
