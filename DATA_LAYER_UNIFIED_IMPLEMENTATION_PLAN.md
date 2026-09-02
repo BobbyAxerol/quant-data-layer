@@ -31080,3 +31080,205 @@ The packet cannot recreate stream, projector, Rust core, bar-edge, either
 ingestor, V1 or any Trading-System/alpha/order role; it cannot alter Kafka
 topology/offsets, Redis, SQLite or runtime identity. Per-replica image,
 health, restart and real MARK/INDEX read checks gate the next operation.
+
+**Reader repair rollout evidence (`PASS / RUNTIME READ-PLANE ONLY`,
+2026-09-02).** The canonical image was built from
+`dev@1f64da7b2288db1debf2d5d83e819abcf1467204` as
+`qdl-v2-python:2.0.1-1f64da7`, immutable digest
+`sha256:4a2b8d55116d582c6e142be81259695002461dc7757d23cb85858e1eaf35da24`.
+Its OCI revision/release labels match the source coordinate; a non-root,
+read-only, network-disabled import gate passed. Operator-only overrides in
+`/home/bobby/.local/state/qdl-v2/phase543-reader-binding-20260902/`
+changed exactly `query_v2_1` and then `query_v2_2`, each with
+`--no-deps --force-recreate`; both are healthy, restart count zero and retain
+the recorded `2.0.0-6962966` query image as exact rollback. No stream,
+projector, Rust, bar-edge, ingestor, V1, Kafka, Redis, SQLite, Trading System,
+alpha, Gateway/Risk or order role was recreated or reset. Real typed
+mark/index reads through the active Trading-System facade passed for Binance
+USD-M `BTCUSDT`/`ETHUSDT` and OKX Swap `BTC-USDT-SWAP`/`ETH-USDT-SWAP`; the
+Gateway demanded-slice health subsequently reported `24/24 READY` with no
+unhealthy slice.
+
+**Final C2 no-order packet (`OWNER-APPROVED / READY`, 2026-09-02).** Create
+one disposable client on only the existing V2 stable-internal and
+`executor_network` networks. It will use the four declared authenticated
+consumer identities (`monitoring.multivenue.stable`,
+`trading-system.paper.stable`, `alpha.binance.paper.stable`,
+`alpha.okx.paper.stable`) against both query replicas and both stream aliases,
+with the authoritative `RUST_PRIMARY` record. The current release compiler
+resolves **299** exact products across the four identities: final BAR,
+TRADE, QUOTE, MARK_INDEX_PRICE, BOOK_SNAPSHOT, BOOK_DELTA, funding, open
+interest, long/short, taker flow, basis and contract metadata. It is a
+300-second upper-bound real-provider read-only acceptance, not a synthetic
+smoke. It verifies warmup, signed cursor replay/reconnect, reference lineage,
+bounded V1 fallback then return for routes that explicitly allow it, and
+fail-closed behavior for `BLOCKED` routes. It cannot call Gateway/Risk,
+create an execution session/order/fill/bracket, mutate alpha signal/sizing or
+connect directly to a venue.
+
+**C2 preconditions, rollback and cleanup.** Before start, derive a fresh
+payload-free V1 fallback runtime binding from the current
+`data_layer_service` container and frozen immutable V1 provenance; an old
+container ID is not reusable evidence. The client mounts certificates only
+read-only, copies the four declared identities to tmpfs, drops to non-root,
+and removes its cursor directory before exit. Its sole mutable artifacts are
+a `0700` evidence namespace with bounded receipt/stderr hashes and the
+temporary client container, which is removed on either pass or failure.
+V1, Kafka topology/offsets, Redis, SQLite, all persistent V2 roles, Trading
+System, alpha containers and the order path remain unchanged. Failure leaves
+V2 reader rollback available at the exact prior query digest and blocks
+release closure; it does not retry by weakening freshness, identity, fallback
+or source-authority rules.
+
+**C2 reference admission diagnosis (`FAIL-CLOSED / RUNTIME CONFIG DEFECT`,
+2026-09-02).** The first disposable C2 client exited before any order/Gateway
+action and retained only bounded stderr hashes. A non-sensitive diagnostic
+added expected/actual identity, status and provider problem context to the
+certification error; its focused reference suite remained `49/49` passing.
+The exact first failed route is Binance USD-M perpetual `DOGEUSDT`
+(`8aedd349-6999-5874-b0dd-34c6451c0b3a`) `BASIS`, returned as typed
+`SOURCE_UNAVAILABLE`: `Binance native basis Rust admission is unavailable`.
+Read-only inspection proves the query reader is correctly bound to the fixed
+private URL `http://rust_core:8300`, but the serving `rust_core` has
+`QDL_PROVIDER_ADMISSION_ENABLED=false` and the port refuses connections.
+This is a rollout configuration omission, not a DOGE delisting, vendor
+response, entitlement, symbol mapping, freshness failure or a reason to
+remove the declared BASIS product.
+
+**Bounded Rust-admission repair packet (`OWNER-APPROVED / READY`,
+2026-09-02).** Render one operator-only override that sets only
+`QDL_PROVIDER_ADMISSION_ENABLED=true` for the existing `rust_core` service;
+retain its current immutable Rust image, runtime/core mount, TLS, Kafka group,
+Redis prefix and all other environment exactly as-is. Compose preflight must
+prove only that one effective environment delta. Then recreate only
+`rust_core` with `--no-deps --force-recreate`, preserving V1, both query
+readers, streams, projectors, `rust_core_2`/`rust_core_3`, ingestors, bar edge,
+Kafka topology/offsets, Redis contents, SQLite, Trading System, alpha and
+order path. Rollback is the same one-service recreate using the exact
+operator override with the flag `false`.
+
+The private admission service is Rust's existing bounded coordinator, not a
+new public endpoint or worker. Its first real native-basis read may create a
+short-lived, namespaced lease/CAS record under the existing
+`qdl:stable:v2:provider-admission:v1` prefix; that is the intended minimal
+coordination write and is neither a market-data cache reset nor an execution
+mutation. Require post-roll endpoint liveness and one real native BASIS read
+for each Binance `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `DOGEUSDT`, `BNBUSDT`, with
+exact identity/lineage/coverage and no cross-venue fallback. Only then rerun
+one full C2 acceptance from a fresh disposable namespace.
+
+**Rust image-selection correction (`FAIL-CLOSED / IMMEDIATE BOUNDED
+ROLLBACK-CORRECTION`, 2026-09-02).** The first one-service recreate exposed a
+separate deployment-provenance defect before any admission request: the base
+stable environment still selected Rust image
+`2.0.0-7b7388348615@sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`,
+while the active shared Rust-core set had previously been
+`2.0.0-0a122a8-l2hot@sha256:c63d54f05cd00407f7440e48d10d13daf3beea581cc624cd5c748e88aaf15ee0`.
+That older image starts the core loop but does not expose the required private
+admission listener. The flag itself is correct; the effective image selector
+was incomplete. Do not accept a mixed core revision.
+
+The immediate correction adds the exact existing `0a122a8-l2hot` immutable
+selector to the same one-service operator override and recreates only
+`rust_core` again. It is a rollback-correction to the prior active core image,
+not a Rust build, topology change or additional role. The false-flag rollback
+retains this same image selector. Exit requires all three core replicas to
+report the identical Rust image digest, `rust_core` to listen on the private
+port, restart/OOM zero, and no data-plane or execution side effect before any
+native BASIS request/C2 retry.
+
+**Rust-admission repair evidence (`PASS / ONE-ROLE RUNTIME CORRECTION`,
+2026-09-02).** The first recreate was immediately corrected before any native
+BASIS request. All three core replicas now run the identical retained image
+`qdl-v2-rust:2.0.0-0a122a8-l2hot@sha256:c63d54f05cd00407f7440e48d10d13daf3beea581cc624cd5c748e88aaf15ee0`,
+each `running`, restart `0`, `OOMKilled=false`. The corrected `rust_core`
+reports `QDL_PROVIDER_ADMISSION_ENABLED=true` and its log records
+`qdl_provider_admission_started` with one sealed lane; a no-auth private GET
+now returns `404` rather than connection refused, which proves listener
+reachability without invoking a state-changing admission operation. V1,
+query/stream/projector/ingestor/bar-edge, Kafka topology/offsets, Redis,
+SQLite, Trading System, alpha and every order path remain untouched. The next
+operation is one fresh full C2 namespace; its declared real BASIS products
+cover Binance BTC/ETH/SOL/DOGE/BNB and will be the first actual admission/data
+proof.
+
+**Phase 54.3 C2 full-route result (`FAIL-CLOSED / RUNTIME-CONVERGENCE DEFECT`,
+2026-09-02).** The fresh 299-product, four-identity C2 progressed beyond the
+previous Binance DOGE native `BASIS` failure after the bounded Rust admission
+repair. The next exact failed product was `trading-system.paper.stable` on
+OKX Swap perpetual `DOGE-USDT-SWAP` `BOOK_DELTA`, rejected by the existing
+freshness contract. This is not a vendor substitution, disabled freshness
+gate, missing C2 identity, order action or alpha mutation: the sealed product
+is valid but has not been materialized by the shared realtime plane.
+
+**Phase 54.3 shared-runtime convergence (`APPROVED / IN PROGRESS`,
+2026-09-02).** Read-only compiler comparison found that the mounted
+`RUST_PRIMARY` bundle is an older partial runtime: every three core files
+contain `16` bindings while the current canonical catalog/acquisition compiler
+renders `182`; Binance USD-M ingestor contains `4` of `19` bindings and OKX
+Swap ingestor contains `6` of `89`. The missing declared set includes the
+five-liquid Binance/OKX TRADE/QUOTE/final-BAR plane plus the shared native
+top-100 L2 snapshot/delta mappings for BTC, ETH, SOL, DOGE and BNB, and the
+currently catalog-resolved BTC/ETH quarterly legs. This is the root cause of
+the DOGE L2 C2 failure. It is a runtime materialization/provenance defect, not
+a reason to relax freshness, fabricate a book, bypass Rust, add a per-symbol
+worker or declare V2 certified prematurely.
+
+**Approved bounded repair.** Use the existing canonical
+`StableSourceCatalog` and `StableAcquisitionPlan` compiler to render one
+authority-preserving convergence bundle. Before any write, prove exact
+identity/membership/order, authority/raw-topic/transactional identity,
+provider endpoints, and all retained DNSE/V1-compatible bindings; only the
+declared additions, catalog/config lineage and the previously approved bounded
+dedup setting may differ. The operation may atomically replace only the three
+mounted `core*.json` files and the two existing Binance/OKX ingestor JSON
+files, retaining byte-for-byte backups in a new private operator directory.
+It may rolling-recreate only `ingestor_binance_usdm`, `ingestor_okx_swap`,
+`rust_core`, `rust_core_2`, and `rust_core_3`, using their already active
+immutable images and existing mounts. It must not change authority mode,
+consumer routes, TLS, Kafka topology or offsets, Redis/SQLite data, V1,
+bar-edge, projectors, query/stream, Trading System, alpha containers or any
+order path; normal provider-originated market-data writes are expected.
+
+**Required gates and rollback.** Source tests must cover the legacy partial
+bundle -> canonical convergence, rejection of any non-declared field drift,
+and atomic rollback. A read-only rendered diff must enumerate all five
+perpetual identities and the six SOL/DOGE/BNB L2 additions without cross-venue
+mixing. Runtime acceptance requires all five shared roles healthy with no
+OOM/restart, real V2 top-100 `BOOK_SNAPSHOT` plus sequence-bearing
+`BOOK_DELTA` for the ten Binance/OKX perpetual books, then exactly one fresh
+299-product C2 no-order acceptance. Failure restores the five exact backed-up
+JSON files and recreates only the same roles; V1 remains the route rollback.
+No release/consumer promotion is allowed before that receipt passes.
+
+**Convergence source gate (`PASS / SOURCE-ONLY`, 2026-09-02).** Added the
+reusable `scripts/converge_v2_primary_runtime.py` operator tool instead of a
+manual file copy. It renders from the canonical compiler with the active
+authority bytes, permits only the measured catalog/instrument lineage updates,
+the already-approved `1,000,000 -> 100,000` core dedup bound, and the declared
+session-liveness metadata. It rejects an unknown binding, retained semantic
+drift, non-core/non-binding drift, unexpected dedup change and an output path
+outside the private QDL state root. It stages all five exact rollback files
+before atomic replacement and restores already-written files on failure.
+
+In a non-root, read-only, network-disabled image,
+`tests.test_converge_v2_primary_runtime`,
+`tests.test_refresh_v2_l2_core_runtime`,
+`tests.test_refresh_v2_native_ingestor_runtime`,
+`tests.test_phase104_reference_batch` and
+`tests.test_reference_l2_consumer_acceptance` passed **54/54** in `17.941s`.
+`py_compile` and `git diff --check` pass. No provider/runtime/data-plane
+operation occurred during this gate.
+
+**Live convergence dry-run (`PASS / NO RUNTIME MUTATION`, 2026-09-02).** The
+isolated renderer validates the active authority digest
+`1cd55d7...981fb107` unchanged and reports exactly five changed mounted files:
+each core is `16 -> 182` bindings with the ten Binance/OKX five-liquid
+perpetual L2 source IDs included and `dedup_capacity 1,000,000 -> 100,000`;
+Binance ingestor is `4 -> 19` bindings (nine native books including BTC/ETH
+quarterlies) and OKX ingestor is `6 -> 89` bindings (nine native books and
+its cataloged final-BAR set). Existing retained bindings have only validated
+catalog/instrument lineage updates. This proves the full compiler output is
+compatible with the mounted legacy subset; it has not written any runtime
+file, restarted a role, called a provider or changed V1/Kafka/Redis/SQLite,
+Trading System, alpha or order state.

@@ -374,7 +374,16 @@ def reference_evidence(
         or item.problem is not None
         or item.data is None
     ):
-        raise ValueError("reference response identity or availability differs from demand")
+        actual_product = getattr(getattr(item, "product", None), "value", None)
+        problem_code = getattr(getattr(item, "problem", None), "code", None)
+        problem_detail = getattr(getattr(item, "problem", None), "detail", None)
+        raise ValueError(
+            "reference response identity or availability differs from demand "
+            f"expected_uid={product.instrument_uid} expected_product={request.product.value} "
+            f"actual_uid={getattr(item, 'instrument_uid', None)} "
+            f"actual_product={actual_product} status={getattr(item, 'status', None)} "
+            f"problem_code={problem_code} problem_detail={problem_detail}"
+        )
     data = item.data
     if data.instrument_uid != product.instrument_uid or data.product.value != request.product.value:
         raise ValueError("reference payload identity differs from demand")
