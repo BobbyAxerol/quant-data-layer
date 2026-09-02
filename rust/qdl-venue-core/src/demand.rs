@@ -105,6 +105,10 @@ pub struct ReconcileAction {
     pub reason: String,
 }
 
+// The sealed V2 final-BAR contract permits a weekly bar to remain governed by
+// its 21-day freshness window. Individual demand policy stays authoritative.
+const MAX_REQUIREMENT_FRESHNESS_MS: u64 = 21 * 86_400_000;
+
 pub fn validate_requirement(requirement: &DataRequirement) -> Result<(), String> {
     let purpose =
         DemandPurpose::try_from(requirement.purpose).map_err(|_| "demand purpose is invalid")?;
@@ -157,7 +161,7 @@ pub fn validate_requirement(requirement: &DataRequirement) -> Result<(), String>
     if (!universe.expected_universe_sha256.is_empty()
         && universe.expected_universe_sha256.len() != 32)
         || requirement.warmup_limit > 100_000
-        || requirement.max_freshness_ms > 86_400_000
+        || requirement.max_freshness_ms > MAX_REQUIREMENT_FRESHNESS_MS
         || requirement.priority > 1_000
         || requirement.ttl_seconds < 30
         || requirement.ttl_seconds > 3_600
@@ -402,7 +406,7 @@ pub fn transition_allowed(previous: DemandState, next: DemandState) -> bool {
 mod tests {
     use super::{
         plan_shards, reconcile, transition_allowed, validate_requirement, DemandSubscription,
-        ReconcileActionKind,
+        ReconcileActionKind, MAX_REQUIREMENT_FRESHNESS_MS,
     };
     use qdl_contracts::qdl::demand::v1::{
         universe_selector, warmup_specification, DataRequirement, DemandPurpose, DemandState,
@@ -477,7 +481,9 @@ mod tests {
             .expected_universe_sha256 = vec![0; 31];
         assert!(validate_requirement(&invalid_digest).is_err());
         let mut invalid_freshness = requirement();
-        invalid_freshness.max_freshness_ms = 86_400_001;
+        invalid_freshness.max_freshness_ms = MAX_REQUIREMENT_FRESHNESS_MS;
+        assert!(validate_requirement(&invalid_freshness).is_ok());
+        invalid_freshness.max_freshness_ms = MAX_REQUIREMENT_FRESHNESS_MS + 1;
         assert!(validate_requirement(&invalid_freshness).is_err());
     }
 

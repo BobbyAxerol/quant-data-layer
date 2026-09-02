@@ -20,6 +20,7 @@ from qdl.api_v2.models import (
     InstrumentPageResponse,
     InstrumentResponse,
     MarketDataView,
+    MAX_REQUIREMENT_FRESHNESS_MS,
     ProblemDetails,
     QualityView,
     ReadinessItemResponse,
@@ -605,7 +606,9 @@ async def snapshot(
     source_policy_id: str,
     consumer_grade: ConsumerGrade = ConsumerGrade.ALPHA,
     interval: str | None = None,
-    max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    max_freshness_ms: int | None = Query(
+        None, gt=0, le=MAX_REQUIREMENT_FRESHNESS_MS
+    ),
     event_recency_policy: StalePolicy | None = None,
     max_session_liveness_ms: int | None = Query(None, gt=0, le=86_400_000),
     require_full_coverage: bool = True,
@@ -653,7 +656,9 @@ async def warmup(
     ),
     max_cache_age_ms: int = Query(60_000, ge=0, le=86_400_000),
     deadline_ms: int = Query(20_000, ge=100, le=120_000),
-    max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    max_freshness_ms: int | None = Query(
+        None, gt=0, le=MAX_REQUIREMENT_FRESHNESS_MS
+    ),
     event_recency_policy: StalePolicy | None = None,
     max_session_liveness_ms: int | None = Query(None, gt=0, le=86_400_000),
     require_full_coverage: bool = True,
@@ -718,7 +723,9 @@ async def history(
     ),
     max_cache_age_ms: int = Query(60_000, ge=0, le=86_400_000),
     deadline_ms: int = Query(20_000, ge=100, le=120_000),
-    max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    max_freshness_ms: int | None = Query(
+        None, gt=0, le=MAX_REQUIREMENT_FRESHNESS_MS
+    ),
     event_recency_policy: StalePolicy | None = None,
     max_session_liveness_ms: int | None = Query(None, gt=0, le=86_400_000),
     require_full_coverage: bool = True,
@@ -885,7 +892,9 @@ async def feed_status(
     source_policy_id: str,
     consumer_grade: ConsumerGrade = ConsumerGrade.ALPHA,
     interval: str | None = None,
-    max_freshness_ms: int | None = Query(None, gt=0, le=86_400_000),
+    max_freshness_ms: int | None = Query(
+        None, gt=0, le=MAX_REQUIREMENT_FRESHNESS_MS
+    ),
     event_recency_policy: StalePolicy | None = None,
     max_session_liveness_ms: int | None = Query(None, gt=0, le=86_400_000),
     require_full_coverage: bool = True,

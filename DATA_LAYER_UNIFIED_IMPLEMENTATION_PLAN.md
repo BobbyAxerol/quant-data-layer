@@ -32075,3 +32075,56 @@ acceptance source file read-only over
 test-client correction without changing the reader/runtime image. It still
 reaches only V2 query/stream and the policy-authorized V1 fallback, has no
 provider/broker/Gateway/Risk path, and is deleted by Docker on exit.
+
+**Universal final-BAR freshness contract correction (`IN PROGRESS / SOURCE +
+TWO-QUERY-ROLE ROLLOUT`, 2026-09-02).** The corrected C2 reached a real DOGE
+`BAR 12h` request and exposed an actual V2 request-model error:
+`max_freshness_ms` was globally clamped to one day. This violates the existing
+sealed final-BAR route contract, which intentionally declares `12h=36h`,
+`1d=3d`, `2d=6d`, `3d=9d` and `1w=21d` freshness windows. The fault is
+independent of DOGE/provider data; the same public request would reject every
+long interval before query execution. Current `max_session_liveness_ms` is
+only `45s`, so no session policy is being broadened.
+
+Correct the shared V2 request/demand bound to the exact current maximum final
+BAR policy (`21d = 1,814,400,000ms`) in the Python API and Rust demand-core,
+with tests that accept the governed weekly horizon and reject one millisecond
+above it. Regenerate/verify the public OpenAPI contract as required. This is a
+backward-compatible expansion of a versioned numeric bound; it does not change
+endpoint shape, identity, provider, finality, freshness values, source
+authority or fallback policy. Build exactly one immutable Python reader image
+after source tests pass, roll only `query_v2_1` then `query_v2_2` with the
+active runtime/TLS/state mounts, verify no restart/OOM and both replicas accept
+the long final-BAR request. Retain `43faf3d` as the explicit rollback image.
+Do not recreate stream, bar-edge, Rust, ingestor, projector, V1, Kafka, Redis,
+SQLite, Trading System, alpha or order path. Only after this bounded repair
+passes may one final full C2 retry run.
+
+**Universal final-BAR freshness source exit (`PASS / QUERY ROLLOUT AUTHORIZED`,
+2026-09-02).** The shared public V2 request bound and Rust demand validator now
+admit exactly the sealed maximum final-BAR SLA (`1,814,400,000ms = 21d`) and
+still reject `21d + 1ms`. The four V2 query routes (`snapshot`, `warmup`,
+`history`, `feed status`) import the same Python contract constant; session
+liveness remains independently capped at `86,400,000ms`, so this does not
+weaken quiet-feed/session admission. `contracts/v2/openapi.snapshot.json` was
+regenerated from the edited source and records the expanded `max_freshness_ms`
+bound for the request model and all four query parameters.
+
+Focused isolated evidence: Python contract/API plus C2/fallback/release
+regressions passed **54/54** in the existing reader image with a read-only
+source mount and `--network none`; Rust `qdl-venue-core` passed **37/37** with
+the repository lockfile. The first Rust attempt correctly exposed a missing
+test-module import for the new private constant; that compile defect was fixed
+before the passing run. A discarded offline attempt found no local crates.io
+cache, so the locked dependency cache was populated only in a temporary
+`/tmp` test directory; it is not source, runtime state, or a retained image
+and must be removed during this slice's cleanup. `git diff --check` passed.
+
+The next bounded runtime step is now authorized by the approved scope: build
+one immutable Python reader image from this committed source, rolling recreate
+only `query_v2_1` and then `query_v2_2` with the existing runtime/TLS/state
+mounts. Verify each is healthy/no-OOM and accepts declared long final-BAR
+requirements; retain `qdl-v2-python:2.0.1-43faf3d` as the exact rollback
+image. No other role, data store, consumer, provider connection, Trading
+System, alpha or order path is in scope. A single fresh full C2 retry follows
+only if both readers pass.
