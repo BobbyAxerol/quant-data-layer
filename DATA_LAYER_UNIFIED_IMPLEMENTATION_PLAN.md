@@ -30310,3 +30310,44 @@ V1, Kafka topology/offsets, Redis, SQLite, Rust core, ingestors, bar edge,
 projectors, Trading System, alpha and every order path were not changed.
 Image label/import smoke passed. This is a reader artifact handoff only; it
 does not yet certify a real alpha consumer. Phase D is the next active gate.
+
+**Phase D reference-period semantics correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-02).** The first authenticated, disposable alpha reference probe
+proved V2 identity, mTLS/JWT and sealed-route admission, then exposed a
+semantic freshness defect in the Binance USD-M adapter: the official provider
+defines `takerBuySellVol.timestamp` as the *start* of its requested period.
+The adapter already used that fact for pagination coverage, but emitted the
+same start timestamp as `ReferenceObservation.observed_at_ns`; the V2 query
+freshness policy therefore treated a completed daily row as almost one whole
+period older than it is. Native Binance basis uses the same period-start
+semantic and must follow the same contract. This is not an SLA change, a
+fallback, a provider retry, or a synthetic-data exception.
+
+The source correction is deliberately shared and bounded: preserve raw
+provider period start/end in observation labels; expose `observed_at_ns` as the
+verified period close for freshness/finality; and make pagination selection,
+cadence and coverage operate on the raw period-open coordinate. Contract tests
+must prove raw lineage preservation, exact close-time freshness, duplicate and
+gap detection, and unchanged period-start coverage for both TAKER_FLOW and
+native BASIS. The only subsequent runtime packet eligible to exercise the
+fix is a serial recreation of the existing `query_v2_1` and `query_v2_2`
+reader roles with one immutable Python image built from this source revision;
+the currently active reader digest remains the exact rollback. V1, Kafka
+topology/offsets, Redis, SQLite, Rust core, ingestors, bar edge, projectors,
+Trading System, alpha services and every order path remain excluded.
+
+**Phase D reference-period source gate (`PASS / SOURCE-ONLY`, 2026-09-02).**
+`BinanceUsdmReferenceAdapter` now keeps `period_open_time_ms`,
+`period_close_time_ms` and `timestamp_origin=PROVIDER_PERIOD_START` on native
+TAKER_FLOW and BASIS observations. Their canonical observation time is the
+verified close; the shared paginator separately uses the preserved open-time
+coordinate for provider windows, cadence, duplicate detection and coverage.
+Thus no raw provider fact is rewritten and a one-period freshness correction
+cannot hide a history gap. An immutable, non-root, read-only, network-disabled
+container ran `tests.test_phase104_reference_batch`,
+`tests.test_phase113_reference_v2` and
+`tests.test_reference_l2_consumer_acceptance`: `48/48 PASS` in 6.589s.
+`git diff --check` and changed-file `py_compile` passed. No provider call,
+container service, Kafka/Redis/SQLite write, V1/Trading System/alpha action or
+order-path mutation occurred. The source is ready for a coherent commit and
+then the separately bounded two-reader image/runtime packet.

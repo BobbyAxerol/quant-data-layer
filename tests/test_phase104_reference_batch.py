@@ -363,9 +363,21 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(taker_result.coverage.complete_left)
         self.assertTrue(taker_result.coverage.complete_right)
         self.assertFalse(taker_result.coverage.truncated)
+        self.assertEqual(
+            [item.observed_at_ns // 1_000_000 for item in taker_result.observations],
+            [2 * hour_ms - 1, 3 * hour_ms - 1],
+        )
+        self.assertIn(("period_open_time_ms", str(hour_ms)), taker_result.observations[0].labels)
+        self.assertIn(("period_close_time_ms", str(2 * hour_ms - 1)), taker_result.observations[0].labels)
         self.assertTrue(basis_result.coverage.complete_left)
         self.assertTrue(basis_result.coverage.complete_right)
         self.assertFalse(basis_result.coverage.truncated)
+        self.assertEqual(
+            [item.observed_at_ns // 1_000_000 for item in basis_result.observations],
+            [2 * hour_ms - 1, 3 * hour_ms - 1],
+        )
+        self.assertIn(("period_open_time_ms", str(hour_ms)), basis_result.observations[0].labels)
+        self.assertIn(("period_close_time_ms", str(2 * hour_ms - 1)), basis_result.observations[0].labels)
 
     async def test_taker_provider_window_advances_one_period_without_changing_logical_coverage(self):
         hour_ms = 3_600_000
@@ -398,7 +410,7 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, [("BTCUSDT", 2, 2 * hour_ms, 4 * hour_ms - 1)])
         self.assertEqual(
             [item.observed_at_ns // 1_000_000 for item in result.observations],
-            [hour_ms, 2 * hour_ms],
+            [2 * hour_ms - 1, 3 * hour_ms - 1],
         )
         self.assertTrue(result.coverage.complete_left)
         self.assertTrue(result.coverage.complete_right)
