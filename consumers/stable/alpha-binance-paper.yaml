@@ -5,7 +5,7 @@ metadata:
   owner: alpha-platform
   subject: spiffe://qdl/paper/alpha-binance-stable
   environment: paper
-  revision: 9
+  revision: 10
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -258,6 +258,7 @@ spec:
     interval: null
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -497,6 +498,7 @@ spec:
     interval: null
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -736,6 +738,7 @@ spec:
     interval: null
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -975,6 +978,7 @@ spec:
     interval: null
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -1214,6 +1218,7 @@ spec:
     interval: null
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK

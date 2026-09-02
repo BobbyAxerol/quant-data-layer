@@ -583,19 +583,19 @@ def validate_product_view(
         raise ValueError("V2 receipt has an unresolved gap or incomplete coverage")
     requirement = product.requirement
     max_freshness_ms = requirement.max_freshness_ms
-    observed_quiet_trade = (
-        product.feed is FeedType.TRADE
+    # A quiet TRADE or BOOK_DELTA channel says nothing about the health of its
+    # provider session. The latter is admitted only through an explicit
+    # session SLA. BOOK_DELTA remains non-price continuity/replay evidence:
+    # callers must use a fresh BOOK_SNAPSHOT/QUOTE/MARK read to choose a price.
+    observed_quiet_continuity = (
+        product.feed in {FeedType.TRADE, FeedType.BOOK_DELTA}
         and requirement.effective_event_recency_policy is StalePolicy.OBSERVE
         and view.quality.event_recency_state == "STALE"
         and view.quality.provider_session_state == "LIVE"
     )
-    if (
-        require_current_quality
-        and max_freshness_ms is not None
-        and view.quality.freshness_ms > max_freshness_ms
-        and not observed_quiet_trade
-    ):
-        raise ValueError("V2 receipt exceeds the governed freshness bound")
+    # The session is the authority for an observed quiet continuity channel.
+    # Check it first so a disconnected feed cannot be reported merely as an
+    # old last event.
     if requirement.max_session_liveness_ms is not None and (
         view.quality.provider_session_state != "LIVE"
         or view.quality.provider_session_liveness_ms is None
@@ -603,6 +603,13 @@ def validate_product_view(
         > requirement.max_session_liveness_ms
     ):
         raise ValueError("V2 receipt provider session liveness differs from demand")
+    if (
+        require_current_quality
+        and max_freshness_ms is not None
+        and view.quality.freshness_ms > max_freshness_ms
+        and not observed_quiet_continuity
+    ):
+        raise ValueError("V2 receipt exceeds the governed freshness bound")
     if product.delivery is DeliveryClass.DURABLE:
         if (
             view.source.venue != product.venue
@@ -616,7 +623,7 @@ def validate_product_view(
             require_current_quality
             and requirement.consumer_grade.value == "EXECUTION"
             and not view.quality.execution_eligible
-            and not observed_quiet_trade
+            and not observed_quiet_continuity
         ):
             raise ValueError("execution-grade durable V2 receipt is not eligible")
     elif product.delivery is DeliveryClass.PROVIDER_PASS_THROUGH:

@@ -74,7 +74,8 @@ DEFAULT_ACQUISITION = ROOT / "config/v2/stable-acquisition-bindings.yaml"
 DEFAULT_TRADING_MANIFEST = ROOT / "consumers/stable/trading-system-paper.yaml"
 DEFAULT_ALPHA_MANIFEST = ROOT / "consumers/stable/alpha-binance-paper.yaml"
 _QUIET_QUOTE_RETRY_SECONDS = 0.2
-_QUIET_TRADE_STREAM_OBSERVATION_SECONDS = 2.0
+_QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS = 2.0
+_QUIET_CONTINUITY_FEEDS = frozenset({"TRADE", "BOOK_DELTA"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,7 +254,7 @@ async def _next_data_or_timeout(
     *,
     timeout_seconds: float,
 ) -> tuple[StreamEvent | None, list[str]]:
-    """Observe one stream without manufacturing data when a trade channel is quiet."""
+    """Observe one stream without manufacturing data when a continuity feed is quiet."""
     controls: list[str] = []
     deadline = time.monotonic() + timeout_seconds
     for _ in range(8):
@@ -273,21 +274,26 @@ async def _next_data_or_timeout(
     return None, controls
 
 
-def _allows_quiet_trade_observation(product: AcceptanceProduct, requirement) -> bool:
-    """Whether this no-order C2 probe may observe a quiet live trade channel."""
+def _allows_quiet_continuity_observation(product: AcceptanceProduct, requirement) -> bool:
+    """Whether C2 may observe a quiet, live continuity channel.
+
+    BOOK_DELTA is not price data. It can be quiet while its verified book and
+    transport session stay healthy, so C2 records it as non-executable
+    continuity evidence rather than manufacturing a new update.
+    """
     return (
         product.delivery is DeliveryClass.DURABLE
-        and product.feed.value == "TRADE"
+        and product.feed.value in _QUIET_CONTINUITY_FEEDS
         and requirement.effective_event_recency_policy is SdkStalePolicy.OBSERVE
         and requirement.max_session_liveness_ms is not None
     )
 
 
-def _quiet_trade_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
-    """Keep a quiet session distinct from fresh/executable market data."""
+def _quiet_continuity_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
+    """Keep a quiet connected continuity channel distinct from price data."""
     quality = status.quality
     return (
-        _allows_quiet_trade_observation(product, requirement)
+        _allows_quiet_continuity_observation(product, requirement)
         and status.instrument_uid == requirement.instrument_uid
         and status.feed is requirement.feed
         and quality.policy_id == requirement.source_policy_id
@@ -302,11 +308,11 @@ def _quiet_trade_status_is_observable(product: AcceptanceProduct, requirement, s
     )
 
 
-def _fresh_trade_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
-    """Accept a live trade session that simply has no new print in this probe."""
+def _fresh_continuity_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
+    """Accept a fresh verified continuity event during a bounded C2 probe."""
     quality = status.quality
     return (
-        _allows_quiet_trade_observation(product, requirement)
+        _allows_quiet_continuity_observation(product, requirement)
         and status.instrument_uid == requirement.instrument_uid
         and status.feed is requirement.feed
         and quality.policy_id == requirement.source_policy_id
@@ -327,11 +333,11 @@ def _require_signed_cursor_controls(controls: list[str]) -> None:
     if missing:
         raise ContinuityError(
             "CURSOR_INVALID",
-            "C2 no-event TRADE observation did not confirm the signed cursor stream",
+            "C2 no-event continuity observation did not confirm the signed cursor stream",
         )
 
 
-async def _classify_no_event_trade_session(
+async def _classify_no_event_continuity_session(
     client: AsyncDataLayerClient,
     *,
     product: AcceptanceProduct,
@@ -345,15 +351,15 @@ async def _classify_no_event_trade_session(
         )
     except TimeoutError as timeout:
         raise ContinuityError(
-            "DATA_STALE", "C2 quiet TRADE status did not return before its deadline"
+            "DATA_STALE", "C2 quiet continuity status did not return before its deadline"
         ) from timeout
-    if _fresh_trade_status_is_observable(product, requirement, status):
+    if _fresh_continuity_status_is_observable(product, requirement, status):
         return "FRESH_EXECUTABLE"
-    if _quiet_trade_status_is_observable(product, requirement, status):
+    if _quiet_continuity_status_is_observable(product, requirement, status):
         return "QUIET_NON_EXECUTABLE"
     raise ContinuityError(
         "DATA_STALE",
-        "C2 no-event TRADE observation requires a live fresh/executable or quiet/non-executable session",
+        "C2 no-event continuity observation requires a live fresh/executable or quiet/non-executable session",
     )
 
 
@@ -556,7 +562,7 @@ async def _wait_for_live_snapshot_retry(
 ) -> None:
     if error.code != "DATA_STALE":
         raise error
-    if product.feed.value not in {"QUOTE", "TRADE"}:
+    if product.feed.value not in {"QUOTE", *_QUIET_CONTINUITY_FEEDS}:
         raise error
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -576,8 +582,8 @@ async def _wait_for_live_snapshot_retry(
         ) or _fresh_quote_status_is_retryable(product, requirement, status)
     else:
         retryable = (
-            _quiet_trade_status_is_observable(product, requirement, status)
-            or _fresh_trade_status_is_observable(product, requirement, status)
+            _quiet_continuity_status_is_observable(product, requirement, status)
+            or _fresh_continuity_status_is_observable(product, requirement, status)
         )
     if not retryable:
         raise ContinuityError(
@@ -692,7 +698,7 @@ async def _stream_resume(
     stream_requirement = requirement
     strict_watermark: int | None = None
     event_timeout_seconds = _stream_event_timeout_seconds(product, timeout_seconds)
-    quiet_trade_observation = _allows_quiet_trade_observation(product, requirement)
+    quiet_continuity_observation = _allows_quiet_continuity_observation(product, requirement)
     quiet_primary = False
     no_event_sessions: list[str] = []
     first_controls: list[str] = []
@@ -724,17 +730,17 @@ async def _stream_resume(
             requirement=stream_requirement,
             timeout_seconds=timeout_seconds,
         ) as session:
-            if quiet_trade_observation:
+            if quiet_continuity_observation:
                 first, first_controls = await _next_data_or_timeout(
                     session,
                     timeout_seconds=min(
                         event_timeout_seconds,
-                        _QUIET_TRADE_STREAM_OBSERVATION_SECONDS,
+                        _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS,
                     ),
                 )
                 if first is None:
                     _require_signed_cursor_controls(first_controls)
-                    no_event_sessions.append(await _classify_no_event_trade_session(
+                    no_event_sessions.append(await _classify_no_event_continuity_session(
                         first_client,
                         product=product,
                         requirement=requirement,
@@ -786,12 +792,12 @@ async def _stream_resume(
                     session,
                     timeout_seconds=min(
                         event_timeout_seconds,
-                        _QUIET_TRADE_STREAM_OBSERVATION_SECONDS,
+                        _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS,
                     ),
                 )
                 if observed is None:
                     _require_signed_cursor_controls(observed_controls)
-                    no_event_sessions.append(await _classify_no_event_trade_session(
+                    no_event_sessions.append(await _classify_no_event_continuity_session(
                         resumed_client,
                         product=product,
                         requirement=requirement,
@@ -829,17 +835,17 @@ async def _stream_resume(
                 else 1
             )
             for _ in range(maximum):
-                if quiet_trade_observation:
+                if quiet_continuity_observation:
                     resumed, controls = await _next_data_or_timeout(
                         session,
                         timeout_seconds=min(
                             event_timeout_seconds,
-                            _QUIET_TRADE_STREAM_OBSERVATION_SECONDS,
+                            _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS,
                         ),
                     )
                     if resumed is None:
                         _require_signed_cursor_controls(controls)
-                        no_event_session = await _classify_no_event_trade_session(
+                        no_event_session = await _classify_no_event_continuity_session(
                             resumed_client,
                             product=product,
                             requirement=requirement,

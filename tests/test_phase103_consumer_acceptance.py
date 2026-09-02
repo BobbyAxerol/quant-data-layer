@@ -24,7 +24,7 @@ from qdl.certification.phase103_consumer_acceptance import (
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
-from qdl.query.contracts import RecoveryPolicy
+from qdl.query.contracts import FeedType, RecoveryPolicy, StalePolicy
 from scripts.phase103_consumer_receipt_acceptance import (
     _query_product,
     _query_product_with_quality,
@@ -222,6 +222,23 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             ),
         )
 
+    def _quiet_book_delta_product(self):
+        """Build one governed quiet-delta receipt without weakening price rules."""
+        trade = self._product(feed="TRADE")
+        return replace(
+            trade,
+            feed=FeedType.BOOK_DELTA,
+            requirement=replace(
+                trade.requirement,
+                feed=FeedType.BOOK_DELTA,
+                source_policy_id="crypto_liquid_v2",
+                max_freshness_ms=2_000,
+                event_recency_policy=StalePolicy.OBSERVE,
+                max_session_liveness_ms=45_000,
+                require_final_bars=False,
+            ),
+        )
+
     def _view(
         self,
         product,
@@ -253,6 +270,22 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 "ask_quantity": d("2"),
                 "quantity_unit": "BASE_ASSET",
                 "level": 1,
+            }
+        elif product.feed.value == "BOOK_DELTA":
+            payload = {
+                "feed": "BOOK_DELTA",
+                "native_sequence_start": "101",
+                "native_sequence_end": "102",
+                "snapshot_sequence": "100",
+                "updates": [{
+                    "side": "BID",
+                    "price": d("10.1"),
+                    "quantity": d("1"),
+                    "quantity_unit": "BASE_ASSET",
+                }],
+                "reset": False,
+                "book_generation": 1,
+                "sequence_verified": True,
             }
         else:
             payload = {
@@ -381,6 +414,63 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "provider session"):
             validate_product_view(product, disconnected)
+
+    def test_quiet_connected_book_delta_is_observable_but_never_price_eligible(self):
+        product = self._quiet_book_delta_product()
+        quiet = self._view(
+            product,
+            freshness_ms=product.requirement.max_freshness_ms + 1,
+            execution_eligible=False,
+        )
+        quiet = quiet.model_copy(
+            update={
+                "quality": quiet.quality.model_copy(
+                    update={
+                        "event_recency_state": "STALE",
+                        "provider_session_state": "LIVE",
+                        "provider_session_liveness_ms": 1,
+                    }
+                )
+            }
+        )
+        validate_product_view(product, quiet)
+
+        blocked = replace(
+            product,
+            requirement=replace(product.requirement, event_recency_policy=None),
+        )
+        with self.assertRaisesRegex(ValueError, "freshness"):
+            validate_product_view(blocked, quiet)
+
+        disconnected = quiet.model_copy(
+            update={
+                "quality": quiet.quality.model_copy(
+                    update={"provider_session_state": "DISCONNECTED"}
+                )
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "provider session"):
+            validate_product_view(product, disconnected)
+
+        with self.assertRaisesRegex(ValueError, "gap"):
+            validate_product_view(
+                product,
+                quiet.model_copy(
+                    update={"quality": quiet.quality.model_copy(update={"gap_open": True})}
+                ),
+            )
+
+        with self.assertRaisesRegex(ValueError, "verified"):
+            validate_product_view(
+                product,
+                quiet.model_copy(
+                    update={
+                        "payload": quiet.payload.model_copy(
+                            update={"sequence_verified": False}
+                        )
+                    }
+                ),
+            )
 
     def test_typed_views_enforce_durable_and_pass_through_domain_semantics(self):
         for feed in ("TRADE", "QUOTE", "BAR"):

@@ -31422,3 +31422,77 @@ No runtime, provider, Kafka, Redis, SQLite, V1, Trading System, alpha or order
 state was accessed by these source gates. Next: commit, build one final reader
 image, serially replace only the two query replicas and rerun the one C2
 namespace with the existing exact rollback image retained.
+
+**Assembly-freshness runtime packet (`OWNER-APPROVED / PRE-BUILD`,
+2026-09-02).** Commit `e634b95` is the final narrow query correction: it moves
+the one governed refresh from worker completion to response assembly, so a
+snapshot cannot become stale while sibling work completes unnoticed. Build
+`qdl-v2-python:2.0.1-e634b95`, attest source labels and execute the 14 focused
+regressions from the immutable image. Render one operator-only selector and
+recreate only `query_v2_1`, then `query_v2_2`, with health/restart/OOM checks
+between them. The active `30b0d91` reader and the retained `1f64da7` reader
+are rollback coordinates until the fresh C2 receipt passes. No other role,
+state store, consumer, topology or order path is in scope.
+
+**C2 L2 quiet-session contract correction (`APPROVED / SOURCE-ONLY`,
+2026-09-02).** The post-`e634b95` C2 failure is now precisely classified. Both
+V2 query replicas agree that all five OKX perpetual top-100 `BOOK_SNAPSHOT`
+products are verified, complete, gap-free and within their declared 60-second
+snapshot bound; `BTC` `BOOK_DELTA` is actively changing, while the quieter
+`ETH`/`SOL`/`DOGE`/`BNB` deltas legitimately have no provider book mutation for
+longer than the generic 2-second event age. The existing Rust ingestor writes
+real per-connection session evidence every second and the shared V2 state
+contains a LIVE `okx-swap` public session. The defect is the consumer contract:
+it declares `BOOK_DELTA` as a price snapshot with `BLOCK`/2-second recency and
+omits the already-supported session-liveness predicate. This is neither a
+missing binding, a provider outage, a reason to fabricate a delta nor a reason
+to weaken L2 sequence/gap protection.
+
+**Approved narrow behavior.** For every declared Binance USD-M and OKX Swap
+perpetual `BOOK_DELTA` demand, preserve the 2-second last-delta age as an
+observable `LAST_EVENT_STALE` fact, but request `OBSERVE` event recency plus a
+bounded real provider-session liveness check. A quiet delta is readable only
+when its exact socket session is LIVE, within the declared heartbeat bound,
+complete and gap-free; disconnected/unknown/stale sessions, unverified books,
+duplicate/out-of-order/gap transitions and every `BLOCK` request remain
+fail-closed. `BOOK_DELTA` remains a sequence/replay input, never the sole
+price-selection primitive: limit/conditional risk read-back continues to use a
+fresh verified `BOOK_SNAPSHOT` (and quote/mark policy where applicable).
+
+**Scope, gates and rollback.** Change only the shared demand/manifest policy,
+the V2 quality/admission predicate and C2 validation for quiet connected book
+deltas. Add deterministic regressions for LIVE quiet delta, disconnected
+delta, stale session, gap/unverified rejection, and manifest round-trip for
+both venues/five symbols. Run the focused contract/L2/consumer test matrix in
+an isolated no-network container. No Rust provider code, image, role, Kafka
+topic/offset, Redis/SQLite state, V1, Trading System, alpha, Gateway/Risk or
+order action is in this source slice. If any gate fails, revert the source
+slice; runtime remains on the already-active `e634b95` query image. A separate
+recorded bounded bundle/query-stream handoff is required before the one final
+299-product C2 retry.
+
+**Quiet-session source correction (`PASS / SOURCE-ONLY`, 2026-09-02).** The
+three paper manifests now govern every Binance USD-M and OKX Swap perpetual
+`BOOK_DELTA` as `event_recency_policy: OBSERVE` with a 45-second explicit
+provider-session SLA, while retaining the existing 2-second event-age,
+`BLOCK` stale/gap policies, verified sequence and full-coverage requirements.
+Their governed revisions advance exactly once (`trading-system: 8`,
+`alpha-binance: 10`, `alpha-okx: 9`); release routing revision `16` seals the
+new manifest SHA-256 values. Validation now checks the exact session before
+reporting an old event, so a disconnected channel cannot be misclassified as
+merely quiet. It does not make a quiet delta price-eligible: snapshot/quote/
+mark remains the price-selection input.
+
+The first focused run exposed two fail-closed configuration defects before any
+runtime operation: Trading System `BOOK_DELTA` had no session SLA, and the
+release route still bound pre-change manifest hashes. Both were corrected in
+source and YAML parsing plus manifest digest verification passed. The isolated
+non-root, read-only, network-disabled matrix passed **52/52 in 30.899s**:
+Phase-10.3/10.5 scope and receipt invariants, stable-route/release
+certification, five-liquid Binance/OKX L2 quiet/disconnect/gap/sequence
+regressions, and alpha deployment binding compilation. `git diff --check`
+passed. No image, container, provider, Kafka, Redis, SQLite, V1, Trading
+System, alpha, Gateway/Risk or order path was accessed by this source gate.
+Next permitted operation: commit this source slice, build one canonical reader
+image from that commit, then use the already-approved bounded query/stream
+handoff and exactly one 299-product C2 no-order acceptance.
