@@ -434,6 +434,21 @@ def _stream_handoff_mode(
     return "DURABLE_CURSOR_REPLAYED"
 
 
+def _replay_precedes_handoff(*, logical_offset: int, watermark_offset: int) -> bool:
+    """Whether a resumed frame restores state rather than supplies a live price.
+
+    A reconnect checks a fresh query handoff, yet a durable cursor may correctly
+    point before that handoff. Those records are required for deterministic
+    state recovery. They retain identity, source, offset and gap validation,
+    but cannot be claimed as an executable current price; a strict read-back
+    is mandatory after the replay acknowledgement.
+    """
+
+    if logical_offset < 0 or watermark_offset < 0:
+        raise ValueError("durable replay offsets must be non-negative")
+    return logical_offset <= watermark_offset
+
+
 async def _query_product(
     product: AcceptanceProduct,
     *,
@@ -938,15 +953,21 @@ async def _stream_resume(
                         timeout_seconds=event_timeout_seconds,
                     )
                 resumed_controls.extend(controls)
+                replay_only = _replay_precedes_handoff(
+                    logical_offset=resumed.logical_offset,
+                    watermark_offset=session.warmup.watermark_offset,
+                )
                 resumed_view = market_data_view_from_stream(
                     resumed,
                     template=session.warmup.data[-1],
                     requirement=stream_requirement,
+                    **({"replay_only": True} if replay_only else {}),
                 )
                 validate_product_view(
                     product,
                     resumed_view,
-                    require_current_quality=not historical_replay,
+                    require_current_quality=not historical_replay and not replay_only,
+                    **({"state_replay": True} if replay_only else {}),
                 )
                 validate_resume_offsets(
                     acknowledged_offset=acknowledged_offset,
@@ -954,6 +975,17 @@ async def _stream_resume(
                 )
                 session.acknowledge(resumed)
                 acknowledged_offset = resumed.logical_offset
+                if replay_only and not historical_replay:
+                    # The stale frame is state recovery only. A fresh strict
+                    # V2 read is required before C2 can attest an executable
+                    # price after reconnect.
+                    current = await _strict_snapshot_for_c2(
+                        resumed_client,
+                        product=product,
+                        requirement=requirement,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    validate_product_view(product, current)
                 if (
                     strict_watermark is None
                     or acknowledged_offset >= strict_watermark

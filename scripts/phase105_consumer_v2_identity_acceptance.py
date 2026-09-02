@@ -78,6 +78,7 @@ _C2_STREAM_TARGETS = frozenset({
     "qdl-v2-stream-b:8210",
 })
 _MAX_REFERENCE_BATCH_CONCURRENCY = 4
+_C2_FINAL_REVALIDATION_MAX_SECONDS = 90.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,24 @@ class IdentityFiles:
     private_key: str
     jwt_private_key: str
     jwt_key_id: str
+
+
+async def _wait_for_minimum_observation(
+    *,
+    started_monotonic: float,
+    observation_seconds: float,
+) -> float:
+    """Hold a real C2 observation window before full closing revalidation."""
+
+    if observation_seconds <= 0:
+        raise ValueError("C2 observation duration must be positive")
+    remaining = started_monotonic + observation_seconds - time.monotonic()
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+    elapsed = time.monotonic() - started_monotonic
+    if elapsed + 0.001 < observation_seconds:
+        raise AssertionError("Phase 10.5 C2 observation ended before its declared duration")
+    return elapsed
 
 
 def _authority(path: Path) -> dict[str, object]:
@@ -618,8 +637,19 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         return results, fallback_details
 
     try:
-        results, fallback_details = await asyncio.wait_for(
+        # Opening sweep proves real warmup/cursor/reconnect/fallback. Keep the
+        # no-order client alive for the declared interval, then prove the full
+        # governed scope again at the closing boundary. A timeout alone is not
+        # a 300-second observation.
+        initial_results, initial_fallback_details = await asyncio.wait_for(
             certify_ordered(), timeout=args.observation_seconds
+        )
+        await _wait_for_minimum_observation(
+            started_monotonic=started,
+            observation_seconds=args.observation_seconds,
+        )
+        results, fallback_details = await asyncio.wait_for(
+            certify_ordered(), timeout=_C2_FINAL_REVALIDATION_MAX_SECONDS
         )
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -627,8 +657,10 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     cpu_seconds = max(0.0, time.process_time() - process_started)
     max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     rss_bytes = int(max_rss) * 1024
-    if elapsed_seconds > args.observation_seconds:
-        raise AssertionError("Phase 10.5 identity observation exceeded its bounded window")
+    if elapsed_seconds > args.observation_seconds + _C2_FINAL_REVALIDATION_MAX_SECONDS:
+        raise AssertionError("Phase 10.5 identity final revalidation exceeded its bounded window")
+    if len(initial_results) != len(results) or len(initial_fallback_details) != len(fallback_details):
+        raise AssertionError("Phase 10.5 identity scope changed during the observation window")
     route_summary = _route_summary(release, scope.products)
     return {
         "schema": "qdl.phase105.v2-identity-acceptance.v1",
@@ -659,6 +691,9 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         "provider_connections": 0,
         "order_actions": 0,
         "cursor_directory_removed": True,
+        "observation_seconds_requested": args.observation_seconds,
+        "observation_seconds_actual": round(elapsed_seconds, 3),
+        "opening_product_count": len(initial_results),
         "secret_values_recorded": False,
         "test_provenance": False,
         "elapsed_seconds": round(elapsed_seconds, 3),

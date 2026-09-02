@@ -26,6 +26,7 @@ from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl.query.contracts import FeedType, RecoveryPolicy, StalePolicy
 from scripts.phase103_consumer_receipt_acceptance import (
+    _c2_requirement,
     _query_product,
     _query_product_with_quality,
     _stream_event_timeout_seconds,
@@ -415,6 +416,39 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provider session"):
             validate_product_view(product, disconnected)
 
+    def test_state_replay_keeps_identity_and_gap_checks_but_defers_old_session_quality(self):
+        product = self._quiet_book_delta_product()
+        stale = self._view(
+            product,
+            freshness_ms=product.requirement.max_freshness_ms + 1,
+            execution_eligible=False,
+        ).model_copy(
+            update={
+                "quality": self._view(
+                    product,
+                    freshness_ms=product.requirement.max_freshness_ms + 1,
+                    execution_eligible=False,
+                ).quality.model_copy(
+                    update={
+                        "state": "STALE",
+                        "event_recency_state": "STALE",
+                        "provider_session_state": "STALE",
+                        "provider_session_liveness_ms": 45_001,
+                    }
+                )
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "provider session"):
+            validate_product_view(product, stale, require_current_quality=False)
+        validate_product_view(
+            product,
+            stale,
+            require_current_quality=False,
+            state_replay=True,
+        )
+        with self.assertRaisesRegex(ValueError, "cannot claim current"):
+            validate_product_view(product, stale, state_replay=True)
+
     def test_quiet_connected_book_delta_is_observable_but_never_price_eligible(self):
         product = self._quiet_book_delta_product()
         quiet = self._view(
@@ -662,8 +696,8 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             _query_product(bar, primary=primary, secondary=secondary)
         )
         self.assertNotEqual(primary_hash, secondary_hash)
-        self.assertEqual(primary.requirement, sdk_requirement(bar))
-        self.assertEqual(secondary.requirement, sdk_requirement(bar))
+        self.assertEqual(primary.requirement, _c2_requirement(sdk_requirement(bar)))
+        self.assertEqual(secondary.requirement, _c2_requirement(sdk_requirement(bar)))
 
         quality_primary = WarmupClient(primary_rows)
         quality_secondary = WarmupClient(secondary_rows)
@@ -761,7 +795,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             _query_product(bar, primary=primary, secondary=secondary)
         )
         self.assertEqual(primary_hash, secondary_hash)
-        self.assertEqual(primary.requirement, sdk_requirement(bar))
+        self.assertEqual(primary.requirement, _c2_requirement(sdk_requirement(bar)))
 
     def test_bar_stream_wait_covers_one_close_but_stays_sla_bounded(self):
         bar = self._product(

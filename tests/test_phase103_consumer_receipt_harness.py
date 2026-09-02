@@ -13,6 +13,7 @@ from scripts.phase103_consumer_receipt_acceptance import (
     _c2_requirement,
     _cursor_directory,
     _historical_bar_replay_requirement,
+    _replay_precedes_handoff,
     _strict_snapshot_for_c2,
     _strict_warmup_then_stream_for_c2,
     _stream_handoff_mode,
@@ -55,6 +56,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
+    def test_reconnect_replay_before_new_handoff_is_state_only(self):
+        self.assertTrue(_replay_precedes_handoff(logical_offset=40, watermark_offset=40))
+        self.assertTrue(_replay_precedes_handoff(logical_offset=39, watermark_offset=40))
+        self.assertFalse(_replay_precedes_handoff(logical_offset=41, watermark_offset=40))
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            _replay_precedes_handoff(logical_offset=-1, watermark_offset=40)
+
     def test_c2_bounds_bar_history_without_reducing_the_public_request(self):
         requirement = DataRequirement(
             instrument_uid="bar-uid",
@@ -466,7 +474,10 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
     async def test_execution_bar_keeps_the_live_stream_requirement(self):
         product = self._product(grade=Grade.EXECUTION)
         requirement = self._requirement(grade=Grade.EXECUTION)
-        warmup = SimpleNamespace(data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=self.INTERVAL_NS))])
+        warmup = SimpleNamespace(
+            data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=self.INTERVAL_NS))],
+            watermark_offset=10,
+        )
         first = StreamEvent(10, "resume-10", object())
         resumed = StreamEvent(11, "resume-11", object())
         first_session = self._Session(warmup=warmup, items=(first,))
@@ -497,10 +508,116 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resumed_client.stream_calls, [(requirement, True)])
 
 
+class Phase103ReplayReadbackTests(unittest.IsolatedAsyncioTestCase):
+    class _Session:
+        def __init__(self, *, watermark_offset: int, items):
+            self.warmup = SimpleNamespace(data=[object()], watermark_offset=watermark_offset)
+            self._items = iter(items)
+            self.acknowledged = []
+
+        async def __anext__(self):
+            try:
+                return next(self._items)
+            except StopIteration as error:
+                raise StopAsyncIteration from error
+
+        def acknowledge(self, event):
+            self.acknowledged.append(event)
+
+    class _Context:
+        def __init__(self, session):
+            self.session = session
+
+        async def __aenter__(self):
+            return self.session
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class _Client:
+        def __init__(self, session):
+            self.session = session
+            self.stream_calls = []
+            self.closed = False
+
+        def warmup_then_stream(self, requirement, *, resume_restored_state=False):
+            self.stream_calls.append((requirement, resume_restored_state))
+            return Phase103ReplayReadbackTests._Context(self.session)
+
+        async def close(self):
+            self.closed = True
+
+    async def test_stale_cursor_replay_requires_a_fresh_readback_before_receipt(self):
+        requirement = DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.QUOTE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=2_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(
+            delivery=DeliveryClass.DURABLE,
+            feed=Feed.QUOTE,
+            interval=None,
+            requirement=SimpleNamespace(
+                consumer_grade=Grade.EXECUTION,
+                max_freshness_ms=2_000,
+            ),
+            identity=("trading-system.paper.stable", "instrument", "QUOTE", "", "policy"),
+        )
+        first = StreamEvent(10, "token-10", object())
+        replayed = StreamEvent(11, "token-11", object())
+        first_session = self._Session(watermark_offset=9, items=(first,))
+        # The fresh reconnect snapshot has moved beyond the persisted cursor;
+        # offset 11 is a valid historical state frame, not a live price.
+        resumed_session = self._Session(watermark_offset=11, items=(replayed,))
+        first_client = self._Client(first_session)
+        resumed_client = self._Client(resumed_session)
+        current = SimpleNamespace()
+        projected = []
+
+        def project(event, *, template, requirement, **kwargs):
+            projected.append((event.logical_offset, kwargs))
+            return SimpleNamespace()
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-replay-readback-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", side_effect=project),
+                patch("scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2", return_value=current) as readback,
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                )
+
+        self.assertEqual(result, (10, 11, (), ()))
+        self.assertEqual(projected, [(10, {}), (11, {"replay_only": True})])
+        readback.assert_awaited_once()
+        self.assertEqual(first_session.acknowledged, [first])
+        self.assertEqual(resumed_session.acknowledged, [replayed])
+        self.assertEqual(
+            validate.call_args_list,
+            [
+                call(product, ANY, require_current_quality=True),
+                call(product, ANY, require_current_quality=False, state_replay=True),
+                call(product, current),
+            ],
+        )
+
+
 class Phase103QuietTradeStreamTests(unittest.IsolatedAsyncioTestCase):
     class _Session:
         def __init__(self, *, items=(), quiet: bool = False):
-            self.warmup = SimpleNamespace(data=[object()])
+            self.warmup = SimpleNamespace(data=[object()], watermark_offset=0)
             self._items = iter(items)
             self._quiet = quiet
             self.acknowledged = []

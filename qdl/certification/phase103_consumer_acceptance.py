@@ -564,12 +564,16 @@ def validate_product_view(
     view,
     *,
     require_current_quality: bool = True,
+    state_replay: bool = False,
 ) -> None:
     """Validate one governed view.
 
     Historical BAR warmup rows retain identity, provenance, gap and payload
     checks, but cannot individually satisfy a *current* freshness SLA. The
     latest closed BAR is the row that carries current/live/execution quality.
+    A state-replay frame is likewise checked for identity, provenance, gap and
+    payload validity only; it can never certify current provider-session or
+    execution eligibility and must be followed by a strict current read-back.
     """
     if (
         view.instrument_uid != product.instrument_uid
@@ -581,6 +585,8 @@ def validate_product_view(
         raise ValueError("V2 receipt identity, feed, interval or policy mismatches demand")
     if view.quality.gap_open or not view.quality.complete:
         raise ValueError("V2 receipt has an unresolved gap or incomplete coverage")
+    if state_replay and require_current_quality:
+        raise ValueError("V2 state replay cannot claim current execution quality")
     requirement = product.requirement
     max_freshness_ms = requirement.max_freshness_ms
     # A quiet TRADE or BOOK_DELTA channel says nothing about the health of its
@@ -596,7 +602,7 @@ def validate_product_view(
     # The session is the authority for an observed quiet continuity channel.
     # Check it first so a disconnected feed cannot be reported merely as an
     # old last event.
-    if requirement.max_session_liveness_ms is not None and (
+    if not state_replay and requirement.max_session_liveness_ms is not None and (
         view.quality.provider_session_state != "LIVE"
         or view.quality.provider_session_liveness_ms is None
         or view.quality.provider_session_liveness_ms

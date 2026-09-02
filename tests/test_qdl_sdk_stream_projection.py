@@ -409,6 +409,30 @@ class SdkStreamProjectionTests(unittest.TestCase):
             )
         self.assertEqual(stale.exception.code, "DATA_STALE")
 
+    def test_stale_execution_replay_is_non_executable_but_gap_stays_strict(self):
+        replay = market_data_view_from_stream(
+            StreamEvent(11, "signed", envelope(Feed.QUOTE)),
+            template=template(Feed.QUOTE),
+            requirement=self.requirement(Feed.QUOTE),
+            now_ns=NOW + 2_000_000_000,
+            replay_only=True,
+        )
+        self.assertEqual(replay.quality.state, "STALE")
+        self.assertEqual(replay.quality.event_recency_state, "STALE")
+        self.assertFalse(replay.quality.execution_eligible)
+
+        gapped = envelope(Feed.QUOTE)
+        gapped.quality_flags.append(common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE)
+        with self.assertRaises(ContinuityError) as error:
+            market_data_view_from_stream(
+                StreamEvent(12, "signed", gapped),
+                template=template(Feed.QUOTE),
+                requirement=self.requirement(Feed.QUOTE),
+                now_ns=NOW + 2_000_000_000,
+                replay_only=True,
+            )
+        self.assertEqual(error.exception.code, "OPEN_SEQUENCE_GAP")
+
     def test_quiet_connected_trade_is_observable_but_never_execution_eligible(self):
         requirement = DataRequirement(
             instrument_uid="uid-1",

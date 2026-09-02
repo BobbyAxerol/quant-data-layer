@@ -6,6 +6,7 @@ import unittest
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct
 from qdl.query import DataRequirement, FeedType, RecoveryPolicy
@@ -21,6 +22,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _reference_batch_concurrency,
     _reference_transport_timeout_seconds,
     _run_consumer_groups,
+    _wait_for_minimum_observation,
     _v1_base_url,
     parser,
 )
@@ -226,6 +228,25 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
 
 
 class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_observation_waits_until_the_declared_floor(self) -> None:
+        clock = {"value": 100.0}
+
+        async def fake_sleep(duration: float) -> None:
+            clock["value"] += duration
+
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.time.monotonic",
+            side_effect=lambda: clock["value"],
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.asyncio.sleep",
+            side_effect=fake_sleep,
+        ):
+            elapsed = await _wait_for_minimum_observation(
+                started_monotonic=100.0,
+                observation_seconds=300.0,
+            )
+        self.assertEqual(elapsed, 300.0)
+
     async def test_groups_start_in_declared_order_and_collect_in_that_order(self) -> None:
         started: list[str] = []
         release = asyncio.Event()
