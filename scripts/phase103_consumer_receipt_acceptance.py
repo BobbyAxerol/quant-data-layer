@@ -24,11 +24,6 @@ from typing import AsyncIterator, Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# A historical alpha BAR seed normally replays one retained event. A bounded
-# repair can append a few older canonical records after that seed, so C2 must
-# consume through the strict snapshot watermark rather than assume one event
-# is enough. This is acceptance-only, never an unbounded consumer catch-up.
-_MAX_HISTORICAL_REPLAY_CATCHUP_EVENTS = 16
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -797,7 +792,6 @@ async def _stream_resume(
     requirement = _c2_requirement(sdk_requirement(product))
     historical_replay = _uses_historical_bar_replay(product)
     stream_requirement = requirement
-    strict_watermark: int | None = None
     event_timeout_seconds = _stream_event_timeout_seconds(product, timeout_seconds)
     quiet_continuity_observation = _allows_quiet_continuity_observation(product, requirement)
     quiet_primary = False
@@ -819,7 +813,6 @@ async def _stream_resume(
             strict_warmup = await first_client.warmup(requirement)
             strict_current = strict_warmup.data[-1]
             validate_product_view(product, strict_current)
-            strict_watermark = strict_warmup.watermark_offset
             stream_requirement = _historical_bar_replay_requirement(
                 requirement,
                 latest_open_time_ns=int(strict_current.payload.open_time_ns),
@@ -931,12 +924,14 @@ async def _stream_resume(
         ) as session:
             acknowledged_offset = first_offset
             resumed_controls: list[str] = []
-            maximum = (
-                _MAX_HISTORICAL_REPLAY_CATCHUP_EVENTS
-                if historical_replay
-                else 1
-            )
-            for _ in range(maximum):
+            # A historical seed intentionally starts before the current
+            # snapshot so C2 can prove signed replay without waiting for the
+            # next bar close. It must not be treated as a production consumer
+            # catch-up cursor: authentic late backfills can make its append
+            # offset far older than the current strict watermark. One
+            # monotonic replay across replicas proves cursor continuity; the
+            # strict snapshot below proves current executable quality.
+            for _ in range(1):
                 if quiet_continuity_observation:
                     resumed, controls = await _next_data_or_timeout(
                         session,
@@ -989,10 +984,10 @@ async def _stream_resume(
                 )
                 session.acknowledge(resumed)
                 acknowledged_offset = resumed.logical_offset
-                if replay_only and not historical_replay:
-                    # The stale frame is state recovery only. A fresh strict
-                    # V2 read is required before C2 can attest an executable
-                    # price after reconnect.
+                if replay_only:
+                    # The replay frame is state recovery only. A fresh strict
+                    # V2 read is required before C2 can attest current quality,
+                    # including for a deliberately historical alpha BAR seed.
                     current = await _strict_snapshot_for_c2(
                         resumed_client,
                         product=product,
@@ -1000,19 +995,13 @@ async def _stream_resume(
                         timeout_seconds=timeout_seconds,
                     )
                     validate_product_view(product, current.data)
-                if (
-                    strict_watermark is None
-                    or acknowledged_offset >= strict_watermark
-                ):
-                    return (
-                        first_offset,
-                        acknowledged_offset,
-                        tuple(first_controls + resumed_controls),
-                        (),
-                    )
-            raise AssertionError(
-                "historical BAR replay did not converge through the strict current watermark"
-            )
+                return (
+                    first_offset,
+                    acknowledged_offset,
+                    tuple(first_controls + resumed_controls),
+                    (),
+                )
+            raise AssertionError("signed cursor replay did not emit a data event")
     finally:
         await resumed_client.close()
 

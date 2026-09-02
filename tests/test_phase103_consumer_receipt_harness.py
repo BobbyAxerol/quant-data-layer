@@ -411,6 +411,7 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         first_client = self._Client(strict_warmup=strict_warmup, session=first_session)
         resumed_client = self._Client(strict_warmup=strict_warmup, session=resumed_session)
         projected = []
+        current = SimpleNamespace(data=SimpleNamespace())
 
         def project(event, *, template, requirement, **kwargs):
             projected.append((event.logical_offset, template, requirement, kwargs))
@@ -422,6 +423,10 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                 patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
                 patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", side_effect=project),
                 patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    return_value=current,
+                ) as readback,
             ):
                 result = await _stream_resume(
                     product,
@@ -450,30 +455,36 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(item[2] is seed_requirement for item in projected))
         self.assertEqual(projected[0][3], {})
         self.assertEqual(projected[1][3], {"replay_only": True})
+        readback.assert_awaited_once()
         self.assertEqual(validate.call_args_list[0], call(product, strict_view))
         self.assertEqual(
             validate.call_args_list[1:],
             [
                 call(product, ANY, require_current_quality=False),
                 call(product, ANY, require_current_quality=False, state_replay=True),
+                call(product, current.data),
             ],
         )
 
-    async def test_non_execution_bar_drains_bounded_replay_to_strict_watermark(self):
+    async def test_non_execution_bar_replay_revalidates_current_snapshot_after_large_backfill_tail(self):
         product = self._product()
         requirement = self._requirement()
         strict_view = SimpleNamespace(
             payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
         )
         seed_view = SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))
-        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=42)
-        seed_warmup = SimpleNamespace(data=[seed_view], watermark_offset=38)
-        first = StreamEvent(39, "resume-39", object())
-        resumed = tuple(StreamEvent(offset, f"resume-{offset}", object()) for offset in (40, 41, 42))
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=11_024)
+        seed_warmup = SimpleNamespace(data=[seed_view], watermark_offset=10_004)
+        first = StreamEvent(10_005, "resume-10005", object())
+        resumed = tuple(
+            StreamEvent(offset, f"resume-{offset}", object())
+            for offset in (10_006, 10_007, 10_008)
+        )
         first_session = self._Session(warmup=seed_warmup, items=(first,))
         resumed_session = self._Session(warmup=seed_warmup, items=resumed)
         first_client = self._Client(strict_warmup=strict_warmup, session=first_session)
         resumed_client = self._Client(strict_warmup=strict_warmup, session=resumed_session)
+        current = SimpleNamespace(data=SimpleNamespace())
 
         with tempfile.TemporaryDirectory(prefix="qdl-c2-historical-drain-") as raw:
             with (
@@ -481,6 +492,10 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                 patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
                 patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", return_value=SimpleNamespace()),
                 patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    return_value=current,
+                ) as readback,
             ):
                 result = await _stream_resume(
                     product,
@@ -492,9 +507,10 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                     timeout_seconds=1.0,
                 )
 
-        self.assertEqual(result, (39, 42, (), ()))
+        self.assertEqual(result, (10_005, 10_006, (), ()))
         self.assertEqual(first_session.acknowledged, [first])
-        self.assertEqual(resumed_session.acknowledged, list(resumed))
+        self.assertEqual(resumed_session.acknowledged, [resumed[0]])
+        readback.assert_awaited_once()
 
     async def test_execution_bar_keeps_the_live_stream_requirement(self):
         product = self._product(grade=Grade.EXECUTION)

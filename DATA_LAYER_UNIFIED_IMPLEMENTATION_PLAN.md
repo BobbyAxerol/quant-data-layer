@@ -32600,3 +32600,111 @@ no-source-mount matrix, then rolling-recreate only `stream_v2_passive`,
 images retained as rollback coordinates. After healthy/restart-free checks,
 run exactly one fresh four-identity C2 no-order receipt. V1 and every other
 role remain unchanged.
+
+**C2 physical-tail reader handoff packet (`OWNER-APPROVED / PRE-ROLL`,
+2026-09-02).** Commit `f9c27e7` is sealed as
+`qdl-v2-python:2.0.3-f9c27e7@sha256:c13c2a9d7d39f2fcac29c65bb57b16e0dfc9132563a1518c945db20006455386`.
+Its no-source-mount, read-only, UID/GID-`10001`, `--network none` matrix passed
+**117/117** with one explicit skip in `32.480s`. The bounded runtime handoff
+may recreate exactly four existing cache readers in dependency-safe order:
+`stream_v2_passive`, `stream_v2_active`, `query_v2_1`, then `query_v2_2`.
+It must reuse the complete active Compose configuration set and env file,
+preserving each role's TLS/runtime/state mounts, network attachments, identity,
+ports, resource limits, volumes and service name; an image-only override is
+the sole rendered configuration change.
+
+The exact rollback images are
+`qdl-v2-python@sha256:b335d609db7b55000cba7cce455a525dbc8d7793faa83b94bc2cfbaa12f64430`
+for both stream roles and
+`qdl-v2-python:2.0.1-d9dea34@sha256:dcb15154ccff53490d152152af99a8aa808c9901c5d210135d791d74d0398bd7`
+for both query roles. Before each recreate, render/inspect must demonstrate
+that only `image` differs. After each, require `healthy`, zero new restarts,
+`OOMKilled=false` and no bounded error signature. V1, Kafka topology/offsets,
+Redis, SQLite, bar-edge, Rust, ingestors, projectors, Trading System, alpha,
+Gateway/Risk and order paths are excluded. On any failure, recreate only the
+failed role with its exact retained rollback image and stop this packet.
+
+**Acceptance boundary.** A healthy four-role roll does not count as C2. It
+only unlocks one fresh, disposable four-identity, 299-product, 300-second
+no-order receipt with governed V2 reads and declared V1 fallback drill. The
+client has no provider, Gateway, Risk, order or durable-state mutation
+authority and is removed after bounded evidence is captured.
+
+**C2 reader handoff render gate (`PASS / ROLL AUTHORIZED`, 2026-09-02).** The
+complete active Compose file chain and current `stable.env` were rendered both
+with and without the new final image override. For
+`stream_v2_passive`, `stream_v2_active`, `query_v2_1` and `query_v2_2`, a
+canonical hash of the rendered service after removing `image` is identical;
+the only configuration diff is the new immutable digest. The preflight records
+four non-image hashes in the bounded handoff evidence. Runtime inspection also
+found an old Compose history artifact: the active stream containers still use
+`b335...4430` while the rendered historical base says `d9dea...8bd7`; their
+mounts, networks, identities and runtime are unchanged. The rollback overlay
+therefore pins the *actual* active stream digest `b335...4430` and actual query
+digest `d9dea...8bd7`, rather than relying on stale Compose history. This is
+provenance hardening only; no role, data plane or topology changed during
+rendering.
+
+**Fresh C2 namespace (`OWNER-APPROVED / EXECUTING`, 2026-09-02).** The
+four-role handoff completed in declared order on `c13c...5386`; every role is
+running, healthy, `restart=0`, `OOMKilled=false`, and a bounded five-minute
+error scan is empty. One new disposable C2 client now uses this reader image,
+the pre-existing Phase-10.3 runtime authority mount, the existing V2 stable
+internal and executor networks, and only four governed identities. It runs the
+unchanged 299-product, 300-second no-order receipt script with signed cursor
+replay/reconnect and declared V1 fallback drill. It cannot reach a venue
+provider directly and has no Gateway, Risk, order or persistent-state mutation
+credential. Any nonzero exit is fail-closed; the client is removed and the four
+reader roles stay on `c13c...5386` unless their own health changes.
+
+**C2 launcher capability correction (`FAIL-CLOSED / RETRY READY`, 2026-09-02).**
+The first new client exited before it could create `/tmp/inputs`: the outer
+Docker launcher dropped all capabilities before `/bootstrap-c2.sh`, so its
+intentional `setpriv --reuid=10001` failed with `setresuid: Operation not
+permitted`. Query replica logs confirm zero endpoint request, and no receipt,
+provider, Gateway, Risk, order or durable-state action exists. The previous
+approved C2 topology correctly starts bootstrap as root with only
+`no-new-privileges:true`; bootstrap then drops UID/groups/capabilities before
+copying identities and before running the Python client. The fresh retry will
+match that proven topology exactly, retain no additional capability after the
+drop, use a new evidence namespace and remove its container on exit. This is a
+launcher repair only; no V2 role is recreated and no policy/SLA is relaxed.
+
+**C2 historical replay watermark diagnosis (`FAIL-CLOSED / SOURCE-ONLY
+ACCEPTANCE REPAIR`, 2026-09-02).** A disposable governed DOGE `1h` trace proved
+the reader/runtime is not gapped: strict V2 warmup returned watermark `11024`;
+the deliberate historical seed returned `10004`, then signed stream replay
+advanced contiguously through `10005..10037` before the bounded diagnostic
+stopped. The C2 harness incorrectly assumes all authentic late/backfill events
+after a historical seed fit its arbitrary 16-event observation cap and demands
+that this test-only cursor reach the *current* watermark. That is not the
+production SDK path: real consumers take a strict current warmup cursor first,
+whereas the C2 historical seed exists solely to prove cursor/reconnect without
+waiting for a future 1h close.
+
+The repair is narrow and preserves stricter domain checks: for a historical
+alpha BAR, require one monotonic signed replay event across query/stream
+replicas, then require a new strict current V2 snapshot using the original
+governed requirement. It must not drain arbitrary historic offsets, relax
+freshness/gap/finality, use a provider/V1 substitute, or change reader/runtime
+services. Regression will cover the real shape (`seed=10004`, first=`10005`,
+strict=`11024`) and prove it passes only after strict current readback; failure
+of that readback remains fail-closed. After source/image tests, build a
+disposable acceptance-client image only and run one fresh C2 receipt. The
+already-rolled reader roles remain on `c13c...5386`.
+
+**C2 historical replay contract source gate (`PASS / DISPOSABLE CLIENT IMAGE
+REQUIRED`, 2026-09-02).** The harness now treats the historical BAR seed as
+what it is: a bounded signed-cursor/reconnect proof, not an unbounded backlog
+consumer. It requires exactly one monotonic replay frame across replicas and
+then a strict current V2 snapshot using the original governed requirement.
+The regression reproduces the real `10004 -> 10005 -> 10006` seed/replay shape
+against strict watermark `11024`, proves later historical offsets are not
+drained, and fails if the current snapshot cannot be read. The isolated,
+read-only, non-root, no-network C2 matrix passed **68/68 in 15.362s** across
+receipt replay, identity, fallback and release-certification cases. No runtime
+reader role, provider, Kafka, Redis, SQLite, V1, Trading System, alpha,
+Gateway/Risk or order path changed. Next: commit this source slice, build one
+immutable disposable acceptance-client image, run its no-source-mount matrix,
+then run exactly one fresh 299-product/four-identity C2 receipt. The current
+reader runtime remains `c13c...5386` throughout.
