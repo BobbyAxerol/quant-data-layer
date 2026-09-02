@@ -31539,3 +31539,30 @@ packet is one fresh 299-product, four-identity, 300-second C2 no-order
 acceptance from a disposable, execution-network-only client; its V1
 provenance/binding will be derived afresh from the running V1 container and
 the client namespace will be removed after its receipt is retained.
+
+**C2 DOGE BAR continuity diagnosis and bounded repair packet (`APPROVED / IN
+PROGRESS`, 2026-09-02).** The first wrapper-only preflight stopped before the
+unprivileged client could start because its public static wrapper had mode
+`0700`; it made no V2 request and was retained separately as preflight
+evidence. The fresh client then reached the real V2 route and correctly
+failed closed at `trading-system.paper.stable` / Binance USD-M `DOGEUSDT` /
+final `BAR 1m`: both query replicas reported a healthy current tail but
+returned `OPEN_SEQUENCE_GAP` for the governed warmup. A read-only canonical
+spool audit found one exact market-time discontinuity, 26 missing final opens
+from `2026-09-02T12:15:00Z` through `2026-09-02T12:41:00Z`, between retained
+opens `12:15` and `12:42`; this is real durable history loss, not an SLA,
+session, reader, or source-lineage issue.
+
+**Repair scope and invariant.** Stop only the existing
+`binance_bar_edge` container, retain a hash-recorded checkpoint backup, remove
+only `binance-usdm-dogeusdt-bar-1m` from its checkpoint map, then start the
+same container/image/runtime. Its established bootstrap path must fetch 1,000
+closed Binance rows, compare every open against the canonical cache and
+publish only missing final opens through the normal Kafka/canonical/projector
+pipeline. Expected normal data-plane writes are the 26 real missing BARs;
+there is no direct SQLite write, image build, source change, new topology,
+offset reset, Redis/SQLite flush/deletion, V1/Trading System/alpha/order
+mutation. If bootstrap or health fails, stop only this role, restore its exact
+checkpoint backup and start it on its unchanged image. After projector catch-up,
+prove both replicas return a contiguous governed DOGE warmup and run one new
+299-product C2 no-order client; the failed client does not count as acceptance.
