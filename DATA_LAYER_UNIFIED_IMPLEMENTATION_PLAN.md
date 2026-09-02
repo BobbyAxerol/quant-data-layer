@@ -30351,3 +30351,29 @@ container ran `tests.test_phase104_reference_batch`,
 container service, Kafka/Redis/SQLite write, V1/Trading System/alpha action or
 order-path mutation occurred. The source is ready for a coherent commit and
 then the separately bounded two-reader image/runtime packet.
+
+**Phase D reader-only candidate packet (`APPROVED / PRE-BUILD`, 2026-09-02).**
+Build one shared reader image from source commit `021b372` as
+`qdl-v2-python:2.0.0-021b372`. Verify its OCI source/release labels and run
+the same immutable source-contract subset before runtime use. If and only if
+that gate passes, atomically render a temporary reader override and serially
+recreate only `query_v2_1` then `query_v2_2`; their current exact image
+`qdl-v2-python:2.0.0-5edbc8c` / digest
+`sha256:b2a2848011c84a6f6eaafd74b5a1a5b4908e0c1f9cfdbeb78325c3c0c3a0985c`
+with the unchanged runtime mount is rollback. The candidate must become
+healthy and retain the sealed identity before one real read-only
+Binance/OKX reference pair. No stream role, V1, Kafka topology/offsets,
+Redis/SQLite data, Rust, ingestion, projector, Trading System, alpha service,
+database, broker credential or order path belongs to this packet.
+
+**Phase D reader-only candidate build (`PASS / RUNTIME UNCHANGED`,
+2026-09-02).** Source commit `021b372` built the one shared candidate
+`qdl-v2-python:2.0.0-021b372`, image digest
+`sha256:82e0c6cc57b8b4630cfa1cfaa7f017128f332601f2ea6613595be4abfd8035e2`.
+OCI labels pin revision `021b372` and version `2.0.0-021b372`. Directly from
+that immutable image, a non-root/read-only/no-network/tmpfs-only contract run
+again passed `48/48` reference/L2 tests in 6.859s. No service was recreated;
+the active reader remains `2.0.0-5edbc8c` and its digest is retained as the
+only rollback for this two-role packet. The next operation is a rendered
+two-query override preflight, followed by serial recreation exactly as recorded
+above; no other role is eligible.
