@@ -575,7 +575,7 @@ class Phase103ReplayReadbackTests(unittest.IsolatedAsyncioTestCase):
         resumed_session = self._Session(watermark_offset=11, items=(replayed,))
         first_client = self._Client(first_session)
         resumed_client = self._Client(resumed_session)
-        current = SimpleNamespace()
+        current = SimpleNamespace(data=SimpleNamespace())
         projected = []
 
         def project(event, *, template, requirement, **kwargs):
@@ -610,7 +610,7 @@ class Phase103ReplayReadbackTests(unittest.IsolatedAsyncioTestCase):
             [
                 call(product, ANY, require_current_quality=True),
                 call(product, ANY, require_current_quality=False, state_replay=True),
-                call(product, current),
+                call(product, current.data),
             ],
         )
 
@@ -1231,7 +1231,7 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.snapshot_calls, 2)
         self.assertEqual(client.status_calls, 1)
 
-    async def test_strict_snapshot_unwraps_the_typed_sdk_envelope(self):
+    async def test_strict_snapshot_preserves_the_typed_sdk_envelope(self):
         requirement = self._requirement()
         expected = SimpleNamespace(kind="market-data-view")
         client = self._Client(
@@ -1252,7 +1252,7 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=0.25,
         )
 
-        self.assertIs(result, expected)
+        self.assertIs(result.data, expected)
         self.assertEqual(client.snapshot_calls, 1)
 
     async def test_disconnected_quote_never_retries_or_accepts_stale_data(self):

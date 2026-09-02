@@ -68,7 +68,6 @@ from qdl_sdk import (
     market_data_view_from_stream,
 )
 from qdl_sdk.errors import ContinuityError, DataLayerError
-from qdl_sdk.models import SnapshotResponse
 
 
 DEFAULT_CATALOG = ROOT / "config/v2/stable-source-bindings.yaml"
@@ -706,14 +705,7 @@ async def _strict_snapshot_for_c2(
                 f"C2 strict {product.feed.value} did not obtain fresh data before its deadline",
             )
         try:
-            response = await asyncio.wait_for(client.snapshot(requirement), timeout=remaining)
-            # The public SDK returns an envelope. C2 validates the governed
-            # market-data view inside it, never the transport response itself.
-            if isinstance(response, SnapshotResponse):
-                return response.data
-            # Test seams use lightweight snapshot values; production SDK calls
-            # are always the typed branch above.
-            return response
+            return await asyncio.wait_for(client.snapshot(requirement), timeout=remaining)
         except DataLayerError as error:
             await _wait_for_live_snapshot_retry(
                 client,
@@ -993,7 +985,7 @@ async def _stream_resume(
                         requirement=requirement,
                         timeout_seconds=timeout_seconds,
                     )
-                    validate_product_view(product, current)
+                    validate_product_view(product, current.data)
                 if (
                     strict_watermark is None
                     or acknowledged_offset >= strict_watermark
