@@ -31065,3 +31065,18 @@ lines untouched by this patch; no changed-line formatting or compile failure
 was accepted. No container, image, provider request, cache, Kafka, Redis,
 SQLite, V1, Trading System, alpha or order path changed during source
 verification.
+
+**Reader repair rollout packet (`OWNER-APPROVED / PRE-BUILD`, 2026-09-02).**
+Build one canonical shared Python reader image carrying the runtime source
+correction `dev@1f64da7b2288db1debf2d5d83e819abcf1467204` as
+`qdl-v2-python:2.0.1-1f64da7`, with OCI revision and release labels. The
+following plan-only commit does not alter the runtime source label. Verify it
+as non-root, read-only and network-disabled before use. Render an operator-only
+image override that changes exactly `query_v2_1` and `query_v2_2`; serially
+recreate those services with `--no-deps` and their existing runtime/TLS/state
+mounts. Their exact current rollback is
+`qdl-v2-python:2.0.0-6962966@sha256:221aceb394b9ad55661bb6d81e0b1acad6a880ac18f75b1b44d03d9b4c0c3377`.
+The packet cannot recreate stream, projector, Rust core, bar-edge, either
+ingestor, V1 or any Trading-System/alpha/order role; it cannot alter Kafka
+topology/offsets, Redis, SQLite or runtime identity. Per-replica image,
+health, restart and real MARK/INDEX read checks gate the next operation.
