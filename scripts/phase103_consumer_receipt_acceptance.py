@@ -355,6 +355,22 @@ def _allows_quiet_continuity_observation(product: AcceptanceProduct, requirement
     )
 
 
+def _allows_quiet_historical_bar_handoff(
+    product: AcceptanceProduct,
+    *,
+    historical_replay: bool,
+) -> bool:
+    """Allow a bounded no-event observation for retained non-execution BARs.
+
+    A historical alpha BAR reconnect can be completely quiet until the next
+    interval closes.  C2 still has to prove the signed stream controls and a
+    fresh final BAR from each replica; it never treats the quiet stream as an
+    execution price or as a durable replay checkpoint.
+    """
+
+    return historical_replay and product.delivery is DeliveryClass.DURABLE
+
+
 def _quiet_continuity_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
     """Keep a quiet connected continuity channel distinct from price data."""
     quality = status.quality
@@ -429,6 +445,27 @@ async def _classify_no_event_continuity_session(
     )
 
 
+async def _verify_quiet_historical_bar_current(
+    client: AsyncDataLayerClient,
+    *,
+    product: AcceptanceProduct,
+    requirement,
+    timeout_seconds: float,
+) -> str:
+    """Prove a quiet retained BAR remains final and current on this replica."""
+
+    if not _uses_historical_bar_replay(product):
+        raise ValueError("quiet historical BAR verification requires a non-execution durable BAR")
+    current = await _strict_snapshot_for_c2(
+        client,
+        product=product,
+        requirement=requirement,
+        timeout_seconds=timeout_seconds,
+    )
+    validate_product_view(product, current.data)
+    return "CURRENT_FINAL_BAR"
+
+
 def _stream_handoff_mode(
     product: AcceptanceProduct,
     *,
@@ -441,6 +478,10 @@ def _stream_handoff_mode(
     if product.delivery is not DeliveryClass.DURABLE:
         return "NOT_APPLICABLE"
     if acknowledged_offset is None:
+        if len(no_event_sessions) == 2 and all(
+            item == "CURRENT_FINAL_BAR" for item in no_event_sessions
+        ):
+            return "CURRENT_FINAL_BAR_OBSERVED_NO_CURSOR"
         if (
             len(no_event_sessions) == 2
             and no_event_sessions[0] == "CURSOR_ACKNOWLEDGED"
@@ -821,6 +862,10 @@ async def _stream_resume(
     stream_requirement = requirement
     event_timeout_seconds = _stream_event_timeout_seconds(product, timeout_seconds)
     quiet_continuity_observation = _allows_quiet_continuity_observation(product, requirement)
+    quiet_historical_bar_handoff = _allows_quiet_historical_bar_handoff(
+        product,
+        historical_replay=historical_replay,
+    )
     quiet_primary = False
     no_event_sessions: list[str] = []
     first_controls: list[str] = []
@@ -853,7 +898,7 @@ async def _stream_resume(
             requirement=stream_requirement,
             timeout_seconds=timeout_seconds,
         ) as session:
-            if quiet_continuity_observation:
+            if quiet_continuity_observation or quiet_historical_bar_handoff:
                 first, first_controls = await _next_data_or_timeout(
                     session,
                     timeout_seconds=min(
@@ -863,12 +908,22 @@ async def _stream_resume(
                 )
                 if first is None:
                     _require_signed_cursor_controls(first_controls)
-                    no_event_sessions.append(await _classify_no_event_continuity_session(
-                        first_client,
-                        product=product,
-                        requirement=requirement,
-                        timeout_seconds=timeout_seconds,
-                    ))
+                    if quiet_historical_bar_handoff:
+                        no_event_sessions.append(
+                            await _verify_quiet_historical_bar_current(
+                                first_client,
+                                product=product,
+                                requirement=requirement,
+                                timeout_seconds=timeout_seconds,
+                            )
+                        )
+                    else:
+                        no_event_sessions.append(await _classify_no_event_continuity_session(
+                            first_client,
+                            product=product,
+                            requirement=requirement,
+                            timeout_seconds=timeout_seconds,
+                        ))
                     quiet_primary = True
             else:
                 first, first_controls = await _next_data(
@@ -947,12 +1002,22 @@ async def _stream_resume(
                 )
                 if observed is None:
                     _require_signed_cursor_controls(observed_controls)
-                    no_event_sessions.append(await _classify_no_event_continuity_session(
-                        resumed_client,
-                        product=product,
-                        requirement=requirement,
-                        timeout_seconds=timeout_seconds,
-                    ))
+                    if quiet_historical_bar_handoff:
+                        no_event_sessions.append(
+                            await _verify_quiet_historical_bar_current(
+                                resumed_client,
+                                product=product,
+                                requirement=requirement,
+                                timeout_seconds=timeout_seconds,
+                            )
+                        )
+                    else:
+                        no_event_sessions.append(await _classify_no_event_continuity_session(
+                            resumed_client,
+                            product=product,
+                            requirement=requirement,
+                            timeout_seconds=timeout_seconds,
+                        ))
                 else:
                     observed_view = market_data_view_from_stream(
                         observed,

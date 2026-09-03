@@ -32857,3 +32857,62 @@ source slice, build one immutable disposable acceptance-client image, repeat
 the no-source-mount matrix, then run exactly one quota-aware 299-product C2
 receipt. The failed `a497ab0` client container is test-only and will be removed
 after its failure digest is retained in bounded evidence.
+
+**C2 quota-aware receipt (`FAIL-CLOSED / QUIET FINAL-BAR ACCEPTANCE REPAIR`,
+2026-09-03).** Immutable client
+`qdl-v2-python:2.0.6-8620303@sha256:a7a7cf86422955158c1e17002fece142814ce5fb6ac1c3a15b1359cf7d8778e2`
+was built from source commit `8620303`, with matching OCI revision/version
+labels. Its focused no-source-mount C2 image suite passed `15/15`; the client
+was then launched once as the declared read-only, non-root-after-bootstrap
+four-identity receipt. It ran for roughly four minutes, did not OOM, emitted no
+receipt, made no provider/Gateway/Risk/order/signal/sizing/durable-state
+mutation, and stopped at `alpha.binance.paper.stable / DOGE-USDT / BAR 4h`.
+The bounded stderr digest is
+`9167bb583160b245a02417bbfb5f36a4e29f960d226938a651c0a309ea112c90`.
+
+The failure is no longer `RATE_LIMITED`: the manifest pacing held. It is a
+second C2-only semantic mismatch. A slow historical alpha BAR can have a valid
+signed warmup cursor and receive only `REPLAYING`/`LIVE` controls during a
+300-second window because no new closed `4h` bar exists. The existing harness
+unconditionally calls `_next_data()` and rejects controls without a market
+event, even though it can already prove a strict current, final, authoritative
+BAR through V2. This must not be solved by generating a bar, changing a venue
+SLA, weakening finality, or claiming a replay event that did not arrive.
+
+The narrow source repair is to admit a *quiet historical alpha BAR handoff*
+only after both sessions prove the signed cursor controls and each immediately
+passes a strict current V2 warmup/snapshot under the original requirement. Its
+evidence is explicitly non-price/no-event; execution-grade BARs and every
+non-BAR product retain their current event/replay behavior. Missing controls,
+gap, stale/finality, identity/source, cursor or strict-current failure remains
+terminal. Regression covers quiet-final-BAR success, missing controls and
+stale-current rejection, alongside ordinary event replay. Then one final
+immutable client rebuild and one fresh 299-product C2 receipt are allowed; no
+reader/runtime role is recreated.
+
+**C2 quiet final-BAR source gate (`PASS / FINAL DISPOSABLE RECEIPT REQUIRED`,
+2026-09-03).** The receipt primitive now admits no-event handling only for a
+durable, non-execution historical `BAR`: both replica sessions must emit
+`REPLAYING` and `LIVE`, and each must immediately pass a strict current,
+final, original-requirement V2 snapshot. The resulting handoff is recorded as
+`CURRENT_FINAL_BAR_OBSERVED_NO_CURSOR`, explicitly not as a durable event
+replay or executable price. `TRADE`, `QUOTE`, `BOOK_*`, execution BAR and every
+ordinary BAR event path are unchanged. The closed cases are: missing signed
+controls before any current read, and a failed/stale current read after valid
+controls. No timeout, freshness, finality, source, identity, gap or policy was
+relaxed.
+
+Evidence from the source-mounted disposable image
+`qdl-v2-python:2.0.6-8620303`: historical-BAR focused suite passed **8/8** in
+`0.068s`; receipt harness plus identity-pacing suite passed **56/56** in
+`1.635s`; the full C2-relevant acceptance set
+(`test_phase103_consumer_acceptance`, receipt harness, handoff, identity and
+five-liquid handoff) passed **96/96** in `6.390s`. All were run network-less,
+read-only, UID/GID `10001`, with dropped Linux capabilities and a tmpfs `/tmp`.
+`git diff --check` and syntax compilation passed. The image does not include
+`ruff`, so no lint result is claimed; repository CI remains the formatting/lint
+authority. No runtime role, provider, Kafka, Redis, SQLite, V1, Trading System,
+alpha, Gateway/Risk, order path or runtime identity changed. Next exact action:
+commit this source slice, build one immutable final C2 client from it, run one
+fresh quota-aware C2 receipt, then remove the two stopped disposable C2
+containers and any non-retained client image after compact evidence is retained.

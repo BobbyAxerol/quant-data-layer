@@ -322,9 +322,10 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
     INTERVAL_NS = 15 * 60 * 1_000_000_000
 
     class _Session:
-        def __init__(self, *, warmup, items):
+        def __init__(self, *, warmup, items, quiet: bool = False):
             self.warmup = warmup
             self._items = iter(items)
+            self._quiet = quiet
             self.acknowledged = []
 
         async def __anext__(self):
@@ -332,6 +333,8 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
             try:
                 return next(self._items)
             except StopIteration as error:
+                if self._quiet:
+                    await asyncio.Event().wait()
                 raise StopAsyncIteration from error
 
         def acknowledge(self, event):
@@ -348,11 +351,13 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
             return False
 
     class _Client:
-        def __init__(self, *, strict_warmup, session):
+        def __init__(self, *, strict_warmup, session, snapshots=()):
             self.strict_warmup = strict_warmup
             self.session = session
+            self._snapshots = iter(snapshots)
             self.warmup_calls = []
             self.stream_calls = []
+            self.snapshot_calls = []
             self.closed = False
 
         async def warmup(self, requirement):
@@ -362,6 +367,13 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         def warmup_then_stream(self, requirement, *, resume_restored_state=False):
             self.stream_calls.append((requirement, resume_restored_state))
             return Phase103HistoricalBarReplayResumeTests._SessionContext(self.session)
+
+        async def snapshot(self, requirement):
+            self.snapshot_calls.append(requirement)
+            try:
+                return next(self._snapshots)
+            except StopIteration as error:
+                raise AssertionError("unexpected strict historical BAR snapshot") from error
 
         async def close(self):
             self.closed = True
@@ -511,6 +523,160 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_session.acknowledged, [first])
         self.assertEqual(resumed_session.acknowledged, [resumed[0]])
         readback.assert_awaited_once()
+
+    async def test_non_execution_bar_can_be_quiet_only_with_signed_controls_and_current_final_reads(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        seed_view = SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(data=[seed_view], watermark_offset=38)
+        controls = (
+            ControlEvent("REPLAYING", "retained BAR replay accepted"),
+            ControlEvent("LIVE", "stream live"),
+        )
+        first_session = self._Session(warmup=seed_warmup, items=controls, quiet=True)
+        resumed_session = self._Session(warmup=seed_warmup, items=controls, quiet=True)
+        first_current = SimpleNamespace(data=SimpleNamespace())
+        resumed_current = SimpleNamespace(data=SimpleNamespace())
+        first_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=first_session,
+            snapshots=(first_current,),
+        )
+        resumed_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=resumed_session,
+            snapshots=(resumed_current,),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-quiet-historical-bar-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
+
+        self.assertEqual(
+            result,
+            (
+                None,
+                None,
+                ("REPLAYING", "LIVE", "REPLAYING", "LIVE"),
+                ("CURRENT_FINAL_BAR", "CURRENT_FINAL_BAR"),
+            ),
+        )
+        self.assertEqual(
+            _stream_handoff_mode(
+                product,
+                acknowledged_offset=result[0],
+                resumed_offset=result[1],
+                no_event_sessions=result[3],
+            ),
+            "CURRENT_FINAL_BAR_OBSERVED_NO_CURSOR",
+        )
+        self.assertEqual(first_client.snapshot_calls, [requirement])
+        self.assertEqual(resumed_client.snapshot_calls, [requirement])
+        self.assertEqual(first_session.acknowledged, [])
+        self.assertEqual(resumed_session.acknowledged, [])
+        self.assertEqual(first_client.stream_calls[0][1], False)
+        self.assertEqual(resumed_client.stream_calls[0][1], False)
+        self.assertEqual(
+            validate.call_args_list,
+            [
+                call(product, strict_view),
+                call(product, first_current.data),
+                call(product, resumed_current.data),
+            ],
+        )
+
+    async def test_non_execution_quiet_bar_requires_signed_controls_before_current_read(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(
+            data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))],
+            watermark_offset=38,
+        )
+        client = self._Client(
+            strict_warmup=strict_warmup,
+            session=self._Session(warmup=seed_warmup, items=(), quiet=True),
+            snapshots=(SimpleNamespace(data=SimpleNamespace()),),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-quiet-historical-bar-controls-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", return_value=client),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                self.assertRaisesRegex(ContinuityError, "signed cursor stream"),
+            ):
+                await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
+
+        self.assertEqual(client.snapshot_calls, [])
+
+    async def test_non_execution_quiet_bar_rejects_failed_current_read(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(
+            data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))],
+            watermark_offset=38,
+        )
+        controls = (
+            ControlEvent("REPLAYING", "retained BAR replay accepted"),
+            ControlEvent("LIVE", "stream live"),
+        )
+        client = self._Client(
+            strict_warmup=strict_warmup,
+            session=self._Session(warmup=seed_warmup, items=controls, quiet=True),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-quiet-historical-bar-current-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", return_value=client),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    side_effect=ContinuityError("DATA_STALE", "current historical BAR stale"),
+                ),
+                self.assertRaisesRegex(ContinuityError, "current historical BAR stale"),
+            ):
+                await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
 
     async def test_execution_bar_keeps_the_live_stream_requirement(self):
         product = self._product(grade=Grade.EXECUTION)
