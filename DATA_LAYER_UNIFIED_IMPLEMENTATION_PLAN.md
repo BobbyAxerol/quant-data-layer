@@ -33291,3 +33291,77 @@ deadline failure, open-gap rejection and no cross-symbol status reuse. No
 runtime role, provider, Kafka, Redis, SQLite, V1, Trading System, alpha or
 order path was changed. Next permitted action: commit this source slice, build
 one immutable disposable C2 client image and run exactly one fresh C2 receipt.
+
+**C2 transient-session immutable receipt (`FAIL-CLOSED / BAR GAP
+DIAGNOSIS`, 2026-09-03).** Commit `10bb4c6` was sealed as the one disposable
+client image `qdl-v2-python:2.0.11-10bb4c6@sha256:d3254eaddf769547fc017f63e066ddf6db9f70404f40a4b656cd329647125227`;
+OCI revision/version are exact and the immutable, no-source-mount,
+network-disabled C2 matrix passed `66/66` in `17.076s`. The one authorized
+four-identity no-order client then ran about 14 minutes at roughly `116-134MiB`
+of its `512MiB` bound, self-removed, and produced no order, signal, sizing or
+durable-store action. It did not reach the observation window: the first
+terminal condition is `alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.
+BTC-USDT / BAR 1h`, whose strict warmup correctly rejected the typed V2
+response with `required feed has an unresolved sequence gap`. The compact
+stderr is `3,948` bytes and is retained only in
+`releases/2.0.11-10bb4c6/c2-transient-session-20260903T031000Z`.
+
+This proves the transient-session retry did not weaken read admission. Next
+scope is read-only two-replica status/warmup lineage for that exact Binance
+`BTC 1h BAR` identity, then targeted shared bar-edge/Rust/projector repair only
+if a real materialized gap is confirmed. No retry C2 is permitted until that
+truthful diagnosis and its regression exit are recorded; V1, Kafka topology or
+offsets, Redis, SQLite reset/deletion, Trading System, alpha and order paths
+remain excluded.
+
+**C2 BTC 1h BAR lineage (`CONFIRMED / SHARED CACHE-GENERATION REPAIR`,
+2026-09-03).** Read-only inspection of the exact canonical partition
+`a953e16e-7138-5562-b5e8-c337a44d0b65/bar/binance-usdm-btcusdt-bar-1h-primary-v2`
+proved a real 24-open hourly hole, not a C2, query or SDK false positive:
+the bounded durable tail had `703` distinct FINAL opens, no duplicate opens,
+and `24` missing expected hourly opens. The typed latest status can still be
+`LIVE/complete/gap_open=false` because it describes the current provider
+session, whereas governed warmup correctly refuses the historical hole. No
+synthetic event, fallback substitution, SLA relaxation or retry was used.
+
+Root cause is a shared lifecycle gap: after a canonical SQLite generation
+rebuild, a continuously running BAR edge can retain its old checkpoint
+watermarks because ordinary recurring final-BAR polling does not currently
+compare the cache generation before deciding that no binding is due. The
+narrow source repair is provider-neutral and applies to every Binance/OKX
+BAR binding: detect a changed canonical-cache identity before the next
+bootstrap/poll, clear only the edge's in-memory watermark/retry state, issue
+a new source connection generation, persist the rebased V4 checkpoint, then
+run the existing bounded provider-authentic bootstrap path. It does not alter
+Kafka topology/offsets, Redis, SQLite deletion, query policy, Rust domain
+logic, V1, Trading System, alpha or any order path. Tests must prove one
+generation change triggers one truthful re-bootstrap, old watermarks are never
+reused, same-generation polling is a no-op, and missing/invalid cache identity
+continues fail-closed. Only after this source gate, an immutable image and a
+bounded V2-only recovery can repair the observed cache before exactly one new
+C2 receipt.
+
+**C2 live cache-generation source repair (`PASS / RUNTIME RECOVERY NEXT`,
+2026-09-03).** `StableBinanceBarEdge` now performs one inexpensive
+canonical-cache identity read at the beginning of its existing bootstrap path.
+If and only if the identity changed, it clears only that edge's in-memory
+watermark/retry maps, issues a new provider connection generation, atomically
+persists a V4 checkpoint bound to the new cache identity, then enters the
+existing bounded authenticated Binance/OKX history bootstrap. Equal identities
+are a no-op; an unavailable/invalid identity remains fail-closed; a generation
+change during a publish still fails closed and is repaired on the next loop.
+No per-symbol worker, service, provider bypass, synthetic data, reader policy
+or public contract was added.
+
+The source-mounted, network-disabled, read-only UID/GID-`10001`,
+capability-dropped test matrix passed **105/105 in 24.176s**:
+all stable BAR history/recovery/cache-generation tests plus Phase-10.3 receipt,
+Phase-10.5 acceptance/fallback and Phase-11.5-C handoff suites. New regression
+proves a live cache generation change clears old watermarks/retries, increments
+the source generation, persists the rebased checkpoint, reboots every governed
+Binance/OKX BAR binding through the bounded bootstrap path exactly once, and
+does not rebase an unchanged cache; unreadable identity fails before mutation.
+The isolated test had no provider, Kafka, Redis, SQLite, V1, Trading System,
+alpha, Gateway/Risk or order-path authority. Next is a bounded V2-only runtime
+recovery from the retained state/volumes, real-provider repair of the confirmed
+hole, projector convergence verification, then exactly one fresh C2 receipt.

@@ -871,6 +871,105 @@ class StableBarBootstrapTests(unittest.TestCase):
             finally:
                 spool.close()
 
+    def test_live_cache_generation_change_rebases_then_bootstraps_all_bindings(self):
+        """A live edge cannot retain watermarks across a cache rebuild."""
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-live-cache-rebase-") as directory:
+            cache_path = Path(directory) / "canonical-cache.sqlite3"
+            state_path = Path(directory) / "bar-edge.json"
+            spool = SQLiteDurableSpool(SpoolConfig(
+                path=cache_path,
+                max_records=100,
+                max_payload_bytes=1_000_000,
+                max_event_bytes=64_000,
+                max_storage_bytes=2_000_000,
+                min_free_disk_bytes=0,
+            ))
+            try:
+                original_cache_id = _canonical_cache_id(cache_path)
+                edge = StableBinanceBarEdge(
+                    catalog=self.catalog,
+                    acquisition=self.acquisition,
+                    authority=self.authority,
+                    publisher=self._NoopPublisher(),
+                    warmup_rows=2,
+                    state_path=state_path,
+                    canonical_cache_id=original_cache_id,
+                    canonical_cache_path=cache_path,
+                    generation_clock_ns=lambda: 100,
+                )
+                edge._last_open_ms = {
+                    binding_id: 120_000 for binding_id in edge._binding_ids
+                }
+                edge._history_bootstrapped = True
+                edge._retry_attempts = {edge._binding_ids[0]: 1}
+                edge._next_retry_at = {edge._binding_ids[0]: 200.0}
+                edge._last_retry_log = {edge._binding_ids[0]: 100.0}
+
+                rebuilt_cache_id = "e" * 32
+                with patch(
+                    "qdl.runtime.stable_bar_edge._canonical_cache_id",
+                    return_value=rebuilt_cache_id,
+                ):
+                    self.assertTrue(edge._rebase_if_canonical_cache_generation_changed())
+
+                self.assertEqual(edge.canonical_cache_id, rebuilt_cache_id)
+                self.assertEqual(edge._last_open_ms, {})
+                self.assertFalse(edge._history_bootstrapped)
+                self.assertEqual(edge._retry_attempts, {})
+                self.assertEqual(edge._next_retry_at, {})
+                self.assertEqual(edge._last_retry_log, {})
+                self.assertEqual(edge.connection_generation, 101)
+                persisted = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(persisted["canonical_cache_id"], rebuilt_cache_id)
+                self.assertEqual(persisted["last_open_ms"], {})
+
+                published = []
+
+                def publish(source, _acquisition, values, *, expected_rows):
+                    self.assertEqual(len(values), expected_rows)
+                    published.append(source.binding_id)
+                    edge._last_open_ms[source.binding_id] = 120_000
+                    return 0
+
+                with patch(
+                    "qdl.runtime.stable_bar_edge._canonical_cache_id",
+                    return_value=rebuilt_cache_id,
+                ), patch.object(
+                    edge,
+                    "_fetch_history",
+                    return_value=(object(), object()),
+                ), patch.object(edge, "_publish_history", side_effect=publish):
+                    self.assertEqual(edge.bootstrap_history(), 0)
+
+                self.assertEqual(set(published), set(edge._binding_ids))
+                self.assertTrue(edge._history_bootstrapped)
+
+                previous_generation = edge.connection_generation
+                with patch(
+                    "qdl.runtime.stable_bar_edge._canonical_cache_id",
+                    return_value=rebuilt_cache_id,
+                ):
+                    self.assertFalse(edge._rebase_if_canonical_cache_generation_changed())
+                self.assertEqual(edge.connection_generation, previous_generation)
+            finally:
+                spool.close()
+
+    def test_live_cache_rebase_fails_closed_when_identity_is_unavailable(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-live-cache-rebase-") as directory:
+            spool, edge = self._cached_edge(directory, self._NoopPublisher())
+            try:
+                original_cache_id = edge.canonical_cache_id
+                with patch(
+                    "qdl.runtime.stable_bar_edge._canonical_cache_id",
+                    side_effect=RuntimeError("stable BAR canonical cache identity is unavailable"),
+                ), self.assertRaisesRegex(RuntimeError, "identity is unavailable"):
+                    edge._rebase_if_canonical_cache_generation_changed()
+                self.assertEqual(edge.canonical_cache_id, original_cache_id)
+                self.assertEqual(edge._last_open_ms, {})
+            finally:
+                spool.close()
+
     def test_cache_short_kafka_ack_does_not_advance_watermark(self):
         class Envelope:
             raw_frame_bytes = json.dumps({"row": _binance_row(60_000)}).encode()

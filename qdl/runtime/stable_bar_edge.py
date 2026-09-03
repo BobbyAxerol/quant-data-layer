@@ -782,6 +782,40 @@ class StableBinanceBarEdge:
         if _canonical_cache_id(self.canonical_cache_path) != self.canonical_cache_id:
             raise RuntimeError("stable BAR canonical cache generation changed during bootstrap")
 
+    def _rebase_if_canonical_cache_generation_changed(self) -> bool:
+        """Re-bootstrap from providers after an external canonical-cache rebuild.
+
+        The edge checkpoint and canonical cache are separate durable artifacts.
+        If a cache rebuild happens while this process remains alive, a watermark
+        alone cannot prove that the rebuilt cache still contains its warmup
+        history. Rebase exactly as a fresh edge process would: clear only this
+        edge's watermarks, issue a new provider-session generation, and let the
+        existing bounded provider-history bootstrap replenish the cache.
+        """
+        if self.canonical_cache_path is None:
+            return False
+        assert self.canonical_cache_id is not None
+        observed_cache_id = _canonical_cache_id(self.canonical_cache_path)
+        if observed_cache_id == self.canonical_cache_id:
+            return False
+
+        previous_cache_id = self.canonical_cache_id
+        self.canonical_cache_id = observed_cache_id
+        self._last_open_ms.clear()
+        self._retry_attempts.clear()
+        self._next_retry_at.clear()
+        self._last_retry_log.clear()
+        self._history_bootstrapped = False
+        self._issue_connection_generation()
+        self._persist_state()
+        logger.warning(
+            "stable BAR canonical cache generation changed; rebased checkpoint "
+            "previous=%s current=%s",
+            previous_cache_id,
+            observed_cache_id,
+        )
+        return True
+
     def _durable_final_bar_opens(
         self,
         source: StableSourceBinding,
@@ -956,6 +990,7 @@ class StableBinanceBarEdge:
         return getattr(self, "_next_retry_at", {}).get(binding_id, 0.0) <= now
 
     def bootstrap_history(self) -> int:
+        self._rebase_if_canonical_cache_generation_changed()
         if not self._history_bootstrap_active:
             return 0
         if self._history_bootstrapped:
