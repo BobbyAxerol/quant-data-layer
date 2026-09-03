@@ -1581,6 +1581,82 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.snapshot_calls, 2)
         self.assertEqual(client.status_calls, 1)
 
+    async def test_fresh_trade_without_session_sla_retries_only_after_typed_current_status(self):
+        requirement = DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.RESEARCH,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=15_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.TRADE)
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "late projected trade"), "fresh-trade"),
+            self._status(
+                requirement,
+                state="LIVE",
+                event_recency_state="LIVE",
+                freshness_ms=1,
+                provider_session_state="NOT_APPLICABLE",
+                provider_session_liveness_ms=None,
+                execution_eligible=True,
+            ),
+        )
+
+        result = await _strict_snapshot_for_c2(
+            client,
+            product=product,
+            requirement=requirement,
+            timeout_seconds=0.25,
+        )
+
+        self.assertEqual(result, "fresh-trade")
+        self.assertEqual(client.snapshot_calls, 2)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_trade_without_session_sla_rejects_quiet_or_disconnected_status(self):
+        requirement = DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.RESEARCH,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=15_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.TRADE)
+        for status in (
+            self._status(
+                requirement,
+                state="STALE",
+                event_recency_state="STALE",
+                provider_session_state="NOT_APPLICABLE",
+                provider_session_liveness_ms=None,
+                execution_eligible=False,
+            ),
+            self._status(
+                requirement,
+                state="LIVE",
+                event_recency_state="LIVE",
+                freshness_ms=1,
+                provider_session_state="DISCONNECTED",
+                provider_session_liveness_ms=None,
+                execution_eligible=True,
+            ),
+        ):
+            client = self._Client((DataLayerError("DATA_STALE", "late trade"),), status)
+            with self.subTest(status=status.quality.provider_session_state), self.assertRaisesRegex(
+                ContinuityError, "fresh executable status"
+            ):
+                await _strict_snapshot_for_c2(
+                    client,
+                    product=product,
+                    requirement=requirement,
+                    timeout_seconds=0.25,
+                )
+            self.assertEqual(client.snapshot_calls, 1)
+            self.assertEqual(client.status_calls, 1)
+
     async def test_strict_snapshot_preserves_the_typed_sdk_envelope(self):
         requirement = self._requirement()
         expected = SimpleNamespace(kind="market-data-view")

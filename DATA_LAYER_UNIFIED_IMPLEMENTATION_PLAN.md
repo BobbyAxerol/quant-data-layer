@@ -33599,3 +33599,114 @@ preceding server-CA client authority. Kafka, Redis, SQLite, V1, Rust,
 ingestors, projector, bar edge, Trading System, alpha and every order path
 remain excluded. Only after reader health and exact env verification may one
 fresh C2 299-product/four-identity/300-second no-order receipt run.
+
+**C2 admission-runtime preflight correction (`APPROVED / FIVE-ROLE ROLL`,
+2026-09-03).** Read-only inspection of the recovered runtime found
+`rust_core` still has `QDL_PROVIDER_ADMISSION_ENABLED=false`; the sealed C2
+overlay already sets it to `true`, but a `--no-deps` reader-only Compose
+roll cannot apply an environment change to a running core. Without this exact
+private listener, the C2 reference-data products would fail truthfully after
+the mTLS repair. This is a recovery-config omission, not a new architecture,
+image, route, symbol worker or authority model.
+
+The bounded packet therefore recreates existing `rust_core` first using its
+current immutable Rust image, existing core runtime/TLS/Kafka/Redis mounts and
+the already-sealed `QDL_PROVIDER_ADMISSION_ENABLED=true` overlay; it then
+recreates only the same four reader roles with their current immutable Python
+image. The other two Rust replicas, ingestors, bar edge, projectors, V1,
+Kafka topology/offsets, Redis, SQLite, Trading System, alpha and order path
+remain excluded. The rollback override explicitly restores this one core to
+`false` and the four readers to their preceding server-CA authority, then
+recreates only those same five roles. Successful private listener readiness
+and all five role health are required before the single fresh C2 receipt.
+
+**C2 trust/admission runtime roll (`PASS / FRESH RECEIPT RUNNING NEXT`,
+2026-09-03).** The bounded packet recreated only the existing `rust_core`
+and then `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+`stream_v2_passive`. All five retain their prior immutable image digest;
+there was no build, new container class, new port, new volume, Kafka/Redis/
+SQLite operation, V1 operation, Trading System/alpha operation or order-path
+mutation. `rust_core` is running with restart `0`, `OOMKilled=false`,
+`QDL_PROVIDER_ADMISSION_ENABLED=true`, and emitted
+`qdl_provider_admission_started` with its sealed policy hash. Each reader is
+`healthy`, restart `0`, `OOMKilled=false`, and has its exact additive
+`client-ca-bundle.crt` environment path. Bounded startup logs show normal
+Uvicorn readiness only. The explicit runtime rollback override retains the
+prior server-CA path for these same four readers and `false` for this same
+core; no other role is in either direction.
+
+The next and only acceptance action is a fresh disposable C2 namespace: four
+declared identities, all 299 governed products, real V2 query/stream reads,
+one governed V1 fallback-return drill and a true 300-second no-order
+observation. It starts from zero, has no Docker socket, provider credential,
+Kafka/Redis/SQLite, Trading System, alpha, Gateway/Risk, signal, sizing or
+order authority, self-removes on exit, and retains only bounded receipt/error
+hashes. Any nonzero outcome remains terminal fail-closed.
+
+**C2 trust/admission receipt (`FAIL-CLOSED / TYPED TRADE-SESSION
+DIAGNOSIS`, 2026-09-03).** The fresh disposable client self-removed after
+`17.99s`; its RAM-only credential staging directory was immediately removed.
+It reached UID/GID `10001` with `NoNewPrivs=1` and zero effective
+capabilities, proving the prior mTLS transport failure is repaired: the query
+returned a typed V2 freshness response rather than disconnecting. It made no
+order/signal/sizing/Gateway/Risk mutation and retained only its bounded stderr
+hash `bbec929b69f04b78fcb0251621906372e7b2763912757c9d9ad3a155cac0cdad`.
+The receipt is not successful: the first monitoring product
+`BINANCE.USDM.PERPETUAL.BTC-USDT / TRADE` reported
+`required data exceeds its freshness policy`, and strict retry exhausted
+because its provider session was not `LIVE`. `acceptance.json` is empty;
+the reader replicas stayed healthy and no C2 client container remains.
+
+This proves the reader trust correction, but not V2 consumer readiness. It
+does not justify an SLA change or another receipt. The sole next scope is
+read-only typed status/lineage for this exact Binance trade identity from both
+query replicas and the matching shared ingestor/Rust/projection path: session
+state, event recency, gap, watermark and completeness. If the status is
+incorrect while the provider session is live, repair only the shared
+projection/provider lineage with regression evidence; if the session is truly
+down, restore it through the existing shared role and record the real provider
+condition. C2 remains blocked until that exact condition is resolved.
+
+**C2 Binance TRADE typed-status diagnosis (`CONFIRMED / HARNESS-ONLY
+SOURCE REPAIR`, 2026-09-03).** A disposable, read-only, mTLS/JWT
+monitoring probe queried the exact failed `BINANCE.USDM.PERPETUAL.BTC-USDT /
+TRADE` identity from both V2 query replicas. Both returned the same governed
+truth: `state=LIVE`, `event_recency_state=LIVE`, `complete=true`,
+`gap_open=false`, `execution_eligible=true`, `policy_id=crypto_primary_v2`
+and sub-second freshness. The latest indexed canonical event also matches the
+currently `LIVE` Binance source session and config generation; all shared
+ingestor/core/projector roles remain running, restart `0`, OOM false.
+
+The observed `provider_session_state=NOT_APPLICABLE` is correct, not an
+outage: the affected monitoring TRADE manifest deliberately declares no
+`max_session_liveness_ms`. C2's retry branch nevertheless treated every
+TRADE stale-snapshot race as requiring a `LIVE` session and rejected the
+subsequent fresh/executable typed status. The correction is confined to the
+acceptance harness: a TRADE without a declared session SLA may re-read only
+when its status is already identity-matched, `LIVE`, current, complete,
+gap-free and execution-eligible with `NOT_APPLICABLE` session fields. It
+never admits a stale price, quiet trade, disconnected provider or missing
+session as success; the next snapshot must still pass ordinary strict V2
+freshness. Regression must cover the permitted fresh race and rejected
+quiet/disconnected cases. No provider, runtime role, image, manifest,
+freshness SLA, authority, V1, Kafka, Redis, SQLite, Trading System, alpha or
+order path changes are in scope.
+
+**C2 no-session TRADE race source gate (`PASS / ONE IMMUTABLE CLIENT
+RECEIPT NEXT`, 2026-09-03).** The acceptance-only retry now honors the
+declared consumer contract. It can make one ordinary strict snapshot re-read
+for a TRADE with no session SLA only after the typed status proves fresh,
+executable, complete, gap-free and `NOT_APPLICABLE` session semantics. It
+still immediately rejects a quiet/stale event or a disconnected state, and
+the re-read remains subject to normal strict freshness. Focused regressions
+cover the allowed race plus both rejected states; the complete C2
+domain/receipt/handoff suite ran from the existing immutable read-only,
+network-disabled image: **79 passed in 15.028s**.
+
+This is client-harness source only. Exactly one new immutable Python image is
+now required because the disposable C2 client executes this changed source;
+no reader, stream, Rust, ingestor, projector, V1 or other runtime role needs
+an image or config change. The next permitted operation is one fresh C2
+four-identity/299-product/300-second no-order receipt from that image. Its
+previous trust/admission roll remains the serving runtime and V1 remains the
+explicit fallback/rollback route.

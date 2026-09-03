@@ -684,6 +684,36 @@ def _fresh_quote_status_is_retryable(
     )
 
 
+def _fresh_trade_without_session_sla_is_retryable(
+    product: AcceptanceProduct,
+    requirement,
+    status,
+) -> bool:
+    """Retry only a proven fresh TRADE race when no session SLA was declared.
+
+    A manifest without max_session_liveness_ms intentionally reports
+    NOT_APPLICABLE rather than inventing transport liveness. This path does
+    not admit a stale trade: it merely lets the existing strict snapshot retry
+    after a typed status proves the same identity became current and executable.
+    """
+
+    quality = status.quality
+    return (
+        product.feed.value == "TRADE"
+        and requirement.max_session_liveness_ms is None
+        and status.instrument_uid == requirement.instrument_uid
+        and status.feed is requirement.feed
+        and quality.policy_id == requirement.source_policy_id
+        and quality.state == "LIVE"
+        and quality.event_recency_state == "LIVE"
+        and quality.provider_session_state == "NOT_APPLICABLE"
+        and quality.provider_session_liveness_ms is None
+        and quality.complete
+        and not quality.gap_open
+        and quality.execution_eligible
+    )
+
+
 def _transitional_session_status_is_retryable(
     product: AcceptanceProduct,
     requirement,
@@ -776,6 +806,11 @@ async def _wait_for_live_snapshot_retry(
     elif product.feed.value == "BOOK_SNAPSHOT":
         retryable = _book_snapshot_status_is_refreshable(product, requirement, status)
         retry_delay_seconds = _BOOK_SNAPSHOT_RETRY_SECONDS
+    elif product.feed.value == "TRADE" and requirement.max_session_liveness_ms is None:
+        retryable = _fresh_trade_without_session_sla_is_retryable(
+            product, requirement, status
+        )
+        retry_delay_seconds = _QUIET_QUOTE_RETRY_SECONDS
     else:
         retryable = (
             _quiet_continuity_status_is_observable(product, requirement, status)
@@ -790,7 +825,12 @@ async def _wait_for_live_snapshot_retry(
         required_state = (
             "a verified complete, gap-free snapshot state"
             if product.feed.value == "BOOK_SNAPSHOT"
-            else "a live provider session"
+            else (
+                "a fresh executable status"
+                if product.feed.value == "TRADE"
+                and requirement.max_session_liveness_ms is None
+                else "a live provider session"
+            )
         )
         raise ContinuityError(
             "DATA_STALE",
