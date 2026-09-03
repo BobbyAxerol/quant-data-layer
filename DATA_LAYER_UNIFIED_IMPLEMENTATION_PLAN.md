@@ -33710,3 +33710,58 @@ an image or config change. The next permitted operation is one fresh C2
 four-identity/299-product/300-second no-order receipt from that image. Its
 previous trust/admission roll remains the serving runtime and V1 remains the
 explicit fallback/rollback route.
+
+**C2 immutable client receipt (`IN PROGRESS / ONE CLIENT IMAGE`, 2026-09-03).**
+The approved closure action is narrowed to one immutable Python client image
+from source revision `f2e5654`, tagged `qdl-v2-python:2.0.13-f2e5654`, then
+one fresh disposable four-identity/299-product/true-300-second C2 receipt.
+The image is not a serving-role rollout: query/stream retain their current
+`qdl-v2-python:2.0.12-8ba4165` image and all V2 data-plane roles, V1, Kafka,
+Redis, SQLite, Trading System, alpha and order paths remain unchanged. The
+client mounts only the predeclared read-only evidence/runtime/ram-backed
+credential staging inputs, has no provider or order authority, and self-removes
+on completion. A nonzero receipt remains terminal fail-closed; rollback is
+removing that disposable client and retaining the current V1 fallback route.
+
+**C2 native-BASIS admission correction (`IN PROGRESS / HARNESS-ONLY`,
+2026-09-03).** The first immutable `2.0.13-f2e5654` receipt passed mTLS and
+the repaired TRADE-session path, then stopped fail-closed while reading the
+first `BINANCE.USDM.PERPETUAL.BTC-USDT / BASIS` reference product. The typed
+public response was `SOURCE_UNAVAILABLE` with `reference batch provider lane
+did not complete`; no receipt, order, signal, sizing, Gateway/Risk or runtime
+mutation occurred, and the RAM-only credential staging tree was removed.
+
+The exact cause is C2-client concurrency, not a provider defect: each
+consumer/replica independently starts its singleton Binance native-BASIS
+batch, while the declared shared Rust `REFERENCE_NATIVE_BASIS` lane correctly
+allows one in-flight request. The existing per-batch isolation and one typed
+cooldown retry are therefore insufficient when both replicas and multiple
+identities race the same lane. The narrow correction is to share one C2-local
+semaphore across *only* these singleton native-BASIS batches, for opening and
+closing reads. It preserves the Rust admission authority, all real-provider
+requests, normal reference parallelism, strict errors and the one bounded
+cooldown retry. Tests must prove native requests serialize across replicas and
+ordinary reference batches remain outside that lane. No provider policy,
+runtime role/image/config, manifest, freshness SLA, V1, Kafka, Redis, SQLite,
+Trading System, alpha or order-path change is in scope.
+
+**C2 native-BASIS serialization source gate (`PASS / ONE REPLACEMENT CLIENT
+IMAGE NEXT`, 2026-09-03).** The C2 harness now shares one local semaphore for
+the Rust-admitted singleton Binance native-BASIS batch across all four
+identities and both V2 reader replicas, in both opening and closing reads.
+Ordinary reference batches remain under their existing bounded concurrency and
+do not wait on that native lane. The shared classifier moved into the
+Reference/L2 acceptance contract so batch construction and C2 use the exact
+same definition. Source-only regression ran from immutable
+`qdl-v2-python:2.0.13-f2e5654`, source mounted read-only, network disabled,
+UID/GID `10001`, capability-free and tmpfs-only scratch: **99 passed,
+25.533s**. The matrix includes the new concurrent native-lane and
+ordinary-reference-not-blocked regressions plus C2 scope/receipt, V1 fallback,
+Reference/L2, rollout and Rust-admission binding tests. A broad `compileall`
+attempt was intentionally rejected by the read-only source mount because it
+writes `.pyc`; it made no source/runtime mutation and is not a code failure.
+
+This source slice needs one replacement immutable disposable-client image
+after commit. It does not roll a reader, stream, Rust core, ingestor,
+projector, V1 or any deployed service. The only next runtime action remains
+one fresh C2 receipt with the replacement client; V1 remains rollback.

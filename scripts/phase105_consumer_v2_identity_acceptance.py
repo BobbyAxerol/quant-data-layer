@@ -42,6 +42,7 @@ from qdl.certification.phase105_consumer_acceptance import (
 from qdl.certification.reference_l2_acceptance import (
     ReferenceAcceptanceProduct,
     acceptance_transport_timeout_seconds,
+    is_rust_admitted_native_basis,
     reference_acceptance_batches,
     reference_evidence,
     reference_quality,
@@ -432,6 +433,7 @@ async def _certify_references(
     timeout_seconds: float,
     deadline_monotonic: float,
     semaphore: asyncio.Semaphore,
+    native_basis_semaphore: asyncio.Semaphore,
     client_factory,
 ) -> list[dict[str, object]]:
     """Read declared provider data through both V2 replicas, never V1/direct.
@@ -456,14 +458,15 @@ async def _certify_references(
         values: dict[tuple[str, str, str, str, str], tuple[str, float, int, int, dict[str, int | bool]]] = {}
         try:
             for batch in reference_acceptance_batches(reference_products):
-                async with semaphore:
-                    started = time.perf_counter()
-                    response, attempts, deferred_ms = await _reference_batch_until_terminal(
-                        client,
-                        batch,
-                        deadline_monotonic=deadline_monotonic,
-                    )
-                    latency_ms = (time.perf_counter() - started) * 1_000
+                started = time.perf_counter()
+                response, attempts, deferred_ms = await _reference_batch_for_c2(
+                    client,
+                    batch,
+                    deadline_monotonic=deadline_monotonic,
+                    semaphore=semaphore,
+                    native_basis_semaphore=native_basis_semaphore,
+                )
+                latency_ms = (time.perf_counter() - started) * 1_000
                 observed_at_ns = time.time_ns()
                 hashes = tuple(
                     reference_evidence(item, result, observed_at_ns=observed_at_ns)
@@ -761,6 +764,37 @@ async def _closing_batch_revalidation(
     return evidence
 
 
+async def _reference_batch_for_c2(
+    client,
+    batch: tuple[ReferenceAcceptanceProduct, ...],
+    *,
+    deadline_monotonic: float,
+    semaphore: asyncio.Semaphore,
+    native_basis_semaphore: asyncio.Semaphore,
+):
+    """Respect Rust's one native-BASIS lane across all C2 identities/replicas."""
+
+    native_basis = tuple(item for item in batch if is_rust_admitted_native_basis(item))
+    if native_basis and len(native_basis) != len(batch):
+        raise AssertionError("Phase 10.5 native BASIS batch mixes provider lanes")
+    if native_basis:
+        if len(native_basis) != 1:
+            raise AssertionError("Phase 10.5 native BASIS batch must be singleton")
+        async with native_basis_semaphore:
+            async with semaphore:
+                return await _reference_batch_until_terminal(
+                    client,
+                    batch,
+                    deadline_monotonic=deadline_monotonic,
+                )
+    async with semaphore:
+        return await _reference_batch_until_terminal(
+            client,
+            batch,
+            deadline_monotonic=deadline_monotonic,
+        )
+
+
 async def _closing_revalidate_consumer(
     consumer_id: str,
     products: tuple[AcceptanceProduct, ...],
@@ -773,6 +807,7 @@ async def _closing_revalidate_consumer(
     timeout_seconds: float,
     max_batch_items: int,
     reference_semaphore: asyncio.Semaphore,
+    native_basis_semaphore: asyncio.Semaphore,
     client_factory,
 ) -> list[dict[str, object]]:
     stream_products = tuple(
@@ -802,6 +837,7 @@ async def _closing_revalidate_consumer(
         timeout_seconds=timeout_seconds,
         deadline_monotonic=time.monotonic() + timeout_seconds,
         semaphore=reference_semaphore,
+        native_basis_semaphore=native_basis_semaphore,
         client_factory=client_factory,
     ))
     stream_results, reference_results = await _gather_or_cancel((stream_task, reference_task))
@@ -888,6 +924,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     reference_semaphore = asyncio.Semaphore(
         _reference_batch_concurrency(args.concurrency)
     )
+    native_basis_semaphore = asyncio.Semaphore(1)
     pacers = _quota_pacers(release, consumer_ids)
     client_factories = {
         consumer_id: _paced_client_factory(pacer)
@@ -948,6 +985,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             timeout_seconds=args.timeout_seconds,
             deadline_monotonic=opening_deadline,
             semaphore=reference_semaphore,
+            native_basis_semaphore=native_basis_semaphore,
             client_factory=client_factories[consumer_id],
         ))
         task_results = await _gather_or_cancel((*product_tasks, reference_task))
@@ -1002,6 +1040,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 timeout_seconds=args.timeout_seconds,
                 max_batch_items=route.manifest.quotas.max_batch_items,
                 reference_semaphore=reference_semaphore,
+                native_basis_semaphore=native_basis_semaphore,
                 client_factory=client_factories[consumer_id],
             )
 

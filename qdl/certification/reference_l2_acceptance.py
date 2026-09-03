@@ -161,19 +161,23 @@ def reference_acceptance_batches(
     bounded batch; no product is dropped or retried through another provider.
     """
 
-    native_basis = tuple(
-        product
-        for product in products
-        if product.venue == "BINANCE"
-        and product.requirement.feed is FeedType.BASIS
-        and product.sdk_requirement.basis_series is BasisSeries.NATIVE
-    )
+    native_basis = tuple(product for product in products if is_rust_admitted_native_basis(product))
     ordinary = tuple(product for product in products if product not in native_basis)
     chunks = tuple(
         ordinary[offset:offset + _REFERENCE_ACCEPTANCE_BATCH_SIZE]
         for offset in range(0, len(ordinary), _REFERENCE_ACCEPTANCE_BATCH_SIZE)
     )
     return tuple((product,) for product in native_basis) + chunks
+
+
+def is_rust_admitted_native_basis(product: ReferenceAcceptanceProduct) -> bool:
+    """Identify the one shared Rust-admitted provider lane exactly once."""
+
+    return (
+        product.venue == "BINANCE"
+        and product.requirement.feed is FeedType.BASIS
+        and product.sdk_requirement.basis_series is BasisSeries.NATIVE
+    )
 
 
 def acceptance_transport_timeout_seconds(provider_deadline_seconds: float) -> float:
