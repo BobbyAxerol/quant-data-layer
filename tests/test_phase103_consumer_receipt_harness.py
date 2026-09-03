@@ -404,7 +404,7 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
             stale_policy=StalePolicy.BLOCK,
         )
 
-    async def test_non_execution_bar_replays_retained_offsets_across_replicas(self):
+    async def test_non_execution_bar_uses_current_handoff_boundary_across_replicas(self):
         product = self._product()
         requirement = self._requirement()
         strict_view = SimpleNamespace(
@@ -451,28 +451,26 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(result, (39, 40, ("REPLAYING",), ()))
-        self.assertEqual(first_client.warmup_calls, [requirement])
+        self.assertEqual(first_client.warmup_calls, [])
         self.assertTrue(first_client.closed)
         self.assertTrue(resumed_client.closed)
         self.assertEqual(first_session.acknowledged, [first])
         self.assertEqual(resumed_session.acknowledged, [resumed])
-        seed_requirement, first_resume = first_client.stream_calls[0]
+        stream_requirement, first_resume = first_client.stream_calls[0]
         resumed_requirement, resumed_flag = resumed_client.stream_calls[0]
         self.assertFalse(first_resume)
         self.assertTrue(resumed_flag)
-        self.assertIs(seed_requirement, resumed_requirement)
-        self.assertEqual(seed_requirement.warmup.time_range.start_time_ns, 18 * self.INTERVAL_NS)
-        self.assertEqual(seed_requirement.warmup.time_range.end_time_ns, 19 * self.INTERVAL_NS)
+        self.assertEqual(stream_requirement, requirement)
+        self.assertEqual(resumed_requirement, requirement)
         self.assertEqual([item[0] for item in projected], [39, 40])
-        self.assertTrue(all(item[2] is seed_requirement for item in projected))
+        self.assertTrue(all(item[2] == requirement for item in projected))
         self.assertEqual(projected[0][3], {})
         self.assertEqual(projected[1][3], {"replay_only": True})
         readback.assert_awaited_once()
-        self.assertEqual(validate.call_args_list[0], call(product, strict_view))
         self.assertEqual(
-            validate.call_args_list[1:],
+            validate.call_args_list,
             [
-                call(product, ANY, require_current_quality=False),
+                call(product, ANY, require_current_quality=True),
                 call(product, ANY, require_current_quality=False, state_replay=True),
                 call(product, current.data),
             ],
@@ -524,7 +522,7 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resumed_session.acknowledged, [resumed[0]])
         readback.assert_awaited_once()
 
-    async def test_non_execution_bar_can_be_quiet_only_with_signed_controls_and_current_final_reads(self):
+    async def test_non_execution_bar_can_be_quiet_only_with_current_signed_controls_and_final_reads(self):
         product = self._product()
         requirement = self._requirement()
         strict_view = SimpleNamespace(
@@ -588,14 +586,15 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(first_client.snapshot_calls, [requirement])
         self.assertEqual(resumed_client.snapshot_calls, [requirement])
+        self.assertEqual(first_client.warmup_calls, [])
+        self.assertEqual(resumed_client.warmup_calls, [])
         self.assertEqual(first_session.acknowledged, [])
         self.assertEqual(resumed_session.acknowledged, [])
-        self.assertEqual(first_client.stream_calls[0][1], False)
-        self.assertEqual(resumed_client.stream_calls[0][1], False)
+        self.assertEqual(first_client.stream_calls, [(requirement, False)])
+        self.assertEqual(resumed_client.stream_calls, [(requirement, False)])
         self.assertEqual(
             validate.call_args_list,
             [
-                call(product, strict_view),
                 call(product, first_current.data),
                 call(product, resumed_current.data),
             ],

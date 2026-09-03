@@ -355,20 +355,21 @@ def _allows_quiet_continuity_observation(product: AcceptanceProduct, requirement
     )
 
 
-def _allows_quiet_historical_bar_handoff(
-    product: AcceptanceProduct,
-    *,
-    historical_replay: bool,
-) -> bool:
+def _allows_quiet_final_bar_handoff(product: AcceptanceProduct) -> bool:
     """Allow a bounded no-event observation for retained non-execution BARs.
 
-    A historical alpha BAR reconnect can be completely quiet until the next
-    interval closes.  C2 still has to prove the signed stream controls and a
-    fresh final BAR from each replica; it never treats the quiet stream as an
-    execution price or as a durable replay checkpoint.
+    A current alpha BAR channel can be quiet until the next interval closes.
+    C2 still proves signed stream controls and a fresh final BAR from each
+    replica; it never turns that quiet period into an execution price or a
+    durable replay checkpoint. Execution BARs keep the ordinary live-event
+    path.
     """
 
-    return historical_replay and product.delivery is DeliveryClass.DURABLE
+    return (
+        product.delivery is DeliveryClass.DURABLE
+        and product.feed.value == "BAR"
+        and product.requirement.consumer_grade.value != "EXECUTION"
+    )
 
 
 def _quiet_continuity_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
@@ -445,7 +446,7 @@ async def _classify_no_event_continuity_session(
     )
 
 
-async def _verify_quiet_historical_bar_current(
+async def _verify_quiet_final_bar_current(
     client: AsyncDataLayerClient,
     *,
     product: AcceptanceProduct,
@@ -454,8 +455,8 @@ async def _verify_quiet_historical_bar_current(
 ) -> str:
     """Prove a quiet retained BAR remains final and current on this replica."""
 
-    if not _uses_historical_bar_replay(product):
-        raise ValueError("quiet historical BAR verification requires a non-execution durable BAR")
+    if not _allows_quiet_final_bar_handoff(product):
+        raise ValueError("quiet final BAR verification requires a non-execution durable BAR")
     current = await _strict_snapshot_for_c2(
         client,
         product=product,
@@ -858,14 +859,10 @@ async def _stream_resume(
         return None, None, (), ()
     cursor_path = _cursor_path(state_dir, product)
     requirement = _c2_requirement(sdk_requirement(product))
-    historical_replay = _uses_historical_bar_replay(product)
     stream_requirement = requirement
     event_timeout_seconds = _stream_event_timeout_seconds(product, timeout_seconds)
     quiet_continuity_observation = _allows_quiet_continuity_observation(product, requirement)
-    quiet_historical_bar_handoff = _allows_quiet_historical_bar_handoff(
-        product,
-        historical_replay=historical_replay,
-    )
+    quiet_final_bar_handoff = _allows_quiet_final_bar_handoff(product)
     quiet_primary = False
     no_event_sessions: list[str] = []
     first_controls: list[str] = []
@@ -879,26 +876,13 @@ async def _stream_resume(
         client_factory=client_factory,
     )
     try:
-        if historical_replay:
-            # This remains the product's actual contract check.  The replay
-            # cursor below is deliberately older only to make the bounded C2
-            # reconnect proof independent of the next 15m/1h close.
-            strict_warmup = await first_client.warmup(requirement)
-            strict_current = strict_warmup.data[-1]
-            validate_product_view(product, strict_current)
-            stream_requirement = _historical_bar_replay_requirement(
-                requirement,
-                latest_open_time_ns=int(strict_current.payload.open_time_ns),
-                calendar_provider=getattr(product, "venue", None),
-            )
-            event_timeout_seconds = timeout_seconds
         async with _strict_warmup_then_stream_for_c2(
             first_client,
             product=product,
             requirement=stream_requirement,
             timeout_seconds=timeout_seconds,
         ) as session:
-            if quiet_continuity_observation or quiet_historical_bar_handoff:
+            if quiet_continuity_observation or quiet_final_bar_handoff:
                 first, first_controls = await _next_data_or_timeout(
                     session,
                     timeout_seconds=min(
@@ -908,9 +892,9 @@ async def _stream_resume(
                 )
                 if first is None:
                     _require_signed_cursor_controls(first_controls)
-                    if quiet_historical_bar_handoff:
+                    if quiet_final_bar_handoff:
                         no_event_sessions.append(
-                            await _verify_quiet_historical_bar_current(
+                            await _verify_quiet_final_bar_current(
                                 first_client,
                                 product=product,
                                 requirement=requirement,
@@ -945,7 +929,7 @@ async def _stream_resume(
                     # replay state and immediately re-read strict current V2
                     # quality below. Gaps, identity violations and every other
                     # continuity error remain fail-closed.
-                    if historical_replay or error.code != "DATA_STALE":
+                    if error.code != "DATA_STALE":
                         raise
                     first_view = market_data_view_from_stream(
                         first,
@@ -957,7 +941,7 @@ async def _stream_resume(
                 validate_product_view(
                     product,
                     first_view,
-                    require_current_quality=not historical_replay and not first_replay_only,
+                    require_current_quality=not first_replay_only,
                     **({"state_replay": True} if first_replay_only else {}),
                 )
                 session.acknowledge(first)
@@ -1002,9 +986,9 @@ async def _stream_resume(
                 )
                 if observed is None:
                     _require_signed_cursor_controls(observed_controls)
-                    if quiet_historical_bar_handoff:
+                    if quiet_final_bar_handoff:
                         no_event_sessions.append(
-                            await _verify_quiet_historical_bar_current(
+                            await _verify_quiet_final_bar_current(
                                 resumed_client,
                                 product=product,
                                 requirement=requirement,
@@ -1095,7 +1079,7 @@ async def _stream_resume(
                 validate_product_view(
                     product,
                     resumed_view,
-                    require_current_quality=not historical_replay and not replay_only,
+                    require_current_quality=not replay_only,
                     **({"state_replay": True} if replay_only else {}),
                 )
                 validate_resume_offsets(
@@ -1107,7 +1091,7 @@ async def _stream_resume(
                 if replay_only:
                     # The replay frame is state recovery only. A fresh strict
                     # V2 read is required before C2 can attest current quality,
-                    # including for a deliberately historical alpha BAR seed.
+                    # including after a stale first stream frame.
                     current = await _strict_snapshot_for_c2(
                         resumed_client,
                         product=product,

@@ -32916,3 +32916,80 @@ alpha, Gateway/Risk, order path or runtime identity changed. Next exact action:
 commit this source slice, build one immutable final C2 client from it, run one
 fresh quota-aware C2 receipt, then remove the two stopped disposable C2
 containers and any non-retained client image after compact evidence is retained.
+
+**C2 stream-handoff closure (`IN PROGRESS / NARROW SOURCE FIX`, 2026-09-03).**
+The final disposable C2 client reached the real V2 read plane and failed
+closed at `alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.DOGE-USDT /
+BAR 4h`: the quiet historical-bar path observed repeated `SNAPSHOT_REPLACED`
+controls rather than the required signed `REPLAYING -> LIVE` sequence. This is
+not a data freshness or provider failure. Read-only inspection proves
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, and `stream_v2_passive` all
+open the same durable `canonical-cache.sqlite3` generation
+`99704a2e9486486e8822156550d1d2e3`, use the same cursor key id and config
+revision, and have no restart or OOM event. The active stream target is
+currently fenced by the scoped lease; the SDK correctly moves to the peer, but
+the peer rejects the query-issued handoff cursor and the SDK keeps replacing
+the snapshot. That is a real REST-query-to-gRPC-stream contract failure and
+must remain fail-closed.
+
+Approved scope is deliberately narrow: trace the exact cursor rejection with
+a disposable, read-only diagnostic; correct only the shared SDK/stream handoff
+or its cursor issuance if the contract is wrong; add deterministic regressions
+for active-to-peer failover, fresh query cursor acceptance, expired cursor
+replacement, and no cross-instrument/consumer mixing. No timeout/SLA
+relaxation, synthetic event, provider change, runtime role recreate, Kafka,
+Redis, SQLite, V1, Trading System, alpha, Gateway/Risk or order-path mutation
+is allowed. Exit requires an immutable client image without a source mount,
+the relevant offline matrix, and one fresh C2 no-order receipt. If the real
+diagnostic instead proves a live runtime misconfiguration, source changes stop
+and a separate exact runtime packet is required.
+
+**C2 cursor rejection root cause (`CONFIRMED / HARNESS-ONLY REPAIR`,
+2026-09-03).** The disposable mTLS/JWT diagnostic retained only cursor
+metadata and proved the issued token is correctly signed, consumer-scoped,
+generation-bound and unexpired. The DOGE 4h durable partition currently spans
+logical offsets `1..6572`; the artificial one-prior-bar C2 seed carried
+watermark `1000`, so the active peer correctly returned `GATEWAY_FENCED` and
+the lease-owning peer correctly returned `CURSOR_EXPIRED: replay backlog
+exceeds the bounded gateway window`. Repeating the deliberately historical
+query merely issued another valid-but-too-old cursor, producing the observed
+`SNAPSHOT_REPLACED` loop. The retained diagnostic is
+`c2-quiet-final-bar-20260903T005238Z/diagnostic-cursor-handoff-20260903T013035Z/diagnostic.json`
+with SHA-256 `3b29bdcab87c8d21dad9dfc1bcaab4a3ef6213a701bb1f59624a39693933539f`;
+it made zero provider connections and zero order actions.
+
+The correction is C2 harness-only: a non-execution durable BAR will use the
+normal, current governed warmup boundary for signed `REPLAYING -> LIVE` and
+cross-replica reopen. A quiet BAR still needs strict final/current read-back on
+both replicas and is recorded as no-event handoff evidence. C2 will no longer
+manufacture a stale time-range cursor merely to force replay beyond the
+server's deliberate bound. This preserves the real SDK behavior for an
+expired consumer cursor: it remains a mandatory fresh snapshot rebuild. Tests
+must prove current-boundary controls, quiet final BAR read-back, execution BAR
+exclusion, and that an actual expired cursor still fails/rebuilds rather than
+being silently accepted.
+
+**C2 current-boundary source gate (`PASS / IMMUTABLE CLIENT BUILD REQUIRED`,
+2026-09-03).** The acceptance harness now uses the real current governed BAR
+warmup as its stream handoff boundary. Non-execution durable BARs may be quiet,
+but only after the current signed cursor emits `REPLAYING` and `LIVE`, and only
+after strict current/final V2 read-back on both query replicas. Execution BAR,
+quote/trade/book behavior, `CURSOR_EXPIRED` semantics, replay limit and every
+runtime service stay unchanged. A source-mounted, read-only mTLS/JWT probe
+against the live V2 plane confirmed DOGE 4h current cursor watermark `6572`
+through active-to-peer failover on both query replicas, yielding
+`REPLAYING`, `LIVE`, then the expected quiet timeout; it made zero provider
+connections and zero order actions. Compact evidence is
+`diagnostic-current-handoff-controls-20260903T013858Z/diagnostic.json` under
+the same C2 evidence root.
+
+The focused receipt harness passed **41/41**. The expanded offline,
+network-disabled, read-only UID/GID-`10001`, capability-dropped matrix passed
+**130/130** in `20.530s`: Phase-10.3 acceptance/receipt, Phase-10.5 consumer,
+fallback, handoff and identity paths, shared stream SDK, and workload TLS
+security. The gRPC test-server `GOAWAY` diagnostic is expected teardown output;
+the test exit was successful. `git diff --check` passed. No V2 runtime role,
+provider, Kafka, Redis, SQLite, V1, Trading System, alpha, Gateway/Risk or
+order path changed. Next: commit this coherent source slice, build one
+immutable disposable C2 client image, run the same no-source-mount matrix, and
+run exactly one fresh C2 299-product/four-identity/300-second no-order receipt.
