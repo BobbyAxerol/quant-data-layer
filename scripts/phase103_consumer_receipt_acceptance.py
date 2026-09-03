@@ -20,7 +20,7 @@ import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import AsyncIterator, Iterator
+from typing import AsyncIterator, Callable, Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -149,6 +149,32 @@ def _client(
         cursor_store=FileCursorStore(cursor_path),
         max_buffer_events=64,
         max_reconnect_attempts=2,
+    )
+
+
+def _receipt_client(
+    identity: WorkloadIdentity,
+    *,
+    base_url: str,
+    grpc_target: str,
+    cursor_path: Path,
+    timeout_seconds: float,
+    client_factory: Callable[..., AsyncDataLayerClient] | None,
+) -> AsyncDataLayerClient:
+    """Create a receipt client, optionally through an acceptance-only wrapper.
+
+    Production SDK construction remains `_client`.  C2 may supply a local
+    wrapper for its own bounded request budget; the wrapper never changes the
+    public client contract, identity, cursor or stream transport.
+    """
+
+    factory = _client if client_factory is None else client_factory
+    return factory(
+        identity,
+        base_url=base_url,
+        grpc_target=grpc_target,
+        cursor_path=cursor_path,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -785,6 +811,7 @@ async def _stream_resume(
     grpc_target: str,
     state_dir: Path,
     timeout_seconds: float,
+    client_factory: Callable[..., AsyncDataLayerClient] | None = None,
 ) -> tuple[int | None, int | None, tuple[str, ...], tuple[str, ...]]:
     if product.delivery is not DeliveryClass.DURABLE:
         return None, None, (), ()
@@ -798,12 +825,13 @@ async def _stream_resume(
     no_event_sessions: list[str] = []
     first_controls: list[str] = []
     first_offset: int | None = None
-    first_client = _client(
+    first_client = _receipt_client(
         identity,
         base_url=primary_url,
         grpc_target=grpc_target,
         cursor_path=cursor_path,
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
     try:
         if historical_replay:
@@ -890,12 +918,13 @@ async def _stream_resume(
     finally:
         await first_client.close()
 
-    resumed_client = _client(
+    resumed_client = _receipt_client(
         identity,
         base_url=secondary_url,
         grpc_target=grpc_target,
         cursor_path=cursor_path,
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
     try:
         if quiet_primary:
@@ -1041,20 +1070,23 @@ async def _certify_product(
     grpc_target: str,
     state_dir: Path,
     timeout_seconds: float,
+    client_factory: Callable[..., AsyncDataLayerClient] | None = None,
 ) -> dict[str, object]:
-    primary = _client(
+    primary = _receipt_client(
         identity,
         base_url=primary_url,
         grpc_target=grpc_target,
         cursor_path=state_dir / "query-primary.json",
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
-    secondary = _client(
+    secondary = _receipt_client(
         identity,
         base_url=secondary_url,
         grpc_target=grpc_target,
         cursor_path=state_dir / "query-secondary.json",
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
     try:
         (
@@ -1081,6 +1113,7 @@ async def _certify_product(
         grpc_target=grpc_target,
         state_dir=state_dir,
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
     result = compact_receipt_evidence(
         product,

@@ -18,6 +18,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,12 @@ if str(ROOT) not in sys.path:
 from qdl.certification.phase103_consumer_acceptance import (
     AcceptanceProduct,
     DeliveryClass,
+    content_fingerprint,
+    sdk_requirement,
+    validate_final_bar_warmup_windows,
+    validate_product_view,
+    validate_replica_views,
+    warmup_content_fingerprint,
 )
 from qdl.certification.phase105_consumer_acceptance import (
     PHASE105_PAPER_CONSUMER_IDS,
@@ -50,9 +57,11 @@ from qdl.certification.phase105_fallback import (
     validate_v1_runtime_binding,
 )
 from qdl.consumer import StableReleaseRoutePlan, requirement_key
+from qdl.certification.phase105_release_observations import compact_view_quality
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from scripts.phase103_consumer_receipt_acceptance import (
+    _c2_requirement,
     _certify_product,
     _client,
     _identity,
@@ -78,7 +87,10 @@ _C2_STREAM_TARGETS = frozenset({
     "qdl-v2-stream-b:8210",
 })
 _MAX_REFERENCE_BATCH_CONCURRENCY = 4
-_C2_FINAL_REVALIDATION_MAX_SECONDS = 90.0
+_C2_REQUEST_QUOTA_FRACTION = 0.75
+_C2_QUOTA_WINDOW_MARGIN_SECONDS = 0.05
+_C2_OPENING_TIMEOUT_SECONDS = 900.0
+_C2_CLOSING_REVALIDATION_MAX_SECONDS = 120.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +99,158 @@ class IdentityFiles:
     private_key: str
     jwt_private_key: str
     jwt_key_id: str
+
+
+class _C2ConsumerRequestPacer:
+    """Keep the disposable C2 probe below one manifest's real REST quota.
+
+    The stable data-plane limit is enforced by Redis in wall-clock minute
+    buckets.  C2 shares an identity across both query replicas, so one local
+    pacer must serialize every REST request for that identity.  It deliberately
+    uses only 75% of the sealed quota, leaving headroom for an independently
+    running paper consumer without changing its production allowance.
+    """
+
+    def __init__(
+        self,
+        requests_per_minute: int,
+        *,
+        safety_fraction: float = _C2_REQUEST_QUOTA_FRACTION,
+        clock: Callable[[], float] = time.time,
+        sleep: Callable[[float], object] | None = None,
+    ) -> None:
+        if requests_per_minute < 1:
+            raise ValueError("C2 manifest request quota must be positive")
+        if not 0.0 < safety_fraction < 1.0:
+            raise ValueError("C2 request quota fraction must be between zero and one")
+        self.requests_per_minute = requests_per_minute
+        self.safe_requests_per_minute = max(
+            1, int(requests_per_minute * safety_fraction)
+        )
+        self._seconds_per_request = 60.0 / self.safe_requests_per_minute
+        self._clock = clock
+        self._sleep = sleep
+        self._lock = asyncio.Lock()
+        self._next_at: float | None = None
+        self._request_count = 0
+        self._wait_seconds = 0.0
+        self._window_wait_seconds = 0.0
+
+    async def wait_for_clean_window(self) -> float:
+        """Start C2 only after the next shared Redis quota-minute boundary."""
+
+        now = self._clock()
+        target = (int(now // 60.0) + 1) * 60.0 + _C2_QUOTA_WINDOW_MARGIN_SECONDS
+        wait_seconds = max(0.0, target - now)
+        sleeper = asyncio.sleep if self._sleep is None else self._sleep
+        if wait_seconds > 0:
+            await sleeper(wait_seconds)
+        async with self._lock:
+            self._next_at = self._clock()
+            self._window_wait_seconds += wait_seconds
+        return wait_seconds
+
+    async def acquire(self) -> None:
+        """Reserve one real REST request without borrowing quota from a peer."""
+
+        async with self._lock:
+            now = self._clock()
+            target = now if self._next_at is None else max(now, self._next_at)
+            self._next_at = target + self._seconds_per_request
+            self._request_count += 1
+            wait_seconds = max(0.0, target - now)
+            self._wait_seconds += wait_seconds
+        sleeper = asyncio.sleep if self._sleep is None else self._sleep
+        if wait_seconds > 0:
+            await sleeper(wait_seconds)
+
+    def evidence(self) -> dict[str, object]:
+        return {
+            "requests_per_minute": self.requests_per_minute,
+            "c2_safe_requests_per_minute": self.safe_requests_per_minute,
+            "c2_request_count": self._request_count,
+            "c2_pacing_wait_seconds": round(self._wait_seconds, 3),
+            "c2_clean_window_wait_seconds": round(self._window_wait_seconds, 3),
+        }
+
+
+class _PacedQueryTransport:
+    """Acceptance-only adapter that charges every C2 REST call to one pacer."""
+
+    def __init__(self, delegate, pacer: _C2ConsumerRequestPacer) -> None:
+        self._delegate = delegate
+        self._pacer = pacer
+
+    async def _call(self, name: str, *args, **kwargs):
+        await self._pacer.acquire()
+        return await getattr(self._delegate, name)(*args, **kwargs)
+
+    async def warmup(self, *args, **kwargs):
+        return await self._call("warmup", *args, **kwargs)
+
+    async def warmup_batch(self, *args, **kwargs):
+        return await self._call("warmup_batch", *args, **kwargs)
+
+    async def reference_batch(self, *args, **kwargs):
+        return await self._call("reference_batch", *args, **kwargs)
+
+    async def snapshot(self, *args, **kwargs):
+        return await self._call("snapshot", *args, **kwargs)
+
+    async def feed_status(self, *args, **kwargs):
+        return await self._call("feed_status", *args, **kwargs)
+
+    async def instruments(self, *args, **kwargs):
+        return await self._call("instruments", *args, **kwargs)
+
+    async def instrument(self, *args, **kwargs):
+        return await self._call("instrument", *args, **kwargs)
+
+    async def close(self) -> None:
+        await self._delegate.close()
+
+
+def _paced_client_factory(pacer: _C2ConsumerRequestPacer):
+    """Preserve the public SDK client while pacing only C2's query transport."""
+
+    def create(identity, *, base_url, grpc_target, cursor_path, timeout_seconds):
+        client = _client(
+            identity,
+            base_url=base_url,
+            grpc_target=grpc_target,
+            cursor_path=cursor_path,
+            timeout_seconds=timeout_seconds,
+        )
+        client.query_transport = _PacedQueryTransport(client.query_transport, pacer)
+        return client
+
+    return create
+
+
+def _quota_pacers(
+    release: StableReleaseRoutePlan,
+    consumer_ids: tuple[str, ...],
+) -> dict[str, _C2ConsumerRequestPacer]:
+    routes = {item.consumer_id: item for item in release.consumers}
+    if any(consumer_id not in routes for consumer_id in consumer_ids):
+        raise ValueError("Phase 10.5 C2 consumer quota manifest is unavailable")
+    return {
+        consumer_id: _C2ConsumerRequestPacer(
+            routes[consumer_id].manifest.quotas.requests_per_minute
+        )
+        for consumer_id in consumer_ids
+    }
+
+
+async def _wait_for_clean_quota_windows(
+    pacers: dict[str, _C2ConsumerRequestPacer],
+) -> float:
+    """Align all governed identities with a fresh server-side quota minute."""
+
+    if not pacers:
+        raise ValueError("Phase 10.5 C2 requires at least one quota pacer")
+    waits = await asyncio.gather(*(item.wait_for_clean_window() for item in pacers.values()))
+    return max(waits)
 
 
 async def _wait_for_minimum_observation(
@@ -268,6 +432,7 @@ async def _certify_references(
     timeout_seconds: float,
     deadline_monotonic: float,
     semaphore: asyncio.Semaphore,
+    client_factory,
 ) -> list[dict[str, object]]:
     """Read declared provider data through both V2 replicas, never V1/direct.
 
@@ -320,14 +485,14 @@ async def _certify_references(
             raise AssertionError(f"Phase 10.5 {label} reference batch lost a product")
         return values
 
-    primary = _client(
+    primary = client_factory(
         identity,
         base_url=primary_url,
         grpc_target=grpc_target,
         cursor_path=state_dir / "reference-primary.json",
         timeout_seconds=transport_timeout_seconds,
     )
-    secondary = _client(
+    secondary = client_factory(
         identity,
         base_url=secondary_url,
         grpc_target=grpc_target,
@@ -398,15 +563,16 @@ async def _v2_query_product(
     grpc_target: str,
     state_dir: Path,
     timeout_seconds: float,
+    client_factory,
 ) -> tuple[str, str | None, float, float | None]:
-    primary = _client(
+    primary = client_factory(
         identity,
         base_url=primary_url,
         grpc_target=grpc_target,
         cursor_path=state_dir / "fallback-query-primary.json",
         timeout_seconds=timeout_seconds,
     )
-    secondary = _client(
+    secondary = client_factory(
         identity,
         base_url=secondary_url,
         grpc_target=grpc_target,
@@ -431,6 +597,7 @@ async def _v1_fallback_return(
     v1_base_url: str,
     state_dir: Path,
     timeout_seconds: float,
+    client_factory,
 ) -> dict[str, object]:
     """Read V2, make one allowed V1 cached read, then confirm V2 again."""
     before = await _v2_query_product(
@@ -441,6 +608,7 @@ async def _v1_fallback_return(
         grpc_target=grpc_target,
         state_dir=state_dir / "before",
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
     import httpx
 
@@ -463,6 +631,7 @@ async def _v1_fallback_return(
         grpc_target=grpc_target,
         state_dir=state_dir / "after",
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
     return {
         **details,
@@ -472,6 +641,173 @@ async def _v1_fallback_return(
         "after_secondary_content_sha256": after[1],
         "v1_request_latency_ms": round(v1_latency_ms, 3),
     }
+
+
+def _chunks(values: tuple[AcceptanceProduct, ...], size: int):
+    if size < 1:
+        raise ValueError("Phase 10.5 C2 batch size must be positive")
+    for offset in range(0, len(values), size):
+        yield values[offset:offset + size]
+
+
+async def _closing_batch_revalidation(
+    products: tuple[AcceptanceProduct, ...],
+    *,
+    identity,
+    primary_url: str,
+    secondary_url: str,
+    grpc_target: str,
+    state_dir: Path,
+    timeout_seconds: float,
+    max_batch_items: int,
+    client_factory,
+) -> list[dict[str, object]]:
+    """Re-read every durable/pass-through product through both V2 replicas.
+
+    C2's opening proof already establishes signed cursor/reconnect per product.
+    Closing needs a strict current view for every route, not a second identical
+    stream storm.  `warmup:batch` keeps that full-scope check below the real
+    per-identity request quota without weakening any product validation.
+    """
+
+    if not products:
+        return []
+    if not 1 <= max_batch_items <= 100:
+        raise ValueError("Phase 10.5 C2 batch size exceeds the V2 contract")
+
+    async def read_replica(base_url: str, *, label: str):
+        client = client_factory(
+            identity,
+            base_url=base_url,
+            grpc_target=grpc_target,
+            cursor_path=state_dir / f"closing-{label}.json",
+            timeout_seconds=timeout_seconds,
+        )
+        values: dict[tuple[str, str, str, str, str], dict[str, object]] = {}
+        try:
+            for batch in _chunks(products, max_batch_items):
+                requirements = tuple(_c2_requirement(sdk_requirement(item)) for item in batch)
+                started = time.perf_counter()
+                response = await client.warmup_batch(requirements, require_all=True)
+                latency_ms = (time.perf_counter() - started) * 1_000
+                if response.partial or len(response.results) != len(batch):
+                    raise AssertionError("Phase 10.5 closing V2 batch cardinality differs")
+                observed_at_ns = time.time_ns()
+                for product, item in zip(batch, response.results, strict=True):
+                    if item.data is None or not item.data.data:
+                        raise AssertionError("Phase 10.5 closing V2 batch returned no product data")
+                    history = tuple(item.data.data)
+                    for view in history[:-1]:
+                        validate_product_view(
+                            product, view, require_current_quality=False
+                        )
+                    latest = history[-1]
+                    validate_product_view(product, latest)
+                    if product.identity in values:
+                        raise AssertionError("Phase 10.5 closing V2 batch duplicated a product")
+                    values[product.identity] = {
+                        "history": history,
+                        "latest": latest,
+                        "latency_ms": latency_ms,
+                        "quality": compact_view_quality(
+                            latest, observed_at_ns=observed_at_ns
+                        ),
+                    }
+        finally:
+            await client.close()
+        if len(values) != len(products):
+            raise AssertionError("Phase 10.5 closing V2 batch lost a product")
+        return values
+
+    primary_values, secondary_values = await asyncio.gather(
+        read_replica(primary_url, label="primary"),
+        read_replica(secondary_url, label="secondary"),
+    )
+    evidence: list[dict[str, object]] = []
+    for product in products:
+        primary = primary_values[product.identity]
+        secondary = secondary_values[product.identity]
+        bar_alignment: dict[str, object] | None = None
+        if product.feed.value == "BAR":
+            primary_hash = warmup_content_fingerprint(primary["history"])
+            secondary_hash = warmup_content_fingerprint(secondary["history"])
+            if product.delivery is DeliveryClass.DURABLE:
+                bar_alignment = validate_final_bar_warmup_windows(
+                    primary["history"], secondary["history"]
+                )
+                primary_hash = str(bar_alignment["primary_content_sha256"])
+                secondary_hash = str(bar_alignment["secondary_content_sha256"])
+            else:
+                validate_replica_views(product, primary["latest"], secondary["latest"])
+        else:
+            primary_hash, secondary_hash = validate_replica_views(
+                product, primary["latest"], secondary["latest"]
+            )
+        item_evidence = {
+            **product.evidence(),
+            "primary_content_sha256": primary_hash,
+            "secondary_content_sha256": secondary_hash,
+            "primary_latency_ms": round(float(primary["latency_ms"]), 3),
+            "secondary_latency_ms": round(float(secondary["latency_ms"]), 3),
+            "release_quality": {
+                "primary": primary["quality"],
+                "secondary": secondary["quality"],
+            },
+            "closing_read": "BATCH_V2_PRIMARY",
+        }
+        if bar_alignment is not None:
+            item_evidence["bar_replica_alignment"] = bar_alignment
+        evidence.append(item_evidence)
+    return evidence
+
+
+async def _closing_revalidate_consumer(
+    consumer_id: str,
+    products: tuple[AcceptanceProduct, ...],
+    *,
+    identity,
+    primary_url: str,
+    secondary_url: str,
+    grpc_target: str,
+    state_dir: Path,
+    timeout_seconds: float,
+    max_batch_items: int,
+    reference_semaphore: asyncio.Semaphore,
+    client_factory,
+) -> list[dict[str, object]]:
+    stream_products = tuple(
+        item for item in products if item.delivery is not DeliveryClass.ON_DEMAND
+    )
+    reference_products = tuple(
+        item for item in products if item.delivery is DeliveryClass.ON_DEMAND
+    )
+    stream_task = asyncio.create_task(_closing_batch_revalidation(
+        stream_products,
+        identity=identity,
+        primary_url=primary_url,
+        secondary_url=secondary_url,
+        grpc_target=grpc_target,
+        state_dir=state_dir / "stream",
+        timeout_seconds=timeout_seconds,
+        max_batch_items=max_batch_items,
+        client_factory=client_factory,
+    ))
+    reference_task = asyncio.create_task(_certify_references(
+        reference_products,
+        identity=identity,
+        primary_url=primary_url,
+        secondary_url=secondary_url,
+        grpc_target=grpc_target,
+        state_dir=state_dir / "references",
+        timeout_seconds=timeout_seconds,
+        deadline_monotonic=time.monotonic() + timeout_seconds,
+        semaphore=reference_semaphore,
+        client_factory=client_factory,
+    ))
+    stream_results, reference_results = await _gather_or_cancel((stream_task, reference_task))
+    if len(stream_results) != len(stream_products) or len(reference_results) != len(reference_products):
+        raise AssertionError("Phase 10.5 closing V2 scope cardinality differs")
+    return [*stream_results, *reference_results]
 
 
 async def _run_consumer_groups(
@@ -546,13 +882,21 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         if not isinstance(identities[product.consumer_id].tls, WorkloadTlsConfig):
             raise AssertionError("Phase 10.5 identity did not build workload TLS")
 
-    started = time.monotonic()
     process_started = time.process_time()
     temporary = Path(tempfile.mkdtemp(prefix="qdl-phase105-v2-identity-"))
     product_semaphore = asyncio.Semaphore(args.concurrency)
     reference_semaphore = asyncio.Semaphore(
         _reference_batch_concurrency(args.concurrency)
     )
+    pacers = _quota_pacers(release, consumer_ids)
+    client_factories = {
+        consumer_id: _paced_client_factory(pacer)
+        for consumer_id, pacer in pacers.items()
+    }
+    release_consumers = {item.consumer_id: item for item in release.consumers}
+    quota_window_wait_seconds = await _wait_for_clean_quota_windows(pacers)
+    started = time.monotonic()
+    opening_deadline = started + args.opening_timeout_seconds
 
     async def certify(product: AcceptanceProduct) -> dict[str, object]:
         async with product_semaphore:
@@ -565,6 +909,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     grpc_target=grpc_target,
                     state_dir=temporary,
                     timeout_seconds=args.timeout_seconds,
+                    client_factory=client_factories[product.consumer_id],
                 )
             except Exception as error:
                 raise RuntimeError(
@@ -601,8 +946,9 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             grpc_target=grpc_target,
             state_dir=temporary / consumer_id.replace(".", "-") / "references",
             timeout_seconds=args.timeout_seconds,
-            deadline_monotonic=started + args.observation_seconds,
+            deadline_monotonic=opening_deadline,
             semaphore=reference_semaphore,
+            client_factory=client_factories[consumer_id],
         ))
         task_results = await _gather_or_cancel((*product_tasks, reference_task))
         ordered = tuple(task_results[:len(product_tasks)])
@@ -622,6 +968,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 v1_base_url=v1_base_url,
                 state_dir=temporary / consumer_id.replace(".", "-"),
                 timeout_seconds=args.timeout_seconds,
+                client_factory=client_factories[consumer_id],
             ))
         return [*ordered, *reference_results], fallback_details
 
@@ -636,31 +983,88 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             fallback_details.extend(consumer_fallbacks)
         return results, fallback_details
 
+    async def closing_revalidation_ordered() -> list[dict[str, object]]:
+        async def revalidate_consumer(consumer_id: str) -> list[dict[str, object]]:
+            consumer_products = tuple(
+                item for item in scope.products if item.consumer_id == consumer_id
+            )
+            route = release_consumers.get(consumer_id)
+            if route is None:
+                raise ValueError("Phase 10.5 closing consumer route is unavailable")
+            return await _closing_revalidate_consumer(
+                consumer_id,
+                consumer_products,
+                identity=identities[consumer_id],
+                primary_url=args.primary_url,
+                secondary_url=args.secondary_url,
+                grpc_target=grpc_target,
+                state_dir=temporary / consumer_id.replace(".", "-") / "closing",
+                timeout_seconds=args.timeout_seconds,
+                max_batch_items=route.manifest.quotas.max_batch_items,
+                reference_semaphore=reference_semaphore,
+                client_factory=client_factories[consumer_id],
+            )
+
+        groups = await _gather_or_cancel(tuple(
+            asyncio.create_task(revalidate_consumer(consumer_id))
+            for consumer_id in consumer_ids
+        ))
+        results: list[dict[str, object]] = []
+        for consumer_results in groups:
+            results.extend(consumer_results)
+        return results
+
     try:
-        # Opening sweep proves real warmup/cursor/reconnect/fallback. Keep the
-        # no-order client alive for the declared interval, then prove the full
-        # governed scope again at the closing boundary. A timeout alone is not
-        # a 300-second observation.
+        # Opening proves warmup/cursor/reconnect/fallback for every product.
+        # The clock for the true 300-second observation starts only after that
+        # full proof is complete. Closing rechecks every route with batch V2
+        # reads; it deliberately does not create a second stream storm.
+        opening_started = time.monotonic()
         initial_results, initial_fallback_details = await asyncio.wait_for(
-            certify_ordered(), timeout=args.observation_seconds
+            certify_ordered(), timeout=args.opening_timeout_seconds
         )
-        await _wait_for_minimum_observation(
-            started_monotonic=started,
+        opening_seconds = time.monotonic() - opening_started
+        observation_started = time.monotonic()
+        observation_seconds = await _wait_for_minimum_observation(
+            started_monotonic=observation_started,
             observation_seconds=args.observation_seconds,
         )
-        results, fallback_details = await asyncio.wait_for(
-            certify_ordered(), timeout=_C2_FINAL_REVALIDATION_MAX_SECONDS
+        closing_started = time.monotonic()
+        closing_results = await asyncio.wait_for(
+            closing_revalidation_ordered(),
+            timeout=args.closing_timeout_seconds,
         )
+        closing_seconds = time.monotonic() - closing_started
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
     elapsed_seconds = time.monotonic() - started
     cpu_seconds = max(0.0, time.process_time() - process_started)
     max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     rss_bytes = int(max_rss) * 1024
-    if elapsed_seconds > args.observation_seconds + _C2_FINAL_REVALIDATION_MAX_SECONDS:
-        raise AssertionError("Phase 10.5 identity final revalidation exceeded its bounded window")
-    if len(initial_results) != len(results) or len(initial_fallback_details) != len(fallback_details):
+    if elapsed_seconds > (
+        args.opening_timeout_seconds
+        + args.observation_seconds
+        + args.closing_timeout_seconds
+    ):
+        raise AssertionError("Phase 10.5 identity acceptance exceeded its bounded windows")
+    initial_by_identity = {
+        (
+            item["consumer_id"], item["instrument_uid"], item["feed"],
+            item["interval"] or "", item["source_policy_id"],
+        ): item
+        for item in initial_results
+    }
+    closing_by_identity = {
+        (
+            item["consumer_id"], item["instrument_uid"], item["feed"],
+            item["interval"] or "", item["source_policy_id"],
+        ): item
+        for item in closing_results
+    }
+    if set(initial_by_identity) != set(closing_by_identity) or len(initial_by_identity) != len(scope.products):
         raise AssertionError("Phase 10.5 identity scope changed during the observation window")
+    for identity_key, item in initial_by_identity.items():
+        item["closing_v2_read"] = closing_by_identity[identity_key]
     route_summary = _route_summary(release, scope.products)
     return {
         "schema": "qdl.phase105.v2-identity-acceptance.v1",
@@ -668,11 +1072,11 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         "release_route_plan_sha256": release.digest,
         "authority_revision": authority.get("revision"),
         "scope_sha256": scope.sha256,
-        "product_count": len(results),
+        "product_count": len(initial_results),
         "durable_product_count": sum(
             item.delivery is DeliveryClass.DURABLE for item in scope.products
         ),
-        "products": results,
+        "products": initial_results,
         "route_contract": {
             **route_summary,
             "v1_fallback_observed": True,
@@ -684,7 +1088,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         },
         "v1_provenance": v1_provenance,
         "v1_runtime_binding": v1_runtime_binding,
-        "fallback_details": fallback_details,
+        "fallback_details": initial_fallback_details,
         "fallback_drill": build_fallback_return_receipt(
             release, probes, consumer_ids=consumer_ids
         ),
@@ -692,8 +1096,16 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         "order_actions": 0,
         "cursor_directory_removed": True,
         "observation_seconds_requested": args.observation_seconds,
-        "observation_seconds_actual": round(elapsed_seconds, 3),
+        "observation_seconds_actual": round(observation_seconds, 3),
         "opening_product_count": len(initial_results),
+        "closing_product_count": len(closing_results),
+        "opening_seconds_actual": round(opening_seconds, 3),
+        "closing_seconds_actual": round(closing_seconds, 3),
+        "quota_window_wait_seconds": round(quota_window_wait_seconds, 3),
+        "quota_budget": {
+            consumer_id: pacer.evidence()
+            for consumer_id, pacer in sorted(pacers.items())
+        },
         "secret_values_recorded": False,
         "test_provenance": False,
         "elapsed_seconds": round(elapsed_seconds, 3),
@@ -734,6 +1146,15 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--timeout-seconds", type=float, default=15.0)
     value.add_argument("--concurrency", type=int, default=4)
     value.add_argument("--observation-seconds", type=float, default=300.0)
+    value.add_argument(
+        "--opening-timeout-seconds", type=float, default=_C2_OPENING_TIMEOUT_SECONDS,
+        help="Bound for the full quota-paced opening proof before observation starts.",
+    )
+    value.add_argument(
+        "--closing-timeout-seconds", type=float,
+        default=_C2_CLOSING_REVALIDATION_MAX_SECONDS,
+        help="Bound for the full-scope batch V2 closing revalidation.",
+    )
     return value
 
 
@@ -745,6 +1166,10 @@ def main() -> int:
         raise SystemExit("--concurrency must be between 1 and 8")
     if not 30.0 <= args.observation_seconds <= 300.0:
         raise SystemExit("--observation-seconds must be between 30 and 300")
+    if not 60.0 <= args.opening_timeout_seconds <= 1_800.0:
+        raise SystemExit("--opening-timeout-seconds must be between 60 and 1800")
+    if not 30.0 <= args.closing_timeout_seconds <= 300.0:
+        raise SystemExit("--closing-timeout-seconds must be between 30 and 300")
     print(json.dumps(asyncio.run(run(args)), sort_keys=True, separators=(",", ":")))
     return 0
 

@@ -8,12 +8,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct
+from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct, DeliveryClass
 from qdl.query import DataRequirement, FeedType, RecoveryPolicy
 from qdl_sdk import Grade
 from scripts.phase105_consumer_v2_identity_acceptance import (
+    _C2ConsumerRequestPacer,
     IDENTITY_PREFIXES,
     _authority,
+    _closing_batch_revalidation,
     _c2_grpc_targets,
     _consumer_ids,
     _identity_files,
@@ -228,6 +230,167 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
 
 
 class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_c2_pacer_aligns_then_spaces_requests_below_manifest_quota(self) -> None:
+        clock = {"value": 100.0}
+        sleeps: list[float] = []
+
+        async def fake_sleep(duration: float) -> None:
+            sleeps.append(duration)
+            clock["value"] += duration
+
+        pacer = _C2ConsumerRequestPacer(
+            4,
+            safety_fraction=0.5,
+            clock=lambda: clock["value"],
+            sleep=fake_sleep,
+        )
+        self.assertAlmostEqual(await pacer.wait_for_clean_window(), 20.05)
+        await pacer.acquire()
+        await pacer.acquire()
+        await pacer.acquire()
+        self.assertEqual(len(sleeps), 3)
+        for actual, expected in zip(sleeps, (20.05, 30.0, 30.0), strict=True):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(pacer.evidence()["c2_safe_requests_per_minute"], 2)
+        self.assertEqual(pacer.evidence()["c2_request_count"], 3)
+
+    async def test_closing_batch_revalidates_every_product_on_both_replicas(self) -> None:
+        class Product:
+            def __init__(self, name: str) -> None:
+                self.consumer_id = "alpha.binance.paper.stable"
+                self.instrument_uid = f"uid-{name}"
+                self.instrument_id = f"BINANCE.USDM.PERPETUAL.{name}-USDT"
+                self.feed = SimpleNamespace(value="TRADE")
+                self.interval = None
+                self.source_policy_id = "crypto_primary_v2"
+                self.delivery = DeliveryClass.DURABLE
+                self.requirement = object()
+                self.identity = (
+                    self.consumer_id, self.instrument_uid, "TRADE", "",
+                    self.source_policy_id,
+                )
+
+            def evidence(self) -> dict[str, object]:
+                return {
+                    "consumer_id": self.consumer_id,
+                    "instrument_uid": self.instrument_uid,
+                    "feed": "TRADE",
+                    "interval": None,
+                    "source_policy_id": self.source_policy_id,
+                }
+
+        products = (Product("BTC"), Product("ETH"))
+        clients = []
+
+        class Client:
+            def __init__(self, label: str) -> None:
+                self.label = label
+                self.calls: list[tuple[object, ...]] = []
+
+            async def warmup_batch(self, requirements, *, require_all: bool):
+                if not require_all:
+                    raise AssertionError("closing batch must require every product")
+                self.calls.append(tuple(requirements))
+                return SimpleNamespace(
+                    partial=False,
+                    results=[
+                        SimpleNamespace(data=SimpleNamespace(data=[SimpleNamespace()]))
+                        for _ in requirements
+                    ],
+                )
+
+            async def close(self) -> None:
+                return None
+
+        def factory(identity, *, base_url, grpc_target, cursor_path, timeout_seconds):
+            del identity, grpc_target, cursor_path, timeout_seconds
+            client = Client(base_url)
+            clients.append(client)
+            return client
+
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.sdk_requirement",
+            side_effect=lambda product: product.requirement,
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._c2_requirement",
+            side_effect=lambda requirement: requirement,
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.validate_product_view",
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.validate_replica_views",
+            return_value=("a" * 64, "b" * 64),
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.compact_view_quality",
+            return_value={"state": "LIVE"},
+        ):
+            evidence = await _closing_batch_revalidation(
+                products,
+                identity=object(),
+                primary_url="https://primary",
+                secondary_url="https://secondary",
+                grpc_target="stream:8210",
+                state_dir=Path("/tmp/phase105-closing"),
+                timeout_seconds=15.0,
+                max_batch_items=1,
+                client_factory=factory,
+            )
+        self.assertEqual(len(evidence), 2)
+        self.assertEqual({item["closing_read"] for item in evidence}, {"BATCH_V2_PRIMARY"})
+        self.assertEqual(len(clients), 2)
+        self.assertEqual([len(call) for client in clients for call in client.calls], [1, 1, 1, 1])
+
+    async def test_closing_batch_rejects_partial_cardinality(self) -> None:
+        product = SimpleNamespace(
+            consumer_id="alpha.binance.paper.stable",
+            instrument_uid="uid-btc",
+            instrument_id="BINANCE.USDM.PERPETUAL.BTC-USDT",
+            feed=SimpleNamespace(value="TRADE"),
+            interval=None,
+            source_policy_id="crypto_primary_v2",
+            delivery=DeliveryClass.DURABLE,
+            requirement=object(),
+            identity=("alpha.binance.paper.stable", "uid-btc", "TRADE", "", "crypto_primary_v2"),
+            evidence=lambda: {
+                "consumer_id": "alpha.binance.paper.stable",
+                "instrument_uid": "uid-btc",
+                "feed": "TRADE",
+                "interval": None,
+                "source_policy_id": "crypto_primary_v2",
+            },
+        )
+
+        class Client:
+            async def warmup_batch(self, requirements, *, require_all: bool):
+                del requirements, require_all
+                return SimpleNamespace(partial=False, results=[])
+
+            async def close(self) -> None:
+                return None
+
+        def factory(*args, **kwargs):
+            del args, kwargs
+            return Client()
+
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.sdk_requirement",
+            return_value=product.requirement,
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._c2_requirement",
+            side_effect=lambda requirement: requirement,
+        ):
+            with self.assertRaisesRegex(AssertionError, "cardinality"):
+                await _closing_batch_revalidation(
+                    (product,),
+                    identity=object(),
+                    primary_url="https://primary",
+                    secondary_url="https://secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path("/tmp/phase105-closing"),
+                    timeout_seconds=15.0,
+                    max_batch_items=50,
+                    client_factory=factory,
+                )
+
     async def test_observation_waits_until_the_declared_floor(self) -> None:
         clock = {"value": 100.0}
 

@@ -32773,3 +32773,87 @@ true-300-second C2 no-order receipt. It may read the existing V2 query/stream
 and governed V1 fallback only, has no provider, Gateway, Risk, order, signal,
 sizing, Redis/Kafka/SQLite or Docker authority, and is removed after terminal
 result. The rolled readers stay on `c13c...5386`; V1 is unchanged.
+
+**C2 consumer-quota diagnosis (`FAIL-CLOSED / SOURCE-ONLY ACCEPTANCE
+SCHEDULING REPAIR`, 2026-09-03).** The single authorized `a497ab0` receipt
+started with the declared four identities and 299 products, read only the
+existing V2 query/stream plane and local governed V1 fallback, then stopped at
+`alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR 4h`.
+The historical signed cursor correctly expired into the SDK's required fresh
+snapshot path; that strict V2 request received `RATE_LIMITED: consumer request
+quota is exhausted`. The disposable client exited `1`, was not OOM-killed,
+recorded no receipt and made no provider, Gateway, Risk, order, signal, sizing
+or durable-state mutation. Its launcher dropped to UID/GID `10001` with
+`NoNewPrivs=1` and every effective/permitted/inheritable/ambient capability
+zero before the read loop.
+
+This is a C2 harness scheduling defect, not a source-data, provider,
+freshness, reader, cursor, session or fallback defect. The harness starts all
+durable products concurrently while each alpha identity is correctly bounded
+to `180` REST requests/minute. A normal product proof performs multiple
+query/warmup/read-back calls, so the full 125-route alpha scope can exceed its
+own declared minute budget before C2 reaches its real 300-second observation.
+The repair remains source-only and preserves the whole 299-product proof:
+
+1. derive one shared request budget from each sealed consumer manifest and
+   pace every C2 REST request across both query replicas below that consumer's
+   real limit, after a fresh wall-clock quota window;
+2. keep opening proof for every durable route: primary/secondary typed reads,
+   signed cursor/reconnect, strict current read-back and the governed fallback
+   drill;
+3. replace only the closing duplicate stream sweep with a full, per-consumer
+   V2 `warmup:batch` revalidation on both replicas, preserving strict identity,
+   finality, quality, cardinality and replica checks for every declared route;
+4. record opening, observed-300-second and closing durations separately. The
+   acceptance is bounded by an explicit opening deadline; the 300-second
+   observation begins only after the full opening proof, rather than treating
+   an incomplete opening timeout as evidence.
+
+The repair must fail closed for any real `RATE_LIMITED`, identity, quality,
+gap, finality, cursor, reconnect or cardinality failure. It must not raise
+runtime quotas, relax freshness/SLA, reduce the 299-product scope, generate
+data, alter any deployed role, or use V1 as a V2 substitute. Regression gates
+cover per-identity quota pacing, clean-window alignment, opening cardinality,
+full batch closing cardinality/replica validation, and the existing
+stale-first/cursor/fallback failures. After a commit and immutable disposable
+client image matrix, exactly one new C2 receipt is allowed; the failed client
+is then removed as scoped test cleanup while its compact failure digest remains
+traceable in evidence.
+
+**C2 quota-aware opening and batch-closing source gate (`PASS / DISPOSABLE
+CLIENT IMAGE REQUIRED`, 2026-09-03).** The acceptance harness now loads the
+real per-identity request-per-minute quota from the sealed release manifest and
+wraps only its disposable REST query transport in a shared identity pacer.
+Both query replicas, warmups, status retries and reference batches therefore
+share the same bounded allowance; V1 fallback remains the separately governed
+local read drill. C2 first aligns to a fresh Redis minute window, uses at most
+75% of the declared quota, and records the exact request count and pacing wait
+per identity. Production quota values, SDK construction, query/stream service
+runtime and all public contracts are unchanged.
+
+The opening continues to prove every non-on-demand product individually:
+primary/secondary typed read, signed cursor/reconnect, strict current read-back
+and declared V1 fallback-return. After that opening, the actual 300-second
+observation begins. The closing boundary now revalidates the complete scope
+through typed V2 `warmup:batch` calls against both replicas, bounded by each
+manifest's `max_batch_items`; it validates every item identity, source,
+quality, gap/finality, history/latest view, cardinality and replica alignment.
+It does not open a second copy of every stream. Opening, observation and
+closing each have explicit bounded clocks (`900s`, `300s`, `120s` defaults)
+and evidence fields; any quota, partial batch, stale/gap, cursor, reconnect or
+identity error remains terminal.
+
+The reusable Phase-10.3 receipt primitive accepts an optional acceptance-only
+client factory, preserving its default SDK client exactly. The C2 harness uses
+that seam solely to pace itself; normal consumer and service code cannot enter
+this path. Focused no-network/read-only UID-`10001` regression passed **64/64
+in 10.787s**, including deterministic minute alignment/pacing, both-replica
+batch closing for every test product and missing-cardinality rejection. The
+expanded reader/transport/bar-edge/C2 matrix contains **196** cases and exited
+successfully under the same offline, read-only container controls. `git diff
+--check` passed. No runtime role, provider, Kafka, Redis, SQLite, V1, Trading
+System, alpha, Gateway/Risk or order path changed. Next: commit this coherent
+source slice, build one immutable disposable acceptance-client image, repeat
+the no-source-mount matrix, then run exactly one quota-aware 299-product C2
+receipt. The failed `a497ab0` client container is test-only and will be removed
+after its failure digest is retained in bounded evidence.
