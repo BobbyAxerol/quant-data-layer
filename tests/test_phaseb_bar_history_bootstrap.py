@@ -564,6 +564,30 @@ class StableBarBootstrapTests(unittest.TestCase):
             finally:
                 spool.close()
 
+    def test_checkpoint_history_gap_is_binding_scoped_and_detected_from_cache(self):
+        """A current checkpoint never certifies a partial durable warmup window."""
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-checkpoint-gap-") as directory:
+            spool, edge = self._cached_edge(directory, self._NoopPublisher())
+            try:
+                source, _acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(spool, source, open_ms=120_000)
+                self.assertEqual(
+                    edge._checkpoint_history_gaps({source.binding_id: 120_000}),
+                    {source.binding_id: 1},
+                )
+                self._cached_final_bar(spool, source, open_ms=60_000)
+                self.assertEqual(
+                    edge._checkpoint_history_gaps({source.binding_id: 120_000}),
+                    {},
+                )
+            finally:
+                spool.close()
+
     def test_targeted_history_repair_publishes_only_missing_without_advancing_checkpoint(self):
         class Envelope:
             def __init__(self, open_ms: int):

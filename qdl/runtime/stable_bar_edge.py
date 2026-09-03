@@ -424,6 +424,16 @@ class StableBinanceBarEdge:
                 "stable BAR checkpoint cache generation changed; bounded bootstrap required"
             )
             return
+        gaps = self._checkpoint_history_gaps(restored)
+        if gaps:
+            for binding_id in gaps:
+                restored.pop(binding_id, None)
+            logger.warning(
+                "stable BAR checkpoint history incomplete; bounded repair required "
+                "bindings=%s missing_rows=%s",
+                ",".join(sorted(gaps)),
+                sum(gaps.values()),
+            )
         self._last_open_ms = restored
         self._history_bootstrapped = set(restored) == set(self._binding_ids)
         logger.info(
@@ -474,6 +484,40 @@ class StableBinanceBarEdge:
             if descriptor is not None:
                 os.close(descriptor)
             temporary.unlink(missing_ok=True)
+
+    def _checkpoint_history_gaps(
+        self,
+        restored: dict[str, int],
+    ) -> dict[str, int]:
+        """Return incomplete warmup windows behind a matching checkpoint.
+
+        A checkpoint watermark proves only that the edge previously observed a
+        final close. It cannot prove that the durable cache still retains the
+        bounded history needed by a V2 warmup after cache rebuild or compaction.
+        This validation is cache-only; deficient bindings re-bootstrap through
+        the normal real-provider pipeline on the next edge loop.
+        """
+
+        if self.canonical_cache_path is None:
+            return {}
+        sources = {
+            source.binding_id: source
+            for source, _acquisition in self.history_bindings + self.history_okx_bindings
+        }
+        gaps: dict[str, int] = {}
+        for binding_id, last_open_ms in restored.items():
+            source = sources[binding_id]
+            interval_ms = _bar_interval_ms(source.interval or "")
+            expected_opens = frozenset(
+                last_open_ms - index * interval_ms
+                for index in range(self._bootstrap_rows_for(source))
+            )
+            missing = len(expected_opens - self._durable_final_bar_opens(
+                source, expected_opens
+            ))
+            if missing:
+                gaps[binding_id] = missing
+        return gaps
 
     def _binance_binding(
         self,

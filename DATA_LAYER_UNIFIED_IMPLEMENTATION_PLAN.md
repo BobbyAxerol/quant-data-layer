@@ -32993,3 +32993,117 @@ provider, Kafka, Redis, SQLite, V1, Trading System, alpha, Gateway/Risk or
 order path changed. Next: commit this coherent source slice, build one
 immutable disposable C2 client image, run the same no-source-mount matrix, and
 run exactly one fresh C2 299-product/four-identity/300-second no-order receipt.
+
+**C2 current-boundary immutable client (`PASS / ONE REAL RECEIPT IN
+PROGRESS`, 2026-09-03).** Commit `3d73891` is sealed as
+`qdl-v2-python:2.0.8-3d73891@sha256:674c29164035d8b22a83ce5f10153d47b334ae50293adfb6491e82f62a2aea14`.
+OCI `revision` and `version` labels are exactly `3d73891` and
+`2.0.8-3d73891`. Its image-contained, no-source-mount regression ran
+network-disabled, read-only as UID/GID `10001` with all capabilities dropped,
+`no-new-privileges` and a tmpfs `/tmp`; it passed **130/130** in `21.174s`.
+Coverage is the C2 consumer/receipt/fallback/handoff/identity suite, shared
+stream SDK and workload TLS transport security. This disposable client has no
+Docker socket, provider, Gateway/Risk, order, signal, sizing, Kafka, Redis or
+SQLite authority.
+
+The approved next action is exactly one fresh four-identity, 299-product,
+300-second C2 receipt using this image and a new evidence namespace. It may
+read V2 query/stream and governed V1 fallback only. V2 reader/runtime roles,
+V1, Kafka, Redis, SQLite, Trading System, alpha and the order path remain
+unchanged. On terminal result, retain only compact hashes/metrics and remove
+the disposable C2 container; test-only images are inventoried for exact
+post-closure cleanup.
+
+**C2 current-boundary receipt (`FAIL-CLOSED / RAW READER DIAGNOSIS`,
+2026-09-03).** The one authorized `3d73891` receipt exited `1` after roughly
+13 minutes; it was not OOM-killed (`137.4 MiB / 512 MiB` while active), and
+its post-bootstrap client was UID `10001`, `NoNewPrivs=1`, with effective,
+permitted, inheritable and ambient capabilities all zero. It made no receipt,
+provider, Gateway/Risk, order, signal, sizing or durable-state mutation. The
+first terminal route was `alpha.binance.paper.stable /
+BINANCE.USDM.PERPETUAL.BTC-USDT / BAR 1d`: C2 asks the intentionally bounded
+but exact public warmup horizon of `700` rows and the SDK rejected the V2
+response because its returned BAR count differed from that horizon. The
+failure digest is `36a40d4c1ff413940e53eb48985cc27d4136eab4c3d3018becc6297a32dda51a`
+under `releases/2.0.8-3d73891/c2-current-boundary-20260903T014559Z`.
+
+This is a valid fail-closed data-contract result, not a reason to reduce the
+requested horizon or accept a partial response. Next is one scoped read-only
+mTLS/JWT diagnostic against both V2 query replicas that records only count,
+coverage, finality/open-time bounds, quality and hashed cursor metadata for
+this exact governed requirement. No runtime role is recreated until that
+evidence distinguishes missing materialized history from an incorrect reader
+window/provider projection.
+
+**C2 durable-history closure (`IN PROGRESS / SHARED BAR-EDGE REPAIR`,
+2026-09-03).** The two-replica raw V2 diagnostic now confirms the reader is
+correctly fail-closed: `alpha.binance.paper.stable / BTC-USDT / BAR 1d`
+requested `700` governed rows and both replicas returned `409 PARTIAL_RESULT`
+with no accepted partial payload. The compact read-only evidence is
+`releases/2.0.8-3d73891/btc-1d-raw-reader-20260903T020411Z/diagnostic.json`
+with SHA-256 `ec2ebd9da90078def19e134d643fc5887966b646a03250f5a8fb12c12760b146`.
+Direct durable-cache inspection shows only `95` Binance BTC `1d` BAR rows,
+whereas the interval-aware truthful retention ceiling and C2 requirement are
+both at least `700`. This is not a reader fallback defect and it must not be
+papered over by lowering the warmup, changing `SNAPSHOT_AND_REPLAY` to a
+pass-through source policy, weakening finality, synthesizing rows, or silently
+returning a partial response.
+
+The shared defect is that the stable multi-venue BAR edge treats the presence
+of a persisted `last_open_ms` checkpoint as proof that durable history remains
+complete. A cache generation can retain a current checkpoint while historical
+rows were never materialized or were compacted/rebuilt. The repair scope is
+one provider-neutral edge validation: on bootstrap, verify bounded durable
+history coverage for every enabled Binance/OKX BAR binding against the
+configured interval-aware warmup requirement; for a deficient binding, fetch
+only the real authenticated provider window, validate calendar/finality and
+publish only still-missing rows through the existing raw Kafka -> Rust
+canonical -> projector path. It must not delete/flush cache or Redis, reset
+Kafka offsets/topology, alter V1, touch Trading System/alpha/order paths, or
+accept a partial reader result. Existing targeted-repair primitives remain the
+idempotent publisher; no symbol-specific service, image, or worker is added.
+
+Before the code/runtime slice, exact disposable C2 diagnostic containers and
+unreferenced Data Layer test images/build artifacts are inventoried and removed
+under the approved cleanup scope to recover the workspace required for SQLite
+read-only preflight. Active V2 roles, V1 fallback, Kafka, Redis, projectors,
+volumes, runtime/TLS state, and the current C2 image until its closure result
+are retained. Pre-clean filesystem state is `/dev/root 290G, used 276G,
+available 15G (96%)`; post-clean measurements and exact retention/removal set
+are recorded below before any durable repair is attempted.
+
+**C2 durable-history cleanup and source gate (`PASS / ONE SHARED RUNTIME ROLE
+PENDING`, 2026-09-03).** Exact cleanup recovered workspace without touching a
+running role, V1, Kafka, Redis, volume, runtime/TLS state, SQLite file or
+rollback image: removed six terminal disposable C2/diagnostic containers and
+the unreferenced client images `2.0.4-7cd0265`, `2.0.5-a497ab0`,
+`2.0.6-8620303`, `2.0.7-5ba4ff1`, plus three unreferenced Rust builder images
+(`authority-log-test`, `ready-refresh-test`, `depthupdate-test`). The retained
+runtime set is V1 `qdl-v1-fallback:v1.2.4-2b0dcf7`, active query/stream
+`c13c...`, edge `2ab6...`, Rust core `c63d...`, projectors `b335...`, current
+ingestors, Kafka/Redis and the current disposable client
+`qdl-v2-python:2.0.8-3d73891`. Disk changed from `276G used / 15G available`
+to `270G used / 21G available`; Docker image footprint changed from `101.1G`
+to `94.13G`. No service restarted during cleanup.
+
+The corrected all-binding read-only preflight uses the actual catalog
+`source_id` partition key, not a guessed binding name: `139/140` BAR bindings
+meet the current interval-aware `1000`-row warmup target. The sole deficit is
+`binance-usdm-btcusdt-bar-1d`, `95/1000`, short `905`; this verifies the repair
+is bounded and prevents a broad provider replay. The shared edge now validates
+the exact durable calendar window behind every restored checkpoint. It removes
+only a deficient binding watermark so the existing bootstrap publishes only
+provider-confirmed missing final rows through normal raw Kafka/Rust/projector
+flow; all healthy bindings retain their checkpoint and are not re-fetched.
+
+Source gates passed with `qdl-v2-python:2.0.8-3d73891`, source mounted
+read-only, network disabled, UID/GID `10001`, capability drop, no-new-privs
+and tmpfs `/tmp`: full BAR bootstrap/recovery/cache-generation suite
+`37/37` in `12.072s`, then C2 consumer/receipt/fallback/handoff/identity,
+shared SDK and workload-TLS matrix `130/130` in `21.123s`. The expected gRPC
+GOAWAY was teardown-only; both test exits were successful. Next is to seal one
+immutable Python image from this commit, run its no-source-mount regression,
+then rolling-recreate **only** `binance_bar_edge`. Its startup may make the
+normal, provider-authentic final-BAR writes for this one verified BTC `1d`
+deficit. Rollback is the current `2ab6...` image/runtime mount; no cache
+deletion, offset reset, topology change or consumer/order mutation is allowed.
