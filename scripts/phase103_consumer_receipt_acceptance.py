@@ -71,8 +71,13 @@ DEFAULT_TRADING_MANIFEST = ROOT / "consumers/stable/trading-system-paper.yaml"
 DEFAULT_ALPHA_MANIFEST = ROOT / "consumers/stable/alpha-binance-paper.yaml"
 _QUIET_QUOTE_RETRY_SECONDS = 0.2
 _BOOK_SNAPSHOT_RETRY_SECONDS = 1.0
+_TRANSIENT_SESSION_RETRY_SECONDS = 0.5
 _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS = 2.0
 _QUIET_CONTINUITY_FEEDS = frozenset({"TRADE", "BOOK_DELTA"})
+_TRANSIENT_PROVIDER_SESSION_STATES = frozenset({"UNKNOWN", "STALE", "DISCONNECTED"})
+_TRANSIENT_SESSION_QUALITY_STATES = frozenset(
+    {"STARTING", "CONNECTING", "SUBSCRIBING", "SYNCING", "RESYNCING", "STALE", "DEGRADED"}
+)
 # C2 proves a representative retained BAR window, not an impossible request
 # for the full per-consumer quota on every calendar interval. Production
 # callers still declare their own bounded maxlen through the public SDK.
@@ -679,6 +684,33 @@ def _fresh_quote_status_is_retryable(
     )
 
 
+def _transitional_session_status_is_retryable(
+    product: AcceptanceProduct,
+    requirement,
+    status,
+) -> bool:
+    """Allow one bounded C2 re-poll while an identity-matched session reconnects.
+
+    This does not admit a stale price or book delta.  It only keeps the strict
+    snapshot loop alive until its existing deadline, after which the SDK must
+    still independently return a fresh, live, complete and gap-free view.
+    """
+
+    quality = status.quality
+    return (
+        product.feed.value in {"QUOTE", "BOOK_DELTA"}
+        and requirement.max_session_liveness_ms is not None
+        and status.instrument_uid == requirement.instrument_uid
+        and status.feed is requirement.feed
+        and quality.policy_id == requirement.source_policy_id
+        and quality.state in _TRANSIENT_SESSION_QUALITY_STATES
+        and quality.provider_session_state in _TRANSIENT_PROVIDER_SESSION_STATES
+        and quality.complete
+        and not quality.gap_open
+        and not quality.execution_eligible
+    )
+
+
 def _book_snapshot_status_is_refreshable(
     product: AcceptanceProduct,
     requirement,
@@ -736,6 +768,11 @@ async def _wait_for_live_snapshot_retry(
             product, requirement, status
         ) or _fresh_quote_status_is_retryable(product, requirement, status)
         retry_delay_seconds = _QUIET_QUOTE_RETRY_SECONDS
+        if not retryable:
+            retryable = _transitional_session_status_is_retryable(
+                product, requirement, status
+            )
+            retry_delay_seconds = _TRANSIENT_SESSION_RETRY_SECONDS
     elif product.feed.value == "BOOK_SNAPSHOT":
         retryable = _book_snapshot_status_is_refreshable(product, requirement, status)
         retry_delay_seconds = _BOOK_SNAPSHOT_RETRY_SECONDS
@@ -744,6 +781,11 @@ async def _wait_for_live_snapshot_retry(
             _quiet_continuity_status_is_observable(product, requirement, status)
             or _fresh_continuity_status_is_observable(product, requirement, status)
         )
+        if not retryable:
+            retryable = _transitional_session_status_is_retryable(
+                product, requirement, status
+            )
+            retry_delay_seconds = _TRANSIENT_SESSION_RETRY_SECONDS
     if not retryable:
         required_state = (
             "a verified complete, gap-free snapshot state"

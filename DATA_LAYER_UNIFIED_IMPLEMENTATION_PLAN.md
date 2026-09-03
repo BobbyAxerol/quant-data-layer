@@ -33179,3 +33179,115 @@ immutable shared image, its no-source-mount regression, then one final
 one-role recreate against the preserved sealed runtime mount. It must observe
 zero historical repair requirement after projector convergence; any new normal
 closed BAR at a real boundary remains allowed.
+
+**C2 checkpoint-history closure packet (`IN PROGRESS / FINAL NO-ORDER
+RECEIPT NEXT`, 2026-09-03).** Commit `82b4830`
+(`perf(bar-edge): bound checkpoint coverage reads`) preserves the exact
+provider-neutral durability contract and improves only healthy-start cost: its
+physical SQLite tail cursor reads at most `256` rows at a time and exits once
+the requested calendar opens are proven. It does not lower the `10,064` tail,
+relax identity/finality checks, alter a deficient binding's repair path, or
+introduce a cache shortcut. The immutable image is
+`qdl-v2-python:2.0.10-82b4830@sha256:74617d3ffc79dc539d1d25dfd025546728d4ceeb5c93ff57c29e919a4d6fef74`.
+The image-contained, no-source-mount, network-disabled, read-only UID/GID
+`10001`, capability-dropped matrix passed `167/167` in `34.350s`.
+
+The approved one-role rollout rendered only `binance_bar_edge` with that
+image, the existing `stable_state` and read-only `stable_tls` volumes, and the
+inspected sealed runtime directory
+`session-liveness-43cdbe3-20260829T162719Z/runtime`. All other V2 roles, V1,
+Kafka topology/offsets, Redis, SQLite deletion/reset, Trading System, alpha
+and order paths remain excluded. The role is `running`, `restart=0`,
+`OOMKilled=false`. Exact calendar-window validation correctly found 18 newly
+missing real final BARs across 14 Binance/OKX `5m/15m/30m` bindings; they were
+published only through the normal provider -> raw Kafka -> Rust canonical ->
+projector flow and bootstrap completed `bindings=140 rows=18`. This reflects
+normal window advance after the earlier checkpoint, not a count-only bypass or
+synthetic write.
+
+The sole next action is one fresh Phase-10.5 C2 four-identity, 299-product,
+true-300-second no-order receipt from the immutable `2.0.10-82b4830` image.
+It uses only V2 query/stream and its explicitly governed local V1 fallback
+drill; it receives no Docker socket, provider credential, Gateway/Risk/order,
+signal, sizing, Kafka, Redis or SQLite authority. The disposable client starts
+as root only to copy declared mTLS/JWT files into tmpfs, then drops to UID/GID
+`10001` with `NoNewPrivs=1` and all capabilities cleared. Its fresh evidence
+namespace retains only bounded receipt/security/error hashes. A nonzero result
+remains fail-closed; after the terminal result, remove only the named
+disposable client and obsolete C2 test images/temporary override once they are
+unreferenced. No retry may weaken history, freshness, gap, identity, cursor or
+fallback policy.
+
+**C2 durable-history receipt result (`FAIL-CLOSED / READ-ONLY L2 SESSION
+DIAGNOSIS`, 2026-09-03).** The one disposable client ran from the immutable
+`2.0.10-82b4830` image, was removed automatically on exit, and retained only
+the bounded stderr hash
+`1953a7cbd83f77613e47acdcb2ee09c50a6e70e89f2637ff2bf64020ba3837d5` in
+`releases/2.0.10-82b4830/c2-durable-history-20260903T024207Z`. It started as
+root solely for tmpfs identity copy, then recorded UID `10001`, zero effective,
+permitted, inherited and ambient capabilities, and `NoNewPrivs=1`. It made no
+provider, Gateway/Risk, order, signal, sizing, Kafka, Redis or SQLite action.
+The terminal requirement is
+`trading-system.paper.stable / OKX.SWAP.PERPETUAL.BTC-USDT / BOOK_DELTA`:
+the strict warmup returned typed freshness rejection and its bounded retry
+correctly refused to accept a session lacking live-provider evidence. This is
+not a BAR repair regression and is not eligible for an SLA relaxation,
+synthetic BOOK_DELTA, fallback substitution or retry-by-luck.
+
+Next scope is read-only only: query typed status/view lineage for the exact
+OKX BTC `BOOK_DELTA` identity from both V2 replicas and inspect the shared
+Rust/book projection health. If it is a genuine provider disconnect, keep C2
+blocked and record the operational condition; if both replicas show a
+healthy provider session but an incorrect shared projection/liveness state,
+repair only that shared Rust/provider-lineage path with regression evidence,
+then rebuild the immutable client and run one new C2 receipt. V1, Kafka,
+Redis, SQLite deletion/reset, Trading System, alpha and the order path remain
+out of scope.
+
+**C2 L2 typed-status diagnosis (`PASS / HARNESS-ONLY TRANSIENT-RECOVERY
+REPAIR`, 2026-09-03).** A fresh bounded, read-only probe used the same Trading
+System paper identity against both V2 replicas for the exact failed identity.
+Both return `state=LIVE`, `complete=true`, `gap_open=false`,
+`execution_eligible=true`, `event_recency_state=LIVE`,
+`provider_session_state=LIVE`, session liveness `517ms`/`559ms`, and a strict
+snapshot succeeds. The probe had no provider/order/durable-state authority;
+its output is `releases/2.0.10-82b4830/l2-status-20260903T025900Z/status.json`.
+This rules out a persistent OKX admission, symbol binding, sequence, gap,
+Rust projection or replica-cross-mix defect. The C2 terminal point instead
+caught a genuine short-lived provider/session transition and the current
+harness treated the first non-LIVE status as permanently terminal.
+
+The corrective scope is harness-only and deliberately does not change serving
+freshness, reader behavior or retryable data semantics. During a C2 strict
+`QUOTE`/`BOOK_DELTA` retry, an identity-matched, complete and gap-free
+transitional session (`UNKNOWN`, `STALE` or `DISCONNECTED`) may be re-polled
+only until the existing strict deadline; no transitional snapshot is accepted,
+and final admission still requires an independently read `LIVE` session within
+the declared liveness SLA plus a new strict snapshot. Gapped, incomplete,
+identity/policy mismatch, bad status response and deadline expiry remain
+terminal. Regression must cover recovery to `LIVE`, persistent disconnect,
+gap rejection and no cross-symbol state reuse. The following immutable-client
+and one fresh C2 receipt remain the only permitted runtime actions.
+
+**C2 transient-session source repair (`PASS / IMMUTABLE CLIENT RECEIPT NEXT`,
+2026-09-03).** The repair is confined to
+`scripts/phase103_consumer_receipt_acceptance.py`: strict C2 retry for only
+`QUOTE` and `BOOK_DELTA` now re-polls an exact identity-matched, complete,
+gap-free, non-executable reconnect state (`UNKNOWN`, `STALE` or
+`DISCONNECTED`) on a bounded `0.5s` cadence inside the already-declared
+deadline. It neither changes SDK/query/Rust freshness rules nor admits that
+transitional response. The next snapshot must independently pass the existing
+fresh/live/session-SLA/complete/gap-free typed contract. `BOOK_SNAPSHOT`,
+`TRADE`, policy mismatch, cross-symbol status, open gap and persistent
+disconnect retain fail-closed behavior.
+
+The source-only, network-disabled, read-only UID/GID `10001` regression
+evidence is: `test_phase103_consumer_receipt_harness.py` `44/44` in `9.618s`,
+`test_phase105_consumer_acceptance.py` `7/7` in `8.844s`,
+`test_phase105_fallback_acceptance.py` `7/7` in `6.405s`, and
+`test_phase115c_five_liquid_handoff.py` `8/8` in `0.168s`. The new harness
+cases prove recover-to-fresh for quote and book delta, persistent disconnect
+deadline failure, open-gap rejection and no cross-symbol status reuse. No
+runtime role, provider, Kafka, Redis, SQLite, V1, Trading System, alpha or
+order path was changed. Next permitted action: commit this source slice, build
+one immutable disposable C2 client image and run exactly one fresh C2 receipt.

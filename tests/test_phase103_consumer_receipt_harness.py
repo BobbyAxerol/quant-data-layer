@@ -1494,7 +1494,8 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
     class _Client:
         def __init__(self, snapshots, status):
             self._snapshots = iter(snapshots)
-            self._status = status
+            self._statuses = iter(status) if isinstance(status, tuple) else None
+            self._status = status[-1] if isinstance(status, tuple) else status
             self.snapshot_calls = 0
             self.status_calls = 0
 
@@ -1507,6 +1508,11 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
 
         async def feed_status(self, _requirement):
             self.status_calls += 1
+            if self._statuses is not None:
+                try:
+                    return next(self._statuses)
+                except StopIteration:
+                    pass
             return self._status
 
     class _StreamContext:
@@ -1599,23 +1605,107 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result.data, expected)
         self.assertEqual(client.snapshot_calls, 1)
 
-    async def test_disconnected_quote_never_retries_or_accepts_stale_data(self):
+    async def test_persistently_disconnected_quote_times_out_without_accepting_stale_data(self):
         requirement = self._requirement()
         client = self._Client(
-            (DataLayerError("DATA_STALE", "stale BBO"),),
+            tuple(DataLayerError("DATA_STALE", "stale BBO") for _ in range(32)),
             self._status(requirement, provider_session_state="DISCONNECTED"),
         )
 
-        with self.assertRaisesRegex(ContinuityError, "live provider session"):
+        with patch(
+            "scripts.phase103_consumer_receipt_acceptance._TRANSIENT_SESSION_RETRY_SECONDS",
+            0.001,
+        ), self.assertRaisesRegex(ContinuityError, "before its deadline"):
             await _strict_snapshot_for_c2(
+                client,
+                product=self._product(),
+                requirement=requirement,
+                timeout_seconds=0.01,
+            )
+
+        self.assertGreater(client.snapshot_calls, 1)
+        self.assertGreater(client.status_calls, 1)
+
+    async def test_transitional_quote_session_retries_then_requires_a_fresh_snapshot(self):
+        requirement = self._requirement()
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "session reconnecting"), "fresh-snapshot"),
+            self._status(requirement, provider_session_state="DISCONNECTED"),
+        )
+
+        with patch(
+            "scripts.phase103_consumer_receipt_acceptance._TRANSIENT_SESSION_RETRY_SECONDS",
+            0.001,
+        ):
+            result = await _strict_snapshot_for_c2(
                 client,
                 product=self._product(),
                 requirement=requirement,
                 timeout_seconds=0.25,
             )
 
-        self.assertEqual(client.snapshot_calls, 1)
+        self.assertEqual(result, "fresh-snapshot")
+        self.assertEqual(client.snapshot_calls, 2)
         self.assertEqual(client.status_calls, 1)
+
+    async def test_transitional_book_delta_session_retries_without_accepting_a_stale_delta(self):
+        requirement = DataRequirement(
+            instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+            feed=Feed.BOOK_DELTA,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=2_000,
+            max_session_liveness_ms=45_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.BOOK_DELTA, delivery=DeliveryClass.DURABLE)
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "book session reconnecting"), "fresh-book-delta"),
+            self._status(requirement, provider_session_state="UNKNOWN"),
+        )
+
+        with patch(
+            "scripts.phase103_consumer_receipt_acceptance._TRANSIENT_SESSION_RETRY_SECONDS",
+            0.001,
+        ):
+            result = await _strict_snapshot_for_c2(
+                client,
+                product=product,
+                requirement=requirement,
+                timeout_seconds=0.25,
+            )
+
+        self.assertEqual(result, "fresh-book-delta")
+        self.assertEqual(client.snapshot_calls, 2)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_transitional_session_rejects_gap_and_cross_symbol_status(self):
+        requirement = self._requirement()
+        for name, status in {
+            "gap": self._status(
+                requirement,
+                provider_session_state="DISCONNECTED",
+                gap_open=True,
+            ),
+            "cross_symbol": self._status(
+                requirement,
+                provider_session_state="DISCONNECTED",
+            ).model_copy(update={"instrument_uid": "other-instrument"}),
+        }.items():
+            with self.subTest(status=name):
+                client = self._Client(
+                    (DataLayerError("DATA_STALE", "stale BBO"),),
+                    status,
+                )
+                with self.assertRaisesRegex(ContinuityError, "live provider session"):
+                    await _strict_snapshot_for_c2(
+                        client,
+                        product=self._product(),
+                        requirement=requirement,
+                        timeout_seconds=0.25,
+                    )
+                self.assertEqual(client.snapshot_calls, 1)
+                self.assertEqual(client.status_calls, 1)
 
     async def test_quiet_quote_deadline_fails_closed_without_a_fresh_snapshot(self):
         requirement = self._requirement()
