@@ -32756,3 +32756,20 @@ provider, Kafka, Redis, SQLite, V1, Trading System, alpha, Gateway/Risk or
 order path changed. Next is one immutable disposable client build, a
 no-source-mount regression, then one fresh 299-product/four-identity/300-second
 C2 receipt; readers remain on `c13c...5386`.
+
+**C2 stale-first-frame immutable-client gate (`PASS / ONE REAL RECEIPT
+AUTHORIZED`, 2026-09-03).** Commit `a497ab0` is sealed as
+`qdl-v2-python:2.0.5-a497ab0@sha256:08f43a67393cea317fff3765cc8b369d49e1378cb25f0644c2243f35f3ed5c0c`.
+Its OCI revision/version labels exactly match `a497ab0` / `2.0.5-a497ab0`, and
+the image runs as `qdl:qdl`. The image-contained, no-source-mount regression
+ran with a read-only root, UID/GID `10001`, all capabilities dropped,
+`no-new-privileges`, an ephemeral `/tmp` and `--network none`; it passed
+**193/193** with one explicit skip in **41.359s**. Coverage includes the
+physical-tail durable reader/transport/bar-edge paths, C2 receipt and cursor
+reconnect, governed identity/fallback policy and release-observation contracts.
+No V2 reader role is recreated for this client-only change. The sole runtime
+operation now permitted is one fresh, disposable, four-identity, 299-product,
+true-300-second C2 no-order receipt. It may read the existing V2 query/stream
+and governed V1 fallback only, has no provider, Gateway, Risk, order, signal,
+sizing, Redis/Kafka/SQLite or Docker authority, and is removed after terminal
+result. The rolled readers stay on `c13c...5386`; V1 is unchanged.
