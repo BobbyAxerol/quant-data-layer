@@ -33502,3 +33502,100 @@ correctly revealed that those standard-library fixtures need scratch space;
 it did not run the affected cases or mutate source/runtime. No V2 role was
 recreated for this source gate. The current live projector group may now be
 observed under the corrected gate and query may start only after it passes.
+
+**C2 recovery runtime resume and final receipt (`IN PROGRESS / ONE DISPOSABLE
+NO-ORDER CLIENT`, 2026-09-03).** The recovered live projector group subsequently
+met the corrected two-dimensional gate in three read-only samples: totals
+`113`, `401`, and `114`, with maximum individual partition lags `39`, `177`,
+and `41` respectively across all six partitions. Only the existing
+`query_v2_1` and `query_v2_2` roles were started after that proof. Only the
+existing shared `binance_bar_edge` role was then recreated with the sealed V4
+`phase54-alpha-demand-5edbc8c` projection; its real-provider bootstrap
+acknowledged exactly `140` governed Binance USD-M/OKX Swap BAR bindings and
+persisted `catalog=8`, `acquisition=16`, `warmup_rows=1000`, `bindings=140`,
+`watermarks=140`. The three projectors have since converged to an aggregate
+canonical lag of `178`; query replicas report healthy and the edge has no
+restart/OOM evidence. This is real provider -> raw Kafka -> Rust canonical ->
+projector/cache data only, not a synthetic repair.
+
+The sole remaining closure gate is exactly one fresh Phase-10.5 C2
+four-identity, 299-product, true-300-second no-order receipt from immutable
+`qdl-v2-python:2.0.12-8ba4165`. The disposable client may read the existing V2
+query/stream pair and perform the governed local V1 fallback-return drill only.
+It has no Docker socket, provider credentials, Kafka, Redis, SQLite,
+Trading-System, alpha, Gateway/Risk, signal, sizing, or order authority.
+It mounts selected workload material read-only, copies only required credentials
+to an in-memory tmpfs before dropping to UID/GID `10001` with all capabilities
+cleared, retains only bounded receipt/error hashes, and self-removes on exit.
+Rollback is stopping/removing that named client; V1 and every running service,
+volume, offset, runtime/TLS mount and data-plane role are excluded. A nonzero
+receipt is terminal fail-closed and will be diagnosed narrowly before any new
+runtime mutation.
+
+**C2 client mount correction (`IN PROGRESS / HARNESS-ONLY`, 2026-09-03).** The
+first disposable C2 container self-removed before any V1/V2 request, provider
+connection, durable-store access or order action: the rootless Docker mapping
+could not traverse the broad host `/v2state` bind mount. Its terminal stderr is
+only the bounded bootstrap permission failure. The corrective launch changes
+no data-plane code or service: a host `/dev/shm` staging tree copies exactly
+one CA file and twelve named mTLS/JWT files required by the four declared
+identities, preserving their expected temporary `/v2state` paths. The staging
+tree is mode-`0700`, RAM-backed, mounted read-only, and removed by the host
+trap when the client exits; no secret enters the evidence namespace. The client
+receives no other state file, then performs the existing tmpfs copy and
+UID/GID-`10001` capability-free drop before its first request. A minimal
+bootstrap-only `DAC_READ_SEARCH`, `SETUID`, `SETGID` set is confined to those
+explicit read-only files and is cleared by `setpriv`; no Docker socket or host
+mutation is introduced. The retry remains one full C2 observation, not a
+data-plane retry, and its prior zero-request exit does not count as an
+acceptance result.
+
+**C2 reader trust configuration repair (`APPROVED / SOURCE AND FOUR-ROLE
+ROLLING ONLY`, 2026-09-03).** The second harness attempt reached UID/GID
+`10001`, `NoNewPrivs=1` and zero effective capabilities, then stopped at its
+first V2 `TRADE` request for `monitoring / BINANCE.USDM.PERPETUAL.BTC-USDT`.
+Both query replicas stayed healthy with zero restart/OOM. Public certificate
+inspection proves the external monitoring/OKX identities are valid and the
+existing query/stream `client-ca-bundle.crt` files already contain their issuer.
+The actual fault is narrower: base Compose supplies only
+`QDL_STABLE_TLS_CA_FILE`, so the runtime defaults client authentication to the
+server CA and ignores the installed additive bundle.
+
+The source correction makes query/stream use their additive client-CA bundle
+as the canonical client-auth authority. `stable_tls_init` deterministically
+copies the server CA into a missing bundle for a base deployment, preserving
+legacy one-CA startup; when an approved bundle is supplied it remains unchanged.
+Focused source tests must prove all four public reader roles name the bundle and
+the bootstrap fallback cannot overwrite it. The bounded runtime packet then
+rolls only `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+`stream_v2_passive` with existing image, runtime/TLS/state mounts and the
+already-tracked C2 overlay. Its `rust_core` stanza is configuration only and is
+not recreated. Rollback re-creates those same four roles with the preceding
+Compose revision and server-CA client authority. Kafka, Redis, SQLite, V1,
+Rust/ingestors/projectors/bar edge, Trading System, alpha and order paths stay
+excluded. After the four roles are healthy, one new full C2 receipt starts from
+zero; the prior transport failure remains a terminal harness evidence, not a
+successful observation.
+
+**C2 reader trust source gate (`PASS / FOUR-ROLE ROLL NEXT`, 2026-09-03).**
+Base `docker-compose.v2-stable.yml` now declares
+`QDL_STABLE_TLS_CLIENT_CA_FILE` on exactly the existing two query and two
+stream roles. `stable_tls_init` preserves a supplied additive
+`client-ca-bundle.crt`; only when it is absent does it seed that file from
+the existing server CA, so a one-CA deployment remains backward-compatible.
+There is no new image, service, port, volume, credential, authority or
+provider behavior. The focused source matrix
+`python -m unittest tests.test_phase105_handoff tests.test_phaseb_stable_edge`
+ran from the existing immutable `qdl-v2-python:2.0.12-8ba4165` image with
+`--network none --read-only`: **66 passed, 1 intentional skip, 16.106s**.
+The exact base-plus-C2-overlay Compose render also passed. A first assertion
+count typo was corrected before the final pass and before any runtime action.
+
+The next bounded runtime operation recreates only `query_v2_1`,
+`query_v2_2`, `stream_v2_active`, and `stream_v2_passive` with their
+current immutable image, current state/TLS/runtime mounts and C2 overlay.
+Rollback is the same four roles with a private external override that sets the
+preceding server-CA client authority. Kafka, Redis, SQLite, V1, Rust,
+ingestors, projector, bar edge, Trading System, alpha and every order path
+remain excluded. Only after reader health and exact env verification may one
+fresh C2 299-product/four-identity/300-second no-order receipt run.

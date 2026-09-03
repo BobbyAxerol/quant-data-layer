@@ -498,7 +498,24 @@ class Phase105HandoffTests(unittest.TestCase):
         self.assertNotIn("data_layer_service:", c2)
         self.assertIn("build: !reset null", v1)
         self.assertIn("volumes: !override", v1)
-        self.assertNotIn(":/app\n", v1)
+        self.assertNotIn(":/app\\n", v1)
+
+    def test_base_readers_use_additive_client_ca_with_one_ca_fallback(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        stable = (root / "docker-compose.v2-stable.yml").read_text(encoding="utf-8")
+        self.assertEqual(stable.count("QDL_STABLE_TLS_CLIENT_CA_FILE:"), 4)
+        self.assertEqual(stable.count("/stable-certs/query/client-ca-bundle.crt"), 4)
+        self.assertEqual(stable.count("/stable-certs/stream/client-ca-bundle.crt"), 4)
+        self.assertIn(
+            "test -f /stable-certs/query/client-ca-bundle.crt || cp "
+            "/stable-certs/query/ca.crt /stable-certs/query/client-ca-bundle.crt",
+            stable,
+        )
+        self.assertIn(
+            "test -f /stable-certs/stream/client-ca-bundle.crt || cp "
+            "/stable-certs/stream/ca.crt /stable-certs/stream/client-ca-bundle.crt",
+            stable,
+        )
 
 
 if __name__ == "__main__":

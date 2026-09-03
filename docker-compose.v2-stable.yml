@@ -227,6 +227,8 @@ services:
         cp /source/query/* /stable-certs/query/ &&
         cp /source/stream/* /stable-certs/stream/ &&
         cp /source/authority-dispatcher/* /stable-certs/authority-dispatcher/ &&
+        test -f /stable-certs/query/client-ca-bundle.crt || cp /stable-certs/query/ca.crt /stable-certs/query/client-ca-bundle.crt &&
+        test -f /stable-certs/stream/client-ca-bundle.crt || cp /stable-certs/stream/ca.crt /stable-certs/stream/client-ca-bundle.crt &&
         chown -R 10001:10001 /stable-certs &&
         find /stable-certs -type f -exec chmod 0440 {} +
     restart: "no"
@@ -263,6 +265,7 @@ services:
       QDL_STABLE_PASS_THROUGH_ENABLED: "true"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-1-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/query/client-ca-bundle.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
@@ -286,6 +289,7 @@ services:
       QDL_STABLE_PASS_THROUGH_ENABLED: "true"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-2-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/query/client-ca-bundle.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
@@ -307,6 +311,7 @@ services:
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-stream-active-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/stream/ca.crt
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/stream/client-ca-bundle.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/stream/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/stream/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
@@ -328,6 +333,7 @@ services:
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-stream-passive-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/stream/ca.crt
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/stream/client-ca-bundle.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/stream/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/stream/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
