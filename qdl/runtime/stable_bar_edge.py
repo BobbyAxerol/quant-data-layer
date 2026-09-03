@@ -45,6 +45,7 @@ from qdl.transport.kafka_raw import KafkaRawPublisher, KafkaRawPublisherConfig
 logger = logging.getLogger(__name__)
 
 _MAX_DURABLE_BAR_ROWS = STABLE_SPOOL_PUBLIC_PARTITION_WINDOW
+_DURABLE_COVERAGE_BATCH_ROWS = 256
 
 
 _STATE_SCHEMA_V2 = "qdl.stable-bar-edge-state.v2"
@@ -798,27 +799,27 @@ class StableBinanceBarEdge:
         if not expected_opens or self.canonical_cache_path is None:
             return frozenset()
         self._assert_canonical_cache_identity()
+        connection = None
         try:
             connection = sqlite3.connect(
                 f"{self.canonical_cache_path.as_uri()}?mode=ro", uri=True
             )
-            try:
-                rows = connection.execute(
-                    """
-                    SELECT payload FROM events
-                    WHERE stream = ? AND partition_key = ?
-                    ORDER BY logical_offset DESC
-                    LIMIT ?
-                    """,
-                    (
-                        source.canonical_stream,
-                        source.partition_key,
-                        STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
-                    ),
-                ).fetchall()
-            finally:
-                connection.close()
+            cursor = connection.execute(
+                """
+                SELECT payload FROM events
+                WHERE stream = ? AND partition_key = ?
+                ORDER BY logical_offset DESC
+                LIMIT ?
+                """,
+                (
+                    source.canonical_stream,
+                    source.partition_key,
+                    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+                ),
+            )
         except (OSError, sqlite3.Error) as error:
+            if connection is not None:
+                connection.close()
             raise RuntimeError("stable BAR durable coverage is unavailable") from error
 
         covered: set[int] = set()
@@ -827,34 +828,40 @@ class StableBinanceBarEdge:
             market_data_pb2.BAR_LIFECYCLE_REVISED,
         }
         expected_role = getattr(common_pb2, f"SOURCE_ROLE_{source.source_role}")
-        for (payload,) in rows:
-            try:
-                envelope = market_data_pb2.EventEnvelope.FromString(payload)
-            except Exception as error:
-                raise RuntimeError("stable BAR durable payload is unreadable") from error
-            if envelope.WhichOneof("payload") != "bar":
-                raise RuntimeError("stable BAR durable partition contains a non-BAR payload")
-            if (
-                envelope.instrument_uid != source.instrument.instrument_uid
-                or envelope.instrument_id != source.instrument.instrument_id
-                or not source.accepts_instrument_revision(envelope.instrument_revision)
-                or envelope.venue != source.instrument.identity.venue
-                or envelope.market != source.instrument.identity.market
-                or envelope.product_type != source.instrument.identity.product_type.value
-                or envelope.native_symbol != source.instrument.native_symbol
-                or envelope.provider != source.provider
-                or envelope.source_id != source.source_id
-                or envelope.source_role != expected_role
-                or envelope.bar.interval != source.interval
-            ):
-                raise RuntimeError("stable BAR durable partition differs from its binding")
-            open_ms = int(envelope.bar.open_time_ns) // 1_000_000
-            if (
-                open_ms in expected_opens
-                and envelope.bar.is_final
-                and envelope.bar.lifecycle in final_lifecycles
-            ):
-                covered.add(open_ms)
+        try:
+            while rows := cursor.fetchmany(_DURABLE_COVERAGE_BATCH_ROWS):
+                for (payload,) in rows:
+                    try:
+                        envelope = market_data_pb2.EventEnvelope.FromString(payload)
+                    except Exception as error:
+                        raise RuntimeError("stable BAR durable payload is unreadable") from error
+                    if envelope.WhichOneof("payload") != "bar":
+                        raise RuntimeError("stable BAR durable partition contains a non-BAR payload")
+                    if (
+                        envelope.instrument_uid != source.instrument.instrument_uid
+                        or envelope.instrument_id != source.instrument.instrument_id
+                        or not source.accepts_instrument_revision(envelope.instrument_revision)
+                        or envelope.venue != source.instrument.identity.venue
+                        or envelope.market != source.instrument.identity.market
+                        or envelope.product_type != source.instrument.identity.product_type.value
+                        or envelope.native_symbol != source.instrument.native_symbol
+                        or envelope.provider != source.provider
+                        or envelope.source_id != source.source_id
+                        or envelope.source_role != expected_role
+                        or envelope.bar.interval != source.interval
+                    ):
+                        raise RuntimeError("stable BAR durable partition differs from its binding")
+                    open_ms = int(envelope.bar.open_time_ns) // 1_000_000
+                    if (
+                        open_ms in expected_opens
+                        and envelope.bar.is_final
+                        and envelope.bar.lifecycle in final_lifecycles
+                    ):
+                        covered.add(open_ms)
+                        if covered == expected_opens:
+                            return frozenset(covered)
+        finally:
+            connection.close()
         self._assert_canonical_cache_identity()
         return frozenset(covered)
 

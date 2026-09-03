@@ -33107,3 +33107,75 @@ then rolling-recreate **only** `binance_bar_edge`. Its startup may make the
 normal, provider-authentic final-BAR writes for this one verified BTC `1d`
 deficit. Rollback is the current `2ab6...` image/runtime mount; no cache
 deletion, offset reset, topology change or consumer/order mutation is allowed.
+
+**C2 checkpoint-validation startup bound (`IN PROGRESS / SOURCE-ONLY
+PERFORMANCE CORRECTION`, 2026-09-03).** The first one-role start on the new
+image exposed an implementation cost without weakening any correctness gate:
+checkpoint validation called the physical-tail reader for each of 140 healthy
+bindings and eagerly decoded all `10,064` retained payloads per partition even
+when the bounded expected warmup set was already complete. The role remained
+fail-closed/running with no OOM, provider publish, Kafka or cache mutation, but
+startup is not acceptable at that complexity. The narrow correction retains the
+same physical-tail query, identity/finality checks and missing-open semantics;
+it iterates the SQLite cursor in bounded batches and stops as soon as every
+expected open has been proven. A deficient binding still scans its bounded tail
+and remains marked for normal authenticated repair. Required regression proves
+early completion, late-tail visibility, mismatch fail-closed behavior and the
+existing 140-binding checkpoint contracts. Then seal one replacement shared
+image and recreate only the same edge again with the already-rendered exact
+runtime mount. No provider/service/data-plane policy changes are permitted.
+
+**C2 durable-history one-role runtime packet (`APPROVED / READY`, 2026-09-03).**
+The exact replacement coordinate is
+`qdl-v2-python:2.0.9-ce530ef@sha256:344ba6abce45e39c0dbe9834df36d06154a18da975e5bb417d725f18cdf4d829`.
+The packet renders the same Compose project `qdl_v2_stable_candidate` with the
+same env file, `docker-compose.v2-stable.yml`, current C2 override and sealed
+BAR projection override, plus a disposable image-only override for
+`binance_bar_edge`. It recreates that role with `--no-deps --force-recreate`;
+its three existing mounts stay exactly `/runtime:ro` from
+`session-liveness-43cdbe3-20260829T162719Z/runtime`, the existing
+`stable_state` volume read-write and existing `stable_tls` volume read-only.
+The current rollback coordinate is the explicitly sealed
+`qdl-v2-python@sha256:2ab6a946e5ca59e234063fb661a7a7738795dab124e371b5579db31febfd42e0`
+with the same compose inputs and mounts. Excluded: every other role, V1,
+Kafka topology/offsets, Redis, SQLite deletion/reset, Trading System, alpha
+and order path. Post-roll requirements are no restart/OOM, exactly one
+provider-authentic BTC `1d` history repair bounded by the observed 905-row
+deficit, projector convergence, all-binding preflight and a fresh C2 receipt.
+
+**C2 durable-history first runtime result (`CONVERGED / EXACT GAP AUDIT
+EXPANDED`, 2026-09-03).** The first image-only recreate failed closed before
+provider access because the inherited Compose env file mounted an older
+`phase103` runtime directory while the running edge's inspected mount was the
+sealed `session-liveness-43cdbe3-20260829T162719Z/runtime` directory. No row,
+checkpoint or external action was emitted by that failed attempt. The packet
+was corrected by rendering and preserving the inspected mount exactly, then
+recreating only `binance_bar_edge` again on `2.0.9-ce530ef`; it is running,
+`restart=0`, `OOMKilled=false`.
+
+The exact open-time validation correctly proved that count-only preflight was
+insufficient: it found 38 affected bindings (not merely BTC `1d`) with 22,351
+missing authentic opens in their current windows. The edge fetched only their
+provider-confirmed final windows and published `22,355` normal final-BAR
+events through raw Kafka -> Rust canonical -> existing projectors. It included
+BTC `1d` (`999` rows at the current provider window, one already durable) and
+hidden gaps across Binance/OKX short/mid intervals; no record was fabricated,
+deleted, or written directly to SQLite, and no V1/Trading System/alpha/order
+route was touched. The updated checkpoint reached all 140 binding watermarks
+and the role resumed normal close ACKs for both venues. The small difference
+between detected missing and ACK totals is expected overlap with concurrent
+current final-BAR ACKs; post-projection exact coverage preflight remains
+mandatory before C2.
+
+The source-only startup-bound correction is now implemented: physical-tail
+coverage keeps the same bounded `10,064` SQL window and all identity/finality
+checks but consumes cursor batches of `256` and returns as soon as the expected
+opens are proven. The regression injects an unreadable payload after a complete
+expected set, proving it is never decoded; missing/mismatched tails remain
+fail-closed. Offline source-mounted suite passed `167/167` in `32.666s`
+(BAR history/cache recovery plus C2/SDK/fallback/handoff/identity/TLS), with
+syntax and diff checks passing. Next is a single coherent commit, one new
+immutable shared image, its no-source-mount regression, then one final
+one-role recreate against the preserved sealed runtime mount. It must observe
+zero historical repair requirement after projector convergence; any new normal
+closed BAR at a real boundary remains allowed.

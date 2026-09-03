@@ -37,6 +37,7 @@ from qdl.canonical.trade import TradeContext
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.runtime.stable_bar_edge import (
     StableBinanceBarEdge,
+    _DURABLE_COVERAGE_BATCH_ROWS,
     _canonical_cache_id,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -649,16 +650,24 @@ class StableBarBootstrapTests(unittest.TestCase):
                 ).fetchone()[0]
 
                 class Cursor:
-                    def fetchall(self):
-                        return [(payload,)]
+                    def __init__(self):
+                        self.calls = []
+                        self.rows = [(payload,), (b"\xff",)]
+
+                    def fetchmany(self, size):
+                        self.calls.append(size)
+                        rows = self.rows
+                        self.rows = []
+                        return rows
 
                 class Connection:
                     def __init__(self):
                         self.calls = []
+                        self.cursor = Cursor()
 
                     def execute(self, statement, parameters):
                         self.calls.append((statement, parameters))
-                        return Cursor()
+                        return self.cursor
 
                     def close(self):
                         return None
@@ -671,6 +680,9 @@ class StableBarBootstrapTests(unittest.TestCase):
                     covered = edge._durable_final_bar_opens(source, frozenset({60_000}))
 
                 self.assertEqual(covered, frozenset({60_000}))
+                self.assertEqual(
+                    connection.cursor.calls, [_DURABLE_COVERAGE_BATCH_ROWS]
+                )
                 self.assertEqual(STABLE_SPOOL_PUBLIC_PARTITION_WINDOW, 10_000)
                 self.assertEqual(STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW, 10_064)
                 self.assertEqual(
