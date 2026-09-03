@@ -13,6 +13,7 @@ from scripts.rebuild_v2_stable_projection_cache import (
     CONFIRM_TOKEN,
     EXPECTED_CANONICAL_PARTITIONS,
     MAX_ACCEPTED_LAG,
+    MAX_ACCEPTED_PARTITION_LAG,
     PROJECT_NAME,
     PROJECTOR_GROUP,
     PROJECTOR_SERVICES,
@@ -59,6 +60,10 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         self.assertEqual(
             plan["lag_gate"]["max_total_records"],
             MAX_ACCEPTED_LAG,
+        )
+        self.assertEqual(
+            plan["lag_gate"]["max_per_partition_records"],
+            MAX_ACCEPTED_PARTITION_LAG,
         )
         self.assertEqual(
             plan["start_order"],
@@ -272,24 +277,42 @@ stable-projector-v1 md.canonical.v2 0 10 12 2 - - -
 stable-projector-v1 md.canonical.v2 1 20 20 0 - - -
 stable-projector-v1 another.topic 2 0 99 99 - - -
 """
-        self.assertEqual(parse_canonical_lag(output), (2, 2))
+        self.assertEqual(parse_canonical_lag(output), (2, 2, 2))
         with self.assertRaisesRegex(RuntimeError, "no partitions"):
             parse_canonical_lag("GROUP TOPIC PARTITION")
+        with self.assertRaisesRegex(RuntimeError, "repeats a partition"):
+            parse_canonical_lag(
+                "stable-projector-v1 md.canonical.v2 0 10 12 2 - - -\n"
+                "stable-projector-v1 md.canonical.v2 0 12 14 2 - - -\n"
+            )
 
-    def test_lag_gate_requires_all_partitions_and_fixed_bound(self):
+    def test_lag_gate_requires_all_partitions_and_two_dimensional_bound(self):
         self.assertTrue(
             lag_sample_acceptable(
-                MAX_ACCEPTED_LAG, EXPECTED_CANONICAL_PARTITIONS
+                MAX_ACCEPTED_LAG,
+                EXPECTED_CANONICAL_PARTITIONS,
+                MAX_ACCEPTED_PARTITION_LAG,
             )
         )
         self.assertFalse(
             lag_sample_acceptable(
-                MAX_ACCEPTED_LAG + 1, EXPECTED_CANONICAL_PARTITIONS
+                MAX_ACCEPTED_LAG + 1,
+                EXPECTED_CANONICAL_PARTITIONS,
+                MAX_ACCEPTED_PARTITION_LAG,
             )
         )
         self.assertFalse(
             lag_sample_acceptable(
-                0, EXPECTED_CANONICAL_PARTITIONS - 1
+                0,
+                EXPECTED_CANONICAL_PARTITIONS - 1,
+                0,
+            )
+        )
+        self.assertFalse(
+            lag_sample_acceptable(
+                MAX_ACCEPTED_LAG,
+                EXPECTED_CANONICAL_PARTITIONS,
+                MAX_ACCEPTED_PARTITION_LAG + 1,
             )
         )
 

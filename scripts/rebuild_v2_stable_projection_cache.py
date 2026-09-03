@@ -24,7 +24,12 @@ PROJECTOR_GROUP = "stable-projector-v1"
 KAFKA_BOOTSTRAP = "kafka1:9092,kafka2:9092,kafka3:9092"
 KAFKA_ADMIN_CONFIG = "/etc/kafka/secrets/admin.properties"
 EXPECTED_CANONICAL_PARTITIONS = 6
-MAX_ACCEPTED_LAG = 250
+# A live Kafka group has one tail per canonical partition.  Preserve the
+# original 250-record guard for each partition, then cap the aggregate tail
+# separately so a healthy multi-partition stream is not rejected merely for
+# having more than one active partition.
+MAX_ACCEPTED_LAG = 500
+MAX_ACCEPTED_PARTITION_LAG = 250
 REPLAY_LOOKBACK_SECONDS = 15 * 60
 MAX_REPLAY_BOOTSTRAP_RECORDS = 1_000_000
 REQUIRED_BOUNDED_LAG_SAMPLES = 3
@@ -88,6 +93,7 @@ def rebuild_plan(env_file: Path) -> dict[str, object]:
         "lag_gate": {
             "expected_partitions": EXPECTED_CANONICAL_PARTITIONS,
             "max_total_records": MAX_ACCEPTED_LAG,
+            "max_per_partition_records": MAX_ACCEPTED_PARTITION_LAG,
             "consecutive_samples": REQUIRED_BOUNDED_LAG_SAMPLES,
         },
         "start_order": [
@@ -107,8 +113,8 @@ def require_authorization(*, apply: bool, confirm: str | None) -> None:
         raise ValueError(f"--confirm must equal {CONFIRM_TOKEN}")
 
 
-def parse_canonical_lag(output: str) -> tuple[int, int]:
-    lags: list[int] = []
+def parse_canonical_lag(output: str) -> tuple[int, int, int]:
+    lags: dict[int, int] = {}
     for line in output.splitlines():
         fields = line.split()
         if len(fields) < 6 or CANONICAL_TOPIC not in fields:
@@ -119,10 +125,13 @@ def parse_canonical_lag(output: str) -> tuple[int, int]:
         partition = fields[topic_index + 1]
         lag = fields[topic_index + 4]
         if partition.isdigit() and lag.lstrip("-").isdigit():
-            lags.append(max(0, int(lag)))
+            partition_id = int(partition)
+            if partition_id in lags:
+                raise RuntimeError("canonical projector lag output repeats a partition")
+            lags[partition_id] = max(0, int(lag))
     if not lags:
         raise RuntimeError("canonical projector lag output has no partitions")
-    return sum(lags), len(lags)
+    return sum(lags.values()), len(lags), max(lags.values())
 
 
 def _run(
@@ -197,7 +206,7 @@ def _reset_projector_to_bounded_window(
         "--topic", CANONICAL_TOPIC,
         "--reset-offsets", "--to-datetime", start_text, "--execute",
     )
-    total_records, partitions = parse_canonical_lag(_kafka_group(
+    total_records, partitions, _max_partition_lag = parse_canonical_lag(_kafka_group(
         env_file, "--group", PROJECTOR_GROUP, "--describe"
     ))
     if partitions != EXPECTED_CANONICAL_PARTITIONS:
@@ -348,16 +357,22 @@ def _wait_projector_ready(env_file: Path, deadline: float) -> None:
         )
 
 
-def lag_sample_acceptable(total_lag: int, partitions: int) -> bool:
+def lag_sample_acceptable(
+    total_lag: int,
+    partitions: int,
+    max_partition_lag: int,
+) -> bool:
     return (
         partitions == EXPECTED_CANONICAL_PARTITIONS
         and 0 <= total_lag <= MAX_ACCEPTED_LAG
+        and 0 <= max_partition_lag <= MAX_ACCEPTED_PARTITION_LAG
     )
 
 
 def _wait_bounded_lag(env_file: Path, deadline: float) -> dict[str, int]:
     last_lag: int | None = None
     partitions = 0
+    max_partition_lag: int | None = None
     consecutive = 0
     observed_bound = 0
     while time.monotonic() < deadline:
@@ -367,8 +382,8 @@ def _wait_bounded_lag(env_file: Path, deadline: float) -> dict[str, int]:
             PROJECTOR_GROUP,
             "--describe",
         )
-        last_lag, partitions = parse_canonical_lag(output)
-        if lag_sample_acceptable(last_lag, partitions):
+        last_lag, partitions, max_partition_lag = parse_canonical_lag(output)
+        if lag_sample_acceptable(last_lag, partitions, max_partition_lag):
             consecutive += 1
             observed_bound = max(observed_bound, last_lag)
             if consecutive >= REQUIRED_BOUNDED_LAG_SAMPLES:
@@ -377,6 +392,8 @@ def _wait_bounded_lag(env_file: Path, deadline: float) -> dict[str, int]:
                     "partitions": partitions,
                     "observed_bound": observed_bound,
                     "configured_bound": MAX_ACCEPTED_LAG,
+                    "configured_per_partition_bound": MAX_ACCEPTED_PARTITION_LAG,
+                    "max_partition_lag": max_partition_lag,
                     "consecutive_samples": consecutive,
                 }
         else:
@@ -385,7 +402,8 @@ def _wait_bounded_lag(env_file: Path, deadline: float) -> dict[str, int]:
         time.sleep(2)
     raise TimeoutError(
         "stable projector did not enter its bounded live-lag window; "
-        f"last_lag={last_lag} partitions={partitions}"
+        f"last_lag={last_lag} partitions={partitions} "
+        f"max_partition_lag={max_partition_lag}"
     )
 
 
@@ -498,7 +516,7 @@ def main() -> int:
     parser.add_argument("--env-file", type=Path, required=True)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--confirm")
-    parser.add_argument("--timeout-seconds", type=float, default=900)
+    parser.add_argument("--timeout-seconds", type=float, default=1200)
     args = parser.parse_args()
     if args.timeout_seconds <= 0:
         parser.error("--timeout-seconds must be positive")

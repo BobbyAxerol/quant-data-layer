@@ -33365,3 +33365,140 @@ The isolated test had no provider, Kafka, Redis, SQLite, V1, Trading System,
 alpha, Gateway/Risk or order-path authority. Next is a bounded V2-only runtime
 recovery from the retained state/volumes, real-provider repair of the confirmed
 hole, projector convergence verification, then exactly one fresh C2 receipt.
+
+**C2 V2 runtime recovery packet (`APPROVED / PRE-FLIGHT PASS`, 2026-09-03).**
+Read-only Docker inventory found no remaining V2 containers or local V2 images;
+the external cause is not asserted. V1 remains live as
+`data_layer_service@qdl-v1-fallback:v1.2.4-2b0dcf7`; the existing V2 Compose
+volumes (`kafka1_data`, `kafka2_data`, `kafka3_data`, `stable_state`,
+`stable_tls`, `stable_authority_db`) and external `executor_network` remain
+present. No V2 volume, Kafka offset, Redis key, SQLite file, V1 service,
+Trading System, alpha or order path will be reset, deleted or changed.
+
+Recovery uses the canonical existing Compose project
+`qdl_v2_stable_candidate`, the sealed runtime directory
+`session-liveness-43cdbe3-20260829T162719Z/runtime`, and its preserved private
+environment. Only a mode-`0600`, payload-free selector overlay changes the
+Python/Rust image coordinates to the newly built immutable shared images from
+commit `8ba4165`: Python
+`qdl-v2-python:2.0.12-8ba4165@sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`
+and Rust
+`qdl-v2-rust:2.0.12-8ba4165@sha256:d86f0e832ba945d302fd3f782e26fd41c5b08709a80f6de16bdd36af5ed86983`.
+Both OCI labels are revision `8ba4165`, release `2.0.12-8ba4165`, and run as
+non-root. The Python image-contained, no-source-mount, network-disabled
+matrix passed **105/105 in 24.087s**. Compose render passed and resolves the
+existing 21-role topology only; no per-symbol/container topology is created.
+
+The allowed runtime effect is normal real-provider V2 market-data traffic.
+On bar-edge startup, the existing V4 checkpoint validation must detect the
+confirmed missing BTC 1h window, re-bootstrap only that deficient binding
+through raw Kafka -> Rust canonical -> existing projector/cache, and leave all
+other covered bindings untouched. Rollback is stopping only the restored V2
+project; V1 remains available. Post-start gates are all role health/no OOM,
+projector catch-up, exact coverage `0` for the failed binding, then one and
+only one fresh C2 four-identity no-order receipt.
+
+**C2 V2 recovery first-start correction (`FAIL-CLOSED / APPROVED CONTINUATION`,
+2026-09-03).** The restored base Compose topology started only its existing
+V2 roles and did not touch V1, Trading System, alpha, order state, Kafka
+topology or durable volumes. It correctly stopped rather than accepting an
+ambiguous runtime: `binance_bar_edge` rejected the image-default catalog while
+the retained environment still named an obsolete r14 checkpoint; all three
+projectors rejected a new ephemeral Redis identity while their durable spool
+is non-empty (`ProjectionCacheMismatch`). These are configuration/recovery
+guards, not provider data failures.
+
+Read-only checkpoint inventory corrects the initial r14 hypothesis before any
+write: r14 is a legacy `catalog=7/acquisition=14` state, while the only strict
+match for the current 140 governed BAR bindings is the existing V4 checkpoint
+`phase54-alpha-demand-5edbc8c.json`, paired with sealed
+`runtime/phase54-alpha-demand-5edbc8c/{catalog,acquisition}.yaml`, revisions
+`8/16`, and `QDL_STABLE_BAR_WARMUP_ROWS=1000`. The continuation therefore
+reuses that already sealed projection through one external, mode-`0600`,
+non-secret Compose override for the existing `binance_bar_edge` only. It pins
+those two paths, the matching V4 state path, and the matching warmup value; it
+creates no service, binding, worker, image or public contract. A private
+composed environment will bind that override plus the immutable `8ba4165`
+image selectors. Before apply it must pass Compose render and the existing
+projection-rebuild tool dry-run. The approved apply remains exactly the
+governed V2-only cache rebuild: stop the seven V2 cache users, remove only
+canonical SQLite `sqlite3/-wal/-shm`, FLUSHDB only `stable_redis`, reset only
+`stable-projector-v1` on `md.canonical.v2` to 900 seconds, then start stream
+-> projector -> query. Afterward the edge rehydrates provider-authentic BAR
+history through the existing Kafka/Rust/projector path and C2 remains blocked
+until the exact coverage and fresh receipt gates pass. V1, Trading System,
+alpha, order path, other Redis DBs, Kafka topology/other offsets and all
+volumes remain excluded.
+
+**C2 recovery composed-config preflight (`PASS / APPLY AUTHORIZED`,
+2026-09-03).** The private selector and the one `binance_bar_edge` override
+rendered cleanly with the immutable Python image
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`,
+sealed `phase54-alpha-demand-5edbc8c` catalog/acquisition paths, matching V4
+checkpoint, `warmup_rows=1000`, and the existing session-liveness runtime
+mount. The governed rebuild tool's dry-run names only the approved seven cache
+users, three SQLite files, `stable_redis` DB, `stable-projector-v1` group and
+15-minute canonical replay. Read-only preflight also proves all three
+projectors share that same immutable Python image and that its embedded
+catalog SHA-256 equals the source catalog SHA-256
+`c2fe0fe5326856ffb504fc4c2251ac77de9bc315e743248c543b394d8df18d3b`.
+No runtime mutation occurred in these preflights. The approved rebuild may now
+run exactly once; if it fails, it stops fail-closed without widening scope.
+
+**C2 recovery cache-rebuild result (`FAIL-CLOSED / THROUGHPUT DIAGNOSIS`,
+2026-09-03).** The governed apply executed its exact V2-only scope: stream
+then projector replicas started and the isolated Redis/cache identity guard was
+cleared through the documented SQLite/Redis/group recovery route. All three
+projectors remained running with `OOMKilled=false` and restart count `0`; no
+V1, Trading System, alpha, order path or topology mutation occurred. The
+script deliberately did not start query because its fixed 900-second recovery
+deadline expired before the live canonical group met its `<=250`-record lag
+gate (`last_lag=12,199`, six partitions). This is an honest incomplete
+recovery, not success and not a reason to reset/replay again. The remaining
+work is read-only throughput/lag diagnosis of the already-running projector
+group, then a narrow runbook correction only if the observed rate proves that
+the fixed deadline is invalid for the approved bounded live replay. Query/edge
+and C2 remain blocked; no timeout/SLA/finality policy may be relaxed and no
+second cache rebuild is authorized by this result.
+
+**C2 recovery live-lag gate correction (`APPROVED / SOURCE-ONLY`,
+2026-09-03).** Five read-only Kafka samples after the failed script prove the
+projector group is caught up to a bounded live tail rather than stalled:
+observed totals were `344, 177, 432, 359, 394` across all six canonical
+partitions; no individual partition exceeded `236`. The three projectors
+remained `running`, `OOMKilled=false`, restart `0`, at roughly `84-106 MiB`
+of their `768 MiB` limits. The previous `total <=250` gate is therefore an
+invalid aggregate criterion for a six-partition live stream: it can reject a
+healthy current tail even when every partition remains within the old
+per-partition-sized bound.
+
+The narrow source correction retains the original `250` record bound per
+partition, adds an explicit `500` aggregate cap, parses/records both values,
+and requires three consecutive samples satisfying both before query starts.
+It also raises only the recovery-command default observation budget from 900
+to 1200 seconds so one bounded real replay can complete under the measured
+live ingress; it does not alter V2 endpoint freshness, finality, sequence,
+cursor, fallback, data-retention, consumer or runtime capacity policy. Unit
+tests must reject an over-limit single partition even if the aggregate is low,
+reject an aggregate over 500, preserve the exact six-partition requirement,
+and record both limits in the dry-run plan. Existing active projectors are not
+reset or restarted for this source slice. After the source gate, the already
+recovered runtime may continue from its current offsets: wait for the new
+two-dimensional gate, start only the existing query replicas, verify their
+typed readiness, then recreate the one shared BAR edge with the sealed V4
+projection. C2 remains blocked until all later data-quality evidence passes.
+
+**C2 recovery live-lag source gate (`PASS / RUNTIME RESUME READY`,
+2026-09-03).** `rebuild_v2_stable_projection_cache.py` now records and enforces
+the two-dimensional gate (`total <=500`, each partition `<=250`, all six
+partitions, three consecutive samples) and uses a 1200-second default
+observation budget. The parser rejects repeated partition lines rather than
+silently double-counting them; the dry-run plan now exposes both bounds.
+Focused isolated regression passed **16/16** with the immutable
+`qdl-v2-python:2.0.12-8ba4165` image, source mounted read-only, network
+disabled, UID/GID `10001`, capability-free, and an ephemeral noexec `/tmp`
+tmpfs solely for `tempfile` fixtures. An initial fully read-only attempt
+correctly revealed that those standard-library fixtures need scratch space;
+it did not run the affected cases or mutate source/runtime. No V2 role was
+recreated for this source gate. The current live projector group may now be
+observed under the corrected gate and query may start only after it passes.
