@@ -34425,3 +34425,75 @@ another 300-second C2 rollout is intentionally not started: it requires a new
 explicit owner packet naming the replacement digest and the same two-query
 rollback because the prior approved receipt was already consumed. No other
 source or runtime scope is open.
+
+**Quiet-final-BAR immutable candidate and same-scope C2 packet (`APPROVED /
+IN PROGRESS`, 2026-09-04).** The owner has standing approval to complete this
+closure without a follow-up prompt, using the same bounded query-only blast
+radius and rollback previously specified. Candidate
+`qdl-v2-python:2.0.16-6d6cfca@sha256:077271ceb7cfb2aaf444e5a019237cab60d14e23882e7ff7513eed9fee0da39c`
+was built from exactly commit `6d6cfca`; OCI labels match and user remains
+`qdl:qdl`. Its no-source-mount, network-disabled, read-only,
+UID/GID-`10001`, no-capability/no-new-privileges, tmpfs-only matrix passed
+`129/129` in `18.011s`.
+
+The sole runtime packet serially recreates only `query_v2_1` then `query_v2_2`
+with this digest and their unchanged runtime/TLS/state mounts, verifies each
+role `healthy`/`restart=0`, and runs one disposable four-identity C2 no-order
+receipt with a true 300-second observation. It uses the established read-only
+identity bootstrap boundary and scoped evidence namespace. On nonzero, only
+those two roles return serially to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+No V1, Rust, Kafka topology/offsets, Redis, SQLite, ingestor, projector,
+stream role, Trading System, alpha or order/signal/sizing path is authorized.
+
+**C2 strict-reference batch correction (`IN PROGRESS / SAME CLOSURE`,
+2026-09-04).** The final candidate passed source/image gates and both query
+replicas were healthy, but its one C2 receipt reached the reference plane and
+failed before observation with `reference response exceeds its governed
+freshness bound`. This is not the repaired DOGE query error: C2's
+`trading-system.paper.stable` scope places ten independent execution
+`MARK_INDEX_PRICE` snapshots, each with the declared `2,000ms` bound, in one
+ordinary 12-item reference batch. Provider work and exact one-read recovery
+remain bounded/fail-closed, but a batch receipt cannot honestly certify every
+two-second snapshot at client receipt when earlier rows must wait behind later
+strict rows. The failure is correct; it exposed an invalid certification batch
+shape rather than grounds to relax the 2-second product contract.
+
+Per the same nonzero rule, only `query_v2_1` then `query_v2_2` were restored
+serially to `sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`;
+both are `healthy`, `restart=0`. The narrow source fix is acceptance-only:
+`reference_acceptance_batches()` must isolate each `MARK_INDEX_PRICE` whose
+declared freshness is at most `2,000ms`, just as it already isolates native
+Binance basis. All looser reference products remain bounded 12-item batches;
+no provider, cache, public batch contract, manifest, runtime role, quota,
+SLA, V1/Rust/Kafka/Redis/SQLite, Trading System, alpha or order path changes.
+Regression must prove complete identity preservation, native-basis isolation,
+strict-Mark singleton isolation and ordinary batch bounds. It fixes request
+shape only; every strict response still needs to meet its original 2-second
+bound and a stale response remains terminal.
+
+**C2 strict-reference source gate (`PASS / IMMUTABLE CANDIDATE PENDING`,
+2026-09-04).** `reference_acceptance_batches()` now isolates only
+`MARK_INDEX_PRICE` products whose declared freshness is at most `2,000ms`, in
+addition to the pre-existing singleton native-Binance-basis lane. All other
+reference products remain in bounded batches of at most twelve. The public
+batch endpoint, consumer manifest, provider/cache implementation, quotas,
+SLA, runtime topology and V1 fallback remain unchanged. The new regression
+constructs two strict Mark products, one `2,001ms` Mark product and one
+ordinary funding product; it proves singleton isolation exactly at the strict
+threshold, complete identity preservation, and ordinary batching for the
+looser Mark/funding pair.
+
+The focused Reference/L2 test module passed `14/14` in `6.563s`; the complete
+C2/reference/L2/five-symbol/identity matrix passed `130/130` in `18.414s`
+after `py_compile`. Both used the repository Dockerfile builder with source
+mounted read-only, `--network none`, UID/GID `10001`, no capabilities,
+no-new-privileges and tmpfs-only bytecode/cache state. The temporary builder
+tag `qdl-v2-builder:c2-strict-mark-test` is test-only and is retained only
+until the final immutable candidate has passed its no-source-mount matrix,
+then must be removed in the closure cleanup. No runtime role, V1, Rust, Kafka,
+Redis, SQLite, provider, Trading System, alpha, signal, sizing, order path or
+market data was changed. The next and only remaining execution is to commit
+this source slice, build one immutable Python candidate, roll the same two
+query roles with the recorded rollback digest, and run one C2 receipt with its
+true 300-second observation.
