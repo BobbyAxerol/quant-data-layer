@@ -34881,12 +34881,38 @@ One explicitly isolated Redis coordination test remained `ignored` because no
 test Redis URL was supplied. The temporary Rust test container and
 `qdl-l2-rust-test:8bd84de` image were removed immediately after the gate.
 
-**Current decision boundary.** The source is ready to commit. The next and
-only runtime sequence remains exactly: build one immutable Python tool image
-from the committed source; run the ten-book matrix read-only; only on `PASS`,
-regenerate the three existing core JSON files, serially recreate the three
-approved Rust core roles, run the same matrix as the short real-provider
-preflight, then run one C2 no-order observation for `300s`. Any nonzero result
-restores exactly those three core JSON files/image selectors and recreates only
-those three roles. No C2 retry is permitted after a nonzero result without a
-new source diagnosis.
+**Runtime preflight and bounded recovery (`ROLLBACK PASS / ONE FINAL ATTEMPT
+PENDING`, 2026-09-04).** Immutable source tool image
+`qdl-v2-python:2.0.12-1d0110e-l2-tool@sha256:198ff9...` first read the ten
+books through both V2 query replicas: `10/10` parity passed, with no provider
+connection, order action, cursor retention, market levels or prices recorded.
+The refresh compiler then wrote exactly `core.json`, `core-002.json` and
+`core-003.json`, plus reconciled `rollout.env` to the Rust digest actually
+running (`sha256:d86f0e...`, revision `8ba4165`). Its former selector pointed
+to absent digest `sha256:c63d54...`; retaining that stale selector would make a
+Compose recreate pull a non-existent rollback binary. No Rust binary changed.
+
+The three Rust cores were recreated serially and all remained `running`,
+`restart=0`, `OOMKilled=false`. An immediate post-roll matrix at about eight
+seconds failed only `BINANCE/USDM DOGEUSDT`: both replicas reported
+`STALE`, age about `61s`, `complete=true`, `gap_open=false`, and no verified
+snapshot. The other nine books remained `LIVE`, complete, gap-free,
+depth-100 and sequence-verified. This was not retried: the three core JSON
+files were restored from their exact SHA-verified rollback copies, the
+selector was kept at the actual unchanged `d86f0e...` digest so the rollback
+could be recreated, and all three cores were rolled back serially. The recovery
+matrix passed `10/10` again.
+
+**Diagnosis and final decision boundary.** Rust L2 adapter state is
+intentionally memory-resident and fail-closed after a core restart. A Binance
+diff-depth book cannot become execution-eligible until the next provider REST
+snapshot bridges its new state; the declared common provider bootstrap/renewal
+contract is `30s`. The failed eight-second probe was below that documented
+bootstrap bound, not evidence that relaxed freshness or a synthetic snapshot
+is needed. The final approved attempt therefore waits a deterministic `40s`
+after the last of the three serial core restarts (`30s` provider bound plus
+`10s` scheduling margin), then runs exactly one ten-book/two-replica matrix.
+Only `PASS` permits exactly one C2 no-order `300s` receipt. A matrix/C2 failure
+again restores the three JSON files and retains the actual immutable `d86f0e...`
+binary selector; no C2 retry or SLA relaxation is allowed without a new source
+diagnosis.
