@@ -500,7 +500,11 @@ def _stream_handoff_mode(
         if len(no_event_sessions) != 2:
             raise ValueError("C2 no-event stream evidence requires both sessions")
         if no_event_sessions[-1] == "EVENT_AFTER_REOPEN":
-            if no_event_sessions[0] not in {"FRESH_EXECUTABLE", "QUIET_NON_EXECUTABLE"}:
+            if no_event_sessions[0] not in {
+                "FRESH_EXECUTABLE",
+                "QUIET_NON_EXECUTABLE",
+                "CURRENT_FINAL_BAR",
+            }:
                 raise ValueError("C2 no-event stream evidence has an invalid initial session")
             return "LIVE_EVENT_AFTER_REOPEN_NO_CURSOR"
         if all(item == "FRESH_EXECUTABLE" for item in no_event_sessions):

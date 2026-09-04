@@ -600,6 +600,93 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_quiet_final_bar_then_reopened_event_is_a_valid_no_cursor_handoff(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        seed_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS)
+        )
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(data=[seed_view], watermark_offset=38)
+        controls = (
+            ControlEvent("REPLAYING", "retained BAR replay accepted"),
+            ControlEvent("LIVE", "stream live"),
+        )
+        first_session = self._Session(warmup=seed_warmup, items=controls, quiet=True)
+        reopened = StreamEvent(41, "final-bar-after-reopen", object())
+        resumed_session = self._Session(
+            warmup=seed_warmup,
+            items=controls + (reopened,),
+        )
+        first_current = SimpleNamespace(data=SimpleNamespace())
+        first_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=first_session,
+            snapshots=(first_current,),
+        )
+        resumed_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=resumed_session,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-quiet-bar-reopen-") as raw:
+            with (
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.sdk_requirement",
+                    return_value=requirement,
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._client",
+                    side_effect=(first_client, resumed_client),
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream",
+                    return_value=SimpleNamespace(),
+                ),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
+
+        self.assertEqual(
+            result,
+            (
+                None,
+                None,
+                ("REPLAYING", "LIVE", "REPLAYING", "LIVE"),
+                ("CURRENT_FINAL_BAR", "EVENT_AFTER_REOPEN"),
+            ),
+        )
+        self.assertEqual(
+            _stream_handoff_mode(
+                product,
+                acknowledged_offset=result[0],
+                resumed_offset=result[1],
+                no_event_sessions=result[3],
+            ),
+            "LIVE_EVENT_AFTER_REOPEN_NO_CURSOR",
+        )
+        self.assertEqual(resumed_session.acknowledged, [reopened])
+        self.assertEqual(first_client.snapshot_calls, [requirement])
+        self.assertEqual(resumed_client.snapshot_calls, [])
+        self.assertEqual(
+            validate.call_args_list,
+            [
+                call(product, first_current.data),
+                call(product, ANY),
+            ],
+        )
+
     async def test_non_execution_quiet_bar_requires_signed_controls_before_current_read(self):
         product = self._product()
         requirement = self._requirement()

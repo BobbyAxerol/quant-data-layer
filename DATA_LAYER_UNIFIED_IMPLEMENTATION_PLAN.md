@@ -34350,3 +34350,78 @@ rollout and exactly one fresh C2 300-second receipt. The prior unattached
 `2.0.14-a8fdb55` image remains test-only and will be removed after the
 replacement source/image evidence is captured; no broad cache prune is in
 scope.
+
+**C2 MARK/INDEX immutable image gate (`PASS / TWO-QUERY ROLLOUT PENDING`,
+2026-09-04).** Tested source and journal were committed as
+`5ba7342 fix(reference): validate mark refresh per item`. One replacement image
+was built from exactly that revision:
+`qdl-v2-python:2.0.15-5ba7342@sha256:f29ee76868fa38b4e540d5f906adb1db332ef298675a21f870229fb4474275e6`.
+OCI revision/version labels are `5ba7342` / `2.0.15-5ba7342`, and the image
+user remains `qdl:qdl`. With no source mount, the same read-only,
+network-disabled, UID/GID-`10001`, no-capability, no-new-privileges,
+tmpfs-only matrix passed `128/128` in `15.841s`. It included the new
+multi-MARK assembly oracle plus C2 quota, reference, L2, five-symbol and
+receipt-harness tests. No provider or runtime/data-plane was touched.
+
+Pre-rollout verification confirms both approved roles currently run the named
+rollback digest `sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`,
+are `healthy` with `restart=0`, and the sealed runtime env still names that
+digest. The next command overrides only the image value for a serial
+`query_v2_1`, then `query_v2_2`, recreate with their existing compose/runtime,
+TLS and state mounts. It must verify health after each role before one
+disposable 300-second C2 no-order receipt. A nonzero receipt restores only
+those same roles to the verified rollback digest.
+
+**C2 MARK/INDEX rollout exit and quiet-final-BAR correction (`IN PROGRESS /
+SAME CLOSURE`, 2026-09-04).** The two-query rollout to
+`sha256:f29ee76868fa38b4e540d5f906adb1db332ef298675a21f870229fb4474275e6`
+completed serially and both roles were `healthy`, `restart=0`. The one actual
+four-identity C2 receipt then passed the earlier quota and DOGE MARK/INDEX
+opening work, but failed before its 300-second observation on a different
+typed harness transition: `alpha.okx.paper.stable`, `OKX.SWAP.PERPETUAL
+ETH-USDT`, `BAR 5m` recorded `CURRENT_FINAL_BAR` for a valid quiet first
+session and `EVENT_AFTER_REOPEN` when a real final BAR arrived after the signed
+reopen. `_stream_handoff_mode()` incorrectly accepted the latter only after a
+price/continuity initial session and rejected a current final BAR initial
+session. This is an acceptance-harness state-transition defect, not provider
+staleness, quota, MARK/INDEX, V1 fallback, Rust, catalog, materialization or
+data loss. The terminal C2 client self-removed and wrote only scoped failure
+evidence; no acceptance JSON was emitted.
+
+Per the approved nonzero rule, `query_v2_1` then `query_v2_2` were rolled back
+serially to `sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`;
+both are again `running`, `healthy`, `restart=0`. No other V2 role, V1, Rust,
+Kafka, Redis, SQLite, provider, Trading System, alpha, signal, sizing or order
+path changed. The only remaining source correction is to admit the valid
+`CURRENT_FINAL_BAR -> EVENT_AFTER_REOPEN` no-cursor handoff for a non-execution
+durable BAR, with a direct regression through `_stream_resume` and the existing
+handoff classifier. It must not make an initial BAR executable, weaken signed
+cursor control requirements, accept a gap/identity mismatch, or alter any
+public/runtime contract. After focused source/image gates, a fresh C2 receipt
+requires its own explicit owner packet because the declared one receipt has
+already been consumed and failed closed.
+
+**Quiet-final-BAR handoff source gate (`PASS / REPLACEMENT IMAGE PENDING`,
+2026-09-04).** `_stream_handoff_mode()` now recognizes the only missing valid
+transition: a non-execution durable BAR first session proved by a strict
+`CURRENT_FINAL_BAR` read, followed by a real `EVENT_AFTER_REOPEN` after signed
+reopen. It returns the existing no-cursor live-event evidence label, while the
+initial BAR remains non-executable and all cursor controls, identity, gap,
+quality and finality checks remain unchanged. A new end-to-end `_stream_resume`
+regression proves both signed session controls, the strict first final read,
+the real reopened event and acknowledgement; the legacy classifier rejects
+that exact evidence pair. The focused harness passed `47/47` in `11.893s`, and
+the complete C2/reference/L2/five-symbol/identity matrix passed `129/129` in
+`18.243s` after `py_compile`. Tests used the existing immutable dependency
+image with source read-only, `--network none`, read-only root, UID/GID `10001`,
+no capabilities/no-new-privileges and tmpfs-only bytecode/cache state. No
+provider, V1, Kafka, Redis, SQLite, runtime role, Trading System, alpha,
+signal, sizing or order mutation occurred; every test client self-removed.
+`git diff --check` passes.
+
+**Decision boundary:** the previous C2 receipt is terminal and remains failure
+evidence. This source correction is ready for a single replacement image, but
+another 300-second C2 rollout is intentionally not started: it requires a new
+explicit owner packet naming the replacement digest and the same two-query
+rollback because the prior approved receipt was already consumed. No other
+source or runtime scope is open.
