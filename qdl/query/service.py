@@ -41,6 +41,7 @@ from qdl.warmup.executor import BoundedWarmupExecutor, RetryableWarmupError
 from qdl.reference.batch import ReferenceBatch
 from qdl.reference.contracts import (
     ReferenceBatchResult,
+    ReferenceProduct,
     ReferenceRequest,
     ReferenceStatus,
 )
@@ -549,8 +550,9 @@ class V2QueryService:
         # Revalidate after every bounded initial task has returned. A current
         # mark/index snapshot can become stale while another item in the same
         # batch finishes. Refresh those exact current-at-receipt snapshots
-        # once here, immediately before response assembly; provider-stale
-        # observations never take this branch.
+        # once here, immediately before response assembly. A transient stale
+        # provider MARK/INDEX row gets the same one bounded, cache-bypassing
+        # re-read; any still-stale result remains fail-closed.
         refresh_candidates = []
         for execution in executions:
             if execution.error is not None or execution.value is None:
@@ -560,7 +562,7 @@ class V2QueryService:
             if (
                 problem is not None
                 and problem.code is CanonicalErrorCode.DATA_STALE
-                and self._reference_snapshot_was_current_at_receipt(
+                and self._reference_snapshot_requires_refresh(
                     requirement,
                     request,
                     execution.value,
@@ -627,6 +629,36 @@ class V2QueryService:
             },
         }
         return ReferenceBatchQueryResult(request_id, resolved)
+
+    def _reference_snapshot_requires_refresh(
+        self,
+        requirement: ReferenceDataRequirement,
+        request: ReferenceRequest,
+        result: ReferenceBatchResult,
+    ) -> bool:
+        """Allow one recovery read for a freshness-governed mark/index snapshot.
+
+        A batch can age an otherwise current cache entry while unrelated work
+        completes. Separately, exchanges can expose a briefly delayed mark or
+        index timestamp even though the same declared provider lane is current
+        on the immediate next read. Both cases get one cache-bypassing re-read
+        through the same bounded admission path. This deliberately excludes
+        history and every other reference product: no freshness bound is
+        relaxed and a second stale observation remains terminal.
+        """
+
+        if self._reference_snapshot_was_current_at_receipt(
+            requirement,
+            request,
+            result,
+        ):
+            return True
+        return (
+            requirement.max_freshness_ms is not None
+            and not request.is_history
+            and request.product is ReferenceProduct.MARK_INDEX_PRICE
+            and result.status is ReferenceStatus.OK
+        )
 
     def _reference_snapshot_was_current_at_receipt(
         self,

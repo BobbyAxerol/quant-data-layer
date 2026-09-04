@@ -34038,3 +34038,89 @@ is intentionally untouched (`8.365GB`, `5.421GB` reported reclaimable): it is
 shared across current projects and a broad cache prune is outside this narrow
 approval. Final post-cleanup checks show all three rollback cores running on
 `sha256:d86f0e...86983`, `restart=0`, `OOMKilled=false`.
+
+**MARK_INDEX_PRICE exact-scope diagnosis (`IN PROGRESS / READ-ONLY`,
+2026-09-04).** The terminal C2 product is Binance USD-M `DOGEUSDT`, demand UID
+`8aedd349-6999-5874-b0dd-34c6451c0b3a`, `MARK_INDEX_PRICE`; this is a bounded
+on-demand provider snapshot behind `/v2/market-data/reference:batch`, not a
+Kafka BAR/L2 materialization defect. The approved diagnostic reads the exact
+signed V2 requirement through both existing query replicas and records only
+typed status, provider-observed age, response/receive age, cache provenance,
+timestamp origin and lineage. It does not relax the 60-second contract, make a
+synthetic observation, use V1, recreate any role, or mutate Kafka, Redis,
+SQLite, Trading System, alpha, signal, sizing or order state.
+
+Exit decision: if both replicas return current V2 data, repair the C2/reference
+batch lifecycle so a fresh execution-grade snapshot cannot age behind unrelated
+history work; if either replica returns stale V2 data, repair only the shared
+query/reference timestamp or cache path and add focused fresh/missing/stale and
+two-replica regression coverage. The Rust receive-recovery patch is independent
+of this defect and is not re-rolled merely to retry the same reference failure.
+Only after the exact fault is fixed and source gates pass may one immutable,
+bounded rollout packet and one fresh 300-second C2 receipt be prepared.
+
+**MARK_INDEX_PRICE exact-scope diagnostic result (`PASS / SOURCE REPAIR
+REQUIRED`, 2026-09-04).** A disposable, signed V2-only read used the declared
+`alpha.binance.paper.stable` identity and the exact DOGE requirement through
+both live query replicas. `query_v2_1` returned `OK` in `172ms` with
+provider-observed age `407ms`; `query_v2_2` returned `OK` in `85ms` with
+provider-observed age `494ms`. Both retained the exact demand UID, native
+symbol `DOGEUSDT`, `timestamp_origin=PROVIDER`, cache miss provenance and only
+`/fapi/v1/premiumIndex` lineage. This rules out a missing catalog identity,
+permanent Binance provider staleness, replica cross-mix, V1 fallback and
+Kafka/L2 materialization as the C2 root cause.
+
+The remaining defect is bounded reference-snapshot recovery: a transient stale
+provider MARK/INDEX row can terminalize the whole C2 batch even though the
+same provider lane is current immediately afterward. The approved source scope
+is therefore one cache-bypassing re-read only for a non-history
+`MARK_INDEX_PRICE` requirement with a declared freshness bound. It does not
+relax freshness, substitute a source, synthesize data, or retry any other
+reference product. The re-read must independently satisfy the original bound;
+otherwise the typed `DATA_STALE` result remains fail-closed. Focused tests must
+cover stale-then-current pass, stale-then-stale fail, and the existing
+batch-aging recovery without changing history/reference semantics. No runtime
+role, V1, Kafka, Redis, SQLite, Trading System, alpha or order state is changed
+by this source slice.
+
+**MARK_INDEX_PRICE bounded recovery source exit (`PASS / RUNTIME C2 PENDING`,
+2026-09-04).** `qdl/query/service.py` now re-reads only a non-history
+`MARK_INDEX_PRICE` result that fails its declared freshness bound, using the
+existing bounded executor, same provider lane and `bypass_cache=True`. The
+re-read is exactly once: a current second result is returned normally; a second
+stale result remains the same typed `DATA_STALE`. Existing current-at-receipt
+batch-aging recovery remains unchanged. Funding, OI, long/short, taker, basis,
+metadata, history and V1 never enter this new branch.
+
+Source-only gates passed in an isolated, read-only, network-disabled container
+using the active immutable Python runtime image as the dependency carrier:
+`py_compile qdl/query/service.py tests/test_phase113_reference_v2.py`, then
+`62/62` tests across `test_phase104_reference_batch`,
+`test_phase113_reference_v2`, `test_reference_l2_consumer_acceptance` and
+`test_phase115c_five_liquid_handoff`. The matrix covers decimal/unit fidelity,
+identity isolation, provider lane bounds, cached-snapshot aging, transient
+stale-to-current MARK/INDEX recovery, stale-to-stale fail-closed behavior,
+non-MARK stale no-retry, API/SDK serialization, L2 generation/gap guards and
+five-symbol manifest admission. No provider call, V1 fallback, Kafka, Redis,
+SQLite, runtime role, Trading System, alpha, signal, sizing or order state was
+changed. Disposable test containers self-removed; no image was built and no
+cache/image cleanup is required for this source slice. Post-test Docker
+inventory is unchanged at `10.84GB` images (`1.808GB` reclaimable), `8.365GB`
+BuildKit cache (`5.421GB` reclaimable), `47` volumes (`13` active) and no
+reference test container. The active V1/V2 images, retained Rust rollback
+image, runtime state, TLS, volumes and networks remain the explicit retention
+set; shared BuildKit cache is outside this source-only cleanup boundary.
+
+**Next approved-boundary packet (`PENDING OWNER RELEASE APPROVAL`).** Build one
+immutable Python image from the committed source revision, retain current
+`sha256:bd0163fd76b0...` as rollback, then rolling-recreate only
+`query_v2_1` and `query_v2_2` with their existing runtime/TLS/state mounts.
+After both are healthy, run one exact 300-second C2 no-order receipt with the
+existing consumer identities and the same V2 manifest; verify DOGE
+`MARK_INDEX_PRICE` through both replicas, final BAR/quote/trade/reference,
+signed cursor/reconnect and V1 fallback-return policy. Any nonzero result rolls
+only those two query roles back to `sha256:bd0163fd76b0...`; V1, Rust cores,
+Kafka offsets/topology, Redis, SQLite, ingestors, projectors, stream roles,
+Trading System, alpha and all order paths remain untouched. This packet is the
+remaining certification gate before release; no SLA relaxation or retry loop is
+permitted.

@@ -132,6 +132,20 @@ class FixtureReferenceAdapter:
             self.active -= 1
 
 
+class StaleThenCurrentReferenceAdapter(FixtureReferenceAdapter):
+    """Return one delayed MARK/INDEX timestamp, then the current provider row."""
+
+    async def fetch(self, request, *, capability, received_at_ns):
+        fetched = await super().fetch(
+            request,
+            capability=capability,
+            received_at_ns=received_at_ns,
+        )
+        if self.calls == 1:
+            self.observed_at_ns = NOW_NS
+        return fetched
+
+
 class AdvanceClockAfterInitialBatchExecutor(BoundedWarmupExecutor):
     """Model a snapshot aging only after all initial batch work completes."""
 
@@ -407,11 +421,12 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_stale_reference_result_fails_closed(self):
         registry = InstrumentRegistry()
         registry.register(self.binance, [])
+        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - 2_000_000_000)
         stale = V2QueryService(
             instruments=InstrumentQuery(registry),
             backend=MemoryMarketDataBackend(),
             entitlements=grants(),
-            reference_batch=fixture_batch(observed_at_ns=NOW_NS - 2_000_000_000),
+            reference_batch=ReferenceBatch({("BINANCE", "USDM"): adapter}),
             reference_source_id=lambda item: f"{item.identity.venue}_DIRECT",
             clock_ns=lambda: NOW_NS,
         )
@@ -424,6 +439,7 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
             purpose=AccessPurpose.INTERNAL_ALPHA,
         )
         self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
+        self.assertEqual(adapter.calls, 1)
 
     async def test_execution_mark_refreshes_a_cached_value_that_crossed_its_bound(self):
         clock = {"ns": NOW_NS}
@@ -590,7 +606,56 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(second.partial)
         self.assertEqual(adapter.calls, 2)
 
-    async def test_execution_mark_does_not_refresh_a_freshly_received_stale_provider_value(self):
+    async def test_execution_mark_refreshes_a_transient_stale_provider_value_once(self):
+        clock = {"ns": NOW_NS}
+        adapter = StaleThenCurrentReferenceAdapter(
+            observed_at_ns=NOW_NS - 2_100_000_000
+        )
+        registry = InstrumentRegistry()
+        registry.register(self.binance, [])
+        execution_grants = EntitlementPolicy((
+            EntitlementGrant(
+                source_id="BINANCE_DIRECT",
+                license_revision="phase113-test",
+                purposes=frozenset({AccessPurpose.INTERNAL_EXECUTION}),
+                products=frozenset({DataProduct.CANONICAL_SNAPSHOT}),
+                valid_from_ns=0,
+            ),
+        ))
+        service = V2QueryService(
+            instruments=InstrumentQuery(registry),
+            backend=MemoryMarketDataBackend(),
+            entitlements=execution_grants,
+            reference_batch=ReferenceBatch(
+                {("BINANCE", "USDM"): adapter},
+                clock_ns=lambda: clock["ns"],
+            ),
+            reference_source_id=lambda _item: "BINANCE_DIRECT",
+            clock_ns=lambda: clock["ns"],
+        )
+        requirement = ReferenceDataRequirement(
+            instrument_uid=self.binance.instrument_uid,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id="crypto_liquid_v2",
+            limit=1,
+            page_size=1,
+            max_pages=1,
+            max_freshness_ms=2_000,
+        )
+        result = await service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "phase113-execution",
+                (requirement,),
+                require_all=False,
+            ),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertFalse(result.partial)
+        self.assertEqual(adapter.calls, 2)
+        self.assertEqual(result.results[0].result.observations[0].observed_at_ns, NOW_NS)
+
+    async def test_execution_mark_keeps_stale_provider_value_fail_closed_after_one_refresh(self):
         clock = {"ns": NOW_NS}
         adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - 2_100_000_000)
         registry = InstrumentRegistry()
@@ -634,7 +699,7 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
             purpose=AccessPurpose.INTERNAL_EXECUTION,
         )
         self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
-        self.assertEqual(adapter.calls, 1)
+        self.assertEqual(adapter.calls, 2)
 
     async def test_retryable_reference_result_reuses_shared_warmup_policy(self):
         adapter = RetryOnceReferenceAdapter()
