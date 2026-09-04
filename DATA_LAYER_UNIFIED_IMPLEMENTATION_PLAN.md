@@ -35281,3 +35281,22 @@ rejected. Its expected negative subprocess and provider fixtures logged their
 bounded errors but did not mutate runtime/provider data; there were no failed
 tests. No runtime role, image selector, Kafka/Redis/SQLite state, V1,
 Trading System, alpha or order path changed during this source gate.
+
+**Read-only catch-up decision (`RUNTIME PACKET REQUIRED`, 2026-09-04).** The
+old `128`-record runtime was allowed to drain after the Stream fix, but the
+remaining ordered partition became producer-bound: read-only group samples
+showed partition `5` carrying about `177,774` records while total lag moved
+from `176,952` to `186,387` then `193,582` as new canonical data arrived.
+All sampled `504` counts stayed zero; this is not a deadline failure or data
+corruption. With the existing live producer rate, natural catch-up cannot
+reach the near-zero C2 gate. The already-tested `512` cap is therefore a
+required bounded capacity correction, not an optional optimization.
+
+The only remaining approval boundary is explicit serial recreation of exactly
+`projector_v2`, `projector_v2_2`, and `projector_v2_3` using their current
+immutable Python image and the committed Compose cap `512`; preserve Kafka
+offsets/topology, Redis, SQLite, V1, Rust, ingestors, query/stream, Trading
+System, alpha and order paths. The SHA-recorded prior Compose file is the
+rollback to `128`. Once applied, measure lag/error/health/OOM, then continue
+the existing matrix and single C2 closure path. No other role or image is
+needed.
