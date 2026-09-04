@@ -35246,3 +35246,38 @@ silent `10s` middleware deadline was the catch-up stall, while preserving
 durable ordering rather than skipping retained data. C2 remains intentionally
 held until lag is near zero and the compact ten-book/two-replica matrix passes.
 No additional image, role, retry or topology is permitted before that gate.
+
+**Bounded projector catch-up tuning (`IN PROGRESS / SAME RELEASE CLOSURE`,
+2026-09-04).** After the stream deadline correction, all `504` samples stayed
+at zero and lag drained, but read-only partition evidence showed nearly all
+remaining work assigned to one ordered canonical partition while its projector
+was only about half of its existing `0.75` CPU allowance. The stable projector
+already validates `QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS` through `512`; the
+canonical Compose value is an unnecessarily conservative `128`, while the
+existing `8MiB` per-batch byte cap, `2,048` pending-record cap, `32MiB`
+pending-byte cap, request-byte bound and idempotent/checkpoint ordering remain
+unchanged. The narrow correction raises only the declared projector batch
+count to `512` for the three existing replicas.
+
+This is throughput-only: it does not alter source/provider events, sequence,
+event IDs, durable ACK/checkpoint ordering, retention, Kafka partitions or
+offsets, Redis/SQLite state, public contracts, image binary, V1, Rust,
+ingestors, query/stream, Trading System, alpha or order paths. Source gate:
+update the Compose regression and prove `512` is accepted while `2049`
+continues to fail. Runtime packet: SHA-backup the exact Compose file, serially
+recreate only `projector_v2`, `projector_v2_2`, `projector_v2_3` on their
+current immutable Python image with unchanged runtime/TLS/state mounts; then
+measure lag, error count, health/restart/OOM. Rollback restores the saved
+Compose file and recreates only those same three projectors at `128`. C2 stays
+held until durable lag is near zero.
+
+**Source gate (`PASS / PROJECTOR ROLLING PENDING`, 2026-09-04).** The canonical
+Compose declaration now sets the existing three projector roles to the already
+validated `512` record bound. The constrained immutable Python image
+`qdl-v2-python:2.0.12-8343f10` ran the direct runtime-boundary case plus the
+stable deployment Compose suite: **`28/28 PASS` in `14.639s`**. The suite
+proves `512` parses under the bounded configuration and `2049` remains
+rejected. Its expected negative subprocess and provider fixtures logged their
+bounded errors but did not mutate runtime/provider data; there were no failed
+tests. No runtime role, image selector, Kafka/Redis/SQLite state, V1,
+Trading System, alpha or order path changed during this source gate.

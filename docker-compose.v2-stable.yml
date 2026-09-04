@@ -362,7 +362,7 @@ services:
       # cache catches up; every durable event remains Kafka-authoritative.
       QDL_STABLE_MAX_PENDING_RECORDS: "2048"
       QDL_STABLE_MAX_PENDING_BYTES: "33554432"
-      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "128"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
       QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
     volumes:
       - stable_state:/var/lib/qdl-stable
@@ -399,7 +399,7 @@ services:
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
       QDL_STABLE_MAX_PENDING_RECORDS: "2048"
       QDL_STABLE_MAX_PENDING_BYTES: "33554432"
-      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "128"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
       QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
     volumes:
       - stable_state:/var/lib/qdl-stable
@@ -436,7 +436,7 @@ services:
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
       QDL_STABLE_MAX_PENDING_RECORDS: "2048"
       QDL_STABLE_MAX_PENDING_BYTES: "33554432"
-      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "128"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
       QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
     volumes:
       - stable_state:/var/lib/qdl-stable
