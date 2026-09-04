@@ -35226,3 +35226,23 @@ commit, an exact runtime backup, then serial recreation of only
 committed offsets and will naturally drain; no offset reset is valid. Retain
 the currently active Python image as the sole rollback selector until the
 matrix and C2 receipt pass.
+
+**Stream rollout and recovery measurement (`PASS / C2 HELD FOR DURABLE
+CATCH-UP`, 2026-09-04).** One immutable Python image was built from source
+`8343f10cb483cc78c66763270957aed2c9d23b35` as
+`qdl-v2-python:2.0.12-8343f10@sha256:08dd22c37c3b4373622d4a1315897343c541ad877ed24ab2589db386808ed29b`.
+Before selector change, exact `rollout.env` rollback evidence was SHA-recorded
+under `rollback-stream-deadline-20260904T154113Z`; the active prior image is
+retained as `qdl-v2-python:rollback-stream-0843d2d@sha256:f608105...b3014`.
+Only `stream_v2_active` and then `stream_v2_passive` were serially recreated.
+Both reached `running/healthy`, `restart=0`, `OOMKilled=false`. No projector,
+Rust, ingestor, query, V1, Kafka topology/offset, Redis/SQLite, Trading
+System, alpha or order role changed.
+
+A bounded post-rollout recovery measurement recorded projector group lag
+`1,107,501 -> 1,091,748 -> 1,075,713` in `79s`; the sampled recent
+stream-side `504` count was zero after rollout. This verifies the hitherto
+silent `10s` middleware deadline was the catch-up stall, while preserving
+durable ordering rather than skipping retained data. C2 remains intentionally
+held until lag is near zero and the compact ten-book/two-replica matrix passes.
+No additional image, role, retry or topology is permitted before that gate.
