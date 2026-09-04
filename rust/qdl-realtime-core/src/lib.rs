@@ -51,6 +51,12 @@ impl L2Binding {
             .unwrap_or_else(|| self.snapshot_refresh_seconds.saturating_mul(1_000))
     }
 
+    fn raw_receipt_is_expired(&self, received_at_ns: i64, processing_at_ns: i64) -> bool {
+        let max_age_ns = self.snapshot_refresh_seconds.saturating_mul(1_000_000_000);
+        let max_age_ns = i64::try_from(max_age_ns).unwrap_or(i64::MAX);
+        processing_at_ns.saturating_sub(received_at_ns) > max_age_ns
+    }
+
     fn validate(&self, binding: &CoreBinding) -> Result<(), CoreError> {
         let materialized_snapshot_interval_ms = self.materialized_snapshot_interval_ms();
         if !(1..=10_000).contains(&self.depth_per_side)
@@ -390,6 +396,7 @@ impl RealtimeCore {
                 &binding,
                 raw,
                 payload,
+                processing_at_ns,
                 materialized_at_ns,
                 transport_offset,
             ));
@@ -583,12 +590,24 @@ impl RealtimeCore {
         binding: &CoreBinding,
         raw: RawProviderEnvelope,
         payload: Value,
+        processing_at_ns: i64,
         materialized_at_ns: i64,
         transport_offset: Option<u64>,
     ) -> ProcessBatch {
         let Some(l2) = binding.l2.as_ref() else {
             unreachable!("process_l2 only accepts an L2 binding")
         };
+        if l2.raw_receipt_is_expired(raw.received_at_ns, processing_at_ns) {
+            if let Some(adapter) = self.l2_adapters.get_mut(binding_key) {
+                adapter.request_resync(raw.connection_generation);
+            }
+            return self.quarantine(
+                &raw,
+                QuarantineReason::SemanticInvalid,
+                "L2 raw receipt exceeded provider renewal bound; resync required",
+                processing_at_ns,
+            );
+        }
         let transport = match TransportProtocol::try_from(raw.transport_protocol) {
             Ok(value) => value,
             Err(_) => {
@@ -1444,6 +1463,50 @@ mod tests {
         assert_eq!(gap.quarantines.len(), 1);
         let evidence = QuarantineRecord::decode(gap.quarantines[0].payload.as_slice()).unwrap();
         assert_eq!(evidence.reason, QuarantineReason::SequenceGap as i32);
+    }
+
+    #[test]
+    fn stale_l2_raw_is_quarantined_without_redating_and_fresh_snapshot_recovers() {
+        let binding = binance_book_binding();
+        let mut core = core(binding.clone(), true);
+        let stale = with_transport(
+            raw(
+                &binding,
+                br#"{"lastUpdateId":100,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#,
+                1,
+            ),
+            TransportProtocol::Http,
+        );
+        let processing_at_ns = stale.received_at_ns + 30_000_000_001;
+        let rejected = core.process(stale, processing_at_ns).unwrap();
+        assert!(rejected.canonical.is_empty());
+        assert_eq!(rejected.quarantines.len(), 1);
+        let evidence =
+            QuarantineRecord::decode(rejected.quarantines[0].payload.as_slice()).unwrap();
+        assert_eq!(evidence.reason, QuarantineReason::SemanticInvalid as i32);
+        assert_eq!(evidence.quarantined_at_ns, processing_at_ns);
+        assert!(evidence.safe_summary.contains("renewal bound"));
+
+        let mut fresh_delta = raw(
+            &binding,
+            br#"{"s":"BTCUSDT","U":99,"u":101,"pu":98,"E":1001,"b":[["60000","2"]],"a":[["60001","1"]]}"#,
+            2,
+        );
+        fresh_delta.received_at_ns = processing_at_ns;
+        let buffered = core.process(fresh_delta, processing_at_ns).unwrap();
+        assert!(buffered.canonical.is_empty());
+
+        let mut fresh_snapshot = with_transport(
+            raw(
+                &binding,
+                br#"{"lastUpdateId":100,"bids":[["60000","2"]],"asks":[["60001","1"]]}"#,
+                2,
+            ),
+            TransportProtocol::Http,
+        );
+        fresh_snapshot.received_at_ns = processing_at_ns;
+        let recovered = core.process(fresh_snapshot, processing_at_ns).unwrap();
+        assert_eq!(recovered.canonical.len(), 1);
     }
 
     #[test]

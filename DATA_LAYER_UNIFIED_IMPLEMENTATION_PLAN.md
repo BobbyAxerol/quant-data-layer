@@ -35001,3 +35001,122 @@ its full `300s` observation. Any nonzero result restores the three core JSON
 files/core roles; the Python candidate is test-only and does not alter query
 or stream roles. Cleanup retains only the active image set and named rollback
 image after the terminal result.
+
+**L2 runtime recovery fact and revised terminal packet (`IN PROGRESS`,
+2026-09-04).** The manifest-derived core refresh was applied to exactly
+`core.json`, `core-002.json`, and `core-003.json` (new SHA-256 values
+`7a092e...f7dfb381`, `05ba9e...02be6edf`, and
+`e91c038b...de0d1698`), then `rust_core`, `rust_core_2`, and `rust_core_3`
+were recreated serially on their unchanged
+`sha256:d86f0e...ed86983` Rust image. All three were `running`,
+`restart=0`, and `OOMKilled=false` after the documented 40-second provider
+bootstrap window. The source regression matrix ran `175/175 PASS` both from a
+constrained source mount and again from immutable client image
+`qdl-v2-python:2.0.12-0843d2d-c2@sha256:b17173...32f42e1` with no source
+mount.
+
+The live L2 matrix then exposed an operational recovery defect before C2: both
+existing query replicas had previously been kernel-OOM killed at 12:30 UTC
+(`exit=137`, `OOMKilled=true`, `restart=no`) and their prior Python image ID
+`sha256:bd0163...` was already pruned from the local image inventory. Starting
+the stopped containers is possible, but recreating them through Compose fails
+because the runtime selector points at a non-retained image ID. Once started,
+the typed ten-book matrix reached both replicas but correctly failed all ten
+books as `STALE` with `complete=true` and `gap_open=false`; Rust core progress
+and the 30-second provider snapshot renewals continued. This is a
+projection/query recovery failure, not a DOGE/SOL-specific source admission
+failure and not grounds to relax freshness.
+
+**Revised bounded terminal scope.** Build one canonical immutable shared
+Python image from source revision `0843d2d` using a canonical
+`qdl-v2-python:2.0.12-0843d2d` tag and matching OCI revision/version labels.
+Seal its digest in the runtime selector. Roll only the seven existing V2
+Python cache/read roles, serially and with their existing TLS/state/runtime
+mounts: `stream_v2_passive`, `stream_v2_active`, `projector_v2`,
+`projector_v2_2`, `projector_v2_3`, `query_v2_2`, `query_v2_1`. The stream
+pair must keep one healthy lease holder; projectors must prove cache binding
+and canonical consumption before query replicas are rolled. This adds no
+service, container, topic, symbol worker, provider credential, data-plane
+schema, Redis flush, SQLite deletion, Kafka offset change, V1 mutation,
+Trading System/alpha change, or order action. It replaces an unrecreatable
+pruned Python runtime with one shared immutable image and reloads the same
+manifest/catalog contract used by the cores.
+
+**Rollback and exit.** Retain the currently running legacy Python containers
+only until the new image's seven-role recovery proves ready; record their
+per-role image IDs and runtime mounts before each recreate. If any role fails
+its bounded health/lease/cache gate, stop immediately and restore only that
+role to its recorded container/image when locally available; otherwise retain
+V1 as the product fallback and fail closed rather than invent an image.
+After all seven roles are healthy, wait through one provider renewal window,
+require the compact ten-book/two-replica L2 matrix to pass, then run exactly
+one C2 no-order 300-second receipt. C2 failure records compact typed evidence
+and does not trigger additional retries. A pass permits cleanup of the
+disposable C2 client/test artifacts while retaining the active canonical image
+and one explicitly named rollback image. This revision supersedes the prior
+statement that query/stream/projector could remain excluded: their actual
+pruned-image/projection state makes that exclusion incompatible with an honest
+C2 certificate.
+
+**L2 stale-envelope correction (`APPROVED / IN PROGRESS`, 2026-09-04).** The
+seven Python cache/read roles above have now recovered on the single canonical
+immutable image `qdl-v2-python:2.0.12-0843d2d`; both query replicas are
+healthy. The resulting typed ten-book/two-replica matrix still correctly
+fails closed because each latest execution L2 view carries a `received_at_ns`
+roughly 45 minutes older than its current spool commit, while the raw Kafka
+topic and all native-ingestor/core clocks are current. This is neither a
+SOL/DOGE-specific contract issue nor a reason to relax query freshness.
+
+**Approved narrow repair.** Rust is the authority for this provider-neutral
+ingress invariant. For any declared L2 binding, core must reject a raw frame
+whose receipt age exceeds that binding's existing
+`snapshot_refresh_seconds`; it must request adapter resync and emit ordinary
+bounded quarantine evidence, never re-date or materialize the old frame. The
+native lossless publisher must use the same declared bound for BOOK delivery:
+a Kafka delivery that cannot complete before the provider renewal bound ends
+the affected connection generation so its normal bootstrap/reconnect path
+obtains a fresh verified view. Python remains unchanged. This is shared
+Binance/OKX behavior, adds no public schema, service, worker, topic, cache or
+SLA relaxation.
+
+**Gate / runtime packet / rollback.** Add only deterministic Rust unit tests
+for stale-L2 rejection/resync and delivery-bound calculation, then run the
+existing targeted Rust suites in the constrained builder. Build one canonical
+Rust image from the tested commit; serially recreate exactly `rust_core`,
+`rust_core_2`, `rust_core_3`, then `ingestor_binance_usdm` and
+`ingestor_okx_swap`. Wait one 40-second bootstrap bound, require the compact
+ten-book/two-replica matrix to pass, then run exactly one 300-second C2
+no-order receipt. V1, Kafka topology/offsets, Redis, SQLite, projectors,
+query/stream, Trading System, alpha and order paths remain untouched.
+Rollback restores only these five roles to the current
+`sha256:d86f0e832ba945d302fd3f782e26fd41c5b08709a80f6de16bdd36af5ed86983`
+image and their saved runtime configs. A final C2 pass permits only scoped
+image/BuildKit cleanup, retaining active images plus one named rollback image.
+
+**Build-capacity guard.** The first disposable Rust builder attempt was killed
+before it could tag an image while compiling the whole release binary set; it
+did not alter any running role. The release Dockerfile now constrains Cargo to
+one job, so the canonical Rust build is deterministic within the host's
+available memory rather than relying on unconstrained parallel compilation.
+This is build hygiene only: it changes no runtime thread, provider cadence,
+data-plane contract or topology. The temporary builder tag is retained only
+until the targeted source gate finishes, then removed with the final scoped
+image/cache cleanup.
+
+**Source gate (`PASS`, 2026-09-04).** The constrained builder ran with one
+CPU and a 4 GiB memory cap, network disabled, and no provider/runtime access.
+`cargo fmt --all -- --check` passed against the read-only worktree. The two
+new release-profile regressions passed: `stale_l2_raw_is_quarantined_without_redating_and_fresh_snapshot_recovers`
+and `book_delivery_bound_is_exact_and_never_applies_to_non_book_frames`.
+The first fixture run exposed only two test mistakes (escaped JSON, then the
+documented Binance delta-to-snapshot bridge requirement); both were corrected
+before the passing run. No runtime container, broker, cache, topic, offset,
+consumer, provider request, V1 route, Trading System, alpha or order state was
+changed by the source gate. The next operation is the already-approved single
+canonical Rust image build and five-role rolling packet; there will be no
+additional test image or topology.
+
+The named regression container `qdl-rust-regression-l2-temp` exited `0` with
+`OOMKilled=false` and was removed immediately. Its temporary builder image is
+the only remaining test artifact and is retained solely to build the canonical
+runtime image in the next step.
