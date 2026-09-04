@@ -34240,6 +34240,19 @@ bootstrap-only caps; its child still receives no effective/inheritable/ambient
 capabilities. Nothing else in the packet changes, and the failed empty
 namespace is retained as a launcher preflight record.
 
+**C2 read-only identity-mount preflight (`PASS / NO RECEIPT`, 2026-09-04).** The
+second empty launcher namespace likewise stopped before Python/evidence because
+the minimal root bootstrap could drop UID/GID but had no `DAC_OVERRIDE` to read
+the declared mode-restricted identity files from its read-only `/v2state` mount.
+This is a capability boundary of the disposable launcher, not an endpoint,
+quota, data-plane or runtime failure. A second `--network none` preflight
+proved that only `DAC_OVERRIDE`, `SETUID` and `SETGID` are sufficient to read
+the exact declared alpha-Binance identity input, then drop to `uid=10001`,
+`CapEff=0`, `NoNewPrivs=1`. The real C2 launcher is revised only to use those
+three bootstrap-only capabilities; the child has no capability and the mount
+remains read-only. It is still the first actual C2 receipt, not a retry of a
+receipt, because neither prior launcher opened an endpoint or wrote C2 output.
+
 **C2 stream-open quota pacing repair (`APPROVED / IN PROGRESS`, 2026-09-04).**
 Owner approved one final narrow closure repair: the existing acceptance-only
 per-identity C2 pacer must govern gRPC stream opens as well as REST reads. The
