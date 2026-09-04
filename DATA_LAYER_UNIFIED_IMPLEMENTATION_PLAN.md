@@ -34228,6 +34228,18 @@ four-identity 300-second no-order receipt. A nonzero receipt triggers only the
 named two-query rollback digest in the preceding packet; no second C2 retry or
 scope expansion follows automatically.
 
+**C2 bootstrap capability preflight (`PASS / NO RECEIPT`, 2026-09-04).** The
+first detached client self-removed before writing any security, exit or C2
+evidence. It therefore did not reach Python, a V1/V2 endpoint, a provider,
+cursor, fallback drill or the 300-second observation and is not a C2 result.
+The launcher was missing the two temporary bootstrap capabilities needed solely
+to drop from root to UID/GID `10001`. A disposable `--network none` preflight
+with only `SETUID` and `SETGID` added proved the exact intended child boundary:
+`uid=10001`, `CapEff=0`, `NoNewPrivs=1`. The next real C2 uses those two
+bootstrap-only caps; its child still receives no effective/inheritable/ambient
+capabilities. Nothing else in the packet changes, and the failed empty
+namespace is retained as a launcher preflight record.
+
 **C2 stream-open quota pacing repair (`APPROVED / IN PROGRESS`, 2026-09-04).**
 Owner approved one final narrow closure repair: the existing acceptance-only
 per-identity C2 pacer must govern gRPC stream opens as well as REST reads. The
