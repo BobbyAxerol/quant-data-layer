@@ -35439,3 +35439,102 @@ history/finality/gap bootstrap tests. Expected negative provider/checkpoint
 fixtures remained bounded; no runtime, provider, Kafka, Redis, SQLite, V1,
 Trading System, alpha, signal, sizing or order mutation occurred. The next
 operation is the already-journaled three-role runtime packet only.
+
+**C2 cache-rebuild recovery runtime packet (`APPROVED / EXECUTING`,
+2026-09-04).** Runtime preflight verified the active stream roles use immutable
+Python image `sha256:08dd22c37c3b4373622d4a1315897343c541ad877ed24ab2589db386808ed29b`,
+have `restart=0` and `OOMKilled=false`, and currently expose their stable
+aliases only on the consumer network, not `stable_internal`. The existing BAR
+edge uses immutable image
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`,
+the sealed Phase 54 catalog/acquisition files, a 1,000-row warmup declaration,
+and checkpoint `phase54-alpha-demand-5edbc8c.json`. The approved packet is
+therefore limited to an external, mode-`0600` override in
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/c2-bar-recovery-20260904T172959Z`:
+it gives the edge a new namespaced checkpoint and a truthful 700-row C2
+bootstrap bound while retaining the same catalog, acquisition projection,
+image, mounts and 10,000-row catch-up ceiling. It serially recreates only
+`stream_v2_active`, `stream_v2_passive`, then `binance_bar_edge`.
+
+The packet may make bounded real-provider reads and normal final-BAR writes
+through the existing raw -> Rust -> Kafka -> projector path, because history
+recovery cannot be verified without materializing real provider data. It must
+not reset Kafka offsets/topology, flush Redis, delete SQLite, change V1, Rust,
+ingestors, projectors, query, Trading System, alpha, signals, sizing or any
+order path. Rollback is restricted to removing this external override from the
+Compose invocation and recreating only these same three roles with their
+recorded current stream topology and Phase 54 edge checkpoint. Exit requires
+role health/restart/OOM checks, internal alias resolution, two-replica DOGE
+`BAR 12h` full-coverage proof, and then exactly one fresh four-identity
+no-order C2 receipt; any failure is terminal evidence, not a retry loop.
+
+**Packet image correction (`IN PROGRESS`, 2026-09-04).** The first BAR-edge
+recreate correctly applied the new checkpoint and started a real bootstrap
+(`140` bindings; `71,810` final-BAR rows), but Compose inherited the global
+Python selector `qdl-v2-python:2.0.12-8343f10` rather than retaining the
+edge's recorded pre-packet digest
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`
+(`qdl-v2-python:2.0.12-8ba4165`). That is outside the approved image scope,
+even though the three-role service boundary and all data-store exclusions held.
+Before any C2 diagnostic, the same external edge override is amended to pin
+that locally retained digest/tag and only `binance_bar_edge` is recreated once
+more. The new checkpoint and already materialized normal BAR data are retained;
+no Kafka offset/topology, Redis, SQLite, V1, Rust, ingestor, projector, query,
+Trading System, alpha or order state is reverted or changed. This restores the
+exact approved runtime image boundary rather than treating an accidental image
+selection as acceptable.
+
+**Focused post-recovery diagnostic (`APPROVED / EXECUTING`, 2026-09-04).**
+Before consuming the single full C2 receipt, run one disposable Alpha-OKX
+SDK preflight for the exact recovered failure product family. It is restricted
+to the manifest-bound Alpha-OKX identity, the two V2 query replicas and the
+two stable stream aliases on `executor_network`, with a 30-second observation.
+It reads the complete Alpha-OKX V2 scope so DOGE `BAR 12h` is checked through
+the same public SDK warmup/full-coverage/parity path as C2; it has no provider
+credential, Docker socket, Kafka/Redis/SQLite mount, Gateway/Risk/order route,
+or deployed consumer mutation. Private client material exists only on the
+client tmpfs and the retained host evidence is limited to C2-produced compact
+JSON/exit metadata. This is a narrow preflight, not a replacement C2
+certificate: a pass permits the one four-identity, true-300-second receipt;
+a fail records typed evidence and stops the closure path.
+
+**Diagnostic credential preflight (`BLOCKED BEFORE ENDPOINT READ`,
+2026-09-04).** The recovered BAR edge and two stream aliases are healthy, and
+the projector group is back within its bounded live-lag window (`170` total,
+`54` maximum partition in the read-only sample). However, the previously
+referenced Alpha-OKX/CA C2 seed paths are now directories rather than regular
+credential files; the surviving repository-local copies are zero-byte input
+skeleton placeholders. This is consistent with a prior failed bind-mount
+launcher creating host directories for absent source files. No diagnostic
+client was started, no V2/V1 endpoint, provider, order, Gateway/Risk or
+durable store was read or mutated by this failed preflight. The only permitted
+next investigation is path/permission-only discovery of an existing active
+external consumer identity. If none exists, do not synthesize a credential or
+retry C2: prepare a separate, explicit trust/keyring extension packet first.
+
+**C2 external-identity recovery packet (`PENDING OWNER RUNTIME APPROVAL`,
+2026-09-04).** Discovery found no recoverable private client material for the
+four governed C2 identities: the active query/stream trust volume contains
+server and internal service credentials plus the client-CA bundle, but not
+external client private keys by design; the old host seed paths are only empty
+directories/skeletons. The smallest correct repair is additive and reuses
+`phase105_prepare_external_consumer_extension.sh`: generate a fresh external
+client CA and four mTLS/JWT key pairs in a new mode-`0700` state namespace,
+delete the generated CA private key after issuance, append only the new public
+CA to the existing query/stream client-trust bundles, and add four new,
+versioned public JWT key IDs mapped to the same four existing manifest
+subjects. Private keys remain only in the protected C2 namespace; no secret
+is committed or emitted in evidence.
+
+The runtime packet would serially recreate exactly `query_v2_1`,
+`query_v2_2`, `stream_v2_active`, and `stream_v2_passive` so they load the
+additive trust/keyring extension. It changes no provider adapter, binding,
+manifest route, Rust role, BAR edge, projector, ingestor, V1, Kafka topology
+or offsets, Redis, SQLite, Trading System, alpha, Gateway/Risk, signal, sizing
+or order path. Rollback restores the recorded prior client-CA bundle and
+key-subject/keyring environment and recreates only those four reader roles.
+After their bounded health/restart/OOM and alias checks, run the focused
+Alpha-OKX diagnostic once and then one full four-identity C2 300-second
+receipt. This packet is necessary because reusing a server/internal identity
+would invalidate the consumer-identity proof; it is intentionally not applied
+without the explicit four-reader trust/keyring approval.
