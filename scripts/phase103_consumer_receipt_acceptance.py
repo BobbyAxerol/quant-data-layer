@@ -93,6 +93,65 @@ class WorkloadIdentity:
     credential: RotatingJwtCredentialProvider
 
 
+def compact_feed_status(status: object) -> dict[str, object]:
+    """Return bounded typed diagnostic evidence without a market payload."""
+
+    quality = getattr(status, "quality", None)
+    instrument_uid = getattr(status, "instrument_uid", None)
+    feed = getattr(status, "feed", None)
+    if not isinstance(instrument_uid, str) or not instrument_uid:
+        raise ValueError("C2 feed-status evidence lacks an instrument identity")
+    feed_value = getattr(feed, "value", feed)
+    if not isinstance(feed_value, str) or not feed_value:
+        raise ValueError("C2 feed-status evidence lacks a feed")
+    fields = {
+        "state": getattr(quality, "state", None),
+        "event_recency_state": getattr(quality, "event_recency_state", None),
+        "event_age_ms": getattr(quality, "freshness_ms", None),
+        "provider_session_state": getattr(quality, "provider_session_state", None),
+        "provider_session_liveness_ms": getattr(quality, "provider_session_liveness_ms", None),
+        "gap_open": getattr(quality, "gap_open", None),
+        "complete": getattr(quality, "complete", None),
+        "execution_eligible": getattr(quality, "execution_eligible", None),
+        "policy_id": getattr(quality, "policy_id", None),
+    }
+    liveness = fields["provider_session_liveness_ms"]
+    if (
+        not isinstance(fields["state"], str)
+        or not isinstance(fields["event_recency_state"], str)
+        or not isinstance(fields["event_age_ms"], int)
+        or fields["event_age_ms"] < 0
+        or not isinstance(fields["provider_session_state"], str)
+        or liveness is not None and (not isinstance(liveness, int) or liveness < 0)
+        or not isinstance(fields["gap_open"], bool)
+        or not isinstance(fields["complete"], bool)
+        or not isinstance(fields["execution_eligible"], bool)
+        or not isinstance(fields["policy_id"], str)
+        or not fields["policy_id"]
+    ):
+        raise ValueError("C2 feed-status evidence has invalid quality fields")
+    flags = getattr(quality, "flags", None)
+    if not isinstance(flags, list) or any(not isinstance(item, str) for item in flags):
+        raise ValueError("C2 feed-status evidence has invalid flags")
+    return {
+        "schema": "qdl.c2.feed-status-evidence.v1",
+        "instrument_uid": instrument_uid,
+        "feed": feed_value,
+        "quality": fields,
+        "flags": sorted(set(flags))[:16],
+        "payload_recorded": False,
+    }
+
+
+class C2StatusEvidenceError(ContinuityError):
+    """Strict-read failure with payload-free typed status evidence."""
+
+    def __init__(self, code: str, detail: str, *, status: object) -> None:
+        super().__init__(code, detail)
+        self.status_evidence = compact_feed_status(status)
+        self.replica: str | None = None
+
+
 def _identity(
     *,
     product: AcceptanceProduct,
@@ -669,12 +728,16 @@ async def _query_product_with_quality(
         validate_product_view(product, primary_view)
         primary_hash = warmup_content_fingerprint(primary_response.data)
     else:
-        primary_response = await _strict_snapshot_for_c2(
-            primary,
-            product=product,
-            requirement=requirement,
-            timeout_seconds=snapshot_timeout_seconds,
-        )
+        try:
+            primary_response = await _strict_snapshot_for_c2(
+                primary,
+                product=product,
+                requirement=requirement,
+                timeout_seconds=snapshot_timeout_seconds,
+            )
+        except C2StatusEvidenceError as error:
+            error.replica = "primary"
+            raise
         primary_latency_ms = (time.perf_counter() - primary_started) * 1000
         primary_view = primary_response.data
         validate_product_view(product, primary_view)
@@ -699,12 +762,16 @@ async def _query_product_with_quality(
         else:
             validate_replica_views(product, primary_view, secondary_view)
     else:
-        secondary_response = await _strict_snapshot_for_c2(
-            secondary,
-            product=product,
-            requirement=requirement,
-            timeout_seconds=snapshot_timeout_seconds,
-        )
+        try:
+            secondary_response = await _strict_snapshot_for_c2(
+                secondary,
+                product=product,
+                requirement=requirement,
+                timeout_seconds=snapshot_timeout_seconds,
+            )
+        except C2StatusEvidenceError as error:
+            error.replica = "secondary"
+            raise
         secondary_latency_ms = (time.perf_counter() - secondary_started) * 1000
         secondary_view = secondary_response.data
         primary_hash, secondary_hash = validate_replica_views(
@@ -923,9 +990,10 @@ async def _wait_for_live_snapshot_retry(
                 else "a live provider session"
             )
         )
-        raise ContinuityError(
+        raise C2StatusEvidenceError(
             "DATA_STALE",
             f"C2 strict {product.feed.value} retry requires {required_state}",
+            status=status,
         ) from error
     remaining = deadline - time.monotonic()
     if remaining <= 0:

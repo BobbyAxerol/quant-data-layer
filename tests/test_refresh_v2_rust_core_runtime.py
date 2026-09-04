@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from functools import lru_cache
 from pathlib import Path
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -12,9 +13,9 @@ from qdl.runtime.stable_deployment import (
     stable_authority_record,
     write_stable_runtime_bundle,
 )
+from qdl.runtime.execution_l2 import execution_l2_materialization_plan
 from scripts.refresh_v2_rust_core_runtime import (
     CORE_FILES,
-    _HOT_L2_SOURCE_IDS,
     refresh,
 )
 
@@ -24,6 +25,17 @@ CATALOG = ROOT / "config/v2/stable-source-bindings.yaml"
 ACQUISITION = ROOT / "config/v2/stable-acquisition-bindings.yaml"
 OLD_IMAGE = "sha256:" + "a" * 64
 NEW_IMAGE = "sha256:" + "b" * 64
+
+
+@lru_cache(maxsize=1)
+def _execution_l2_source_ids() -> frozenset[str]:
+    catalog = StableSourceCatalog.load(CATALOG)
+    acquisition = StableAcquisitionPlan.load(ACQUISITION, catalog=catalog)
+    return frozenset(execution_l2_materialization_plan(
+        demand_path=ROOT / "config/v2/stable-crypto-demand.yaml",
+        catalog=catalog,
+        acquisition=acquisition,
+    ).source_ids)
 
 
 class RustCoreRuntimeRefreshTests(unittest.TestCase):
@@ -51,7 +63,7 @@ class RustCoreRuntimeRefreshTests(unittest.TestCase):
             payload = json.loads((runtime / name).read_text())
             payload["core"]["dedup_capacity"] = 1_000_000
             for binding in payload["core"]["bindings"]:
-                if binding.get("source_id") in _HOT_L2_SOURCE_IDS:
+                if binding.get("source_id") in _execution_l2_source_ids():
                     binding["l2"].pop("materialized_snapshot_interval_ms", None)
             (runtime / name).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         (runtime / "unrelated.json").write_text('{"untouched":true}\n')
@@ -82,6 +94,10 @@ class RustCoreRuntimeRefreshTests(unittest.TestCase):
             self.assertTrue(result["authority_bytes_preserved"])
             self.assertEqual(len(result["changes"]), 3)
             self.assertTrue(all(item["l2_source_ids"] for item in result["changes"]))
+            self.assertTrue(all(
+                set(item["execution_l2_source_ids"]) == _execution_l2_source_ids()
+                for item in result["changes"]
+            ))
             self.assertTrue(
                 all(
                     item["dedup_capacity"]
@@ -122,7 +138,7 @@ class RustCoreRuntimeRefreshTests(unittest.TestCase):
                         for binding in payload["core"]["bindings"]
                         if binding.get("l2", {}).get("materialized_snapshot_interval_ms") == 1000
                     },
-                    _HOT_L2_SOURCE_IDS,
+                    _execution_l2_source_ids(),
                 )
                 self.assertTrue((root / "state" / "refresh" / "rollback" / name).is_file())
 

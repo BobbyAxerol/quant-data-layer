@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Materialize the declared additive L2 mappings in the active Rust cores.
+"""Materialize declared execution-L2 mappings in the active Rust cores.
 
-This is deliberately narrower than a generic stable-runtime refresh.  It
-updates only the three mounted realtime-core JSON files and only admits the
-six already-declared perpetual BOOK mappings required to complete the
-five-liquid V2 demand scope. Existing binding semantics must remain
-byte-for-byte equivalent; the current catalog revision is deliberately
-materialized for every retained binding so raw/core lineage remains valid.
+This is deliberately narrower than a generic stable-runtime refresh. It
+updates only the three mounted realtime-core JSON files and derives additive
+BOOK bindings from the execution-grade demand contract. Existing binding
+semantics must remain byte-for-byte equivalent; the current catalog revision
+is deliberately materialized for every retained binding so raw/core lineage
+remains valid.
 """
 
 from __future__ import annotations
@@ -33,19 +33,16 @@ from qdl.runtime.stable_deployment import (
     validate_shared_authority_record,
     write_stable_runtime_bundle,
 )
+from qdl.runtime.execution_l2 import (
+    ExecutionL2MaterializationPlan,
+    execution_l2_materialization_plan,
+)
 
 
 CONFIRM = "REFRESH_QDL_V2_L2_CORE_RUNTIME"
 DEFAULT_STATE_ROOT = Path("/home/bobby/.local/state/qdl-v2")
 CORE_FILES = ("core.json", "core-002.json", "core-003.json")
-DECLARED_ADDITIVE_BOOK_SOURCE_IDS = frozenset({
-    "binance-usdm-bnbusdt-book-primary-v2",
-    "binance-usdm-dogeusdt-book-primary-v2",
-    "binance-usdm-solusdt-book-primary-v2",
-    "okx-swap-bnb-usdt-swap-book-primary-v2",
-    "okx-swap-doge-usdt-swap-book-primary-v2",
-    "okx-swap-sol-usdt-swap-book-primary-v2",
-})
+DEFAULT_EXECUTION_DEMAND = ROOT / "config/v2/stable-crypto-demand.yaml"
 _COMMON_METADATA_DRIFT = frozenset({"instrument_catalog_revision"})
 
 
@@ -95,11 +92,9 @@ def _without_catalog_revision(value: Mapping[str, Any]) -> dict[str, Any]:
 def _render_expected(
     *,
     authority: Mapping[str, Any],
-    catalog_path: Path,
-    acquisition_path: Path,
+    catalog: StableSourceCatalog,
+    acquisition: StableAcquisitionPlan,
 ) -> dict[str, dict[str, Any]]:
-    catalog = StableSourceCatalog.load(catalog_path)
-    acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
     with tempfile.TemporaryDirectory(prefix="qdl-l2-core-render-") as raw:
         runtime = Path(raw) / "runtime"
         write_stable_runtime_bundle(
@@ -119,6 +114,7 @@ def _validate_and_render(
     active: Mapping[str, Any],
     expected: Mapping[str, Any],
     file_name: str,
+    execution_l2: ExecutionL2MaterializationPlan,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if active.get("authority") != expected.get("authority"):
         raise ValueError(f"{file_name} changes authority")
@@ -145,15 +141,16 @@ def _validate_and_render(
         if _without_catalog_revision(current) != _without_catalog_revision(generated):
             raise ValueError(f"{file_name} has semantic drift for {source_id}")
 
+    declared_book_source_ids = frozenset(execution_l2.source_ids)
     added_ids = expected_by_id.keys() - active_by_id.keys()
-    if added_ids and added_ids != DECLARED_ADDITIVE_BOOK_SOURCE_IDS:
+    if added_ids and not added_ids.issubset(declared_book_source_ids):
         raise ValueError(
-            f"{file_name} additive BOOK scope differs from the approved declaration: "
+            f"{file_name} additive BOOK scope differs from the execution demand: "
             f"{sorted(added_ids)}"
         )
-    if not DECLARED_ADDITIVE_BOOK_SOURCE_IDS.issubset(expected_by_id):
+    if not declared_book_source_ids.issubset(expected_by_id):
         raise ValueError(f"{file_name} generated BOOK scope is incomplete")
-    if not DECLARED_ADDITIVE_BOOK_SOURCE_IDS.issubset(expected_by_id.keys() | active_by_id.keys()):
+    if not declared_book_source_ids.issubset(expected_by_id.keys() | active_by_id.keys()):
         raise ValueError(f"{file_name} active/generated BOOK scope is incomplete")
     additions = [
         expected_by_id[str(item["source_id"])]
@@ -198,7 +195,7 @@ def _validate_and_render(
         "after_catalog_revisions": sorted({
             int(item["instrument_catalog_revision"]) for item in expected_bindings
         }),
-        "declared_book_source_ids": sorted(DECLARED_ADDITIVE_BOOK_SOURCE_IDS),
+        "declared_book_source_ids": sorted(declared_book_source_ids),
         "added_book_source_ids": sorted(added_ids),
         "added_book_symbols": sorted(str(item["native_symbol"]) for item in additions),
     }
@@ -229,6 +226,7 @@ def refresh(
     apply: bool,
     catalog_path: Path = ROOT / "config/v2/stable-source-bindings.yaml",
     acquisition_path: Path = ROOT / "config/v2/stable-acquisition-bindings.yaml",
+    execution_demand_path: Path = DEFAULT_EXECUTION_DEMAND,
     state_root: Path = DEFAULT_STATE_ROOT,
 ) -> dict[str, Any]:
     runtime_dir = runtime_dir.resolve()
@@ -249,10 +247,17 @@ def refresh(
         validate_shared_authority_record(authority)
     except ValueError as error:
         raise ValueError("active authority is invalid") from error
+    catalog = StableSourceCatalog.load(catalog_path)
+    acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
+    execution_l2 = execution_l2_materialization_plan(
+        demand_path=execution_demand_path,
+        catalog=catalog,
+        acquisition=acquisition,
+    )
     expected_by_file = _render_expected(
         authority=authority,
-        catalog_path=catalog_path,
-        acquisition_path=acquisition_path,
+        catalog=catalog,
+        acquisition=acquisition,
     )
 
     pending: dict[str, tuple[Path, bytes, bytes, int, dict[str, Any]]] = {}
@@ -263,6 +268,7 @@ def refresh(
             active=_read_json(path, field=f"active {file_name}"),
             expected=expected_by_file[file_name],
             file_name=file_name,
+            execution_l2=execution_l2,
         )
         pending[file_name] = (
             path,
@@ -290,6 +296,7 @@ def refresh(
         "runtime_dir": str(runtime_dir),
         "authority_sha256": _sha256(authority_bytes),
         "authority_bytes_preserved": True,
+        "execution_l2": execution_l2.evidence(),
         "files": files,
         "production_mutations": 0 if not apply else len(CORE_FILES),
     }
@@ -327,6 +334,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--execution-demand", type=Path, default=DEFAULT_EXECUTION_DEMAND)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--confirm")
     args = parser.parse_args(argv)
@@ -336,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
         runtime_dir=args.runtime_dir,
         output_dir=args.output_dir,
         apply=args.apply,
+        execution_demand_path=args.execution_demand,
     ), indent=2, sort_keys=True))
     return 0
 

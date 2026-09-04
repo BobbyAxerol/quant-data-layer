@@ -62,6 +62,7 @@ from qdl.certification.phase105_release_observations import compact_view_quality
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from scripts.phase103_consumer_receipt_acceptance import (
+    C2StatusEvidenceError,
     _c2_requirement,
     _certify_product,
     _client,
@@ -100,6 +101,25 @@ class IdentityFiles:
     private_key: str
     jwt_private_key: str
     jwt_key_id: str
+
+
+class C2ProductAcceptanceError(RuntimeError):
+    """One compact, payload-free product failure for an operator C2 receipt."""
+
+    def __init__(self, product: AcceptanceProduct, error: C2StatusEvidenceError) -> None:
+        super().__init__(
+            "Phase 10.5 V2 identity receipt failed "
+            f"consumer={product.consumer_id} instrument={product.instrument_id} "
+            f"feed={product.feed.value} interval={product.interval}"
+        )
+        self.evidence = {
+            "schema": "qdl.phase105.c2-product-failure.v1",
+            "product": product.evidence(),
+            "replica": error.replica or "unknown",
+            "error_code": error.code,
+            "typed_status": error.status_evidence,
+            "payload_recorded": False,
+        }
 
 
 class _C2ConsumerRequestPacer:
@@ -969,6 +989,8 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     stream_open_timeout_seconds=args.opening_timeout_seconds,
                     client_factory=client_factories[product.consumer_id],
                 )
+            except C2StatusEvidenceError as error:
+                raise C2ProductAcceptanceError(product, error) from error
             except Exception as error:
                 raise RuntimeError(
                     "Phase 10.5 V2 identity receipt failed "
@@ -1230,7 +1252,18 @@ def main() -> int:
         raise SystemExit("--opening-timeout-seconds must be between 60 and 1800")
     if not 30.0 <= args.closing_timeout_seconds <= 300.0:
         raise SystemExit("--closing-timeout-seconds must be between 30 and 300")
-    print(json.dumps(asyncio.run(run(args)), sort_keys=True, separators=(",", ":")))
+    try:
+        result = asyncio.run(run(args))
+    except C2ProductAcceptanceError as error:
+        print(json.dumps({
+            "schema": "qdl.phase105.v2-identity-acceptance.v1",
+            "status": "FAIL_TYPED_STATUS",
+            "failure": error.evidence,
+            "order_actions": 0,
+            "payload_recorded": False,
+        }, sort_keys=True, separators=(",", ":")))
+        return 1
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 
 

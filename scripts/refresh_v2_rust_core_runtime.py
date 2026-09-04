@@ -35,17 +35,17 @@ from qdl.runtime.stable_deployment import (
     validate_shared_authority_record,
     write_stable_runtime_bundle,
 )
+from qdl.runtime.execution_l2 import (
+    ExecutionL2MaterializationPlan,
+    execution_l2_materialization_plan,
+)
 
 
 CONFIRM = "REFRESH_QDL_V2_RUST_CORE_RUNTIME"
 DEFAULT_STATE_ROOT = Path("/home/bobby/.local/state/qdl-v2")
 CORE_FILES = ("core.json", "core-002.json", "core-003.json")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
-_HOT_L2_SOURCE_IDS = frozenset({
-    "binance-usdm-ethusdt-book-primary-v2",
-    "okx-swap-eth-usdt-swap-book-primary-v2",
-})
-_HOT_L2_MATERIALIZATION_INTERVAL_MS = 1_000
+DEFAULT_EXECUTION_DEMAND = ROOT / "config/v2/stable-crypto-demand.yaml"
 _PREVIOUS_STABLE_CORE_DEDUP_CAPACITY = 1_000_000
 
 
@@ -119,6 +119,7 @@ def _validate_only_materialized_snapshot_interval(
     expected: Mapping[str, Any],
     *,
     file_name: str,
+    execution_l2: ExecutionL2MaterializationPlan,
 ) -> dict[str, Any]:
     active_without, active_dedup_capacity = _without_bindings_and_dedup_capacity(active)
     expected_without, expected_dedup_capacity = _without_bindings_and_dedup_capacity(expected)
@@ -140,6 +141,7 @@ def _validate_only_materialized_snapshot_interval(
         raise ValueError(f"{file_name} changes binding order or membership")
 
     l2_sources: list[str] = []
+    declared_source_ids = frozenset(execution_l2.source_ids)
     for current, refreshed in zip(before, after, strict=True):
         source_id = str(current["source_id"])
         if current.get("l2") is None:
@@ -164,24 +166,31 @@ def _validate_only_materialized_snapshot_interval(
             raise ValueError(f"{file_name} changes L2 binding fields beyond cadence: {source_id}")
         if old_provider_refresh != new_provider_refresh or new_provider_refresh != 30:
             raise ValueError(f"{file_name} changes provider refresh cadence: {source_id}")
-        if source_id in _HOT_L2_SOURCE_IDS:
+        if source_id in declared_source_ids:
             if (
-                old_materialization not in {None, _HOT_L2_MATERIALIZATION_INTERVAL_MS}
-                or new_materialization != _HOT_L2_MATERIALIZATION_INTERVAL_MS
+                old_materialization not in {
+                    None,
+                    execution_l2.materialized_snapshot_interval_ms,
+                }
+                or new_materialization != execution_l2.materialized_snapshot_interval_ms
             ):
-                raise ValueError(f"{file_name} has invalid hot materialization transition: {source_id}")
-        elif old_materialization is not None or new_materialization is not None:
-            raise ValueError(f"{file_name} changes undeclared materialization cadence: {source_id}")
+                raise ValueError(
+                    f"{file_name} has invalid execution L2 materialization transition: {source_id}"
+                )
+        elif old_materialization != new_materialization:
+            raise ValueError(
+                f"{file_name} changes non-execution L2 materialization cadence: {source_id}"
+            )
         l2_sources.append(source_id)
     if not l2_sources:
         raise ValueError(f"{file_name} has no L2 binding to refresh")
-    if not _HOT_L2_SOURCE_IDS.issubset(l2_sources):
-        raise ValueError(f"{file_name} lacks a declared hot materialization binding")
+    if not declared_source_ids.issubset(l2_sources):
+        raise ValueError(f"{file_name} lacks a declared execution L2 binding")
     return {
         "file": file_name,
         "l2_source_ids": sorted(l2_sources),
-        "materialized_snapshot_interval_ms": _HOT_L2_MATERIALIZATION_INTERVAL_MS,
-        "hot_l2_source_ids": sorted(_HOT_L2_SOURCE_IDS),
+        "materialized_snapshot_interval_ms": execution_l2.materialized_snapshot_interval_ms,
+        "execution_l2_source_ids": sorted(declared_source_ids),
         "dedup_capacity": {
             "before": active_dedup_capacity,
             "after": expected_dedup_capacity,
@@ -192,11 +201,9 @@ def _validate_only_materialized_snapshot_interval(
 def _render_expected(
     *,
     authority: Mapping[str, Any],
-    catalog_path: Path,
-    acquisition_path: Path,
+    catalog: StableSourceCatalog,
+    acquisition: StableAcquisitionPlan,
 ) -> dict[str, bytes]:
-    catalog = StableSourceCatalog.load(catalog_path)
-    acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
     with tempfile.TemporaryDirectory(prefix="qdl-core-runtime-render-") as raw:
         runtime = Path(raw) / "runtime"
         write_stable_runtime_bundle(
@@ -255,6 +262,7 @@ def refresh(
     apply: bool,
     catalog_path: Path = ROOT / "config/v2/stable-source-bindings.yaml",
     acquisition_path: Path = ROOT / "config/v2/stable-acquisition-bindings.yaml",
+    execution_demand_path: Path = DEFAULT_EXECUTION_DEMAND,
     state_root: Path = DEFAULT_STATE_ROOT,
 ) -> dict[str, Any]:
     runtime_dir = runtime_dir.resolve()
@@ -273,11 +281,18 @@ def refresh(
         if output_dir.exists() or state_root not in (output_dir, *output_dir.parents):
             raise ValueError("output directory must be a new private QDL state path")
 
+    catalog = StableSourceCatalog.load(catalog_path)
+    acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
+    execution_l2 = execution_l2_materialization_plan(
+        demand_path=execution_demand_path,
+        catalog=catalog,
+        acquisition=acquisition,
+    )
     authority, authority_bytes = _load_authority(runtime_dir)
     expected_bytes = _render_expected(
         authority=authority,
-        catalog_path=catalog_path,
-        acquisition_path=acquisition_path,
+        catalog=catalog,
+        acquisition=acquisition,
     )
     active_bytes = {name: (runtime_dir / name).read_bytes() for name in CORE_FILES}
     changes = [
@@ -285,6 +300,7 @@ def refresh(
             _read_json(runtime_dir / name, field=f"active {name}"),
             json.loads(expected_bytes[name]),
             file_name=name,
+            execution_l2=execution_l2,
         )
         for name in CORE_FILES
     ]
@@ -303,6 +319,7 @@ def refresh(
         "active_rust_image": active_rust_image,
         "new_rust_image": new_rust_image,
         "image_selector_changed": image_selector_changed,
+        "execution_l2": execution_l2.evidence(),
         "changes": changes,
         "files": {
             name: {"before": _sha256(active_bytes[name]), "after": _sha256(expected_bytes[name])}
@@ -359,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rollout-env", type=Path, required=True)
     parser.add_argument("--active-rust-image", required=True)
     parser.add_argument("--new-rust-image", required=True)
+    parser.add_argument("--execution-demand", type=Path, default=DEFAULT_EXECUTION_DEMAND)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--confirm")
@@ -372,6 +390,7 @@ def main(argv: list[str] | None = None) -> int:
         new_rust_image=args.new_rust_image,
         output_dir=args.output_dir,
         apply=args.apply,
+        execution_demand_path=args.execution_demand,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

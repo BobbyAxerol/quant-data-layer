@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import ANY, AsyncMock, call, patch
 
 from scripts.phase103_consumer_receipt_acceptance import (
+    C2StatusEvidenceError,
     _c2_requirement,
     _certify_product,
     _cursor_directory,
@@ -21,6 +22,7 @@ from scripts.phase103_consumer_receipt_acceptance import (
     _stream_resume,
     _uses_historical_bar_replay,
     _validated_packet,
+    compact_feed_status,
     parser,
 )
 from scripts.phase103_prepare_shared_primary_packet import (
@@ -2121,6 +2123,49 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertEqual(client.snapshot_calls, 1)
             self.assertEqual(client.status_calls, 1)
+
+    async def test_book_snapshot_failure_retains_compact_typed_status_only(self):
+        requirement = DataRequirement(
+            instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+            feed=Feed.BOOK_SNAPSHOT,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=60_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.BOOK_SNAPSHOT)
+        status = self._status(
+            requirement,
+            state="STALE",
+            event_recency_state="STALE",
+            provider_session_state="NOT_APPLICABLE",
+            provider_session_liveness_ms=None,
+            gap_open=True,
+            complete=False,
+            execution_eligible=False,
+        )
+        client = self._Client((DataLayerError("DATA_STALE", "bad book"),), status)
+
+        with self.assertRaises(C2StatusEvidenceError) as raised:
+            await _strict_snapshot_for_c2(
+                client,
+                product=product,
+                requirement=requirement,
+                timeout_seconds=0.25,
+            )
+
+        evidence = raised.exception.status_evidence
+        self.assertEqual(evidence["instrument_uid"], requirement.instrument_uid)
+        self.assertEqual(evidence["feed"], "BOOK_SNAPSHOT")
+        self.assertEqual(evidence["quality"]["state"], "STALE")
+        self.assertTrue(evidence["quality"]["gap_open"])
+        self.assertFalse(evidence["quality"]["complete"])
+        self.assertFalse(evidence["payload_recorded"])
+        self.assertNotIn("levels", repr(evidence))
+
+    def test_compact_feed_status_rejects_untyped_status(self):
+        with self.assertRaisesRegex(ValueError, "instrument identity"):
+            compact_feed_status(SimpleNamespace())
 
     async def test_quiet_connected_trade_retries_but_still_requires_a_fresh_snapshot(self):
         requirement = DataRequirement(

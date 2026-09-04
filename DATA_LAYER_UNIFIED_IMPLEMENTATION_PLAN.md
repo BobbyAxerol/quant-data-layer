@@ -34766,3 +34766,127 @@ available`; Docker image storage changed from `17.21GB` to `10.62GB`.
 BuildKit reports `11.88GB` reclaimable cache, but it is shared/unattributed at
 this point and was deliberately not broadly pruned. Both rolled-back query
 roles remained `healthy`, `restart=0` after cleanup.
+
+### L2 execution-readiness closure (`APPROVED / IN PROGRESS`, 2026-09-04)
+
+**Goal.** Close the real multi-symbol execution-L2 gap revealed by the paced
+C2 receipt, then run exactly one new no-order C2 certificate. The applicable
+source of truth is the declared execution demand, not a manually maintained
+symbol allow-list: every currently active execution-grade `BOOK_SNAPSHOT` /
+`BOOK_DELTA` pair for Binance USD-M and OKX Swap must receive the same shared
+Rust-core verified-view materialization policy. Current intended scope is
+`BTC`, `ETH`, `SOL`, `DOGE`, and `BNB` on both venues, with depth `100`.
+
+**Known defect and invariant.** The active three-core runtime proves that the
+previous refresh tool hard-coded two ETH source IDs. All other active L2 pairs
+therefore fell back to `snapshot_refresh_seconds=30` instead of the declared
+hot materialization cadence. This closure must remove that hard-coded source
+set. Provider bootstrap/renewal remains `30s`; only a *verified, gap-free*
+canonical book view may materialize at the common hot cadence. A duplicate,
+out-of-order frame, gap, resync, unverified sequence, wrong identity, or
+cross-replica divergence must remain non-execution-eligible. No freshness SLA
+may be relaxed and no synthetic book, V1 substitution, per-symbol process, new
+topic, or topology may be used to force a pass.
+
+**Approved scope and rollback.** First run a read-only typed-status matrix for
+the ten active venue/symbol books through both V2 query replicas. The matrix
+must record compact payload-free `state`, event age, provider-session
+liveness, `complete`, `gap_open`, book generation, sequence-verification,
+source sequence, materialization age and watermark/replica identity. Then
+make the runtime compiler manifest-derived, add deterministic Rust/Python
+regressions and make C2 retain that same compact typed status on failure.
+After source gates, regenerate only `core.json`, `core-002.json` and
+`core-003.json`, serially recreate only `rust_core`, `rust_core_2` and
+`rust_core_3`, perform a short real-provider L2 readiness preflight, then run
+one disposable four-identity C2 no-order receipt with its real `300s`
+observation. A nonzero core/preflight/C2 result restores exactly the three
+core JSON files and their existing image selector from the generated rollback
+directory. V1, Kafka topology/offsets, Redis flushes, SQLite deletion,
+ingestors, projectors, query/stream roles, Trading System, alpha runtime,
+signals, sizing and all order paths are excluded.
+
+**Required evidence and exit.** Source tests must cover all ten execution
+books across both replicas for verified ready, quiet-but-connected,
+duplicate, out-of-order, gap/resync and recovery behavior; compiler tests must
+prove adding/removing a declared execution book changes the derived set without
+hard-coded symbols. The real preflight must show both replicas `LIVE`,
+`complete=true`, `gap_open=false`, verified sequence and bounded snapshot age
+for all ten books before C2 starts. C2 then proves the existing final-BAR,
+quote/trade, reference, signed-cursor/reconnect and governed V1 fallback
+behaviors without an order or consumer-state mutation. Only a passing C2 is a
+release-certification exit. Each slice records exact commands, counts, runtime
+image/config hashes, rollback state and cleanup evidence below this entry.
+
+**Source compiler and diagnostic slice (`PASS / RUNTIME PREFLIGHT PENDING`,
+2026-09-04).** Replaced the hand-maintained ETH-only hot-book allow-list in
+both Rust-core refresh tools with `qdl.runtime.execution_l2`, a fail-closed
+join of `stable-crypto-demand.yaml`, catalog and acquisition contracts. It
+derives the ten active execution physical source IDs (`BTC/ETH/SOL/DOGE/BNB`
+on Binance USD-M and OKX Swap) only when each has an exact
+`BOOK_SNAPSHOT`/`BOOK_DELTA` pair, depth `100`, Rust-native contiguous
+acquisition, provider refresh `30s`, and common verified-view materialization
+of `1000ms`. The acquisition configuration now declares that common cadence
+for all ten pairs; provider refresh itself remains unchanged at `30s` and
+ingestors do not gain a per-symbol loop or a new service.
+
+The C2 strict-snapshot harness now attaches bounded, payload-free typed status
+evidence to a non-retryable stale BOOK failure: identity, feed, state, event
+age, provider-session liveness, `complete`, `gap_open`, execution eligibility,
+policy and at most sixteen flags. Phase 10.5 renders that evidence as a compact
+failure JSON with primary/secondary replica attribution; it records no book
+levels/prices, cursor, credentials or market payload.
+
+Source gates actually run inside immutable
+`qdl-v2-python:2.0.12-8ba4165@sha256:bd0163...`, UID/GID `10001`, read-only
+root, `--network none`, no capabilities, no-new-privileges and tmpfs-only
+scratch:
+
+- `tests.test_execution_l2_materialization`,
+  `tests.test_refresh_v2_rust_core_runtime`, and
+  `tests.test_refresh_v2_l2_core_runtime`: **15/15 PASS** in `12.866s`.
+- `StableDeploymentContractTests.test_hot_l2_materialization_is_core_only_and_keeps_provider_refresh`,
+  all `Phase103QuietQuoteRetryTests`, and all
+  `Phase105IdentityAcceptanceTests`: **29/29 PASS** in `1.498s` after one
+  test-fixture correction (`subscription_id`, not a runtime-only binding ID).
+
+The compiler tests prove an incomplete snapshot/delta pair and missing hot
+cadence fail closed; refresh tests prove only the three core JSON files and
+optional existing immutable image selector can change, with exact rollback
+copies. No runtime role, image, provider call, Kafka/Redis/SQLite state, V1,
+Trading System, alpha, signal, sizing or order path has changed. Next approved
+slice: run the new read-only ten-book/two-replica matrix, then only if it
+passes apply/roll exactly `core.json`, `core-002.json`, `core-003.json` and
+`rust_core`, `rust_core_2`, `rust_core_3` before the one C2 receipt.
+
+**Matrix hardening and final source gates (`PASS / RUNTIME PREFLIGHT PENDING`,
+2026-09-04).** `scripts/phase105_execution_l2_status_matrix.py` now derives
+the exact ten physical `BOOK_SNAPSHOT` products from the declared execution
+demand and reads each through both V2 query replicas. Its compact, payload-free
+row records product/replica identity, typed quality state, event age,
+provider-session liveness, `complete`, `gap_open`, execution eligibility,
+verified book generation/native sequence/depth, materialization age and
+durable `watermark_offset`; no levels, prices, quantities, cursor or credential
+is retained. A status-transport failure itself becomes a typed fail-closed row
+instead of an unstructured harness error.
+
+The final source-only Python matrix/regression ran `118/118 PASS` in
+`42.368s` with exit `0`, network disabled, read-only root, UID/GID `10001`, no
+Linux capabilities, no-new-privileges, `1 CPU`, `768MiB` memory and no provider
+or runtime access. The visible BAR/DNSE messages are intentional failure
+fixtures that passed their fail-closed assertions. The Rust workspace library
+suite ran release-mode from a temporary local builder with network disabled,
+`1.5 CPU` and `2GiB` memory; it exited `0`, including Binance/OKX verified
+materialization, gap/resync, duplicate suppression and cross-source isolation.
+One explicitly isolated Redis coordination test remained `ignored` because no
+test Redis URL was supplied. The temporary Rust test container and
+`qdl-l2-rust-test:8bd84de` image were removed immediately after the gate.
+
+**Current decision boundary.** The source is ready to commit. The next and
+only runtime sequence remains exactly: build one immutable Python tool image
+from the committed source; run the ten-book matrix read-only; only on `PASS`,
+regenerate the three existing core JSON files, serially recreate the three
+approved Rust core roles, run the same matrix as the short real-provider
+preflight, then run one C2 no-order observation for `300s`. Any nonzero result
+restores exactly those three core JSON files/image selectors and recreates only
+those three roles. No C2 retry is permitted after a nonzero result without a
+new source diagnosis.

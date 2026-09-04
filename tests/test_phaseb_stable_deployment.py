@@ -1152,34 +1152,35 @@ class StableDeploymentContractTests(unittest.TestCase):
         core = self.acquisition.core_config(
             catalog=self.catalog, authority=self.authority
         )
+        from qdl.runtime.execution_l2 import execution_l2_materialization_plan
+
+        execution_l2 = execution_l2_materialization_plan(
+            demand_path=ROOT / "config/v2/stable-crypto-demand.yaml",
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+        )
         hot = {
-            (item["venue"], item["market"], item["native_symbol"]): item["l2"]
+            item["source_id"]: item["l2"]
             for item in core["core"]["bindings"]
             if item.get("l2", {}).get("materialized_snapshot_interval_ms") == 1_000
         }
-        self.assertEqual(
-            hot,
-            {
-                ("BINANCE", "USDM", "ETHUSDT"): {
-                    "provider_protocol": "BINANCE_DIFF_DEPTH",
-                    "depth_per_side": 100,
-                    "snapshot_refresh_seconds": 30,
-                    "materialized_snapshot_interval_ms": 1_000,
-                },
-                ("OKX", "SWAP", "ETH-USDT-SWAP"): {
-                    "provider_protocol": "OKX_PUBLIC_BOOKS",
-                    "depth_per_side": 100,
-                    "snapshot_refresh_seconds": 30,
-                    "materialized_snapshot_interval_ms": 1_000,
-                },
-            },
-        )
+        self.assertEqual(set(hot), set(execution_l2.source_ids))
+        self.assertEqual(len(hot), 10)
+        self.assertTrue(all(
+            item["depth_per_side"] == 100
+            and item["snapshot_refresh_seconds"] == 30
+            and item["materialized_snapshot_interval_ms"] == 1_000
+            for item in hot.values()
+        ))
         ingestors = self.acquisition.native_ingestor_configs(
             catalog=self.catalog, authority=self.authority
         )
         for config in ingestors.values():
             for binding in config["bindings"]:
-                if binding["native_symbol"] in {"ETHUSDT", "ETH-USDT-SWAP"} and binding["feed"] == "BOOK":
+                if (
+                    binding["subscription_id"] in execution_l2.source_ids
+                    and binding["feed"] == "BOOK"
+                ):
                     self.assertNotIn("materialized_snapshot_interval_ms", binding["l2"])
                     self.assertEqual(binding["l2"]["snapshot_refresh_seconds"], 30)
 

@@ -157,6 +157,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: binance-usdm-bnbusdt-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -170,6 +171,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: binance-usdm-bnbusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -363,6 +365,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: binance-usdm-btcusdt-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -376,6 +379,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: binance-usdm-btcusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -517,6 +521,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: binance-usdm-dogeusdt-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -530,6 +535,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: binance-usdm-dogeusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -879,6 +885,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: binance-usdm-solusdt-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -892,6 +899,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: binance-usdm-solusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -1196,6 +1204,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: okx-swap-bnb-usdt-swap-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1209,6 +1218,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: okx-swap-bnb-usdt-swap-quote
   mode: RUST_NATIVE
   runtime: OKX
@@ -1342,6 +1352,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: okx-swap-btc-usdt-swap-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1355,6 +1366,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: okx-swap-btcusdt-bar-1m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1504,6 +1516,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: okx-swap-doge-usdt-swap-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1517,6 +1530,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: okx-swap-doge-usdt-swap-quote
   mode: RUST_NATIVE
   runtime: OKX
@@ -1814,6 +1828,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: okx-swap-sol-usdt-swap-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1827,6 +1842,7 @@ bindings:
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
 - binding_id: okx-swap-sol-usdt-swap-quote
   mode: RUST_NATIVE
   runtime: OKX

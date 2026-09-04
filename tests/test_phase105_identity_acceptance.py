@@ -10,8 +10,10 @@ from unittest.mock import patch
 
 from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct, DeliveryClass
 from qdl.query import DataRequirement, FeedType, RecoveryPolicy
-from qdl_sdk import Grade
+from qdl_sdk import Feed, FeedStatusResponse, Grade
+from scripts.phase103_consumer_receipt_acceptance import C2StatusEvidenceError
 from scripts.phase105_consumer_v2_identity_acceptance import (
+    C2ProductAcceptanceError,
     _C2ConsumerRequestPacer,
     _PacedQueryTransport,
     _PacedStreamTransport,
@@ -34,6 +36,39 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
 
 
 class Phase105IdentityAcceptanceTests(unittest.TestCase):
+    def test_typed_c2_product_failure_keeps_status_without_market_payload(self) -> None:
+        status = FeedStatusResponse.model_validate({
+            "schema": "qdl.feed-status.v2",
+            "instrument_uid": "book-uid",
+            "feed": "BOOK_SNAPSHOT",
+            "quality": {
+                "state": "GAPPED",
+                "freshness_ms": 12,
+                "event_recency_state": "LIVE",
+                "provider_session_state": "NOT_APPLICABLE",
+                "provider_session_liveness_ms": None,
+                "gap_open": True,
+                "complete": False,
+                "execution_eligible": False,
+                "policy_id": "crypto_liquid_v2",
+                "flags": ["SEQUENCE_GAP"],
+            },
+        })
+        error = C2StatusEvidenceError("DATA_STALE", "strict book rejected", status=status)
+        error.replica = "secondary"
+        product = SimpleNamespace(
+            consumer_id="trading-system.paper.stable",
+            instrument_id="OKX.SWAP.PERPETUAL.SOL-USDT",
+            feed=Feed.BOOK_SNAPSHOT,
+            interval=None,
+            evidence=lambda: {"instrument_uid": "book-uid", "feed": "BOOK_SNAPSHOT"},
+        )
+        failure = C2ProductAcceptanceError(product, error)
+        self.assertEqual(failure.evidence["replica"], "secondary")
+        self.assertEqual(failure.evidence["typed_status"]["quality"]["state"], "GAPPED")
+        self.assertFalse(failure.evidence["payload_recorded"])
+        self.assertNotIn("levels", repr(failure.evidence))
+
     def test_paced_client_factory_wraps_both_c2_transports(self) -> None:
         client = SimpleNamespace(query_transport=object(), stream_transport=object())
         with patch(
