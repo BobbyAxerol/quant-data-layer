@@ -35512,8 +35512,9 @@ next investigation is path/permission-only discovery of an existing active
 external consumer identity. If none exists, do not synthesize a credential or
 retry C2: prepare a separate, explicit trust/keyring extension packet first.
 
-**C2 external-identity recovery packet (`PENDING OWNER RUNTIME APPROVAL`,
-2026-09-04).** Discovery found no recoverable private client material for the
+**C2 external-identity recovery packet (`APPROVED / SOURCE IMPLEMENTATION`,
+2026-09-04).** The owner has authorized completing the remaining release
+closure without another approval round. Discovery found no recoverable private client material for the
 four governed C2 identities: the active query/stream trust volume contains
 server and internal service credentials plus the client-CA bundle, but not
 external client private keys by design; the old host seed paths are only empty
@@ -35538,3 +35539,62 @@ Alpha-OKX diagnostic once and then one full four-identity C2 300-second
 receipt. This packet is necessary because reusing a server/internal identity
 would invalidate the consumer-identity proof; it is intentionally not applied
 without the explicit four-reader trust/keyring approval.
+
+**C2 identity recovery implementation boundary (`IN PROGRESS`, 2026-09-04).**
+The recovery is deliberately an additive credential rotation, not a runtime
+architecture change. Source work may extend the existing external-consumer
+generator so it can issue exactly `monitoring`, `trading-system`,
+`alpha-binance`, and `alpha-okx`; it must preserve support for the historical
+`reference-l2` identity. The new JWT public keys use distinct `*-rs256-v2` key
+IDs bound to the four already-governed SPIFFE subjects, while the five retained
+`*-rs256-v1` public keys stay valid in the reader keyring. The generated client
+CA is appended to the current query/stream trust bundles; existing trust is
+never replaced. Tests must prove: duplicate/unknown role rejection, no CA
+private key retention, exact old-plus-new key/subject map, private material
+absent from public handoff output, and that the historical Reference/L2 packet
+continues to use its unchanged five-key contract.
+
+The following bounded runtime packet is authorized after source gates pass:
+create one fresh `0700` C2 state namespace, retain only four disposable client
+key pairs and compact evidence there, back up the two public trust bundles,
+append the new external CA, then serially recreate only `query_v2_1`,
+`query_v2_2`, `stream_v2_active`, and `stream_v2_passive` with their existing
+images, runtime mounts, ports and aliases plus the additive public JWT overlay.
+Rollback restores the two bundle backups and prior five-key public overlay,
+then recreates the same four reader roles. It does not touch V1, Rust,
+ingestors, BAR edge, projectors, Kafka topology/offsets, Redis, SQLite,
+Trading System, alpha containers, signal/sizing or order paths. Exit is one
+focused Alpha-OKX read-only preflight followed by exactly one four-identity,
+300-second C2 receipt; failures are recorded as terminal evidence rather than
+retried by changing the contract.
+
+**C2 identity recovery source gate (`PASS / FOUR-READER PACKET READY`,
+2026-09-04).** The handoff module now separates the preserved five-key
+Reference/L2 contract from an explicit recovery key map. The recovery compiler
+adds only four versioned public keys (`monitoring`, `trading-system`,
+`alpha-binance`, `alpha-okx`) and retains all five original v1 public keys and
+subjects. `phase105_prepare_external_consumer_extension.sh` now accepts the
+four governed C2 roles, retains historical `reference-l2` support, and builds
+the successor client trust from an operator-supplied current bundle plus one
+new external CA. `phase105_prepare_c2_identity_recovery.py` writes only the
+expanded public key/subject overlay and a hash-only packet; private key paths
+never enter reader environment or repository output.
+
+Source-only evidence used immutable `qdl-v2-python:2.0.12-8343f10`, UID/GID
+`10001`, read-only root and no network: `tests.test_phase105_handoff` **16/16
+PASS** and `tests.test_phaseb_stable_deployment` **27/27 PASS**. The latter
+prints expected negative fixture diagnostics for missing CLI input, bounded
+BAR continuity and DNSE queue exhaustion; its process exit was `0`. A separate
+tmpfs-only generator check issued all four C2 mTLS/JWT identities, preserved a
+two-certificate trust chain and confirmed the generated external CA private
+key was deleted. No runtime, provider, Kafka, Redis, SQLite, V1, Trading
+System, alpha, signal, sizing or order state changed during source gates.
+
+The next bounded operation is now valid: extract public current query/stream
+trust bundles to the new `0700` packet namespace, generate the additive C2
+bundle there, back up then replace only those two public trust files in
+`stable_tls`, and serially recreate the four reader roles with a Compose
+overlay pinned to their currently active images. C2 is not run until those
+reader health/restart/OOM and two-alias checks pass. The recorded rollback is
+the two bundle backups plus removal of the additive public overlay and
+recreation of those same four readers at their recorded image digests.

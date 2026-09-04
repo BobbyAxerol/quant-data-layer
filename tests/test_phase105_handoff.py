@@ -9,12 +9,14 @@ from pathlib import Path
 
 from qdl.certification.phase105_handoff import (
     ALL_KEY_SUBJECTS,
+    RECOVERY_ALL_KEY_SUBJECTS,
     V1_FALLBACK_COMMIT,
     V1_FALLBACK_VERSION,
     active_query_environment_commitment,
     active_runtime_binding,
     handoff_packet,
     load_dotenv,
+    prepare_c2_identity_recovery_environment,
     prepare_handoff_environment,
     public_handoff_overlay,
     render_dotenv,
@@ -23,6 +25,9 @@ from qdl.certification.phase105_handoff import (
     v1_image_attestation,
 )
 from scripts.phase105_prepare_handoff_bundle import main as prepare_handoff_main
+from scripts.phase105_prepare_c2_identity_recovery import (
+    main as prepare_identity_recovery_main,
+)
 
 
 class Phase105HandoffTests(unittest.TestCase):
@@ -33,6 +38,9 @@ class Phase105HandoffTests(unittest.TestCase):
             "QDL_STABLE_JWT_KEYS_JSON": json.dumps({
                 "stable-trading-system-rs256-v1": "-----BEGIN PUBLIC KEY-----\\ntrading\\n-----END PUBLIC KEY-----",
                 "stable-alpha-binance-rs256-v1": "-----BEGIN PUBLIC KEY-----\\nalpha\\n-----END PUBLIC KEY-----",
+                "stable-monitoring-rs256-v1": "-----BEGIN PUBLIC KEY-----\\nmonitoring-jwt/public.pem\\n-----END PUBLIC KEY-----\\n",
+                "stable-alpha-okx-rs256-v1": "-----BEGIN PUBLIC KEY-----\\nalpha-okx-jwt/public.pem\\n-----END PUBLIC KEY-----\\n",
+                "stable-reference-l2-rs256-v1": "-----BEGIN PUBLIC KEY-----\\nreference-l2-jwt/public.pem\\n-----END PUBLIC KEY-----\\n",
             }),
         }
 
@@ -41,6 +49,22 @@ class Phase105HandoffTests(unittest.TestCase):
             "monitoring-jwt/public.pem",
             "alpha-okx-jwt/public.pem",
             "reference-l2-jwt/public.pem",
+        ):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "-----BEGIN PUBLIC KEY-----\\n" + relative + "\\n-----END PUBLIC KEY-----\\n",
+                encoding="utf-8",
+            )
+        (root / "client-ca-bundle.crt").write_text("server-ca\\nexternal-ca\\n", encoding="utf-8")
+        return root
+
+    def _recovery_extension(self, root: Path) -> Path:
+        for relative in (
+            "monitoring-jwt/public.pem",
+            "trading-system-jwt/public.pem",
+            "alpha-binance-jwt/public.pem",
+            "alpha-okx-jwt/public.pem",
         ):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +138,7 @@ class Phase105HandoffTests(unittest.TestCase):
         self.assertEqual(values["QDL_STABLE_JWT_KEYS_JSON"], '{"key":"value"}')
         self.assertEqual(values["QDL_STABLE_RUNTIME_DIR"], "/runtime")
 
-    def test_environment_has_exact_five_key_subject_bindings(self) -> None:
+    def test_environment_has_exact_legacy_key_subject_bindings(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             values = prepare_handoff_environment(
                 self.base,
@@ -125,6 +149,61 @@ class Phase105HandoffTests(unittest.TestCase):
         self.assertEqual(set(json.loads(values["QDL_STABLE_JWT_KEYS_JSON"])), set(ALL_KEY_SUBJECTS))
         self.assertEqual(json.loads(values["QDL_STABLE_JWT_KEY_SUBJECTS_JSON"]), ALL_KEY_SUBJECTS)
         self.assertNotIn("PRIVATE KEY", values["QDL_STABLE_JWT_KEYS_JSON"])
+
+    def test_recovery_environment_adds_only_versioned_c2_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            values = prepare_c2_identity_recovery_environment(
+                self.base,
+                extension_dir=self._recovery_extension(Path(raw)),
+                python_image="sha256:" + "b" * 64,
+            )
+        keyring = json.loads(values["QDL_STABLE_JWT_KEYS_JSON"])
+        self.assertEqual(set(keyring), set(RECOVERY_ALL_KEY_SUBJECTS))
+        self.assertEqual(
+            keyring["stable-trading-system-rs256-v1"],
+            json.loads(self.base["QDL_STABLE_JWT_KEYS_JSON"])["stable-trading-system-rs256-v1"],
+        )
+        self.assertEqual(
+            json.loads(values["QDL_STABLE_JWT_KEY_SUBJECTS_JSON"]),
+            RECOVERY_ALL_KEY_SUBJECTS,
+        )
+
+    def test_identity_recovery_packet_is_public_only_and_additive(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base_path = root / "stable.env"
+            v1_path = root / "v1.json"
+            output = root / "output"
+            base_path.write_text(render_dotenv(self.base), encoding="utf-8")
+            v1_path.write_text(json.dumps({
+                "schema": "qdl.phase105.v1-fallback-provenance.v1",
+                "status": "PASS",
+                "image_id": "sha256:" + "a" * 64,
+                "source_commit": V1_FALLBACK_COMMIT,
+                "source_tree": "b" * 40,
+                "dockerfile_sha256": "c" * 64,
+                "version": V1_FALLBACK_VERSION,
+            }), encoding="utf-8")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                status = prepare_identity_recovery_main([
+                    "--base-env", str(base_path),
+                    "--extension-dir", str(self._recovery_extension(root / "extension")),
+                    "--reader-image", "sha256:" + "d" * 64,
+                    "--v1-provenance", str(v1_path),
+                    "--output-dir", str(output),
+                    "--apply",
+                    "--confirm", "PREPARE_QDL_PHASE105C_IDENTITY_RECOVERY",
+                ])
+            self.assertEqual(status, 0)
+            self.assertEqual((output / "identity-recovery-public.env").stat().st_mode & 0o777, 0o600)
+            packet = json.loads((output / "identity-recovery-packet.json").read_text())
+            self.assertEqual(packet["schema"], "qdl.phase105c.identity-recovery.v1")
+            self.assertEqual(packet["retained_key_ids"], sorted(ALL_KEY_SUBJECTS))
+            self.assertEqual(set(packet["recovery_key_ids"]), set(RECOVERY_ALL_KEY_SUBJECTS) - set(ALL_KEY_SUBJECTS))
+            encoded = (output / "identity-recovery-public.env").read_text()
+            self.assertNotIn("PRIVATE KEY", encoded)
+            self.assertNotIn("PRIVATE KEY", stdout.getvalue())
 
     def test_active_runtime_packet_only_overlays_allowlisted_selectors(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -366,7 +445,11 @@ class Phase105HandoffTests(unittest.TestCase):
         })
         self.assertNotIn("unchanged-secret", json.dumps(overlay, sort_keys=True))
         self.assertEqual(set(verified["verified_keys"]), set(current))
-        current["QDL_DATA_JWT_KEYS_JSON"] = base["QDL_STABLE_JWT_KEYS_JSON"]
+        current["QDL_DATA_JWT_KEYS_JSON"] = json.dumps({
+            key: value
+            for key, value in json.loads(base["QDL_STABLE_JWT_KEYS_JSON"]).items()
+            if key != "stable-reference-l2-rs256-v1"
+        })
         with self.assertRaisesRegex(ValueError, "JWT keyring mismatches public overlay"):
             active_query_environment_commitment(
                 base, current, runtime, json.loads(expected["QDL_STABLE_JWT_KEYS_JSON"])
