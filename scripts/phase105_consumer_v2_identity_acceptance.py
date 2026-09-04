@@ -966,6 +966,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     grpc_target=grpc_target,
                     state_dir=temporary,
                     timeout_seconds=args.timeout_seconds,
+                    stream_open_timeout_seconds=args.opening_timeout_seconds,
                     client_factory=client_factories[product.consumer_id],
                 )
             except Exception as error:

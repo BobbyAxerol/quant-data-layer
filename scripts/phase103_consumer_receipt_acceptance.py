@@ -307,12 +307,56 @@ def _historical_bar_replay_requirement(
     )
 
 
-async def _next_data(session, *, timeout_seconds: float) -> tuple[StreamEvent, list[str]]:
+async def _next_data(
+    session,
+    *,
+    timeout_seconds: float,
+    stream_open_timeout_seconds: float | None = None,
+) -> tuple[StreamEvent, list[str]]:
+    """Read one data frame after a bounded stream-open and event window.
+
+    C2's quota pacer may wait before a lazy SDK stream opens. That local wait
+    is not market-data latency, so it uses the separately bounded opening
+    window. Once the server begins its control handshake, the original data
+    event timeout resumes unchanged.
+    """
+
+    if stream_open_timeout_seconds is None:
+        controls: list[str] = []
+        for _ in range(8):
+            item = await asyncio.wait_for(session.__anext__(), timeout=timeout_seconds)
+            if isinstance(item, ControlEvent):
+                controls.append(item.code)
+                continue
+            if isinstance(item, StreamEvent):
+                return item, controls
+            raise AssertionError("V2 SDK stream emitted an unknown event type")
+        raise AssertionError("V2 SDK stream emitted controls without market data")
+    if stream_open_timeout_seconds <= 0:
+        raise ValueError("stream-open timeout must be positive when declared")
     controls: list[str] = []
+    open_deadline = time.monotonic() + max(
+        timeout_seconds,
+        stream_open_timeout_seconds or timeout_seconds,
+    )
+    event_deadline: float | None = None
     for _ in range(8):
-        item = await asyncio.wait_for(session.__anext__(), timeout=timeout_seconds)
+        deadline = event_deadline if event_deadline is not None else open_deadline
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        item = await asyncio.wait_for(session.__anext__(), timeout=remaining)
         if isinstance(item, ControlEvent):
             controls.append(item.code)
+            if item.code in {"RECONNECTED", "SNAPSHOT_REPLACED"}:
+                # The SDK will lazily open a fresh stream on its next read.
+                event_deadline = None
+                open_deadline = time.monotonic() + max(
+                    timeout_seconds,
+                    stream_open_timeout_seconds or timeout_seconds,
+                )
+            else:
+                event_deadline = time.monotonic() + timeout_seconds
             continue
         if isinstance(item, StreamEvent):
             return item, controls
@@ -324,11 +368,44 @@ async def _next_data_or_timeout(
     session,
     *,
     timeout_seconds: float,
+    stream_open_timeout_seconds: float | None = None,
 ) -> tuple[StreamEvent | None, list[str]]:
-    """Observe one stream without manufacturing data when a continuity feed is quiet."""
+    """Observe one stream without manufacturing data when a continuity feed is quiet.
+
+    The optional opening bound covers only a local C2 quota reservation before
+    the server emits its first handshake control. The original quiet-data
+    timeout begins immediately after that control; a silent or incomplete
+    server handshake therefore remains fail-closed.
+    """
+
+    if stream_open_timeout_seconds is None:
+        controls: list[str] = []
+        deadline = time.monotonic() + timeout_seconds
+        for _ in range(8):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None, controls
+            try:
+                item = await asyncio.wait_for(session.__anext__(), timeout=remaining)
+            except TimeoutError:
+                return None, controls
+            if isinstance(item, ControlEvent):
+                controls.append(item.code)
+                continue
+            if isinstance(item, StreamEvent):
+                return item, controls
+            raise AssertionError("V2 SDK stream emitted an unknown event type")
+        return None, controls
+    if stream_open_timeout_seconds <= 0:
+        raise ValueError("stream-open timeout must be positive when declared")
     controls: list[str] = []
-    deadline = time.monotonic() + timeout_seconds
+    open_deadline = time.monotonic() + max(
+        timeout_seconds,
+        stream_open_timeout_seconds or timeout_seconds,
+    )
+    event_deadline: float | None = None
     for _ in range(8):
+        deadline = event_deadline if event_deadline is not None else open_deadline
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None, controls
@@ -338,6 +415,16 @@ async def _next_data_or_timeout(
             return None, controls
         if isinstance(item, ControlEvent):
             controls.append(item.code)
+            if item.code in {"RECONNECTED", "SNAPSHOT_REPLACED"}:
+                # This is an SDK-local control. Its next read opens a new
+                # paced stream, so restart only the bounded open window.
+                event_deadline = None
+                open_deadline = time.monotonic() + max(
+                    timeout_seconds,
+                    stream_open_timeout_seconds or timeout_seconds,
+                )
+            else:
+                event_deadline = time.monotonic() + timeout_seconds
             continue
         if isinstance(item, StreamEvent):
             return item, controls
@@ -939,6 +1026,7 @@ async def _stream_resume(
     grpc_target: str,
     state_dir: Path,
     timeout_seconds: float,
+    stream_open_timeout_seconds: float | None = None,
     client_factory: Callable[..., AsyncDataLayerClient] | None = None,
 ) -> tuple[int | None, int | None, tuple[str, ...], tuple[str, ...]]:
     if product.delivery is not DeliveryClass.DURABLE:
@@ -975,6 +1063,7 @@ async def _stream_resume(
                         event_timeout_seconds,
                         _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS,
                     ),
+                    stream_open_timeout_seconds=stream_open_timeout_seconds,
                 )
                 if first is None:
                     _require_signed_cursor_controls(first_controls)
@@ -999,6 +1088,7 @@ async def _stream_resume(
                 first, first_controls = await _next_data(
                     session,
                     timeout_seconds=event_timeout_seconds,
+                    stream_open_timeout_seconds=stream_open_timeout_seconds,
                 )
             if not quiet_primary:
                 assert first is not None
@@ -1069,6 +1159,7 @@ async def _stream_resume(
                         event_timeout_seconds,
                         _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS,
                     ),
+                    stream_open_timeout_seconds=stream_open_timeout_seconds,
                 )
                 if observed is None:
                     _require_signed_cursor_controls(observed_controls)
@@ -1129,6 +1220,7 @@ async def _stream_resume(
                             event_timeout_seconds,
                             _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS,
                         ),
+                        stream_open_timeout_seconds=stream_open_timeout_seconds,
                     )
                     if resumed is None:
                         _require_signed_cursor_controls(controls)
@@ -1148,6 +1240,7 @@ async def _stream_resume(
                     resumed, controls = await _next_data(
                         session,
                         timeout_seconds=event_timeout_seconds,
+                        stream_open_timeout_seconds=stream_open_timeout_seconds,
                     )
                 resumed_controls.extend(controls)
                 # This context was opened with `resume_restored_state=True`.
@@ -1205,6 +1298,7 @@ async def _certify_product(
     grpc_target: str,
     state_dir: Path,
     timeout_seconds: float,
+    stream_open_timeout_seconds: float | None = None,
     client_factory: Callable[..., AsyncDataLayerClient] | None = None,
 ) -> dict[str, object]:
     primary = _receipt_client(
@@ -1248,6 +1342,7 @@ async def _certify_product(
         grpc_target=grpc_target,
         state_dir=state_dir,
         timeout_seconds=timeout_seconds,
+        stream_open_timeout_seconds=stream_open_timeout_seconds,
         client_factory=client_factory,
     )
     result = compact_receipt_evidence(

@@ -34597,3 +34597,96 @@ V1, Rust, Kafka, Redis, SQLite, runtime role, Trading System, alpha, signal,
 sizing or order path changed. The next action is exactly one immutable Python
 image from this commit followed by the bounded two-query-role C2 packet; any
 nonzero rolls back only those two roles to the recorded `bd0163...` image.
+
+**C2 execution-fallback candidate and receipt (`FAIL-CLOSED / ROLLED BACK`,
+2026-09-04).** Commit `cde0fff54df28108aa6568178b23856ed6dcbdf8` was built
+once as `qdl-v2-python:2.0.18-cde0fff@sha256:3d21a09314303c1c78d11b272ac09e0456e704af3d54c5f23271e93be2449a83`.
+Its OCI revision/release labels, `qdl:qdl` user and the no-source-mount,
+network-disabled/read-only `138/138` C2/reference/L2/five-liquid/identity
+matrix passed. Only `query_v2_1`, then `query_v2_2`, were serially recreated
+with that digest and each reached `healthy`, `restart=0` before acceptance.
+
+The first disposable client launcher stopped before any bootstrap, identity
+copy or endpoint request because its outer `cap-drop ALL` could not read the
+bind-mounted bootstrap script. This was a harness permission preflight only,
+not a C2 attempt: no C2 output, provider/V1/V2 request, data-plane or order
+action existed. The exact documented outer boundary was then used: root with
+`no-new-privileges` only for bootstrap, followed by mandatory `setpriv` to UID
+`10001` with empty effective/permitted/inheritable/ambient capabilities before
+the C2 program started. The payload-free client security receipt records UID
+`10001`, `CapPrm/Eff=0` and `NoNewPrivs=1`.
+
+The single actual C2 ran for about twelve minutes, self-removed, and exited
+`1` before the 300-second observation with no acceptance JSON. It failed
+closed at the existing signed-cursor no-event handoff requirement for exactly
+`alpha.okx.paper.stable`, `OKX.SWAP.PERPETUAL.DOGE-USDT`, `BAR 1h`:
+`C2 no-event continuity observation did not confirm the signed cursor stream`.
+This is distinct from stream-open quota pacing and the now-blocked V1
+execution fallback; it is not a valid release receipt. Compact failure
+evidence is under
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/recovery-2.0.12-8ba4165-20260903/c2-exec-fallback-blocked-cde0fff-20260904T093057Z/`.
+Per the predeclared nonzero rule, only `query_v2_1`, then `query_v2_2`, were
+serially restored to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`;
+both are `running`, `healthy`, `restart=0`. V1, Rust, Kafka topology/offsets,
+Redis, SQLite, ingestors, projectors, streams, Trading System, alpha, provider
+state and signal/sizing/order paths were not changed.
+
+**Decision boundary:** this C2 closure is not certified and the candidate
+must not be released. The remaining diagnosis is narrowly limited to the
+shared signed-cursor/no-event BAR handoff used by the named OKX `DOGE-USDT`
+`1h` route. Do not relax the cursor requirement, freshness SLA or route policy,
+and do not rerun C2 as a luck-based retry. A source repair, if the read-only
+trace shows one, must retain the existing stream contract and add a direct
+regression for quiet-but-connected `1h` BAR handoff before any new bounded C2
+packet.
+
+**C2 stream-open pacing diagnosis and repair scope (`APPROVED / IN PROGRESS`,
+2026-09-04).** Read-only trace proved that the named DOGE route is not missing
+provider data or signed-cursor server controls. The C2-only stream pacer is
+correctly charging a lazy gRPC `Subscribe` open to the same per-identity quota
+as REST. However, the quiet BAR helper starts its fixed two-second *event*
+observation on the first `__anext__`; that call includes the client-local
+quota wait before the server can emit `REPLAYING` and `LIVE`. The second quiet
+session can therefore time out with an empty control list while waiting for its
+own admitted stream-open slot. This is a C2 harness timing defect introduced
+by the approved quota pacing, not an OKX data or cursor-contract defect.
+
+The repair remains deliberately narrow: C2 will distinguish bounded local
+stream-open scheduling from the existing two-second post-open quiet-event
+window. It will wait only to the existing C2 opening deadline for the first
+server control, then retain the original signed `REPLAYING -> LIVE` requirement
+and original final/current BAR validation. Freshness, provider/session quality,
+cursor semantics, manifest policy, public SDK/runtime contracts and all data
+plane roles remain unchanged. Regression must prove a quota-delayed open can
+receive both controls, a connection that emits one/no control still fails on
+the original post-open bound, and the stream pacer still charges REST plus
+every open/reconnect to one identity quota. Source gates must pass before one
+new immutable Python image and exactly one 300-second C2 retry; the existing
+two-query-role rollback remains unchanged.
+
+**C2 paced-stream-open source gate (`PASS / IMMUTABLE BUILD PENDING`,
+2026-09-04).** The shared receipt helper now accepts an optional C2-only
+`stream_open_timeout_seconds`. With no value, its prior behavior is byte-for-
+byte equivalent: no other receipt path changes. With the C2 value, it permits
+only the bounded local admission wait until the first server response. After
+`REPLAYING` (or any server handshake control), the original event window is
+restarted; a client-local `RECONNECTED` or `SNAPSHOT_REPLACED` opens one new
+bounded admission window for the next lazy subscription. The phase-10.5 C2
+runner supplies its existing global opening budget, which is already bounded
+by the enclosing `900s` opening gate. It does not alter any provider or public
+SDK timeout/SLA.
+
+The isolated source-only regression ran as UID/GID `10001`, read-only,
+network-disabled, capability-free/no-new-privileges with tmpfs scratch:
+`python -m unittest tests.test_phase103_consumer_receipt_harness
+tests.test_phase105_identity_acceptance tests.test_phase105_fallback_acceptance`
+passed `77/77` in `19.588s`. New cases prove a quota-delayed quiet final BAR
+receives `REPLAYING -> LIVE` before the original post-open observation, an
+incomplete `REPLAYING`-only handshake remains rejected before any current read,
+and the phase-10.3 certificate function receives the bounded opening budget.
+Existing C2 stream/REST shared-quota and fail-closed open regressions remain
+green. `git diff --check` passed. No runtime service, image, provider, Kafka,
+Redis, SQLite, V1, Trading System, alpha or order path changed. Next: build one
+immutable Python candidate, run the complete no-source-mount source matrix,
+then serially recreate only the two approved query roles for one C2 retry.

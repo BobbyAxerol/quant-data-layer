@@ -7,10 +7,11 @@ from types import SimpleNamespace
 import tempfile
 import time
 import unittest
-from unittest.mock import ANY, call, patch
+from unittest.mock import ANY, AsyncMock, call, patch
 
 from scripts.phase103_consumer_receipt_acceptance import (
     _c2_requirement,
+    _certify_product,
     _cursor_directory,
     _historical_bar_replay_requirement,
     _replay_precedes_handoff,
@@ -204,6 +205,56 @@ class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
         self.assertIn("docker run --rm --entrypoint sha256sum", runbook)
 
 
+class Phase103C2StreamOpeningTests(unittest.IsolatedAsyncioTestCase):
+    async def test_certify_product_forwards_the_bounded_stream_open_window(self):
+        product = SimpleNamespace()
+        primary = SimpleNamespace(close=AsyncMock())
+        secondary = SimpleNamespace(close=AsyncMock())
+        stream_resume = AsyncMock(return_value=(None, None, (), ()))
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-stream-open-window-") as raw:
+            with (
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._receipt_client",
+                    side_effect=(primary, secondary),
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._query_product_with_quality",
+                    new=AsyncMock(return_value=("a", "b", 1.0, 2.0, {}, None)),
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._stream_resume",
+                    new=stream_resume,
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.compact_receipt_evidence",
+                    return_value={},
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._stream_handoff_mode",
+                    return_value="NOT_APPLICABLE",
+                ),
+            ):
+                await _certify_product(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                    stream_open_timeout_seconds=5.0,
+                )
+
+        stream_resume.assert_awaited_once()
+        self.assertEqual(
+            stream_resume.await_args.kwargs["stream_open_timeout_seconds"],
+            5.0,
+        )
+        primary.close.assert_awaited_once()
+        secondary.close.assert_awaited_once()
+
+
 class Phase103HistoricalBarReplayTests(unittest.TestCase):
     INTERVAL_NS = 15 * 60 * 1_000_000_000
 
@@ -322,13 +373,26 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
     INTERVAL_NS = 15 * 60 * 1_000_000_000
 
     class _Session:
-        def __init__(self, *, warmup, items, quiet: bool = False):
+        def __init__(
+            self,
+            *,
+            warmup,
+            items,
+            quiet: bool = False,
+            first_item_delay_seconds: float = 0.0,
+        ):
             self.warmup = warmup
             self._items = iter(items)
             self._quiet = quiet
+            self._first_item_delay_seconds = first_item_delay_seconds
+            self._first_item_pending = True
             self.acknowledged = []
 
         async def __anext__(self):
+            if self._first_item_pending:
+                self._first_item_pending = False
+                if self._first_item_delay_seconds:
+                    await asyncio.sleep(self._first_item_delay_seconds)
             await asyncio.sleep(0)
             try:
                 return next(self._items)
@@ -719,6 +783,112 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                     grpc_target="stream:8210",
                     state_dir=Path(raw),
                     timeout_seconds=0.01,
+                )
+
+        self.assertEqual(client.snapshot_calls, [])
+
+    async def test_non_execution_quiet_bar_allows_paced_open_before_post_open_window(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(
+            data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))],
+            watermark_offset=38,
+        )
+        controls = (
+            ControlEvent("REPLAYING", "retained BAR replay accepted"),
+            ControlEvent("LIVE", "stream live"),
+        )
+        first_session = self._Session(
+            warmup=seed_warmup,
+            items=controls,
+            quiet=True,
+            first_item_delay_seconds=0.02,
+        )
+        resumed_session = self._Session(
+            warmup=seed_warmup,
+            items=controls,
+            quiet=True,
+            first_item_delay_seconds=0.02,
+        )
+        first_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=first_session,
+            snapshots=(SimpleNamespace(data=SimpleNamespace()),),
+        )
+        resumed_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=resumed_session,
+            snapshots=(SimpleNamespace(data=SimpleNamespace()),),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-paced-quiet-bar-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                    stream_open_timeout_seconds=0.05,
+                )
+
+        self.assertEqual(
+            result,
+            (
+                None,
+                None,
+                ("REPLAYING", "LIVE", "REPLAYING", "LIVE"),
+                ("CURRENT_FINAL_BAR", "CURRENT_FINAL_BAR"),
+            ),
+        )
+
+    async def test_non_execution_quiet_bar_keeps_post_open_control_bound(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(
+            data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))],
+            watermark_offset=38,
+        )
+        client = self._Client(
+            strict_warmup=strict_warmup,
+            session=self._Session(
+                warmup=seed_warmup,
+                items=(ControlEvent("REPLAYING", "accepted"),),
+                quiet=True,
+                first_item_delay_seconds=0.02,
+            ),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-paced-incomplete-controls-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", return_value=client),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                self.assertRaisesRegex(ContinuityError, "signed cursor stream"),
+            ):
+                await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                    stream_open_timeout_seconds=0.05,
                 )
 
         self.assertEqual(client.snapshot_calls, [])
