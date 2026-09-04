@@ -63,6 +63,7 @@ from qdl.runtime.stable_capacity import (
 )
 from qdl.runtime.stable import (
     StableRuntimeConfig,
+    stable_request_bounds,
     stable_grpc_server_credentials,
     stable_uvicorn_tls,
 )
@@ -2527,9 +2528,13 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
                 root / "state" / "session-liveness",
             )
             values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "90"
+            configured = StableRuntimeConfig.from_environment("query_v2", values)
+            self.assertEqual(configured.request_deadline_seconds, 90.0)
+            bounds = stable_request_bounds(configured)
+            self.assertEqual(bounds.request_deadline_seconds, 90.0)
+            self.assertEqual(bounds.max_request_bytes, configured.max_request_bytes)
             self.assertEqual(
-                StableRuntimeConfig.from_environment("query_v2", values).request_deadline_seconds,
-                90.0,
+                bounds.max_concurrent_requests, configured.max_concurrent_requests
             )
             values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "121"
             with self.assertRaisesRegex(ValueError, "request deadline"):

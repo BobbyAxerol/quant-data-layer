@@ -35181,3 +35181,48 @@ matrix using the corrected file-bind client. Only a `PASS` may start the one
 already-approved 300-second four-identity C2 no-order receipt. A non-pass
 returns to the exact five-role rollback above; it does not create another
 phase, image, topology, or retry ceremony.
+
+**Stable stream deadline-propagation repair (`IN PROGRESS / NARROW RELEASE
+BLOCKER`, 2026-09-04).** Read-only runtime inspection found the exact reason
+the inherited projector catch-up intermittently stalls: the active containers
+declare `QDL_STABLE_REQUEST_DEADLINE_SECONDS=90`, and the query application
+propagates that value, but `create_stable_stream_runtime()` constructs its
+`BoundedRequestMiddleware` without `request_deadline_seconds`. The stream
+therefore silently falls back to the `RequestBounds` default of `10s`, emits
+truthful `504 DEADLINE_EXCEEDED` responses while a canonical batch is still
+being durably accepted, and forces projector generation reconnects. This is a
+configuration-propagation bug, not an L2/provider/data-quality defect.
+
+Approved scope is deliberately limited to one shared stable-request-bounds
+constructor, use by the existing query and stream applications, and a
+regression proving a configured `90s` deadline reaches both. No public API,
+schema, deadline value, Kafka topic/offset, Redis/SQLite state, provider,
+Rust role, V1 path, Trading System, alpha, or order path changes. Source gates
+are targeted unit/regression tests in the existing constrained Python image.
+If they pass, build one immutable Python image and serially recreate only
+`stream_v2_active` then `stream_v2_passive`, retaining their exact current
+image/runtime selector as rollback. The projectors continue from their
+committed offsets without reset; after their natural catch-up, rerun one
+ten-book matrix and the already-authorized single C2 no-order receipt. Any
+failure restores only the two Stream roles and does not create a retry image,
+new role, or topology.
+
+**Source gate (`PASS / STREAM ROLLOUT PENDING`, 2026-09-04).**
+`qdl.runtime.stable.stable_request_bounds()` is now the single constructor for
+both the V2 query application and internal stable-stream ingress. It carries
+the configured maximum request bytes, request deadline and concurrency bound,
+so a declared `QDL_STABLE_REQUEST_DEADLINE_SECONDS=90` cannot be applied to
+query while silently omitted from stream. The focused boundary regression and
+the complete stable-edge module passed in the existing immutable Python image
+with network disabled, read-only root, UID/GID `10001`, and tmpfs-only scratch:
+`1/1 PASS` for the direct propagation case and `52 PASS, 1 skipped` in
+`20.670s` for `tests.test_phaseb_stable_edge`. No provider call, runtime role,
+image selector, Kafka/Redis/SQLite state, V1 route, Trading System, alpha or
+order mutation occurred during source verification.
+
+The next bounded mutation is one immutable Python image from this tested
+commit, an exact runtime backup, then serial recreation of only
+`stream_v2_active` and `stream_v2_passive`. Existing projectors keep their
+committed offsets and will naturally drain; no offset reset is valid. Retain
+the currently active Python image as the sole rollback selector until the
+matrix and C2 receipt pass.

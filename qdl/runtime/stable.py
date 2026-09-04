@@ -433,6 +433,15 @@ def stable_uvicorn_tls(config: StableRuntimeConfig) -> dict[str, object]:
     }
 
 
+def stable_request_bounds(config: StableRuntimeConfig) -> RequestBounds:
+    """Keep query and internal stream ingress on one configured deadline."""
+    return RequestBounds(
+        max_request_bytes=config.max_request_bytes,
+        request_deadline_seconds=config.request_deadline_seconds,
+        max_concurrent_requests=config.max_concurrent_requests,
+    )
+
+
 def stable_grpc_server_credentials(
     config: StableRuntimeConfig,
 ) -> grpc.ServerCredentials:
@@ -596,11 +605,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     app = create_v2_app(
         service, identity_service=identity, readiness_service=readiness,
         cursor_issuer=issuer,
-        request_bounds=RequestBounds(
-            max_request_bytes=config.max_request_bytes,
-            request_deadline_seconds=config.request_deadline_seconds,
-            max_concurrent_requests=config.max_concurrent_requests,
-        ),
+        request_bounds=stable_request_bounds(config),
         contract_version="2.0.0", authority="INTERNAL_STABLE",
     )
     app.state.runtime_manifest = config.public_manifest()
@@ -701,10 +706,7 @@ def create_stable_stream_runtime(
     )
     app.add_middleware(
         BoundedRequestMiddleware,
-        bounds=RequestBounds(
-            max_request_bytes=config.max_request_bytes,
-            max_concurrent_requests=config.max_concurrent_requests,
-        ),
+        bounds=stable_request_bounds(config),
     )
     install_stable_health(app, readiness, config.public_manifest())
     install_stable_canonical_ingest(
