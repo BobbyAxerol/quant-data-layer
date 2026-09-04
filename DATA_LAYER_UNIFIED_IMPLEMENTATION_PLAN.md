@@ -34209,6 +34209,25 @@ itself. `git diff --check` passes. Next and only next action is to commit this
 source slice, build one immutable image from its SHA, repeat this exact matrix
 without a source mount, then execute the recorded two-query-role C2 packet.
 
+**C2 stream-open quota pacing immutable-image gate (`PASS / QUERY ROLLOUT
+PENDING`, 2026-09-04).** Immutable candidate
+`qdl-v2-python:2.0.14-a8fdb55@sha256:be78f3b864b44809354a26fa3d9f2e28b49c15f03ff325188cccbc1d1f0eb341`
+was built from source commit `a8fdb5556207888958b97c8383b4baa6fde9752b`.
+OCI revision/version labels match that source and `qdl:qdl` remains the runtime
+user. The same `py_compile` plus six-module C2 matrix ran from the immutable
+image with no source mount, `--network none`, read-only root, UID/GID `10001`,
+no capabilities/no-new-privileges and tmpfs-only bytecode: `127/127 PASS` in
+`15.714s`. No provider, V1, Kafka, Redis, SQLite, runtime service, Trading
+System, alpha, signal, sizing or order path was touched; the test client
+self-removed.
+
+The exact remaining approved action is serial rolling recreate of only
+`query_v2_1` and `query_v2_2` to this digest with unchanged runtime/TLS/state
+mounts, readiness verification after each, then one fresh disposable C2
+four-identity 300-second no-order receipt. A nonzero receipt triggers only the
+named two-query rollback digest in the preceding packet; no second C2 retry or
+scope expansion follows automatically.
+
 **C2 stream-open quota pacing repair (`APPROVED / IN PROGRESS`, 2026-09-04).**
 Owner approved one final narrow closure repair: the existing acceptance-only
 per-identity C2 pacer must govern gRPC stream opens as well as REST reads. The
