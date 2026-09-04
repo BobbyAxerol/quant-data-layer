@@ -34690,3 +34690,29 @@ green. `git diff --check` passed. No runtime service, image, provider, Kafka,
 Redis, SQLite, V1, Trading System, alpha or order path changed. Next: build one
 immutable Python candidate, run the complete no-source-mount source matrix,
 then serially recreate only the two approved query roles for one C2 retry.
+
+**C2 paced-stream-open immutable candidate (`PASS / QUERY-ONLY ROLLOUT
+PENDING`, 2026-09-04).** Commit `7d7f8102f6f59e4e7b7a444c7b26dc9faa65cddd`
+was built once as `qdl-v2-python:2.0.19-7d7f810` with immutable digest
+`sha256:2a087564eb4d442a59e6eff05629934ef221ad0b6b448cfc3c9c110578d88b6f`.
+OCI source revision and release labels match the commit/tag and the process
+user remains `qdl:qdl`. The candidate was exercised without a source mount,
+with network disabled, a read-only root filesystem, UID/GID `10001`, no Linux
+capabilities, `no-new-privileges`, and tmpfs-only scratch. `py_compile` plus
+the C2 receipt harness (`50/50`), identity/fallback suites (`27/27`),
+reference batch (`26/26`), reference-v2 (`16/16`), reference/L2 consumer
+acceptance (`14/14`) and five-liquid handoff (`8/8`) passed: `141/141` total.
+No runtime role, provider request, durable store, V1 route, Trading System,
+alpha, signal, sizing or order path changed during the gate.
+
+**Authorized next action and rollback.** Serially recreate only
+`query_v2_1`, verify `healthy` with `restart=0`, then `query_v2_2` under their
+unchanged runtime, TLS and state mounts using the candidate digest. Run exactly
+one disposable four-identity C2 no-order receipt with its genuine
+`300s` observation. A nonzero receipt restores only those same query roles,
+serially, to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+V1, Rust, Kafka topology/offsets, Redis, SQLite, ingestors, projectors,
+streams, Trading System, alpha and all order/signal/sizing paths remain out of
+scope. Candidate/test-only artifacts will be inventory-cleaned only after this
+single terminal receipt, retaining the active image and named rollback image.
