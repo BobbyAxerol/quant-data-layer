@@ -569,21 +569,26 @@ class V2QueryService:
                 )
             ):
                 refresh_candidates.append(execution.item)
-        refreshed_by_index = {}
-        if refresh_candidates:
-            refreshed = await self.warmup_executor.execute(
-                tuple(refresh_candidates),
-                work=lambda candidate: work(candidate, bypass_cache=True),
-                identity=lambda candidate: candidate[2].cache_key,
-                provider=lambda candidate: candidate[2].instrument.identity.venue,
-                deadline_ms=lambda candidate: candidate[1].deadline_ms,
-            )
-            refreshed_by_index = {
-                execution.item[0]: execution for execution in refreshed
-            }
+        refresh_by_index = {candidate[0]: candidate for candidate in refresh_candidates}
 
         for initial_execution in executions:
-            execution = refreshed_by_index.get(initial_execution.item[0], initial_execution)
+            execution = initial_execution
+            refresh_candidate = refresh_by_index.get(initial_execution.item[0])
+            if refresh_candidate is not None:
+                # A bounded batch refresh can itself make an early MARK/INDEX
+                # result stale before response assembly. Re-read and validate
+                # this exact already-admitted item at its assembly turn instead.
+                # It is still one cache-bypass recovery through the same
+                # provider lane; a second stale result remains fail-closed.
+                execution = (
+                    await self.warmup_executor.execute(
+                        (refresh_candidate,),
+                        work=lambda candidate: work(candidate, bypass_cache=True),
+                        identity=lambda candidate: candidate[2].cache_key,
+                        provider=lambda candidate: candidate[2].instrument.identity.venue,
+                        deadline_ms=lambda candidate: candidate[1].deadline_ms,
+                    )
+                )[0]
             index, requirement, request = execution.item
             if execution.error is not None:
                 retry_after_ms = getattr(execution.error, "retry_after_ms", None)

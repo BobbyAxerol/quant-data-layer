@@ -164,6 +164,28 @@ class AdvanceClockAfterInitialBatchExecutor(BoundedWarmupExecutor):
         return result
 
 
+class AdvanceClockAfterBatchedMarkRefreshExecutor(BoundedWarmupExecutor):
+    """Expose stale response assembly after a multi-item MARK refresh.
+
+    The first two-item execute ages initial snapshots. A legacy second
+    two-item refresh would age both refreshed snapshots before response
+    assembly. Per-item refreshes remain current at their own assembly turn.
+    """
+
+    def __init__(self, *args, clock, adapter, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._test_clock = clock
+        self._test_adapter = adapter
+
+    async def execute(self, items, **kwargs):
+        values = tuple(items)
+        result = await super().execute(values, **kwargs)
+        if len(values) == 2:
+            self._test_clock["ns"] += 2_100_000_000
+            self._test_adapter.observed_at_ns = self._test_clock["ns"]
+        return result
+
+
 class RetryOnceReferenceAdapter(FixtureReferenceAdapter):
     """Deterministic admission pressure without bypassing ReferenceBatch."""
 
@@ -545,6 +567,72 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(result.partial)
         self.assertEqual(adapter.calls, 2)
+
+    async def test_execution_marks_refresh_and_validate_each_item_at_assembly(self):
+        clock = {"ns": NOW_NS}
+        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS)
+        second = record(venue="BINANCE", market="USDM", symbol="ETHUSDT", base="ETH")
+        registry = InstrumentRegistry()
+        registry.register(self.binance, [])
+        registry.register(second, [])
+        execution_grants = EntitlementPolicy((
+            EntitlementGrant(
+                source_id="BINANCE_DIRECT",
+                license_revision="phase113-test",
+                purposes=frozenset({AccessPurpose.INTERNAL_EXECUTION}),
+                products=frozenset({DataProduct.CANONICAL_SNAPSHOT}),
+                valid_from_ns=0,
+            ),
+        ))
+        executor = AdvanceClockAfterBatchedMarkRefreshExecutor(
+            clock=clock,
+            adapter=adapter,
+        )
+        service = V2QueryService(
+            instruments=InstrumentQuery(registry),
+            backend=MemoryMarketDataBackend(),
+            entitlements=execution_grants,
+            warmup_executor=executor,
+            reference_batch=ReferenceBatch(
+                {("BINANCE", "USDM"): adapter},
+                clock_ns=lambda: clock["ns"],
+                monotonic=lambda: 0.0,
+            ),
+            reference_source_id=lambda _item: "BINANCE_DIRECT",
+            clock_ns=lambda: clock["ns"],
+        )
+
+        def mark_requirement(instrument_uid: str) -> ReferenceDataRequirement:
+            return ReferenceDataRequirement(
+                instrument_uid=instrument_uid,
+                product=ReferenceProduct.MARK_INDEX_PRICE,
+                consumer_grade=ConsumerGrade.EXECUTION,
+                source_policy_id="crypto_liquid_v2",
+                limit=1,
+                page_size=1,
+                max_pages=1,
+                max_freshness_ms=2_000,
+            )
+
+        result = await service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "phase113-execution",
+                (
+                    mark_requirement(self.binance.instrument_uid),
+                    mark_requirement(second.instrument_uid),
+                ),
+                require_all=False,
+            ),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+
+        self.assertFalse(result.partial)
+        self.assertEqual(adapter.calls, 4)
+        self.assertTrue(all(item.problem is None for item in result.results))
+        self.assertEqual(
+            [item.result.request.instrument.instrument_uid for item in result.results],
+            [self.binance.instrument_uid, second.instrument_uid],
+        )
 
     async def test_shared_execution_mark_refresh_uses_one_provider_call(self):
         clock = {"ns": NOW_NS}

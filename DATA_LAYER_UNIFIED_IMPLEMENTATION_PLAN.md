@@ -34285,3 +34285,68 @@ the blast radius. Retain only the active candidate plus named rollback image;
 remove the self-removed C2 client and any unattached candidate after a failed
 receipt, record pre/post Docker disk evidence, and do not broad-prune shared
 BuildKit cache.
+
+**C2 stream-pacing receipt and bounded MARK/INDEX assembly correction (`IN
+PROGRESS / SAME CLOSURE`, 2026-09-04).** The first real receipt using the
+stream-paced candidate reached authenticated V2 reads and the disposable child
+correctly ran as UID `10001` with no effective/inheritable/ambient capability
+and `NoNewPrivs=1`. It failed before the 300-second observation on Binance
+USD-M `DOGEUSDT` `MARK_INDEX_PRICE`: the typed result was `DATA_STALE` because
+the final batch assembly evaluated a refreshed mark snapshot after other
+refresh work had completed. Direct bounded read-only Binance observations
+showed provider timestamps 0--18ms old, so this is neither provider staleness
+nor a reason to relax the declared 2-second SLA.
+
+The approved closure repair remains narrow and does not create a new phase:
+for an already-admitted, non-history `MARK_INDEX_PRICE` item that needs the
+existing one cache-bypass recovery, execute and validate that exact item at its
+own response-assembly turn. It remains on the existing bounded executor and
+same venue/provider lane, is still allowed exactly one recovery read, and a
+second stale/error result remains fail-closed. This prevents a fresh DOGE mark
+from aging behind unrelated MARK refresh candidates without changing cache TTL,
+provider admission, public API/SDK contracts, quota policy, V1 fallback,
+Rust, Kafka, Redis, SQLite, manifests, topology or any order path.
+
+**Required correction tests and exit:** add a deterministic multi-symbol MARK
+batch regression which advances the test clock between refresh candidates and
+proves every response is validated immediately after its own re-read; retain
+the existing stale-to-current, stale-to-stale, non-MARK no-retry, shared
+singleflight and identity/stream-quota cases. Run the focused six-module
+isolated matrix and `py_compile` with network disabled before one replacement
+immutable image. The only runtime action remains the already-approved serial
+two-query-role rollout and one fresh C2 receipt. A nonzero receipt rolls back
+only `query_v2_1` and `query_v2_2` to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+
+**C2 MARK/INDEX assembly source gate (`PASS / REPLACEMENT IMAGE PENDING`,
+2026-09-04).** `V2QueryService.reference_data_batch_async()` no longer submits
+all stale MARK/INDEX recoveries as one second batch. It first identifies only
+the existing eligible one-read candidates, then at each candidate's response
+assembly turn submits that exact item through the same bounded executor with
+`bypass_cache=True` and validates it immediately. This keeps provider token
+budgeting, venue isolation, request identity, result ordering and the exact
+one-refresh limit intact. A second stale/error result is still returned as its
+typed terminal problem; history and all non-MARK products retain the old path.
+
+The new deterministic two-symbol regression models the failure exactly: both
+initial marks age after initial work, while a legacy two-item refresh would age
+again before response assembly. Per-item refresh/validation returns two current
+results in request order after four provider calls; the legacy grouped form
+would fail `DATA_STALE`. Focused test first passed `16/16` in `0.319s`; the
+complete isolated source matrix then passed `128/128` in `16.198s` after
+`py_compile` of the query service and C2 source/tests. Both runs used the
+existing immutable dependency image, source mounted read-only, `--network
+none`, read-only root, UID/GID `10001`, no Linux capabilities,
+no-new-privileges and tmpfs-only bytecode/cache state. The launch explicitly
+preserved `/opt/venv/bin` rather than invoking login-shell PATH reset. No
+provider, V1, Kafka, Redis, SQLite, service, Trading System, alpha, signal,
+sizing or order mutation occurred; disposable test containers removed
+themselves. `git diff --check` passes.
+
+**Next exact action:** commit this tested source-and-journal slice, build one
+replacement immutable Python image from that commit, repeat the same 128-case
+matrix with no source mount, then use the already-approved serial two-query
+rollout and exactly one fresh C2 300-second receipt. The prior unattached
+`2.0.14-a8fdb55` image remains test-only and will be removed after the
+replacement source/image evidence is captured; no broad cache prune is in
+scope.
