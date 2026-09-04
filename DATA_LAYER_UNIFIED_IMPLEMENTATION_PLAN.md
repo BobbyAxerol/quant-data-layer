@@ -34124,3 +34124,61 @@ Kafka offsets/topology, Redis, SQLite, ingestors, projectors, stream roles,
 Trading System, alpha and all order paths remain untouched. This packet is the
 remaining certification gate before release; no SLA relaxation or retry loop is
 permitted.
+
+**MARK_INDEX_PRICE bounded recovery runtime packet (`APPROVED / APPLIED`,
+2026-09-04).** Owner approved exactly the preceding packet: build one immutable
+Python image from source commit `f5b14f141a5a36abee7ddda543b274f3feccb4bf`,
+rolling-recreate only `query_v2_1` then `query_v2_2` with their existing
+runtime/TLS/state mounts, and run one C2 no-order receipt with a true
+300-second observation. The only authorized rollback is those two query roles
+to `sha256:bd0163fd76b0...`. No V1 role, Rust core, Kafka topology/offset,
+Redis, SQLite, ingestor, projector, stream role, Trading System, alpha or
+order/signal/sizing path is in this blast radius. A passing receipt permits
+release certification; a failing receipt triggers the declared two-role
+rollback and remains fail-closed. After either terminal result, remove only
+the disposable C2 client and test-only build artifacts not retained as the
+named active/rollback image set, then record pre/post disk evidence.
+
+**MARK_INDEX_PRICE bounded recovery rollout and C2 exit (`SOURCE PASS /
+RUNTIME NOT CERTIFIED`, 2026-09-04).** Immutable Python image
+`qdl-v2-python:2.0.13-f5b14f1@sha256:55a63fb82381829c7089075c64a1276f5fa865f8a7031a5930acc2054aa23a42`
+was built from exactly `f5b14f141a5a36abee7ddda543b274f3feccb4bf`; OCI
+revision/version and non-root `qdl:qdl` user were verified. Its no-source-mount,
+read-only, network-disabled `py_compile` plus four-module regression matrix
+passed `62/62` in `5.849s`.
+
+Only `query_v2_1` then `query_v2_2` were rolling-recreated to that image after
+Compose preflight; each reached `healthy`, `restart=0`. Two disposable launcher
+preflights stopped before an endpoint request: the first copied a non-secret
+runner at mode `0700`, and the second lacked the read-only `/runtime` authority
+mount. A fresh namespace corrected only those launch mechanics (`0755` public
+runner and the existing `/runtime` read-only mount); it dropped to UID `10001`
+with no effective/inheritable/ambient capability and `NoNewPrivs=1`.
+
+That third receipt reached real V2 reads but stopped fail-closed before the
+300-second observation and before an acceptance JSON could be emitted. The
+exact typed cause is `RESOURCE_EXHAUSTED: consumer request quota is exhausted`
+while the C2 harness opens `alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL
+DOGE-USDT / BOOK_SNAPSHOT`. This is not a `MARK_INDEX_PRICE`, DOGE catalog,
+provider freshness, V1 fallback, Rust, Kafka or data-materialization defect.
+It exposes a harness correctness gap: the C2 pacer bounds query REST requests
+but does not pace its own concurrent gRPC stream opens against the same
+per-identity quota. No SLA was relaxed and no synthetic/provider-direct data
+was used. The disposable client has no Docker socket, Gateway/Risk, broker,
+signal, sizing or order authority; only its approved bounded V2 query/stream
+and normal quota/audit activity occurred.
+
+Per the approved nonzero exit rule, only `query_v2_1` then `query_v2_2` were
+rolled back to `sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+Both are now `running`, `healthy`, `restart=0`. V1, Rust cores, Kafka
+topology/offsets, Redis data, SQLite, ingestors, projectors, stream roles,
+Trading System, alpha and order paths were not recreated or changed. All C2
+containers self-removed. The unattached candidate image was removed exactly;
+Docker images returned from `11.5GB` to the pre-packet `10.84GB`.
+BuildKit cache is `9.049GB` (`6.106GB` reclaimable), shared and intentionally
+not broadly pruned without a separate approval. The compact three receipt
+namespaces are retained as failure evidence; they contain no copied secret
+material. The narrow next source scope, if approved, is to apply the existing
+per-identity C2 quota pacer to stream-open scheduling, add quota/stream
+regressions, then build one replacement image and run exactly one fresh C2.
+Release remains blocked until that single receipt reaches `300s` and passes.
