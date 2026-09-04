@@ -34716,3 +34716,53 @@ V1, Rust, Kafka topology/offsets, Redis, SQLite, ingestors, projectors,
 streams, Trading System, alpha and all order/signal/sizing paths remain out of
 scope. Candidate/test-only artifacts will be inventory-cleaned only after this
 single terminal receipt, retaining the active image and named rollback image.
+
+**C2 paced-stream-open runtime receipt (`FAIL-CLOSED / ROLLED BACK`,
+2026-09-04).** Two launcher-only preflights stopped before the C2 program:
+the immutable image's declared non-root user needed an explicit root bootstrap,
+and the next launch mounted the recovery subdirectory rather than the existing
+read-only `qdl-v2` state root. Neither preflight copied identities, opened an
+endpoint, created C2 output, or consumed the approved receipt. The clean third
+launcher used root only for the established tmpfs copy/bootstrap and then
+executed the client as UID `10001`, with empty effective/permitted/inheritable
+and ambient capabilities and `NoNewPrivs=1`.
+
+The one actual disposable C2 client then exited nonzero before its true
+`300s` observation. It had already passed the repaired paced stream-open path;
+the terminal, unrelated fail-closed condition was
+`alpha.okx.paper.stable / OKX.SWAP.PERPETUAL.SOL-USDT / BOOK_SNAPSHOT`: the
+secondary V2 read could not prove a current complete, gap-free snapshot inside
+the declared freshness policy. The client wrote no acceptance receipt, had no
+order/provider credential, Docker socket, Kafka/Redis/SQLite mount or
+Gateway/Risk/alpha authority, and self-removed. Compact payload-free evidence
+is retained under
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/recovery-2.0.12-8ba4165-20260903/c2-paced-open-7d7f810-r3-sQFo1t/`.
+
+Per the approved nonzero rule, only `query_v2_1`, then `query_v2_2`, were
+restored serially to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+Both are `running`, `healthy`, `restart=0`. V1, Rust, Kafka topology/offsets,
+Redis, SQLite, ingestors, projectors, streams, Trading System, alpha, market
+data, signals, sizing and order paths were unchanged.
+
+**Decision boundary.** The C2 pace repair is source-tested, but this receipt
+does not certify release. The SOL L2 completeness/freshness failure is outside
+the approved C2 scheduling scope and must be separately diagnosed and repaired
+at the shared L2 materialization/quality boundary with a targeted regression
+before any new C2 packet. Do not relax freshness/completeness, silently fall
+back, or rerun C2 as a luck-based retry. The unused candidate and builder may
+be removed after their hashes/evidence are retained; scoped failure evidence
+and the active named rollback image remain.
+
+**Scoped artifact cleanup (`COMPLETE`, 2026-09-04).** After the terminal
+receipt and rollback verification, only unused Data Layer test/candidate images
+were removed: `qdl-v2-python:2.0.13-f2e5654` through
+`qdl-v2-python:2.0.19-7d7f810`, plus
+`qdl-v2-builder:c2-strict-mark-test`. The active
+`qdl-v2-python:2.0.12-8ba4165@sha256:bd0163...` rollback/runtime image,
+running containers, volumes, networks and compact evidence directories remain.
+Root disk changed from `164G used / 126G available` to `160G used / 130G
+available`; Docker image storage changed from `17.21GB` to `10.62GB`.
+BuildKit reports `11.88GB` reclaimable cache, but it is shared/unattributed at
+this point and was deliberately not broadly pruned. Both rolled-back query
+roles remained `healthy`, `restart=0` after cleanup.
