@@ -35598,3 +35598,68 @@ overlay pinned to their currently active images. C2 is not run until those
 reader health/restart/OOM and two-alias checks pass. The recorded rollback is
 the two bundle backups plus removal of the additive public overlay and
 recreation of those same four readers at their recorded image digests.
+
+**C2 identity recovery runtime (`APPROVED / EXECUTING`, 2026-09-04).** The
+owner explicitly approved the additive trust/keyring handoff. The bounded
+runtime packet is
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/c2-identity-recovery-20260904T180000Z`.
+The operation is limited to appending its generated external CA to the
+existing `query` and `stream` public client trust bundles in
+`qdl_v2_stable_candidate_stable_tls`, then serially recreating exactly
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, and `stream_v2_passive` with
+the packet's additive public JWT keyring and each role's already-recorded
+immutable image/runtime mounts. The prior bundle digests and PEM counts are
+recorded in the packet before mutation. Rollback restores those two exact
+bundle backups, removes the additive overlay, and recreates only the same
+four readers. V1, Rust, ingestors, BAR edge, projectors, Kafka topology and
+offsets, Redis, SQLite, Trading System, alpha and order paths are excluded.
+
+The first bounded command verified both pre-mutation bundles against their
+packet backups and copied the additive four-certificate bundle into exactly
+the `query` and `stream` trust paths. Its final shell-only hash assertion
+used an invalid nested `awk` escape and exited before any reader recreate;
+the resulting partial state is therefore `trust append applied / reader
+rolling pending`, with four certificates present. The verification command
+will be rerun with a simpler hash extraction before the four-reader rollout;
+no broader retry or scope change is permitted.
+
+**C2 identity recovery runtime evidence (`FOCUSED PREFLIGHT SKIPPED / FULL C2
+AUTHORIZED`, 2026-09-04).** The four readers were then recreated serially and
+passed health, restart, OOM, alias, bundle and additive-key checks. Two
+disposable Alpha-OKX-only launcher attempts stopped before endpoint access:
+the first could not traverse the protected packet directory; the corrected
+launcher reached the acceptance program but its optional `--consumer-id`
+subset exposed an existing harness invariant requiring the complete four
+consumer fallback scope. A third launcher reached the same boundary after
+metadata staging and confirmed the failure is harness scope validation, not
+provider/auth/data/runtime behavior. These attempts recorded only compact
+exit/error evidence and made no endpoint, provider, order or durable-state
+mutation. Per the fixed C2 contract, the subset diagnostic is not retried or
+expanded; the next and only acceptance operation is the complete four-identity
+no-order C2 with a real `300s` observation, which exercises Alpha-OKX together
+with the other governed consumers.
+
+**C2 identity recovery runtime exit (`FAIL-CLOSED / RELEASE BLOCKED`,
+2026-09-04).** The approved reader rollout completed: both public trust
+bundles changed from the recorded SHA
+`931e12cf2d2b63ea0cc46d148d24ca74972ae909e9293f456984338be84c199a` to
+`441af36962b83608e1d0f336dab1822a761d136b104589a4c421af6cef34e874`, each
+with four certificates; all four readers are healthy, `restart=0`,
+`OOMKilled=false`, use their recorded images, resolve both stable stream
+aliases, and expose the retained five plus additive four public JWT IDs.
+The V1/Rust/ingestor/BAR-edge/projector/Kafka/Redis/SQLite/Trading-System/
+alpha/order exclusions were preserved.
+
+The one full four-identity C2 invocation then stopped before the observation
+window and produced no receipt. Its compact terminal error is
+`BASIS / SOURCE_UNAVAILABLE`: the Binance native-basis query lane could not
+obtain Rust provider admission. Read-only runtime inspection confirmed the
+query is bound to `http://rust_core:8300`, while all three unchanged Rust core
+roles currently declare `QDL_PROVIDER_ADMISSION_ENABLED=false`; no provider
+connection, order action, signal/sizing mutation or durable-state mutation
+occurred. This is a real runtime configuration blocker, not a trust or C2
+launcher defect. No C2 retry, fallback widening, Rust recreate or release
+publication is allowed under this packet. The next permitted packet must
+explicitly enable/verify the existing Rust admission lane (or remove the
+native BASIS product from the certified consumer manifest through a separate
+decision), then run one fresh complete C2 `300s` receipt.
