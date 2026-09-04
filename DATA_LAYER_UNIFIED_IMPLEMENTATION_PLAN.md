@@ -34916,3 +34916,88 @@ Only `PASS` permits exactly one C2 no-order `300s` receipt. A matrix/C2 failure
 again restores the three JSON files and retains the actual immutable `d86f0e...`
 binary selector; no C2 retry or SLA relaxation is allowed without a new source
 diagnosis.
+
+**C2 closing-read diagnosis and bounded repair (`APPROVED / IN PROGRESS`,
+2026-09-04).** The post-preflight matrix completed `10/10` execution books on
+both query replicas after the declared `40s` Rust-book bootstrap bound. The
+single disposable C2 then failed before writing its receipt inside closing
+`warmup:batch` with an HTTP read timeout. This is not an L2 quality failure:
+the C2 scope has `299` V2-primary products, including `150` durable/pass-through
+BAR products. The opening proof already reads each bounded BAR history and
+proves signed cursor/reconnect. Closing incorrectly rebuilt the same
+`_c2_requirement` for every BAR (`min(manifest rows, 700, retained capacity)`)
+and sent those histories concurrently to both replicas for all four identities.
+That turns a current-state closing check into a large duplicate history transfer
+and can exceed the unchanged per-request `15s` transport deadline.
+
+The final approved core attempt did wait the deterministic `40s`: its
+ten-book/two-replica matrix passed `10/10` before the one actual C2 client
+started. C2 then reached closing revalidation and exited on that unwrapped
+`httpx.ReadTimeout`; it produced no acceptance receipt and is not a
+certificate. The exact three core JSON files were restored from the generated
+rollback directory and the three cores were recreated serially with the
+unchanged `d86f0e...` image selector. This returned the runtime to its prior
+baseline without touching V1, query/stream, Kafka/Redis/SQLite, Trading
+System, alpha or order state.
+
+The approved repair is limited to the C2 harness, not the public SDK/query
+contract: opening warmup, signed cursor, reconnect, full history/finality and
+all manifest policy remain unchanged. Closing retains the exact product
+identity, grade, source policy, interval, freshness/session/gap/finality,
+coverage, recovery and deadline fields, but requests exactly one final BAR row
+for BAR products. It continues to use `require_all=true`, validates that row
+strictly, and requires exact final-BAR content parity between the two replicas.
+Non-BAR closing reads retain their existing current-view semantics. The patch
+must also convert a closing batch transport failure into compact payload-free
+typed evidence (consumer, replica, batch identity digest/count and bounded
+feed-status observations); it must never record a price, level, quantity,
+cursor, credential or raw provider payload.
+
+**Exit / rollback.** Add deterministic regressions for one-row-only closing
+BAR requests, preserved public/full opening requirements, strict final-BAR
+parity, and compact timeout evidence. Run the existing source-only C2/L2
+matrix under the constrained immutable image. No query/core/ingestor/runtime
+service is changed by this harness repair. Only after those source gates pass,
+reapply the already-approved three core JSON files, serially recreate only
+`rust_core`, `rust_core_2` and `rust_core_3`, wait the documented `40s`, rerun
+the ten-book matrix, and consume exactly one new `300s` C2 receipt. Any
+nonzero result restores only those three core JSON files and core roles; V1,
+Kafka offsets/topology, Redis, SQLite, ingestors, projectors, query/stream,
+Trading System, alpha and every order path remain excluded.
+
+**C2 closing-read source gate (`PASS / RUNTIME C2 CANDIDATE PENDING`,
+2026-09-04).** The harness now derives a separate closing requirement. For a
+BAR it retains the exact manifested identity, grade, source policy, interval,
+freshness/session/gap/finality/coverage/recovery controls and all warmup
+deadline/cache fields, while changing only the history horizon to one final
+row. Both supported SDK representations are covered: an explicit
+`WarmupSpecification(rows=N)` and the equivalent `warmup_limit=N` form. The
+opening C2 proof remains unchanged at its bounded historical window and signed
+cursor/reconnect proof; closing compares the one final BAR's canonical content
+across both replicas. A failed closing transport batch now emits
+`qdl.phase105.c2-closing-batch-failure.v1` with a batch identity digest/count
+and at most one payload-free typed status per feed. It never records market
+payload, levels, prices, quantities, cursors or secrets.
+
+The real sealed scope was compiled source-only: `234` durable/pass-through
+stream products, including `150` BAR products, all resulting in exactly
+`rows=1` with `require_final_bars=true` and `require_full_coverage=true`.
+The constrained immutable tool image
+`qdl-v2-python:2.0.12-1d0110e-l2-tool`, with the candidate source mounted
+read-only, ran the execution-L2, C2 receipt,
+consumer/route/fallback, reference/L2, universe and core-refresh regression
+matrix: **`175/175 PASS` in `78.422s`**, network disabled, read-only root,
+UID/GID `1001`, no Linux capabilities, `1 CPU`, `768MiB`, tmpfs-only scratch
+and no runtime/provider access. No runtime role, image selector, provider
+session, Kafka/Redis/SQLite/V1 state, Trading System, alpha, signal, sizing or
+order path changed by this source gate.
+
+**Next exact packet.** Build one immutable Python C2-client image from this
+source revision, apply the already-reviewed manifest-derived materialization to
+only `core.json`, `core-002.json`, `core-003.json`, serially recreate only the
+three existing Rust cores, wait `40s`, and require the ten-book/two-replica
+matrix to pass. Then run exactly one disposable four-identity no-order C2 with
+its full `300s` observation. Any nonzero result restores the three core JSON
+files/core roles; the Python candidate is test-only and does not alter query
+or stream roles. Cleanup retains only the active image set and named rollback
+image after the terminal result.

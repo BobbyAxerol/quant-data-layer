@@ -4,22 +4,32 @@ import json
 import tempfile
 import unittest
 import asyncio
+import httpx
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct, DeliveryClass
 from qdl.query import DataRequirement, FeedType, RecoveryPolicy
-from qdl_sdk import Feed, FeedStatusResponse, Grade
+from qdl_sdk import (
+    DataRequirement as SdkDataRequirement,
+    Feed,
+    FeedStatusResponse,
+    Grade,
+    WarmupSpecification as SdkWarmupSpecification,
+)
 from scripts.phase103_consumer_receipt_acceptance import C2StatusEvidenceError
 from scripts.phase105_consumer_v2_identity_acceptance import (
     C2ProductAcceptanceError,
+    C2ClosingBatchError,
     _C2ConsumerRequestPacer,
     _PacedQueryTransport,
     _PacedStreamTransport,
     IDENTITY_PREFIXES,
     _authority,
     _closing_batch_revalidation,
+    _closing_requirement,
     _c2_grpc_targets,
     _consumer_ids,
     _identity_files,
@@ -68,6 +78,56 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
         self.assertEqual(failure.evidence["typed_status"]["quality"]["state"], "GAPPED")
         self.assertFalse(failure.evidence["payload_recorded"])
         self.assertNotIn("levels", repr(failure.evidence))
+
+    def test_closing_bar_requirement_keeps_policy_and_reduces_only_history_rows(self) -> None:
+        requirement = SdkDataRequirement(
+            instrument_uid="bar-uid",
+            feed=Feed.BAR,
+            consumer_grade=Grade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            interval="15m",
+            warmup_limit=700,
+            max_freshness_ms=5_000,
+            max_session_liveness_ms=8_000,
+            require_full_coverage=True,
+            require_final_bars=True,
+            warmup=SdkWarmupSpecification(
+                rows=700,
+                deadline_ms=9_000,
+                max_cache_age_ms=7_000,
+            ),
+        )
+        product = SimpleNamespace()
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.sdk_requirement",
+            return_value=requirement,
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._c2_requirement",
+            side_effect=lambda value: value,
+        ):
+            closing = _closing_requirement(product)
+        self.assertEqual(requirement.warmup_limit, 700)
+        self.assertEqual(requirement.warmup.rows, 700)
+        self.assertEqual(closing.warmup_limit, 1)
+        self.assertEqual(closing.warmup.rows, 1)
+        self.assertEqual(closing.max_freshness_ms, requirement.max_freshness_ms)
+        self.assertEqual(closing.max_session_liveness_ms, requirement.max_session_liveness_ms)
+        self.assertEqual(closing.require_full_coverage, requirement.require_full_coverage)
+        self.assertEqual(closing.require_final_bars, requirement.require_final_bars)
+        self.assertEqual(closing.warmup.deadline_ms, requirement.warmup.deadline_ms)
+        self.assertEqual(closing.warmup.max_cache_age_ms, requirement.warmup.max_cache_age_ms)
+
+        limit_only = replace(requirement, warmup=None)
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.sdk_requirement",
+            return_value=limit_only,
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._c2_requirement",
+            side_effect=lambda value: value,
+        ):
+            limit_only_closing = _closing_requirement(product)
+        self.assertIsNone(limit_only_closing.warmup)
+        self.assertEqual(limit_only_closing.warmup_limit, 1)
 
     def test_paced_client_factory_wraps_both_c2_transports(self) -> None:
         client = SimpleNamespace(query_transport=object(), stream_transport=object())
@@ -454,11 +514,8 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             return client
 
         with patch(
-            "scripts.phase105_consumer_v2_identity_acceptance.sdk_requirement",
+            "scripts.phase105_consumer_v2_identity_acceptance._closing_requirement",
             side_effect=lambda product: product.requirement,
-        ), patch(
-            "scripts.phase105_consumer_v2_identity_acceptance._c2_requirement",
-            side_effect=lambda requirement: requirement,
         ), patch(
             "scripts.phase105_consumer_v2_identity_acceptance.validate_product_view",
         ), patch(
@@ -517,11 +574,8 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             return Client()
 
         with patch(
-            "scripts.phase105_consumer_v2_identity_acceptance.sdk_requirement",
+            "scripts.phase105_consumer_v2_identity_acceptance._closing_requirement",
             return_value=product.requirement,
-        ), patch(
-            "scripts.phase105_consumer_v2_identity_acceptance._c2_requirement",
-            side_effect=lambda requirement: requirement,
         ):
             with self.assertRaisesRegex(AssertionError, "cardinality"):
                 await _closing_batch_revalidation(
@@ -535,6 +589,82 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                     max_batch_items=50,
                     client_factory=factory,
                 )
+
+    async def test_closing_batch_timeout_has_bounded_typed_status_evidence(self) -> None:
+        product = SimpleNamespace(
+            consumer_id="alpha.binance.paper.stable",
+            instrument_uid="uid-btc",
+            instrument_id="BINANCE.USDM.PERPETUAL.BTC-USDT",
+            feed=Feed.TRADE,
+            interval=None,
+            source_policy_id="crypto_primary_v2",
+            delivery=DeliveryClass.DURABLE,
+            requirement=object(),
+            identity=("alpha.binance.paper.stable", "uid-btc", "TRADE", "", "crypto_primary_v2"),
+            evidence=lambda: {
+                "consumer_id": "alpha.binance.paper.stable",
+                "instrument_uid": "uid-btc",
+                "feed": "TRADE",
+                "interval": None,
+                "source_policy_id": "crypto_primary_v2",
+            },
+        )
+        status = FeedStatusResponse.model_validate({
+            "schema": "qdl.feed-status.v2",
+            "instrument_uid": "uid-btc",
+            "feed": "TRADE",
+            "quality": {
+                "state": "LIVE",
+                "freshness_ms": 7,
+                "event_recency_state": "LIVE",
+                "provider_session_state": "LIVE",
+                "provider_session_liveness_ms": 3,
+                "gap_open": False,
+                "complete": True,
+                "execution_eligible": True,
+                "policy_id": "crypto_primary_v2",
+                "flags": [],
+            },
+        })
+
+        class Client:
+            async def warmup_batch(self, requirements, *, require_all: bool):
+                del requirements, require_all
+                raise httpx.ReadTimeout("closing request timed out")
+
+            async def feed_status(self, requirement):
+                del requirement
+                return status
+
+            async def close(self) -> None:
+                return None
+
+        def factory(*args, **kwargs):
+            del args, kwargs
+            return Client()
+
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._closing_requirement",
+            return_value=product.requirement,
+        ):
+            with self.assertRaises(C2ClosingBatchError) as raised:
+                await _closing_batch_revalidation(
+                    (product,),
+                    identity=object(),
+                    primary_url="https://primary",
+                    secondary_url="https://secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path("/tmp/phase105-closing"),
+                    timeout_seconds=15.0,
+                    max_batch_items=50,
+                    client_factory=factory,
+                )
+        evidence = raised.exception.evidence
+        self.assertEqual(evidence["transport_error"], "ReadTimeout")
+        self.assertEqual(evidence["batch_size"], 1)
+        self.assertEqual(evidence["typed_status"][0]["quality"]["quality"]["state"], "LIVE")
+        self.assertFalse(evidence["payload_recorded"])
+        self.assertNotIn("price", repr(evidence))
 
     async def test_observation_waits_until_the_declared_floor(self) -> None:
         clock = {"value": 100.0}

@@ -10,16 +10,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import resource
 import shutil
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
+
+import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -66,12 +69,14 @@ from scripts.phase103_consumer_receipt_acceptance import (
     _c2_requirement,
     _certify_product,
     _client,
+    compact_feed_status,
     _identity,
     _query_product,
 )
 from scripts.phasec36_reference_l2_consumer_acceptance import (
     _reference_batch_until_terminal,
 )
+from qdl_sdk.errors import DataLayerError
 
 
 IDENTITY_PREFIXES = {
@@ -118,6 +123,43 @@ class C2ProductAcceptanceError(RuntimeError):
             "replica": error.replica or "unknown",
             "error_code": error.code,
             "typed_status": error.status_evidence,
+            "payload_recorded": False,
+        }
+
+
+class C2ClosingBatchError(RuntimeError):
+    """Compact, payload-free evidence for a closing batch transport failure."""
+
+    def __init__(
+        self,
+        *,
+        consumer_id: str,
+        replica: str,
+        products: tuple[AcceptanceProduct, ...],
+        error: Exception,
+        status_observations: list[dict[str, object]],
+    ) -> None:
+        if not products or any(item.consumer_id != consumer_id for item in products):
+            raise ValueError("Phase 10.5 closing batch failure has an invalid consumer scope")
+        digest = hashlib.sha256(
+            json.dumps(
+                [item.identity for item in products],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        super().__init__(
+            "Phase 10.5 V2 closing batch failed "
+            f"consumer={consumer_id} replica={replica} size={len(products)}"
+        )
+        self.evidence = {
+            "schema": "qdl.phase105.c2-closing-batch-failure.v1",
+            "consumer_id": consumer_id,
+            "replica": replica,
+            "batch_size": len(products),
+            "batch_identity_sha256": digest,
+            "transport_error": type(error).__name__,
+            "typed_status": status_observations,
             "payload_recorded": False,
         }
 
@@ -693,6 +735,72 @@ def _chunks(values: tuple[AcceptanceProduct, ...], size: int):
         yield values[offset:offset + size]
 
 
+def _closing_requirement(product: AcceptanceProduct):
+    """Keep closing current-state proof small without weakening the product.
+
+    Opening C2 already proves the declared bounded BAR history, finality and
+    signed stream handoff. Closing only needs the latest final BAR to verify
+    that the route remains live and that both replicas still agree. Every
+    non-history policy field is retained unchanged.
+    """
+
+    requirement = _c2_requirement(sdk_requirement(product))
+    if requirement.feed.value != "BAR":
+        return requirement
+    specification = requirement.warmup_specification
+    if specification is None or specification.rows is None:
+        raise ValueError("Phase 10.5 closing BAR requires a row-bounded warmup policy")
+    return replace(
+        requirement,
+        warmup_limit=1,
+        warmup=(
+            requirement.warmup.model_copy(update={"rows": 1})
+            if requirement.warmup is not None
+            else None
+        ),
+    )
+
+
+def _closing_status_representatives(
+    products: tuple[AcceptanceProduct, ...],
+) -> tuple[AcceptanceProduct, ...]:
+    """Keep transport-failure evidence bounded to one identity per feed."""
+
+    by_feed: dict[str, AcceptanceProduct] = {}
+    for product in products:
+        by_feed.setdefault(product.feed.value, product)
+    return tuple(by_feed[feed] for feed in sorted(by_feed))
+
+
+async def _closing_failure_status_observations(
+    client,
+    products: tuple[AcceptanceProduct, ...],
+    *,
+    timeout_seconds: float,
+) -> list[dict[str, object]]:
+    """Capture bounded typed status after a failed closing batch, never payload."""
+
+    timeout = min(5.0, timeout_seconds)
+    observations: list[dict[str, object]] = []
+    for product in _closing_status_representatives(products):
+        try:
+            status = await asyncio.wait_for(
+                client.feed_status(_closing_requirement(product)),
+                timeout=timeout,
+            )
+        except Exception as error:  # Diagnostic must not hide the primary failure.
+            observations.append({
+                **product.evidence(),
+                "status_transport_error": type(error).__name__,
+            })
+        else:
+            observations.append({
+                **product.evidence(),
+                "quality": compact_feed_status(status),
+            })
+    return observations
+
+
 async def _closing_batch_revalidation(
     products: tuple[AcceptanceProduct, ...],
     *,
@@ -729,9 +837,23 @@ async def _closing_batch_revalidation(
         values: dict[tuple[str, str, str, str, str], dict[str, object]] = {}
         try:
             for batch in _chunks(products, max_batch_items):
-                requirements = tuple(_c2_requirement(sdk_requirement(item)) for item in batch)
+                requirements = tuple(_closing_requirement(item) for item in batch)
                 started = time.perf_counter()
-                response = await client.warmup_batch(requirements, require_all=True)
+                try:
+                    response = await client.warmup_batch(requirements, require_all=True)
+                except (httpx.HTTPError, TimeoutError, DataLayerError) as error:
+                    status_observations = await _closing_failure_status_observations(
+                        client,
+                        batch,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    raise C2ClosingBatchError(
+                        consumer_id=batch[0].consumer_id,
+                        replica=label,
+                        products=batch,
+                        error=error,
+                        status_observations=status_observations,
+                    ) from error
                 latency_ms = (time.perf_counter() - started) * 1_000
                 if response.partial or len(response.results) != len(batch):
                     raise AssertionError("Phase 10.5 closing V2 batch cardinality differs")
@@ -1254,7 +1376,7 @@ def main() -> int:
         raise SystemExit("--closing-timeout-seconds must be between 30 and 300")
     try:
         result = asyncio.run(run(args))
-    except C2ProductAcceptanceError as error:
+    except (C2ProductAcceptanceError, C2ClosingBatchError) as error:
         print(json.dumps({
             "schema": "qdl.phase105.v2-identity-acceptance.v1",
             "status": "FAIL_TYPED_STATUS",
