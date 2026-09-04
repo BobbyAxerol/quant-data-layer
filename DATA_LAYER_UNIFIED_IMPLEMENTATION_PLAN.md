@@ -33765,3 +33765,117 @@ This source slice needs one replacement immutable disposable-client image
 after commit. It does not roll a reader, stream, Rust core, ingestor,
 projector, V1 or any deployed service. The only next runtime action remains
 one fresh C2 receipt with the replacement client; V1 remains rollback.
+
+**C2 replacement-client runtime trace (`FAIL-CLOSED / REAL DATA-PLANE
+DIAGNOSIS`, 2026-09-03).** Immutable disposable client
+`qdl-v2-python:2.0.14-1c135af` (digest
+`sha256:ac6125fc496f9ea0d59a164903906c5eb560141a42086c1013617c9f29be945f`)
+passed the repaired mTLS and serialized native-BASIS entry path, then stopped
+before its 300-second observation because the first governed
+`BINANCE.USDM.PERPETUAL.BTC-USDT / TRADE` status was truthfully
+`STALE/LAST_EVENT_STALE`. Both reader replicas reported the same stale typed
+state; no synthetic event, SLA relaxation, order, signal, sizing, Gateway/Risk
+or durable-state mutation was used to force progress. The disposable client
+self-removed and its RAM-only credential stage was removed.
+
+Read-only runtime trace then proved the BTC trade binding is present in the
+active Binance ingestor, all three ingestor lanes and all three projectors are
+running with restart `0` and no OOM, and provider-session liveness later resumed
+on every Binance lane. This rules out a missing demand binding or a permanently
+dead process, but does **not** certify continuity: the failed C2 receipt remains
+terminal until the raw-to-canonical-to-cache path is traced and a single fresh
+receipt reaches its full 300-second observation. The next scope is strictly
+read-only offsets/cache/lineage diagnosis followed by the smallest proven
+shared recovery or source correction; V1, Kafka topology/offsets, Redis,
+SQLite, Trading System, alpha and order paths remain excluded unless an exact
+approved recovery is required.
+
+**Kafka diagnostic recovery (`APPROVED / NARROW RUNTIME REPAIR`,
+2026-09-03).** The Java Kafka administrative CLI used for a read-only offset
+inspection was invoked inside the memory-bounded `kafka1` broker container and
+exceeded its `768MiB` container limit, leaving only `kafka1` in
+`exited/OOMKilled` state. This is an operational error in the diagnostic
+method, not a provider, data-contract or consumer defect. Recover only that
+existing stopped container with `docker start`, retaining its current image,
+network, Kafka data volume, TLS and KRaft identity exactly as-is. No recreate,
+topic/offset/ACL mutation, Redis/SQLite operation, V1, Rust, ingestor,
+projector, Trading System, alpha or order-path action is permitted. Verify all
+three broker health checks and the existing core/projector roles afterward;
+rollback is stopping only the restarted broker if it cannot rejoin. Future
+offset diagnostics use the existing bounded librdkafka client outside broker
+JVM memory, never a Java CLI inside a broker container.
+
+**Shared Rust-core transient receive recovery (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-03).** The failed C2 trace and bounded structured-log evidence show
+retryable librdkafka receive failures (including a transient resolver failure)
+reach `bridge.next()?`, which currently tears down the entire transactional
+generation before the outer retry loop runs. That behavior is correct for a
+transaction/commit/fencing failure, but it unnecessarily forces a cooperative
+group rebalance for a recoverable receive-side hiccup and can create a
+freshness gap in otherwise healthy TRADE bindings.
+
+The narrow correction is confined to `qdl-realtime-core`: retry a bounded
+retryable *receive* error in the current bridge/generation with the existing
+backoff policy and shutdown awareness. Persistent receive errors still return
+to the existing outer generation retry; all commit, output, authority,
+quarantine and non-retryable errors retain their present fail-closed behavior.
+No provider adapter, subscription, manifest, Kafka topology/offset, Redis,
+SQLite, V1, query/stream, Trading System, alpha or order path changes are in
+scope. Source exit requires focused policy regressions plus the existing Rust
+core suite. A later, separately journaled bounded roll of only the three Rust
+core roles is allowed only if source tests pass; it must retain the current
+runtime JSON, image rollback coordinate and all durable state. A fresh single
+C2 receipt remains the only acceptance gate after that recovery.
+
+Implementation is now present in the isolated `dev` worktree: retryable
+`bridge.next()` failures retain the current generation for at most three
+backoff attempts, emit bounded structured receive diagnostics, and remain
+shutdown-aware; an error while filling a batch defers that batch rather than
+tearing down the bridge. The explicit policy regression covers retryable,
+bounded-exhaustion and non-retryable cases. `git diff --check` passes. The
+host has no Cargo toolchain, and the otherwise isolated, network-disabled
+existing-builder test invocation was blocked before execution by the external
+command-approval service returning HTTP `404`; therefore no Rust test or
+runtime roll is claimed here. No runtime state was changed by this source
+slice. The next action is to rerun exactly that existing source-only Rust
+formatter/clippy/test suite when the approved Docker executor is available;
+only then may the correction be committed and the separately bounded core roll
+and one C2 receipt proceed.
+
+The sandboxed source executor also cannot reach the host-published V2 ports
+`18201`, `18202`, `18210` or `18211` (all returned local connect failure from
+its isolated network namespace). That is not health evidence for or against
+the host runtime and must not be interpreted as a V2 outage. Host-runtime
+verification remains limited to the approved Docker executor or an operator
+shell in the host namespace; no fallback probe may substitute a synthetic or
+different-network result for the C2 receipt.
+
+**Shared Rust-core transient receive source exit (`PASS / COMMIT AND NARROW
+ROLL NEXT`, 2026-09-04).** The correction was compiled in the pinned Rust
+`1.82` Docker builder only; the builder is a disposable test artifact and no
+running service, Kafka, Redis, SQLite, V1, Trading System, alpha or order path
+was changed. Exact evidence:
+
+- `docker build --target builder -f Dockerfile.phase8-rust .` completed the
+  locked release build including `qdl-realtime-core` successfully.
+- `rustfmt --edition 2021 --check rust/qdl-kafka/src/bin/qdl-realtime-core.rs`
+  passed from a read-only, network-disabled container.
+- `cargo clippy -p qdl-kafka --bin qdl-realtime-core --locked --offline --
+  -D warnings` passed in `50.38s` in the same isolated builder.
+- `cargo test -p qdl-kafka --bin qdl-realtime-core --locked --offline` passed
+  `5/5`, including retryable receive, bounded exhaustion and non-retryable
+  policy. `git diff --check` also passes.
+
+The broad workspace `cargo fmt --all -- --check` remains non-green solely
+because pre-existing formatting deviations in
+`qdl-native-raw-ingestor.rs` are outside this correction; that file was not
+changed. The changed realtime-core file is format-clean and the focused
+compile/lint/test gate is sufficient for this narrow slice. Commit only the
+two tracked source/journal files with the configured BobbyAxerol identity.
+After commit, build one immutable Rust runtime image from that commit, retain
+the current `qdl-v2-rust:2.0.12-8ba4165@sha256:d86f0e832ba9...` image as
+rollback, and rolling-recreate exactly the existing three core containers.
+They retain current runtime JSON/TLS/state mounts and all durable state. A
+single fresh disposable C2 no-order receipt of exactly `300s` is the only
+post-roll acceptance; any failed receipt remains terminal and rolls those
+three cores back without touching V1 or consumers.
