@@ -35120,3 +35120,64 @@ The named regression container `qdl-rust-regression-l2-temp` exited `0` with
 `OOMKilled=false` and was removed immediately. Its temporary builder image is
 the only remaining test artifact and is retained solely to build the canonical
 runtime image in the next step.
+
+**Stale-envelope runtime rollout and catch-up evidence (`IN PROGRESS / C2
+HELD`, 2026-09-04).** One canonical Rust runtime image was built from tested
+source `d53609850558bd6e243ada220c93a9500ef48757` with OCI revision
+`d536098` and version `2.0.12-d536098`:
+`sha256:36a822c0ef61fb122dbf8fa12221cff27ad6a863976424be1407cd345f4dce65`.
+Before mutation, the operator state received an exact SHA-verified rollback
+copy of `rollout.env`, `core.json`, `core-002.json`, `core-003.json`,
+`ingestor-binance-usdm.json`, and `ingestor-okx-swap.json` under
+`rollback-d536098-20260904T150845Z`; the prior image is retained explicitly as
+`qdl-v2-rust:rollback-2.0.12-8ba4165@sha256:d86f0e...ed86983`.
+
+Only the approved existing roles were serially recreated:
+`rust_core`, `rust_core_2`, `rust_core_3`, `ingestor_binance_usdm`, and
+`ingestor_okx_swap`. Each started on `36a822...dce65` with `restart=0` and
+`OOMKilled=false`. V1, Kafka topology and offsets, Redis, SQLite,
+projector/query/stream roles, Trading System, alpha, and order paths were not
+changed. The first disposable L2 preflight exposed a malformed legacy C2
+identity-directory mount before any request. It was deleted; the replacement
+uses four individual read-only governed identity file mounts, tmpfs-only
+cursor state, UID/GID `10001`, no capabilities, no provider credential and
+only the two V2 query replicas.
+
+The replacement real V2 preflight completed and retained compact typed
+evidence only (`10` physical execution books x `2` replicas,
+`provider_connections=0`, `order_actions=0`, no cursor or payload retained).
+It correctly returned `FAIL`, not a certificate: every view remains
+`STALE`, `complete=true`, `gap_open=false`, `execution_eligible=false`, with
+an approximately 46-minute event age. Read-only Kafka evidence isolates the
+cause: the Rust core group is near current (partition lag `69..266`), while
+`stable-projector-v1` has an inherited canonical backlog (`1,434,640` records
+at the last measurement) from its earlier recovery. This is a normal durable
+catch-up, not a symbol-specific L2 parsing defect. Its initial observed drain
+rate was about `50k` records/minute. No offset reset is permitted because it
+would silently skip retained BAR/history records. C2 is deliberately held
+until projector lag is drained and the ten-book matrix returns `PASS`; no C2
+attempt has been counted in this packet.
+
+**Scoped artifact cleanup (`PASS / RUNTIME CATCH-UP CONTINUES`).** After the
+canonical image completed, removed only unreferenced test artifacts:
+`qdl-v2-rust-builder:2.0.12-l2-stale-test`, the two disposable Python C2/L2
+tool images, and the obsolete stream/projector rollback tag. The redundant old
+Rust release tag was removed while its explicit rollback tag was retained. An
+attempt to remove `qdl-v2-python:2.0.12-8ba4165` was refused because a stopped
+container still references it; it was left intact and not force-removed.
+`docker builder prune -f` removed only unused BuildKit cache. Docker images
+fell from `27 / 16.12GB` to `23 / 11.7GB`; BuildKit from `18.34GB` (`15.39GB`
+reclaimable) to `2.278GB` (`0B` reclaimable); root filesystem changed from
+`177GB used / 113GB available` to `161GB used / 130GB available`. No volume,
+network, source, runtime-state, active container, Kafka/Redis/SQLite data or
+V1 artifact was removed. Retained set is active V2 Python
+`f608105...b3014`, active Rust `36a822...dce65`, one Python rollback
+`86a236...cbf5d`, one Rust rollback `d86f0e...ed86983`, and V1 fallback
+`dbfb57...15d65`.
+
+**Next and only release action.** Allow the existing projector group to catch
+up without offset mutation; when its lag is near zero, run one new ten-book
+matrix using the corrected file-bind client. Only a `PASS` may start the one
+already-approved 300-second four-identity C2 no-order receipt. A non-pass
+returns to the exact five-role rollback above; it does not create another
+phase, image, topology, or retry ceremony.
