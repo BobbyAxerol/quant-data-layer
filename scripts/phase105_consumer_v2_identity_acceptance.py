@@ -211,8 +211,27 @@ class _PacedQueryTransport:
         await self._delegate.close()
 
 
+class _PacedStreamTransport:
+    """Charge each C2 stream open to the same per-identity request budget."""
+
+    def __init__(self, delegate, pacer: _C2ConsumerRequestPacer) -> None:
+        self._delegate = delegate
+        self._pacer = pacer
+
+    async def subscribe(self, *args, **kwargs):
+        # `subscribe` is an async iterator. Reserving at iterator start covers
+        # both the initial stream and every SDK reconnect without changing the
+        # public stream contract.
+        await self._pacer.acquire()
+        async for item in self._delegate.subscribe(*args, **kwargs):
+            yield item
+
+    async def close(self) -> None:
+        await self._delegate.close()
+
+
 def _paced_client_factory(pacer: _C2ConsumerRequestPacer):
-    """Preserve the public SDK client while pacing only C2's query transport."""
+    """Preserve the SDK contract while pacing C2 REST and stream opens only."""
 
     def create(identity, *, base_url, grpc_target, cursor_path, timeout_seconds):
         client = _client(
@@ -223,6 +242,7 @@ def _paced_client_factory(pacer: _C2ConsumerRequestPacer):
             timeout_seconds=timeout_seconds,
         )
         client.query_transport = _PacedQueryTransport(client.query_transport, pacer)
+        client.stream_transport = _PacedStreamTransport(client.stream_transport, pacer)
         return client
 
     return create

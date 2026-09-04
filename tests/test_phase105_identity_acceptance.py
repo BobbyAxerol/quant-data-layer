@@ -13,6 +13,8 @@ from qdl.query import DataRequirement, FeedType, RecoveryPolicy
 from qdl_sdk import Grade
 from scripts.phase105_consumer_v2_identity_acceptance import (
     _C2ConsumerRequestPacer,
+    _PacedQueryTransport,
+    _PacedStreamTransport,
     IDENTITY_PREFIXES,
     _authority,
     _closing_batch_revalidation,
@@ -24,6 +26,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _reference_batch_concurrency,
     _reference_transport_timeout_seconds,
     _run_consumer_groups,
+    _paced_client_factory,
     _wait_for_minimum_observation,
     _v1_base_url,
     parser,
@@ -31,6 +34,23 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
 
 
 class Phase105IdentityAcceptanceTests(unittest.TestCase):
+    def test_paced_client_factory_wraps_both_c2_transports(self) -> None:
+        client = SimpleNamespace(query_transport=object(), stream_transport=object())
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._client",
+            return_value=client,
+        ):
+            result = _paced_client_factory(_C2ConsumerRequestPacer(8))(
+                object(),
+                base_url="https://query.example",
+                grpc_target="stream.example:8210",
+                cursor_path=Path("/tmp/cursor.json"),
+                timeout_seconds=15.0,
+            )
+        self.assertIs(result, client)
+        self.assertIsInstance(result.query_transport, _PacedQueryTransport)
+        self.assertIsInstance(result.stream_transport, _PacedStreamTransport)
+
     def test_identity_prefixes_are_exactly_the_four_governed_paper_consumers(self) -> None:
         self.assertEqual(set(IDENTITY_PREFIXES), {
             "monitoring.multivenue.stable",
@@ -253,6 +273,96 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             self.assertAlmostEqual(actual, expected)
         self.assertEqual(pacer.evidence()["c2_safe_requests_per_minute"], 2)
         self.assertEqual(pacer.evidence()["c2_request_count"], 3)
+
+    async def test_stream_open_and_rest_read_share_one_identity_budget(self) -> None:
+        clock = {"value": 0.0}
+        sleeps: list[float] = []
+
+        async def fake_sleep(duration: float) -> None:
+            sleeps.append(duration)
+            clock["value"] += duration
+
+        class QueryDelegate:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def snapshot(self, *args, **kwargs):
+                del args, kwargs
+                self.calls += 1
+                return {"snapshot": True}
+
+            async def close(self) -> None:
+                return None
+
+        class StreamDelegate:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def subscribe(self, *args, **kwargs):
+                del args, kwargs
+                self.calls += 1
+                yield "frame"
+
+            async def close(self) -> None:
+                return None
+
+        pacer = _C2ConsumerRequestPacer(
+            4,
+            safety_fraction=0.5,
+            clock=lambda: clock["value"],
+            sleep=fake_sleep,
+        )
+        query_delegate = QueryDelegate()
+        stream_delegate = StreamDelegate()
+        query = _PacedQueryTransport(query_delegate, pacer)
+        stream = _PacedStreamTransport(stream_delegate, pacer)
+
+        self.assertEqual(await query.snapshot(object()), {"snapshot": True})
+        self.assertEqual(await anext(stream.subscribe(object())), "frame")
+        self.assertEqual(query_delegate.calls, 1)
+        self.assertEqual(stream_delegate.calls, 1)
+        self.assertEqual(sleeps, [30.0])
+        self.assertEqual(pacer.evidence()["c2_request_count"], 2)
+
+    async def test_stream_open_failure_remains_fail_closed(self) -> None:
+        class StreamDelegate:
+            async def subscribe(self, *args, **kwargs):
+                del args, kwargs
+                raise RuntimeError("stream transport rejected subscription")
+                yield None
+
+            async def close(self) -> None:
+                return None
+
+        pacer = _C2ConsumerRequestPacer(8)
+        stream = _PacedStreamTransport(StreamDelegate(), pacer)
+        with self.assertRaisesRegex(RuntimeError, "rejected subscription"):
+            await anext(stream.subscribe(object()))
+        self.assertEqual(pacer.evidence()["c2_request_count"], 1)
+
+    async def test_distinct_identity_stream_pacers_do_not_share_a_lock(self) -> None:
+        opened: list[str] = []
+
+        class StreamDelegate:
+            def __init__(self, label: str) -> None:
+                self.label = label
+
+            async def subscribe(self, *args, **kwargs):
+                del args, kwargs
+                opened.append(self.label)
+                yield self.label
+
+            async def close(self) -> None:
+                return None
+
+        first = _PacedStreamTransport(StreamDelegate("first"), _C2ConsumerRequestPacer(8))
+        second = _PacedStreamTransport(StreamDelegate("second"), _C2ConsumerRequestPacer(8))
+        values = await asyncio.gather(
+            anext(first.subscribe(object())),
+            anext(second.subscribe(object())),
+        )
+        self.assertEqual(set(values), {"first", "second"})
+        self.assertEqual(set(opened), {"first", "second"})
 
     async def test_closing_batch_revalidates_every_product_on_both_replicas(self) -> None:
         class Product:

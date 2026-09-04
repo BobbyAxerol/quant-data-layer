@@ -34182,3 +34182,62 @@ material. The narrow next source scope, if approved, is to apply the existing
 per-identity C2 quota pacer to stream-open scheduling, add quota/stream
 regressions, then build one replacement image and run exactly one fresh C2.
 Release remains blocked until that single receipt reaches `300s` and passes.
+
+**C2 stream-open quota pacing source gate (`PASS / IMMUTABLE IMAGE PENDING`,
+2026-09-04).** `_PacedStreamTransport` now wraps only the disposable C2 SDK
+client's `stream_transport`. It reserves the existing shared identity pacer at
+async-iterator start, so an initial subscription and every SDK reconnect share
+the same allowance as C2 REST warmup/snapshot/reference reads. The wrapper
+passes frames and failures through unchanged; it cannot turn a rejected or
+stale stream into data. `_paced_client_factory` applies the two wrappers to the
+same client instance, while distinct C2 consumer identities still receive
+separate pacers.
+
+The standard isolated source matrix used active immutable image `bd0163fd76b0`,
+with a read-only source mount, `--network none`, UID/GID `10001`, no Linux
+capabilities, no-new-privileges and tmpfs-only bytecode. It ran
+`py_compile scripts/phase105_consumer_v2_identity_acceptance.py
+tests/test_phase105_identity_acceptance.py`, then `127/127` unittest cases in
+`test_phase104_reference_batch`, `test_phase113_reference_v2`,
+`test_reference_l2_consumer_acceptance`, `test_phase115c_five_liquid_handoff`,
+`test_phase105_identity_acceptance` and `test_phase103_consumer_receipt_harness`
+in `16.053s`. New deterministic cases prove factory wiring, shared REST/stream
+spacing, independent identity pacers and fail-closed stream errors. No network,
+provider, V1 fallback, Kafka, Redis, SQLite, service, Trading System, alpha,
+signal, sizing or order mutation occurred; the disposable test client removed
+itself. `git diff --check` passes. Next and only next action is to commit this
+source slice, build one immutable image from its SHA, repeat this exact matrix
+without a source mount, then execute the recorded two-query-role C2 packet.
+
+**C2 stream-open quota pacing repair (`APPROVED / IN PROGRESS`, 2026-09-04).**
+Owner approved one final narrow closure repair: the existing acceptance-only
+per-identity C2 pacer must govern gRPC stream opens as well as REST reads. The
+source change is limited to the disposable C2 client factory: wrap its existing
+`stream_transport.subscribe()` path so each initial subscription and every SDK
+reconnect reserves the same manifest-derived identity budget already used by
+`_PacedQueryTransport`. It does not alter a server quota, consumer manifest,
+SDK/public endpoint semantics, provider concurrency, stream service, Rust,
+Kafka, Redis, SQLite, V1 fallback policy, or runtime topology. Separate C2
+identities retain separate pacers; a transport exception must propagate
+fail-closed unchanged.
+
+**Required source gates:** deterministic regressions prove same-identity stream
+opens are serialized below the existing safe rate, stream and REST share one
+budget, distinct identities do not share a local lock, and a failing stream
+remains terminal. Run the existing focused C2/identity/reference/L2/five-symbol
+matrix plus `py_compile` and `git diff --check` in the standard isolated,
+network-disabled, read-only image environment. The detailed consumer-cutover
+invariants remain those in architecture-guide Appendix J.7.
+
+**Approved runtime/rollback/cleanup packet:** build exactly one immutable Python
+image from the tested source commit; rolling-recreate only `query_v2_1` then
+`query_v2_2` with their existing runtime/TLS/state mounts; run exactly one
+disposable, no-order, four-identity C2 receipt with a true `300s` observation.
+If it exits nonzero, roll back only those two query roles to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+V1, Rust, Kafka topology/offsets, Redis, SQLite, ingestors, projectors, stream
+roles, Trading System, alpha and all order/signal/sizing paths remain outside
+the blast radius. Retain only the active candidate plus named rollback image;
+remove the self-removed C2 client and any unattached candidate after a failed
+receipt, record pre/post Docker disk evidence, and do not broad-prune shared
+BuildKit cache.
