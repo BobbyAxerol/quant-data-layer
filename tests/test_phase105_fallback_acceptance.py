@@ -91,6 +91,37 @@ class Phase105FallbackAcceptanceTests(unittest.TestCase):
         self.assertFalse(blocked & {item.identity for item in self.probes})
         self.assertTrue(any("alpha.okx" in consumer for consumer, _key in blocked))
 
+    def test_execution_trade_fallback_is_blocked_without_v1_session_lineage(self) -> None:
+        """V1 last-trade age cannot certify the execution-grade 3s contract."""
+        execution_products = [
+            item for item in self.scope.products
+            if item.consumer_id == "trading-system.paper.stable"
+            and item.venue == "BINANCE"
+            and item.market == "USDM"
+            and item.feed.value == "TRADE"
+        ]
+        self.assertEqual(
+            {item.native_symbol for item in execution_products},
+            {"BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"},
+        )
+        route_by_identity = {
+            (consumer.consumer_id, product.requirement_key): product
+            for consumer in self.release.consumers
+            for product in consumer.products
+        }
+        for item in execution_products:
+            route = route_by_identity[(item.consumer_id, requirement_key(item.requirement))]
+            self.assertEqual(route.route, "V2_PRIMARY")
+            self.assertEqual(route.fallback, "BLOCKED")
+            self.assertEqual(route.reason, "V1_EXECUTION_SESSION_LIVENESS_UNPROVEN")
+        self.assertFalse(
+            any(item.consumer_id == "trading-system.paper.stable" for item in self.probes)
+        )
+        self.assertEqual(
+            {item.consumer_id for item in self.probes},
+            {"monitoring.multivenue.stable", "alpha.binance.paper.stable"},
+        )
+
     def test_trade_contract_is_checked_without_retaining_payload(self) -> None:
         trade = next(item for item in self.probes if item.feed == "TRADE")
         trade_result = validate_v1_fallback_payload(trade, {

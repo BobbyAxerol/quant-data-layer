@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 16
+revision: 17
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
@@ -1025,12 +1025,12 @@ consumers:
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
-    fallback: V1
-    reason: null
+    fallback: BLOCKED
+    reason: V1_EXECUTION_SESSION_LIVENESS_UNPROVEN
   - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:TRADE::crypto_primary_v2
     route: V2_PRIMARY
-    fallback: V1
-    reason: null
+    fallback: BLOCKED
+    reason: V1_EXECUTION_SESSION_LIVENESS_UNPROVEN
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:QUOTE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -1193,8 +1193,8 @@ consumers:
     reason: V1_L2_EQUIVALENCE_UNPROVEN
   - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:TRADE::crypto_primary_v2
     route: V2_PRIMARY
-    fallback: V1
-    reason: null
+    fallback: BLOCKED
+    reason: V1_EXECUTION_SESSION_LIVENESS_UNPROVEN
   - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:QUOTE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -1205,8 +1205,8 @@ consumers:
     reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:TRADE::crypto_primary_v2
     route: V2_PRIMARY
-    fallback: V1
-    reason: null
+    fallback: BLOCKED
+    reason: V1_EXECUTION_SESSION_LIVENESS_UNPROVEN
   - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:QUOTE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -1217,8 +1217,8 @@ consumers:
     reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:TRADE::crypto_primary_v2
     route: V2_PRIMARY
-    fallback: V1
-    reason: null
+    fallback: BLOCKED
+    reason: V1_EXECUTION_SESSION_LIVENESS_UNPROVEN
   - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:QUOTE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED

@@ -34497,3 +34497,103 @@ market data was changed. The next and only remaining execution is to commit
 this source slice, build one immutable Python candidate, roll the same two
 query roles with the recorded rollback digest, and run one C2 receipt with its
 true 300-second observation.
+
+**C2 strict-reference immutable image gate (`PASS / QUERY-ONLY ROLLOUT
+PENDING`, 2026-09-04).** Commit `19727174f0d31926c28fdc0465637d9cbfb2095e`
+was built as `qdl-v2-python:2.0.17-1972717` with immutable digest
+`sha256:28d7a6a538b7da69c7718977dae409acaff469fd663f96e09b6b1342d6a0f006`.
+OCI revision and release labels are exactly `19727174...` and
+`2.0.17-1972717`; the image runs as `qdl:qdl`. Its no-source-mount,
+network-disabled, read-only, UID/GID-`10001`, no-capability,
+no-new-privileges, tmpfs-only full C2/reference/L2/five-symbol/identity matrix
+passed `130/130` in `19.076s` after `py_compile`. The only remaining packet is
+the already-approved serial recreate of `query_v2_1` and `query_v2_2` with
+their unchanged runtime/TLS/state mounts, health/restart verification, and one
+disposable C2 no-order receipt with a true `300s` observation. Any nonzero
+returns only those two roles to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+V1, Rust, Kafka topology/offsets, Redis, SQLite, ingestors, projectors,
+streams, Trading System, alpha and the order path remain excluded.
+
+**C2 strict-reference runtime receipt (`FAIL-CLOSED / ROLLED BACK`,
+2026-09-04).** The approved query-only packet recreated `query_v2_1` then
+`query_v2_2` with
+`sha256:28d7a6a538b7da69c7718977dae409acaff469fd663f96e09b6b1342d6a0f006`.
+Each reached `healthy` with `restart=0`. A new V1 provenance and running
+container binding both passed for the frozen `v1.2.4` image
+`sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65`
+at commit `2b0dcf74454c9f87c352d3c47389955aeb955804`. The one detached,
+self-removing C2 client ran through the sealed root-to-UID-`10001` bootstrap,
+the exact four identities, V2 query/stream endpoints on `executor_network`,
+and no Docker socket, provider credential, Kafka/Redis/SQLite, Gateway/Risk or
+order authority.
+
+The receipt exited `1` before its 300-second observation and emitted no
+acceptance JSON because the governed `V2 -> V1 -> V2` fallback drill rejected
+its V1 response as stale at
+`qdl.certification.phase105_fallback._source_age_ms`. This is a real fail-closed
+V1 fallback freshness result, not a successful V2 certificate, a strict-Mark
+batch error, a V2 query error, or permission to relax freshness/retry the same
+receipt. The disposable client self-removed; its compact, payload-free evidence
+is under
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/recovery-2.0.12-8ba4165-20260903/c2-strict-reference-1972717-20260904T090512Z/`.
+Per the predeclared nonzero rule, `query_v2_1` then `query_v2_2` were rolled
+back serially to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`;
+both are `running`, `healthy`, `restart=0`. No other V2 role, V1, Rust, Kafka
+topology/offsets, Redis, SQLite, ingestor, projector, stream role, Trading
+System, alpha, signal, sizing or order path changed.
+
+**Decision boundary:** C2 is not certified and the candidate must not be
+released. The next permitted work is read-only diagnosis of the exact V1
+fallback product/payload freshness and its mapping. Any source/runtime repair
+requires a new, separately journaled scope; do not relax the declared V1
+freshness bound or rerun C2 as a luck-based retry.
+
+**V1 execution-fallback policy correction (`IN PROGRESS / SAME C2 CLOSURE`,
+2026-09-04).** Read-only probing of all twelve manifest-authorized V1 fallback
+routes showed the endpoint can currently return fresh Binance trade rows, but
+the terminal C2 receipt proved the opposite can occur during a real handoff.
+This is expected for a generic last-trade cache: V1 exposes event age but no
+typed provider/session liveness, generation or gap state. It therefore cannot
+be a trustworthy automatic fallback for the five
+`trading-system.paper.stable` execution TRADE products with a `3,000ms`
+contract. Waiting/retrying until a print arrives would turn certification into
+a luck-based test and would not make V1 semantically equivalent.
+
+The narrow correction is configuration-only: retain `V2_PRIMARY`, change only
+those five V1 fallback declarations to `BLOCKED` with the explicit reason
+`V1_EXECUTION_SESSION_LIVENESS_UNPROVEN`, and retain the existing V1 fallback
+declarations for monitoring/alpha products whose governed contract permits the
+legacy age-only source. No freshness bound is relaxed and no live route is
+mutated by this source change. Required source gates must prove exact five-row
+selection, unchanged V2-primary identities, retained allowed V1 probes for the
+other consumers, and `BLOCKED` routes making zero V1 requests. A fresh C2
+receipt remains a separately bounded runtime action after these gates; it is
+not started by this source correction.
+
+**V1 execution-fallback policy source gate (`PASS / SINGLE C2 CANDIDATE
+PENDING`, 2026-09-04).** The stable release-routing revision is now `17`.
+Only the five Binance USD-M `TRADE` products of
+`trading-system.paper.stable` changed: each remains `V2_PRIMARY` and is now
+`fallback: BLOCKED` with
+`V1_EXECUTION_SESSION_LIVENESS_UNPROVEN`. This makes the execution-grade
+three-second route fail closed if V2 is unavailable rather than silently
+switching to a V1 last-trade cache that cannot prove provider/session/gap
+state. Monitoring and `alpha.binance.paper.stable` retain their existing,
+manifest-governed V1 fallback declarations; all Binance/OKX/VN identities,
+freshness bounds, V2 routes, public API/SDK contracts and runtime topology are
+unchanged.
+
+`tests.test_phase105_fallback_acceptance` now proves the exact five-symbol
+selection (`BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `DOGEUSDT`, `BNBUSDT`), unchanged
+V2-primary route, explicit block reason and zero Trading-System V1 probe; it
+also proves the remaining probes are only monitoring/alpha identities. The
+focused route/fallback/stream-quota/reference suite passed `55/55` in
+`22.276s`. The complete source-mounted C2/reference/L2/five-liquid/identity
+matrix passed `138/138` in `20.472s`, network-disabled, read-only,
+UID/GID-`10001`, no capability/no-new-privileges and tmpfs-only. No provider,
+V1, Rust, Kafka, Redis, SQLite, runtime role, Trading System, alpha, signal,
+sizing or order path changed. The next action is exactly one immutable Python
+image from this commit followed by the bounded two-query-role C2 packet; any
+nonzero rolls back only those two roles to the recorded `bd0163...` image.
