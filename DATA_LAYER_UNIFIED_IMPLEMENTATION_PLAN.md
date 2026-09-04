@@ -33879,3 +33879,162 @@ They retain current runtime JSON/TLS/state mounts and all durable state. A
 single fresh disposable C2 no-order receipt of exactly `300s` is the only
 post-roll acceptance; any failed receipt remains terminal and rolls those
 three cores back without touching V1 or consumers.
+
+**Shared Rust-core transient receive rolling packet (`APPROVED / APPLIED`,
+2026-09-04).** Source commit `5875d35aff3710be884eefa7bce9f8463aa73bcd`
+was built as immutable
+`qdl-v2-rust:2.0.14-5875d35@sha256:6d0668f1ded3648eb727d07872175b528ee38e4a01c1ae041e9469f354de168a`.
+The exact rollback image is the three cores' pre-roll
+`sha256:d86f0e832ba945d302fd3f782e26fd41c5b08709a80f6de16bdd36af5ed86983`.
+Only these existing services were rolling-recreated, one healthy replica at a
+time: `rust_core`, `rust_core_2`, `rust_core_3`. Their existing private runtime
+JSON mounts remain byte-identical: `core.json`
+`4ff72e09649a7d00d02b8b006e9dfc1bd82ff6b5a6718a02a03fcc07c629d74f`,
+`core-002.json`
+`fe85911773eedda38a9fc84ef485c1e2bd1a5bd115a1268bac361075972a25ce`, and
+`core-003.json`
+`84081f68a6290bd130d770e1d36b197aa52d8df71c8a249bea3c0baa4a6dd946`.
+The existing TLS volume, state mounts, Kafka group/topic/offsets, Redis,
+SQLite, V1, ingestors, projectors, query/stream roles, Trading System, alpha
+and order paths are excluded. All three replacement cores start
+`RUST_PRIMARY`, `bindings=182`, `restart=0`, `OOMKilled=false`; the first
+retains the already-enabled private provider-admission listener. Rollback is a
+rolling recreate of these same three names with the exact old image and the
+same current runtime config; no durable reset or topology mutation is part of
+either direction.
+
+The sole remaining receipt is one new disposable C2 client namespace using the
+immutable Python client `qdl-v2-python:2.0.14-1c135af`, exactly four paper
+identities (monitoring, Trading System paper, Binance alpha paper, OKX alpha
+paper), all governed `299` products, V2 query/stream, and only its declared
+local V1 fallback-return drill. It observes exactly `300s`, has no provider
+credentials, Docker socket, Kafka, Redis, SQLite, Gateway/Risk, signal, sizing
+or order authority, and self-removes. Its credential staging is RAM-only and
+only bounded payload-free receipt/error hashes persist. A nonzero exit is
+terminal fail-closed and triggers only the stated three-core image rollback;
+it never causes a synthetic event, policy/SLA relaxation, consumer mutation or
+retry ceremony.
+
+**C2 client bootstrap preflight (`NO RECEIPT / HARNESS ENTRYPOINT ONLY`,
+2026-09-04).** The first launch attempt did not create a client process: OCI
+rejected direct execution of the read-only bind-mounted bootstrap script with
+`permission denied` before the process, network namespace, mTLS/JWT material,
+V2/V1 request, provider, data-plane or order action existed. The disposable
+container name was not retained and this is not a C2 retry or acceptance
+result. The sole harness correction is to invoke the same immutable,
+read-only bootstrap bytes through `/bin/sh /bootstrap-c2.sh`; it preserves the
+same mount set, capabilities, tmpfs staging, identities, 300-second scope and
+self-removal. No runtime role, image, config, credential, consumer or durable
+state changes.
+
+The shell-interpreter preflight then reached the bootstrap but still stopped
+before Python, mTLS/JWT construction or any V2/V1 request: the inherited
+mode-`0700` `run-c2.sh` could not be read by the intentionally dropped UID
+`10001`, and the capability-restricted bootstrap parent could not synthesize
+an exit code into that UID's tmpfs directory. This is still no receipt and no
+data-plane action. The new disposable namespace corrects only those two
+harness mechanics: its non-secret run script is mode `0755`, and bootstrap
+writes a fallback exit code through the same already-dropped UID `10001`.
+The actual receipt starts in a new evidence namespace, preserving a clear
+terminal preflight trail rather than overwriting it.
+
+**C2 consumer-network correction (`FAIL-CLOSED / HARNESS ATTACHMENT ONLY`,
+2026-09-04).** The first client that reached Python used
+`stable_internal` and stopped at the first gRPC stream open because
+`qdl-v2-stream-b` is deliberately published only on the declared external
+consumer network. The typed error is DNS `UNAVAILABLE`, not a stream process,
+Rust core, TLS, data freshness or provider failure. Read-only inspection proves
+the sealed `QDL_STABLE_CONSUMER_NETWORK=executor_network` and that exact
+network contains `data_layer_service`, both V2 query replicas, and both stream
+replicas with their public aliases. The failed client self-removed; its security
+evidence confirms UID `10001`, no effective/inheritable/ambient capability and
+`NoNewPrivs=1`; no order, signal, sizing, Gateway/Risk or durable mutation
+occurred. The fresh receipt changes only its Docker network attachment to the
+declared `executor_network`; no service or source code is recreated or changed.
+
+**C2 bounded product-concurrency correction (`FAIL-CLOSED / HARNESS SCHEDULING
+ONLY`, 2026-09-04).** The correctly attached fresh C2 client reached its
+immutable Python acceptance code and then exhausted the fixed `900s` opening
+deadline while tasks were queued on its own `product_semaphore`. Its sealed
+run artifact requested concurrency `2` for all governed `299` products; the
+failure occurred before any typed per-product freshness, gap, session,
+provider, TLS, cursor or fallback result was produced. The client self-removed
+with exit `1`; its UID/capability evidence remains `10001`/no capabilities/
+`NoNewPrivs=1`, and no order, signal, sizing, Gateway/Risk or durable mutation
+occurred. This is not a Rust-core or data-plane failure and is not a reason to
+relax a data SLA.
+
+The one permitted fresh receipt changes only the disposable C2 artifact from
+`--concurrency 2` to `--concurrency 4`: that equals the already sealed
+reference-batch maximum, retains the existing 75% per-consumer request quota
+and native-basis semaphore, and neither raises provider concurrency nor changes
+any runtime service. It uses the same four paper identities, `299` governed
+products, `executor_network`, V2 routes, declared V1 fallback-return drill and
+exact `300s` observation. Any nonzero result remains terminal and triggers the
+recorded three-core rollback only; a passing receipt is the sole remaining
+closure gate for this narrowly approved repair.
+
+**C2 bootstrap transport preflight (`PASS / NO NETWORK`, 2026-09-04).** The
+same immutable client image, read-only root, root-only bootstrap, RAM-only
+credential staging, UID-`10001` capability drop, evidence mounts and resource
+limits completed with `--network none`; it produced only `exit_code=0` and the
+expected capability record. It opened no V1/V2/provider endpoint and changed
+no runtime state. A first attached executor-network launcher left no receipt,
+stderr or exit artifact before Docker auto-removal, so it is not counted as a
+C2 result and has no data-plane evidence. The one fresh C2 receipt is launched
+detached solely to decouple the 300-second observation from the shell transport;
+the same immutable image, identity/mount set, `executor_network`, quota and
+no-order constraints remain in force. No service, source or durable state
+changes.
+
+**C2 real acceptance after receive recovery (`FAIL-CLOSED / ROLLBACK REQUIRED`,
+2026-09-04).** The detached, auto-removed C2 client completed the reviewed
+root-to-UID-`10001` boundary (`CapEff=0`, `CapAmb=0`, `NoNewPrivs=1`) and made
+real V2 reads through the declared `executor_network`; it had no provider,
+Docker, Kafka, Redis, SQLite, Gateway/Risk, signal, sizing or order authority.
+It stopped before the 300-second observation during initial reference
+validation for demand UID `8aedd349-6999-5874-b0dd-34c6451c0b3a`, product
+`MARK_INDEX_PRICE`: the returned identity is exact, but its typed availability
+is `DATA_STALE` with `reference provider result exceeds the declared freshness
+bound`. This is a real V2 quality failure, not a timeout, retry, identity
+cross-mix, TLS, cursor, Rust receive-recovery or resource/OOM result. The
+receipt is terminal; its client self-removed and left only bounded security and
+error evidence.
+
+All three rolled Rust cores remain `running`, `restart=0`, `OOMKilled=false`
+on `sha256:6d0668f...de168a`; no core error was observed. Nevertheless the
+approved packet makes a nonzero C2 terminal: roll back only `rust_core`,
+`rust_core_2` and `rust_core_3` to
+`sha256:d86f0e832ba945d302fd3f782e26fd41c5b08709a80f6de16bdd36af5ed86983`,
+retaining byte-identical runtime JSON/TLS/state mounts. Do not change V1,
+Kafka topology/offsets, Redis, SQLite, ingestors, projectors, query/stream,
+Trading System, alpha or order path. This closes the receive-recovery runtime
+packet as `SOURCE PASS / RUNTIME C2 NOT CERTIFIED`; the MARK_INDEX freshness
+defect is a separate data-quality scope and blocks closure honestly.
+
+**Receive-recovery rollback exit and scoped cleanup (`APPLIED / CLOSURE
+BLOCKED`, 2026-09-04).** The three rollback recreates completed serially and
+all now run the retained prior image
+`sha256:d86f0e832ba945d302fd3f782e26fd41c5b08709a80f6de16bdd36af5ed86983`
+with `restart=0` and `OOMKilled=false`. No C2 container remains. Before
+cleanup, Docker reported `14GB` images (`4.974GB` reclaimable) and `8.365GB`
+BuildKit cache (`5.336GB` reclaimable). The only disposable artifacts from this
+slice are the no-longer-referenced immutable candidate
+`qdl-v2-rust:2.0.14-5875d35@sha256:6d0668f...de168a` and builder
+`qdl-v2-rust-builder:receive-recovery-1c135af`; retain the active rollback
+image, all running V1/V2 images, volumes, networks, runtime state and compact
+receipt evidence. No broad prune, cache purge, volume/network/data deletion or
+worktree removal is in scope. Post-cleanup disk and runtime health are recorded
+before the journal commit.
+
+**Scoped cleanup result (`PASS / NO BROAD PRUNE`, 2026-09-04).** Docker confirmed
+neither disposable image had a container reference, then removed exactly
+`qdl-v2-rust:2.0.14-5875d35` and
+`qdl-v2-rust-builder:receive-recovery-1c135af`. Image usage fell from `14GB`
+to `10.84GB` (reclaimable image space from `4.974GB` to `1.808GB`). The active
+rollback image remains present; every V1/V2 running image, volume, network,
+runtime directory and compact evidence namespace is retained. BuildKit cache
+is intentionally untouched (`8.365GB`, `5.421GB` reported reclaimable): it is
+shared across current projects and a broad cache prune is outside this narrow
+approval. Final post-cleanup checks show all three rollback cores running on
+`sha256:d86f0e...86983`, `restart=0`, `OOMKilled=false`.
