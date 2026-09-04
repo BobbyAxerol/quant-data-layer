@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.rebuild_v2_stable_projection_cache import (
+    BAR_EDGE_SERVICES,
     CACHE_FILES,
     CANONICAL_TOPIC,
     CONFIRM_TOKEN,
@@ -67,7 +68,12 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
         )
         self.assertEqual(
             plan["start_order"],
-            [list(STREAM_SERVICES), list(PROJECTOR_SERVICES), list(QUERY_SERVICES)],
+            [
+                list(STREAM_SERVICES),
+                list(PROJECTOR_SERVICES),
+                list(BAR_EDGE_SERVICES),
+                list(QUERY_SERVICES),
+            ],
         )
         self.assertFalse(plan["touches_v1"])
         self.assertFalse(plan["apply"])
@@ -373,6 +379,7 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
         env = Path("/tmp/stable.env")
         cache_sizes = iter(("0\n", "2\n"))
         observed = {}
+        starts = []
 
         def fake_compose(_env, *arguments, **_kwargs):
             if arguments[:4] == ("ps", "--services", "--status", "running"):
@@ -391,6 +398,9 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
         def capture_projector(_env, deadline):
             observed["projector"] = deadline
 
+        def capture_start(_env, *services):
+            starts.append(services)
+
         with (
             patch("scripts.rebuild_v2_stable_projection_cache._validate_project"),
             patch(
@@ -406,7 +416,7 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
                 "scripts.rebuild_v2_stable_projection_cache._stable_client_ssl_context",
                 return_value=None,
             ),
-            patch("scripts.rebuild_v2_stable_projection_cache._start_services"),
+            patch("scripts.rebuild_v2_stable_projection_cache._start_services", capture_start),
             patch("scripts.rebuild_v2_stable_projection_cache._wait_http", capture_http),
             patch("scripts.rebuild_v2_stable_projection_cache._wait_bounded_lag", capture_lag),
             patch("scripts.rebuild_v2_stable_projection_cache._wait_projector_ready", capture_projector),
@@ -419,6 +429,10 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
         self.assertEqual(observed["lag"], 170.0)
         self.assertEqual(observed["projector"], 170.0)
         self.assertEqual(observed["http"][2:], [170.0, 170.0])
+        self.assertEqual(
+            starts,
+            [STREAM_SERVICES, PROJECTOR_SERVICES, BAR_EDGE_SERVICES, QUERY_SERVICES],
+        )
 
 
 if __name__ == "__main__":

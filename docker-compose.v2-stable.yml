@@ -299,7 +299,7 @@ services:
     <<: *python
     command: [python, -m, app.entrypoints.stream_v2_stable]
     networks:
-      stable_internal: {}
+      stable_internal: {aliases: [qdl-v2-stream-a]}
       stable_ingress: {}
       stable_consumer: {aliases: [qdl-v2-stream-a]}
     ports: ["127.0.0.1:18210:8200", "127.0.0.1:18220:8210"]
@@ -321,7 +321,7 @@ services:
     <<: *python
     command: [python, -m, app.entrypoints.stream_v2_stable]
     networks:
-      stable_internal: {}
+      stable_internal: {aliases: [qdl-v2-stream-b]}
       stable_ingress: {}
       stable_consumer: {aliases: [qdl-v2-stream-b]}
     ports: ["127.0.0.1:18211:8200", "127.0.0.1:18221:8210"]

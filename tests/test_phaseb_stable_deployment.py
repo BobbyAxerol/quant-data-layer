@@ -1393,6 +1393,12 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 services[name]["networks"]["stable_consumer"]["aliases"],
                 [alias],
             )
+        for name in ("stream_v2_active", "stream_v2_passive"):
+            alias = ingress_aliases[name]
+            self.assertEqual(
+                services[name]["networks"]["stable_internal"]["aliases"],
+                [alias],
+            )
         for name in ("query_v2_1", "query_v2_2"):
             with self.subTest(pass_through_query_role=name):
                 self.assertEqual(

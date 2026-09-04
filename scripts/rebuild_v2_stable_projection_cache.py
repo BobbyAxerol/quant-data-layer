@@ -36,7 +36,16 @@ REQUIRED_BOUNDED_LAG_SAMPLES = 3
 PROJECTOR_SERVICES = ("projector_v2", "projector_v2_2", "projector_v2_3")
 STREAM_SERVICES = ("stream_v2_active", "stream_v2_passive")
 QUERY_SERVICES = ("query_v2_1", "query_v2_2")
-STOP_SERVICES = (*PROJECTOR_SERVICES, *QUERY_SERVICES, *STREAM_SERVICES)
+# A BAR edge checkpoint alone cannot prove that a rebuilt durable cache still
+# holds its historical warmup. Stop it with the cache readers so its existing
+# startup coverage check can refill only missing final BARs after recovery.
+BAR_EDGE_SERVICES = ("binance_bar_edge",)
+STOP_SERVICES = (
+    *PROJECTOR_SERVICES,
+    *QUERY_SERVICES,
+    *STREAM_SERVICES,
+    *BAR_EDGE_SERVICES,
+)
 CACHE_FILES = (
     "/var/lib/qdl-stable/shared/canonical-cache.sqlite3",
     "/var/lib/qdl-stable/shared/canonical-cache.sqlite3-wal",
@@ -99,6 +108,7 @@ def rebuild_plan(env_file: Path) -> dict[str, object]:
         "start_order": [
             list(STREAM_SERVICES),
             list(PROJECTOR_SERVICES),
+            list(BAR_EDGE_SERVICES),
             list(QUERY_SERVICES),
         ],
         "touches_v1": False,
@@ -471,6 +481,7 @@ def execute_rebuild(env_file: Path, *, timeout_seconds: float) -> dict[str, obje
 
     _start_services(env_file, *PROJECTOR_SERVICES)
     catchup_deadline = time.monotonic() + timeout_seconds
+    _start_services(env_file, *BAR_EDGE_SERVICES)
     lag = _wait_bounded_lag(env_file, catchup_deadline)
     _wait_projector_ready(env_file, catchup_deadline)
 
