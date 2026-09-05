@@ -30261,6 +30261,13 @@ unchanged. Onlymarket_data_service changed in the complete container inventory;
 DB order/session/bracket/journal counts unchanged. Localdev includesSDK commit
 ab9b545; stablemain remainsf8adb61 pending a genuine successful closure.
 
+Source/journal pusheddevf20a4a5 (TSdev769a144); feature branches merged and
+removed, no new worktrees. TS cleanup removed two superseded reader images and
+18 enumerated build-cache records in dependency passes (~1.00GB reported
+reclaimed). Final Docker inventory24 images/12.69GB, BuildKit4.878GB versus
+baseline23/12.14GB and4.164GB; final reader plus named rollback retained. No DL
+runtime image or state removed. Existing activephase-c worktree retained.
+
 This is completion of the existing consumer charter, not a new phase. Owner
 approved inheriting the v2.0.12 certificate (299 products, certificate SHA256
 `0b67916ef677f7ee099de510a1731948b2eea85e876663ff99cf7d67e4bc1b2e`),
