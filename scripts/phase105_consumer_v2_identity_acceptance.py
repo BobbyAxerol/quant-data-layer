@@ -735,6 +735,16 @@ def _chunks(values: tuple[AcceptanceProduct, ...], size: int):
         yield values[offset:offset + size]
 
 
+def _closing_batches(products: tuple[AcceptanceProduct, ...], max_batch_items: int):
+    """Keep hot reads out of history batches and bound head-of-line delay."""
+    groups: dict[str, list[AcceptanceProduct]] = {}
+    for product in products:
+        groups.setdefault(product.feed.value, []).append(product)
+    for feed, group in groups.items():
+        size = max_batch_items if feed == "BAR" else min(max_batch_items, 8)
+        yield from _chunks(tuple(group), size)
+
+
 def _closing_requirement(product: AcceptanceProduct):
     """Keep closing current-state proof small without weakening the product.
 
@@ -838,7 +848,7 @@ async def _closing_batch_revalidation(
         )
         values: dict[tuple[str, str, str, str, str], dict[str, object]] = {}
         try:
-            for batch in _chunks(products, max_batch_items):
+            for batch in _closing_batches(products, max_batch_items):
                 requirements = tuple(_closing_requirement(item) for item in batch)
                 started = time.perf_counter()
                 try:

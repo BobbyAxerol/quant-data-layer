@@ -36245,3 +36245,26 @@ expired evidence and immutable original C2. Counts overlap, not additive.
 This code is offline certification only; no serving image is rebuilt/rolled.
 Capture current closing observations using the tested mapping, bind their hash
 to the immutable passing C2, and certify with the original full V1 attestation.
+
+Current-read helper initially stopped before any endpoint call: the immutable
+host C2 receipt is mode0600 and the test client drops to UID10001. Preserve that
+original and failed setup; mount an identical payload-free receipt copy with
+read permission into the disposable client. No credentials or runtime file
+permissions change. Capture label is `release-current-reads-verified/`.
+
+Current-read capture299/299 completed, but the stricter offline certificate
+correctly rejects26 hot products whose receive age exceeded2-3s while the
+mixed warmup batch finished. All reported source ages/session states remained
+valid; do not discard receive age or bless executable stale data. Closing must
+separate feed classes and cap hot batches at8 (one bounded local cache lane),
+retaining the declared BAR batch limit, existing identity quotas and120s total
+deadline. Verify exact scope/cardinality, class isolation and both replicas;
+then recapture current reads only. Original full C2 remains immutable and PASS;
+certificate remains BLOCKED until the strict source AND receive bounds pass.
+
+Grouped closing/certificate regressions42/42 PASS in22.310s, covering all10
+venue/symbol pairs and feed-isolated bounded batch/cardinality on both replicas.
+The initial invocation also named a nonexistent extra test module; the exact
+corrected invocation used `tests.test_phase105_identity_acceptance`,
+`tests.test_release_session_observations`, `tests.test_phase105_release_observations`,
+`tests.test_phase105_release_certification`. Container removed; no new image.

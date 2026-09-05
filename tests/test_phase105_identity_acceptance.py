@@ -29,6 +29,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     IDENTITY_PREFIXES,
     _authority,
     _closing_batch_revalidation,
+    _closing_batches,
     _closing_requirement,
     _c2_grpc_targets,
     _consumer_ids,
@@ -46,6 +47,22 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
 
 
 class Phase105IdentityAcceptanceTests(unittest.TestCase):
+    def test_closing_batches_isolate_hot_feeds_without_losing_scope(self) -> None:
+        products = tuple(SimpleNamespace(identity=(venue, symbol, feed), feed=Feed(feed))
+            for venue in ("BINANCE", "OKX")
+            for symbol in ("BTC", "ETH", "SOL", "DOGE", "BNB")
+            for feed in ("TRADE", "BAR", "QUOTE", "BOOK_SNAPSHOT", "BOOK_DELTA"))
+        for limit in (1, 5, 50):
+            batches = tuple(_closing_batches(products, limit))
+            actual = [item.identity for batch in batches for item in batch]
+            self.assertCountEqual(actual, [item.identity for item in products])
+            self.assertEqual(len(actual), len(set(actual)))
+            for batch in batches:
+                self.assertEqual(len({item.feed for item in batch}), 1)
+                bound = limit if batch[0].feed is Feed.BAR else min(limit, 8)
+                self.assertLessEqual(len(batch), bound)
+        self.assertEqual(tuple(_closing_batches((), 50)), ())
+
     def test_typed_c2_product_failure_keeps_status_without_market_payload(self) -> None:
         status = FeedStatusResponse.model_validate({
             "schema": "qdl.feed-status.v2",
