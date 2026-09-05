@@ -37640,3 +37640,13 @@ new gate is required for this closure. Retain active projector image
 named rollback `sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820`,
 V1, and the bounded receipt. Disposable C2 container cleanup is complete;
 shared build-cache pruning remains outside this release scope.
+
+**Dev handoff (`PUSHED / REMOTE CI PENDING`, 2026-09-05).** Certified source
+through `40072f3` was fast-forwarded from `origin/dev` `87a1646` to
+`origin/dev` `40072f3`; the review branch
+`fix/v2-realtime-mark-index-release` was pushed at the same revision. This host
+has neither GitHub CLI nor a GitHub API token, so it cannot truthfully inspect
+or bypass the remote Actions result. `main` and release tags are deliberately
+unchanged until the normal `dev -> main` CI/review release handoff completes.
+That is an external publication boundary, not an unimplemented data-plane or
+runtime gate; the sealed C2 certificate above remains the release evidence.
