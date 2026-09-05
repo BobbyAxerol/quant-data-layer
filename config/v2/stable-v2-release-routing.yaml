@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 17
+revision: 18
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
@@ -1019,8 +1019,8 @@ consumers:
     reason: VN_REAL_PROVIDER_GATE_UNEXERCISED
 - consumer_id: trading-system.paper.stable
   manifest: /app/consumers/stable/trading-system-paper.yaml
-  manifest_revision: 8
-  manifest_sha256: a82ed9adf01401408a9b603d0bbb1e058e4573cff3be67c1b3caa3b7ddd6c0f7
+  manifest_revision: 9
+  manifest_sha256: b026df8d4b1e615899c2ba3b86923a4da4dc8d213a5758e58846be7e308a2811
   demand_revision: 6
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2

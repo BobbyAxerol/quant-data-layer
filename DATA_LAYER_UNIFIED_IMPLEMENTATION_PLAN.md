@@ -30224,6 +30224,50 @@ mutated. The feature worktree remains retained because Phase D still uses its
 active source; it is not an archival copy and is eligible for removal only in
 the final exact cleanup inventory.
 
+### Trading consumer certified-scope convergence (2026-09-05, IN PROGRESS)
+
+This is completion of the existing consumer charter, not a new phase. Owner
+approved inheriting the v2.0.12 certificate (299 products, certificate SHA256
+`0b67916ef677f7ee099de510a1731948b2eea85e876663ff99cf7d67e4bc1b2e`),
+expanding the stale Trading System binding from 42 to 60, its runtime symbols
+from BTC/ETH to BTC/ETH/SOL/DOGE/BNB on Binance USD-M and OKX Swap, and matching
+the consumer quota. The previous 24-slice reader repair was not the complete
+multi-symbol objective. See Trading System's matching convergence journal and
+the architecture guide sections 18.3 (DataRequirement) and deployment manifests.
+
+Scope: consumer manifest revision 8 -> 9; quota 20 -> 50 streams and
+600 -> 1500 requests/minute. Ten instruments require 40 persistent streams,
+600 mark reads/minute and 20 book snapshots/minute plus bounded recovery.
+Keep feed requirements, freshness/finality/authority and all other quotas
+unchanged. Use a versioned read-only manifest mount and the existing immutable
+Python image; no binary rebuild or new topology is needed. Roll only the four
+query/stream readers and Trading System `market_data_service`.
+
+Exit: focused manifest/binding tests; 60 native-identity/feed routes, 40 streams
+within quota; real consumer cache/watermark/health progress on the added six
+instruments, both venues; no order/state mutation. Reuse the certified 299
+products, do not run full C2/provider certification again. Keep V1, Rust,
+ingestors, projectors, Kafka offsets/topology, Redis/SQLite and alpha/order path
+unchanged. Save exact inspected role image/env/mount rollback before rolling;
+restore four reader configurations and the prior TS 42-product/24-demand
+configuration if acceptance fails. Retain bounded evidence outside source,
+remove disposable probes, journal test results and commit using owner identity.
+
+Source gate PASS: `tests.test_trading_consumer_scope` and existing
+`tests.test_phase115_universal_release`: 18/18 offline tests in retained Python
+image, network disabled, tmpfs removed. Initial verification caught a file-hash
+versus canonical manifest hash mismatch; corrected with ConsumerManifestLoader,
+not by bypassing validation. Stable routing is now revision 18, manifest 9.
+The renderer projects the already certified StableReleaseRoutePlan directly
+into the existing portable binding; its digest identifies routing, not a new
+299-product certificate. TS source bridge/deployment/routes: 23/23 PASS.
+Binding SHA `5b18204180db470c27332665bae949a0b1768593769d4c30200e2812bafde8b3`;
+release routing SHA `e61f3bce3f0cbe610f433d51e53959ca874c1cee51ecc3cc549bf897ffd95ffa`.
+The certified execution identity has zero automatic V1 fallback products;
+all 60 V2 failures stay typed BLOCKED, with V1 retained for explicit rollback.
+Other consumers' certified fallback routes are unchanged. Exact inspected
+five-role forward/rollback Compose configs validate; runtime acceptance next.
+
 ### Phase C — Canonical reader/stream release artifact
 
 - Build and attest one canonical `qdl-v2-python:<semver>-<gitsha>` reader/stream

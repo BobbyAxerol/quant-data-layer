@@ -5,7 +5,7 @@ metadata:
   owner: trading-platform
   subject: spiffe://qdl/paper/trading-system-stable
   environment: paper
-  revision: 8
+  revision: 9
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -20,10 +20,10 @@ spec:
   purposes:
   - INTERNAL_EXECUTION
   quotas:
-    requests_per_minute: 600
+    requests_per_minute: 1500
     max_batch_items: 50
     max_warmup_rows: 2000
-    max_streams: 20
+    max_streams: 50
     max_buffer_events: 2000
   requirements:
   - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
