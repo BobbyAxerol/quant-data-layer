@@ -120,6 +120,8 @@ def _binding(
     source_role: str,
     interval: str | None = None,
     authoritative: bool = False,
+    stale_after_ms: int = 60_000,
+    freshness_basis: str = "SOURCE_EVENT",
 ) -> StableSourceBinding:
     return StableSourceBinding(
         binding_id=f"phase104d-{record.native_symbol.lower()}-{feed.value.lower()}-{interval or 'latest'}",
@@ -133,11 +135,12 @@ def _binding(
         normalizer_version="phase104d-core/1",
         feed=feed,
         interval=interval,
-        stale_after_ms=60_000,
+        stale_after_ms=stale_after_ms,
         require_final_bar=False,
         continuous_calendar=True,
         v1_compatibility="NONE",
         canonical_stream=STREAM,
+        freshness_basis=freshness_basis,
     )
 
 
@@ -377,6 +380,89 @@ class Phase104V2QueryStreamIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 api_item = _market_item(item)
                 self.assertEqual(api_item.feed, feed.value)
                 self.assertEqual(api_item.payload.feed.value, feed.value)
+
+    def test_mark_index_confirmation_freshness_preserves_source_time_and_blocks_expiry(self):
+        """A repeated provider value is usable only while its WS confirmation is fresh."""
+        binding = _binding(
+            self.okx_btc,
+            FeedType.MARK_INDEX_PRICE,
+            provider="OKX_DIRECT",
+            source_id="okx-mark-index-primary",
+            source_role="PRIMARY",
+            authoritative=True,
+            stale_after_ms=2_000,
+            freshness_basis="PROVIDER_CONFIRMATION",
+        )
+        catalog = StableSourceCatalog(
+            canonical_stream=STREAM,
+            bindings=(binding,),
+            catalog_revision=8,
+            source_policy_revision=4,
+            authority_revision=4,
+            instruments=(self.okx_btc,),
+        )
+        # The generic reference canonicalizer intentionally accepts REFERENCE
+        # only.  The live Rust path emits the same payload as PRIMARY, so build
+        # valid fixture bytes first, then set the proven runtime lineage.
+        reference_binding = _binding(
+            self.okx_btc,
+            FeedType.MARK_INDEX_PRICE,
+            provider="OKX_DIRECT",
+            source_id=binding.source_id,
+            source_role="REFERENCE",
+        )
+        result, observation, context = _reference_result(
+            binding=reference_binding,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            fields=(
+                _field("mark_price", "60123.40", "QUOTE_PRICE"),
+                _field("index_price", "60120.10", "QUOTE_PRICE"),
+            ),
+            sequence=71,
+        )
+        current = canonicalize_reference_observation(
+            result=result, observation=observation, context=context
+        )
+        current.source_role = common_pb2.SOURCE_ROLE_PRIMARY
+        current.adapter_version = binding.adapter_version
+        current.normalizer_version = binding.normalizer_version
+        current.authority_revision = catalog.authority_revision
+        # Keep value time for lineage. A current authenticated provider frame,
+        # rather than the REST age of an unchanged index, proves freshness.
+        current.source_event_time_ns = NOW - 10_000_000_000
+        current.received_at_ns = NOW - 1_000_000_000
+        current.normalized_at_ns = current.received_at_ns
+        current.published_at_ns = current.received_at_ns
+        self.spool.append(_durable(binding, current))
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            catalog,
+            schema_digest="e" * 64,
+            clock_ns=lambda: NOW,
+        )
+        requirement = _requirement(binding)
+        fresh = backend.latest(requirement)
+        self.assertIsNotNone(fresh)
+        assert fresh is not None
+        self.assertEqual(fresh.observed_at_ns, NOW - 10_000_000_000)
+        self.assertEqual(fresh.quality.state, "LIVE")
+        self.assertTrue(fresh.quality.execution_eligible)
+        self.assertIn("FRESHNESS_BASIS_PROVIDER_CONFIRMATION", fresh.quality.flags)
+        self.assertIn("SOURCE_VALUE_TIMESTAMP_OLD", fresh.quality.flags)
+
+        expired = market_data_pb2.EventEnvelope()
+        expired.CopyFrom(current)
+        expired.event_id = hashlib.sha256(b"phase104d-mark-index-expired").digest()[:16]
+        expired.received_at_ns = NOW - 2_001_000_000
+        expired.normalized_at_ns = expired.received_at_ns
+        expired.published_at_ns = expired.received_at_ns
+        self.spool.append(_durable(binding, expired))
+        stale = backend.latest(requirement)
+        self.assertIsNotNone(stale)
+        assert stale is not None
+        self.assertEqual(stale.quality.state, "STALE")
+        self.assertFalse(stale.quality.execution_eligible)
+        self.assertIn("LAST_EVENT_STALE", stale.quality.flags)
 
     def test_source_scoped_entitlements_coalesce_bound_products(self):
         entitlements = self.catalog.entitlements()

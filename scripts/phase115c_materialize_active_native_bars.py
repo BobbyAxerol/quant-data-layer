@@ -213,7 +213,11 @@ def _merge_source_bindings(
     # the cosmetic binding ID, is the matching key.
     for item in generated:
         current = existing_by_requirement.get(_source_requirement_key(item))
-        chosen = deepcopy(current if current is not None else item)
+        # MARK_INDEX_PRICE changed from a bounded REST reference route to a
+        # generated native canonical route.  Its binding policy is therefore
+        # deliberately refreshed while its requirement identity stays stable.
+        refresh_mark_index = str(item.get("feed")) == "MARK_INDEX_PRICE"
+        chosen = deepcopy(item if refresh_mark_index or current is None else current)
         result.append(chosen)
         remap[str(item["binding_id"])] = str(chosen["binding_id"])
     result.extend(
@@ -250,7 +254,15 @@ def _merge_acquisition_bindings(
             str(item.get("runtime")) == "OKX"
             and str(item.get("provider_kind")) == "okx_bar"
         )
-        chosen = deepcopy(item if refresh_okx_bar_policy or current is None else current)
+        refresh_mark_index_policy = str(item.get("provider_kind")) in {
+            "binance_usdm_mark_index",
+            "okx_mark_index",
+        }
+        chosen = deepcopy(
+            item
+            if refresh_okx_bar_policy or refresh_mark_index_policy or current is None
+            else current
+        )
         chosen["binding_id"] = target_id
         result[target_id] = chosen
     for binding_id in source_binding_ids:
@@ -356,7 +368,14 @@ def build_documents(
     active_authority_ids = {
         item.binding_id
         for item in next_catalog.bindings
-        if item.feed.value in {"BAR", "TRADE", "QUOTE", "BOOK_SNAPSHOT", "BOOK_DELTA"}
+        if item.feed.value in {
+            "BAR",
+            "TRADE",
+            "QUOTE",
+            "MARK_INDEX_PRICE",
+            "BOOK_SNAPSHOT",
+            "BOOK_DELTA",
+        }
         and (item.instrument.identity.venue, item.instrument.identity.market) in ACTIVE_BAR_FAMILIES
     }
     next_scope_ids = sorted(

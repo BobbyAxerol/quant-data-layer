@@ -4,8 +4,8 @@ use qdl_contracts::qdl::common::v1::{
     SourceRole,
 };
 use qdl_contracts::qdl::marketdata::v2::{
-    event_envelope, Bar, BarLifecycle, BookLevel, EventEnvelope, OrderBookDelta, OrderBookSnapshot,
-    Quote, Trade, TradeIdentityKind,
+    event_envelope, Bar, BarLifecycle, BookLevel, EventEnvelope, MarkIndexPrice, OrderBookDelta,
+    OrderBookSnapshot, Quote, Trade, TradeIdentityKind,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -63,6 +63,17 @@ pub struct TradeFixture {
     pub provider_kind: String,
     pub context: TradeContext,
     pub raw: Value,
+}
+
+/// A provider-authentic paired mark/index observation.  The source timestamp
+/// remains the oldest provider component timestamp; the receipt timestamp in
+/// `TradeContext` independently records when the provider confirmed the pair.
+#[derive(Clone, Debug)]
+pub struct MarkIndexInput {
+    pub mark_price: String,
+    pub index_price: String,
+    pub source_event_time_ms: i64,
+    pub source_sequence: String,
 }
 
 fn text(raw: &Value, field: &str) -> Result<String, String> {
@@ -140,6 +151,33 @@ pub fn canonicalize_trade(fixture: &TradeFixture) -> Result<EventEnvelope, Strin
         "deribit_option_book_fixture" => canonicalize_deribit_fixture(fixture),
         other => Err(format!("unsupported provider fixture: {other}")),
     }
+}
+
+pub fn canonicalize_mark_index(
+    fixture: &TradeFixture,
+    input: MarkIndexInput,
+) -> Result<EventEnvelope, String> {
+    if input.source_event_time_ms <= 0 || input.source_sequence.trim().is_empty() {
+        return Err("mark/index source time and sequence are required".into());
+    }
+    let mut envelope = base_envelope(
+        fixture,
+        "mark_index_price",
+        input.source_sequence,
+        input.source_event_time_ms,
+    )?;
+    envelope.payload = Some(event_envelope::Payload::MarkIndexPrice(MarkIndexPrice {
+        mark_price: Some(parse_positive_trade_decimal(
+            &input.mark_price,
+            "mark price",
+        )?),
+        index_price: Some(parse_positive_trade_decimal(
+            &input.index_price,
+            "index price",
+        )?),
+    }));
+    set_payload_hash(&mut envelope)?;
+    Ok(envelope)
 }
 
 fn source_role(value: &str) -> Result<SourceRole, String> {

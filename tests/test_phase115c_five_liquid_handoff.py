@@ -151,8 +151,50 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
             {2_000},
         )
 
+    def test_typed_mark_index_uses_explicit_strict_provider_identity(self) -> None:
+        mark_rows = [
+            item for _consumer_id, item in self.requirements
+            if item["feed"] == "MARK_INDEX_PRICE"
+        ]
+        payload = {
+            "schema": self.demand["schema"],
+            "revision": self.demand["revision"],
+            "consumers": [{
+                "consumer_id": "typed-mark-index-regression",
+                "consumer_grade": "EXECUTION",
+                "requirements": mark_rows,
+            }],
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "mark-index.yaml"
+            path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+            manifest = ProductionDemandManifest.load_many((path,))
+        marks = [item for item in manifest.demands if item.feed.value == "MARK_INDEX_PRICE"]
+        self.assertEqual(len(marks), 10)
+        self.assertEqual({item.max_freshness_ms for item in marks}, {2_000})
+        self.assertTrue(all(item.require_live for item in marks))
+        self.assertEqual(
+            {
+                (item.native_symbol, item.index_native_symbol)
+                for item in marks
+                if item.venue == "OKX"
+            },
+            {
+                ("BTC-USDT-SWAP", "BTC-USDT"),
+                ("ETH-USDT-SWAP", "ETH-USDT"),
+                ("SOL-USDT-SWAP", "SOL-USDT"),
+                ("DOGE-USDT-SWAP", "DOGE-USDT"),
+                ("BNB-USDT-SWAP", "BNB-USDT"),
+            },
+        )
+        self.assertTrue(all(
+            item.index_native_symbol is None
+            for item in marks
+            if item.venue == "BINANCE"
+        ))
+
     def test_admission_budget_is_exact_and_all_routes_are_provider_admitted(self) -> None:
-        self.assertEqual(self.demand["revision"], 4)
+        self.assertEqual(self.demand["revision"], 5)
         self.assertEqual(self.registry["revision"], 4)
         usage = Counter(
             (item["venue"], item["market"], item["feed"])

@@ -33,11 +33,13 @@ _PROVIDER_KINDS = {
     }),
     ("BINANCE", "BOOK_SNAPSHOT"): frozenset({"binance_usdm_book", "binance_spot_book"}),
     ("BINANCE", "BOOK_DELTA"): frozenset({"binance_usdm_book", "binance_spot_book"}),
+    ("BINANCE", "MARK_INDEX_PRICE"): frozenset({"binance_usdm_mark_index"}),
     ("OKX", "TRADE"): frozenset({"okx_trade"}),
     ("OKX", "QUOTE"): frozenset({"okx_bbo"}),
     ("OKX", "BAR"): frozenset({"okx_bar"}),
     ("OKX", "BOOK_SNAPSHOT"): frozenset({"okx_book"}),
     ("OKX", "BOOK_DELTA"): frozenset({"okx_book"}),
+    ("OKX", "MARK_INDEX_PRICE"): frozenset({"okx_mark_index"}),
     ("HNX", "TRADE"): frozenset({"dnse_trade"}),
     ("HNX", "BAR"): frozenset({"dnse_bar"}),
     ("HOSE", "TRADE"): frozenset({"dnse_trade"}),
@@ -116,6 +118,108 @@ class StableL2Acquisition:
                 self.materialized_snapshot_interval_ms
             )
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class StableMarkIndexAcquisition:
+    """One logical execution mark/index view, backed by provider-native frames."""
+
+    provider_protocol: str
+    index_native_symbol: str | None
+
+    def validate(
+        self,
+        source: StableSourceBinding,
+        acquisition: "StableAcquisitionBinding",
+    ) -> None:
+        identity = source.instrument.identity
+        if (
+            source.feed is not FeedType.MARK_INDEX_PRICE
+            or acquisition.mode != "RUST_NATIVE"
+            or acquisition.sequence_policy != "NONE"
+        ):
+            raise ValueError("MARK_INDEX acquisition requires native replace-only semantics")
+        if self.provider_protocol == "BINANCE_MARK_PRICE":
+            if (
+                identity.venue != "BINANCE"
+                or identity.market != "USDM"
+                or acquisition.provider_kind != "binance_usdm_mark_index"
+                or acquisition.native_channel
+                != f"{source.instrument.native_symbol.lower()}@markPrice@1s"
+                or self.index_native_symbol is not None
+            ):
+                raise ValueError("Binance MARK_INDEX acquisition differs from provider protocol")
+            return
+        if self.provider_protocol == "OKX_MARK_INDEX":
+            index_symbol = (self.index_native_symbol or "").strip().upper()
+            if (
+                identity.venue != "OKX"
+                or identity.market != "SWAP"
+                or acquisition.provider_kind != "okx_mark_index"
+                or acquisition.native_channel != "mark-price"
+                or not index_symbol
+                or index_symbol == source.instrument.native_symbol
+            ):
+                raise ValueError("OKX MARK_INDEX acquisition differs from provider protocol")
+            return
+        raise ValueError("MARK_INDEX provider protocol is not certified")
+
+    def component_entries(
+        self,
+        source: StableSourceBinding,
+        acquisition: "StableAcquisitionBinding",
+    ) -> tuple[tuple[str, str, str, str], ...]:
+        """Return physical symbol/channel/provider-kind/component entries.
+
+        The index symbol is explicit in the signed acquisition plan.  We never
+        infer it from a swap symbol at runtime, avoiding a silent USD/USDT or
+        venue mapping error.
+        """
+        self.validate(source, acquisition)
+        if self.provider_protocol == "BINANCE_MARK_PRICE":
+            return ((
+                source.instrument.native_symbol,
+                acquisition.native_channel,
+                "binance_usdm_mark_index",
+                "BOTH",
+            ),)
+        return (
+            (
+                source.instrument.native_symbol,
+                "mark-price",
+                "okx_mark_price",
+                "MARK",
+            ),
+            (
+                str(self.index_native_symbol),
+                "index-tickers",
+                "okx_index_price",
+                "INDEX",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StablePhysicalEntry:
+    """A physical provider subscription projected into one logical binding."""
+
+    source: StableSourceBinding
+    acquisition: "StableAcquisitionBinding"
+    physical_native_symbol: str
+    physical_native_channel: str
+    provider_kind: str
+    mark_index_component: str | None = None
+
+    def __iter__(self):
+        """Keep the former private `(source, acquisition)` projection usable.
+
+        Existing callers only need logical ownership. New native mark/index
+        callers use the explicit physical fields above instead of inferring a
+        second instrument from a tuple shape.
+        """
+
+        yield self.source
+        yield self.acquisition
 
 
 def validate_shared_authority_record(authority: Mapping[str, Any]) -> None:
@@ -224,6 +328,7 @@ class StableAcquisitionBinding:
     websocket_url: str | None
     business_websocket_url: str | None
     l2: StableL2Acquisition | None = None
+    mark_index: StableMarkIndexAcquisition | None = None
     # Program rule 6: an unused feed is disabled by configuration and
     # zero-demand evidence, never deleted. The catalog keeps the capability so a
     # reviewed DataRequirement can re-enable it without a code change; this flag
@@ -247,10 +352,16 @@ class StableAcquisitionBinding:
         )
         if self.provider_kind not in allowed:
             raise ValueError("stable acquisition provider kind differs from catalog feed")
+        if self.l2 is not None and self.mark_index is not None:
+            raise ValueError("stable acquisition cannot combine L2 and MARK_INDEX")
         if self.l2 is not None:
             self.l2.validate(source, self)
         elif source.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}:
             raise ValueError("book binding requires an explicit L2 acquisition")
+        if self.mark_index is not None:
+            self.mark_index.validate(source, self)
+        elif source.feed is FeedType.MARK_INDEX_PRICE:
+            raise ValueError("MARK_INDEX binding requires an explicit acquisition contract")
         if self.provider_kind == "okx_bbo" and self.sequence_policy != "NONE":
             raise ValueError("OKX bbo-tbt is replace-only and cannot require sequence continuity")
         if self.mode == "RUST_NATIVE":
@@ -346,7 +457,7 @@ class StableAcquisitionPlan:
                 "sequence_policy", "websocket_url", "business_websocket_url",
             }
             if not isinstance(value, dict) or not required <= set(value) or (
-                set(value) - required - {"enabled", "l2"}
+                set(value) - required - {"enabled", "l2", "mark_index"}
             ):
                 raise ValueError("stable acquisition binding fields are incomplete or unknown")
             enabled = value.get("enabled", True)
@@ -386,6 +497,30 @@ class StableAcquisitionPlan:
                 )
             else:
                 l2 = None
+            mark_index_raw = value.get("mark_index")
+            if mark_index_raw is not None:
+                required_mark_index = {"provider_protocol", "index_native_symbol"}
+                if (
+                    not isinstance(mark_index_raw, dict)
+                    or set(mark_index_raw) != required_mark_index
+                    or (
+                        mark_index_raw["index_native_symbol"] is not None
+                        and not isinstance(mark_index_raw["index_native_symbol"], str)
+                    )
+                ):
+                    raise ValueError(
+                        "stable MARK_INDEX acquisition fields are incomplete or unknown"
+                    )
+                mark_index = StableMarkIndexAcquisition(
+                    provider_protocol=str(mark_index_raw["provider_protocol"]).upper(),
+                    index_native_symbol=(
+                        str(mark_index_raw["index_native_symbol"]).upper()
+                        if mark_index_raw["index_native_symbol"] is not None
+                        else None
+                    ),
+                )
+            else:
+                mark_index = None
             bindings.append(StableAcquisitionBinding(
                 binding_id=str(value["binding_id"]),
                 mode=str(value["mode"]).upper(),
@@ -401,6 +536,7 @@ class StableAcquisitionPlan:
                     if value["business_websocket_url"] is not None else None
                 ),
                 l2=l2,
+                mark_index=mark_index,
                 enabled=enabled,
             ))
         result = cls(
@@ -469,12 +605,13 @@ class StableAcquisitionPlan:
         *,
         source_by_id: Mapping[str, StableSourceBinding],
         selected_ids: frozenset[str],
-    ) -> tuple[tuple[StableSourceBinding, StableAcquisitionBinding], ...]:
-        """Coalesce only the two logical aliases of one L2 book.
+    ) -> tuple[StablePhysicalEntry, ...]:
+        """Project logical bindings into shared physical provider inputs.
 
-        The core and native ingestor consume physical provider inputs. Public
-        query still receives distinct canonical BOOK_SNAPSHOT/BOOK_DELTA
-        payloads, produced from that one input/state machine.
+        L2 coalesces two logical public products into one verified state
+        machine. MARK_INDEX keeps one logical public product, but OKX exposes
+        its mark and index values on two physical channels. Both cases remain
+        inside the existing per-venue shared role.
         """
         aliases_by_source: dict[str, frozenset[str]] = {}
         for item in self.bindings:
@@ -486,23 +623,44 @@ class StableAcquisitionPlan:
                     if value.l2 is not None
                     and source_by_id[value.binding_id].source_id == source_id
                 )
-        result: list[tuple[StableSourceBinding, StableAcquisitionBinding]] = []
+        result: list[StablePhysicalEntry] = []
         seen: set[tuple[str, str]] = set()
         for binding_id in sorted(selected_ids):
             source = source_by_id[binding_id]
             acquisition = next(item for item in self.bindings if item.binding_id == binding_id)
-            if acquisition.l2 is None:
+            if acquisition.l2 is None and acquisition.mark_index is None:
                 identity = ("binding", binding_id)
-            else:
+            elif acquisition.l2 is not None:
                 aliases = aliases_by_source[source.source_id]
                 if not aliases.issubset(selected_ids):
                     raise ValueError(
                         "stable L2 runtime selection must include both snapshot/delta aliases"
                     )
                 identity = ("l2", source.source_id)
+            else:
+                identity = ("mark-index", source.source_id)
             if identity not in seen:
                 seen.add(identity)
-                result.append((source, acquisition))
+                if acquisition.mark_index is None:
+                    result.append(StablePhysicalEntry(
+                        source=source,
+                        acquisition=acquisition,
+                        physical_native_symbol=source.instrument.native_symbol,
+                        physical_native_channel=acquisition.native_channel,
+                        provider_kind=acquisition.provider_kind,
+                    ))
+                else:
+                    for physical_symbol, physical_channel, provider_kind, component in (
+                        acquisition.mark_index.component_entries(source, acquisition)
+                    ):
+                        result.append(StablePhysicalEntry(
+                            source=source,
+                            acquisition=acquisition,
+                            physical_native_symbol=physical_symbol,
+                            physical_native_channel=physical_channel,
+                            provider_kind=provider_kind,
+                            mark_index_component=component,
+                        ))
         return tuple(result)
 
     def core_config(
@@ -530,9 +688,11 @@ class StableAcquisitionPlan:
         if not selected_ids or not selected_ids.issubset(source_by_id):
             raise ValueError("stable core binding selection is empty or unknown")
         bindings = []
-        for source, acquisition in self._physical_entries(
+        for entry in self._physical_entries(
             source_by_id=source_by_id, selected_ids=selected_ids
         ):
+            source = entry.source
+            acquisition = entry.acquisition
             identity = source.instrument.identity
             item = {
                 "provider": source.provider,
@@ -541,7 +701,7 @@ class StableAcquisitionPlan:
                 "product_type": identity.product_type.value,
                 "native_symbol": source.instrument.native_symbol,
                 "native_channel": acquisition.native_channel,
-                "provider_kind": acquisition.provider_kind,
+                "provider_kind": entry.provider_kind,
                 "instrument_uid": source.instrument.instrument_uid,
                 "instrument_id": source.instrument.instrument_id,
                 "instrument_revision": source.instrument.metadata_revision,
@@ -554,6 +714,10 @@ class StableAcquisitionPlan:
             }
             if acquisition.l2 is not None:
                 item["l2"] = acquisition.l2.core_mapping()
+            if entry.mark_index_component is not None:
+                item["physical_native_symbol"] = entry.physical_native_symbol
+                item["physical_native_channel"] = entry.physical_native_channel
+                item["mark_index"] = {"component": entry.mark_index_component}
             bindings.append(item)
         return {
             "core": {
@@ -661,41 +825,61 @@ class StableAcquisitionPlan:
         disabled_ids = selected_ids - enabled_ids
         if disabled_ids:
             raise ValueError("native ingestor selection contains disabled bindings")
-        grouped: dict[tuple[str, str], list[tuple[StableSourceBinding, StableAcquisitionBinding]]] = {}
-        for source, acquisition in self._physical_entries(
+        grouped: dict[tuple[str, str], list[StablePhysicalEntry]] = {}
+        for entry in self._physical_entries(
             source_by_id=source_by_id, selected_ids=frozenset(selected_ids)
         ):
+            source = entry.source
+            acquisition = entry.acquisition
             if acquisition.enabled and acquisition.mode == "RUST_NATIVE":
-                grouped.setdefault(self._runtime_lane(acquisition, source), []).append(
-                    (source, acquisition)
-                )
+                grouped.setdefault(self._runtime_lane(acquisition, source), []).append(entry)
         result = {}
         for (runtime, market), values in sorted(grouped.items()):
-            _first_source, first = values[0]
+            first = values[0].acquisition
             bindings = []
-            for source, acquisition in sorted(values, key=lambda item: item[1].binding_id):
+            for entry in sorted(
+                values,
+                key=lambda item: (
+                    item.acquisition.binding_id,
+                    item.physical_native_channel,
+                    item.physical_native_symbol,
+                ),
+            ):
+                source = entry.source
+                acquisition = entry.acquisition
                 identity = source.instrument.identity
                 binding = {
                     "provider": source.provider,
                     "venue": identity.venue,
                     "market": identity.market,
                     "product_type": identity.product_type.value,
-                    "native_symbol": source.instrument.native_symbol,
-                    "native_channel": acquisition.native_channel,
+                    "native_symbol": entry.physical_native_symbol,
+                    "native_channel": entry.physical_native_channel,
                     "subscription_id": source.source_id,
                     "adapter_version": source.adapter_version,
                     "instrument_catalog_revision": catalog.catalog_revision,
                     "feed": (
-                        "BOOK" if acquisition.l2 is not None else source.feed.value
+                        "BOOK"
+                        if acquisition.l2 is not None
+                        else (
+                            "MARK_INDEX"
+                            if entry.mark_index_component is not None
+                            else source.feed.value
+                        )
                     ),
                     "delivery_class": (
                         "LATEST_STATE"
-                        if source.feed is FeedType.QUOTE and acquisition.l2 is None
+                        if (
+                            source.feed is FeedType.QUOTE
+                            or entry.mark_index_component is not None
+                        ) and acquisition.l2 is None
                         else "LOSSLESS"
                     ),
                 }
                 if acquisition.l2 is not None:
                     binding["l2"] = acquisition.l2_mapping()
+                if entry.mark_index_component is not None:
+                    binding["mark_index_target"] = source.instrument.instrument_uid
                 bindings.append(binding)
             key = f"{runtime.lower()}-{market.lower()}"
             result[key] = {

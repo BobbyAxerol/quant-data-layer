@@ -75,6 +75,10 @@ class StableSourceBinding:
     continuous_calendar: bool
     v1_compatibility: str
     canonical_stream: str
+    # Source time stays immutable for lineage.  A provider-neutral paired
+    # mark/index feed may instead use its authenticated receipt confirmation
+    # for execution freshness when the provider repeats an unchanged value.
+    freshness_basis: str = "SOURCE_EVENT"
     # Explicitly signed historical revisions are replay-only lineage.  They
     # never change the current instrument metadata returned to consumers.
     historical_metadata_revisions: tuple[int, ...] = ()
@@ -115,6 +119,15 @@ class StableSourceBinding:
             raise ValueError("require_final_bar is valid only for BAR")
         if self.stale_after_ms <= 0:
             raise ValueError("stable source freshness bound must be positive")
+        if self.freshness_basis not in {"SOURCE_EVENT", "PROVIDER_CONFIRMATION"}:
+            raise ValueError("stable source freshness basis is invalid")
+        if (
+            self.freshness_basis == "PROVIDER_CONFIRMATION"
+            and self.feed is not FeedType.MARK_INDEX_PRICE
+        ):
+            raise ValueError(
+                "provider confirmation freshness is reserved for paired MARK_INDEX_PRICE"
+            )
         if (
             not isinstance(self.historical_metadata_revisions, tuple)
             or not all(type(value) is int for value in self.historical_metadata_revisions)
@@ -388,7 +401,10 @@ class StableSourceCatalog:
         }
         if set(source) != expected_source:
             raise ValueError("stable source lineage fields are incomplete or unknown")
-        if set(quality) != {"stale_after_ms", "require_final_bar", "continuous_calendar"}:
+        required_quality = {"stale_after_ms", "require_final_bar", "continuous_calendar"}
+        if not required_quality <= set(quality) or set(quality) - required_quality - {
+            "freshness_basis"
+        }:
             raise ValueError("stable source quality fields are incomplete or unknown")
         interval = raw["interval"]
         return StableSourceBinding(
@@ -408,6 +424,7 @@ class StableSourceCatalog:
             continuous_calendar=bool(quality["continuous_calendar"]),
             v1_compatibility=str(raw["v1_compatibility"]).upper(),
             canonical_stream=canonical_stream,
+            freshness_basis=str(quality.get("freshness_basis", "SOURCE_EVENT")).upper(),
             historical_metadata_revisions=history_by_uid[instrument.instrument_uid],
         )
 

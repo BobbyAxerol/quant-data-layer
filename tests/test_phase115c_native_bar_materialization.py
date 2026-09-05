@@ -207,6 +207,78 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         self.assertEqual(materialized_l2, current_l2)
         self.assertEqual(len(materialized_l2), 36)
 
+    def test_five_liquid_mark_index_is_promoted_as_shared_physical_inputs(self) -> None:
+        """Execution mark/index demand reaches the shared Rust physical plane."""
+        demand = self.tool._load_yaml(
+            ROOT / "config/v2/phase115c-paper-consumer-demand.yaml"
+        )
+        _, catalog, acquisition, scope, _ = self.tool.build_documents(
+            demand=demand,
+            source_catalog=self.current_catalog,
+            acquisition=self.current_acquisition,
+            promotion_scope=self.current_scope,
+            binance_usdm_capture=(
+                ROOT / "config/v2/captures/binance-usdm-exchangeinfo.filtered.json"
+            ),
+            binance_spot_capture=(
+                ROOT / "config/v2/captures/binance-spot-exchangeinfo.filtered.json"
+            ),
+            okx_swap_capture=(
+                ROOT / "config/v2/captures/okx-instruments-swap.filtered.json"
+            ),
+            okx_spot_capture=(
+                ROOT / "config/v2/captures/okx-instruments-spot.filtered.json"
+            ),
+        )
+        loaded_catalog = self.tool._load_temporary(
+            catalog, "mark-index-catalog.yaml", StableSourceCatalog.load
+        )
+        loaded_acquisition = self.tool._load_temporary(
+            acquisition,
+            "mark-index-acquisition.yaml",
+            lambda path: StableAcquisitionPlan.load(path, catalog=loaded_catalog),
+        )
+        mark_bindings = {
+            item.binding_id: item
+            for item in loaded_catalog.bindings
+            if item.feed.value == "MARK_INDEX_PRICE"
+            and (item.instrument.identity.venue, item.instrument.identity.market)
+            in {("BINANCE", "USDM"), ("OKX", "SWAP")}
+        }
+        self.assertEqual(len(mark_bindings), 10)
+        self.assertTrue(set(mark_bindings).issubset(set(scope["binding_ids"])))
+
+        entries = loaded_acquisition._physical_entries(
+            source_by_id={item.binding_id: item for item in loaded_catalog.bindings},
+            selected_ids=frozenset(mark_bindings),
+        )
+        self.assertEqual(len(entries), 15)
+        self.assertEqual(
+            Counter(
+                (entry.source.instrument.identity.venue, entry.mark_index_component)
+                for entry in entries
+            ),
+            {
+                ("BINANCE", "BOTH"): 5,
+                ("OKX", "MARK"): 5,
+                ("OKX", "INDEX"): 5,
+            },
+        )
+        self.assertEqual(
+            {
+                (entry.source.instrument.native_symbol, entry.physical_native_symbol)
+                for entry in entries
+                if entry.mark_index_component == "INDEX"
+            },
+            {
+                ("BTC-USDT-SWAP", "BTC-USDT"),
+                ("ETH-USDT-SWAP", "ETH-USDT"),
+                ("SOL-USDT-SWAP", "SOL-USDT"),
+                ("DOGE-USDT-SWAP", "DOGE-USDT"),
+                ("BNB-USDT-SWAP", "BNB-USDT"),
+            },
+        )
+
     def test_every_active_bar_uses_only_the_admitted_venue_acquisition_lane(self) -> None:
         source_by_id = {item.binding_id: item for item in self.loaded_catalog.bindings}
         for item in self.loaded_acquisition.bindings:

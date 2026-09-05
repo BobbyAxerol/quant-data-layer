@@ -46,7 +46,9 @@ pub struct OkxSubscription {
 impl OkxSubscription {
     pub fn service(&self) -> Result<OkxService, String> {
         match self.channel.as_str() {
-            "trades" | "bbo-tbt" | "books" => Ok(OkxService::Public),
+            "trades" | "bbo-tbt" | "books" | "mark-price" | "index-tickers" => {
+                Ok(OkxService::Public)
+            }
             "trades-all" => Ok(OkxService::Business),
             value if candle_interval(value).is_ok() => Ok(OkxService::Business),
             _ => Err(format!("unsupported stable OKX channel: {}", self.channel)),
@@ -59,6 +61,8 @@ impl OkxSubscription {
             "bbo-tbt" => Ok("okx_bbo"),
             value if candle_interval(value).is_ok() => Ok("okx_bar"),
             "books" => Ok("okx_book"),
+            "mark-price" => Ok("okx_mark_price"),
+            "index-tickers" => Ok("okx_index_price"),
             _ => Err(format!("unsupported stable OKX channel: {}", self.channel)),
         }
     }
@@ -212,9 +216,12 @@ pub fn expand_data_frame(payload: &Value) -> Result<Vec<NativeFrame>, String> {
                 })
             })
             .collect(),
-        value if matches!(value, "bbo-tbt" | "books") || candle_interval(value).is_ok() => {
+        value
+            if matches!(value, "bbo-tbt" | "books" | "mark-price" | "index-tickers")
+                || candle_interval(value).is_ok() =>
+        {
             if rows.len() != 1 {
-                return Err("OKX BBO/BAR/BOOK frame requires one data row".into());
+                return Err("OKX BBO/BAR/BOOK/MARK/INDEX frame requires one data row".into());
             }
             Ok(vec![NativeFrame {
                 provider_kind: subscription.provider_kind()?,

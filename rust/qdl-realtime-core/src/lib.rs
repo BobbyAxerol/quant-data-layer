@@ -9,7 +9,8 @@ use qdl_contracts::qdl::provider::v1::{
     QuarantineReason, QuarantineRecord, RawProviderEnvelope, TransportProtocol,
 };
 use qdl_core::canonical::{
-    canonicalize_l2_publication, canonicalize_trade, TradeContext, TradeFixture,
+    canonicalize_l2_publication, canonicalize_mark_index, canonicalize_trade, MarkIndexInput,
+    TradeContext, TradeFixture,
 };
 use qdl_core::l2_adapter::{BookPublication, BookTransition, L2BookAdapter};
 use qdl_core::l2_book::{BookIdentity, BookOutcome};
@@ -18,7 +19,7 @@ use qdl_core::transport::DurableRecord;
 use qdl_provider_envelope::validate as validate_raw;
 use qdl_venue_core::ordering::{OrderingStage, OrderingTracker, SequenceDecision, SequencePolicy};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 pub mod provider_admission;
@@ -31,6 +32,20 @@ const TRANSPORT_SEQUENCE_STRIDE: u64 = 1_000_000;
 pub enum L2ProviderProtocol {
     BinanceDiffDepth,
     OkxPublicBooks,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MarkIndexComponent {
+    Both,
+    Mark,
+    Index,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MarkIndexBinding {
+    pub component: MarkIndexComponent,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -109,6 +124,10 @@ pub struct CoreBinding {
     pub product_type: String,
     pub native_symbol: String,
     pub native_channel: String,
+    #[serde(default)]
+    pub physical_native_symbol: Option<String>,
+    #[serde(default)]
+    pub physical_native_channel: Option<String>,
     pub provider_kind: String,
     pub instrument_uid: String,
     pub instrument_id: String,
@@ -122,18 +141,36 @@ pub struct CoreBinding {
     pub sequence_policy: SequencePolicy,
     #[serde(default)]
     pub l2: Option<L2Binding>,
+    #[serde(default)]
+    pub mark_index: Option<MarkIndexBinding>,
 }
 
 impl CoreBinding {
+    fn physical_native_symbol(&self) -> &str {
+        self.physical_native_symbol
+            .as_deref()
+            .unwrap_or(&self.native_symbol)
+    }
+
+    fn physical_native_channel(&self) -> &str {
+        self.physical_native_channel
+            .as_deref()
+            .unwrap_or(&self.native_channel)
+    }
+
     fn key(&self) -> String {
         binding_key(
             &self.provider,
             &self.venue,
             &self.market,
             &self.product_type,
-            &self.native_symbol,
-            &self.native_channel,
+            self.physical_native_symbol(),
+            self.physical_native_channel(),
         )
+    }
+
+    fn mark_index_target_key(&self) -> String {
+        format!("{}/{}", self.instrument_uid, self.source_id)
     }
 
     fn validate(&self) -> Result<(), CoreError> {
@@ -162,6 +199,11 @@ impl CoreBinding {
                 "binding instrument revisions must be positive".into(),
             ));
         }
+        if self.physical_native_symbol.is_some() != self.physical_native_channel.is_some() {
+            return Err(CoreError::Configuration(
+                "physical mark/index binding identity must be complete".into(),
+            ));
+        }
         if !matches!(
             self.source_role.as_str(),
             "PRIMARY" | "SECONDARY" | "REFERENCE" | "BACKFILL"
@@ -170,7 +212,49 @@ impl CoreBinding {
                 "binding source role is invalid".into(),
             ));
         }
-        if let Some(l2) = &self.l2 {
+        if let Some(mark_index) = &self.mark_index {
+            if self.l2.is_some()
+                || self.require_final_bar
+                || self.sequence_policy != SequencePolicy::None
+            {
+                return Err(CoreError::Configuration(
+                    "mark/index binding cannot carry L2, BAR finality or sequence continuity"
+                        .into(),
+                ));
+            }
+            let physical_symbol = self.physical_native_symbol();
+            let physical_channel = self.physical_native_channel();
+            match (
+                self.venue.as_str(),
+                self.market.as_str(),
+                self.provider_kind.as_str(),
+                mark_index.component,
+            ) {
+                ("BINANCE", "USDM", "binance_usdm_mark_index", MarkIndexComponent::Both)
+                    if physical_symbol == self.native_symbol
+                        && physical_channel
+                            == format!(
+                                "{}@markPrice@1s",
+                                self.native_symbol.to_ascii_lowercase()
+                            ) => {}
+                ("OKX", "SWAP", "okx_mark_price", MarkIndexComponent::Mark)
+                    if physical_symbol == self.native_symbol
+                        && physical_channel == "mark-price" => {}
+                ("OKX", "SWAP", "okx_index_price", MarkIndexComponent::Index)
+                    if physical_symbol != self.native_symbol
+                        && physical_channel == "index-tickers" => {}
+                _ => {
+                    return Err(CoreError::Configuration(
+                        "mark/index provider protocol differs from approved binding identity"
+                            .into(),
+                    ))
+                }
+            }
+        } else if self.physical_native_symbol.is_some() {
+            return Err(CoreError::Configuration(
+                "physical identity is reserved for a mark/index component binding".into(),
+            ));
+        } else if let Some(l2) = &self.l2 {
             l2.validate(self)?;
         } else if self.provider_kind.ends_with("_book") {
             return Err(CoreError::Configuration(
@@ -204,7 +288,10 @@ impl RealtimeCoreConfig {
             ));
         }
         let mut keys = HashSet::new();
-        let mut source_ids = HashSet::new();
+        let mut ordinary_source_ids = HashSet::new();
+        let mut mark_index_source_ids = HashSet::new();
+        let mut mark_index_components: BTreeMap<String, HashSet<MarkIndexComponent>> =
+            BTreeMap::new();
         for binding in &self.bindings {
             binding.validate()?;
             if !keys.insert(binding.key()) {
@@ -212,10 +299,34 @@ impl RealtimeCoreConfig {
                     "duplicate realtime core binding".into(),
                 ));
             }
-            if !source_ids.insert(binding.source_id.clone()) {
+            if let Some(mark_index) = &binding.mark_index {
+                if ordinary_source_ids.contains(&binding.source_id)
+                    || !mark_index_components
+                        .entry(binding.mark_index_target_key())
+                        .or_default()
+                        .insert(mark_index.component)
+                {
+                    return Err(CoreError::Configuration(
+                        "duplicate realtime core mark/index component binding".into(),
+                    ));
+                }
+                mark_index_source_ids.insert(binding.source_id.clone());
+            } else if mark_index_source_ids.contains(&binding.source_id)
+                || !ordinary_source_ids.insert(binding.source_id.clone())
+            {
                 return Err(CoreError::Configuration(
                     "duplicate realtime core source ID".into(),
                 ));
+            }
+        }
+        for (target, components) in mark_index_components {
+            let complete = components == HashSet::from([MarkIndexComponent::Both])
+                || components
+                    == HashSet::from([MarkIndexComponent::Mark, MarkIndexComponent::Index]);
+            if !complete {
+                return Err(CoreError::Configuration(format!(
+                    "mark/index target has an incomplete component pair: {target}"
+                )));
             }
         }
         Ok(())
@@ -253,11 +364,29 @@ pub struct ProcessBatch {
     pub filtered: usize,
 }
 
+#[derive(Clone, Debug)]
+struct MarkIndexComponentState {
+    price: String,
+    source_event_time_ms: i64,
+    received_at_ns: i64,
+    raw_capture_id: Vec<u8>,
+    raw_frame_sha256: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct MarkIndexPairState {
+    source_session_id: String,
+    connection_generation: u64,
+    mark: Option<MarkIndexComponentState>,
+    index: Option<MarkIndexComponentState>,
+}
+
 pub struct RealtimeCore {
     config: RealtimeCoreConfig,
     bindings: BTreeMap<String, CoreBinding>,
     l2_adapters: BTreeMap<String, L2BookAdapter>,
     l2_snapshot_observed_at_ms: BTreeMap<String, i64>,
+    mark_index_pairs: BTreeMap<String, MarkIndexPairState>,
     partition_sequences: BTreeMap<String, u64>,
     ordering: OrderingTracker,
     seen_ids: HashSet<Vec<u8>>,
@@ -300,6 +429,7 @@ impl RealtimeCore {
             bindings,
             l2_adapters,
             l2_snapshot_observed_at_ms: BTreeMap::new(),
+            mark_index_pairs: BTreeMap::new(),
             partition_sequences: BTreeMap::new(),
             ordering: OrderingTracker::new(4096),
             seen_ids: HashSet::new(),
@@ -390,6 +520,9 @@ impl RealtimeCore {
         }
         let payload: Value = serde_json::from_slice(&raw.raw_frame_bytes)
             .map_err(|error| CoreError::Decode(error.to_string()))?;
+        if binding.mark_index.is_some() {
+            return Ok(self.process_mark_index(&binding, raw, payload, processing_at_ns));
+        }
         if binding.l2.is_some() {
             return Ok(self.process_l2(
                 &key,
@@ -581,6 +714,236 @@ impl RealtimeCore {
             self.remember(event_id);
         }
         Ok(batch)
+    }
+
+    fn process_mark_index(
+        &mut self,
+        binding: &CoreBinding,
+        raw: RawProviderEnvelope,
+        payload: Value,
+        processing_at_ns: i64,
+    ) -> ProcessBatch {
+        let materialized_at_ns = raw.received_at_ns;
+        let Some(contract) = binding.mark_index.as_ref() else {
+            unreachable!("mark/index processing requires a mark/index binding")
+        };
+        let parsed = match parse_mark_index_component(binding, contract.component, &payload) {
+            Ok(value) => value,
+            Err(summary) => {
+                return self.quarantine(
+                    &raw,
+                    QuarantineReason::SemanticInvalid,
+                    &summary,
+                    materialized_at_ns,
+                )
+            }
+        };
+        let target_key = binding.mark_index_target_key();
+        let mut state =
+            self.mark_index_pairs
+                .get(&target_key)
+                .cloned()
+                .unwrap_or(MarkIndexPairState {
+                    source_session_id: raw.source_session_id.clone(),
+                    connection_generation: raw.connection_generation,
+                    mark: None,
+                    index: None,
+                });
+        if raw.connection_generation < state.connection_generation {
+            return self.quarantine(
+                &raw,
+                QuarantineReason::StaleGeneration,
+                "mark/index raw frame belongs to an older connection generation",
+                materialized_at_ns,
+            );
+        }
+        if raw.connection_generation > state.connection_generation {
+            state = MarkIndexPairState {
+                source_session_id: raw.source_session_id.clone(),
+                connection_generation: raw.connection_generation,
+                mark: None,
+                index: None,
+            };
+        } else if state.source_session_id != raw.source_session_id {
+            return self.quarantine(
+                &raw,
+                QuarantineReason::StaleGeneration,
+                "mark/index raw frame has a mismatched source session",
+                materialized_at_ns,
+            );
+        }
+
+        let candidate = |(price, source_event_time_ms): (String, i64)| MarkIndexComponentState {
+            price,
+            source_event_time_ms,
+            received_at_ns: raw.received_at_ns,
+            raw_capture_id: raw.capture_id.clone(),
+            raw_frame_sha256: raw.raw_frame_sha256.clone(),
+        };
+        let update = |slot: &mut Option<MarkIndexComponentState>, value: (String, i64)| {
+            update_mark_index_component(slot, candidate(value))
+        };
+        let apply = match parsed.component {
+            MarkIndexComponent::Both => {
+                let mark = parsed
+                    .mark
+                    .ok_or("Binance mark/index frame omitted mark price")
+                    .and_then(|value| update(&mut state.mark, value));
+                let index = parsed
+                    .index
+                    .ok_or("Binance mark/index frame omitted index price")
+                    .and_then(|value| update(&mut state.index, value));
+                match (mark, index) {
+                    (Ok(mark), Ok(index)) => Ok(mark || index),
+                    (Err(error), _) | (_, Err(error)) => Err(error),
+                }
+            }
+            MarkIndexComponent::Mark => parsed
+                .mark
+                .ok_or("OKX mark frame omitted mark price")
+                .and_then(|value| update(&mut state.mark, value)),
+            MarkIndexComponent::Index => parsed
+                .index
+                .ok_or("OKX index frame omitted index price")
+                .and_then(|value| update(&mut state.index, value)),
+        };
+        let changed = match apply {
+            Ok(value) => value,
+            Err(summary) => {
+                return self.quarantine(
+                    &raw,
+                    QuarantineReason::SemanticInvalid,
+                    summary,
+                    materialized_at_ns,
+                )
+            }
+        };
+        if !changed {
+            return ProcessBatch {
+                canonical: vec![],
+                quarantines: vec![],
+                duplicates: 0,
+                filtered: 1,
+            };
+        }
+        let (Some(mark), Some(index)) = (state.mark.as_ref(), state.index.as_ref()) else {
+            self.mark_index_pairs.insert(target_key, state);
+            return ProcessBatch {
+                canonical: vec![],
+                quarantines: vec![],
+                duplicates: 0,
+                filtered: 0,
+            };
+        };
+        let oldest_confirmation_ns = mark.received_at_ns.min(index.received_at_ns);
+        let newest_confirmation_ns = mark.received_at_ns.max(index.received_at_ns);
+        let source_event_time_ms = mark.source_event_time_ms.min(index.source_event_time_ms);
+        let (raw_capture_id, raw_frame_sha256) = pair_raw_identity(mark, index);
+        let source_sequence = format!(
+            "{}:{}:{}:{}:{}:{}",
+            mark.source_event_time_ms,
+            index.source_event_time_ms,
+            mark.received_at_ns,
+            index.received_at_ns,
+            hex::encode(&mark.raw_capture_id),
+            hex::encode(&index.raw_capture_id),
+        );
+        let partition_key = format!(
+            "{}/mark-index/{}",
+            binding.instrument_uid, binding.source_id
+        );
+        let partition_sequence = self
+            .partition_sequences
+            .get(&partition_key)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(1);
+        let fixture = TradeFixture {
+            provider_kind: binding.provider_kind.clone(),
+            context: TradeContext {
+                instrument_uid: binding.instrument_uid.clone(),
+                instrument_id: binding.instrument_id.clone(),
+                instrument_revision: binding.instrument_revision,
+                venue: binding.venue.clone(),
+                market: binding.market.clone(),
+                product_type: binding.product_type.clone(),
+                native_symbol: binding.native_symbol.clone(),
+                provider: binding.provider.clone(),
+                source_id: binding.source_id.clone(),
+                lease_epoch: raw.lease_epoch,
+                // A paired execution view is only as fresh as its oldest
+                // provider confirmation. The original source value time stays
+                // in the envelope separately.
+                received_at_ns: oldest_confirmation_ns,
+                normalized_at_ns: newest_confirmation_ns,
+                published_at_ns: newest_confirmation_ns,
+                partition_sequence,
+                normalizer_version: binding.normalizer_version.clone(),
+                adapter_version: raw.adapter_version.clone(),
+                config_revision: raw.config_revision,
+                correlation_id: hex::encode(&raw_capture_id),
+                source_session_id: raw.source_session_id.clone(),
+                connection_generation: raw.connection_generation,
+                authority_revision: raw.authority_revision,
+                partition_plan_epoch: raw.partition_plan_epoch,
+                raw_capture_id,
+                raw_frame_sha256,
+                source_role: binding.source_role.clone(),
+            },
+            raw: json!({
+                "mark": {
+                    "price": mark.price,
+                    "source_event_time_ms": mark.source_event_time_ms,
+                    "received_at_ns": mark.received_at_ns,
+                },
+                "index": {
+                    "price": index.price,
+                    "source_event_time_ms": index.source_event_time_ms,
+                    "received_at_ns": index.received_at_ns,
+                },
+            }),
+        };
+        let canonical = match canonicalize_mark_index(
+            &fixture,
+            MarkIndexInput {
+                mark_price: mark.price.clone(),
+                index_price: index.price.clone(),
+                source_event_time_ms,
+                source_sequence,
+            },
+        ) {
+            Ok(value) => value,
+            Err(_) => {
+                return self.quarantine(
+                    &raw,
+                    QuarantineReason::SemanticInvalid,
+                    "mark/index pair failed canonical validation",
+                    materialized_at_ns,
+                )
+            }
+        };
+        if self.seen_ids.contains(&canonical.event_id) {
+            return ProcessBatch {
+                canonical: vec![],
+                quarantines: vec![],
+                duplicates: 1,
+                filtered: 0,
+            };
+        }
+        self.partition_sequences
+            .insert(partition_key, partition_sequence);
+        self.mark_index_pairs.insert(target_key, state);
+        self.remember(canonical.event_id.clone());
+        ProcessBatch {
+            canonical: vec![canonical_record(
+                &self.config.canonical_stream,
+                canonical,
+                newest_confirmation_ns.max(processing_at_ns),
+            )],
+            quarantines: vec![],
+            duplicates: 0,
+            filtered: 0,
+        }
     }
 
     fn process_l2(
@@ -886,6 +1249,141 @@ fn l2_observed_at_ms(transition: &BookTransition, raw: &RawProviderEnvelope) -> 
     (observed_at_ms > 0).then_some(observed_at_ms)
 }
 
+#[derive(Clone, Debug)]
+struct ParsedMarkIndexComponent {
+    component: MarkIndexComponent,
+    mark: Option<(String, i64)>,
+    index: Option<(String, i64)>,
+}
+
+fn parse_mark_index_component(
+    binding: &CoreBinding,
+    component: MarkIndexComponent,
+    payload: &Value,
+) -> Result<ParsedMarkIndexComponent, String> {
+    match (binding.venue.as_str(), component) {
+        ("BINANCE", MarkIndexComponent::Both) => {
+            let frame = payload.get("data").unwrap_or(payload);
+            if frame.get("e").and_then(Value::as_str) != Some("markPriceUpdate")
+                || frame.get("s").and_then(Value::as_str) != Some(binding.physical_native_symbol())
+            {
+                return Err("Binance mark/index frame identity is invalid".into());
+            }
+            let source_event_time_ms = json_timestamp_ms(frame, "E")?;
+            Ok(ParsedMarkIndexComponent {
+                component,
+                mark: Some((json_text(frame, "p")?, source_event_time_ms)),
+                index: Some((json_text(frame, "i")?, source_event_time_ms)),
+            })
+        }
+        ("OKX", MarkIndexComponent::Mark | MarkIndexComponent::Index) => {
+            let arg = payload
+                .get("arg")
+                .and_then(Value::as_object)
+                .ok_or("OKX mark/index frame has no arg")?;
+            if arg.get("channel").and_then(Value::as_str) != Some(binding.physical_native_channel())
+                || arg.get("instId").and_then(Value::as_str)
+                    != Some(binding.physical_native_symbol())
+            {
+                return Err("OKX mark/index frame identity is invalid".into());
+            }
+            let rows = payload
+                .get("data")
+                .and_then(Value::as_array)
+                .ok_or("OKX mark/index frame has no data rows")?;
+            if rows.len() != 1 {
+                return Err("OKX mark/index frame must contain exactly one row".into());
+            }
+            let row = &rows[0];
+            if row
+                .get("instId")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value != binding.physical_native_symbol())
+            {
+                return Err("OKX mark/index row identity is invalid".into());
+            }
+            let source_event_time_ms = json_timestamp_ms(row, "ts")?;
+            let price = match component {
+                MarkIndexComponent::Mark => json_text(row, "markPx")?,
+                MarkIndexComponent::Index => json_text(row, "idxPx")?,
+                MarkIndexComponent::Both => unreachable!("OKX component was prevalidated"),
+            };
+            Ok(ParsedMarkIndexComponent {
+                component,
+                mark: (component == MarkIndexComponent::Mark)
+                    .then_some((price.clone(), source_event_time_ms)),
+                index: (component == MarkIndexComponent::Index)
+                    .then_some((price, source_event_time_ms)),
+            })
+        }
+        _ => Err("mark/index component differs from its approved provider protocol".into()),
+    }
+}
+
+fn json_text(value: &Value, field: &str) -> Result<String, String> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("mark/index field {field} is missing or blank"))
+}
+
+fn json_timestamp_ms(value: &Value, field: &str) -> Result<i64, String> {
+    let timestamp = value
+        .get(field)
+        .and_then(|raw| match raw {
+            Value::String(text) => text.parse::<i64>().ok(),
+            Value::Number(number) => number.as_i64(),
+            _ => None,
+        })
+        .filter(|timestamp| *timestamp > 0)
+        .ok_or_else(|| format!("mark/index timestamp {field} is invalid"))?;
+    Ok(timestamp)
+}
+
+fn update_mark_index_component(
+    slot: &mut Option<MarkIndexComponentState>,
+    candidate: MarkIndexComponentState,
+) -> Result<bool, &'static str> {
+    let Some(current) = slot.as_ref() else {
+        *slot = Some(candidate);
+        return Ok(true);
+    };
+    if candidate.source_event_time_ms < current.source_event_time_ms {
+        return Ok(false);
+    }
+    if candidate.source_event_time_ms == current.source_event_time_ms
+        && candidate.price != current.price
+    {
+        return Err("mark/index provider timestamp has conflicting values");
+    }
+    // A same-value/same-source-time frame is still a real provider
+    // confirmation. Keep the original value timestamp, but refresh the
+    // receipt lineage so query freshness is not confused with price movement.
+    *slot = Some(candidate);
+    Ok(true)
+}
+
+fn pair_raw_identity(
+    mark: &MarkIndexComponentState,
+    index: &MarkIndexComponentState,
+) -> (Vec<u8>, Vec<u8>) {
+    let mut capture = Sha256::new();
+    capture.update(b"qdl-mark-index-capture-v1");
+    capture.update(&mark.raw_capture_id);
+    capture.update(&index.raw_capture_id);
+    // EventEnvelope carries a fixed 16-byte capture identity.  The paired
+    // raw-frame SHA-256 below preserves the full digest lineage separately.
+    let raw_capture_id = capture.finalize()[..16].to_vec();
+
+    let mut payload = Sha256::new();
+    payload.update(b"qdl-mark-index-payload-v1");
+    payload.update(&mark.raw_frame_sha256);
+    payload.update(&index.raw_frame_sha256);
+    (raw_capture_id, payload.finalize().to_vec())
+}
+
 fn binding_key(
     provider: &str,
     venue: &str,
@@ -1013,7 +1511,8 @@ fn canonical_record(stream: &str, envelope: EventEnvelope, now_ns: i64) -> Durab
 #[cfg(test)]
 mod tests {
     use super::{
-        CoreBinding, CoreError, L2Binding, L2ProviderProtocol, RealtimeCore, RealtimeCoreConfig,
+        CoreBinding, CoreError, L2Binding, L2ProviderProtocol, MarkIndexBinding,
+        MarkIndexComponent, RealtimeCore, RealtimeCoreConfig,
     };
     use prost::Message;
     use qdl_contracts::qdl::common::v1::{QuantityUnit, SourceRole};
@@ -1057,6 +1556,8 @@ mod tests {
             product_type: product.into(),
             native_symbol: symbol.into(),
             native_channel: channel.into(),
+            physical_native_symbol: None,
+            physical_native_channel: None,
             provider_kind: provider_kind.into(),
             instrument_uid: format!("uid-{venue}-{market}-{symbol}"),
             instrument_id: format!("{venue}.{market}.{product}.{symbol}"),
@@ -1068,16 +1569,21 @@ mod tests {
             require_final_bar: provider_kind.ends_with("_bar"),
             sequence_policy: policy,
             l2: None,
+            mark_index: None,
         }
     }
 
     fn core(binding: CoreBinding, allow_test: bool) -> RealtimeCore {
+        core_many(vec![binding], allow_test)
+    }
+
+    fn core_many(bindings: Vec<CoreBinding>, allow_test: bool) -> RealtimeCore {
         RealtimeCore::new(RealtimeCoreConfig {
             canonical_stream: "qdl.test.canonical.v2".into(),
             quarantine_stream: "qdl.test.quarantine.v1".into(),
             allow_test_provenance: allow_test,
             dedup_capacity: 16,
-            bindings: vec![binding],
+            bindings,
         })
         .unwrap()
     }
@@ -1112,6 +1618,82 @@ mod tests {
             correlation_id: "phase-a-core-test".into(),
             test_provenance: true,
         }
+    }
+
+    fn raw_with_receipt(
+        binding: &CoreBinding,
+        frame: &[u8],
+        generation: u64,
+        received_at_ns: i64,
+    ) -> RawProviderEnvelope {
+        let mut value = raw(binding, frame, generation);
+        value.native_symbol = binding.physical_native_symbol().into();
+        value.native_channel = binding.physical_native_channel().into();
+        value.received_at_ns = received_at_ns;
+        value.capture_id = Sha256::digest(
+            [
+                frame,
+                &generation.to_be_bytes(),
+                &received_at_ns.to_be_bytes(),
+            ]
+            .concat(),
+        )[..16]
+            .to_vec();
+        value.correlation_id = hex::encode(&value.capture_id);
+        value
+    }
+
+    fn binance_mark_index_binding(symbol: &str) -> CoreBinding {
+        let mut result = binding((
+            "BINANCE_DIRECT",
+            "BINANCE",
+            "USDM",
+            "PERPETUAL",
+            symbol,
+            &format!("{}@markPrice@1s", symbol.to_ascii_lowercase()),
+            "binance_usdm_mark_index",
+            "PRIMARY",
+            SequencePolicy::None,
+        ));
+        result.source_id = format!(
+            "binance-usdm-{}-mark-index-primary-v2",
+            symbol.to_ascii_lowercase()
+        );
+        result.mark_index = Some(MarkIndexBinding {
+            component: MarkIndexComponent::Both,
+        });
+        result
+    }
+
+    fn okx_mark_index_bindings(symbol: &str, index_symbol: &str) -> (CoreBinding, CoreBinding) {
+        let mut mark = binding((
+            "OKX_DIRECT",
+            "OKX",
+            "SWAP",
+            "PERPETUAL",
+            symbol,
+            "mark-price",
+            "okx_mark_price",
+            "PRIMARY",
+            SequencePolicy::None,
+        ));
+        mark.source_id = format!(
+            "okx-swap-{}-mark-index-primary-v2",
+            symbol.to_ascii_lowercase()
+        );
+        mark.physical_native_symbol = Some(symbol.into());
+        mark.physical_native_channel = Some("mark-price".into());
+        mark.mark_index = Some(MarkIndexBinding {
+            component: MarkIndexComponent::Mark,
+        });
+        let mut index = mark.clone();
+        index.provider_kind = "okx_index_price".into();
+        index.physical_native_symbol = Some(index_symbol.into());
+        index.physical_native_channel = Some("index-tickers".into());
+        index.mark_index = Some(MarkIndexBinding {
+            component: MarkIndexComponent::Index,
+        });
+        (mark, index)
     }
 
     fn binance_book_binding() -> CoreBinding {
@@ -1156,6 +1738,106 @@ mod tests {
             materialized_snapshot_interval_ms: None,
         });
         result
+    }
+
+    #[test]
+    fn binance_mark_index_reconfirmation_refreshes_receipt_without_redating_value() {
+        let binding = binance_mark_index_binding("SOLUSDT");
+        let mut core = core(binding.clone(), true);
+        let frame =
+            br#"{"e":"markPriceUpdate","E":1786352400000,"s":"SOLUSDT","p":"145.25","i":"145.10"}"#;
+        let first = core
+            .process(
+                raw_with_receipt(&binding, frame, 1, 1_786_352_400_000_000_000),
+                1_786_352_400_000_000_100,
+            )
+            .unwrap();
+        assert_eq!(first.canonical.len(), 1);
+        let first_event = EventEnvelope::decode(first.canonical[0].payload.as_slice()).unwrap();
+        assert_eq!(first_event.source_event_time_ns, 1_786_352_400_000_000_000);
+        assert_eq!(first_event.received_at_ns, 1_786_352_400_000_000_000);
+
+        let second = core
+            .process(
+                raw_with_receipt(&binding, frame, 1, 1_786_352_401_000_000_000),
+                1_786_352_401_000_000_100,
+            )
+            .unwrap();
+        assert_eq!(second.canonical.len(), 1);
+        let second_event = EventEnvelope::decode(second.canonical[0].payload.as_slice()).unwrap();
+        // The provider's value timestamp is immutable, while the current
+        // provider confirmation advances the execution freshness basis.
+        assert_eq!(
+            second_event.source_event_time_ns,
+            first_event.source_event_time_ns
+        );
+        assert_eq!(second_event.received_at_ns, 1_786_352_401_000_000_000);
+        assert_ne!(second_event.event_id, first_event.event_id);
+    }
+
+    #[test]
+    fn okx_mark_index_requires_a_current_pair_on_one_generation() {
+        let (mark, index) = okx_mark_index_bindings("SOL-USDT-SWAP", "SOL-USDT");
+        let mut core = core_many(vec![mark.clone(), index.clone()], true);
+        let mark_frame = br#"{"arg":{"channel":"mark-price","instId":"SOL-USDT-SWAP"},"data":[{"instId":"SOL-USDT-SWAP","markPx":"145.25","ts":"1786352400000"}]}"#;
+        let only_mark = core
+            .process(
+                raw_with_receipt(&mark, mark_frame, 5, 1_786_352_400_000_000_000),
+                1_786_352_400_000_000_100,
+            )
+            .unwrap();
+        assert!(only_mark.canonical.is_empty());
+
+        let index_frame = br#"{"arg":{"channel":"index-tickers","instId":"SOL-USDT"},"data":[{"instId":"SOL-USDT","idxPx":"145.10","ts":"1786352400100"}]}"#;
+        let paired = core
+            .process(
+                raw_with_receipt(&index, index_frame, 5, 1_786_352_400_500_000_000),
+                1_786_352_400_500_000_100,
+            )
+            .unwrap();
+        assert_eq!(paired.canonical.len(), 1);
+        let event = EventEnvelope::decode(paired.canonical[0].payload.as_slice()).unwrap();
+        assert_eq!(event.native_symbol, "SOL-USDT-SWAP");
+        assert_eq!(event.source_event_time_ns, 1_786_352_400_000_000_000);
+        assert_eq!(event.received_at_ns, 1_786_352_400_000_000_000);
+
+        let stale = core
+            .process(
+                raw_with_receipt(&index, index_frame, 4, 1_786_352_401_000_000_000),
+                1_786_352_401_000_000_100,
+            )
+            .unwrap();
+        assert_eq!(stale.quarantines.len(), 1);
+        let evidence = QuarantineRecord::decode(stale.quarantines[0].payload.as_slice()).unwrap();
+        assert_eq!(evidence.reason, QuarantineReason::StaleGeneration as i32);
+    }
+
+    #[test]
+    fn mark_index_conflicting_same_timestamp_is_quarantined() {
+        let binding = binance_mark_index_binding("DOGEUSDT");
+        let mut core = core(binding.clone(), true);
+        let first_frame = br#"{"e":"markPriceUpdate","E":1786352400000,"s":"DOGEUSDT","p":"0.14525","i":"0.14510"}"#;
+        assert_eq!(
+            core.process(
+                raw_with_receipt(&binding, first_frame, 1, 1_786_352_400_000_000_000),
+                1_786_352_400_000_000_100,
+            )
+            .unwrap()
+            .canonical
+            .len(),
+            1
+        );
+        let conflicting_frame = br#"{"e":"markPriceUpdate","E":1786352400000,"s":"DOGEUSDT","p":"0.14526","i":"0.14510"}"#;
+        let rejected = core
+            .process(
+                raw_with_receipt(&binding, conflicting_frame, 1, 1_786_352_401_000_000_000),
+                1_786_352_401_000_000_100,
+            )
+            .unwrap();
+        assert_eq!(rejected.quarantines.len(), 1);
+        let evidence =
+            QuarantineRecord::decode(rejected.quarantines[0].payload.as_slice()).unwrap();
+        assert_eq!(evidence.reason, QuarantineReason::SemanticInvalid as i32);
     }
 
     fn with_transport(

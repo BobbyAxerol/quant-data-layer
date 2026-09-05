@@ -36668,3 +36668,133 @@ Public WebSocket mark/index ingestion remains the future provider-plane path if
 continuous sub-two-second index availability becomes a separately approved
 requirement. No test-only Data Layer image was retained; the active image and
 named rollback image are the only artifacts retained for this rollout.
+
+### Release Closure - Shared Realtime Mark/Index Plane (`APPROVED / EXECUTING`, 2026-09-05)
+
+**Goal.** Close the remaining continuous execution-read defect without relaxing
+the sealed `2_000ms` `MARK_INDEX_PRICE` SLA: an accepted mark/index pair must
+be provider-authentic, complete, exact-identity and current; a missing,
+duplicate, cross-instrument, previous-generation or old component must remain
+typed `DATA_STALE`/unreadable to Trading System Risk. This is the consolidated
+repair for the observed eleven generic reference reconnects, now correctly
+typed as stale provider components by `c1d4c36` and `4f99f8a`; previously
+certified BAR, TRADE, QUOTE, BOOK, cursor and fallback evidence is inherited
+and is not rerun wholesale.
+
+**Approved source scope.** Extend the existing provider-neutral shared Rust
+raw/canonical plane, not a Python polling bypass or a per-symbol worker:
+
+1. Add one logical `MARK_INDEX_PRICE` acquisition family with physical native
+   components. Binance USD-M uses its documented single mark-price stream;
+   OKX Swap uses documented public `mark-price` and `index-tickers` channels,
+   paired only through an explicit target-instrument identity in the generated
+   catalog.
+2. The core may publish a canonical latest-state mark/index envelope only when
+   all required components belong to the same configured target and connection
+   generation. Its event time is the oldest component event time, so a true
+   provider-old price is still rejected by the existing strict query/Risk
+   check. Receipt time, heartbeat and cache time must never overwrite source
+   time.
+3. Generate active bindings for the already certified Binance USD-M and OKX
+   Swap execution universe (`BTC`, `ETH`, `SOL`, `DOGE`, `BNB`) only. The
+   result remains one shared Binance role and one shared OKX role; no
+   symbol/interval image, container, Kafka topic, consumer group or public API
+   is introduced.
+4. Query/stream continues to prefer the canonical V2 record for an active
+   execution binding. The existing bounded REST reference adapter remains
+   available only where a route is not active; it cannot substitute for a
+   failed strict active execution record. V1 policy and public V1 compatibility
+   are unchanged.
+
+**Invariant and tests.** Before any runtime packet, source gates must cover
+both venues and all five symbols: provider-frame parse/identity, mark/index
+pair completion, stale oldest-component rejection, same-generation fencing,
+reconnect reset, duplicate/out-of-order handling, no cross-symbol or
+cross-venue mix, canonical decimal/unit/lineage, query preference and strict
+staleness. Build in the repository builder, run Rust and Python focused suites
+plus contract/golden checks. A bounded real-provider probe must observe actual
+public frames for the active five-symbol routes; synthetic frames remain test
+provenance only.
+
+**Runtime boundary and rollback.** Only after source gates pass, build one
+immutable Rust image and regenerate a sealed runtime revision. The prospective
+packet rolls the existing shared Binance/OKX ingestors and three Rust core
+replicas serially; it permits normal real-provider canonical writes but does
+not touch V1, Kafka topology/offsets, Redis flush, SQLite deletion,
+projectors, readers, Trading System, alpha or the order path. The current
+image/config pair is retained as named rollback and a failed preflight restores
+only those five roles. A single V2 no-order acceptance then verifies the 60
+execution slices over `300s`, including strict mark/index and zero order/state
+mutation. Only that receipt may advance the release certification decision.
+
+**Decision boundary.** No SLA widening, source-time rewriting, stale cache
+acceptance, fake provider event, inferred symbol mapping or additional release
+phase is allowed. If official provider frames cannot meet the declared SLA,
+the route remains correctly fail-closed and the release cannot claim
+continuous execution eligibility.
+
+**Implementation note before source edit (2026-09-05).** The current
+`reference:batch` path cannot distinguish an old provider value timestamp from
+a current WebSocket confirmation of an unchanged index; a REST receipt cannot
+prove that distinction either. The shared native path therefore preserves
+`source_event_time_ns` as the provider value timestamp, while a generated
+execution `MARK_INDEX_PRICE` binding explicitly evaluates its SLA against the
+latest authenticated provider-frame receipt (`PROVIDER_CONFIRMATION`). This is
+not source-time rewriting: query output retains the original observed time and
+lineage. A missing/disconnected/old confirmation, incomplete pair, gap or
+previous connection generation remains `DATA_STALE`. The scope is one shared
+physical mark/index lane per existing venue role, with a current confirmation
+event emitted even when the provider repeats an unchanged component value.
+
+**Compiler correction identified during implementation (2026-09-05).** The
+existing native-materialization compiler admitted only `BAR`, `TRADE`, `QUOTE`
+and L2 bindings into the Rust promotion scope. That would leave a generated
+execution `MARK_INDEX_PRICE` binding present in catalog/acquisition artifacts
+but absent from the promoted shared core. The correction is deliberately
+narrow: include `MARK_INDEX_PRICE` in the same active Binance USD-M/OKX Swap
+scope predicate, and prove the five-symbol logical demand renders five shared
+Binance physical inputs plus ten paired OKX physical inputs. No new role,
+topic, worker or authority mode is introduced.
+
+**Source exit record (2026-09-05, `IMPLEMENTED / TESTED LOCALLY`).** The
+shared Rust parser/canonicalizer now accepts Binance USD-M `@markPrice@1s` and
+OKX `mark-price` plus `index-tickers`, while the stable compiler renders the
+physical components from explicit signed identity. A five-symbol execution
+manifest produces ten logical `MARK_INDEX_PRICE` bindings and exactly fifteen
+shared physical inputs: five Binance `BOTH`, five OKX `MARK`, and five OKX
+`INDEX`; all ten logical bindings enter the Rust promotion scope. Query
+freshness for these generated bindings is provider-confirmation based; output
+preserves the original source timestamp and marks it old for audit rather than
+rewriting it. Missing, expired, disconnected, old-generation, incomplete,
+duplicate-conflicting, gap or cross-identity evidence remains unreadable.
+
+**Tests actually run.** Isolated no-network Python: catalog/deployment `32/32`,
+native-ingestor/query/manifest `32/32`, and the targeted compiler/query
+matrix `27/27`; `py_compile` passed for every changed Python module. Isolated
+Rust builder: `cargo fmt --check`, `qdl-core` `38/38`, and
+`qdl-realtime-core` `34/34` with one intentionally skipped isolated-Redis
+integration test. A no-write compiler dry-run produced catalog revision `9`,
+acquisition revision `17`, promotion-scope revision `8`, and no changed host
+files. These are source/test facts only, not a real-provider or runtime
+certificate.
+
+**Remaining bounded action.** Build one immutable Rust image from this tested
+revision, seal a runtime revision, then serially recreate only
+`ingestor_binance_usdm`, `ingestor_okx_swap`, `rust_core`, `rust_core_2` and
+`rust_core_3`; retain the current image/config pair for rollback. Afterwards,
+run the already-defined 60-slice/300-second no-order acceptance. V1, Kafka
+topology and offsets, Redis, SQLite, projectors/readers, Trading System,
+alpha and order paths remain outside this action.
+
+**Runtime packet clarification (2026-09-05).** The original five-role wording
+is insufficient for an end-to-end fix because all existing V2 projectors,
+query replicas and stream replicas load `StableSourceCatalog` at process
+startup. Leaving their old catalog active would correctly reject the new
+canonical mark/index binding before a consumer can read it. The bounded packet
+therefore uses exactly two immutable images from this source revision and
+serially recreates the existing twelve shared roles only: the two native
+ingestors, three Rust cores, three projectors, two query replicas and two
+stream replicas. It adds no topology, symbol worker, volume, topic, consumer
+group, credential or route policy; V1, Kafka offsets/topology, Redis, SQLite,
+Trading System, alpha and the order path remain unchanged. The prior Rust and
+Python image/config pairs are retained as named rollback coordinates.
