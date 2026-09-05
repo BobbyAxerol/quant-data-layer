@@ -1,0 +1,57 @@
+{
+  "schema": "qdl.v2.patch-release-scope-evidence.v1",
+  "status": "PASS",
+  "release": "v2.0.13",
+  "inherits": {
+    "release": "v2.0.12",
+    "certificate_sha256": "0b67916ef677f7ee099de510a1731948b2eea85e876663ff99cf7d67e4bc1b2e",
+    "formal_v2_primary_product_count": 299
+  },
+  "delta_acceptance": {
+    "receipt_schema": "qdl.phase105.v2-identity-acceptance.v1",
+    "receipt_sha256": "fb2a952e5d296639c2c5f112a35249761cc0e34dd076768859d72818cf58618d",
+    "consumer_id": "trading-system.paper.stable",
+    "authority_revision": 1,
+    "product_count": 60,
+    "durable_product_count": 50,
+    "opening_product_count": 60,
+    "closing_product_count": 60,
+    "opening_seconds": 303.58,
+    "observation_seconds": 300.099,
+    "closing_seconds": 3.014,
+    "provider_connections": 0,
+    "order_actions": 0,
+    "cursor_directory_removed": true,
+    "secret_values_recorded": false,
+    "route_contract": {
+      "blocked_fallback_declared": 60,
+      "blocked_v1_requests": 0,
+      "v1_fallback_declared": 0
+    }
+  },
+  "runtime": {
+    "projectors": {
+      "image": "sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d",
+      "services": [
+        "projector_v2",
+        "projector_v2_2",
+        "projector_v2_3"
+      ]
+    },
+    "rust_core_image": "sha256:407a67131ca6567f803950aefd56c547306a20bec6992a42c44ae1719beccabd",
+    "v1_rollback_image": "sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65",
+    "v2_projector_rollback_image": "sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820"
+  },
+  "source_vs_runtime": {
+    "tracked_catalog_route_plan_sha256": "e61f3bce3f0cbe610f433d51e53959ca874c1cee51ecc3cc549bf897ffd95ffa",
+    "sealed_runtime_route_plan_sha256": "feda807873dff2c72b9586b84169abef51094a21ed2dddacee371fb39f9661a0",
+    "explanation": "The compiler strips disabled Spot, dated and VN bindings and admits only execution-mark/index products to the sealed runtime artifact. The C2 receipt proves the sealed output rather than claiming byte equality with the broader tracked catalog."
+  },
+  "exclusions": [
+    "VN market-hours V2-primary cutover",
+    "broker order execution",
+    "signal and sizing mutation",
+    "independent failure-domain HA or DR",
+    "unlisted consumer or product bindings"
+  ]
+}

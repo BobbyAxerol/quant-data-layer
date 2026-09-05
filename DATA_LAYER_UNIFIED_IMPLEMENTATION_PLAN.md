@@ -37674,3 +37674,37 @@ locally because the retained runtime images omit unrelated test-only
 `PyYAML`/`tomli` dependencies; the remote `unit-tests` job is the correct
 dependency-complete authority for that test. No runtime/data-plane resource was
 modified.
+
+**Patch-release provenance and publication (`EXECUTING`, 2026-09-05).**
+`v2.0.12` already exists on `main`; this closure must therefore publish the
+next patch tag `v2.0.13`, never move an existing tag. The tracked source catalog
+is intentionally broader than the sealed active-runtime catalog: the compiler
+removes disabled Spot/dated/VN bindings and adds only admitted execution
+MARK/INDEX bindings. Consequently source route digest
+`e61f3bce...ffd95ffa` and sealed C2 route digest
+`feda8078...f9661a0` are not expected to be byte-equal. This is not drift: the
+immutable `d190...` image loaded the sealed inputs and the selected 60-route C2
+proved that exact output.
+
+Release `v2.0.13` will therefore carry a compact patch certificate rather than
+rewrite or falsely re-run the immutable `v2.0.12` full certificate: inherit its
+299-product Binance/OKX scope and formal five-gate certificate, bind the
+changed Trading-System 60-route sealed receipt, record CI SHA, active/rollback
+image digests, and state all exclusions honestly. Validate JSON/schema/tag
+paths locally, run the normal `dev` CI after the evidence commit, then merge
+`dev -> main`, create immutable annotated tag `v2.0.13` from that merged main
+revision, and let the existing tag release workflow publish the notes and
+certificate. No runtime service, data-plane store, consumer or order path is
+changed by this publication work.
+
+**Patch-release evidence source exit (`PASS LOCAL / REMOTE CI REQUIRED`,
+2026-09-05).** Added the compact, machine-readable `v2.0.13` patch certificate,
+scope evidence and release notes under `upgrade/evidence/releases/v2.0.13/`.
+They bind the predecessor `v2.0.12` certificate SHA
+`0b67916e...e4bc1b2e` and the actual sealed 60-route C2 receipt SHA
+`fb2a952e...cf58618d`; all receipt counts, timing, V1 provenance, active V2
+image, explicit rollback image and V1 boundary are recorded without secrets or
+payloads. `jq` schema parsing and the release workflow's required artifact
+paths are the local gates; normal `dev` CI remains the dependency-complete
+authority before promotion. This documentation-only slice does not change a
+runtime service, data-plane store, consumer route or order path.

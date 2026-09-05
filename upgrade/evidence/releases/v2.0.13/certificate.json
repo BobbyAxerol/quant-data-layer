@@ -1,0 +1,66 @@
+{
+  "schema": "qdl.v2.patch-release-certificate.v1",
+  "status": "PASS",
+  "release": "v2.0.13",
+  "classification": "single-host real-provider no-order data-plane patch certification",
+  "predecessor": {
+    "tag": "v2.0.12",
+    "certificate_schema": "qdl.phase105.stable-release-certification.v1",
+    "certificate_sha256": "0b67916ef677f7ee099de510a1731948b2eea85e876663ff99cf7d67e4bc1b2e",
+    "v2_primary_product_count": 299,
+    "v1_primary_excluded_count": 4
+  },
+  "delta": {
+    "consumer_id": "trading-system.paper.stable",
+    "product_count": 60,
+    "durable_product_count": 50,
+    "products_by_feed": {
+      "BAR": 10,
+      "BOOK_DELTA": 10,
+      "BOOK_SNAPSHOT": 10,
+      "MARK_INDEX_PRICE": 10,
+      "QUOTE": 10,
+      "TRADE": 10
+    },
+    "products_by_venue": {
+      "BINANCE": 30,
+      "OKX": 30
+    },
+    "instruments_per_venue": [
+      "BTC-USDT",
+      "ETH-USDT",
+      "SOL-USDT",
+      "DOGE-USDT",
+      "BNB-USDT"
+    ],
+    "route_plan_sha256": "feda807873dff2c72b9586b84169abef51094a21ed2dddacee371fb39f9661a0",
+    "scope_sha256": "bae6152595e07046d2ecf2dc9bf024239e8d90276c1fbe9c564234a7c04643e5",
+    "c2_receipt_sha256": "fb2a952e5d296639c2c5f112a35249761cc0e34dd076768859d72818cf58618d",
+    "opening_product_count": 60,
+    "closing_product_count": 60,
+    "observation_seconds": 300.099,
+    "provider_connections": 0,
+    "order_actions": 0,
+    "cursor_directory_removed": true,
+    "per_product_v1_fallback": "BLOCKED"
+  },
+  "provenance": {
+    "certified_source_commit": "ba9f06eedc62d8c5c6564384f8774cef9117ed0d",
+    "tracked_release_plan_sha256": "e61f3bce3f0cbe610f433d51e53959ca874c1cee51ecc3cc549bf897ffd95ffa",
+    "sealed_runtime_route_plan_sha256": "feda807873dff2c72b9586b84169abef51094a21ed2dddacee371fb39f9661a0",
+    "active_python_image": "sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d",
+    "rollback_python_image": "sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820",
+    "active_rust_image": "sha256:407a67131ca6567f803950aefd56c547306a20bec6992a42c44ae1719beccabd",
+    "ci": {
+      "workflow": "CI",
+      "run_id": 33996002379,
+      "head_sha": "ba9f06eedc62d8c5c6564384f8774cef9117ed0d",
+      "conclusion": "success"
+    }
+  },
+  "boundaries": [
+    "The tracked source catalog is intentionally broader than the sealed active-runtime catalog; the two route-plan digests are recorded separately and are not asserted equal.",
+    "This is data-plane evidence only: it does not certify broker order execution, signal or sizing mutation, independent HA/DR, or VN market-hours cutover.",
+    "V1 remains the service-level rollback revision; the selected sixty V2 products do not silently read per-product V1 fallback."
+  ]
+}
