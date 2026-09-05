@@ -36967,3 +36967,26 @@ the disposable container was removed. No runtime role, data-plane state, V1,
 Kafka, Redis, SQLite, Trading System, alpha or order path changed. The only
 remaining gate is the one bounded C2 no-order observation using this immutable
 client and the already validated C2-only compatibility input.
+
+**Selected-consumer C2 harness correction (`IMPLEMENTING`, 2026-09-05).** The
+first 60-route C2 runner exited before any network or data-plane read because
+`build_v1_fallback_probes()` treated an otherwise valid selected scope with
+zero allowed V1 fallback routes as an error. The sealed manifest explicitly
+permits a single `--consumer-id` C2, so the correction is limited to returning
+an empty probe set for that fail-closed scope while retaining rejection of a
+missing required fallback. Add a regression proving the selected Trading
+System scope cannot leak a foreign alpha V1 probe. This changes no runtime
+route, SLA, provider, catalog, V1 service, order path or consumer policy.
+After this source-only gate passes, rerun exactly the same disposable 60-route
+C2 client.
+
+**Selected-consumer harness exit (`PASS`, 2026-09-05).** The first failed C2
+container made no network, provider, order or state mutation; its compact
+stderr identifies the preflight-only empty-fallback assumption. The helper now
+returns an empty V1 probe set only when the selected manifest scope declares no
+V1 fallback, while a selected scope that requires a fallback still fails if
+that product is absent. The regression proves a Trading System selection cannot
+inherit a foreign alpha V1 probe. Isolated, network-disabled Python ran `40/40
+PASS` across fallback, C2 identity/pacing and stable-release routing tests.
+Build one replacement immutable C2 client only, then rerun the same 60-route,
+300-second no-order receipt. No serving role is replaced by this source fix.
