@@ -108,8 +108,8 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
             closing = _closing_requirement(product)
         self.assertEqual(requirement.warmup_limit, 700)
         self.assertEqual(requirement.warmup.rows, 700)
-        self.assertEqual(closing.warmup_limit, 1)
-        self.assertEqual(closing.warmup.rows, 1)
+        self.assertEqual(closing.warmup_limit, 2)
+        self.assertEqual(closing.warmup.rows, 2)
         self.assertEqual(closing.max_freshness_ms, requirement.max_freshness_ms)
         self.assertEqual(closing.max_session_liveness_ms, requirement.max_session_liveness_ms)
         self.assertEqual(closing.require_full_coverage, requirement.require_full_coverage)
@@ -127,7 +127,7 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
         ):
             limit_only_closing = _closing_requirement(product)
         self.assertIsNone(limit_only_closing.warmup)
-        self.assertEqual(limit_only_closing.warmup_limit, 1)
+        self.assertEqual(limit_only_closing.warmup_limit, 2)
 
     def test_paced_client_factory_wraps_both_c2_transports(self) -> None:
         client = SimpleNamespace(query_transport=object(), stream_transport=object())

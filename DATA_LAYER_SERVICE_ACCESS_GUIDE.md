@@ -4,7 +4,52 @@ This document provides technical details on how to integrate production services
 
 ## Standard
 
-Other services should connect to `data_layer` using this rule:
+V2-routed Binance/OKX consumers use the versioned manifest and `qdl_sdk`:
+
+- `AsyncDataLayerClient` (or `DataLayerClientV2` for synchronous reads) calls
+  authenticated V2 query replicas and the signed-cursor gRPC stream service.
+- Warm up once, then append/deduplicate final events into the alpha's bounded
+  buffer. Restore the acknowledged cursor on reconnect. REST warmup/history
+  repairs missing state; it is not a per-tick polling loop.
+- Resolve canonical instrument identity before reading. Venue, native symbol,
+  feed, interval, source policy, depth and freshness must match the consumer
+  manifest. A provider wrapper alone does not grant an identity access.
+- V1 is fallback only where the manifest explicitly permits it; `BLOCKED`
+  products cannot silently fall back, substitute venues or direct-connect a
+  provider. VN remains on its separately governed V1 route.
+- Closed BARs drive signals. QUOTE/TRADE provide current price context;
+  verified BOOK_SNAPSHOT/BOOK_DELTA support limit-price and impact analysis.
+  MARK_INDEX_PRICE is used only under the declared trigger/risk policy.
+  Trading System, not Data Layer, owns order submission, OCO and risk admission.
+
+V2 query operations are:
+
+```text
+GET  /v2/instruments
+GET  /v2/instruments/{identity}
+GET  /v2/market-data/{instrument_uid}/snapshot
+GET  /v2/market-data/{instrument_uid}/warmup
+GET  /v2/market-data/{instrument_uid}/history
+POST /v2/market-data/warmup:batch
+POST /v2/market-data/reference:batch
+GET  /v2/feeds/{instrument_uid}/status
+POST /v2/system/readiness:check
+GET  /v2/system/readiness
+GET  /v2/data-quality/gaps
+```
+
+Use deployment-provided query/stream addresses, mTLS identity and JWT config;
+port8100 and the Redis channels below describe **V1 compatibility**, not the
+V2 authority. `warmup_then_stream()` exposes the SDK's signed snapshot/replay/
+live handoff; no new per-symbol container or provider connection is needed.
+Stale, partial or gapped execution data stays rejected. Bounded retry waits for
+a new valid read; it never changes old data's timestamp or treats session
+liveness as a fresh executable book/price.
+
+### V1 Compatibility And Fallback
+
+The V1-specific sections below retain these integration rules for existing
+consumers and explicitly permitted fallback:
 
 - use Redis Pub/Sub for live streaming consumption
 - use REST API for warmup, latest-state recovery, diagnostics, and manual triggers

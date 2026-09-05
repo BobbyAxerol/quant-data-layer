@@ -630,6 +630,12 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             rollover["secondary_content_sha256"],
         )
 
+        two_row_rollover = validate_final_bar_warmup_windows(primary[-2:], secondary[-2:])
+        self.assertEqual(two_row_rollover["common_row_count"], 1)
+        self.assertEqual(two_row_rollover["comparison"], "SINGLE_FINAL_BAR_ROLLOVER")
+        with self.assertRaisesRegex(ValueError, "no immutable common window"):
+            validate_final_bar_warmup_windows(primary[-1:], secondary[-1:])
+
     def test_final_bar_warmup_window_rejects_immutable_or_multi_row_divergence(self):
         bar = self._product(feed="BAR")
         minute = 60_000_000_000

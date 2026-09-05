@@ -36161,3 +36161,58 @@ is retained. The first unit invocation also had one mistyped test-module name;
 the complete corrected invocation above passed. Serving runtime remains35a7cd8.
 Run the replacement C2 with only the tested harness file mounted read-only;
 this is an auditable test-harness revision, not a serving-image substitution.
+
+Publication documentation check: the service-access guide still introduces
+the V1 Redis client as its universal default. Clarify the existing versioned
+V2 primary SDK/query/gRPC contract first and label the preserved V1 sections
+as compatibility/fallback instructions. This changes no endpoint, entitlement,
+consumer config or runtime. The release must not direct new crypto consumers
+back to the legacy route by accident. Public certificate/notes will include
+the actual image digests and tested scope, not a claim that every possible
+symbol or VN market-hours execution has been certified.
+
+Replacement C2 milestone: `c2-session-book-final/` reports opening299/299 PASS
+in881.495s with the quota policy unchanged. The subsequent300s observation
+and batch closing revalidation are in progress; this is not a final PASS.
+CI run33948049168 for harness commit92edc17 is fully green (unit, contract,
+Python3.10 SDK). The real book-class probe took2.532s for20 strict reads,
+slowest0.058s; all typed states LIVE. Service-guide route inventory matches
+all11 current V2 HTTP router operations. Read-only capture still reports44
+protected services unchanged and RUST_PRIMARY. No additional image was built.
+
+C2 closing result: opening299/299 and300.100s observation PASS; closing failed
+with `native BASIS cooldown exceeds the bounded Reference/L2 acceptance
+deadline`. No release certificate is issued. The shared closing harness passes
+the15s cache-read timeout as the deadline for all reference batches, although
+reference requests declare60s and the approved overall closing bound is120s.
+Propagate the one existing absolute closing deadline to every reference worker
+instead of creating a shorter cache-read deadline. Keep per-request provider
+deadlines, Rust cooldown/one-deferral policy and overall120s unchanged. Test
+deadline propagation, cooldown beyond the bound, cancellation and both venues;
+run the real closing/reference class as a bounded probe before any further
+full replacement. No runtime/source-provider change, quota increase or image.
+
+The grouped closing probe completed in13.042s: monitoring4/4 and Binance
+alpha125/125 PASS, including native BASIS on both replicas. Trading-System
+and OKX alpha groups instead expose the remaining shared BAR harness error:
+closing asks for a single row but the parity validator requires an immutable
+overlap across one legitimate final-candle rollover. Keep two final rows for
+the bounded closing read; compare the immutable overlap using the existing
+one-row-rollover validator and still validate each current tail strictly.
+No timestamp adjustment or arbitrary skew is allowed. Test exact/one-row
+rollover and conflicting/disjoint/multi-row windows, then rerun only this
+closing class. The overall acceptance and market-data contract stay unchanged.
+
+Closing-class corrections pass59/59 focused tests in10.570s (including native
+60s deferral within the existing120s bound, rejection beyond the same bound,
+two-row immutable overlap and unchanged strict tail quality). First reference
+suite invocation had one mistyped module name; the corrected complete command
+is `python -B -m unittest -q tests.test_phase105_native_basis_lane
+tests.test_phase105_identity_acceptance tests.test_reference_l2_consumer_acceptance
+tests.test_phase103_consumer_acceptance` inside the network-none existing image.
+Real probe `closing-class-aligned/acceptance.json` is PASS across all4 consumers:
+monitoring4, Trading-System60, Binance alpha125, OKX alpha110 =299/299 products.
+It reads both query replicas, respects the existing provider admission lane,
+and makes zero order calls. Both disposable closing-probe clients were removed.
+Use the same final serving image with the exact three tested harness scripts
+mounted read-only for the final replacement C2; no image build or runtime roll.

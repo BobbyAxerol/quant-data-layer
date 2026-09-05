@@ -121,7 +121,8 @@ async def _reference_batch_until_terminal(
         remaining_ms = int((deadline_monotonic - clock()) * 1_000)
         if retry_after_ms + 250 >= remaining_ms:
             raise AssertionError(
-                "native BASIS cooldown exceeds the bounded Reference/L2 acceptance deadline"
+                "native BASIS cooldown exceeds the bounded Reference/L2 acceptance deadline "
+                f"retry_after_ms={retry_after_ms} remaining_ms={remaining_ms}"
             )
         await sleep(retry_after_ms / 1_000)
         deferred_ms += retry_after_ms

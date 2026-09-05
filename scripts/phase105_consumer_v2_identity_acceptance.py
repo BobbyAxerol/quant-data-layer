@@ -739,9 +739,10 @@ def _closing_requirement(product: AcceptanceProduct):
     """Keep closing current-state proof small without weakening the product.
 
     Opening C2 already proves the declared bounded BAR history, finality and
-    signed stream handoff. Closing only needs the latest final BAR to verify
-    that the route remains live and that both replicas still agree. Every
-    non-history policy field is retained unchanged.
+    signed stream handoff. Closing keeps up to two final BARs so reads spanning one
+    candle close still have an immutable overlap. Each current tail remains
+    strict, and the existing parity validator rejects larger window shifts.
+    Every non-history policy field is retained unchanged.
     """
 
     requirement = _c2_requirement(sdk_requirement(product))
@@ -750,11 +751,12 @@ def _closing_requirement(product: AcceptanceProduct):
     specification = requirement.warmup_specification
     if specification is None or specification.rows is None:
         raise ValueError("Phase 10.5 closing BAR requires a row-bounded warmup policy")
+    rows = min(2, specification.rows)
     return replace(
         requirement,
-        warmup_limit=1,
+        warmup_limit=rows,
         warmup=(
-            requirement.warmup.model_copy(update={"rows": 1})
+            requirement.warmup.model_copy(update={"rows": rows})
             if requirement.warmup is not None
             else None
         ),
@@ -967,6 +969,7 @@ async def _closing_revalidate_consumer(
     grpc_target: str,
     state_dir: Path,
     timeout_seconds: float,
+    deadline_monotonic: float,
     max_batch_items: int,
     reference_semaphore: asyncio.Semaphore,
     native_basis_semaphore: asyncio.Semaphore,
@@ -997,7 +1000,7 @@ async def _closing_revalidate_consumer(
         grpc_target=grpc_target,
         state_dir=state_dir / "references",
         timeout_seconds=timeout_seconds,
-        deadline_monotonic=time.monotonic() + timeout_seconds,
+        deadline_monotonic=deadline_monotonic,
         semaphore=reference_semaphore,
         native_basis_semaphore=native_basis_semaphore,
         client_factory=client_factory,
@@ -1190,7 +1193,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             fallback_details.extend(consumer_fallbacks)
         return results, fallback_details
 
-    async def closing_revalidation_ordered() -> list[dict[str, object]]:
+    async def closing_revalidation_ordered(deadline_monotonic: float) -> list[dict[str, object]]:
         async def revalidate_consumer(consumer_id: str) -> list[dict[str, object]]:
             consumer_products = tuple(
                 item for item in scope.products if item.consumer_id == consumer_id
@@ -1207,6 +1210,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 grpc_target=grpc_target,
                 state_dir=temporary / consumer_id.replace(".", "-") / "closing",
                 timeout_seconds=args.timeout_seconds,
+                deadline_monotonic=deadline_monotonic,
                 max_batch_items=route.manifest.quotas.max_batch_items,
                 reference_semaphore=reference_semaphore,
                 native_basis_semaphore=native_basis_semaphore,
@@ -1243,7 +1247,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         print(json.dumps({"stage": "C2_OBSERVATION_COMPLETE", "seconds": observation_seconds}),
               file=sys.stderr, flush=True)
         closing_results = await asyncio.wait_for(
-            closing_revalidation_ordered(),
+            closing_revalidation_ordered(closing_started + args.closing_timeout_seconds),
             timeout=args.closing_timeout_seconds,
         )
         closing_seconds = time.monotonic() - closing_started
