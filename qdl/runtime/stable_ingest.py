@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import re
 import ssl
 import uuid
@@ -34,6 +35,7 @@ _INGEST_SCHEMA = "qdl.v2.stable-canonical-ingest.v1"
 _RESULT_SCHEMA = "qdl.v2.stable-canonical-ingest-result.v1"
 _MAX_REJECTION_DETAIL_CHARS = 192
 _UNSAFE_REJECTION_TOKEN = re.compile(r"[A-Za-z0-9+/=_-]{33,}")
+logger = logging.getLogger(__name__)
 
 
 def _signature(secret: bytes, body: bytes) -> str:
@@ -66,6 +68,10 @@ def _bounded_rejection_detail(response: httpx.Response) -> str:
     detail = body.get("detail") if isinstance(body, dict) else None
     if not isinstance(detail, str):
         return "unavailable"
+    return _bounded_rejection_text(detail)
+
+
+def _bounded_rejection_text(detail: str) -> str:
     normalized = " ".join(detail.split())
     if not normalized:
         return "unavailable"
@@ -209,6 +215,10 @@ def install_stable_canonical_ingest(
         except GatewayFenced as error:
             raise HTTPException(status_code=409, detail="stable gateway was fenced") from error
         except BackpressureRequired as error:
+            logger.warning(
+                "stable canonical ingest backpressure reason=%s",
+                _bounded_rejection_text(str(error)),
+            )
             raise HTTPException(
                 status_code=503,
                 detail="stable canonical cache capacity temporarily unavailable",
@@ -377,6 +387,7 @@ class StableHttpCanonicalSink:
     ) -> tuple[StoredEvent, ...]:
         body = self._body(encoded)
         last_error: BaseException | None = None
+        rejections: list[str] = []
         assert self.client is not None
         for url in self.urls:
             try:
@@ -389,6 +400,9 @@ class StableHttpCanonicalSink:
                     },
                 )
                 if response.status_code in {409, 503}:
+                    rejections.append(
+                        f"{response.status_code}:{_bounded_rejection_detail(response)}"
+                    )
                     continue
                 response.raise_for_status()
                 result = response.json()
@@ -424,6 +438,11 @@ class StableHttpCanonicalSink:
                 "stable canonical ingest rejected "
                 f"http_status={last_error.response.status_code} "
                 f"detail={_bounded_rejection_detail(last_error.response)}"
+            ) from last_error
+        if rejections:
+            raise RuntimeError(
+                "stable canonical ingest unavailable statuses="
+                + ",".join(rejections)
             ) from last_error
         raise RuntimeError(
             "no active stable stream gateway accepted canonical data"

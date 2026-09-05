@@ -37252,3 +37252,78 @@ old in the durable cache even though bar-edge ACKs the new provider BAR. This
 is not an index freshness workaround and was not changed in this repair. A
 release C2 certificate remains blocked until that BAR-plane lag is repaired;
 stale BAR and stale price continue to be rejected rather than accepted.
+
+**Release-closure shared projector/cache repair (`APPROVED / EXECUTING`,
+2026-09-05).** Live bounded inspection found one shared V2 materialization
+failure, not eleven independent symbol defects: all three `stable-projector-v1`
+members are retrying because both stream gateways reject canonical batches.
+The raw Rust group remains near tail, while the canonical cache is stale. The
+cache has `547,998` retained records / `551,063,356` logical payload bytes but
+its SQLite main file plus WAL consume about `3.1 GiB`, exceeding the configured
+`3 GiB` physical bound; the stable ingest endpoint therefore correctly returns
+HTTP `503` rather than accepting an unbounded write. The host has ample free
+disk, so this is bounded WAL/maintenance behavior, not provider loss or a
+reason to raise a capacity limit.
+
+**Approved scope and invariants.** Repair only the shared SQLite durable-spool
+maintenance/diagnostics path: make gateway rejection reason observable without
+logging payloads, and make WAL checkpointing bounded and safe after committed
+retention maintenance so normal operation cannot permanently consume the
+physical bound while logical retention is within policy. Preserve atomic
+append/idempotency, full synchronous durability, cursor generation, existing
+record/payload/storage bounds, and fail-closed behavior for capacity, gaps and
+stale data. Do not widen freshness, synthesize data, change provider/Rust
+admission, Kafka topology or offsets, Redis, SQLite data deletion, V1, Trading
+System, alpha, or order paths. Runtime packet after source proof may recreate
+only the five existing cache users (`stream_v2_passive`, `stream_v2_active`,
+`projector_v2`, `projector_v2_2`, `projector_v2_3`) serially with an exact
+rollback image; it must not delete the cache.
+
+**Test and exit gates.** Add deterministic tests for `409/503` aggregate
+diagnostics, WAL maintenance with a committed bounded spool, retained-window
+correctness, duplicate/idempotent append and failure to checkpoint when SQLite
+cannot safely do so. Run focused no-network Python tests plus the applicable
+existing stable transport/projector regressions. Only after source pass: build
+one immutable reader image, roll the five roles serially, prove cache writes
+resume and canonical lag falls, then run one real V2 no-order acceptance for
+the existing 60-route scope. Acceptance must separately report final BAR,
+session health, execution-price eligibility, recovery/cursor behavior and
+zero order/signal/sizing mutation. Historical certificates are inherited, not
+rerun; no release is claimed if this shared route remains unhealthy.
+
+**Source repair and test gate (`PASS / RUNTIME ROLL PENDING`, 2026-09-05).**
+`SQLiteDurableSpool` now attempts `PRAGMA wal_checkpoint(PASSIVE)` only outside
+an append transaction: after committed periodic maintenance and once before a
+physical-capacity rejection. PASSIVE cannot invalidate or wait for readers; if
+the WAL remains pinned or checkpointing errors, the original physical bound
+still rejects the append. This preserves `FULL` synchronous commits, atomic
+append/trim, event-ID idempotency and all existing logical/physical limits. The
+stable canonical ingest endpoint additionally logs a bounded, payload-safe
+backpressure reason internally, while projector sink errors now aggregate only
+the typed `409`/`503` statuses and bounded public details from both gateway
+attempts. No raw payload, secret, cursor or provider data enters those logs.
+
+New deterministic regressions prove: preflight may recover space through a
+nonblocking checkpoint; a pinned/non-reclaimable WAL remains fail-closed;
+periodic maintenance checkpoints only after a committed append; and a fenced
+active gateway plus a capacity-bound passive gateway produces one actionable,
+bounded aggregate error. The no-network immutable-image matrix passed
+`107/107`, with `1` pre-existing conditional Redis skip, in `24.103s`:
+`test_fund_phase2_transport`, `test_phase533_query_readiness`,
+`test_mark_index_paired_lineage`, `test_phaseb_stable_edge`,
+`test_phase104_v2_query_stream_integration`, and
+`test_phase105_stable_release`. `git diff --check` and `py_compile` pass.
+The disposable test client used no network, read-only source and tmpfs-only
+state; it left no runtime container, provider request or market mutation.
+
+**Next runtime packet.** Build one immutable Python reader image from this
+committed source, retain `sha256:d711d2b572d6013ed1b9b6a14b1e96c29bfe86fff75ecb7f4a102eaad8753e2d`
+as the rollback image, then serially recreate only `stream_v2_passive`,
+`stream_v2_active`, `projector_v2`, `projector_v2_2`, `projector_v2_3` with
+the unchanged runtime directory. This closes existing shared SQLite connections
+without deleting a cache row; the successor active writer can checkpoint the
+WAL before retrying canonical input. Verify exact current error reason, cache
+file size/record count, projector recovery and lag before starting the one
+remaining C2 observation. V1, Kafka topology/offsets, Redis, SQLite deletion,
+Rust, ingestors, query replicas, Trading System, alpha and order paths remain
+excluded.

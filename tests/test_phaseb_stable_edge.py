@@ -2435,6 +2435,48 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             await sink.close()
             await client.aclose()
 
+    async def test_signed_http_sink_reports_fenced_and_backpressure_gateways(self):
+        durable = DurableEvent(
+            stream=self.catalog.canonical_stream,
+            partition_key="stable-gateway-diagnostics",
+            event_id=b"g" * 16,
+            payload=b"canonical-diagnostics",
+            accepted_at_ns=1,
+            headers={
+                "raw_stream": "md.raw.gateway-diagnostics",
+                "raw_event_id": (b"r" * 16).hex(),
+            },
+        )
+        responses = iter((
+            httpx.Response(409, json={"detail": "stable gateway is not active"}),
+            httpx.Response(
+                503,
+                json={"detail": "stable canonical cache capacity temporarily unavailable"},
+            ),
+        ))
+
+        async def reject(_request: httpx.Request) -> httpx.Response:
+            return next(responses)
+
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(reject), base_url="http://localhost"
+        )
+        sink = StableHttpCanonicalSink(
+            ("http://stream_v2_active:8200", "http://stream_v2_passive:8200"),
+            b"s" * 32,
+            self.spool,
+            client=client,
+        )
+        try:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "statuses=409:stable gateway is not active,503:stable canonical cache capacity temporarily unavailable",
+            ):
+                await sink.publish(durable)
+        finally:
+            await sink.close()
+            await client.aclose()
+
     async def test_stale_projection_epoch_fails_without_broker_checkpoint(self):
         binding, raw, event = _stable_pair(
             self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"

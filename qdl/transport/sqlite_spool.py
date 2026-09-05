@@ -280,7 +280,7 @@ class SQLiteDurableSpool:
             self._preflight_disk(total_input_bytes)
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                self._maybe_maintain_locked(self._clock_ns())
+                maintenance_ran = self._maybe_maintain_locked(self._clock_ns())
                 records, payload_bytes = self._logical_usage_locked()
                 partition_count = int(
                     self._connection.execute("SELECT COUNT(*) FROM partitions").fetchone()[0]
@@ -403,6 +403,12 @@ class SQLiteDurableSpool:
                         (event.stream, event.partition_key) for event in events
                     })
                 self._connection.execute("COMMIT")
+                if maintenance_ran:
+                    # PASSIVE never blocks readers or discards a committed event.
+                    # It gives SQLite a bounded opportunity to recycle the WAL
+                    # after retention work before the physical cache bound becomes
+                    # a false backpressure signal.
+                    self._checkpoint_wal_passive_locked()
                 return results
             except BaseException:
                 if self._connection.in_transaction:
@@ -842,7 +848,30 @@ class SQLiteDurableSpool:
             raise BackpressureRequired("bridge minimum free-disk reserve would be violated")
         conservative_growth = max(1 * 1024 * 1024, event_bytes * 4)
         if self.storage_bytes() + conservative_growth > self.config.max_storage_bytes:
+            # A complete checkpoint is safe to attempt outside a transaction and
+            # can reclaim a stale WAL without changing logical retention. If a
+            # reader pins the WAL, PASSIVE returns promptly and the same physical
+            # bound remains fail-closed below.
+            self._checkpoint_wal_passive_locked()
+        if self.storage_bytes() + conservative_growth > self.config.max_storage_bytes:
             raise BackpressureRequired("bridge physical storage bound would be violated")
+
+    def _checkpoint_wal_passive_locked(self) -> bool:
+        """Best-effort nonblocking WAL checkpoint for a shared durable spool.
+
+        The caller holds this process' spool lock and must be outside a write
+        transaction. SQLite's PASSIVE mode does not wait for or invalidate
+        readers, so a pinned reader leaves the normal physical bound fail-closed.
+        """
+
+        try:
+            row = self._connection.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+        except sqlite3.DatabaseError:
+            return False
+        if row is None or len(row) != 3:
+            return False
+        busy, log_frames, checkpointed_frames = (int(value) for value in row)
+        return busy == 0 and log_frames == checkpointed_frames
 
     def _logical_usage_locked(self) -> tuple[int, int]:
         row = self._connection.execute(
@@ -850,19 +879,20 @@ class SQLiteDurableSpool:
         ).fetchone()
         return int(row[0]), int(row[1])
 
-    def _maybe_maintain_locked(self, now_ns: int) -> None:
+    def _maybe_maintain_locked(self, now_ns: int) -> bool:
         last = self._connection.execute(
             "SELECT last_maintenance_ns FROM spool_state WHERE singleton = 1"
         ).fetchone()[0]
         interval_ns = self.config.maintenance_interval_seconds * 1_000_000_000
         if now_ns - int(last) < interval_ns:
-            return
+            return False
         self._expire_consumers_locked(now_ns)
         self._trim_aged_unowned_locked(now_ns)
         self._connection.execute(
             "UPDATE spool_state SET last_maintenance_ns = ? WHERE singleton = 1",
             (now_ns,),
         )
+        return True
 
     def _decrement_usage_locked(self, records: int, payload_bytes: int) -> None:
         if records <= 0:
