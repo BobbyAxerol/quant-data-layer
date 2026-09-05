@@ -907,9 +907,9 @@ def _book_snapshot_status_is_refreshable(
 ) -> bool:
     """Permit a bounded retry while a verified book snapshot renews.
 
-    Snapshot delivery has no provider-session liveness contract. The stale
-    response remains rejected; this only permits a subsequent strict read while
-    the typed book state is identity-matched, complete and gap-free.
+    The stale response remains rejected; only a subsequent strict read can pass.
+    Native session-backed and sessionless snapshot providers both retain their
+    declared liveness policy, identity, completeness and gap checks.
     """
 
     quality = status.quality
@@ -920,8 +920,22 @@ def _book_snapshot_status_is_refreshable(
         and quality.policy_id == requirement.source_policy_id
         and quality.state in {"LIVE", "STALE"}
         and quality.event_recency_state in {"LIVE", "STALE"}
-        and quality.provider_session_state == "NOT_APPLICABLE"
-        and quality.provider_session_liveness_ms is None
+        and (
+            (
+                quality.provider_session_state == "NOT_APPLICABLE"
+                and quality.provider_session_liveness_ms is None
+                and requirement.max_session_liveness_ms is None
+            )
+            or (
+                quality.provider_session_state == "LIVE"
+                and quality.provider_session_liveness_ms is not None
+                and (
+                    requirement.max_session_liveness_ms is None
+                    or quality.provider_session_liveness_ms
+                    <= requirement.max_session_liveness_ms
+                )
+            )
+        )
         and quality.complete
         and not quality.gap_open
     )

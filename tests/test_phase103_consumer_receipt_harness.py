@@ -2144,7 +2144,7 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
                 provider_session_liveness_ms=None,
                 gap_open=True,
             ),
-            self._status(requirement),
+            self._status(requirement, provider_session_state="DISCONNECTED"),
         ):
             client = self._Client((DataLayerError("DATA_STALE", "bad book"),), status)
             with self.assertRaisesRegex(ContinuityError, "complete, gap-free snapshot state"):
@@ -2156,6 +2156,76 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertEqual(client.snapshot_calls, 1)
             self.assertEqual(client.status_calls, 1)
+
+    async def test_session_backed_book_renewal_matrix(self):
+        product = SimpleNamespace(feed=Feed.BOOK_SNAPSHOT)
+        for venue in ("BINANCE", "OKX"):
+            for symbol in ("BTC", "ETH", "SOL", "DOGE", "BNB"):
+                for session_limit in (None, 3_000):
+                    requirement = DataRequirement(
+                        instrument_uid=f"{venue}-{symbol}", feed=Feed.BOOK_SNAPSHOT,
+                        consumer_grade=Grade.EXECUTION, source_policy_id="crypto_primary_v2",
+                        max_freshness_ms=3_000, max_session_liveness_ms=session_limit,
+                        stale_policy=StalePolicy.BLOCK,
+                    )
+                    for event_state in ("LIVE", "STALE"):
+                        with self.subTest(venue=venue, symbol=symbol, limit=session_limit,
+                                          event_state=event_state):
+                            client = self._Client(
+                                (DataLayerError("DATA_STALE", "pending"), "fresh-book"),
+                                self._status(requirement, state=event_state,
+                                             event_recency_state=event_state,
+                                             provider_session_liveness_ms=806),
+                            )
+                            with patch("scripts.phase103_consumer_receipt_acceptance."
+                                       "_BOOK_SNAPSHOT_RETRY_SECONDS", 0.001):
+                                result = await _strict_snapshot_for_c2(
+                                    client, product=product, requirement=requirement,
+                                    timeout_seconds=0.25,
+                                )
+                            self.assertEqual(result, "fresh-book")
+                            self.assertEqual(client.snapshot_calls, 2)
+                            self.assertEqual(client.status_calls, 1)
+
+    async def test_book_renewal_rejects_invalid_sessions_identity_and_quality(self):
+        requirement = replace(self._requirement(), feed=Feed.BOOK_SNAPSHOT)
+        base = self._status(requirement)
+        statuses = {
+            "disconnected": self._status(requirement, provider_session_state="DISCONNECTED"),
+            "unknown": self._status(requirement, provider_session_state="UNKNOWN"),
+            "stale": self._status(requirement, provider_session_state="STALE"),
+            "missing_age": self._status(requirement, provider_session_liveness_ms=None),
+            "expired_age": self._status(requirement, provider_session_liveness_ms=45_001),
+            "required_session_absent": self._status(requirement,
+                provider_session_state="NOT_APPLICABLE", provider_session_liveness_ms=None),
+            "gap": self._status(requirement, gap_open=True),
+            "partial": self._status(requirement, complete=False),
+            "offline": self._status(requirement, state="OFFLINE"),
+            "other_symbol": base.model_copy(update={"instrument_uid": "other"}),
+            "other_feed": base.model_copy(update={"feed": Feed.BOOK_DELTA}),
+            "other_policy": base.model_copy(update={
+                "quality": base.quality.model_copy(update={"policy_id": "other"})}),
+        }
+        for name, status in statuses.items():
+            with self.subTest(case=name):
+                client = self._Client((DataLayerError("DATA_STALE", "bad book"),), status)
+                with self.assertRaises(C2StatusEvidenceError):
+                    await _strict_snapshot_for_c2(
+                        client, product=SimpleNamespace(feed=Feed.BOOK_SNAPSHOT),
+                        requirement=requirement, timeout_seconds=0.25,
+                    )
+                self.assertEqual(client.snapshot_calls, 1)
+
+    async def test_book_renewal_never_accepts_status_instead_of_strict_snapshot(self):
+        requirement = replace(self._requirement(), feed=Feed.BOOK_SNAPSHOT)
+        client = self._Client((DataLayerError("DATA_STALE", "pending"),),
+                              self._status(requirement))
+        with self.assertRaisesRegex(ContinuityError, "before its deadline"):
+            await _strict_snapshot_for_c2(
+                client, product=SimpleNamespace(feed=Feed.BOOK_SNAPSHOT),
+                requirement=requirement, timeout_seconds=0.001,
+            )
+        self.assertEqual(client.snapshot_calls, 1)
 
     async def test_book_snapshot_failure_retains_compact_typed_status_only(self):
         requirement = DataRequirement(

@@ -36097,3 +36097,67 @@ added. The scanner public DB download needed 512MiB scratch after its first
 128MiB scratch filled; this was an isolated scanner setup error, not runtime
 storage exhaustion. Release workflow YAML/permissions and shell blocks pass
 syntax checks; remote publication itself remains pending certification.
+
+Final image consolidation scope: build once from `35a7cd8`; after offline
+image scan passes, roll the same eight approved Python roles (two query, two
+stream, three projector, BAR edge last) onto that one standard release image.
+This removes the flagged inactive lockfile from all serving Python image sets,
+not only the disposable C2 client. Capture each role's current digest/env/mounts
+first (query `cca6355c`, remaining six `46a04c1e`) for exact rollback. No Rust,
+ingestor, V1, Kafka topology/offset reset, cache reset or order-path action.
+Then run the single replacement C2 from the packaged final image, with no
+source patch mounts; use a new evidence directory and preserve prior failures.
+
+Final image result: `qdl-v2-python:2.0.12-35a7cd8`, digest
+`sha256:1c1392bf636dc40c67cc73a2e5ea5e8d17f4e53ca4ecb8c62ac387be4262045a`,
+passes packaged SDK30/30 and offline Trivy fixable HIGH/CRITICAL count0.
+All eight approved Python roles now use that one image. Per-role env/mounts
+are preserved; capture again reports44 protected services unchanged and
+RUST_PRIMARY. Final C2 evidence target is `c2-release-final/`; no source mounts
+or replay/cache resets are used. Release remains conditional on its result.
+
+Safe source cleanup inventory: Python310 SDK worktree and phase-D no-order
+worktree are clean and ancestors of remote dev; the detached V1 test worktree
+is also represented. None is referenced by any container mount or Compose
+provenance. Remove only those after checking ignored files are disposable
+bytecode. Retain phase-C reader worktree: it has four commits not represented
+by dev (`cbb5161`, `9991ed2`, `2fb9146`, `70ac65b`), so deleting it would lose
+unmerged development. Do not merge that unrelated projector branch into this
+release just to claim a tidy directory. Active closure worktree stays until
+publication and canonical-checkout synchronization are complete.
+
+Final C2 stopped during opening with BOOK_SNAPSHOT DATA_STALE for OKX ETH.
+Its immediate typed status is LIVE/complete/no-gap, event age633ms and LIVE
+session age806ms. The C2 retry predicate still requires NOT_APPLICABLE for
+every book snapshot, contradicting the shared session-aware runtime contract.
+This is a harness contract defect, not evidence that the rejected stale read
+was usable. Correct only that predicate: a matching verified book may wait
+within the existing deadline for a subsequent strict read when its session is
+LIVE and within the declared SLA, or legitimately NOT_APPLICABLE without a
+session requirement. Unknown/disconnected/stale session, mismatched identity,
+gap, incomplete data and deadline exhaustion remain failures. Test the shared
+matrix, not an ETH exception. No runtime image/build/recreate is needed for
+this harness-only correction; use the final packaged SDK with the exact tested
+harness file mounted read-only. Retain the failed receipt. Run the affected
+book class together before the replacement full-scope acceptance.
+
+Cleanup completed: disposable Rust/scanner/C2 clients, the scanner/toolchain
+images and exported test image archives removed; disk152G used/138G available
+before scoped cleanup,149G/141G after. Removed two merged feature worktrees and
+one clean detached V1 test checkout after no-runtime-reference verification.
+The phase-C reader branch has four genuinely unmerged commits and is retained.
+Shared BuildKit records and exact active/rollback images remain deliberately
+retained; no broad prune or production data deletion was performed.
+
+Shared book-session correction: 83/83 receipt/identity/observation tests PASS
+(29.758s), including40 venue/symbol/session-SLA/event-state combinations and
+12 identity/quality/session rejection cases. Legacy sessionless snapshot is
+preserved, absent required session and deadline exhaustion still reject.
+Real read-only probe `book-class-verified/acceptance.json`: 10/10 books across
+Binance/OKX, both replicas, 20/20 strict snapshot validations PASS; zero order
+actions/provider-direct connections. Initial probe helper missing a required
+factory argument made no reads and was corrected; its failed setup evidence
+is retained. The first unit invocation also had one mistyped test-module name;
+the complete corrected invocation above passed. Serving runtime remains35a7cd8.
+Run the replacement C2 with only the tested harness file mounted read-only;
+this is an auditable test-harness revision, not a serving-image substitution.
