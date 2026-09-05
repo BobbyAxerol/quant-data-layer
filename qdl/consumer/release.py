@@ -353,9 +353,15 @@ class StableReleaseRoutePlan:
                 }
                 feed = str(requirement.get("feed", "")).upper()
                 book_fields = {"depth_per_side", "max_freshness_ms", "require_live"}
-                expected = required | book_fields if feed in {
-                    "BOOK_SNAPSHOT", "BOOK_DELTA"
-                } else required
+                mark_fields = {
+                    "max_freshness_ms", "require_live", "index_native_symbol",
+                }
+                if feed in {"BOOK_SNAPSHOT", "BOOK_DELTA"}:
+                    expected = required | book_fields
+                elif feed == "MARK_INDEX_PRICE":
+                    expected = required | mark_fields
+                else:
+                    expected = required
                 if set(requirement) != expected:
                     raise ValueError("stable release crypto demand requirement fields differ")
                 if feed in {"BOOK_SNAPSHOT", "BOOK_DELTA"} and (
@@ -366,6 +372,22 @@ class StableReleaseRoutePlan:
                     or not isinstance(requirement["require_live"], bool)
                 ):
                     raise ValueError("stable release crypto BOOK demand fields are invalid")
+                if feed == "MARK_INDEX_PRICE":
+                    index_native_symbol = requirement["index_native_symbol"]
+                    if (
+                        isinstance(requirement["max_freshness_ms"], bool)
+                        or not isinstance(requirement["max_freshness_ms"], int)
+                        or requirement["max_freshness_ms"] <= 0
+                        or not isinstance(requirement["require_live"], bool)
+                        or (
+                            index_native_symbol is not None
+                            and (
+                                not isinstance(index_native_symbol, str)
+                                or not index_native_symbol.strip()
+                            )
+                        )
+                    ):
+                        raise ValueError("stable release crypto MARK demand fields are invalid")
                 keys.add((
                     str(requirement["venue"]).upper(),
                     str(requirement["market"]).upper(),

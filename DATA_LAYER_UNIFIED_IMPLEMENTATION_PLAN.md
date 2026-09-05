@@ -36828,3 +36828,113 @@ failed preflight restores only the exact prior role image/config pair. No
 Kafka-offset reset, Redis flush, SQLite deletion or state-file mutation is
 permitted. The replacement C2 remains one no-order, 300-second observation
 after all twelve roles are healthy.
+
+**Packet preflight (`PASS / NOT YET ROLLED`, 2026-09-05).** The active reader
+catalog has 140 bindings at revision 8; the sealed revision-9 catalog has 190
+and loses zero existing reader binding IDs. The additive renderer retained all
+182 active core inputs at revision 8 and added exactly fifteen revision-9
+physical components to each core (five Binance `BOTH`, five OKX `MARK`, five
+OKX `INDEX`), rendering 197 inputs. It retained the native ingestor inputs and
+added exactly five Binance and ten OKX inputs (`19 -> 24`, `19 -> 29`). Parser
+validation accepted catalog `9/190`, acquisition `17/190`, and promotion scope
+`8/190`; authority bytes are unchanged. Compose forward and exact per-role
+rollback configurations both passed `config --quiet`.
+
+Forward images are immutable Python
+`sha256:a2ba7af21aca3debb309ae76ef1eba8c02d8bd51bb2b33da4c291c973079999a`
+and Rust
+`sha256:407a67131ca6567f803950aefd56c547306a20bec6992a42c44ae1719beccabd`.
+Rollback preserves Rust
+`sha256:36a822c0ef61fb122dbf8fa12221cff27ad6a863976424be1407cd345f4dce65`,
+Python projector/stream
+`sha256:1c1392bf636dc40c67cc73a2e5ea5e8d17f4e53ca4ecb8c62ac387be4262045a`,
+and Python query
+`sha256:8c3dc599233d8a6e4a8b13831fb62cd66f487e73fb73e8b3cfb1415a6adac51d`.
+The isolated, mode-`0750` packet is
+`/home/bobby/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z`; its
+private environment files are mode `0600` and contain no committed evidence.
+
+**First forward attempt / rollback (`FAIL-CLOSED / RECOVERED`, 2026-09-05).**
+Only the three projector replicas were recreated before the next query role
+was attempted. They exited before processing because the new packet parent was
+mode `0750` while all runtime containers correctly run as UID/GID `10001`; the
+read-only `/runtime/authority.json` mount was therefore inaccessible. The
+failure was configuration-file permission only, not a provider, Kafka,
+Redis, SQLite, order or data-quality failure. The rollout stopped immediately;
+`query_v2_1` was never healthy and stream/core/ingestor roles were not
+recreated. All three projectors were serially restored to their exact captured
+image and original runtime and each became healthy.
+
+The correction exposes only the non-secret packet/bundle/runtime directories
+and public runtime JSON/YAML as `0755/0644`, matching the existing non-root
+runtime contract. The copied `rollout.env` and `rollback.env` remain `0600`;
+no certificate, key, secret or state file permission was widened. A UID-10001
+read-only probe confirmed it can read `authority.json` and the new source
+catalog. The same twelve-role packet may now be retried once; no second
+configuration shape, data source, policy or scope change is authorized.
+
+**C2 manifest parser correction (`IMPLEMENTING`, 2026-09-05).** The live
+reader packet is healthy, but the read-only C2 scope builder correctly rejects
+the generated `MARK_INDEX_PRICE` demand because its legacy release loader
+recognizes execution extras only for L2 books. The MARK demand is valid and
+already declares its strict contract: `max_freshness_ms`, `require_live`, and
+`index_native_symbol`. The narrow source correction is to validate precisely
+those three fields for `MARK_INDEX_PRICE` (including positive freshness,
+boolean liveness and nullable/non-empty index identity), with valid/missing/
+invalid regression cases. It does not change any route, SLA, provider data,
+fallback policy, runtime role, consumer identity or order behavior. C2 remains
+blocked until this parser gate passes; the running twelve-role packet stays
+unchanged during the source-only test.
+
+**Approved implementation slice.** Extend only
+`StableReleaseRoutePlan._load_crypto_demand()` so an execution
+`MARK_INDEX_PRICE` requirement validates its already sealed
+`max_freshness_ms`, `require_live`, and `index_native_symbol` fields. The
+positive two-second source freshness gate remains in the Rust/provider path;
+this reader correction neither changes that SLA nor accepts stale data. The
+regression matrix covers valid Binance/OKX forms plus missing, zero/boolean
+freshness, non-boolean liveness and invalid index identity. Exit is the exact
+candidate release plan loading successfully and malformed MARK demand failing
+closed. No runtime mutation is part of this source slice.
+
+**Candidate artifact compatibility correction (`IMPLEMENTING`).** The sealed
+revision-9 crypto catalog correctly contains the ten active Binance/OKX
+perpetual instruments, but it is not a complete replacement for the stable
+release catalog: it omits twelve retained V1/non-crypto identities and 26
+associated bindings. `StableReleaseRoutePlan` correctly refuses to validate a
+release route whose explicit V1-primary VN product has lost its catalog
+identity. Render an additive revision-9 catalog by retaining every current
+source instrument/binding absent from the candidate and preferring candidate
+rows for overlapping crypto identities. Rehash only the candidate release
+route's catalog artifact reference. `StableAcquisitionPlan` deliberately
+requires an exact binding-ID set match with the catalog, so retain the same 26
+legacy acquisition declarations in the C2-only artifact as disabled/V1
+compatibility metadata; C2 still excludes V1-primary routes and neither
+acquires nor serves them through V2. Validate exact identity/binding
+preservation and load the standard path-safe release plan; this is metadata
+compatibility only, with no service/data-plane mutation.
+
+**Source and C2-preflight exit (`PASS`, 2026-09-05).** The isolated,
+network-disabled regression set passed `24/24` across stable-release route
+validation, C2 scope construction and the five-liquid handoff matrix. It
+proves valid Binance/OKX MARK declarations load and invalid missing/zero/
+boolean/non-boolean/blank fields fail closed. The release parser accepts no
+out-of-root artifact path, so the C2 overlay uses the normal `/app/config/v2`
+paths rather than weakening path validation.
+
+The C2-only compatibility artifact at
+`/home/bobby/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z/c2-input`
+retains the candidate revision-9 crypto rows and exactly 12 old V1
+instruments plus 26 binding/acquisition declarations. Candidate canonical IDs
+win over superseded legacy aliases. It validates `22` instruments and `216`
+matching catalog/acquisition bindings; the sealed route revision `19` then
+builds the exact `299`-product C2 V2 scope with only the two declared VN
+V1-primary exclusions. This artifact is read-only test input and is not
+mounted by a running role; no provider data, Kafka, Redis, SQLite, V1,
+Trading System, alpha or order path changed.
+
+**Next gate.** Read the live typed `MARK_INDEX_PRICE` view for SOL/OKX from
+both V2 query replicas. Acceptance requires an authenticated provider
+confirmation and both mark/index components at or below `2_000ms`; an old
+component must remain typed `DATA_STALE`. Only then run the single bounded
+no-order C2 observation using the already validated C2 input.

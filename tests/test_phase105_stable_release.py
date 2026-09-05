@@ -125,6 +125,74 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "certified Binance/OKX"):
             StableReleaseRoutePlan.from_mapping(vn_primary, manifest_root=ROOT)
 
+    def test_mark_index_execution_demand_contract_is_strict(self):
+        requirements = [
+            {
+                "venue": "BINANCE",
+                "market": "USDM",
+                "product_type": "PERPETUAL",
+                "native_symbol": "SOLUSDT",
+                "feed": "MARK_INDEX_PRICE",
+                "interval": None,
+                "source_policy_id": "crypto_liquid_v2",
+                "max_freshness_ms": 2_000,
+                "require_live": True,
+                "index_native_symbol": None,
+            },
+            {
+                "venue": "OKX",
+                "market": "SWAP",
+                "product_type": "PERPETUAL",
+                "native_symbol": "SOL-USDT-SWAP",
+                "feed": "MARK_INDEX_PRICE",
+                "interval": None,
+                "source_policy_id": "crypto_liquid_v2",
+                "max_freshness_ms": 2_000,
+                "require_live": True,
+                "index_native_symbol": "SOL-USDT",
+            },
+        ]
+
+        def load(rows):
+            payload = {
+                "schema": "qdl.v2.production-demand.v1",
+                "consumers": [{"requirements": rows}],
+            }
+            with tempfile.TemporaryDirectory() as raw:
+                path = Path(raw) / "mark-demand.yaml"
+                path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+                return StableReleaseRoutePlan._load_crypto_demand(path)
+
+        self.assertEqual(len(load(copy.deepcopy(requirements))), 2)
+        invalid_cases = {
+            "missing_index_identity": (
+                lambda rows: rows[1].pop("index_native_symbol"),
+                "requirement fields differ",
+            ),
+            "zero_freshness": (
+                lambda rows: rows[1].__setitem__("max_freshness_ms", 0),
+                "MARK demand fields are invalid",
+            ),
+            "boolean_freshness": (
+                lambda rows: rows[1].__setitem__("max_freshness_ms", True),
+                "MARK demand fields are invalid",
+            ),
+            "non_boolean_liveness": (
+                lambda rows: rows[1].__setitem__("require_live", "true"),
+                "MARK demand fields are invalid",
+            ),
+            "blank_index_identity": (
+                lambda rows: rows[1].__setitem__("index_native_symbol", "  "),
+                "MARK demand fields are invalid",
+            ),
+        }
+        for name, (mutate, error) in invalid_cases.items():
+            with self.subTest(case=name):
+                rows = copy.deepcopy(requirements)
+                mutate(rows)
+                with self.assertRaisesRegex(ValueError, error):
+                    load(rows)
+
     def test_materialized_v2_product_must_remain_in_declared_demand(self):
         payload = yaml.safe_load(ROUTE_PATH.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as temporary:
