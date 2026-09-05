@@ -30226,7 +30226,8 @@ the final exact cleanup inventory.
 
 ### Trading consumer certified-scope convergence (2026-09-05, SCOPE APPLIED)
 
-**Index component freshness correction (2026-09-05, IN PROGRESS).**
+**Index component freshness correction (2026-09-05, SOURCE/ROLLOUT DONE;
+CONTINUOUS ACCEPTANCE FAIL).**
 Owner requests a narrow fix for OKX SOL index exceeding the sealed 2000ms SLA.
 Root source defect: query freshness selects the newest MARK_INDEX observation,
 so fresh mark hides stale index and prevents the existing bounded cache-bypass
@@ -30255,6 +30256,53 @@ Use existing immutable parent plus the tested query module; dependencies,
 runtime/mTLS/manifest mounts, provider admission and all other services stay
 unchanged. Observe both query replicas plus existing60-route reader300s; normal
 public reference reads only, no test orders or new consumers/subscriptions.
+
+Runtime slice: source7daeedd, immutable query image
+`45dd2bf104564952faf03f5315a08f4f2956392ca68a3adaf95eaa7f18fbc632`.
+Parent query module SHA matched dev before the patch exactly; only that module
+overlaid. The built image also PASS50 tests. Rolled query_v2_1 thenquery_v2_2;
+no dependencies recreated. Twenty real MARK/INDEX reads across five symbols,
+two venues andtwo pinned replicas PASS; maximum component age1878ms against
+2000ms. Diagnostic DNS pinning now handles bytes as well asstr, so exact replica
+evidence does not accidentally go through DNS load balancing. An initial probe
+before correcting pinning mixed old/new peers and is not replica evidence.
+Initial60-route startup wait expired onQUOTE freshness; it was not a300s
+acceptance and does not erase that failure. Record one actual300s observation
+with the overall60 gate unchanged and separate MARK_INDEX result, rather than
+retrying until a lucky all-green startup. Privatepacket/evidence:
+`~/.local/state/qdl-v2/index-freshness-7daeedd-20260905/`.
+
+Final single observation300.832s,21 samples: MARK_INDEX had0 unhealthy sampled
+states, but exact-window logs contain11 reference PARTIAL_RESULT reconnects;
+therefore continuous index availability is NOT certified. The sampled-health
+PASS was explicitly corrected toFAIL in summary after checking logs. Generic
+PARTIAL_RESULT does not expose the individual reference failure cause here;
+do not claim all11 are provider-age errors without typed item evidence.
+Overall health48-60/60, final48; QUOTE stale and8 other BOOK_DELTA disconnect
+messages also remain outside this query component fix. Cache checks1236/1260
+present/identity/complete-no-gap,210/210 final bars. No release tag/publication;
+existingv2.0.12 certificate retained, not relabeled as this observation.
+Summary SHA25637d21fcb663073bfa819eebdaa7e798ad1571e14856240146e4b945bbd18fce3;
+observation SHA25648f0ab2ae84d1c5c706f37465d054e998d024545fe9c2f3ae801967e837a5adb.
+The narrow algorithm defect is fixed: a fresh mark no longer conceals stale
+index, the existing single bounded refresh is reached, and stale pairs still
+fail closed. Remaining acceptance failures are unfinished investigation, not
+reclassified as external technical debt. Next relevant diagnosis is typed
+per-item reference failure detail; QUOTE/L2 require separately scoped analysis.
+
+Isolation: exactlytwo query container IDs changed, both0 restarts; all other
+running container identities/images/restart counts unchanged. Orders1180,
+fills6094,sessions65361,brackets431,journal434 unchanged. No-order only; no TS,
+alpha,V1,stream,Rust,ingestor,projector,Kafka,Redis,SQLite mutation. Resource
+sample query1=11.66%CPU/131.9MiB,query2=0.15%/117.8MiB,TSreader27.68%/170.8MiB;
+these are instantaneous samples, not capacity guarantees.
+Cleanup removed3 exact build-input records (61.438kB); retained active45dd2bf
+and prior1c1392bf rollback (also active in otherroles). Docker26 images/13.24GB
+before/after, BuildKit61->58 records/5.428GB rounded. No disposable containers
+left; no volumes/networks/state removed. Reproduction scripts and build recipe
+archived in the private packet; temporary build context removed. Canonical
+checkout remains/home/bobby/data_layer; no newworktree; existingphase-c active
+worktree retained. Changes integrate todev only; stablemain/tag unchanged.
 
 **Latest owner-approved consumer correction, 2026-09-05:** Trading System
 e8ee8f7 fixed independent provider-session deadlines, monotonic heartbeat
