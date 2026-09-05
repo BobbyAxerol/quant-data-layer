@@ -79,9 +79,33 @@ class OkxRestClient:
         self._timeout = timeout_seconds
         self._buckets = {
             "instruments": AsyncTokenBucket(capacity=10, refill_per_second=5),
-            "market": AsyncTokenBucket(capacity=10, refill_per_second=5),
+            # Documented OKX market endpoints used here allow 20 requests per
+            # two seconds per IP. The old 5/s local bucket created a queue
+            # before the provider was even called.
+            "market": AsyncTokenBucket(capacity=20, refill_per_second=10),
             "public": AsyncTokenBucket(capacity=5, refill_per_second=2.5),
         }
+        self._scoped_buckets: dict[tuple[str, str, str], AsyncTokenBucket] = {}
+        self._scoped_bucket_lock = asyncio.Lock()
+
+    async def _bucket_for(
+        self, path: str, params: Mapping[str, str], bucket: str
+    ) -> AsyncTokenBucket:
+        """Return the documented rate-limit scope without cross-symbol queueing."""
+
+        # OKX mark-price is budgeted by IP plus instrument. Do not put five
+        # independent execution references behind the generic public bucket.
+        if path == "/api/v5/public/mark-price":
+            inst_id = str(params.get("instId") or "").strip().upper()
+            if inst_id:
+                key = (bucket, path, inst_id)
+                async with self._scoped_bucket_lock:
+                    scoped = self._scoped_buckets.get(key)
+                    if scoped is None:
+                        scoped = AsyncTokenBucket(capacity=10, refill_per_second=5)
+                        self._scoped_buckets[key] = scoped
+                    return scoped
+        return self._buckets[bucket]
 
     async def get(
         self, path: str, *, params: Mapping[str, str], bucket: str, attempts: int = 3
@@ -90,7 +114,7 @@ class OkxRestClient:
             raise ValueError(f"undeclared OKX endpoint bucket: {bucket}")
         last_error: BaseException | None = None
         for attempt in range(attempts):
-            await self._buckets[bucket].acquire()
+            await (await self._bucket_for(path, params, bucket)).acquire()
             try:
                 response = await asyncio.to_thread(
                     requests.get,

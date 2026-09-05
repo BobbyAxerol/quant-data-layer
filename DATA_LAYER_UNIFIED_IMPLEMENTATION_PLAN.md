@@ -36569,3 +36569,73 @@ at70ac65b has four genuinely unmerged commits and is deliberately preserved.
 Remote stable main remains9d6dfb9 and existingv2.0.0 remains7ebe1d1; newv2.0.12
 package is certified but not tagged/published before the required release PR.
 This is the remaining publication boundary, not another market-data test gate.
+
+### Hotfix - OKX Mark/Index Realtime Freshness (`EXECUTING`, 2026-09-05)
+
+**Approved scope.** Repair the observed execution-grade
+`MARK_INDEX_PRICE` rejection where the OKX `SOL-USDT-SWAP` index component
+exceeds the existing `2_000ms` SLA. The rejection is correct and remains
+fail-closed: a stale provider timestamp must never be relabelled fresh, cached
+as a substitute, or accepted by execution/risk.
+
+**Root cause confirmed.** The current OKX reference adapter performs separate
+REST `mark-price` then `index-tickers` reads. Their provider timestamps are
+independent and the index response can already be older than the strict
+execution bound when received. A shared REST singleflight may reduce load but
+cannot make a provider-old timestamp current. The provider guide already
+declares public WebSocket `mark-price` and `index-tickers` channels; use those
+through the existing shared Rust provider-neutral raw/canonical plane instead
+of adding a per-symbol worker or widening the SLA.
+
+**Narrowed implementation boundary after provider measurement.** A direct
+`SOL-USDT` index read returned below the SLA, but a five-round documented bulk
+probe (`mark-price?instType=SWAP` plus `index-tickers?quoteCcy=USDT`) returned
+provider index ages of `8-30s`. The latter is provider cache behavior and is
+not execution-safe, so bulk is explicitly rejected for the hot execution
+route. The local violation instead comes from a too-coarse shared `public` /
+`market` token bucket and sequential mark-then-index reads. Keep exact
+per-`instId` provider routes; call the two independent snapshots concurrently
+and rate-limit mark price by its documented `IP + instId` scope while using the
+documented global market endpoint budget for index tickers. This removes local
+queueing without persisting or fabricating a value. It preserves exact-row
+identity and provider timestamps; a truly provider-old component still returns
+`DATA_STALE`. Python remains the bounded provider/API edge, Rust remains the
+existing canonical realtime core. No public endpoint/schema change, no new
+container/topology, Kafka offset reset, Redis/SQLite deletion, V1, Trading
+System, alpha or order-path mutation is permitted.
+
+**Required proof and exit.** Run deterministic exact-identity, concurrent
+per-symbol pair, endpoint-rate-scope, duplicate/missing-row and stale-component
+tests plus the current five-symbol Binance/OKX execution reference matrix. Then
+sample the active OKX five-symbol set from both query replicas, prove `SOL`
+index and mark are individually within `2_000ms` when accepted, and prove a
+deliberately/provider-old component remains `DATA_STALE`. Roll only the two
+existing query roles if source tests pass; retain their exact prior image/config
+as rollback. A bounded no-order reader acceptance follows the roll. Record
+image digest, result counts, runtime impact and scoped cleanup here before
+claiming certification/release.
+
+**Source slice complete; runtime pending.** The rejected bulk probe is retained
+as bounded evidence: its five rounds used two calls each but exposed provider
+index ages of `8-30s`, so no bulk cache entered the serving path. The replacement
+uses exact `instId` pairs, concurrent mark/index reads, a documented global
+`20/2s` market budget, and a separate `10/2s IP+instrument` mark bucket. Isolated
+network-disabled regression passed `60/60` in `6.665s`:
+`tests.test_phase104_reference_batch`, `tests.test_phase113_reference_v2`, and
+`tests.test_reference_l2_consumer_acceptance`. It covers five-symbol concurrent
+pair identity/timestamp preservation, missing/duplicate rows, scoped mark
+buckets, strict oldest-component freshness and fail-closed stale replay.
+
+Bounded real-provider probe used five exact symbols for five rounds: every
+round issued exactly ten paths (five mark plus five index) concurrently; `SOL`
+index ranged `613-1,254ms`. One `ETH` index was provider-old at `2,782ms`; this
+is intentionally not accepted and proves the source fix does not rewrite native
+time. One `1,920ms` provider-response tail remained below the mark freshness
+bound; it is recorded as provider/transport latency rather than attributed to
+the local bucket. Build one immutable
+Python query image from this source, retain digest `45dd2bf10456...` as rollback,
+then rolling-recreate only `query_v2_1` and `query_v2_2`. V1, Rust, ingestors,
+projectors, streams, Kafka, Redis, SQLite, Trading System, alpha and orders
+remain untouched. A short typed real-read matrix follows; it must show accepted
+`SOL/OKX` under the declared bound while an old provider component remains
+blocked.
