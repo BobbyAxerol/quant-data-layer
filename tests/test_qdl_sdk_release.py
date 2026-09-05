@@ -33,7 +33,7 @@ class QdlSdkReleaseTests(unittest.TestCase):
                 self.assertEqual({row[0] for row in rows}, names)
             release = json.loads(Path(first_result["manifest"]).read_text())
             self.assertFalse(release["contains_service_internals"])
-            self.assertEqual(release["version"], "2.0.1")
+            self.assertEqual(release["version"], "2.0.2")
             self.assertEqual(len(release["generated_contract_digest"]), 64)
             sbom = json.loads(Path(first_result["sbom"]).read_text())
             self.assertEqual(sbom["bomFormat"], "CycloneDX")

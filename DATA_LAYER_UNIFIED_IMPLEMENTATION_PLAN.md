@@ -30226,6 +30226,27 @@ the final exact cleanup inventory.
 
 ### Trading consumer certified-scope convergence (2026-09-05, SCOPE APPLIED)
 
+**Consumer stability completion (IN PROGRESS, owner approved 2026-09-05).**
+Continue this same closure, no new phase or provider certification rerun.
+The installed TS SDK2.0.1 lacks current certified quiet-continuity handling.
+Package current SDK as2.0.2, run focused SDK/contract/package tests, update TS
+vendor lock and reader continuity/backoff tests. No Data Layer runtime,
+authority, provider, Kafka/Redis/SQLite or topology change. Inherit v2.0.12's
+299-product certificate; add truthful 60-route consumer acceptance and a
+release addendum only after it passes. Reader-only rollout/rollback is recorded
+in the matching TS main-plan section. No stale price is made executable to
+turn health green. Remove temporary SDK/test/build artifacts after verification.
+
+Source slice verified: 42 SDK release/stream/reconnect/contract unittest cases
+PASS in the existing immutable Python image, including fresh and quiet verified
+BOOK_DELTA as non-price continuity, generation0/unverified sequence rejection.
+SDK2.0.2 built reproducibly: wheel SHA256
+eceb28f869e31ea44d69d3deb0a939dbbc3f481a117728f9c217efa60e0f22de;
+SDK source digest fbd0f6306268237715b318b75ca50eb8a4dc1fdfe20b7c21b4ae39f09fea2ebc.
+TS integration adds124 passing tests and pins that wheel. No Data Layer image
+build or runtime change. Certification waits for the approved reader-only real60
+observation; previous299 evidence remains inherited, not rerun or overwritten.
+
 This is completion of the existing consumer charter, not a new phase. Owner
 approved inheriting the v2.0.12 certificate (299 products, certificate SHA256
 `0b67916ef677f7ee099de510a1731948b2eea85e876663ff99cf7d67e4bc1b2e`),
