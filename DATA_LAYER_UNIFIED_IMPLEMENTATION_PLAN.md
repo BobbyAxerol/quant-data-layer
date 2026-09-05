@@ -36639,3 +36639,32 @@ projectors, streams, Kafka, Redis, SQLite, Trading System, alpha and orders
 remain untouched. A short typed real-read matrix follows; it must show accepted
 `SOL/OKX` under the declared bound while an old provider component remains
 blocked.
+
+**Runtime slice complete; strict provider outcome retained (2026-09-05).**
+Built immutable `qdl-v2-python:2.0.12-c1d4c36`, digest
+`sha256:8c3dc599233d8a6e4a8b13831fb62cd66f487e73fb73e8b3cfb1415a6adac51d`,
+from exactly `c1d4c36c6c92595fa660cc8d7343046e4afe8217`. Only
+`query_v2_1` and `query_v2_2` were rolling-recreated; both remained running
+with restart count `0`. The retained exact rollback is
+`sha256:45dd2bf10456...`. V1, Rust, ingestors, projectors, streams, Kafka,
+Redis, SQLite, Trading System, alpha and the order path were not mutated.
+
+The companion Trading System reader acceptance was no-order only: `300.355s`,
+`21` samples and all `60` cached views across the five-symbol/two-venue/six-feed
+matrix had zero missing identity, incomplete, open-gap or non-authoritative
+views; the ten mark/index execution reads were eligible during that bounded
+window and database order/fill/session/bracket/journal counts were unchanged.
+The reader fix is recorded separately in the Trading System main plan at
+`4f99f8a`/`2c10e1c`.
+
+The continuous provider result is intentionally stricter than that bounded
+acceptance: later exact OKX rows can still carry a native index timestamp older
+than `2_000ms` (including SOL). Those rows are now surfaced as typed
+`DATA_STALE`/`StaleExecutionReferenceError`, never rewritten, cached as fresh,
+or degraded to a generic `PARTIAL_RESULT`; execution/risk therefore continues
+to reject them. This closes the local queueing and error-semantics defect, but
+does not claim that an upstream REST timestamp can be made fresh by local code.
+Public WebSocket mark/index ingestion remains the future provider-plane path if
+continuous sub-two-second index availability becomes a separately approved
+requirement. No test-only Data Layer image was retained; the active image and
+named rollback image are the only artifacts retained for this rollout.
