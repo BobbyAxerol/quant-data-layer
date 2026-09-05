@@ -247,6 +247,19 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         }
         self.assertEqual(len(mark_bindings), 10)
         self.assertTrue(set(mark_bindings).issubset(set(scope["binding_ids"])))
+        baseline_by_requirement = {
+            self.tool._source_requirement_key(item): item
+            for item in self.current_catalog["bindings"]
+        }
+        rendered_by_requirement = {
+            self.tool._source_requirement_key(item): item
+            for item in catalog["bindings"]
+        }
+        for requirement, baseline in baseline_by_requirement.items():
+            self.assertEqual(
+                rendered_by_requirement[requirement]["source"]["source_id"],
+                baseline["source"]["source_id"],
+            )
 
         entries = loaded_acquisition._physical_entries(
             source_by_id={item.binding_id: item for item in loaded_catalog.bindings},

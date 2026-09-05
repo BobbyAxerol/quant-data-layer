@@ -36990,3 +36990,58 @@ inherit a foreign alpha V1 probe. Isolated, network-disabled Python ran `40/40
 PASS` across fallback, C2 identity/pacing and stable-release routing tests.
 Build one replacement immutable C2 client only, then rerun the same 60-route,
 300-second no-order receipt. No serving role is replaced by this source fix.
+
+**Runtime catalog compatibility repair (`APPROVED / EXECUTING`, 2026-09-05).**
+The typed SOL/OKX `MARK_INDEX_PRICE` stale guard remains correct: a provider-old
+component is still rejected at the sealed `2_000ms` boundary. Read-only runtime
+evidence identified the distinct availability fault: the revision-9 crypto-only
+runtime catalog has 10 instruments / 190 bindings while the active Rust core
+continues to emit valid retained legacy bindings. Each projector therefore
+fails closed with `canonical event is outside the stable catalog`, reconnects,
+and stops refreshing the canonical cache; SOL/OKX then becomes stale for the
+right reason but cannot recover.
+
+The repair is deliberately narrow and shared: render the existing stable
+catalog plus the admitted five-symbol MARK/L2 candidate as one additive catalog
+and matching acquisition plan, with candidate rows winning only identical
+canonical identities. Add a compiler guard that refuses any future runtime
+refresh which drops an active catalog binding. Do not relax the `2_000ms` SLA,
+rewrite source timestamps, add a symbol worker/container/topic, or alter V1,
+Kafka offsets/topology, Redis, SQLite, Trading System, alpha, or the order
+path. Source tests must prove all retained bindings survive, acquisition IDs
+match exactly, SOL/OKX MARK rows are present, and expired data remains blocked.
+
+Runtime scope after source exit is only serial rolling recreation of
+`projector_v2`, `projector_v2_2`, and `projector_v2_3` against a new immutable
+runtime directory; the existing Python image and all other role images/mounts
+remain unchanged. Rollback restores their exact prior runtime directory and
+recreates those same three projectors. Acceptance is two read-only typed
+SOL/OKX queries after catch-up: current complete data must be eligible within
+the declared SLA, while a deliberately/provider-old component remains typed
+`DATA_STALE` and ineligible. The already-approved 60-route C2 receipt remains
+blocked until this recovery evidence passes.
+
+**Compatibility compiler source exit (`PASS / RUNTIME PENDING`, 2026-09-05).**
+The first candidate compiler was not applied because it would replace retained
+quarterly/legacy L2 rows. The correct existing compiler is
+`scripts/phase115c_materialize_active_native_bars.py`: with the committed
+five-liquid execution demand it renders `216` bindings with exactly `10`
+`MARK_INDEX_PRICE` rows, retains all `206` baseline binding records and keeps
+the active Binance/OKX BTC TRADE/QUOTE source IDs unchanged. The compiler now
+supports a reviewed `--output-dir` apply target, so a runtime packet can render
+the same sealed documents into a new directory without modifying checked-in
+source artifacts. `refresh_stable_runtime_bundle.py` now additionally rejects
+a catalog which omits any source ID in the mounted active core configuration;
+this prevents a future reader/projector refresh from accepting a lineage split
+that would make canonical projection reconnect indefinitely.
+
+**Tests actually run.** In `qdl-v2-python:2.0.12-d4e8a85`, UID `10001`,
+read-only root filesystem and `--network none`,
+`tests.test_stable_runtime_refresh`,
+`tests.test_phase115c_native_bar_materialization`, and
+`tests.test_phase104_v2_query_stream_integration` passed `35/35` in `22.102s`.
+The matrix includes full prior-lineage preservation, five-symbol MARK physical
+mapping, Binance/OKX identity isolation, and source-time expiry returning typed
+ineligible data. A separate real-provider metadata dry-run was read-only and
+persisted no raw response; its Reference/L2 catalog shape was intentionally
+rejected for this runtime because it would remove active legacy L2 rows.
