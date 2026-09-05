@@ -487,6 +487,7 @@ def build_stable_spool(
         consumer_ttl_seconds=config.cursor_ttl_seconds,
         replay_retention_seconds=24 * 3600,
         max_partition_records=capacity.max_partition_records,
+        retain_partition_windows=True,
         verify_integrity_on_open=False,
     ))
 

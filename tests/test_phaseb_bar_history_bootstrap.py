@@ -1039,6 +1039,45 @@ class StableBarBootstrapTests(unittest.TestCase):
         self.assertEqual(len(edge._last_open_ms), expected_bindings)
         self.assertTrue(edge._history_bootstrapped)
 
+    def test_repair_reuses_live_generation_and_never_updates_writer_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "edge.json"
+            arguments = dict(catalog=self.catalog, acquisition=self.acquisition,
+                             authority=self.authority, publisher=self._NoopPublisher(),
+                             state_path=path, warmup_rows=2)
+            writer = StableBinanceBarEdge(**arguments, generation_clock_ns=lambda: 100)
+            before = path.read_bytes()
+            repair = StableBinanceBarEdge(**arguments, repair_only=True,
+                                         generation_clock_ns=lambda: 999)
+            self.assertEqual(repair.connection_generation, writer.connection_generation)
+            self.assertEqual(repair.binance_session_id, writer.binance_session_id)
+            self.assertEqual(repair.okx_session_id, writer.okx_session_id)
+            self.assertEqual(path.read_bytes(), before)
+            repair._assert_repair_writer_current()
+            for action in (repair._persist_state, repair.run_forever,
+                           repair.bootstrap_history, repair.run_cycle):
+                with self.assertRaisesRegex(RuntimeError, "repair cannot"):
+                    action()
+            # A scheduled watermark change is allowed; a new writer is not.
+            source = next(s for s, _ in writer.history_bindings if s.interval == "1m")
+            writer._last_open_ms[source.binding_id] = 60_000
+            writer._persist_state()
+            repair._assert_repair_writer_current()
+            replacement = StableBinanceBarEdge(**arguments, generation_clock_ns=lambda: 101)
+            self.assertEqual(replacement.connection_generation, 101)
+            with self.assertRaisesRegex(RuntimeError, "generation or identity changed"):
+                repair._assert_repair_writer_current()
+            with self.assertRaisesRegex(RuntimeError, "generation or identity changed"):
+                repair._apply_history_repair_plan(None, advance_watermark=False)
+
+    def test_repair_fails_without_active_writer_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(
+            RuntimeError, "active writer checkpoint"
+        ):
+            StableBinanceBarEdge(catalog=self.catalog, acquisition=self.acquisition,
+                                authority=self.authority, publisher=self._NoopPublisher(),
+                                state_path=Path(directory) / "missing.json", repair_only=True)
+
     def test_checkpoint_accepts_provider_calendar_anchored_multiday_watermarks(self):
         with tempfile.TemporaryDirectory(prefix="qdl-stable-calendar-checkpoint-") as raw:
             state_path = Path(raw) / "bar-edge.json"

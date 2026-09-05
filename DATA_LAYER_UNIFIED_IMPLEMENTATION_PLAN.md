@@ -35880,3 +35880,57 @@ Kafka offset, Redis, SQLite, topology, manifest or policy mutation occurred.
 The provider-admission packet is verified, but certification/release remains
 blocked until the exact remaining BAR route is explicitly repaired and a
 replacement C2 passes; no automatic scope expansion is permitted.
+
+**Grouped endpoint/route closure (`OWNER APPROVED / IN PROGRESS`, 2026-09-05).**
+The owner requests grouped diagnosis and repair of failing routes, reuse of
+unaffected certification, and completion of the release. This supersedes the
+prior per-DOGE-interval decision boundary for the existing manifest. Follow the
+fund-grade guide's history/replay and stable certification contracts. Inventory
+all current BAR bindings read-only, distinguish actual missing open times,
+retained ingest-gap flags, query window selection and projector lag; fix the
+shared cause and exercise affected Binance/OKX routes together before C2.
+Use source regressions and bounded genuine-provider repair where necessary.
+Keep existing service topology, schemas/public contracts, V1, Kafka offsets,
+Redis/SQLite generations, Trading System and order paths intact. Any necessary
+rollout is limited to the affected existing V2 roles with their prior image and
+mounts retained for rollback. No new phase, per-symbol image or repeated broad
+suite is required. Release needs a successful current receipt, not just uptime.
+
+Evidence correction: both earlier C2 tracebacks failed in `initial_results`
+before `observation_started`. Their elapsed launch time does not prove a full
+300-second successful observation. Earlier wording claiming that observation
+is superseded here. Preserve the failure receipts; do not count them as PASS.
+
+**Grouped diagnosis and shared correction (2026-09-05, IN PROGRESS).**
+Read-only inventory found real holes in 49/140 BAR partitions, with zero
+duplicates and zero retained sequence-gap flags. Three bounded genuine-provider
+probes (Binance DOGE 1h/3m, OKX DOGE 1h) returned continuous windows while cache
+holes appeared at about now minus 24h. The canonical spool's age maintenance
+removes sparse history by commit age despite its existing 10,064-record window.
+Standalone repair also issues a new source generation, fencing the running
+BAR edge's subsequent messages. Earlier repeated repairs treated symptoms.
+
+Fix only these shared boundaries: opt the bounded canonical projection into
+count-window retention (record/byte/disk limits and cursor TTL remain enforced;
+generic spool retains its age policy), and make repair reuse and validate the
+active checkpoint generation without writing it or becoming a scheduled writer.
+Regression gates cover age expiry vs count bounds, restart/dedup, changed/missing
+checkpoint, both venues, and repair followed by normal publication. Roll only
+existing V2 spool users and BAR edge if source tests pass, preserve their exact
+old images/mounts, then recover provider-final history once and verify all 140
+BAR windows together before the one replacement C2. No Rust fencing relaxation,
+Kafka reset, cache deletion, V1/consumer/order-path mutation or invented bars.
+
+Source verification: disposable existing Python image, read-only source mount,
+network disabled, 768 MiB / 2 CPU cap. Transport/history/stable-edge suite:
+114 tests, 113 PASS and 1 external-Redis integration SKIP (25.540s).
+BAR bootstrap/scheduler/release/repair suite after adjusting constructor-bypass
+fixtures: 61/61 PASS (17.582s); its first run had four fixture AttributeErrors,
+not a provider failure. Syntax and `git diff --check` pass. Suites overlap;
+do not add their counts as unique coverage. No runtime change yet. Test
+containers auto-removed. Pre-build disk: 147G used / 143G available; Docker
+22 images, 10.92GB total, 3.797GB build cache. Next rollout is exactly the
+two query, two stream, three projector and one existing BAR edge, image-only,
+retaining each role's current environment/mounts and digest rollback. Restart
+BAR edge last so its newer active generation restores normal publication and
+uses the existing bounded provider bootstrap for deficient windows.

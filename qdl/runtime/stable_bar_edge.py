@@ -167,6 +167,7 @@ class StableBinanceBarEdge:
         state_path: str | Path | None = None,
         canonical_cache_id: str | None = None,
         canonical_cache_path: str | Path | None = None,
+        repair_only: bool = False,
         clock=time.time,
         generation_clock_ns=time.time_ns,
     ) -> None:
@@ -195,6 +196,9 @@ class StableBinanceBarEdge:
         self.final_retry_max_seconds = final_retry_max_seconds
         self.max_concurrent_requests = max_concurrent_requests
         self.state_path = Path(state_path) if state_path is not None else None
+        self.repair_only = repair_only
+        if repair_only and (self.state_path is None or not self.state_path.is_file()):
+            raise RuntimeError("stable BAR repair requires the active writer checkpoint")
         self.canonical_cache_id = (
             str(canonical_cache_id).strip().lower()
             if canonical_cache_id is not None
@@ -287,11 +291,16 @@ class StableBinanceBarEdge:
         self._rest_fallback_active = bool(self.bindings or self.okx_bindings)
         if self._history_bootstrap_active:
             self._restore_state()
-            self._issue_connection_generation()
-            # Persist the new generation before any provider row can be sent to
-            # Kafka. A crash after issuance must never reuse an older source
-            # generation on restart.
-            self._persist_state()
+            if self.repair_only:
+                if self.connection_generation <= 0:
+                    raise RuntimeError("stable BAR repair requires a versioned writer generation")
+                self._set_session_ids()
+                self._assert_repair_writer_current()
+            else:
+                self._issue_connection_generation()
+                # Persist before publishing, so a restart cannot reuse an
+                # older writer generation. Repairs never claim a generation.
+                self._persist_state()
         else:
             self._history_bootstrapped = True
 
@@ -340,6 +349,9 @@ class StableBinanceBarEdge:
         self.connection_generation = max(previous + 1, floor)
         if self.connection_generation > _MAX_CONNECTION_GENERATION:
             raise RuntimeError("stable BAR connection generation is exhausted")
+        self._set_session_ids()
+
+    def _set_session_ids(self) -> None:
         suffix = f"r{self._authority_revision}-g{self.connection_generation}"
         self.binance_session_id = f"qdl-v2-stable-binance-rest-{suffix}"
         self.okx_session_id = f"qdl-v2-stable-okx-rest-{suffix}"
@@ -425,7 +437,7 @@ class StableBinanceBarEdge:
                 "stable BAR checkpoint cache generation changed; bounded bootstrap required"
             )
             return
-        gaps = self._checkpoint_history_gaps(restored)
+        gaps = {} if self.repair_only else self._checkpoint_history_gaps(restored)
         if gaps:
             for binding_id in gaps:
                 restored.pop(binding_id, None)
@@ -445,6 +457,8 @@ class StableBinanceBarEdge:
         )
 
     def _persist_state(self) -> None:
+        if self.repair_only:
+            raise RuntimeError("stable BAR repair cannot write the active checkpoint")
         if self.state_path is None:
             return
         parent = self.state_path.parent
@@ -604,6 +618,9 @@ class StableBinanceBarEdge:
         expected_missing_rows: int | None = None,
         revalidate_missing_rows: bool = False,
     ) -> int:
+        self._assert_repair_writer_current()
+        if self.repair_only and advance_watermark:
+            raise RuntimeError("stable BAR repair cannot advance the writer watermark")
         current = plan
         if revalidate_missing_rows:
             current = self._history_repair_plan(
@@ -623,6 +640,7 @@ class StableBinanceBarEdge:
                 f"binding={plan.source.binding_id} expected={expected_missing_rows} "
                 f"actual={len(current.missing_envelopes)}"
             )
+        self._assert_repair_writer_current()
         acknowledgements = (
             self.publisher.publish_many(current.missing_envelopes)
             if current.missing_envelopes
@@ -655,6 +673,21 @@ class StableBinanceBarEdge:
             advance_watermark,
         )
         return len(acknowledgements)
+
+    def _assert_repair_writer_current(self) -> None:
+        if not self.repair_only:
+            return
+        self._assert_canonical_cache_identity()
+        try:
+            checkpoint = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise RuntimeError("stable BAR repair writer checkpoint is unavailable") from error
+        expected = self._state_payload()
+        if not isinstance(checkpoint, dict) or any(
+            checkpoint.get(key) != value
+            for key, value in expected.items() if key != "last_open_ms"
+        ):
+            raise RuntimeError("stable BAR repair writer generation or identity changed")
 
     def _publish_history(
         self,
@@ -990,6 +1023,8 @@ class StableBinanceBarEdge:
         return getattr(self, "_next_retry_at", {}).get(binding_id, 0.0) <= now
 
     def bootstrap_history(self) -> int:
+        if self.repair_only:
+            raise RuntimeError("stable BAR repair cannot bootstrap as writer")
         self._rebase_if_canonical_cache_generation_changed()
         if not self._history_bootstrap_active:
             return 0
@@ -1183,6 +1218,8 @@ class StableBinanceBarEdge:
         raise ValueError("stable crypto BAR runtime is unsupported")
 
     def run_cycle(self) -> int:
+        if self.repair_only:
+            raise RuntimeError("stable BAR repair cannot run the writer cycle")
         if not self._rest_fallback_active:
             return 0
         observed_ms = self._settled_observed_ms()
@@ -1288,6 +1325,8 @@ class StableBinanceBarEdge:
         return max(0.01, self._next_ready_at(now) - now)
 
     def run_forever(self) -> None:
+        if self.repair_only:
+            raise RuntimeError("stable BAR repair cannot run the writer loop")
         if not self._history_bootstrap_active:
             logger.info("stable crypto BAR edge idle; no enabled crypto BAR demand")
             while not self._stopped.wait(60.0):
@@ -1324,6 +1363,7 @@ def build_from_environment(
     *,
     state_path: str | Path | None = None,
     client_id: str | None = None,
+    repair_only: bool = False,
 ) -> StableBinanceBarEdge:
     """Build the shared edge or an isolated repair client from one runtime env."""
 
@@ -1389,6 +1429,7 @@ def build_from_environment(
         ),
         canonical_cache_id=_canonical_cache_id(canonical_cache_path),
         canonical_cache_path=canonical_cache_path,
+        repair_only=repair_only,
     )
 
 

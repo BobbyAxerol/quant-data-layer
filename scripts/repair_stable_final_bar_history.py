@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -77,69 +76,68 @@ def main(argv: list[str] | None = None) -> int:
     if args.apply and args.confirm != CONFIRM:
         raise SystemExit(f"--apply requires --confirm {CONFIRM}")
 
-    with tempfile.TemporaryDirectory(prefix="qdl-final-bar-history-repair-") as raw:
-        edge = build_from_environment(
-            state_path=Path(raw) / "repair-state.json",
-            client_id=f"qdl-v2-final-bar-repair-{os.getpid()}",
+    edge = build_from_environment(
+        client_id=f"qdl-v2-final-bar-repair-{os.getpid()}",
+        repair_only=True,
+    )
+    try:
+        plans = tuple(
+            edge.prepare_history_repair(binding_id, rows=args.rows)
+            for binding_id in bindings
         )
-        try:
-            plans = tuple(
-                edge.prepare_history_repair(binding_id, rows=args.rows)
-                for binding_id in bindings
-            )
-            for plan in plans:
-                actual = len(plan.missing_envelopes)
-                required = expected[plan.source.binding_id]
-                if actual != required:
-                    raise RuntimeError(
-                        "stable BAR repair missing-row count differs from approved scope "
-                        f"binding={plan.source.binding_id} expected={required} actual={actual}"
-                    )
-            if not args.apply:
-                print(json.dumps({
-                    "schema": "qdl.stable-final-bar-history-repair.v1",
-                    "status": "DRY_RUN",
-                    "production_mutations": 0,
-                    "repairs": [_summary(plan) for plan in plans],
-                }, sort_keys=True))
-                return 0
-
-            published = {
-                plan.source.binding_id: edge.apply_history_repair(
-                    plan,
-                    expected_missing_rows=expected[plan.source.binding_id],
+        for plan in plans:
+            actual = len(plan.missing_envelopes)
+            required = expected[plan.source.binding_id]
+            if actual != required:
+                raise RuntimeError(
+                    "stable BAR repair missing-row count differs from approved scope "
+                    f"binding={plan.source.binding_id} expected={required} actual={actual}"
                 )
+        if not args.apply:
+            print(json.dumps({
+                "schema": "qdl.stable-final-bar-history-repair.v1",
+                "status": "DRY_RUN",
+                "production_mutations": 0,
+                "repairs": [_summary(plan) for plan in plans],
+            }, sort_keys=True))
+            return 0
+
+        published = {
+            plan.source.binding_id: edge.apply_history_repair(
+                plan,
+                expected_missing_rows=expected[plan.source.binding_id],
+            )
+            for plan in plans
+        }
+        deadline = time.monotonic() + args.wait_seconds
+        remaining = {plan.source.binding_id: -1 for plan in plans}
+        while time.monotonic() < deadline:
+            remaining = {
+                plan.source.binding_id: edge.history_repair_remaining_rows(plan)
                 for plan in plans
             }
-            deadline = time.monotonic() + args.wait_seconds
-            remaining = {plan.source.binding_id: -1 for plan in plans}
-            while time.monotonic() < deadline:
-                remaining = {
-                    plan.source.binding_id: edge.history_repair_remaining_rows(plan)
-                    for plan in plans
-                }
-                if all(value == 0 for value in remaining.values()):
-                    print(json.dumps({
-                        "schema": "qdl.stable-final-bar-history-repair.v1",
-                        "status": "CONVERGED",
-                        "production_mutations": sum(published.values()),
-                        "repairs": [
-                            _summary(
-                                plan,
-                                published_rows=published[plan.source.binding_id],
-                                remaining_rows=remaining[plan.source.binding_id],
-                            )
-                            for plan in plans
-                        ],
-                    }, sort_keys=True))
-                    return 0
-                time.sleep(args.poll_seconds)
-            raise RuntimeError(
-                "stable BAR repair did not converge before deadline remaining="
-                + json.dumps(remaining, sort_keys=True)
-            )
-        finally:
-            edge.stop()
+            if all(value == 0 for value in remaining.values()):
+                print(json.dumps({
+                    "schema": "qdl.stable-final-bar-history-repair.v1",
+                    "status": "CONVERGED",
+                    "production_mutations": sum(published.values()),
+                    "repairs": [
+                        _summary(
+                            plan,
+                            published_rows=published[plan.source.binding_id],
+                            remaining_rows=remaining[plan.source.binding_id],
+                        )
+                        for plan in plans
+                    ],
+                }, sort_keys=True))
+                return 0
+            time.sleep(args.poll_seconds)
+        raise RuntimeError(
+            "stable BAR repair did not converge before deadline remaining="
+            + json.dumps(remaining, sort_keys=True)
+        )
+    finally:
+        edge.stop()
 
 
 if __name__ == "__main__":

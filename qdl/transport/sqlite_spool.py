@@ -39,6 +39,7 @@ class SpoolConfig:
     replay_retention_seconds: int = 24 * 3600
     maintenance_interval_seconds: int = 30
     max_partition_records: int = 0
+    retain_partition_windows: bool = False
     verify_integrity_on_open: bool = True
 
     def __post_init__(self) -> None:
@@ -50,6 +51,10 @@ class SpoolConfig:
             raise ValueError("max_batch_events must be positive")
         if self.max_partition_records < 0:
             raise ValueError("max_partition_records cannot be negative")
+        if not isinstance(self.retain_partition_windows, bool) or (
+            self.retain_partition_windows and self.max_partition_records <= 0
+        ):
+            raise ValueError("retained partition windows require a positive record bound")
         if self.max_storage_bytes <= self.max_event_bytes:
             raise ValueError("max_storage_bytes must exceed max_event_bytes")
         if min(
@@ -588,6 +593,8 @@ class SQLiteDurableSpool:
     def trim_consumed(self, *, now_ns: int | None = None) -> int:
         """Delete only records acknowledged by every active consumer."""
 
+        if self.config.retain_partition_windows:
+            return 0
         effective_now = now_ns or self._clock_ns()
         deleted = 0
         with self._lock:
@@ -876,6 +883,10 @@ class SQLiteDurableSpool:
         )
 
     def _trim_aged_unowned_locked(self, now_ns: int) -> None:
+        # Canonical warmup windows are count-bounded: age eviction would punch
+        # holes into sparse bars even while their advertised window still fits.
+        if self.config.retain_partition_windows:
+            return
         cutoff = now_ns - self.config.replay_retention_seconds * 1_000_000_000
         removed = self._connection.execute(
             """

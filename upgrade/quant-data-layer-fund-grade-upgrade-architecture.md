@@ -1027,6 +1027,16 @@ Với derived bar có thể partition theo `instrument_uid + interval`.
 
 Retention là config theo environment/data class, không hardcode trong adapter.
 
+Stable canonical projection clarification (2026-09-05): its advertised warmup
+is a bounded record window, not a 24-hour commit-age window. The shared spool
+opts into `retain_partition_windows` only with a positive per-partition bound
+(currently 10,064 physical records, at most 10,000 public rows). Global record,
+payload/disk limits and signed-cursor expiry remain enforced. Consumer ACK or
+age maintenance must not punch holes into this window. Generic/raw spools keep
+their existing age policy. An explicit historical repair reuses the active BAR
+writer checkpoint generation, validates it before publication and never writes
+that checkpoint; writer restart fences an in-flight repair normally.
+
 ### 11.4 Raw and canonical transaction
 
 Hai deployment mode:
