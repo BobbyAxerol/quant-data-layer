@@ -1,0 +1,50 @@
+name: Publish Certified Release
+
+on:
+  push:
+    tags: ['v2.*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Verify stable ancestry and certificate
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          tag = os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'v2\.\d+\.\d+', tag):
+              raise SystemExit('Expected a stable v2 semantic-version tag')
+          root = Path('upgrade/evidence/releases') / tag
+          if json.loads((root / 'certificate.json').read_text())['status'] != 'PASS':
+              raise SystemExit('Release certificate is not PASS')
+          if not (root / 'RELEASE_NOTES.md').is_file():
+              raise SystemExit('Release notes are missing')
+          PY
+      - name: Publish immutable tag and public evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          evidence="upgrade/evidence/releases/$RELEASE_TAG"
+          gh release create "$RELEASE_TAG" --verify-tag \
+            --title "Quant Data Layer $RELEASE_TAG" \
+            --notes-file "$evidence/RELEASE_NOTES.md" \
+            "$evidence/certificate.json"

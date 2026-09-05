@@ -36029,3 +36029,71 @@ cache lane passes 75/75 targeted executor/query-routing/identity tests in
 10.992s, including explicit backend opt-in, 100 local reads bounded to eight
 concurrent workers with no provider sleep, and unchanged Binance/OKX rates.
 These suites overlap; counts are not additive. No runtime query change yet.
+
+Runtime closure update: `d7c7506` is pushed to `dev`; one standard immutable
+Python image was built as `qdl-v2-python:2.0.12-d7c7506`, digest
+`sha256:cca6355ceb9ddfc12dcee2ff68ea7b9b42b10e44034fb011b31d9e0f8483a517`.
+Only query_v2_1/query_v2_2 were rolled, preserving exact env/mounts and keeping
+`46a04c1e` as their rollback. Capture confirms 44 protected services unchanged,
+11 V2 roles running, authority RUST_PRIMARY. The existing four-identity C2
+replacement uses this packaged image, evidence `c2-cache-lane-final/`, and
+the unchanged 299-product/300-second contract. Other V2 Python roles remain
+`46a04c1e`; Rust remains `36a822c0`. No extra Rust runtime build or rollout.
+
+Cleanup so far: removed the stopped disposable `qdl-rust-ci-check-20260905`
+builder and its unreferenced `rust:1.82-slim` image. Disk measured 152G used /
+138G available before this cleanup and 149G / 142G afterwards; do not attribute
+the full delta exclusively to one layer. No shared volumes, offsets or data
+were removed. Per-role rollback artifacts remain intentionally retained.
+
+Publication scope remains the approved release, not a new phase: prepare a
+minimal tag-triggered GitHub release publisher because this host has SSH Git
+access but no GitHub API token/gh login. It must refuse a tag outside `main`
+or a missing/failed committed certificate; it uploads only the compact public
+certificate and release notes. Existing `v2.0.0` is never moved. Proposed
+patch release tag `v2.0.12` remains conditional on C2 PASS and green CI; do not
+publish a tag, promote main or claim certification before those results exist.
+
+Current replacement did not certify: an HTTP `RemoteProtocolError` occurred on
+a quiet BAR snapshot re-read (Binance SOL 12h), with both query replicas still
+running, zero restarts/OOM and no server error. Shared SDK transport has no
+recovery for a stale keep-alive socket. Add exactly one retry for this read-only
+transport error across query operations, within the original elapsed timeout;
+no HTTP status/freshness/security retry relaxation. Test GET/POST query reads,
+permanent disconnect, timeout and semantic errors. Remote CI now passes actual
+unit and contract stages but its final image vulnerability scan fails. Scan the
+same immutable image in isolation and remediate actual fixable findings before
+publication; do not suppress the scanner. C2 failure receipt remains retained.
+
+SDK reconnect verification: 30/30 transport/feed-status/stream SDK tests PASS
+in 0.629s. Scope is one RemoteProtocolError retry with remaining original
+timeout only, including read-only query POSTs. Persistent disconnect, timeout,
+401/403/429/503 remain failures. Both serving queries still have zero restarts
+and no OOM. No production change is required for the disposable client's SDK.
+
+Cleanup/security safety: broad dangling BuildKit prune was rejected by the
+execution safety reviewer and was NOT run; existing shared build cache remains.
+A mutable networked scanner with the application archive was also rejected
+before execution. Use the verified official Trivy0.74.0 digest `62b1e65e`
+instead: download its public DB with no application mounts, then scan the
+readonly exported candidate image with network disabled. Delete this scoped
+test image/archive/cache when complete; retain production/rollback images.
+
+Offline security scan isolates both findings to the copied `app/Cargo.lock`:
+quinn-proto0.11.9, fixed by0.11.15 (CVE-2026-31812 and
+GHSA-4w2j-m93h-cj5j). This optional HTTP/3 dependency is not enabled by our
+reqwest rustls-tls build. Its fixed release requires Rust1.85; do not upgrade
+the production toolchain opportunistically. Update only the inactive lockfile
+dependency with Cargo and prove the selected Linux normal/build graph is
+unchanged under the pinned1.82 toolchain. If that proof fails, stop that
+approach rather than bypass the scanner or silently change runtime features.
+
+Cargo update succeeded under1.82. Selected Linux normal/build dependency graph
+is byte-identical before/after, SHA256
+`d1d65596caa0f2c88d45c137e8f3eb82e06ddd69dc679a24f2a5cccf7e728956`.
+Only inactive QUIC dependencies changed. Offline scan of the corrected lockfile
+has no fixable HIGH/CRITICAL findings. No vulnerability ignore/suppression was
+added. The scanner public DB download needed 512MiB scratch after its first
+128MiB scratch filled; this was an isolated scanner setup error, not runtime
+storage exhaustion. Release workflow YAML/permissions and shell blocks pass
+syntax checks; remote publication itself remains pending certification.

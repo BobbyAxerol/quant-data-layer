@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import time
 from collections.abc import AsyncIterator, Sequence
 from urllib.parse import urlsplit
 
@@ -31,6 +32,7 @@ class RestQueryTransport:
         if client is not None and tls is not None:
             raise ValueError("provide either REST client or workload TLS, not both")
         self._owns_client = client is None
+        self._timeout_seconds = timeout_seconds
         self._credential_provider = credential_provider
         self._client = client or httpx.AsyncClient(
             base_url=self.base_url,
@@ -39,9 +41,22 @@ class RestQueryTransport:
             verify=tls.ssl_context() if tls is not None else True,
         )
 
+    async def _read_request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        # Query POSTs are read-only too. A peer can close an idle keep-alive
+        # socket between pool reuse and receipt of headers; retry it once.
+        deadline = time.monotonic() + self._timeout_seconds
+        request = getattr(self._client, method)
+        try:
+            return await request(path, **kwargs)
+        except httpx.RemoteProtocolError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            return await request(path, timeout=remaining, **kwargs)
+
     async def warmup(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
         headers = await self._headers(requirement, consumer_id)
-        response = await self._client.get(
+        response = await self._read_request("get",
             f"/v2/market-data/{requirement.instrument_uid}/warmup",
             params=requirement.query_params(),
             headers=headers,
@@ -62,7 +77,7 @@ class RestQueryTransport:
         if len(grades) != 1:
             raise ValueError("one warmup batch cannot mix consumer grades")
         headers = await self._identity_headers(next(iter(grades)), consumer_id)
-        response = await self._client.post(
+        response = await self._read_request("post",
             "/v2/market-data/warmup:batch",
             json={
                 "consumer_id": consumer_id,
@@ -87,7 +102,7 @@ class RestQueryTransport:
         if len(grades) != 1:
             raise ValueError("one reference batch cannot mix consumer grades")
         headers = await self._identity_headers(next(iter(grades)), consumer_id)
-        response = await self._client.post(
+        response = await self._read_request("post",
             "/v2/market-data/reference:batch",
             json={
                 "consumer_id": consumer_id,
@@ -102,7 +117,7 @@ class RestQueryTransport:
         headers = await self._headers(requirement, consumer_id)
         params = requirement.query_params()
         params.pop("limit", None)
-        response = await self._client.get(
+        response = await self._read_request("get",
             f"/v2/market-data/{requirement.instrument_uid}/snapshot",
             params=params,
             headers=headers,
@@ -124,7 +139,7 @@ class RestQueryTransport:
             "end_time_ns",
         ):
             params.pop(field, None)
-        response = await self._client.get(
+        response = await self._read_request("get",
             f"/v2/feeds/{requirement.instrument_uid}/status",
             params=params,
             headers=headers,
@@ -143,7 +158,7 @@ class RestQueryTransport:
         params: dict[str, str | int] = {"limit": limit}
         if cursor is not None:
             params["cursor"] = cursor
-        response = await self._client.get(
+        response = await self._read_request("get",
             "/v2/instruments", params=params, headers=headers
         )
         return self._decode(response)
@@ -158,7 +173,7 @@ class RestQueryTransport:
         if not identity.strip():
             raise ValueError("instrument identity is required")
         headers = await self._identity_headers(consumer_grade, consumer_id)
-        response = await self._client.get(
+        response = await self._read_request("get",
             f"/v2/instruments/{identity}", headers=headers
         )
         return self._decode(response)
