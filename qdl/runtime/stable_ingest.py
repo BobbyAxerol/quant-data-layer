@@ -19,7 +19,11 @@ from google.protobuf.message import DecodeError
 
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.provider.v1 import raw_provider_pb2
-from qdl.raw.envelope import validate_raw_envelope
+from qdl.runtime.mark_index_lineage import (
+    DERIVED_MARK_INDEX_COMPONENT_V1,
+    validate_derived_mark_index_component,
+    validate_single_raw_lineage,
+)
 from qdl.runtime.lease import GatewayFenced
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.stream import DurableStreamGateway
@@ -110,7 +114,9 @@ def install_stable_canonical_ingest(
         for value in values:
             try:
                 required_fields = {"canonical", "raw_stream", "raw_event_id"}
-                allowed_fields = required_fields | {"raw_provider_envelope"}
+                allowed_fields = required_fields | {
+                    "raw_provider_envelope", "raw_lineage_kind",
+                }
                 if (
                     not isinstance(value, dict)
                     or not required_fields.issubset(value)
@@ -125,27 +131,28 @@ def install_stable_canonical_ingest(
                     if "raw_provider_envelope" in value
                     else None
                 )
+                raw_lineage_kind = value.get("raw_lineage_kind")
+                if raw_lineage_kind not in {
+                    None, DERIVED_MARK_INDEX_COMPONENT_V1,
+                }:
+                    raise ValueError("stable canonical raw lineage kind is invalid")
                 envelope = market_data_pb2.EventEnvelope.FromString(canonical)
                 binding = catalog.binding_for_envelope(envelope)
                 if raw_event_id != bytes(envelope.raw_capture_id):
                     raise ValueError("stable canonical raw reference is unavailable")
                 if inline_raw is not None:
                     raw = raw_provider_pb2.RawProviderEnvelope.FromString(inline_raw)
-                    validate_raw_envelope(raw)
-                    if (
-                        bytes(raw.capture_id) != raw_event_id
-                        or bytes(raw.raw_frame_sha256) != bytes(envelope.raw_payload_hash)
-                        or raw.provider != envelope.provider
-                        or raw.venue != envelope.venue
-                        or raw.market != envelope.market
-                        or raw.native_symbol != envelope.native_symbol
-                        or raw.source_session_id != envelope.source_session_id
-                        or raw.connection_generation != envelope.connection_generation
-                        or raw.authority_revision != envelope.authority_revision
-                    ):
-                        raise ValueError("private Kafka raw lineage validation failed")
+                    if raw_lineage_kind == DERIVED_MARK_INDEX_COMPONENT_V1:
+                        validate_derived_mark_index_component(envelope, raw, binding)
+                    else:
+                        validate_single_raw_lineage(envelope, raw)
+                elif raw_lineage_kind is not None:
+                    raise ValueError(
+                        "derived MARK_INDEX lineage requires an inline raw component"
+                    )
                 references.append((
-                    binding, envelope, canonical, raw_stream, raw_event_id, inline_raw
+                    binding, envelope, canonical, raw_stream, raw_event_id, inline_raw,
+                    raw_lineage_kind,
                 ))
             except (ValueError, TypeError, DecodeError) as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
@@ -167,7 +174,8 @@ def install_stable_canonical_ingest(
             )
         prepared = []
         for (
-            binding, envelope, canonical, raw_stream, raw_event_id, inline_raw
+            binding, envelope, canonical, raw_stream, raw_event_id, inline_raw,
+            raw_lineage_kind,
         ) in references:
             if (
                 inline_raw is None
@@ -186,6 +194,11 @@ def install_stable_canonical_ingest(
                 headers={
                     "raw_stream": raw_stream,
                     "raw_event_id": raw_event_id.hex(),
+                    **(
+                        {"raw_lineage_kind": raw_lineage_kind}
+                        if raw_lineage_kind is not None
+                        else {}
+                    ),
                 },
             )))
 
@@ -296,6 +309,9 @@ class StableHttpCanonicalSink:
         inline_raw = event.headers.get("raw_provider_envelope")
         if inline_raw:
             item["raw_provider_envelope"] = inline_raw
+        raw_lineage_kind = event.headers.get("raw_lineage_kind")
+        if raw_lineage_kind:
+            item["raw_lineage_kind"] = raw_lineage_kind
         return item
 
     @staticmethod

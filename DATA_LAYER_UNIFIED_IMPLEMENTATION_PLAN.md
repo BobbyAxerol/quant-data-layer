@@ -37045,3 +37045,95 @@ mapping, Binance/OKX identity isolation, and source-time expiry returning typed
 ineligible data. A separate real-provider metadata dry-run was read-only and
 persisted no raw response; its Reference/L2 catalog shape was intentionally
 rejected for this runtime because it would remove active legacy L2 rows.
+
+**Projector-only runtime packet (`READY / APPLY APPROVED`, 2026-09-05).**
+The reviewed compiler output is staged outside source at
+`/home/bobby/.local/state/qdl-v2/mark-index-compat-a366d0e-20260905T185000Z/runtime`.
+It contains the additive `216`-binding catalog/acquisition pair, all `206`
+baseline records, ten native MARK rows, and the unchanged active core
+configuration. The packet changes only the `/runtime:ro` mount of
+`projector_v2`, `projector_v2_2`, and `projector_v2_3`; it retains their
+current immutable Python image and existing source-binding environment override.
+The exact rollback overlay restores their prior runtime directory
+`/home/bobby/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z/bundle/runtime`
+and recreates only those same roles. Compose preflight must pass before the
+serial roll. No other V2 role, V1, Kafka offsets/topology, Redis, SQLite,
+Trading System, alpha, or order path is in scope.
+
+**Reader-plane packet correction (`READY / APPLY APPROVED`, 2026-09-05).**
+The first serial projector recreation proved the catalog compiler output is
+readable and the process is healthy, but its canonical-post request still
+received `422 canonical event is outside the stable catalog`. Code inspection
+established that `stream_v2_active/passive` own the canonical ingest endpoint
+and independently load the same source catalog. Query replicas also load this
+catalog to resolve typed public reads. Therefore the exact coherent mount
+boundary is the seven existing reader roles:
+`stream_v2_passive` -> `stream_v2_active` -> `query_v2_1` ->
+`query_v2_2` -> `projector_v2` -> `projector_v2_2` ->
+`projector_v2_3`. This corrects the packet boundary only; it adds no role,
+image, topology, provider path, authority change, or data policy. The rollback
+overlay restores the prior runtime directory for exactly those seven roles.
+
+**Paired MARK/INDEX lineage repair (`APPROVED / EXECUTING`, 2026-09-05).**
+After the additive catalog became visible to the coherent reader plane, the
+projectors correctly advanced beyond the prior catalog rejection and exposed
+the remaining strict failure: `private Kafka raw lineage differs from canonical
+capture ID`. This is not a SOL/OKX provider, freshness or SLA defect. Rust
+canonicalizes one logical `MARK_INDEX_PRICE` from one Binance `BOTH` raw frame
+or two OKX `MARK`/`INDEX` raw frames, then deterministically derives the
+canonical capture ID and payload digest from the two component identities.
+Kafka's existing private header intentionally carries the current physical
+component frame, while the Python reader path incorrectly required that one
+component capture ID equal the derived logical capture ID.
+
+The approved repair is source-only and provider-neutral: add one shared
+validator for an explicitly paired `MARK_INDEX_PRICE` lineage. It accepts only
+the Rust `qdl-mark-index-capture-v1` derivation encoded by the six-part source
+sequence; recomputes the derived capture ID; requires the private raw header
+to be a valid MARK or INDEX component; and preserves provider, venue, market,
+session, connection-generation and authority-revision equality. It never
+applies to TRADE/BAR/QUOTE/L2 or an ordinary reference event, and it retains
+`v1_compatibility=NONE` for this path. Generic one-raw validation remains the
+default. Missing, malformed, cross-session, wrong-component, old-generation or
+stale records remain fail-closed; the sealed two-second execution freshness
+gate is unchanged.
+
+**Tests and rollback gate.** Add focused valid Binance/OKX paired-lineage,
+wrong component, session/generation/authority mismatch, malformed sequence and
+non-MARK rejection tests, plus an ingest/projector handoff regression. Run the
+targeted Python suite in the existing non-network, read-only UID-10001 image.
+Only after source tests pass, build one immutable Python reader image and roll
+only `projector_v2`, `projector_v2_2`, `projector_v2_3`; retain the current
+Python digest as exact rollback. No V1, Rust core, ingestor, query/stream,
+Kafka topology/offset, Redis, SQLite, Trading System, alpha or order-path
+mutation is permitted. Success requires projectors to catch up without the
+lineage error and a fresh SOL/OKX typed read; stale price remains rejected.
+
+**Source implementation and regression (`PASS / RUNTIME ROLL PENDING`,
+2026-09-05).** Added the shared
+`qdl.runtime.mark_index_lineage` validator and threaded its explicit
+`DERIVED_MARK_INDEX_COMPONENT_V1` marker through Kafka projector, signed
+canonical ingest and V2 projection. The normal single-raw path remains the
+default and still compares capture ID, payload digest, provider, venue, market,
+native symbol, session, generation and authority exactly. The derived path is
+available only to a valid `MARK_INDEX_PRICE` binding with `v1_compatibility`
+`NONE`; it recomputes the Rust pair capture from both source-sequence component
+IDs and checks that the inline raw frame is one of them. The strict `2,000ms`
+freshness calculation was not changed.
+
+The new focused suite passed `4/4`: valid Binance and OKX component lineage,
+wrong component/session/generation/authority, malformed source sequence,
+non-MARK rejection, projector-to-signed-ingest preservation and absent inline
+component rejection. The isolated read-only, no-network regression command
+then passed `72/72` with `1` existing skip in `27.470s` across
+`test_mark_index_paired_lineage`, `test_phaseb_stable_edge`,
+`test_phase104_v2_query_stream_integration` and
+`test_phase105_stable_release`. No runtime state changed during testing.
+
+**Next bounded action.** Commit this source slice, build exactly one immutable
+Python reader image, then serially recreate only `projector_v2`,
+`projector_v2_2`, `projector_v2_3` with the already-mounted additive reader
+runtime. Retain current digest `sha256:a2ba7af21aca3debb309ae76ef1eba8c02d8bd51bb2b33da4c291c973079999a`
+as rollback; no other role is recreated. Runtime acceptance must verify no
+`private Kafka raw lineage differs from canonical capture ID`, projector
+catch-up, fresh SOL/OKX typed read, and continued stale rejection.

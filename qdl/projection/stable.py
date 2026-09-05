@@ -11,7 +11,10 @@ import redis
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.provider.v1 import raw_provider_pb2
-from qdl.raw.envelope import validate_raw_envelope
+from qdl.runtime.mark_index_lineage import (
+    validate_derived_mark_index_component,
+    validate_single_raw_lineage,
+)
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.transport import StoredEvent
 
@@ -297,23 +300,16 @@ class StableCompatibilityProjector:
         self,
         stored: StoredEvent,
         raw_envelope_bytes: bytes,
+        *,
+        derived_mark_index_component: bool = False,
     ) -> StableProjectionRecord:
         envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
         binding = self.catalog.binding_for_envelope(envelope)
         raw = raw_provider_pb2.RawProviderEnvelope.FromString(raw_envelope_bytes)
-        validate_raw_envelope(raw)
-        if (
-            bytes(raw.capture_id) != bytes(envelope.raw_capture_id)
-            or bytes(raw.raw_frame_sha256) != bytes(envelope.raw_payload_hash)
-            or raw.provider != envelope.provider
-            or raw.venue != envelope.venue
-            or raw.market != envelope.market
-            or raw.native_symbol != envelope.native_symbol
-            or raw.source_session_id != envelope.source_session_id
-            or raw.connection_generation != envelope.connection_generation
-            or raw.authority_revision != envelope.authority_revision
-        ):
-            raise ValueError("canonical/raw stable lineage mismatch")
+        if derived_mark_index_component:
+            validate_derived_mark_index_component(envelope, raw, binding)
+        else:
+            validate_single_raw_lineage(envelope, raw)
         raw_json = json.loads(bytes(raw.raw_frame_bytes))
         if not isinstance(raw_json, dict):
             raise ValueError("stable compatibility raw frame must be a JSON object")

@@ -14,6 +14,11 @@ from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.projection.stable import StableCompatibilityProjector, StableProjectionTarget
 from qdl.provider.v1 import raw_provider_pb2
+from qdl.runtime.mark_index_lineage import (
+    DERIVED_MARK_INDEX_COMPONENT_V1,
+    is_derived_mark_index_lineage,
+    validate_derived_mark_index_component,
+)
 from qdl.raw.envelope import validate_raw_envelope
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.stream import DurableStreamGateway
@@ -92,6 +97,7 @@ class _ReadyCanonical:
     semantic_duplicate: bool = False
     project_latest: bool = True
     terminal_reason: str | None = None
+    derived_mark_index_component: bool = False
 
 
 class StableProjectorEngine:
@@ -305,7 +311,11 @@ class StableProjectorEngine:
                 )
             )
             projections = [
-                self.projector.build(stored, item.raw_envelope)
+                self.projector.build(
+                    stored,
+                    item.raw_envelope,
+                    derived_mark_index_component=item.derived_mark_index_component,
+                )
                 for item, stored in projected
             ]
             applied = (
@@ -687,7 +697,13 @@ class StableProjectorEngine:
                 raw_envelope = record.raw_provider_envelope
                 raw = raw_provider_pb2.RawProviderEnvelope.FromString(raw_envelope)
                 validate_raw_envelope(raw)
-                if bytes(raw.capture_id) != capture_id:
+                binding = self.catalog.binding_for_envelope(envelope)
+                derived_mark_index_component = is_derived_mark_index_lineage(
+                    envelope
+                )
+                if derived_mark_index_component:
+                    validate_derived_mark_index_component(envelope, raw, binding)
+                elif bytes(raw.capture_id) != capture_id:
                     raise ValueError(
                         "private Kafka raw lineage differs from canonical capture ID"
                     )
@@ -706,6 +722,7 @@ class StableProjectorEngine:
                 raw_envelope = stored_raw.event.payload
                 raw_stream = stored_raw.event.stream
                 raw_event_id = stored_raw.event.event_id
+                derived_mark_index_component = False
 
             project_latest = True
             if envelope.WhichOneof("payload") == "bar":
@@ -738,12 +755,22 @@ class StableProjectorEngine:
                         "raw_provider_envelope": base64.b64encode(
                             raw_envelope
                         ).decode("ascii"),
+                        **(
+                            {
+                                "raw_lineage_kind": (
+                                    DERIVED_MARK_INDEX_COMPONENT_V1
+                                )
+                            }
+                            if derived_mark_index_component
+                            else {}
+                        ),
                         "kafka_topic": record.topic,
                         "kafka_partition": str(record.partition),
                         "kafka_offset": str(record.offset),
                     },
                 ),
                 project_latest=project_latest,
+                derived_mark_index_component=derived_mark_index_component,
             ))
         return tuple(ready)
 
