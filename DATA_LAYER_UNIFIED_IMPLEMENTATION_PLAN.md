@@ -37187,3 +37187,26 @@ removed. State-directory disk usage moved from `2.1M` to `2.0M`; source
 receipt is the passing aggregate/digest-only evidence above. Active image
 `d711d2b572d6` and named rollback image `a2ba7af21aca` are retained; no broad
 prune, volume, network, cache or operational data cleanup occurred.
+
+**C2 local-cache circuit isolation (`APPROVED / EXECUTING`, 2026-09-05).** A
+single 60-route no-order C2 follow-up failed before its observation window with
+`provider circuit is open for LOCAL_CANONICAL_CACHE`; it did not create an
+order, signal, alpha state or durable mutation. Read-only evidence excludes a
+missing DOGE/OKX history: the canonical cache retains `2,303` final
+`OKX.SWAP.PERPETUAL.DOGE-USDT` `BAR 1m` rows while C2 asks for `700`, and the
+shared BAR edge continues to ACK that binding. The defect is a shared query
+policy issue: retryable typed errors from unrelated local cache requirements
+are converted into provider failures and can open one process-global
+`LOCAL_CANONICAL_CACHE` circuit, hiding the original product error from every
+other symbol/interval.
+
+The narrowly approved fix keeps concurrency and bounded execution but treats a
+local-cache `QueryServiceError` as its own typed result rather than an external
+provider retry/circuit event. Binance, OKX and other provider failures retain
+their existing retry, rate and circuit policy. Add a regression proving one
+retryable local error neither opens the local circuit nor prevents another
+local requirement from succeeding, while the existing external-provider retry
+test remains unchanged. No catalog, provider, freshness SLA, Rust code,
+container topology or V1 route changes are in scope. After source tests, build
+one reader image and roll only the V2 query replicas; then rerun exactly one
+300-second C2 receipt. Rollback is the current reader image/runtime pair.

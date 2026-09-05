@@ -321,6 +321,15 @@ class V2QueryService:
         executor_before = self.warmup_executor.stats()
         backend_before = self._warmup_backend_stats()
 
+        def provider(requirement: DataRequirement) -> str:
+            local = getattr(self.backend, "warmup_is_local", None)
+            if callable(local) and local(requirement):
+                return "LOCAL_CANONICAL_CACHE"
+            try:
+                return self.instruments.get(requirement.instrument_uid).identity.venue
+            except KeyError:
+                return "UNKNOWN"
+
         async def work(requirement: DataRequirement) -> WarmupResult:
             try:
                 return await asyncio.to_thread(
@@ -330,22 +339,16 @@ class V2QueryService:
                     request_id=request_id,
                 )
             except QueryServiceError as error:
-                if error.problem.retryable:
+                # A local canonical-cache miss/stale result is already a typed
+                # per-requirement data outcome. It must not trip one shared
+                # circuit and hide unrelated symbols/intervals as a provider outage.
+                if error.problem.retryable and provider(requirement) != "LOCAL_CANONICAL_CACHE":
                     raise RetryableWarmupError(
                         error.problem.detail,
                         retry_after_ms=error.problem.retry_after_ms,
                         cause=error,
                     ) from error
                 raise
-
-        def provider(requirement: DataRequirement) -> str:
-            local = getattr(self.backend, "warmup_is_local", None)
-            if callable(local) and local(requirement):
-                return "LOCAL_CANONICAL_CACHE"
-            try:
-                return self.instruments.get(requirement.instrument_uid).identity.venue
-            except KeyError:
-                return "UNKNOWN"
 
         def deadline(requirement: DataRequirement) -> int:
             specification = requirement.warmup_specification
